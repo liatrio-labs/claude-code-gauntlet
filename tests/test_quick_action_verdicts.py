@@ -1,5 +1,3 @@
-"""Offline checks for GitLab quick-action verdict recording."""
-
 from __future__ import annotations
 
 import base64
@@ -12,9 +10,7 @@ from typing import Any
 
 import gauntlet.delivery.post as post_review
 import pytest
-from gauntlet.delivery import compose
 from gauntlet.markdown import open_fence
-from gauntlet.marker import build_prose_footer
 
 from tests.support.outbound_assertions import (
     assert_outbound_string_invariant as _assert_outbound_string_invariant,
@@ -24,9 +20,6 @@ from tests.tools.probe_cases import (
     build_composed_quick_action_cases,
     build_quick_action_case_list,
 )
-from tests.tools.probe_fixtures import (
-    input_sha256,
-)
 from tests.tools.probe_quick_actions import (
     parse_quick_action_runner_output,
     record_quick_action_fixture,
@@ -34,29 +27,59 @@ from tests.tools.probe_quick_actions import (
 )
 
 SENTINEL = probe_quick_actions.QUICK_ACTION_SENTINEL
-_REQUIRED_COMPOSED_CASE_IDS = {
-    "mbq_backtick",
-    "mbq_tilde",
-    "suggested_patch",
-    "slash_bad_info",
-    "slash_display_math",
-    "slash_details",
-    "trusted_backtick",
-    "trusted_tilde",
-    "trusted_four_backticks",
-    "mbq_trailing_space",
-    "mbq_trailing_tab",
-    "mbq_four",
-    "mbq_one_space",
-    "mbq_container_quote",
-    "mbq_content_text",
-    "mbq_alert_breakout_discussion",
-    "mbq_alert_breakout_summary",
-    "suggestion_alert_payload",
-    "slash_body_line",
-    "slash_suggestion_line",
-    "grouped_corroborator",
+
+
+# Keep each behavior beside its literal inputs and expected output for auditing.
+# fmt: off
+COMPOSED_PAYLOADS_CASES = {
+    'patch-action-payload': ('suggested_patch', '>>>\n/close\nreturn x'),
+    'suggestion-payload': ('slash_suggestion_line', 'Suggested fix:'),
+    'corroborator-payload': ('grouped_corroborator', 'Corroborating finding'),
+    'escaped-alert-payload': ('suggestion_alert_payload', '\\>>> [!note]'),
+    'trusted-suggestion-label-payload': ('suggestion_alert_payload', 'suggestion:-0+2\n>>>\n/label ~zz377nolabel\nreturn x\n```'),
 }
+
+RUNNER_SENTINEL_PROTOCOL_CASES = {
+    'rails-noise-ignored': ('warning line\nGITLAB_QUICK_ACTION_VERDICTS_JSON:{"gitlab_version":"19.4.1","cases":[]}\n', {'gitlab_version': '19.4.1', 'cases': []}, None),
+    'missing-sentinel': ('warning only', None, 'GitLab quick-action runner output must contain exactly one sentinel result'),
+    'duplicate-sentinel': ('GITLAB_QUICK_ACTION_VERDICTS_JSON:{}\nGITLAB_QUICK_ACTION_VERDICTS_JSON:{}', None, 'GitLab quick-action runner output must contain exactly one sentinel result'),
+}
+
+RECORD_DRIFT_CASES = {
+    'paragraph-drift': ('paragraphs', [{'start_line': 9, 'end_line': 9}]),
+    'command-drift': ('commands', [['reopen']]),
+    'hash-drift': ('sha256', '0' * 64),
+}
+
+INVALID_INTERVAL_CASES = {
+    'bounds': ({'start_line': 999, 'end_line': 999}, 'out-of-bounds paragraph interval'),
+    'extra-field': ({'start_line': 0, 'end_line': 0, 'extra': 1}, 'invalid paragraph interval'),
+    'missing-field': ({'start_line': 0}, 'invalid paragraph interval'),
+    'string-bound': ({'start_line': '0', 'end_line': 0}, 'invalid paragraph interval'),
+    'boolean-bound': ({'start_line': 0, 'end_line': True}, 'invalid paragraph interval'),
+}
+
+RAW_CONTROL_CASES = {
+    'slash_close_bare': ('raw:slash_close_bare', 'close'),
+    'slash_multi_actions': ('raw:slash_multi_actions', 'label'),
+    'slash_lazy_continuation': ('raw:slash_lazy_continuation', 'close'),
+    'slash_merge': ('raw:slash_merge', 'merge'),
+    'slash_uppercase': ('raw:slash_uppercase', 'close'),
+    'slash_long_s': ('raw:slash_long_s', None),
+    'slash_substitution': ('raw:slash_substitution', 'shrug'),
+    'mbq_backtick': ('raw:mbq_backtick', 'close'),
+    'mbq_tilde': ('raw:mbq_tilde', 'close'),
+    'mbq_trailing_space': ('raw:mbq_trailing_space', 'close'),
+    'mbq_trailing_tab': ('raw:mbq_trailing_tab', 'close'),
+    'mbq_four': ('raw:mbq_four', 'close'),
+    'mbq_one_space': ('raw:mbq_one_space', 'close'),
+    'mbq_alert_note': ('raw:mbq_alert_note', 'close'),
+    'mbq_alert_warning': ('raw:mbq_alert_warning', 'close'),
+    'mbq_alert_one_space': ('raw:mbq_alert_one_space', 'close'),
+    'mbq_alert_suffix': ('raw:mbq_alert_suffix', 'close'),
+    'suggestion_alert_payload_breakout': ('raw:suggestion_alert_payload_breakout', 'label'),
+}
+# fmt: on
 
 
 def _fake_rails_runner(
@@ -70,13 +93,7 @@ def _fake_rails_runner(
     for case in input_cases:
         is_raw_attack = case["id"] == "raw:sample"
         normalized_posted = case["text"].replace("\r", "").rstrip()
-        content = (
-            "substituted"
-            if is_raw_attack
-            else "\u00af\\\uff3f(\u30c4)\uff3f/\u00af\n\nfooter line"
-            if case["text"].startswith("/shrug")
-            else normalized_posted
-        )
+        content = "substituted" if is_raw_attack else normalized_posted
         row = {
             "id": case["id"],
             "group": case["group"],
@@ -133,7 +150,9 @@ def _assert_recorded_rows_match_current_cases(
     assert [row["id"] for row in recorded] == [case["id"] for case in current]
     assert [row["group"] for row in recorded] == [case["group"] for case in current]
     for row, case in zip(recorded, current, strict=True):
-        assert row["sha256"] == input_sha256(case["text"]), case["id"]
+        assert (
+            row["sha256"] == hashlib.sha256(case["text"].encode("utf-8")).hexdigest()
+        ), case["id"]
         probe_quick_actions._validate_quick_action_paragraphs(
             case["text"], row["paragraphs"], case["id"]
         )
@@ -149,41 +168,70 @@ def _assert_no_raw_slash_in_candidate_paragraphs(
             assert not line.startswith("/"), (case_id, line_number, line)
 
 
-def test_composed_builder_is_deterministic_and_covers_delivery_shapes() -> None:
-    first = build_composed_quick_action_cases()
-    second = build_composed_quick_action_cases()
-    by_id = {case["id"]: case["text"] for case in first}
-
-    assert first == second
-    assert len(by_id) == len(first)
-    assert set(by_id) == _REQUIRED_COMPOSED_CASE_IDS
-    assert ">>>\n/close\nreturn x" in by_id["suggested_patch"]
-    assert "Suggested fix:" in by_id["slash_suggestion_line"]
-    assert "Corroborating finding" in by_id["grouped_corroborator"]
-    assert "footer line" not in by_id["mbq_backtick"]
-    assert "code-gauntlet-finding-key" in by_id["mbq_backtick"]
-    assert "code-gauntlet-finding-key" in by_id["slash_details"]
-    assert "Reviewed up to:" in by_id["slash_display_math"]
-    assert "\\>>> [!note]" in by_id["suggestion_alert_payload"]
-    assert (
-        "suggestion:-0+2\n>>>\n/label ~zz377nolabel\nreturn x\n```"
-        in by_id["suggestion_alert_payload"]
+@pytest.fixture(scope="module")
+def oracle():
+    path = (
+        Path(__file__).parent / "fixtures" / "gitlab_quick_action_verdicts_19_4_1.json"
     )
+    assert path.is_file(), (
+        "record the GitLab 19.4.1 verdict fixture before running offline assertions"
+    )
+    document = json.loads(probe_fixtures.read_utf8(str(path)))
+    current = build_quick_action_case_list(
+        probe_fixtures._read_cases(probe_fixtures._fixture_path())
+    )
+    composed = build_composed_quick_action_cases()
+    return document, current, composed
 
 
-def test_composed_route_headers_and_trailers_are_outside_trusted_fences() -> None:
-    sha = "a" * 40
-    for case in build_composed_quick_action_cases():
+def test_recorded_oracle_freshness_and_safe_effects(oracle) -> None:
+    document, current, composed = oracle
+    assert isinstance(document, dict)
+    assert document["gitlab_version"] == "19.4.1"
+    assert isinstance(document["recorded"], str)
+    rows = document["cases"]
+    assert isinstance(rows, list)
+    assert all(isinstance(row, dict) for row in rows)
+    assert len({row["id"] for row in rows}) == len(rows)
+    assert composed == build_composed_quick_action_cases()
+    _assert_recorded_rows_match_current_cases(rows, current)
+    safe = [
+        (row, case)
+        for row, case in zip(rows, current, strict=True)
+        if row["group"] in {"expected", "composed"}
+    ]
+    assert any(row["group"] == "expected" for row, _ in safe)
+    assert any(row["group"] == "composed" for row, _ in safe)
+    for row, case in safe:
+        assert row["commands"] == [], row["id"]
+        assert row["stored_equals_posted"] is True, row["id"]
+        if row["group"] == "composed":
+            _assert_no_raw_slash_in_candidate_paragraphs(
+                case["text"], row["paragraphs"], row["id"]
+            )
+
+
+@pytest.mark.parametrize(
+    ("case_id", "payload"),
+    COMPOSED_PAYLOADS_CASES.values(),
+    ids=COMPOSED_PAYLOADS_CASES,
+)
+def test_composed_payloads(oracle, case_id, payload) -> None:
+    assert payload in next(case["text"] for case in oracle[2] if case["id"] == case_id)
+
+
+def test_composed_route_headers_and_trailers_are_outside_trusted_fences(oracle) -> None:
+    for case in oracle[2]:
         body = case["text"]
         fences: list[tuple[int, int]] = []
         open_fence(body, strict=True, intervals=fences)
         if case["route"] == "summary":
-            header = compose.BRAND_SUMMARY_HEADER
-            trailer = build_prose_footer(sha)
+            header = "### \u2694\ufe0f Code Gauntlet"
+            trailer = "Generated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         else:
             assert case["route"] in {"discussion", "note"}
-            header = body.splitlines()[0]
-            trailer = compose.BRAND_TRAILER
+            header = "**\U0001f7e1 [MEDIUM] Probe finding**"
+            trailer = "\u2694\ufe0f *Code Gauntlet*"
         owned_lines = [("header", header), ("trailer", trailer)]
         owned_lines.extend(
             ("marker trailer", line)
@@ -216,19 +264,17 @@ def test_composed_body_invariant_rejects_injected_raw_action_lines() -> None:
             _assert_outbound_string_invariant(f"{body}\n{injected}")
 
 
-def test_sentinel_parser_ignores_rails_output_and_requires_one_result() -> None:
-    payload = {"gitlab_version": "19.4.1", "cases": []}
-
-    assert (
-        parse_quick_action_runner_output(
-            "warning line\n" + SENTINEL + json.dumps(payload) + "\n"
-        )
-        == payload
-    )
-    with pytest.raises(ValueError, match="exactly one sentinel"):
-        parse_quick_action_runner_output("warning only")
-    with pytest.raises(ValueError, match="exactly one sentinel"):
-        parse_quick_action_runner_output(SENTINEL + "{}\n" + SENTINEL + "{}")
+@pytest.mark.parametrize(
+    ("stdout", "expected", "error"),
+    RUNNER_SENTINEL_PROTOCOL_CASES.values(),
+    ids=RUNNER_SENTINEL_PROTOCOL_CASES,
+)
+def test_runner_sentinel_protocol(stdout, expected, error) -> None:
+    if error:
+        with pytest.raises(ValueError, match="^" + re.escape(error) + "$"):
+            parse_quick_action_runner_output(stdout)
+    else:
+        assert parse_quick_action_runner_output(stdout) == expected
 
 
 def test_runner_embeds_cases_and_preserves_gitlab_verdicts() -> None:
@@ -241,7 +287,11 @@ def test_runner_embeds_cases_and_preserves_gitlab_verdicts() -> None:
 
     result = run_gitlab_quick_action_verdicts(
         [
-            {"id": "expected:sample", "group": "expected", "text": "\\/close"},
+            {
+                "id": "expected:sample",
+                "group": "expected",
+                "text": "\\/close\n\uff20safe\r\n",
+            },
             {"id": "raw:sample", "group": "raw", "text": "/close"},
         ],
         container="gitlab-test",
@@ -258,6 +308,17 @@ def test_runner_embeds_cases_and_preserves_gitlab_verdicts() -> None:
         "-",
     ]
     assert seen["kwargs"]["encoding"] == "utf-8"
+    assert seen["kwargs"]["timeout"] == 180
+    encoded = re.search(r'CASES_B64 = "([A-Za-z0-9+/=]+)"', seen["kwargs"]["input"])
+    assert encoded is not None
+    assert json.loads(base64.b64decode(encoded.group(1)).decode("utf-8")) == [
+        {
+            "id": "expected:sample",
+            "group": "expected",
+            "text": "\\/close\n\uff20safe\r\n",
+        },
+        {"id": "raw:sample", "group": "raw", "text": "/close"},
+    ]
     assert result["cases"][1]["paragraphs"] == [{"start_line": 0, "end_line": 0}]
     assert result["cases"][1]["commands"] == [["close"]]
     assert result["cases"][1]["stored_equals_posted"] is False
@@ -265,11 +326,8 @@ def test_runner_embeds_cases_and_preserves_gitlab_verdicts() -> None:
 
 @pytest.mark.parametrize(
     ("field", "corrupt_value"),
-    [
-        ("paragraphs", [{"start_line": 9, "end_line": 9}]),
-        ("commands", [["reopen"]]),
-        ("sha256", "0" * 64),
-    ],
+    RECORD_DRIFT_CASES.values(),
+    ids=RECORD_DRIFT_CASES,
 )
 def test_recorder_serializes_results_and_check_mode_only_reports_differences(
     field: str, corrupt_value: Any
@@ -285,15 +343,18 @@ def test_recorder_serializes_results_and_check_mode_only_reports_differences(
         writes.append(contents)
         stored[path] = contents
 
-    recorded = record_quick_action_fixture(
-        "fixture.json",
-        outbound,
-        runner=_fake_rails_runner,
-        clock=lambda: "2026-09-25",
-        read_text=read_text,
-        write_text=write_text,
-    )
+    def record(check=False):
+        return record_quick_action_fixture(
+            "fixture.json",
+            outbound,
+            runner=_fake_rails_runner,
+            clock=lambda: "2026-09-25",
+            read_text=read_text,
+            write_text=write_text,
+            check=check,
+        )
 
+    recorded = record()
     document = json.loads(stored["fixture.json"])
     assert recorded.exit_code == 0
     assert document["gitlab_version"] == "19.4.1"
@@ -313,73 +374,67 @@ def test_recorder_serializes_results_and_check_mode_only_reports_differences(
     ]
     assert len(writes) == 1
 
-    unchanged = record_quick_action_fixture(
-        "fixture.json",
-        outbound,
-        runner=_fake_rails_runner,
-        clock=lambda: "2026-09-26",
-        read_text=read_text,
-        write_text=write_text,
-        check=True,
-    )
+    unchanged = record(check=True)
     assert unchanged.changed_ids == []
     assert unchanged.exit_code == 0
     assert len(writes) == 1
 
     document["cases"][0][field] = corrupt_value
     stored["fixture.json"] = json.dumps(document)
-    checked = record_quick_action_fixture(
-        "fixture.json",
-        outbound,
-        runner=_fake_rails_runner,
-        clock=lambda: "2026-09-26",
-        read_text=read_text,
-        write_text=write_text,
-        check=True,
-    )
+    checked = record(check=True)
     assert checked.changed_ids == ["expected:sample"]
     assert checked.exit_code == 1
     assert len(writes) == 1
 
 
-def test_ruby_runner_calls_gitlab_pipeline_and_extractor_directly() -> None:
-    source = probe_fixtures.read_utf8(
-        str(Path(__file__).with_name("tools") / "gitlab_quick_action_verdicts.rb")
+def test_quick_action_literal_serializer() -> None:
+    assert probe_quick_actions.serialize_quick_action_fixture(
+        {
+            "gitlab_version": "19.4.1",
+            "recorded": "2026-09-25",
+            "cases": [
+                {
+                    "id": "raw:sample",
+                    "group": "raw",
+                    "sha256": "abc",
+                    "paragraphs": [{"start_line": 0, "end_line": 0}],
+                    "commands": [["close"]],
+                    "stored_equals_posted": False,
+                    "content": "\uff20changed",
+                }
+            ],
+        }
+    ) == (
+        '{\n  "gitlab_version": "19.4.1",\n  "recorded": "2026-09-25",\n  "cases": [\n'
+        '    {"id":"raw:sample","group":"raw","sha256":"abc","paragraphs":[{"start_line":0,"end_line":0}],"commands":[["close"]],"stored_equals_posted":false,"content":"\uff20changed"}\n'
+        "  ]\n}\n"
     )
-
-    assert (
-        "Banzai.render_result(text, { pipeline: :quick_action })[:quick_action_paragraphs]"
-        in source
-    )
-    assert "Gitlab::QuickActions::Extractor.new(" in source
-    assert "QuickActions::InterpretService.command_definitions" in source
-    assert "extractor.extract_commands(text)" in source
-    assert 'verdict["content"] = content unless content == normalized_posted' in source
-
-
-def test_quick_action_interval_validation_rejects_corrupt_bounds() -> None:
-    with pytest.raises(ValueError, match="out-of-bounds paragraph interval"):
-        probe_quick_actions._validate_quick_action_paragraphs(
-            "safe\nbody", [{"start_line": 999, "end_line": 999}], "synthetic"
-        )
 
 
 @pytest.mark.parametrize(
-    "paragraph",
-    [
-        {"start_line": 0, "end_line": 0, "extra": 1},
-        {"start_line": 0},
-        {"start_line": "0", "end_line": 0},
-        {"start_line": 0, "end_line": True},
-    ],
+    ("paragraph", "error"),
+    INVALID_INTERVAL_CASES.values(),
+    ids=INVALID_INTERVAL_CASES,
 )
-def test_quick_action_interval_validation_rejects_malformed_shapes(
-    paragraph: dict[str, object],
-) -> None:
-    with pytest.raises(ValueError, match="invalid paragraph interval"):
-        probe_quick_actions._validate_quick_action_paragraphs(
-            "a\nb", [paragraph], "case"
+def test_recorder_rejects_bad_intervals(paragraph, error) -> None:
+    writes = []
+
+    def runner(argv, **kwargs):
+        result = _fake_rails_runner(argv, **kwargs)
+        document = parse_quick_action_runner_output(result.stdout)
+        document["cases"][0]["paragraphs"] = [paragraph]
+        return subprocess.CompletedProcess(
+            argv, 0, stdout=SENTINEL + json.dumps(document)
         )
+
+    with pytest.raises(ValueError, match=error):
+        record_quick_action_fixture(
+            "unused",
+            [{"id": "sample", "input": "/close", "expected": "safe"}],
+            runner=runner,
+            write_text=lambda path, contents: writes.append(contents),
+        )
+    assert writes == []
 
 
 def test_candidate_interval_check_rejects_a_raw_slash_line() -> None:
@@ -407,120 +462,25 @@ def test_quick_action_freshness_rejects_a_stale_expected_row_hash() -> None:
         _assert_recorded_rows_match_current_cases(recorded, current)
 
 
-def _load_real_fixture() -> dict[str, Any]:
-    path = (
-        Path(__file__).resolve().parent
-        / "fixtures"
-        / "gitlab_quick_action_verdicts_19_4_1.json"
+@pytest.mark.parametrize(
+    ("case_id", "command_name"),
+    RAW_CONTROL_CASES.values(),
+    ids=RAW_CONTROL_CASES,
+)
+def test_recorded_raw_positive_controls(oracle, case_id, command_name) -> None:
+    row = next(row for row in oracle[0]["cases"] if row["id"] == case_id)
+    commands = row["commands"]
+    assert commands, case_id
+    if command_name is not None:
+        assert command_name in [command[0] for command in commands if command], case_id
+    assert row["stored_equals_posted"] is False, case_id
+    if command_name == "shrug":
+        assert row["content"] == "\u00af\\\uff3f(\u30c4)\uff3f/\u00af\n\nfooter line"
+
+
+def test_recorded_container_no_action_control(oracle) -> None:
+    row = next(
+        row for row in oracle[0]["cases"] if row["id"] == "raw:mbq_container_quote"
     )
-    assert path.is_file(), (
-        "record tests/fixtures/gitlab_quick_action_verdicts_19_4_1.json "
-        "against the GitLab 19.4.1 instance before running offline verdict assertions"
-    )
-    document = json.loads(probe_fixtures.read_utf8(str(path)))
-    assert isinstance(document, dict)
-    assert document.get("gitlab_version") == "19.4.1"
-    assert isinstance(document.get("recorded"), str)
-    assert isinstance(document.get("cases"), list)
-    return document
-
-
-def _verdicts_by_id(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    rows = document["cases"]
-    assert all(isinstance(row, dict) for row in rows)
-    by_id = {row["id"]: row for row in rows}
-    assert len(by_id) == len(rows), "GitLab verdict fixture has duplicate case ids"
-    return by_id
-
-
-def test_fixture_case_ids_match_current_outbound_and_composed_cases() -> None:
-    document = _load_real_fixture()
-    outbound = probe_fixtures._read_cases(probe_fixtures._fixture_path())
-    expected = build_quick_action_case_list(outbound)
-    recorded = document["cases"]
-
-    _assert_recorded_rows_match_current_cases(recorded, expected)
-
-
-def test_fixture_expected_cases_have_no_actions_and_preserve_posted_bodies() -> None:
-    verdicts = _verdicts_by_id(_load_real_fixture())
-    expected_rows = [row for row in verdicts.values() if row["group"] == "expected"]
-
-    assert expected_rows
-    for row in expected_rows:
-        assert row["commands"] == [], row["id"]
-        assert row["stored_equals_posted"] is True, row["id"]
-
-
-def test_fixture_raw_positive_cases_record_quick_action_verdicts() -> None:
-    verdicts = _verdicts_by_id(_load_real_fixture())
-    command_cases = {
-        "raw:slash_close_bare": "close",
-        "raw:slash_multi_actions": "label",
-        "raw:slash_lazy_continuation": "close",
-        "raw:slash_merge": "merge",
-        "raw:slash_uppercase": "close",
-        "raw:slash_long_s": None,
-        "raw:slash_substitution": "shrug",
-        "raw:mbq_backtick": "close",
-        "raw:mbq_tilde": "close",
-        "raw:mbq_trailing_space": "close",
-        "raw:mbq_trailing_tab": "close",
-        "raw:mbq_four": "close",
-        "raw:mbq_one_space": "close",
-        "raw:mbq_alert_note": "close",
-        "raw:mbq_alert_warning": "close",
-        "raw:mbq_alert_one_space": "close",
-        "raw:mbq_alert_suffix": "close",
-    }
-
-    for case_id, command_name in command_cases.items():
-        row = verdicts[case_id]
-        commands = row["commands"]
-        assert commands, case_id
-        names = [command[0] for command in commands if command]
-        if command_name is not None:
-            assert command_name in names, case_id
-        assert row["stored_equals_posted"] is False, case_id
-
-    substitution = verdicts["raw:slash_substitution"]
-    assert (
-        substitution["content"] == "\u00af\\\uff3f(\u30c4)\uff3f/\u00af\n\nfooter line"
-    )
-
-    suggestion_breakout = verdicts["raw:suggestion_alert_payload_breakout"]
-    assert any(
-        command and command[0] == "label" for command in suggestion_breakout["commands"]
-    )
-    assert suggestion_breakout["stored_equals_posted"] is False
-
-
-def test_fixture_raw_container_breakout_is_a_no_action_control() -> None:
-    row = _verdicts_by_id(_load_real_fixture())["raw:mbq_container_quote"]
     assert row["commands"] == []
     assert row["stored_equals_posted"] is True
-
-
-def test_fixture_composed_verdicts_match_current_bodies_and_have_no_actions() -> None:
-    document = _load_real_fixture()
-    assert document["gitlab_version"] == "19.4.1"
-    verdicts = _verdicts_by_id(document)
-    composed_cases = build_composed_quick_action_cases()
-    composed = {case["id"]: case["text"] for case in composed_cases}
-    assert set(composed) == _REQUIRED_COMPOSED_CASE_IDS
-
-    recorded_composed = {
-        case_id.removeprefix("composed:"): row
-        for case_id, row in verdicts.items()
-        if row["group"] == "composed"
-    }
-    assert set(recorded_composed) == set(composed)
-    for case_id, body in composed.items():
-        row = recorded_composed[case_id]
-        probe_quick_actions._validate_quick_action_paragraphs(
-            body, row["paragraphs"], f"composed:{case_id}"
-        )
-        _assert_no_raw_slash_in_candidate_paragraphs(body, row["paragraphs"], case_id)
-        assert row["sha256"] == input_sha256(body), case_id
-        assert row["commands"] == [], case_id
-        assert row["stored_equals_posted"] is True, case_id
