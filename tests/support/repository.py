@@ -1,8 +1,10 @@
 import json
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from functools import cache
 from pathlib import Path
+
+from tests.support.generator_inputs import declared_inputs
 
 
 def tracked_paths(root: Path, pathspecs: Sequence[str] = ()) -> list[str]:
@@ -13,6 +15,18 @@ def tracked_paths(root: Path, pathspecs: Sequence[str] = ()) -> list[str]:
         check=True,
     )
     return [path for path in result.stdout.decode("utf-8").split("\0") if path]
+
+
+def copy_generator_tree(root: Path, destination: Path, targets: Iterable[str]) -> None:
+    paths = (
+        set(targets)
+        | declared_inputs(str(root))
+        | {"scripts/generate_contract_requirements.py"}
+    )
+    for relative in sorted(paths):
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((root / relative).read_bytes())
 
 
 @cache
