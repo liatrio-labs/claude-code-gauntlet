@@ -2713,3 +2713,51 @@ for (const [name, persist, ok, error] of PERSIST_VALIDATION_ROWS) {
     else assert.deepEqual(out.errors, []);
   });
 }
+
+test('args proof: headless null delivery cap reports only the focused error', () => {
+  const input = headlessArgs();
+  input.limits.deliveryCap = null;
+  assert.deepEqual(validateArgs(input), {
+    ok: false,
+    errors: ['headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap'],
+  });
+});
+
+test('args proof: normalization preserves conflicting stamped requested scope', () => {
+  const normalized = normalizeArgs(headlessArgs('incremental', { requested: 'full' }));
+  assert.equal(normalized.reviewScope.requested, 'full');
+  assert.deepEqual(validateArgs(normalized), {
+    ok: false,
+    errors: ['reviewScope.requested does not match configEcho.reviewed_policy'],
+  });
+});
+
+test('args proof: normalization keeps the required limits root absent', () => {
+  const input = headlessArgs();
+  delete input.limits;
+  const normalized = normalizeArgs(input);
+  assert.equal('limits' in normalized, false);
+  assert.deepEqual(validateArgs(normalized), { ok: false, errors: ['missing required field: limits'] });
+});
+
+test('args proof: invalid limits report every error in check order', () => {
+  const input = {
+    ...good,
+    limits: {
+      summarizeBucketSize: 0, validateBatch: -1, challengeCap: -1, verifySliceSize: 0,
+      deliveryCap: -1, discoveryCap: 0, maxLineSpan: 0,
+    },
+  };
+  assert.deepEqual(validateArgs(input), {
+    ok: false,
+    errors: [
+      'limits.summarizeBucketSize must be a positive safe integer when present',
+      'limits.validateBatch must be a positive safe integer when present',
+      'limits.verifySliceSize must be a positive safe integer when present',
+      'limits.maxLineSpan must be a positive safe integer when present',
+      'limits.challengeCap must be a non-negative safe integer when present',
+      'limits.deliveryCap must be null, absent, or a non-negative safe integer when present',
+      'limits.discoveryCap must be a positive safe integer when present',
+    ],
+  });
+});
