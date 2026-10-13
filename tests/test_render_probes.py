@@ -16,31 +16,39 @@ from urllib.parse import parse_qs, unquote
 
 import pytest
 
-from tests.tools.render_probes import (
+from tests.tools.probe_cli import (
+    build_argument_parser,
+    main,
+)
+from tests.tools.probe_fixtures import (
+    input_sha256,
+    record_divergence,
+    record_fixture,
+    serialize_fixture,
+    update_cases,
+    write_utf8,
+)
+from tests.tools.probe_github import (
+    github_login,
+    render_github,
+    run_github_canary,
+)
+from tests.tools.probe_gitlab import (
     INHERENTLY_PLAIN,
     SEED_GROUPS,
     GitLabClient,
     GitLabHTTPError,
     _gitlab_blob_prefix,
     _gitlab_version,
-    _reference_originals,
-    build_argument_parser,
-    check_render,
     derive_handles,
-    github_login,
-    input_sha256,
-    main,
-    pair_sha256,
-    record_divergence,
-    record_fixture,
-    render_github,
     run_canary,
-    run_github_canary,
     seed,
-    serialize_fixture,
+)
+from tests.tools.probe_html import (
+    _reference_originals,
+    check_render,
+    pair_sha256,
     structure,
-    update_cases,
-    write_utf8,
 )
 
 REAL_HEADING_HTML = (
@@ -1188,11 +1196,11 @@ def test_main_record_check_and_cleared_divergence_output(
 ) -> None:
     path = tmp_path / "fixture.json"
     _write_divergent_probe_fixture(path)
-    monkeypatch.setattr("tests.tools.render_probes._fixture_path", lambda: str(path))
+    monkeypatch.setattr("tests.tools.probe_cli._fixture_path", lambda: str(path))
     if platform == "github":
-        monkeypatch.setattr("tests.tools.render_probes.github_login", lambda: "lee")
+        monkeypatch.setattr("tests.tools.probe_cli.github_login", lambda: "lee")
         monkeypatch.setattr(
-            "tests.tools.render_probes.render_github", _github_render_with_canary
+            "tests.tools.probe_cli.render_github", _github_render_with_canary
         )
     else:
 
@@ -1201,13 +1209,13 @@ def test_main_record_check_and_cleared_divergence_output(
                 return _fake_gitlab_render(text)
 
         monkeypatch.setattr(
-            "tests.tools.render_probes._client_from_environment", lambda *args: Client()
+            "tests.tools.probe_cli._client_from_environment", lambda *args: Client()
         )
         monkeypatch.setattr(
-            "tests.tools.render_probes._gitlab_version", lambda client: "19.4.1 ce"
+            "tests.tools.probe_cli._gitlab_version", lambda client: "19.4.1 ce"
         )
         monkeypatch.setattr(
-            "tests.tools.render_probes._gitlab_blob_prefix",
+            "tests.tools.probe_cli._gitlab_blob_prefix",
             lambda client, project: "http://gitlab.test/-/blob/main/",
         )
     argv = ["record", "--platform", platform]
@@ -1243,12 +1251,10 @@ def test_main_seed_dispatch_prints_seed_counts(monkeypatch, capsys) -> None:
         assert actual_client is client
         return {"users": {"alice": {}}, "groups": {"team": {}, "cdr-group": {}}}
 
-    monkeypatch.setattr("tests.tools.render_probes._fixture_path", lambda: "unused")
-    monkeypatch.setattr("tests.tools.render_probes._read_cases", lambda path: cases)
-    monkeypatch.setattr(
-        "tests.tools.render_probes._client_from_environment", fake_client
-    )
-    monkeypatch.setattr("tests.tools.render_probes.seed", fake_seed)
+    monkeypatch.setattr("tests.tools.probe_cli._fixture_path", lambda: "unused")
+    monkeypatch.setattr("tests.tools.probe_cli._read_cases", lambda path: cases)
+    monkeypatch.setattr("tests.tools.probe_cli._client_from_environment", fake_client)
+    monkeypatch.setattr("tests.tools.probe_cli.seed", fake_seed)
     assert main(["seed", "--token-env", "FAKE_ENV"]) == 0
     assert capsys.readouterr().out.strip() == "seeded 1 users and 2 groups"
 
@@ -1348,7 +1354,7 @@ def test_divergence_cli_uses_fixture_path_and_stored_pair(
         "divergence": None,
     }
     write_utf8(str(path), serialize_fixture(document["cases"]))
-    monkeypatch.setattr("tests.tools.render_probes._fixture_path", lambda: str(path))
+    monkeypatch.setattr("tests.tools.probe_cli._fixture_path", lambda: str(path))
     assert (
         main(
             [

@@ -16,20 +16,24 @@ from gauntlet.delivery import compose
 from gauntlet.markdown import open_fence
 from gauntlet.marker import build_prose_footer
 
-from tests.test_outbound_contract import (
+from tests.support.outbound_assertions import (
     assert_outbound_string_invariant as _assert_outbound_string_invariant,
 )
-from tests.tools import render_probes
-from tests.tools.render_probes import (
+from tests.tools import probe_fixtures, probe_quick_actions
+from tests.tools.probe_cases import (
     build_composed_quick_action_cases,
     build_quick_action_case_list,
+)
+from tests.tools.probe_fixtures import (
     input_sha256,
+)
+from tests.tools.probe_quick_actions import (
     parse_quick_action_runner_output,
     record_quick_action_fixture,
     run_gitlab_quick_action_verdicts,
 )
 
-SENTINEL = render_probes.QUICK_ACTION_SENTINEL
+SENTINEL = probe_quick_actions.QUICK_ACTION_SENTINEL
 _REQUIRED_COMPOSED_CASE_IDS = {
     "mbq_backtick",
     "mbq_tilde",
@@ -130,7 +134,7 @@ def _assert_recorded_rows_match_current_cases(
     assert [row["group"] for row in recorded] == [case["group"] for case in current]
     for row, case in zip(recorded, current, strict=True):
         assert row["sha256"] == input_sha256(case["text"]), case["id"]
-        render_probes._validate_quick_action_paragraphs(
+        probe_quick_actions._validate_quick_action_paragraphs(
             case["text"], row["paragraphs"], case["id"]
         )
 
@@ -339,7 +343,7 @@ def test_recorder_serializes_results_and_check_mode_only_reports_differences(
 
 
 def test_ruby_runner_calls_gitlab_pipeline_and_extractor_directly() -> None:
-    source = render_probes.read_utf8(
+    source = probe_fixtures.read_utf8(
         str(Path(__file__).with_name("tools") / "gitlab_quick_action_verdicts.rb")
     )
 
@@ -355,7 +359,7 @@ def test_ruby_runner_calls_gitlab_pipeline_and_extractor_directly() -> None:
 
 def test_quick_action_interval_validation_rejects_corrupt_bounds() -> None:
     with pytest.raises(ValueError, match="out-of-bounds paragraph interval"):
-        render_probes._validate_quick_action_paragraphs(
+        probe_quick_actions._validate_quick_action_paragraphs(
             "safe\nbody", [{"start_line": 999, "end_line": 999}], "synthetic"
         )
 
@@ -373,7 +377,9 @@ def test_quick_action_interval_validation_rejects_malformed_shapes(
     paragraph: dict[str, object],
 ) -> None:
     with pytest.raises(ValueError, match="invalid paragraph interval"):
-        render_probes._validate_quick_action_paragraphs("a\nb", [paragraph], "case")
+        probe_quick_actions._validate_quick_action_paragraphs(
+            "a\nb", [paragraph], "case"
+        )
 
 
 def test_candidate_interval_check_rejects_a_raw_slash_line() -> None:
@@ -411,7 +417,7 @@ def _load_real_fixture() -> dict[str, Any]:
         "record tests/fixtures/gitlab_quick_action_verdicts_19_4_1.json "
         "against the GitLab 19.4.1 instance before running offline verdict assertions"
     )
-    document = json.loads(render_probes.read_utf8(str(path)))
+    document = json.loads(probe_fixtures.read_utf8(str(path)))
     assert isinstance(document, dict)
     assert document.get("gitlab_version") == "19.4.1"
     assert isinstance(document.get("recorded"), str)
@@ -429,7 +435,7 @@ def _verdicts_by_id(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 def test_fixture_case_ids_match_current_outbound_and_composed_cases() -> None:
     document = _load_real_fixture()
-    outbound = render_probes._read_cases(render_probes._fixture_path())
+    outbound = probe_fixtures._read_cases(probe_fixtures._fixture_path())
     expected = build_quick_action_case_list(outbound)
     recorded = document["cases"]
 
@@ -511,7 +517,7 @@ def test_fixture_composed_verdicts_match_current_bodies_and_have_no_actions() ->
     assert set(recorded_composed) == set(composed)
     for case_id, body in composed.items():
         row = recorded_composed[case_id]
-        render_probes._validate_quick_action_paragraphs(
+        probe_quick_actions._validate_quick_action_paragraphs(
             body, row["paragraphs"], f"composed:{case_id}"
         )
         _assert_no_raw_slash_in_candidate_paragraphs(body, row["paragraphs"], case_id)
