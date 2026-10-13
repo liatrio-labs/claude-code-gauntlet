@@ -151,6 +151,13 @@ def _attrs(node: _Node) -> dict[str, str | None]:
     return dict(node.attrs)
 
 
+def is_github_mention(node: _Node) -> bool:
+    return node.tag == "a" and bool(
+        {"user-mention", "team-mention"}
+        & set((_attrs(node).get("class") or "").split())
+    )
+
+
 def _is_renderer_attribute(
     platform: str, tag: str, name: str, value: str | None
 ) -> bool:
@@ -369,13 +376,8 @@ def check_render(platform: str, html_text: str) -> None:
             problems.append(f"unknown element <{node.tag}>")
         if platform == "gitlab" and "data-reference-type" in attrs:
             problems.append("GitLab reference link")
-        if platform == "github" and node.tag == "a":
-            mentions = set((attrs.get("class") or "").split()) & {
-                "user-mention",
-                "team-mention",
-            }
-            if mentions:
-                problems.append("GitHub mention anchor")
+        if platform == "github" and is_github_mention(node):
+            problems.append("GitHub mention anchor")
     if problems:
         raise ValueError("; ".join(problems))
 

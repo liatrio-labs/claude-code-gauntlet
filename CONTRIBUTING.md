@@ -258,6 +258,23 @@ export GITLAB_TOKEN=$(docker exec cdr-gitlab gitlab-rails runner \
 Then run the `seed` and GitLab `record` commands above. GitHub recording needs only an
 authenticated `gh`. Add `--check` to either `record` command to re-render without writing.
 
+### Optional outbound canary
+
+After changing outbound preparation, entity handling, marker neutralization or probe HTML checks,
+run this locally with authenticated `gh` and network access:
+
+```bash
+python3 tests/tools/outbound_canary.py --live --seed 375 --cases 64
+```
+
+It renders generated `prepare_prose` and `prepare_line` outputs with GitHub's Markdown API and
+posts no comments. This optional check never runs in CI or pre-commit; deterministic offline
+suites remain the merge gate. Replay a failure with the printed seed, mention handle and case
+index; both operations always run. Add the printed input as a reviewed regression fixture with an
+independently written safe expected value. A failed renderer or preflight is not a passing
+containment check. Record seed, generator version and results in the PR when you run it. Fixture
+changes follow the separate recorder workflow above.
+
 ## Style and Quality
 
 - Markdown is linted using markdownlint (via pre-commit). Keep lines reasonably short and headings well structured.
