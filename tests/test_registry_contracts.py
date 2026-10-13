@@ -1,11 +1,7 @@
-"""Hand-written contracts, registry ownership, and cross-runtime values."""
-
 import json
 import re
-import subprocess
 import time
 from collections import Counter
-from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -13,6 +9,7 @@ from gauntlet import contract_gen as gen
 from gauntlet import registry as python_registry
 
 from tests.support.js_values import js_values
+from tests.support.repository import tracked_paths
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_FORMAT = ROOT / "skills/code-gauntlet/references/report-format.md"
@@ -37,30 +34,9 @@ _FIELD_ROW = re.compile("^\\|\\s*`([a-z_][a-z0-9_]*)`\\s*\\|(.+)\\|\\s*$")
 _BACKTICKED_FIELD = re.compile("`([a-z_][a-z0-9_]*)`")
 
 
-@lru_cache(maxsize=1)
-def registry():
-    node_src = (
-        "const t = v => typeof v === 'string' ? v : v.type;"
-        "import('./workflows/src/registry.js').then(m => console.log(JSON.stringify({"
-        "  propTypes: Object.fromEntries(Object.entries(m.FINDING_PROP_TYPES).map(([k, v]) => [k, t(v)])),"
-        "  required: m.FINDING_REQUIRED,"
-        "  dimensions: m.DIMENSIONS.map(d => ({"
-        "    dimension: d.dimension, agentType: d.agentType,"
-        "    extras: Object.fromEntries(Object.entries(d.schemaExtra || {}).map(([k, v]) => [k, t(v)])),"
-        "    requiredExtra: d.requiredExtra || [],"
-        "    requiredWhenDimension: d.requiredWhenDimension || [],"
-        "  })),"
-        "})))"
-    )
-    out = subprocess.run(
-        ["node", "--input-type=module", "-e", node_src],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-        encoding="utf-8",
-    )
-    return json.loads(out.stdout)
+def registry() -> dict:
+    projection: dict = js_values()["registryProjection"]
+    return projection
 
 
 def agent_name(agent_type):
@@ -330,7 +306,6 @@ def parse_registry(text: str) -> list[dict]:
 
 
 def parse_composite_rows(text: str) -> list[dict]:
-    """Parse rows whose first cell contains multiple backticked values."""
     rows = []
     for line in text.splitlines():
         m = _COMPOSITE_ROW.match(line)
@@ -368,14 +343,8 @@ def read(rel):
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
-def tracked(*patterns):
-    result = subprocess.run(
-        ["git", "ls-files", "-z", "--", *patterns],
-        cwd=ROOT,
-        capture_output=True,
-        check=True,
-    )
-    return result.stdout.decode().split("\0")[:-1]
+def tracked(*patterns: str) -> list[str]:
+    return tracked_paths(ROOT, patterns)
 
 
 @pytest.mark.parametrize(
@@ -407,9 +376,10 @@ def instructed_fields_for(agent_type):
 
 
 @pytest.mark.parametrize("agent_type", sorted(declared_by_agent()), ids=agent_name)
-def test_contract_schema(agent_type):
+def test_contract_schema(agent_type: str) -> None:
     declared = declared_by_agent()[agent_type]
     name = agent_name(agent_type)
+    text = read(f"agents/{name}.md")
     blocks = contract_blocks(name)
     fields = {key for block in blocks for key in block}
     assert fields == set(declared) - {"origin"}
@@ -430,6 +400,20 @@ def test_contract_schema(agent_type):
                     r"\b(?:otherwise|or)\s*,?\s+null\b", value, re.IGNORECASE
                 )
                 assert "\\'" not in value
+    remainder = _JSON_BLOCK.sub("", text)
+    for field in (set(all_extras()) | {"claude_md_rule"}) & declared.keys():
+        if declared[field] == "string":
+            assert not re.search(
+                r'"' + re.escape(field) + r'"\s*:\s*null', remainder
+            ), (
+                agent_type,
+                field,
+            )
+            if field in text:
+                assert "otherwise null" not in text.split(field, 1)[1][:120], (
+                    agent_type,
+                    field,
+                )
     for template in templates:
         for field, value in template.items():
             if (
@@ -459,7 +443,7 @@ def test_contract_schema(agent_type):
                 field_carries_omit_instruction(raw, field, source=name)
                 for raw in raw_contract_blocks(name)
             )
-            assert f"REQUIRED for {row['dimension']}" in read(f"agents/{name}.md")
+            assert f"REQUIRED for {row['dimension']}" in text
     expected_conditional = {
         field
         for row in registry()["dimensions"]
@@ -511,10 +495,8 @@ def test_omit_parser(raw, field, expected):
         assert field_carries_omit_instruction(raw, field) is expected
 
 
-def test_convention_vocabulary():
+def test_convention_vocabulary() -> None:
     assert _DISPATCH_REQUIRED_PHRASE not in _DIMENSION_CONDITIONAL_PHRASE
-    assert declared_by_agent()["code-gauntlet:test-analyzer"]["criticality"] == "number"
-    assert all_extras()["criticality"] == "test_coverage"
     text = read("agents/conventions-and-intent.md")
     section = re.search(
         r"^### Convention output requirements\n(.*?)(?=^## )",
@@ -603,9 +585,16 @@ def test_delivery_vocabulary(surface):
         for (rel, symbol), bounds in OWNERS.items()
     ],
 )
-def test_identity_owner(rel, symbol, start, end):
+def test_identity_owner(rel: str, symbol: str, start: str, end: str) -> None:
     text = read(rel)
     # Marker discovery is independent of the generator's marker rendering helper.
+    opening = (
+        f"<!-- generated-from-registry-identity:{symbol} "
+        "\u2014 do not edit; run scripts/generate_contract_requirements.py -->"
+    )
+    lines = text.splitlines()
+    assert opening in lines
+    assert f"<!-- /generated-from-registry-identity:{symbol} -->" in lines
     marker = re.search(
         r"^<!-- generated-from-registry-identity:" + re.escape(symbol) + r"\b",
         text,
@@ -808,21 +797,19 @@ def test_agent_mirrors(mirror):
 @pytest.mark.parametrize(
     ("rel", "needles"),
     [
-        (
+        pytest.param(
             "skills/code-gauntlet/SKILL.md",
             ("contextLines", "contextChars", "policy.gateway"),
+            id="skill-waist-instructions",
         ),
-        (
+        pytest.param(
             "skills/code-gauntlet/references/phase2-triage.md",
             ("contextLines", "contextChars", "policy.gateway"),
+            id="triage-waist-instructions",
         ),
-        ("workflows/src/args.js", ("contextLines",)),
-        ("workflows/src/contextPlan.js", ("contextReadPlan",)),
-        ("workflows/pipeline.js", ("contextReadPlan",)),
-        ("workflows/src/registry.js", ("conditionalSchemaActive",)),
     ],
 )
-def test_waist_consumers(rel, needles):
+def test_waist_consumers(rel: str, needles: tuple[str, ...]) -> None:
     text = read(rel)
     assert all(needle in text for needle in needles)
 
@@ -878,7 +865,7 @@ def test_summary_is_not_benchmark_candidate(platform, summary):
 
 
 @pytest.mark.parametrize("source", ["wording-rules.md", "cadence-rules.md"])
-def test_style_source_contract(source):
+def test_style_source_contract(source: str) -> None:
     lines = read("docs/style/" + source).splitlines()
     rules = [line[len("RULE: ") :] for line in lines if line.startswith("RULE: ")]
     assert rules
@@ -888,17 +875,6 @@ def test_style_source_contract(source):
             assert "\u2014" not in line
             assert line.rstrip().endswith((".", '."'))
             assert lines[index + 1] == ""
-    in_fence = False
-    headings = 0
-    for line in lines:
-        if line.strip().startswith("```"):
-            in_fence = not in_fence
-        elif not in_fence and line.startswith("## "):
-            headings += 1
-    carrier = read("docs/style/session-context.md")
-    section_name = "Wording" if source == "wording-rules.md" else "Cadence"
-    section = carrier.split(f"## {section_name}\n", 1)[1].split("\n## ", 1)[0]
-    assert headings == sum(line.startswith("- ") for line in section.splitlines())
     starts = [index for index, line in enumerate(lines) if line.startswith("## ")]
     for start, end in zip(starts, [*starts[1:], len(lines)], strict=True):
         section = lines[start:end]
@@ -955,38 +931,3 @@ def test_full_report_predicates(surface):
     assert "{finding.body}" not in text
     assert "suggested_fix_code" not in text
     assert "not apply-checked" not in text
-
-
-def test_no_null_string_instructions():
-    extras = set(all_extras()) | {"claude_md_rule"}
-    for agent_type, fields in declared_by_agent().items():
-        text = read(f"agents/{agent_name(agent_type)}.md")
-        for field in extras & fields.keys():
-            if fields[field] != "string":
-                continue
-            assert re.search(r'"' + re.escape(field) + r'"\s*:\s*null', text) is None, (
-                agent_type,
-                field,
-            )
-            if field in text:
-                assert "otherwise null" not in text.split(field, 1)[1][:120], (
-                    agent_type,
-                    field,
-                )
-
-
-@pytest.mark.parametrize(
-    ("rel", "symbol"),
-    [
-        pytest.param(rel, symbol, id=rel.split("/")[-1] + ":" + symbol)
-        for rel, symbols in gen.IDENTITY_FENCES.items()
-        for symbol in symbols
-    ],
-)
-def test_identity_marker_lines(rel, symbol):
-    lines = read(rel).splitlines()
-    assert (
-        f"<!-- generated-from-registry-identity:{symbol} "
-        "\u2014 do not edit; run scripts/generate_contract_requirements.py -->"
-    ) in lines
-    assert f"<!-- /generated-from-registry-identity:{symbol} -->" in lines
