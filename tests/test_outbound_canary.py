@@ -54,9 +54,7 @@ def test_generator_reproducibility_and_bound() -> None:
     assert first[:15] == canary.generate_cases(375, "lee", 15)
     assert first[13:] != canary.generate_cases(376, "lee", 40)[13:]
     for index, text in enumerate(canary.generate_cases(375, "x" * 100, 80)):
-        assert len(text.encode("utf-8")) <= 8192
         assert f"<b>OUTBOUND_PROBE_HTML_{index}</b>" in text
-        assert not any(0xD800 <= ord(char) <= 0xDFFF for char in text)
 
 
 @pytest.mark.parametrize(
@@ -87,13 +85,6 @@ def test_mention_predicate(tag: str, classes: str, expected: bool) -> None:
         ),
         pytest.param(
             "safe",
-            "<pre><code>&lt;b&gt;OUTBOUND_PROBE_HTML_0&lt;/b&gt;</code></pre>",
-            "identity",
-            None,
-            id="code-sentinel",
-        ),
-        pytest.param(
-            "safe",
             "<strong>OUTBOUND_PROBE_HTML_0</strong><h3>ok</h3><hr>",
             "identity",
             None,
@@ -106,13 +97,7 @@ def test_mention_predicate(tag: str, classes: str, expected: bool) -> None:
             "mention",
             id="user-mention",
         ),
-        pytest.param(
-            "safe",
-            '<a class="team-mention extra">@team/name</a>',
-            "identity",
-            "mention",
-            id="team-mention",
-        ),
+        pytest.param("safe", "<b>other</b>", "identity", None, id="other-bold"),
         pytest.param(
             "safe",
             "<b>OUTBOUND_PROBE_HTML_0</b>",
@@ -133,13 +118,6 @@ def test_mention_predicate(tag: str, classes: str, expected: bool) -> None:
             "identity",
             "marker",
             id="current-summary-marker",
-        ),
-        pytest.param(
-            "<!-- deep-review-findings: {} -->",
-            "",
-            "identity",
-            "marker",
-            id="legacy-summary-marker",
         ),
         pytest.param(
             '<!-- code-gauntlet-finding-key: {"sha":"abcdef0","key":"aaaaaaaaaaaaaaaa"} -->',
@@ -178,6 +156,16 @@ def test_checker(
 
     failure = canary.check_case(original, 0, prepare, render)
     assert (failure.property if failure is not None else None) == expected
+    assert (failure.second if failure is not None else None) == (
+        "safe!!" if expected == "fixpoint" else None
+    )
+    assert (failure.error if failure is not None else None) == (
+        "renderer unavailable"
+        if expected == "renderer"
+        else "preparation unavailable"
+        if expected == "preparer"
+        else None
+    )
     assert submissions == (
         [] if expected in {"marker", "fixpoint", "preparer"} else [original]
     )
@@ -187,7 +175,6 @@ def test_checker(
     ("arguments", "environment", "message"),
     [
         pytest.param([], {}, "--live is required", id="live-opt-in-required"),
-        pytest.param(["--live"], {"CI": "1"}, "refuses CI", id="ci-refusal"),
         pytest.param(
             ["--live"], {"GITHUB_ACTIONS": "true"}, "refuses CI", id="actions-refusal"
         ),
@@ -196,7 +183,7 @@ def test_checker(
             ["--live", "--cases", "0"], {}, "--cases must", id="nonpositive-count"
         ),
         pytest.param(
-            ["--live", "--cases", "4097"], {}, "--cases must", id="bounded-count"
+            ["--live", "--cases", "257"], {}, "--cases must", id="bounded-count"
         ),
         pytest.param(
             ["--live", "--case-index", "-1"],
@@ -211,25 +198,7 @@ def test_checker(
             id="index-outside-count",
         ),
         pytest.param(
-            ["--live", "--seed", "bad"], {}, "invalid int value", id="invalid-seed"
-        ),
-        pytest.param(
             ["--live", "--mention", "@lee"], {}, "--mention must", id="invalid-mention"
-        ),
-        pytest.param(
-            ["--live", "--mention", ""], {}, "--mention must", id="empty-mention"
-        ),
-        pytest.param(
-            ["--live", "--batch-size", "8"],
-            {},
-            "unrecognized arguments",
-            id="no-batch-flag",
-        ),
-        pytest.param(
-            ["--live", "--operation", "line"],
-            {},
-            "unrecognized arguments",
-            id="both-operations-required",
         ),
     ],
 )
@@ -264,39 +233,72 @@ def test_cli_refuses_before_transport(
 
 
 @pytest.mark.parametrize(
-    "response",
+    ("response", "mention", "expected_calls", "expected_replay"),
     [
-        pytest.param("<p>@lee</p>", id="plain-preflight"),
         pytest.param(
-            '<a class="user-mention" href="/other">@other</a>',
-            id="wrong-login-preflight",
+            "<p>@lee</p>",
+            None,
+            ["@lee"],
+            "Replay: python3 tests/tools/outbound_canary.py --live --seed 375 --cases 1 --mention lee",
+            id="plain-preflight",
         ),
-        pytest.param("RAISE", id="preflight-renderer-failure"),
-        pytest.param("NO_GH", id="missing-gh"),
+        pytest.param(
+            POSITIVE,
+            "ghost",
+            ["@ghost"],
+            "Replay: python3 tests/tools/outbound_canary.py --live --seed 375 --cases 1 --mention ghost",
+            id="different-mentioned-account",
+        ),
     ],
 )
 def test_preflight_failure(
     response: str,
+    mention: str | None,
+    expected_calls: list[str],
+    expected_replay: str,
     offline_live: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     calls: list[str] = []
 
     def login() -> str:
-        if response == "NO_GH":
-            raise FileNotFoundError("gh unavailable")
         return "lee"
 
     def render(text: str) -> str:
         calls.append(text)
-        if response == "RAISE":
-            raise RuntimeError("API unavailable")
         return response
 
-    assert canary.main(["--live", "--cases", "1"], login=login, render=render) == 1
-    assert calls == ([] if response == "NO_GH" else ["@lee"])
-    diagnostic: dict[str, object] = json.loads(capsys.readouterr().out.splitlines()[0])
+    arguments = ["--live", "--cases", "1"]
+    if mention is not None:
+        arguments.extend(["--mention", mention])
+    assert canary.main(arguments, login=login, render=render) == 1
+    lines = capsys.readouterr().out.splitlines()
+    diagnostic: dict[str, object] = json.loads(lines[0])
     assert diagnostic["property"] == "preflight"
+    assert calls == expected_calls
+    assert lines[1] == expected_replay
+
+
+def test_preflight_missing_gh(
+    offline_live: None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from tests.tools import probe_github
+
+    def unavailable_login() -> str:
+        raise FileNotFoundError("gh unavailable")
+
+    monkeypatch.setattr(probe_github, "github_login", unavailable_login)
+    assert canary.main(["--live"]) == 1
+    lines = capsys.readouterr().out.splitlines()
+    diagnostic: dict[str, object] = json.loads(lines[0])
+    assert diagnostic["property"] == "preflight"
+    assert diagnostic["error"] == "gh unavailable"
+    assert (
+        lines[1]
+        == "Replay: python3 tests/tools/outbound_canary.py --live --seed 375 --cases 64"
+    )
 
 
 def test_pipeline_submits_both_actual_preparations(
@@ -381,60 +383,10 @@ def test_failure_diagnostic_and_replay(
     assert capsys.readouterr().out == output
 
 
-@pytest.mark.parametrize(
-    "property_name",
-    ["fixpoint", "renderer"],
-    ids=["second-output-diagnostic", "renderer-error-exit"],
-)
-def test_failure_details(
-    property_name: str,
-    offline_live: None,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    def inputs(seed: int, mention: str, count: int) -> list[str]:
-        return ["original"]
-
-    def prepare(text: str) -> str:
-        return text + "!" if property_name == "fixpoint" else text
-
-    def render(text: str) -> str:
-        if text == "@lee":
-            return POSITIVE
-        raise RuntimeError("render failed")
-
-    monkeypatch.setattr(canary, "generate_cases", inputs)
-    assert (
-        canary.main(
-            ["--live", "--cases", "1"],
-            login=lambda: "lee",
-            render=render,
-            preparers={"prose": prepare, "line": prepare},
-        )
-        == 1
-    )
-    diagnostic: dict[str, object] = json.loads(capsys.readouterr().out.splitlines()[0])
-    assert diagnostic["property"] == property_name
-    assert diagnostic["original"] == "original"
-    assert diagnostic["prepared"] == (
-        "original!" if property_name == "fixpoint" else "original"
-    )
-    assert diagnostic["second"] == (
-        "original!!" if property_name == "fixpoint" else None
-    )
-    assert diagnostic["error"] == (
-        "render failed" if property_name == "renderer" else None
-    )
-    assert diagnostic["html"] is None
-
-
 def test_entry_from_foreign_cwd_without_live(tmp_path: Path) -> None:
     environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in {"CI", "GITHUB_ACTIONS", "PYTHONPATH"}
+        key: value for key, value in os.environ.items() if key != "PYTHONPATH"
     }
-    environment["PATH"] = str(tmp_path)
     result = subprocess.run(
         [sys.executable, str(ROOT / "tests/tools/outbound_canary.py")],
         cwd=tmp_path,

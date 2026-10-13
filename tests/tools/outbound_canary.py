@@ -5,13 +5,11 @@ import json
 import os
 import random
 import re
-import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal, TypedDict
 
 GENERATOR_VERSION = 1
-MAX_INPUT_BYTES = 8192
 Operation = Literal["prose", "line"]
 OPERATIONS: tuple[Operation, ...] = ("prose", "line")
 Property = Literal[
@@ -87,8 +85,6 @@ def generate_cases(seed: int, mention: str, count: int) -> list[str]:
             body = rng.choice(templates).format(left, right)
         sentinel = f"OUTBOUND_PROBE_HTML_{index}"
         controls = f"\n&lt;b&gt;{sentinel}&lt;/b&gt;\n```\n<b>{sentinel}</b>\n```\n<b>{sentinel}</b>"
-        budget = MAX_INPUT_BYTES - len(controls.encode("utf-8"))
-        body = body.encode("utf-8")[:budget].decode("utf-8", errors="ignore")
         cases.append(body + controls)
     return cases
 
@@ -152,7 +148,6 @@ def main(
     *,
     render: Callable[[str], str] | None = None,
     login: Callable[[], str] | None = None,
-    preparers: Mapping[Operation, Callable[[str], str]] | None = None,
 ) -> int:
     import sys
 
@@ -167,13 +162,13 @@ def main(
     count: int = args.cases
     selected: int | None = args.case_index
     handle: str = args.mention or ""
-    if not 1 <= count <= 4096:
-        parser.error("--cases must be between 1 and 4096")
+    if not 1 <= count <= 256:
+        parser.error("--cases must be between 1 and 256")
     if selected is not None and not 0 <= selected < count:
         parser.error("--case-index must be within --cases")
     if (
         args.mention is not None
-        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9/-]{0,99}", handle) is None
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,99}", handle) is None
     ):
         parser.error("--mention must be a GitHub handle without @")
     if not args.live:
@@ -185,18 +180,19 @@ def main(
         return 2
     renderer = render if render is not None else render_github
     get_login = login if login is not None else github_login
-    operations: Mapping[Operation, Callable[[str], str]] = (
-        preparers
-        if preparers is not None
-        else {"prose": prepare_prose, "line": prepare_line}
-    )
+    operations: Mapping[Operation, Callable[[str], str]] = {
+        "prose": prepare_prose,
+        "line": prepare_line,
+    }
 
-    def report(failure: Failure, original: str, index: int, operation: str) -> int:
+    def report(
+        failure: Failure, original: str, index: int | None, operation: str
+    ) -> int:
         diagnostic: Diagnostic = {
             "generator_version": GENERATOR_VERSION,
             "seed": seed,
             "handle": handle,
-            "index": index,
+            "index": index if index is not None else 0,
             "operation": operation,
             "property": failure.property,
             "original": original,
@@ -209,29 +205,16 @@ def main(
             "error": failure.error,
         }
         print(json.dumps(diagnostic, ensure_ascii=True))
-        command = [
-            "python3",
-            "tests/tools/outbound_canary.py",
-            "--live",
-            "--seed",
-            str(seed),
-            "--cases",
-            str(count),
-        ]
-        if handle:
-            command.extend(["--mention", handle])
-        command.extend(["--case-index", str(index)])
-        print("Replay: " + shlex.join(command))
+        replay = f"python3 tests/tools/outbound_canary.py --live --seed {seed} --cases {count}{' --mention ' + handle if handle else ''}{' --case-index ' + str(index) if index is not None else ''}"
+        print("Replay: " + replay)
         return 1
 
     try:
         authenticated = get_login()
         handle = handle or authenticated
-        run_github_canary(authenticated, renderer)
+        run_github_canary(handle, renderer)
     except Exception as exc:  # noqa: BLE001 - preflight must fail closed before generated cases
-        return report(
-            Failure("preflight", error=str(exc)), "", selected or 0, "preflight"
-        )
+        return report(Failure("preflight", error=str(exc)), "", None, "preflight")
     completed = 0
     for index, original in enumerate(generate_cases(seed, handle, count)):
         if selected is not None and index != selected:

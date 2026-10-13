@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -29,57 +30,78 @@ from tests.tools.probe_quick_actions import (
 SENTINEL = probe_quick_actions.QUICK_ACTION_SENTINEL
 
 
-# Keep each behavior beside its literal inputs and expected output for auditing.
-# fmt: off
 COMPOSED_PAYLOADS_CASES = {
-    'patch-action-payload': ('suggested_patch', '>>>\n/close\nreturn x'),
-    'suggestion-payload': ('slash_suggestion_line', 'Suggested fix:'),
-    'corroborator-payload': ('grouped_corroborator', 'Corroborating finding'),
-    'escaped-alert-payload': ('suggestion_alert_payload', '\\>>> [!note]'),
-    'trusted-suggestion-label-payload': ('suggestion_alert_payload', 'suggestion:-0+2\n>>>\n/label ~zz377nolabel\nreturn x\n```'),
+    "patch-action-payload": ("suggested_patch", ">>>\n/close\nreturn x"),
+    "suggestion-payload": ("slash_suggestion_line", "Suggested fix:"),
+    "corroborator-payload": ("grouped_corroborator", "Corroborating finding"),
+    "escaped-alert-payload": ("suggestion_alert_payload", "\\>>> [!note]"),
+    "trusted-suggestion-label-payload": (
+        "suggestion_alert_payload",
+        "suggestion:-0+2\n>>>\n/label ~zz377nolabel\nreturn x\n```",
+    ),
 }
 
 RUNNER_SENTINEL_PROTOCOL_CASES = {
-    'rails-noise-ignored': ('warning line\nGITLAB_QUICK_ACTION_VERDICTS_JSON:{"gitlab_version":"19.4.1","cases":[]}\n', {'gitlab_version': '19.4.1', 'cases': []}, None),
-    'missing-sentinel': ('warning only', None, 'GitLab quick-action runner output must contain exactly one sentinel result'),
-    'duplicate-sentinel': ('GITLAB_QUICK_ACTION_VERDICTS_JSON:{}\nGITLAB_QUICK_ACTION_VERDICTS_JSON:{}', None, 'GitLab quick-action runner output must contain exactly one sentinel result'),
+    "rails-noise-ignored": (
+        'warning line\nGITLAB_QUICK_ACTION_VERDICTS_JSON:{"gitlab_version":"19.4.1","cases":[]}\n',
+        {"gitlab_version": "19.4.1", "cases": []},
+        None,
+    ),
+    "missing-sentinel": (
+        "warning only",
+        None,
+        "GitLab quick-action runner output must contain exactly one sentinel result",
+    ),
+    "duplicate-sentinel": (
+        "GITLAB_QUICK_ACTION_VERDICTS_JSON:{}\nGITLAB_QUICK_ACTION_VERDICTS_JSON:{}",
+        None,
+        "GitLab quick-action runner output must contain exactly one sentinel result",
+    ),
 }
 
 RECORD_DRIFT_CASES = {
-    'paragraph-drift': ('paragraphs', [{'start_line': 9, 'end_line': 9}]),
-    'command-drift': ('commands', [['reopen']]),
-    'hash-drift': ('sha256', '0' * 64),
+    "paragraph-drift": ("paragraphs", [{"start_line": 9, "end_line": 9}]),
+    "command-drift": ("commands", [["reopen"]]),
+    "hash-drift": ("sha256", "0" * 64),
 }
 
 INVALID_INTERVAL_CASES = {
-    'bounds': ({'start_line': 999, 'end_line': 999}, 'out-of-bounds paragraph interval'),
-    'extra-field': ({'start_line': 0, 'end_line': 0, 'extra': 1}, 'invalid paragraph interval'),
-    'missing-field': ({'start_line': 0}, 'invalid paragraph interval'),
-    'string-bound': ({'start_line': '0', 'end_line': 0}, 'invalid paragraph interval'),
-    'boolean-bound': ({'start_line': 0, 'end_line': True}, 'invalid paragraph interval'),
+    "bounds": (
+        {"start_line": 999, "end_line": 999},
+        "out-of-bounds paragraph interval",
+    ),
+    "extra-field": (
+        {"start_line": 0, "end_line": 0, "extra": 1},
+        "invalid paragraph interval",
+    ),
+    "missing-field": ({"start_line": 0}, "invalid paragraph interval"),
+    "string-bound": ({"start_line": "0", "end_line": 0}, "invalid paragraph interval"),
+    "boolean-bound": (
+        {"start_line": 0, "end_line": True},
+        "invalid paragraph interval",
+    ),
 }
 
 RAW_CONTROL_CASES = {
-    'slash_close_bare': ('raw:slash_close_bare', 'close'),
-    'slash_multi_actions': ('raw:slash_multi_actions', 'label'),
-    'slash_lazy_continuation': ('raw:slash_lazy_continuation', 'close'),
-    'slash_merge': ('raw:slash_merge', 'merge'),
-    'slash_uppercase': ('raw:slash_uppercase', 'close'),
-    'slash_long_s': ('raw:slash_long_s', None),
-    'slash_substitution': ('raw:slash_substitution', 'shrug'),
-    'mbq_backtick': ('raw:mbq_backtick', 'close'),
-    'mbq_tilde': ('raw:mbq_tilde', 'close'),
-    'mbq_trailing_space': ('raw:mbq_trailing_space', 'close'),
-    'mbq_trailing_tab': ('raw:mbq_trailing_tab', 'close'),
-    'mbq_four': ('raw:mbq_four', 'close'),
-    'mbq_one_space': ('raw:mbq_one_space', 'close'),
-    'mbq_alert_note': ('raw:mbq_alert_note', 'close'),
-    'mbq_alert_warning': ('raw:mbq_alert_warning', 'close'),
-    'mbq_alert_one_space': ('raw:mbq_alert_one_space', 'close'),
-    'mbq_alert_suffix': ('raw:mbq_alert_suffix', 'close'),
-    'suggestion_alert_payload_breakout': ('raw:suggestion_alert_payload_breakout', 'label'),
+    "slash_close_bare": "close",
+    "slash_multi_actions": "label",
+    "slash_lazy_continuation": "close",
+    "slash_merge": "merge",
+    "slash_uppercase": "close",
+    "slash_long_s": None,
+    "slash_substitution": "shrug",
+    "mbq_backtick": "close",
+    "mbq_tilde": "close",
+    "mbq_trailing_space": "close",
+    "mbq_trailing_tab": "close",
+    "mbq_four": "close",
+    "mbq_one_space": "close",
+    "mbq_alert_note": "close",
+    "mbq_alert_warning": "close",
+    "mbq_alert_one_space": "close",
+    "mbq_alert_suffix": "close",
+    "suggestion_alert_payload_breakout": "label",
 }
-# fmt: on
 
 
 def _fake_rails_runner(
@@ -343,12 +365,15 @@ def test_recorder_serializes_results_and_check_mode_only_reports_differences(
         writes.append(contents)
         stored[path] = contents
 
-    def record(check=False):
+    def record(
+        check: bool = False,
+        clock: Callable[[], str] = lambda: "2026-09-25",
+    ):
         return record_quick_action_fixture(
             "fixture.json",
             outbound,
             runner=_fake_rails_runner,
-            clock=lambda: "2026-09-25",
+            clock=clock,
             read_text=read_text,
             write_text=write_text,
             check=check,
@@ -374,14 +399,14 @@ def test_recorder_serializes_results_and_check_mode_only_reports_differences(
     ]
     assert len(writes) == 1
 
-    unchanged = record(check=True)
+    unchanged = record(check=True, clock=lambda: "2026-09-26")
     assert unchanged.changed_ids == []
     assert unchanged.exit_code == 0
     assert len(writes) == 1
 
     document["cases"][0][field] = corrupt_value
     stored["fixture.json"] = json.dumps(document)
-    checked = record(check=True)
+    checked = record(check=True, clock=lambda: "2026-09-26")
     assert checked.changed_ids == ["expected:sample"]
     assert checked.exit_code == 1
     assert len(writes) == 1
@@ -463,11 +488,12 @@ def test_quick_action_freshness_rejects_a_stale_expected_row_hash() -> None:
 
 
 @pytest.mark.parametrize(
-    ("case_id", "command_name"),
-    RAW_CONTROL_CASES.values(),
+    ("case_name", "command_name"),
+    [(name, command) for name, command in RAW_CONTROL_CASES.items()],
     ids=RAW_CONTROL_CASES,
 )
-def test_recorded_raw_positive_controls(oracle, case_id, command_name) -> None:
+def test_recorded_raw_positive_controls(oracle, case_name, command_name) -> None:
+    case_id = f"raw:{case_name}"
     row = next(row for row in oracle[0]["cases"] if row["id"] == case_id)
     commands = row["commands"]
     assert commands, case_id

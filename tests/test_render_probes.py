@@ -33,6 +33,7 @@ from tests.tools.probe_github import (
 )
 from tests.tools.probe_gitlab import (
     INHERENTLY_PLAIN,
+    SEED_GROUPS,
     GitLabClient,
     GitLabHTTPError,
     _gitlab_blob_prefix,
@@ -71,165 +72,432 @@ REAL_ANGLE_ATTRIBUTE_HTML = (
 )
 
 
-# Keep each behavior beside its literal inputs and expected output for auditing.
-# fmt: off
 HTML_NORMALIZATION_CASES = {
-    'copy-control': ('gitlab', '<copy-code><span>noise</span></copy-code><p>x</p>', '<p>x</p>'),
-    'insert-control': ('gitlab', '<insert-code-snippet>noise</insert-code-snippet><p>x</p>', '<p>x</p>'),
-    'heading-anchor': ('gitlab', '<h1>head<a href="#head" class="anchor"></a></h1>', '<h1>head</h1>'),
-    'gitlab-code-wrapper': ('gitlab', '<div class="gl-relative markdown-code-block js-markdown-code"><p>x</p></div>', '<p>x</p>'),
-    'github-code-wrapper': ('github', '<div class="highlight highlight-text-adblock"><pre>x</pre></div>', '<pre>x</pre>'),
-    'line-span': ('gitlab', '<span id="LC1" class="line" data-lang="plaintext">x</span>', 'x'),
-    'escaped-span': ('gitlab', '<span data-escaped-char="" data-sourcepos="1:1-1:2">x</span>', 'x'),
-    'accessible-table': ('github', '<markdown-accessiblity-table><table><tr><td>x</td></tr></table></markdown-accessiblity-table>', '<table><tr><td>x</td></tr></table>'),
-    'source-position-auto-dir': ('gitlab', '<p data-sourcepos="1:1-1:2" dir="auto">x</p>', '<p>x</p>'),
-    'gitlab-link-chrome': ('gitlab', '<a href="/x" class="gfm" rel="nofollow noreferrer noopener" target="_blank">x</a>', '<a href="/x">x</a>'),
-    'github-code-class': ('github', '<code class="notranslate">x</code>', '<code>x</code>'),
-    'gitlab-pre-class': ('gitlab', '<pre class="code highlight js-syntax-highlight language-plaintext">x</pre>', '<pre>x</pre>'),
-    'line-break': ('gitlab', 'a<br>b', 'a b'),
-    'pre-code': ('gitlab', '<pre><code>x  y</code></pre>', '<pre>x y</pre>'),
-    'pre-trailing-lf': ('gitlab', '<pre><code>x\n</code></pre>', '<pre>x</pre>'),
-    'entity-text': ('gitlab', '<p>a  &lt;b&gt;</p>', '<p>a &lt;b&gt;</p>'),
-    'ascii-whitespace': ('gitlab', '<p>a\t\n b</p>', '<p>a b</p>'),
-    'github-table-role': ('github', '<table role="table"></table>', '<table></table>'),
-    'github-nofollow': ('github', '<a href="x" rel="nofollow">x</a>', '<a href="x">x</a>'),
-    'real-heading': ('gitlab', REAL_HEADING_HTML, '<h2>`x Heading</h2><p>&lt;b&gt; \uff20leehopper`</p><p>footer line</p>'),
-    'real-code': ('gitlab', REAL_CODE_HTML, '<pre>@user &lt;table&gt; @</pre> <p>footer line</p>'),
-    'angle-attribute': ('gitlab', REAL_ANGLE_ATTRIBUTE_HTML, '<h1>heading &lt;b&gt; \uff20leehopper`</h1>'),
-    'heading-1': ('gitlab', '<h1 id="user-content-title">Title<a class="other anchor" href="#title" aria-label="Link to heading"></a></h1>', '<h1>Title</h1>'),
-    'heading-2': ('gitlab', '<h2 id="user-content-title">Title<a class="other anchor" href="#title" aria-label="Link to heading"></a></h2>', '<h2>Title</h2>'),
-    'heading-3': ('gitlab', '<h3 id="user-content-title">Title<a class="other anchor" href="#title" aria-label="Link to heading"></a></h3>', '<h3>Title</h3>'),
-    'heading-4': ('gitlab', '<h4 id="user-content-title">Title<a class="other anchor" href="#title" aria-label="Link to heading"></a></h4>', '<h4>Title</h4>'),
-    'heading-5': ('gitlab', '<h5 id="user-content-title">Title<a class="other anchor" href="#title" aria-label="Link to heading"></a></h5>', '<h5>Title</h5>'),
-    'heading-6': ('gitlab', '<h6 id="user-content-title">Title<a class="other anchor" href="#title" aria-label="Link to heading"></a></h6>', '<h6>Title</h6>'),
+    "copy-control": (
+        "gitlab",
+        "<copy-code><span>noise</span></copy-code><p>x</p>",
+        "<p>x</p>",
+    ),
+    "insert-control": (
+        "gitlab",
+        "<insert-code-snippet>noise</insert-code-snippet><p>x</p>",
+        "<p>x</p>",
+    ),
+    "gitlab-code-wrapper": (
+        "gitlab",
+        '<div class="gl-relative markdown-code-block js-markdown-code"><p>x</p></div>',
+        "<p>x</p>",
+    ),
+    "github-code-wrapper": (
+        "github",
+        '<div class="highlight highlight-text-adblock"><pre>x</pre></div>',
+        "<pre>x</pre>",
+    ),
+    "line-span": (
+        "gitlab",
+        '<span id="LC1" class="line" data-lang="plaintext">x</span>',
+        "x",
+    ),
+    "escaped-span": (
+        "gitlab",
+        '<span data-escaped-char="" data-sourcepos="1:1-1:2">x</span>',
+        "x",
+    ),
+    "accessible-table": (
+        "github",
+        "<markdown-accessiblity-table><table><tr><td>x</td></tr></table></markdown-accessiblity-table>",
+        "<table><tr><td>x</td></tr></table>",
+    ),
+    "source-position-auto-dir": (
+        "gitlab",
+        '<p data-sourcepos="1:1-1:2" dir="auto">x</p>',
+        "<p>x</p>",
+    ),
+    "gitlab-link-chrome": (
+        "gitlab",
+        '<a href="/x" class="gfm" rel="nofollow noreferrer noopener" target="_blank">x</a>',
+        '<a href="/x">x</a>',
+    ),
+    "github-code-class": (
+        "github",
+        '<code class="notranslate">x</code>',
+        "<code>x</code>",
+    ),
+    "gitlab-pre-class": (
+        "gitlab",
+        '<pre class="code highlight js-syntax-highlight language-plaintext">x</pre>',
+        "<pre>x</pre>",
+    ),
+    "line-break": ("gitlab", "a<br>b", "a b"),
+    "pre-code": ("gitlab", "<pre><code>x  y</code></pre>", "<pre>x y</pre>"),
+    "pre-trailing-lf": ("gitlab", "<pre><code>x\n</code></pre>", "<pre>x</pre>"),
+    "entity-text": ("gitlab", "<p>a  &lt;b&gt;</p>", "<p>a &lt;b&gt;</p>"),
+    "ascii-whitespace": ("gitlab", "<p>a\t\n b</p>", "<p>a b</p>"),
+    "github-table-role": ("github", '<table role="table"></table>', "<table></table>"),
+    "github-nofollow": (
+        "github",
+        '<a href="x" rel="nofollow">x</a>',
+        '<a href="x">x</a>',
+    ),
+    "real-heading": (
+        "gitlab",
+        REAL_HEADING_HTML,
+        "<h2>`x Heading</h2><p>&lt;b&gt; \uff20leehopper`</p><p>footer line</p>",
+    ),
+    "real-code": (
+        "gitlab",
+        REAL_CODE_HTML,
+        "<pre>@user &lt;table&gt; @</pre> <p>footer line</p>",
+    ),
+    "angle-attribute": (
+        "gitlab",
+        REAL_ANGLE_ATTRIBUTE_HTML,
+        "<h1>heading &lt;b&gt; \uff20leehopper`</h1>",
+    ),
+    "heading-1": (
+        "gitlab",
+        '<h1 id="user-content-title">Title<a class="other anchor" href="#title" aria-label="Link to heading"></a></h1>',
+        "<h1>Title</h1>",
+    ),
+    "heading-2": (
+        "gitlab",
+        '<h2 id="user-content-title">Title<a class="other anchor" href="#title" aria-label="Link to heading"></a></h2>',
+        "<h2>Title</h2>",
+    ),
+    "heading-3": (
+        "gitlab",
+        '<h3 id="user-content-title">Title<a class="other anchor" href="#title" aria-label="Link to heading"></a></h3>',
+        "<h3>Title</h3>",
+    ),
+    "heading-4": (
+        "gitlab",
+        '<h4 id="user-content-title">Title<a class="other anchor" href="#title" aria-label="Link to heading"></a></h4>',
+        "<h4>Title</h4>",
+    ),
+    "heading-5": (
+        "gitlab",
+        '<h5 id="user-content-title">Title<a class="other anchor" href="#title" aria-label="Link to heading"></a></h5>',
+        "<h5>Title</h5>",
+    ),
+    "heading-6": (
+        "gitlab",
+        '<h6 id="user-content-title">Title<a class="other anchor" href="#title" aria-label="Link to heading"></a></h6>',
+        "<h6>Title</h6>",
+    ),
 }
 
 MEANINGFUL_HTML_SURVIVES_CASES = {
-    'anchor-vs-text': ('gitlab', '<a href="/same">x</a>', 'x'),
-    'href': ('gitlab', '<a href="/x">x</a>', '<a href="/y">x</a>'),
-    'image-src': ('gitlab', '<img src="/x">', '<img src="/y">'),
-    'image-data-src': ('gitlab', '<img data-src="/x">', '<img data-src="/y">'),
-    'ordered-start': ('gitlab', '<ol start="1"><li>x</li></ol>', '<ol start="2"><li>x</li></ol>'),
-    'inline-code': ('gitlab', '<code>x</code>', 'x'),
-    'pre-vs-paragraph': ('gitlab', '<pre>x</pre>', '<p>x</p>'),
-    'foreign-blob': ('gitlab', '<a href="https://elsewhere.test/project/-/blob/main/a.md">x</a>', '<a href="a.md">x</a>'),
-    'escaped-tag': ('gitlab', '&lt;b&gt;', '<b></b>'),
-    'escaped-comment': ('gitlab', '<!-- note -->', '&lt;!-- note --&gt;'),
-    'inline-comment': ('gitlab', '<p>a<!-- c -->b</p>', '<p>ab</p>'),
-    'void-rule': ('gitlab', '<hr>', ''),
-    'literal-nbsp': ('gitlab', '<p>a\xa0b</p>', '<p>a b</p>'),
-    'entity-nbsp': ('gitlab', '<p>a&nbsp;b</p>', '<p>a b</p>'),
-    'pre-nbsp': ('gitlab', '<pre>x\xa0</pre>', '<pre>x</pre>'),
-    'root-nbsp': ('gitlab', '\xa0x', 'x'),
-    'unknown-tag': ('gitlab', '<abbr title="HTML">HTML</abbr>', 'HTML'),
-    'root-extra-attribute': ('gitlab', '<a href="#head" class="anchor" onclick="run()">content</a>', 'content'),
-    'heading-no-class': ('gitlab', '<h1>T<a href="#poison"></a></h1>', '<h1>T</h1>'),
-    'heading-wrong-class': ('gitlab', '<h1>T<a href="#poison" class="anchored"></a></h1>', '<h1>T</h1>'),
-    'heading-content': ('gitlab', '<h1>T<a href="#head" class="other anchor">c</a></h1>', '<h1>T</h1>'),
-    'heading-extra-attribute': ('gitlab', '<h1>T<a href="#head" class="anchor" onclick="run()"></a></h1>', '<h1>T</h1>'),
-    'heading-nonfinal': ('gitlab', '<h1>T<a class="anchor" href="#t"></a>X</h1>', '<h1>TX</h1>'),
-    'escaped-span-value': ('gitlab', '<span data-escaped-char="x" data-sourcepos="1:1">x</span>', 'x'),
-    'line-span-extra': ('gitlab', '<span id="LC1" class="line" data-lang="plaintext" data-extra="x">x</span>', 'x'),
-    'wrapper-signature': ('gitlab', '<div class="highlight"><pre>x</pre></div>', '<pre>x</pre>'),
-    'code-custom-class': ('gitlab', '<pre><code class="custom">x</code></pre>', '<pre>x</pre>'),
-    'paragraph-custom-class': ('gitlab', '<p class="custom">x</p>', '<p>x</p>'),
-    'pre-custom-class': ('gitlab', '<pre class="custom">x</pre>', '<pre>x</pre>'),
-    'attribute-whitespace': ('gitlab', '<p title="a  b">x</p>', '<p title="a b">x</p>'),
-    'event-attribute': ('gitlab', '<p onclick="run()">x</p>', '<p>x</p>'),
-    'foreign-code-class': ('gitlab', '<code class="notranslate">x</code>', '<code>x</code>'),
-    'custom-anchor-class': ('gitlab', '<a href="x" class="other">x</a>', '<a href="x">x</a>'),
-    'foreign-gfm': ('github', '<a href="x" class="gfm">x</a>', '<a href="x">x</a>'),
-    'wrong-rel-gitlab': ('gitlab', '<a href="x" rel="nofollow">x</a>', '<a href="x">x</a>'),
-    'wrong-rel-github': ('github', '<a href="x" rel="noopener">x</a>', '<a href="x">x</a>'),
-    'wrong-target': ('gitlab', '<a href="x" target="_self">x</a>', '<a href="x">x</a>'),
-    'foreign-target': ('github', '<a href="x" target="_blank">x</a>', '<a href="x">x</a>'),
-    'foreign-v-pre': ('github', '<pre v-pre="true">x</pre>', '<pre>x</pre>'),
-    'foreign-role': ('gitlab', '<table role="table"></table>', '<table></table>'),
-    'foreign-pre-class': ('gitlab', '<pre class="notranslate">x</pre>', '<pre>x</pre>'),
-    'foreign-highlight-class': ('github', '<pre class="code highlight js-syntax-highlight language-plaintext">x</pre>', '<pre>x</pre>'),
-    'paragraph-id': ('gitlab', '<p id="user-content-x">x</p>', '<p>x</p>'),
-    'foreign-heading-id': ('github', '<h1 id="user-content-x">x</h1>', '<h1>x</h1>'),
-    'wrong-v-pre': ('gitlab', '<pre v-pre="false">x</pre>', '<pre>x</pre>'),
-    'partial-rel': ('gitlab', '<a href="x" rel="noopener">x</a>', '<a href="x">x</a>'),
-    'github-rtl': ('github', '<p dir="rtl">y</p>', '<p>y</p>'),
-    'gitlab-rtl': ('gitlab', '<p dir="rtl">y</p>', '<p>y</p>'),
-    'wrong-table-role': ('github', '<table role="alert"></table>', '<table></table>'),
-    'nonheading-parent': ('gitlab', '<p><a class="anchor" href="#title"></a></p>', '<p></p>'),
-    'foreign-heading-anchor': ('github', '<h1>T<a class="anchor" href="#t"></a></h1>', '<h1>T</h1>'),
-    'wrong-line-id': ('gitlab', '<span class="line" id="bad" data-lang="plaintext">x</span>', 'x'),
-    'copy-extra-attribute': ('gitlab', '<copy-code title="x">x</copy-code>', ''),
-    'table-wrapper-extra': ('github', '<markdown-accessiblity-table title="x"><p>x</p></markdown-accessiblity-table>', '<p>x</p>'),
+    "anchor-vs-text": ("gitlab", '<a href="/same">x</a>', "x"),
+    "href": ("gitlab", '<a href="/x">x</a>', '<a href="/y">x</a>'),
+    "image-src": ("gitlab", '<img src="/x">', '<img src="/y">'),
+    "image-data-src": ("gitlab", '<img data-src="/x">', '<img data-src="/y">'),
+    "ordered-start": (
+        "gitlab",
+        '<ol start="1"><li>x</li></ol>',
+        '<ol start="2"><li>x</li></ol>',
+    ),
+    "inline-code": ("gitlab", "<code>x</code>", "x"),
+    "pre-vs-paragraph": ("gitlab", "<pre>x</pre>", "<p>x</p>"),
+    "foreign-blob": (
+        "gitlab",
+        '<a href="https://elsewhere.test/project/-/blob/main/a.md">x</a>',
+        '<a href="a.md">x</a>',
+    ),
+    "escaped-tag": ("gitlab", "&lt;b&gt;", "<b></b>"),
+    "escaped-comment": ("gitlab", "<!-- note -->", "&lt;!-- note --&gt;"),
+    "inline-comment": ("gitlab", "<p>a<!-- c -->b</p>", "<p>ab</p>"),
+    "void-rule": ("gitlab", "<hr>", ""),
+    "literal-nbsp": ("gitlab", "<p>a\xa0b</p>", "<p>a b</p>"),
+    "entity-nbsp": ("gitlab", "<p>a&nbsp;b</p>", "<p>a b</p>"),
+    "pre-nbsp": ("gitlab", "<pre>x\xa0</pre>", "<pre>x</pre>"),
+    "root-nbsp": ("gitlab", "\xa0x", "x"),
+    "unknown-tag": ("gitlab", '<abbr title="HTML">HTML</abbr>', "HTML"),
+    "root-extra-attribute": (
+        "gitlab",
+        '<a href="#head" class="anchor" onclick="run()">content</a>',
+        "content",
+    ),
+    "heading-wrong-class": (
+        "gitlab",
+        '<h1>T<a href="#poison" class="anchored"></a></h1>',
+        "<h1>T</h1>",
+    ),
+    "heading-content": (
+        "gitlab",
+        '<h1>T<a href="#head" class="other anchor">c</a></h1>',
+        "<h1>T</h1>",
+    ),
+    "heading-extra-attribute": (
+        "gitlab",
+        '<h1>T<a href="#head" class="anchor" onclick="run()"></a></h1>',
+        "<h1>T</h1>",
+    ),
+    "heading-nonfinal": (
+        "gitlab",
+        '<h1>T<a class="anchor" href="#t"></a>X</h1>',
+        "<h1>TX</h1>",
+    ),
+    "escaped-span-value": (
+        "gitlab",
+        '<span data-escaped-char="x" data-sourcepos="1:1">x</span>',
+        "x",
+    ),
+    "line-span-extra": (
+        "gitlab",
+        '<span id="LC1" class="line" data-lang="plaintext" data-extra="x">x</span>',
+        "x",
+    ),
+    "wrapper-signature": (
+        "gitlab",
+        '<div class="highlight"><pre>x</pre></div>',
+        "<pre>x</pre>",
+    ),
+    "code-custom-class": (
+        "gitlab",
+        '<pre><code class="custom">x</code></pre>',
+        "<pre>x</pre>",
+    ),
+    "paragraph-custom-class": ("gitlab", '<p class="custom">x</p>', "<p>x</p>"),
+    "attribute-whitespace": ("gitlab", '<p title="a  b">x</p>', '<p title="a b">x</p>'),
+    "event-attribute": ("gitlab", '<p onclick="run()">x</p>', "<p>x</p>"),
+    "foreign-code-class": (
+        "gitlab",
+        '<code class="notranslate">x</code>',
+        "<code>x</code>",
+    ),
+    "custom-anchor-class": (
+        "gitlab",
+        '<a href="x" class="other">x</a>',
+        '<a href="x">x</a>',
+    ),
+    "foreign-gfm": ("github", '<a href="x" class="gfm">x</a>', '<a href="x">x</a>'),
+    "wrong-rel-gitlab": (
+        "gitlab",
+        '<a href="x" rel="nofollow">x</a>',
+        '<a href="x">x</a>',
+    ),
+    "wrong-rel-github": (
+        "github",
+        '<a href="x" rel="noopener">x</a>',
+        '<a href="x">x</a>',
+    ),
+    "wrong-target": ("gitlab", '<a href="x" target="_self">x</a>', '<a href="x">x</a>'),
+    "foreign-target": (
+        "github",
+        '<a href="x" target="_blank">x</a>',
+        '<a href="x">x</a>',
+    ),
+    "foreign-v-pre": ("github", '<pre v-pre="true">x</pre>', "<pre>x</pre>"),
+    "foreign-role": ("gitlab", '<table role="table"></table>', "<table></table>"),
+    "foreign-pre-class": ("gitlab", '<pre class="notranslate">x</pre>', "<pre>x</pre>"),
+    "foreign-highlight-class": (
+        "github",
+        '<pre class="code highlight js-syntax-highlight language-plaintext">x</pre>',
+        "<pre>x</pre>",
+    ),
+    "paragraph-id": ("gitlab", '<p id="user-content-x">x</p>', "<p>x</p>"),
+    "foreign-heading-id": ("github", '<h1 id="user-content-x">x</h1>', "<h1>x</h1>"),
+    "wrong-v-pre": ("gitlab", '<pre v-pre="false">x</pre>', "<pre>x</pre>"),
+    "github-rtl": ("github", '<p dir="rtl">y</p>', "<p>y</p>"),
+    "gitlab-rtl": ("gitlab", '<p dir="rtl">y</p>', "<p>y</p>"),
+    "wrong-table-role": ("github", '<table role="alert"></table>', "<table></table>"),
+    "nonheading-parent": (
+        "gitlab",
+        '<p><a class="anchor" href="#title"></a></p>',
+        "<p></p>",
+    ),
+    "foreign-heading-anchor": (
+        "github",
+        '<h1>T<a class="anchor" href="#t"></a></h1>',
+        "<h1>T</h1>",
+    ),
+    "wrong-line-id": (
+        "gitlab",
+        '<span class="line" id="bad" data-lang="plaintext">x</span>',
+        "x",
+    ),
+    "copy-extra-attribute": ("gitlab", '<copy-code title="x">x</copy-code>', ""),
+    "table-wrapper-extra": (
+        "github",
+        '<markdown-accessiblity-table title="x"><p>x</p></markdown-accessiblity-table>',
+        "<p>x</p>",
+    ),
 }
 
 PROJECT_BLOB_NORMALIZATION_CASES = {
-    'project-root': ('http://localhost:8929/cdr-group/probe/-/blob/main/', '<a href="">x</a>'),
-    'project-file': ('http://localhost:8929/cdr-group/probe/-/blob/main/file.md', '<a href="file.md">x</a>'),
-    'foreign-origin': ('https://elsewhere.test/cdr-group/probe/-/blob/main/file.md', '<a href="https://elsewhere.test/cdr-group/probe/-/blob/main/file.md">x</a>'),
-    'foreign-project': ('http://localhost:8929/other/proj/-/blob/main/file.md', '<a href="http://localhost:8929/other/proj/-/blob/main/file.md">x</a>'),
-    'foreign-link': ('https://other.test/file.md', '<a href="https://other.test/file.md">x</a>'),
+    "project-root": (
+        "http://localhost:8929/cdr-group/probe/-/blob/main/",
+        '<a href="">x</a>',
+    ),
+    "project-file": (
+        "http://localhost:8929/cdr-group/probe/-/blob/main/file.md",
+        '<a href="file.md">x</a>',
+    ),
+    "foreign-origin": (
+        "https://elsewhere.test/cdr-group/probe/-/blob/main/file.md",
+        '<a href="https://elsewhere.test/cdr-group/probe/-/blob/main/file.md">x</a>',
+    ),
+    "foreign-project": (
+        "http://localhost:8929/other/proj/-/blob/main/file.md",
+        '<a href="http://localhost:8929/other/proj/-/blob/main/file.md">x</a>',
+    ),
 }
 
 RENDER_CONTAINMENT_CASES = {
-    'gitlab-safe': ('gitlab', '<p><strong>safe</strong> <code>text</code></p>', None),
-    'github-safe': ('github', '<p><strong>safe</strong> <code>text</code></p>', None),
-    'real-heading': ('gitlab', REAL_HEADING_HTML, None),
-    'real-code': ('gitlab', REAL_CODE_HTML, None),
-    'angle-attribute': ('gitlab', REAL_ANGLE_ATTRIBUTE_HTML, None),
-    'gitlab-reference': ('gitlab', '<a data-reference-type="user">@user</a>', 'GitLab reference link'),
-    'github-user': ('github', '<a class="user-mention">@team</a>', 'GitHub mention anchor'),
-    'github-team': ('github', '<a class="team-mention">@team</a>', 'GitHub mention anchor'),
-    'gitlab-comment': ('gitlab', '<!-- retained -->', 'comment node'),
-    'github-comment': ('github', '<!-- retained -->', 'comment node'),
-    'gitlab-unknown': ('gitlab', '<abbr>HTML</abbr>', 'unknown element <abbr>'),
-    'github-unknown': ('github', '<abbr>HTML</abbr>', 'unknown element <abbr>'),
-    'bare-span': ('gitlab', '<span>x</span>', 'unknown element <span>'),
-    'foreign-gitlab-wrapper': ('github', '<div class="gl-relative markdown-code-block js-markdown-code"><pre>x</pre></div>', 'unknown element <div>'),
-    'foreign-github-wrapper': ('gitlab', '<div class="highlight highlight-text-adblock"><pre>x</pre></div>', 'unknown element <div>'),
-    'foreign-escaped-span': ('github', '<span data-escaped-char="" data-sourcepos="1:1">x</span>', 'unknown element <span>'),
+    "gitlab-safe": ("gitlab", "<p><strong>safe</strong> <code>text</code></p>", None),
+    "github-safe": ("github", "<p><strong>safe</strong> <code>text</code></p>", None),
+    "real-code": ("gitlab", REAL_CODE_HTML, None),
+    "angle-attribute": ("gitlab", REAL_ANGLE_ATTRIBUTE_HTML, None),
+    "gitlab-reference": (
+        "gitlab",
+        '<a data-reference-type="user">@user</a>',
+        "GitLab reference link",
+    ),
+    "gitlab-reference-nested": (
+        "gitlab",
+        '<p><a data-reference-type="user">@user</a></p>',
+        "GitLab reference link",
+    ),
+    "github-user": (
+        "github",
+        '<a class="user-mention">@team</a>',
+        "GitHub mention anchor",
+    ),
+    "github-team": (
+        "github",
+        '<a class="team-mention">@team</a>',
+        "GitHub mention anchor",
+    ),
+    "gitlab-comment": ("gitlab", "<!-- retained -->", "comment node"),
+    "gitlab-unknown": ("gitlab", "<abbr>HTML</abbr>", "unknown element <abbr>"),
+    "github-unknown": ("github", "<abbr>HTML</abbr>", "unknown element <abbr>"),
+    "bare-span": ("gitlab", "<span>x</span>", "unknown element <span>"),
+    "foreign-gitlab-wrapper": (
+        "github",
+        '<div class="gl-relative markdown-code-block js-markdown-code"><pre>x</pre></div>',
+        "unknown element <div>",
+    ),
+    "foreign-github-wrapper": (
+        "gitlab",
+        '<div class="highlight highlight-text-adblock"><pre>x</pre></div>',
+        "unknown element <div>",
+    ),
+    "foreign-escaped-span": (
+        "github",
+        '<span data-escaped-char="" data-sourcepos="1:1">x</span>',
+        "unknown element <span>",
+    ),
 }
 
 GITLAB_METADATA_CASES = {
-    'encoded-project-nonmain-branch': ('prefix', {'web_url': 'https://gitlab.test/team/probe/', 'default_branch': 'develop'}, 'https://gitlab.test/team/probe/-/blob/develop/', None),
-    'missing-branch': ('prefix', {'web_url': 'https://gitlab.test/team/probe'}, None, 'GitLab project metadata is incomplete for team/probe'),
-    'enterprise-flag': ('version', {'version': '19.4.1', 'enterprise': True}, '19.4.1 ee', None),
-    'ee-suffix': ('version', {'version': '19.4.1-ee', 'enterprise': False}, '19.4.1 ee', None),
+    "encoded-project-nonmain-branch": (
+        "prefix",
+        {"web_url": "https://gitlab.test/team/probe/", "default_branch": "develop"},
+        "https://gitlab.test/team/probe/-/blob/develop/",
+        None,
+    ),
+    "missing-branch": (
+        "prefix",
+        {"web_url": "https://gitlab.test/team/probe"},
+        None,
+        "GitLab project metadata is incomplete for team/probe",
+    ),
+    "enterprise-flag": (
+        "version",
+        {"version": "19.4.1", "enterprise": True},
+        "19.4.1 ee",
+        None,
+    ),
+    "ee-suffix": (
+        "version",
+        {"version": "19.4.1-ee", "enterprise": False},
+        "19.4.1 ee",
+        None,
+    ),
 }
 
 HANDLE_DERIVATION_CASES = {
-    'ascii-fullwidth-path-lookbehind-suffix': ([{'input': '(@alice), \uff20team, @types/node; x@hidden _\uff20hidden @bare. \uff20modal/', 'expected': '\uff20Override @x @all'}, {'input': '@ignore.git @ignore.atom', 'expected': 'footer'}], False, {'alice', 'team', 'types/node', 'Override', 'x', 'all', 'bare', 'modal'}),
-    'segment-and-path-limits': ([{'input': '@' + 'a' * 256 + ' @' + 'b' * 257 + ' @' + '/'.join(['a'] * 20) + ' @' + '/'.join(['c'] * 21), 'expected': ''}], False, {'a' * 256, '/'.join(['a'] * 20)}),
-    'fullwidth-only-filters': ([{'input': '@ascii', 'expected': '\uff20visible @ascii \uff20all \uff20x \uff20ignore.git \uff20' + 'b' * 257}], True, {'visible'}),
+    "ascii-fullwidth-path-lookbehind-suffix": (
+        [
+            {
+                "input": "(@alice), \uff20team, @types/node; x@hidden _\uff20hidden @bare. \uff20modal/",
+                "expected": "\uff20Override @x @all",
+            },
+            {"input": "@ignore.git @ignore.atom", "expected": "footer"},
+        ],
+        False,
+        {"alice", "team", "types/node", "Override", "x", "all", "bare", "modal"},
+    ),
+    "segment-and-path-limits": (
+        [
+            {
+                "input": "@"
+                + "a" * 256
+                + " @"
+                + "b" * 257
+                + " @"
+                + "/".join(["a"] * 20)
+                + " @"
+                + "/".join(["c"] * 21),
+                "expected": "",
+            }
+        ],
+        False,
+        {"a" * 256, "/".join(["a"] * 20)},
+    ),
+    "fullwidth-only-filters": (
+        [
+            {
+                "input": "@ascii",
+                "expected": "\uff20visible @ascii \uff20all \uff20x \uff20ignore.git \uff20"
+                + "b" * 257,
+            }
+        ],
+        True,
+        {"visible"},
+    ),
 }
 
 GITLAB_CANARY_CASES = {
-    'plain-handles-exempt': (['alice', 'all', 'x'], '<a data-reference-type="user" data-original="@alice">@alice</a>', None),
-    'unresolved-handle-named': (['alice', 'missing', 'all', 'x'], '<a data-reference-type="user" data-original="@alice">@alice</a>', 'unresolved handles: missing'),
-    'wrong-reference-identity': (['alice'], '<a data-reference-type="user" data-original="@other">other</a>', 'alice'),
+    "plain-handles-exempt": (
+        ["alice", "all", "x"],
+        '<a data-reference-type="user" data-original="@alice">@alice</a>',
+        None,
+    ),
+    "unresolved-handle-named": (
+        ["alice", "missing", "all", "x"],
+        '<a data-reference-type="user" data-original="@alice">@alice</a>',
+        "unresolved handles: missing",
+    ),
+    "wrong-reference-identity": (
+        ["alice"],
+        '<a data-reference-type="user" data-original="@other">other</a>',
+        "alice",
+    ),
 }
 
 GITHUB_CANARY_CASES = {
-    'case-insensitive-href': ('<a class="notranslate user-mention" href="https://github.com/LeE">user</a>',),
-    'case-insensitive-text': ('<a class="user-mention" href="/somewhere">@LeE</a>',),
+    "case-insensitive-href": '<a class="notranslate user-mention" href="https://github.com/LeE">user</a>',
+    "case-insensitive-text": '<a class="user-mention" href="/somewhere">@LeE</a>',
 }
 
 CHECK_DRIFT_CASES = {
-    'gitlab-html-only': ('gitlab', 'html', '<p>old</p>', ['probe_row'], None),
-    'github-html-only': ('github', 'html', '<p>old</p>', ['probe_row'], None),
-    'twin-only': ('gitlab', 'twin_references', ['@bob'], ['probe_row'], None),
-    'gitlab-hash-only': ('gitlab', 'input_sha256', '0' * 64, ['probe_row'], None),
-    'github-hash-only': ('github', 'input_sha256', '0' * 64, ['probe_row'], None),
-    'version-only': ('gitlab', 'version', '19.4.0 ce', [], ('19.4.0 ce', '19.4.1 ce')),
+    "gitlab-html-only": ("gitlab", "html", "<p>old</p>", ["probe_row"], None),
+    "github-html-only": ("github", "html", "<p>old</p>", ["probe_row"], None),
+    "twin-only": ("gitlab", "twin_references", ["@bob"], ["probe_row"], None),
+    "gitlab-hash-only": ("gitlab", "input_sha256", "0" * 64, ["probe_row"], None),
+    "github-hash-only": ("github", "input_sha256", "0" * 64, ["probe_row"], None),
+    "version-only": ("gitlab", "version", "19.4.0 ce", [], ("19.4.0 ce", "19.4.1 ce")),
 }
 
 RECORD_REJECTS_BEFORE_WRITE_CASES = {
-    'gitlab-preflight': ('gitlab', 'canary', 'alice'),
-    'github-preflight': ('github', 'plain', 'lee'),
-    'github-missing-class': ('github', 'no-class', 'lee'),
-    'github-wrong-login': ('github', 'wrong-login', 'lee'),
-    'expected-reference': ('gitlab', 'reference', 'GitLab reference link'),
-    'extra-root-key': ('gitlab', 'extra', 'only a cases'),
+    "gitlab-preflight": ("gitlab", "canary", "alice"),
+    "github-preflight": ("github", "plain", "lee"),
+    "github-missing-class": ("github", "no-class", "lee"),
+    "github-wrong-login": ("github", "wrong-login", "lee"),
+    "expected-reference": ("gitlab", "reference", "GitLab reference link"),
+    "extra-root-key": ("gitlab", "extra", "only a cases"),
 }
-# fmt: on
 
 
 def test_contributing_probe_commands_parse_with_the_recorder() -> None:
@@ -442,7 +710,7 @@ def test_gitlab_canary(handles, html, error) -> None:
 
 
 @pytest.mark.parametrize(
-    ("rendered",), GITHUB_CANARY_CASES.values(), ids=GITHUB_CANARY_CASES
+    "rendered", GITHUB_CANARY_CASES.values(), ids=GITHUB_CANARY_CASES
 )
 def test_github_canary(rendered) -> None:
     run_github_canary("lee", lambda text: rendered)
@@ -628,6 +896,7 @@ def test_seed_creates_group_chains_users_project_and_idempotent_memberships() ->
             raise AssertionError((method, path, body))
 
     assert set(INHERENTLY_PLAIN) == {"all", "x"}
+    assert SEED_GROUPS == ("team",)
     api = FakeGitLab()
     cases = [{"input": "@alice @types/node @team @all @x", "expected": "\uff20bob"}]
     first = seed(cases, api)
@@ -697,7 +966,9 @@ def _renderer(platform: str, html: str) -> Callable[[str], str]:
         if text == "@lee":
             return '<a class="user-mention" href="/lee">@lee</a>'
         if platform == "gitlab" and "@alice" in text:
-            return '<a data-reference-type="user" data-original="@alice">@alice</a>'
+            return (
+                '<p><a data-reference-type="user" data-original="@alice">@alice</a></p>'
+            )
         return html
 
     return render
@@ -715,17 +986,39 @@ def _record(path, platform, html, **options):
     )
 
 
-@pytest.mark.parametrize("platform", ["gitlab", "github"])
+def _read_fixture(path: Path) -> str:
+    with path.open("r", encoding="utf-8", newline="") as stream:
+        return str(stream.read())
+
+
 @pytest.mark.parametrize(
-    "state", ["valid", "stale", "equal", "skeleton", "href", "nesting"]
+    ("platform", "state"),
+    [
+        ("gitlab", "valid"),
+        ("github", "valid"),
+        ("gitlab", "stale"),
+        ("github", "stale"),
+        ("gitlab", "equal"),
+        ("github", "equal"),
+        ("gitlab", "href"),
+        ("gitlab", "nesting"),
+    ],
+    ids=[
+        "gitlab-valid",
+        "github-valid",
+        "gitlab-stale",
+        "github-stale",
+        "gitlab-equal",
+        "github-equal",
+        "gitlab-href",
+        "gitlab-nesting",
+    ],
 )
 def test_record_pair_states(probe_file, platform, state) -> None:
     path = probe_file
     github_html, gitlab_html = "<p>a</p>", "<p>b</p>"
     if state == "equal":
         github_html = gitlab_html
-    elif state == "skeleton":
-        gitlab_html = "<h1>b</h1>"
     elif state == "href":
         github_html, gitlab_html = (
             '<a href="one.md">guide</a>',
@@ -741,7 +1034,6 @@ def test_record_pair_states(probe_file, platform, state) -> None:
         "valid": PAIR,
         "stale": "0" * 64,
         "equal": "a93d005ca9daf0f58620e3e889af61246c992b8a3c079a401c34bc744d3c958b",
-        "skeleton": "294e65bb3cfa1fcd49da9d69f91c7eaad9e86e5b6ff1275c5623da02575f3db2",
         "href": "478e08465dd5d4a11fced4b94b85f4ac0e3dceda85451d911bb6f2cf574ee86d",
         "nesting": "b88d62c1fd495f49fb0d985cefb9f1758e9d8b6d0a163e6953fbb2c0538a33ae",
     }[state]
@@ -801,6 +1093,27 @@ def test_check_drift(probe_file, platform, field, value, changed, version) -> No
     assert writes == [] and probe_file.read_bytes() == before
 
 
+def test_check_drift_reports_gitlab_content_and_version_together(probe_file) -> None:
+    rows = _probe_rows()
+    rows[0]["gitlab_probe"]["version"] = "19.4.0 ce"
+    write_utf8(str(probe_file), serialize_fixture(rows))
+    before = probe_file.read_bytes()
+    writes = []
+
+    checked = _record(
+        probe_file,
+        "gitlab",
+        "<p>changed</p>",
+        check=True,
+        write_text=lambda target, contents: writes.append(contents),
+    )
+
+    assert checked.changed_ids == ["probe_row"]
+    assert checked.version_mismatch == ("19.4.0 ce", "19.4.1 ce")
+    assert checked.exit_code == 1
+    assert writes == [] and probe_file.read_bytes() == before
+
+
 @pytest.mark.parametrize(
     ("platform", "failure", "error"),
     RECORD_REJECTS_BEFORE_WRITE_CASES.values(),
@@ -831,7 +1144,9 @@ def test_record_rejects_before_write(probe_file, platform, failure, error) -> No
     elif failure == "reference":
 
         def render(text):
-            return '<a data-reference-type="user" data-original="@alice">@alice</a>'
+            return (
+                '<p><a data-reference-type="user" data-original="@alice">@alice</a></p>'
+            )
 
     with pytest.raises(
         ValueError if failure in {"reference", "extra"} else RuntimeError, match=error
@@ -848,22 +1163,17 @@ def test_record_rejects_before_write(probe_file, platform, failure, error) -> No
     assert writes == [] and probe_file.read_bytes() == before
 
 
-def _read_fixture(path: Path) -> str:
-    with path.open("r", encoding="utf-8", newline="") as stream:
-        return str(stream.read())
-
-
 @pytest.mark.parametrize("platform", ["gitlab", "github"])
 def test_main_record_check_and_cleared_divergence_output(
-    tmp_path, monkeypatch, capsys, platform: str
+    probe_file, monkeypatch, capsys, platform: str
 ) -> None:
-    path = tmp_path / "fixture.json"
+    path = probe_file
     write_utf8(str(path), serialize_fixture(_probe_rows()))
     monkeypatch.setattr("tests.tools.probe_cli._fixture_path", lambda: str(path))
     if platform == "github":
         monkeypatch.setattr("tests.tools.probe_cli.github_login", lambda: "lee")
         monkeypatch.setattr(
-            "tests.tools.probe_cli.render_github", _github_render_with_canary
+            "tests.tools.probe_cli.render_github", _renderer("github", "<p>changed</p>")
         )
     else:
 
@@ -896,10 +1206,6 @@ def test_main_record_check_and_cleared_divergence_output(
     )
 
 
-def _github_render_with_canary(text: str) -> str:
-    return _renderer("github", "<p>changed</p>")(text)
-
-
 def test_main_seed_dispatch_prints_seed_counts(monkeypatch, capsys) -> None:
     monkeypatch.setenv("FAKE_ENV", "fake-token")
     cases = [{"input": "@alice", "expected": "@alice"}]
@@ -926,18 +1232,16 @@ def test_main_seed_dispatch_prints_seed_counts(monkeypatch, capsys) -> None:
 
 @pytest.mark.parametrize(
     "failure",
-    ["stale", "equal", "skeleton", "nesting", "extra", "duplicate", "issue", "note"],
+    ["stale", "equal", "nesting", "extra", "duplicate", "issue", "note"],
 )
-def test_divergence_refuses_invalid_fixture_or_pair(tmp_path, failure: str) -> None:
-    path = tmp_path / "fixture.json"
+def test_divergence_refuses_invalid_fixture_or_pair(probe_file, failure: str) -> None:
+    path = probe_file
     document = {"cases": _probe_rows()}
     row = document["cases"][0]
     if failure == "stale":
         row["gitlab_probe"]["input_sha256"] = "0" * 64
     elif failure == "equal":
         row["gitlab_probe"]["html"] = "<p>a</p>"
-    elif failure == "skeleton":
-        row["gitlab_probe"]["html"] = "<h1>b</h1>"
     elif failure == "nesting":
         row["github_probe"]["html"] = "<blockquote><p>a</p></blockquote><p>b</p>"
         row["gitlab_probe"]["html"] = "<blockquote><p>a</p><p>b</p></blockquote>"
@@ -953,7 +1257,6 @@ def test_divergence_refuses_invalid_fixture_or_pair(tmp_path, failure: str) -> N
         match={
             "stale": "stale",
             "equal": "equal",
-            "skeleton": "skeleton",
             "nesting": "skeleton",
             "extra": "only a cases",
             "duplicate": "expected one fixture row",
