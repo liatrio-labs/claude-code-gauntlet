@@ -1,11 +1,11 @@
-"""Guard text-mode Python I/O across the tracked test and tooling surface."""
-
 from __future__ import annotations
 
 import ast
 import subprocess
 from pathlib import Path
 from typing import Any, TypeGuard
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCANNED_ROOTS = (
@@ -37,255 +37,83 @@ GUARDED_STAR_IMPORTS = frozenset(
 _MISSING = object()
 
 
-# Each row is a call shape, its argument positions, and executable examples.
-# Add a call kind here so both matching and its positive/negative examples stay together.
+def _rule(name: str, **settings: Any) -> dict[str, Any]:
+    shape: dict[str, Any] = (
+        {"kind": "attribute"}
+        if "attribute" in settings
+        else {"kind": "exact", "names": (name,)}
+    )
+    return {"name": name, **shape, **settings}
+
+
+# Policy and test oracles stay separate so deleting a rule cannot delete its proof.
 CALL_RULES: tuple[dict[str, Any], ...] = (
-    {
-        "name": "open, builtins.open and io.open",
-        "kind": "exact",
-        "names": ("open", "builtins.open", "io.open"),
-        "mode_index": 1,
-        "default_mode": "r",
-        "always_text": False,
-        "encoding_index": None,
-        "examples": (
-            ('open("file", encoding="utf-8")', 0),
-            ('open("file")', 1),
-            ('io.open("file", "w", encoding="utf-8")', 0),
-            ('io.open("file", "w")', 1),
-            ('builtins.open("file")', 1),
-            ('builtins.open("file", "rb")', 0),
-            ('from builtins import open as file_open\nfile_open("file")', 1),
-            ('from builtins import open as file_open\nfile_open("file", "rb")', 0),
-        ),
-    },
+    _rule(
+        "open, builtins.open and io.open",
+        names=("open", "builtins.open", "io.open"),
+        mode_index=1,
+        default_mode="r",
+    ),
     *(
-        {
-            "name": f"{module}.open",
-            "kind": "exact",
-            "names": (f"{module}.open",),
-            "mode_index": 1,
-            "default_mode": "rb",
-            "text_mode_marker": "t",
-            "always_text": False,
-            "encoding_index": None,
-            "examples": (
-                (f'{module}.open("file")', 0),
-                (f'{module}.open("file", "r")', 0),
-                (f'{module}.open("file", "rt")', 1),
-                (f'{module}.open("file", "rt", encoding="utf-8")', 0),
-            ),
-        }
+        _rule(f"{module}.open", mode_index=1, default_mode="rb", text_mode_marker="t")
         for module in ("gzip", "bz2", "lzma")
     ),
-    {
-        "name": "os.fdopen",
-        "kind": "exact",
-        "names": ("os.fdopen",),
-        "mode_index": 1,
-        "default_mode": "r",
-        "always_text": False,
-        "encoding_index": None,
-        "examples": (
-            ('os.fdopen(3, encoding="utf-8")', 0),
-            ("os.fdopen(3)", 1),
-            ('os.fdopen(3, "w", encoding="utf-8")', 0),
-            ('os.fdopen(3, "w")', 1),
-        ),
-    },
-    {
-        "name": "Path.open",
-        "kind": "attribute",
-        "attribute": "open",
-        "exclude_receivers": NON_TEXT_OPEN_RECEIVERS,
-        "mode_index": 0,
-        "default_mode": "r",
-        "always_text": False,
-        "encoding_index": None,
-        "examples": (
-            ('Path("file").open(encoding="utf-8")', 0),
-            ('Path("file").open()', 1),
-            ('Path("file").open("w", encoding="utf-8")', 0),
-            ('Path("file").open("w")', 1),
-        ),
-    },
-    {
-        "name": "Path.read_text",
-        "kind": "attribute",
-        "attribute": "read_text",
-        "mode_index": None,
-        "default_mode": None,
-        "always_text": True,
-        "encoding_index": 0,
-        "examples": (
-            ('Path("file").read_text(encoding="utf-8")', 0),
-            ('Path("file").read_text()', 1),
-            ('Path("file").read_text("utf-8")', 0),
-            ('Path("file").read_text(ENCODING)', 1),
-        ),
-    },
-    {
-        "name": "Path.write_text",
-        "kind": "attribute",
-        "attribute": "write_text",
-        "mode_index": None,
-        "default_mode": None,
-        "always_text": True,
-        "encoding_index": 1,
-        "examples": (
-            ('Path("file").write_text("x", encoding="utf-8")', 0),
-            ('Path("file").write_text("x")', 1),
-            ('Path("file").write_text("x", "utf-8")', 0),
-            ('Path("file").write_text("x", ENCODING)', 1),
-        ),
-    },
-    {
-        "name": "tempfile.NamedTemporaryFile",
-        "kind": "exact",
-        "names": ("tempfile.NamedTemporaryFile", "NamedTemporaryFile"),
-        "mode_index": 0,
-        "default_mode": "w+b",
-        "always_text": False,
-        "encoding_index": None,
-        "examples": (
-            ('tempfile.NamedTemporaryFile("w", encoding="utf-8")', 0),
-            ('tempfile.NamedTemporaryFile("w")', 1),
-            ('NamedTemporaryFile(mode="w", encoding="utf-8")', 0),
-            ('NamedTemporaryFile(mode="w")', 1),
-        ),
-    },
-    {
-        "name": "tempfile.TemporaryFile",
-        "kind": "exact",
-        "names": ("tempfile.TemporaryFile", "TemporaryFile"),
-        "mode_index": 0,
-        "default_mode": "w+b",
-        "always_text": False,
-        "encoding_index": None,
-        "examples": (
-            ('tempfile.TemporaryFile("w", encoding="utf-8")', 0),
-            ('tempfile.TemporaryFile("w")', 1),
-            ('TemporaryFile(mode="w", encoding="utf-8")', 0),
-            ('TemporaryFile(mode="w")', 1),
-        ),
-    },
-    {
-        "name": "tempfile.SpooledTemporaryFile",
-        "kind": "exact",
-        "names": ("tempfile.SpooledTemporaryFile", "SpooledTemporaryFile"),
-        "mode_index": 1,
-        "default_mode": "w+b",
-        "always_text": False,
-        "encoding_index": None,
-        "examples": (
-            ('tempfile.SpooledTemporaryFile(1024, "w", encoding="utf-8")', 0),
-            ('tempfile.SpooledTemporaryFile(1024, "w")', 1),
-            ('SpooledTemporaryFile(max_size=1024, mode="w", encoding="utf-8")', 0),
-            ('SpooledTemporaryFile(max_size=1024, mode="w")', 1),
-        ),
-    },
-    {
-        "name": "io.TextIOWrapper",
-        "kind": "exact",
-        "names": ("io.TextIOWrapper", "TextIOWrapper"),
-        "mode_index": None,
-        "default_mode": None,
-        "always_text": True,
-        "encoding_index": 1,
-        "examples": (
-            ('io.TextIOWrapper(buffer, encoding="utf-8")', 0),
-            ("io.TextIOWrapper(buffer)", 1),
-            ('TextIOWrapper(buffer, "utf-8")', 0),
-            ("TextIOWrapper(buffer, ENCODING)", 1),
-        ),
-    },
-    {
-        "name": "logging.FileHandler",
-        "kind": "exact",
-        "names": ("logging.FileHandler",),
-        "mode_index": 1,
-        "default_mode": "a",
-        "always_text": True,
-        "encoding_index": 2,
-        "examples": (
-            ('logging.FileHandler("file", encoding="utf-8")', 0),
-            ('logging.FileHandler("file")', 1),
-            ('logging.FileHandler("file", "w", "utf-8")', 0),
-            ('logging.FileHandler("file", "w")', 1),
-        ),
-    },
-    {
-        "name": "subprocess text-capable calls",
-        "kind": "exact",
-        "names": tuple(
+    _rule("os.fdopen", mode_index=1, default_mode="r"),
+    _rule(
+        "Path.open",
+        attribute="open",
+        exclude_receivers=NON_TEXT_OPEN_RECEIVERS,
+        mode_index=0,
+        default_mode="r",
+    ),
+    _rule("Path.read_text", attribute="read_text", always_text=True, encoding_index=0),
+    _rule(
+        "Path.write_text", attribute="write_text", always_text=True, encoding_index=1
+    ),
+    *(
+        _rule(
+            f"tempfile.{name}",
+            names=(f"tempfile.{name}", name),
+            mode_index=index,
+            default_mode="w+b",
+        )
+        for name, index in (
+            ("NamedTemporaryFile", 0),
+            ("TemporaryFile", 0),
+            ("SpooledTemporaryFile", 1),
+        )
+    ),
+    _rule(
+        "io.TextIOWrapper",
+        names=("io.TextIOWrapper", "TextIOWrapper"),
+        always_text=True,
+        encoding_index=1,
+    ),
+    _rule(
+        "logging.FileHandler",
+        mode_index=1,
+        default_mode="a",
+        always_text=True,
+        encoding_index=2,
+    ),
+    _rule(
+        "subprocess text-capable calls",
+        names=tuple(
             f"subprocess.{name}"
             for name in ("run", "Popen", "check_output", "call", "check_call")
         ),
-        "mode_index": None,
-        "default_mode": None,
-        "always_text": False,
-        "subprocess_text": True,
-        "encoding_index": None,
-        "examples": tuple(
-            example
-            for name in ("run", "Popen", "check_output", "call", "check_call")
-            for example in (
-                (f'subprocess.{name}([], text=True, encoding="utf-8")', 0),
-                (f"subprocess.{name}([], text=True)", 1),
-            )
-        ),
-    },
-    {
-        "name": "codecs.open",
-        "kind": "exact",
-        "names": ("codecs.open",),
-        "mode_index": 1,
-        "default_mode": "r",
-        "always_text": False,
-        "encoding_index": None,
-        "examples": (
-            ('codecs.open("file", encoding="utf-8")', 0),
-            ('codecs.open("file")', 1),
-            ('codecs.open("file", "rb")', 0),
-            ('codecs.open("file", "r")', 1),
-        ),
-    },
-    {
-        "name": "tempfile.mkstemp(text=True) (forbidden)",
-        "kind": "exact",
-        "names": ("tempfile.mkstemp",),
-        "forbidden_text_flag": True,
-        "examples": (
-            ("tempfile.mkstemp()", 0),
-            ("tempfile.mkstemp(text=False)", 0),
-            ("tempfile.mkstemp(text=True)", 1),
-            ("tempfile.mkstemp(text=TEXT)", 1),
-            ("tempfile.mkstemp(None, None, None, False)", 0),
-            ("tempfile.mkstemp(None, None, None, True)", 1),
-            ("tempfile.mkstemp(**options)", 1),
-        ),
-    },
-    {
-        "name": "os.popen (forbidden)",
-        "kind": "exact",
-        "names": ("os.popen",),
-        "forbidden": True,
-        "examples": (("os.popen('command')", 1),),
-    },
-    {
-        "name": "subprocess.getoutput (forbidden)",
-        "kind": "exact",
-        "names": ("subprocess.getoutput",),
-        "forbidden": True,
-        "examples": (("subprocess.getoutput('command')", 1),),
-    },
-    {
-        "name": "subprocess.getstatusoutput (forbidden)",
-        "kind": "exact",
-        "names": ("subprocess.getstatusoutput",),
-        "forbidden": True,
-        "examples": (("subprocess.getstatusoutput('command')", 1),),
-    },
+        subprocess_text=True,
+    ),
+    _rule("codecs.open", mode_index=1, default_mode="r"),
+    _rule(
+        "tempfile.mkstemp(text=True) (forbidden)",
+        names=("tempfile.mkstemp",),
+        forbidden_text_flag=True,
+    ),
+    *(
+        _rule(f"{name} (forbidden)", names=(name,), forbidden=True)
+        for name in ("os.popen", "subprocess.getoutput", "subprocess.getstatusoutput")
+    ),
 )
 
 
@@ -378,7 +206,6 @@ def _valid_open_mode(mode: str) -> bool:
 
 
 def _encoding_state(call: ast.Call, rule: dict) -> tuple[bool, bool]:
-    """Return (valid encoding supplied, invalid encoding explicitly supplied)."""
     encoding = _argument(call, "encoding", rule.get("encoding_index"))
     if encoding is _MISSING:
         return False, False
@@ -395,7 +222,6 @@ def _explicit_keyword_encoding(call: ast.Call) -> bool:
 
 
 def _text_mode(call: ast.Call, rule: dict) -> tuple[bool, bool]:
-    """Return (is text mode, dynamic mode or text flag was supplied)."""
     if rule.get("always_text"):
         return True, False
     if rule.get("subprocess_text"):
@@ -535,107 +361,256 @@ def _tracked_offenders() -> list[str]:
     return offenders
 
 
-def test_tracked_python_files_use_explicit_text_io_settings():
+def test_tracked_python_files_use_explicit_text_io_settings() -> None:
     offenders = _tracked_offenders()
     assert not offenders, "\n".join(offenders)
 
 
-def test_call_rule_table_examples_cover_each_call_kind():
-    for rule in CALL_RULES:
-        for snippet, expected_count in rule["examples"]:
-            offenders = _scan_source(snippet, "tests/snippet.py")
-            assert len(offenders) == expected_count, (
-                f"{rule['name']} example {snippet!r}: {offenders}"
-            )
+@pytest.mark.parametrize(
+    ("snippet", "expected_count"),
+    [
+        pytest.param(snippet, expected_count, id=behavior)
+        for behavior, snippet, expected_count in (
+            ("open-encoded", 'open("file", encoding="utf-8")', 0),
+            ("open-no-encoding", 'open("file")', 1),
+            ("io-open-encoded", 'io.open("file", "w", encoding="utf-8")', 0),
+            ("io-open-no-encoding", 'io.open("file", "w")', 1),
+            ("builtins-open-no-encoding", 'builtins.open("file")', 1),
+            ("builtins-open-binary", 'builtins.open("file", "rb")', 0),
+            (
+                "file-open-alias",
+                'from builtins import open as file_open\nfile_open("file")',
+                1,
+            ),
+            (
+                "file-open-alias",
+                'from builtins import open as file_open\nfile_open("file", "rb")',
+                0,
+            ),
+            ("gzip-open-binary", 'gzip.open("file")', 0),
+            ("gzip-open-binary", 'gzip.open("file", "r")', 0),
+            ("gzip-open-no-encoding", 'gzip.open("file", "rt")', 1),
+            ("gzip-open-encoded", 'gzip.open("file", "rt", encoding="utf-8")', 0),
+            ("bz2-open-binary", 'bz2.open("file")', 0),
+            ("bz2-open-binary", 'bz2.open("file", "r")', 0),
+            ("bz2-open-no-encoding", 'bz2.open("file", "rt")', 1),
+            ("bz2-open-encoded", 'bz2.open("file", "rt", encoding="utf-8")', 0),
+            ("lzma-open-binary", 'lzma.open("file")', 0),
+            ("lzma-open-binary", 'lzma.open("file", "r")', 0),
+            ("lzma-open-no-encoding", 'lzma.open("file", "rt")', 1),
+            ("lzma-open-encoded", 'lzma.open("file", "rt", encoding="utf-8")', 0),
+            ("os-fdopen-encoded", 'os.fdopen(3, encoding="utf-8")', 0),
+            ("os-fdopen-no-encoding", "os.fdopen(3)", 1),
+            ("os-fdopen-encoded", 'os.fdopen(3, "w", encoding="utf-8")', 0),
+            ("os-fdopen-no-encoding", 'os.fdopen(3, "w")', 1),
+            ("path-open-encoded", 'Path("file").open(encoding="utf-8")', 0),
+            ("path-open-no-encoding", 'Path("file").open()', 1),
+            ("path-open-encoded", 'Path("file").open("w", encoding="utf-8")', 0),
+            ("path-open-no-encoding", 'Path("file").open("w")', 1),
+            ("path-read-encoded", 'Path("file").read_text(encoding="utf-8")', 0),
+            ("path-read-no-encoding", 'Path("file").read_text()', 1),
+            ("path-read-pos-encoding", 'Path("file").read_text("utf-8")', 0),
+            ("path-read-dynamic-encoding", 'Path("file").read_text(ENCODING)', 1),
+            ("path-write-encoded", 'Path("file").write_text("x", encoding="utf-8")', 0),
+            ("path-write-no-encoding", 'Path("file").write_text("x")', 1),
+            ("path-write-pos-encoding", 'Path("file").write_text("x", "utf-8")', 0),
+            (
+                "path-write-dynamic-encoding",
+                'Path("file").write_text("x", ENCODING)',
+                1,
+            ),
+            ("named-encoded", 'tempfile.NamedTemporaryFile("w", encoding="utf-8")', 0),
+            ("named-no-encoding", 'tempfile.NamedTemporaryFile("w")', 1),
+            ("named-encoded", 'NamedTemporaryFile(mode="w", encoding="utf-8")', 0),
+            ("named-no-encoding", 'NamedTemporaryFile(mode="w")', 1),
+            ("temporary-encoded", 'tempfile.TemporaryFile("w", encoding="utf-8")', 0),
+            ("temporary-no-encoding", 'tempfile.TemporaryFile("w")', 1),
+            ("temporary-encoded", 'TemporaryFile(mode="w", encoding="utf-8")', 0),
+            ("temporary-no-encoding", 'TemporaryFile(mode="w")', 1),
+            (
+                "spooled-encoded",
+                'tempfile.SpooledTemporaryFile(1024, "w", encoding="utf-8")',
+                0,
+            ),
+            ("spooled-no-encoding", 'tempfile.SpooledTemporaryFile(1024, "w")', 1),
+            (
+                "spooled-encoded",
+                'SpooledTemporaryFile(max_size=1024, mode="w", encoding="utf-8")',
+                0,
+            ),
+            ("spooled-no-encoding", 'SpooledTemporaryFile(max_size=1024, mode="w")', 1),
+            ("wrapper-encoded", 'io.TextIOWrapper(buffer, encoding="utf-8")', 0),
+            ("wrapper-no-encoding", "io.TextIOWrapper(buffer)", 1),
+            ("wrapper-pos-encoding", 'TextIOWrapper(buffer, "utf-8")', 0),
+            ("wrapper-dynamic-encoding", "TextIOWrapper(buffer, ENCODING)", 1),
+            ("handler-encoded", 'logging.FileHandler("file", encoding="utf-8")', 0),
+            ("handler-no-encoding", 'logging.FileHandler("file")', 1),
+            ("handler-pos-encoding", 'logging.FileHandler("file", "w", "utf-8")', 0),
+            ("handler-no-encoding", 'logging.FileHandler("file", "w")', 1),
+            ("run-encoded", 'subprocess.run([], text=True, encoding="utf-8")', 0),
+            ("run-no-encoding", "subprocess.run([], text=True)", 1),
+            ("popen-encoded", 'subprocess.Popen([], text=True, encoding="utf-8")', 0),
+            ("popen-no-encoding", "subprocess.Popen([], text=True)", 1),
+            (
+                "check-output-encoded",
+                'subprocess.check_output([], text=True, encoding="utf-8")',
+                0,
+            ),
+            ("check-output-no-encoding", "subprocess.check_output([], text=True)", 1),
+            ("call-encoded", 'subprocess.call([], text=True, encoding="utf-8")', 0),
+            ("call-no-encoding", "subprocess.call([], text=True)", 1),
+            (
+                "check-call-encoded",
+                'subprocess.check_call([], text=True, encoding="utf-8")',
+                0,
+            ),
+            ("check-call-no-encoding", "subprocess.check_call([], text=True)", 1),
+            ("codecs-open-encoded", 'codecs.open("file", encoding="utf-8")', 0),
+            ("codecs-open-no-encoding", 'codecs.open("file")', 1),
+            ("codecs-open-binary", 'codecs.open("file", "rb")', 0),
+            ("codecs-open-no-encoding", 'codecs.open("file", "r")', 1),
+            ("tempfile-mkstemp-binary", "tempfile.mkstemp()", 0),
+            ("tempfile-mkstemp-binary", "tempfile.mkstemp(text=False)", 0),
+            ("tempfile-mkstemp-forbidden-text", "tempfile.mkstemp(text=True)", 1),
+            ("tempfile-mkstemp-dynamic-text", "tempfile.mkstemp(text=TEXT)", 1),
+            ("tempfile-mkstemp-binary", "tempfile.mkstemp(None, None, None, False)", 0),
+            (
+                "tempfile-mkstemp-forbidden-text",
+                "tempfile.mkstemp(None, None, None, True)",
+                1,
+            ),
+            ("tempfile-mkstemp-expanded-options", "tempfile.mkstemp(**options)", 1),
+            ("os-popen-forbidden-api", "os.popen('command')", 1),
+            ("getoutput-forbidden-api", "subprocess.getoutput('command')", 1),
+            (
+                "getstatusoutput-forbidden-api",
+                "subprocess.getstatusoutput('command')",
+                1,
+            ),
+        )
+    ],
+)
+def test_call_rule_table_examples_cover_each_call_kind(
+    snippet: str, expected_count: int
+) -> None:
+    offenders = _scan_source(snippet, "tests/snippet.py")
+    assert len(offenders) == expected_count, offenders
+    if expected_count and snippet.startswith("from builtins import open as file_open"):
+        assert "tests/snippet.py:2" in offenders[0]
 
 
-def test_locale_encoding_is_rejected_for_every_call_kind():
-    for rule in CALL_RULES:
-        if "encoding_index" not in rule:
-            continue
-        examples = [
-            snippet
-            for snippet, expected_count in rule["examples"]
-            if expected_count == 0 and 'encoding="utf-8"' in snippet
-        ]
-        assert examples, rule["name"]
-        for spelling in ("locale", "LoCaLe"):
-            snippet = examples[0].replace('encoding="utf-8"', f'encoding="{spelling}"')
-            offenders = _scan_source(snippet, "tests/locale.py")
-            assert len(offenders) == 1, f"{rule['name']} {snippet!r}: {offenders}"
-
-
-def test_added_api_rules_are_pinned_independently_of_the_rule_table():
-    cases = (
-        ('builtins.open("file")', 1),
-        ('builtins.open("file", "rb")', 0),
-        ('from builtins import open as file_open\nfile_open("file")', 1),
-        ('from builtins import open as file_open\nfile_open("file", "rb")', 0),
-        ('codecs.open("file")', 1),
-        ('codecs.open("file", "rb")', 0),
-        ('codecs.open("file", encoding="utf-8")', 0),
-        ('gzip.open("file")', 0),
-        ('gzip.open("file", "rt")', 1),
-        ('bz2.open("file")', 0),
-        ('bz2.open("file", "rt")', 1),
-        ('lzma.open("file")', 0),
-        ('lzma.open("file", "rt")', 1),
-        ('logging.FileHandler("file", encoding="utf-8")', 0),
-        ('logging.FileHandler("file")', 1),
-        ('logging.FileHandler("file", "w", "utf-8")', 0),
-        ('logging.FileHandler("file", "w")', 1),
-        ("tempfile.mkstemp()", 0),
-        ("tempfile.mkstemp(text=True)", 1),
-    )
-    for snippet, expected_count in cases:
-        offenders = _scan_source(snippet, "tests/added_api.py")
-        assert len(offenders) == expected_count, f"{snippet!r}: {offenders}"
-
-
-def test_alias_resolution_handles_all_import_spellings():
-    examples = (
-        "import subprocess as sp\nsp.run([], text=True)",
-        "from os import fdopen\nfdopen(3, 'w')",
-        "from io import open as text_open\ntext_open('file')",
-        "from builtins import open as file_open\nfile_open('file')",
-        "from tempfile import NamedTemporaryFile as make_temp\nmake_temp('w')",
-        "from subprocess import getoutput as get_output\nget_output('command')",
-    )
-    for snippet in examples:
-        offenders = _scan_source(snippet, "tests/alias_snippet.py")
-        assert len(offenders) == 1, f"alias not resolved for {snippet!r}: {offenders}"
-        assert "tests/alias_snippet.py:2" in offenders[0]
-
-
-def test_positional_mode_is_checked():
+@pytest.mark.parametrize(
+    "spelling", ["locale", "LoCaLe"], ids=["locale", "mixed-case-locale"]
+)
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        pytest.param(snippet, id=behavior)
+        for behavior, snippet in (
+            ("open, builtins.open and io.open", 'open("file", encoding="utf-8")'),
+            ("gzip.open", 'gzip.open("file", "rt", encoding="utf-8")'),
+            ("bz2.open", 'bz2.open("file", "rt", encoding="utf-8")'),
+            ("lzma.open", 'lzma.open("file", "rt", encoding="utf-8")'),
+            ("os.fdopen", 'os.fdopen(3, encoding="utf-8")'),
+            ("Path.open", 'Path("file").open(encoding="utf-8")'),
+            ("Path.read_text", 'Path("file").read_text(encoding="utf-8")'),
+            ("Path.write_text", 'Path("file").write_text("x", encoding="utf-8")'),
+            (
+                "named-temp",
+                'tempfile.NamedTemporaryFile("w", encoding="utf-8")',
+            ),
+            ("tempfile.TemporaryFile", 'tempfile.TemporaryFile("w", encoding="utf-8")'),
+            (
+                "spooled-temp",
+                'tempfile.SpooledTemporaryFile(1024, "w", encoding="utf-8")',
+            ),
+            ("io.TextIOWrapper", 'io.TextIOWrapper(buffer, encoding="utf-8")'),
+            ("logging.FileHandler", 'logging.FileHandler("file", encoding="utf-8")'),
+            (
+                "subprocess",
+                'subprocess.run([], text=True, encoding="utf-8")',
+            ),
+            ("codecs.open", 'codecs.open("file", encoding="utf-8")'),
+        )
+    ],
+)
+def test_locale_encoding_is_rejected_for_every_call_kind(
+    snippet: str, spelling: str
+) -> None:
     offenders = _scan_source(
-        'tempfile.NamedTemporaryFile("w")', "tests/positional_mode.py"
+        snippet.replace('encoding="utf-8"', f'encoding="{spelling}"'), "tests/locale.py"
     )
-    assert len(offenders) == 1
+    assert len(offenders) == 1, offenders
 
 
-def test_fail_closed_for_dynamic_values_and_kwargs():
-    snippets = (
-        ('open("file", mode=MODE, encoding="utf-8")', 1),
-        ('subprocess.run([], text=TEXT, encoding="utf-8")', 1),
-        ('subprocess.run([], universal_newlines=TEXT, encoding="utf-8")', 1),
-        ("subprocess.run([], universal_newlines=True)", 1),
-        ('subprocess.run([], errors="replace")', 1),
-        ("subprocess.run([], text=False)", 0),
-        ("subprocess.run([])", 0),
-        ('open("file", **options)', 1),
-        ('open("file", **options, encoding="utf-8")', 0),
-        ('Path("file").read_text("utf-8", **options)', 1),
-        ('open("file", encoding=None)', 1),
-        ('open("file", encoding=123)', 1),
-        ('open("file", encoding=ENCODING)', 1),
-    )
-    for snippet, expected_count in snippets:
-        offenders = _scan_source(snippet, "tests/fail_closed.py")
-        assert len(offenders) == expected_count, f"{snippet!r}: {offenders}"
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        pytest.param(snippet, id=behavior)
+        for behavior, snippet in (
+            (
+                "module-alias",
+                "import subprocess as sp\nsp.run([], text=True)",
+            ),
+            ("from-import", "from os import fdopen\nfdopen(3, 'w')"),
+            (
+                "from-alias",
+                "from io import open as text_open\ntext_open('file')",
+            ),
+            (
+                "temp-alias",
+                "from tempfile import NamedTemporaryFile as make_temp\nmake_temp('w')",
+            ),
+            (
+                "forbidden-alias",
+                "from subprocess import getoutput as get_output\nget_output('command')",
+            ),
+        )
+    ],
+)
+def test_alias_resolution_handles_all_import_spellings(snippet: str) -> None:
+    offenders = _scan_source(snippet, "tests/alias_snippet.py")
+    assert len(offenders) == 1, offenders
+    assert "tests/alias_snippet.py:2" in offenders[0]
 
 
-def test_receiver_exemptions_do_not_hide_path_open():
+@pytest.mark.parametrize(
+    ("snippet", "expected_count"),
+    [
+        pytest.param(snippet, expected_count, id=behavior)
+        for behavior, snippet, expected_count in (
+            ("dynamic-mode", 'open("file", mode=MODE, encoding="utf-8")', 1),
+            ("dynamic-text", 'subprocess.run([], text=TEXT, encoding="utf-8")', 1),
+            (
+                "dynamic-universal",
+                'subprocess.run([], universal_newlines=TEXT, encoding="utf-8")',
+                1,
+            ),
+            ("universal-no-encoding", "subprocess.run([], universal_newlines=True)", 1),
+            ("errors-no-encoding", 'subprocess.run([], errors="replace")', 1),
+            ("run-binary", "subprocess.run([], text=False)", 0),
+            ("run-binary", "subprocess.run([])", 0),
+            ("kwargs-no-keyword-encoding", 'open("file", **options)', 1),
+            ("kwargs-keyword-encoding", 'open("file", **options, encoding="utf-8")', 0),
+            (
+                "kwargs-no-keyword-encoding",
+                'Path("file").read_text("utf-8", **options)',
+                1,
+            ),
+            ("none-encoding", 'open("file", encoding=None)', 1),
+            ("nonstring-encoding", 'open("file", encoding=123)', 1),
+            ("dynamic-encoding", 'open("file", encoding=ENCODING)', 1),
+        )
+    ],
+)
+def test_fail_closed_for_dynamic_values_and_kwargs(
+    snippet: str, expected_count: int
+) -> None:
+    offenders = _scan_source(snippet, "tests/fail_closed.py")
+    assert len(offenders) == expected_count, offenders
+
+
+def test_receiver_exemptions_do_not_hide_path_open() -> None:
     exempt = """\
 import os
 import tarfile
@@ -651,70 +626,122 @@ webbrowser.open("https://example.test")
     assert len(offenders) == 1
 
 
-def test_archive_members_do_not_look_like_path_open_modes():
-    cases = (
-        ('zipfile.ZipFile("archive.zip").open("member.txt")', 0),
-        ('z.open(name="member.txt")', 0),
-        ('z.open("m")', 0),
-        ('z.open("rr")', 0),
-        ('Path("file").open("r")', 1),
-    )
-    for snippet, expected_count in cases:
-        offenders = _scan_source(snippet, "tests/archive_members.py")
-        assert len(offenders) == expected_count, f"{snippet!r}: {offenders}"
+@pytest.mark.parametrize(
+    ("snippet", "expected_count"),
+    [
+        pytest.param(snippet, expected_count, id=behavior)
+        for behavior, snippet, expected_count in (
+            ("archive-member", 'zipfile.ZipFile("archive.zip").open("member.txt")', 0),
+            ("keyword-member", 'z.open(name="member.txt")', 0),
+            ("nonmode-member", 'z.open("m")', 0),
+            ("invalid-mode-member", 'z.open("rr")', 0),
+            ("path-text", 'Path("file").open("r")', 1),
+        )
+    ],
+)
+def test_archive_members_do_not_look_like_path_open_modes(
+    snippet: str, expected_count: int
+) -> None:
+    offenders = _scan_source(snippet, "tests/archive_members.py")
+    assert len(offenders) == expected_count, offenders
 
 
-def test_guarded_star_imports_fail_closed():
-    modules = (
-        "subprocess",
-        "io",
-        "os",
-        "tempfile",
-        "codecs",
-        "pathlib",
-        "builtins",
-        "gzip",
-        "bz2",
-        "lzma",
-        "logging",
-    )
-    for module in modules:
-        snippet = f"from {module} import *"
-        offenders = _scan_source(snippet, "tests/star_import.py")
-        assert len(offenders) == 1, f"{snippet!r}: {offenders}"
-        assert "star import hides guarded text I/O calls" in offenders[0]
+@pytest.mark.parametrize(
+    "module",
+    [
+        pytest.param(module, id=behavior)
+        for behavior, module in (
+            ("star-import", "subprocess"),
+            ("io-star-import", "io"),
+            ("os-star-import", "os"),
+            ("tempfile-star-import", "tempfile"),
+            ("codecs-star-import", "codecs"),
+            ("pathlib-star-import", "pathlib"),
+            ("builtins-star-import", "builtins"),
+            ("gzip-star-import", "gzip"),
+            ("bz2-star-import", "bz2"),
+            ("lzma-star-import", "lzma"),
+            ("logging-star-import", "logging"),
+        )
+    ],
+)
+def test_guarded_star_imports_fail_closed(module: str) -> None:
+    offenders = _scan_source(f"from {module} import *", "tests/star_import.py")
+    assert len(offenders) == 1, offenders
+    assert "star import hides guarded text I/O calls" in offenders[0]
 
 
-def test_syntax_error_reports_the_scanned_path():
+def test_syntax_error_reports_the_scanned_path() -> None:
     offenders = _scan_source("def broken(:\n    pass\n", "tests/broken.py")
     assert len(offenders) == 1
     assert offenders[0].startswith("tests/broken.py:1 SyntaxError:")
 
 
-def test_scripts_writes_require_literal_empty_newline():
-    cases = (
-        ('open("file", "w", encoding="utf-8")', 1),
-        ('open("file", "w", encoding="utf-8", newline="")', 0),
-        ('open("file", "w", encoding="utf-8", newline="\\n")', 1),
-        ('Path("file").write_text("x", encoding="utf-8")', 1),
-        (
-            'Path("file").write_text("x", encoding="utf-8", newline="")',
-            0,
-        ),
-        ('open("file", "r+", encoding="utf-8")', 1),
-    )
-    for snippet, expected_count in cases:
-        offenders = _scan_source(snippet, "scripts/snippet.py")
-        assert len(offenders) == expected_count, f"{snippet!r}: {offenders}"
-    assert _scan_source('open("file", "w", encoding="utf-8")', "tests/snippet.py") == []
-    tools_path = "workflows/test/tools/record_parity.py"
-    offenders = _scan_source(
-        'Path("expected.json").write_text("x", encoding="utf-8")', tools_path
-    )
-    assert len(offenders) == 1
-    assert tools_path in offenders[0]
+@pytest.mark.parametrize(
+    ("snippet", "expected_count", "path"),
+    [
+        pytest.param(snippet, expected_count, path, id=behavior)
+        for behavior, snippet, expected_count, path in (
+            (
+                "write-no-newline",
+                'open("file", "w", encoding="utf-8")',
+                1,
+                "scripts/snippet.py",
+            ),
+            (
+                "write-literal-empty-newline",
+                'open("file", "w", encoding="utf-8", newline="")',
+                0,
+                "scripts/snippet.py",
+            ),
+            (
+                "write-nonempty-newline",
+                'open("file", "w", encoding="utf-8", newline="\\n")',
+                1,
+                "scripts/snippet.py",
+            ),
+            (
+                "path-write-no-newline",
+                'Path("file").write_text("x", encoding="utf-8")',
+                1,
+                "scripts/snippet.py",
+            ),
+            (
+                "path-write-empty-newline",
+                'Path("file").write_text("x", encoding="utf-8", newline="")',
+                0,
+                "scripts/snippet.py",
+            ),
+            (
+                "read-write-no-newline",
+                'open("file", "r+", encoding="utf-8")',
+                1,
+                "scripts/snippet.py",
+            ),
+            (
+                "tests-write-exempt",
+                'open("file", "w", encoding="utf-8")',
+                0,
+                "tests/snippet.py",
+            ),
+            (
+                "workflow-tool-write-no-newline",
+                'Path("expected.json").write_text("x", encoding="utf-8")',
+                1,
+                "workflows/test/tools/record_parity.py",
+            ),
+        )
+    ],
+)
+def test_scripts_writes_require_literal_empty_newline(
+    snippet: str, expected_count: int, path: str
+) -> None:
+    offenders = _scan_source(snippet, path)
+    assert len(offenders) == expected_count, offenders
+    if path == "workflows/test/tools/record_parity.py":
+        assert "workflows/test/tools/record_parity.py" in offenders[0]
 
 
-def test_gitattributes_pins_lf_for_text_files():
+def test_gitattributes_pins_lf_for_text_files() -> None:
     attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
     assert "* text=auto eol=lf" in attributes.splitlines()
