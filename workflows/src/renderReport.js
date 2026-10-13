@@ -1,7 +1,13 @@
+// Line fields use outbound containment, and repository spans preserve copyable normalized text inside dynamic delimiters.
+// Prose keeps local Markdown, while evidence and diagnostic receipts keep their own fence grammars.
 import { rankFindings } from './applyChallenges.js';
-import { PERMALINK_TEMPLATES, PR_IDENTITY_FIELDS, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES, DIMENSIONS, AGENTS, AGENT_LABELS, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, conditionalSchemaActive, resolvePolicy, SEVERITY_ORDER, REPORT_EXCLUDED_FIELDS, REPORT_FOLD_LIMITS } from './registry.js';
+import { PERMALINK_TEMPLATES, PR_IDENTITY_FIELDS, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES } from './registry.js';
+import { DIMENSIONS, AGENTS, AGENT_LABELS, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI } from './registry.js';
+import { RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, conditionalSchemaActive, resolvePolicy } from './registry.js';
+import { SEVERITY_ORDER, REPORT_EXCLUDED_FIELDS, REPORT_FOLD_LIMITS } from './registry.js';
 import { KNOB_REGISTRY } from './knobs.js';
-import { reportAsText, foldInline, foldProse, foldEvidence, oneLine, outboundBase, outboundVisible, outboundDefinitions, prepareSummaryTitle, outboundTildeRuns } from './outboundText.js';
+import { reportAsText, foldInline, foldProse, foldEvidence, oneLine, outboundBase, prepareLine } from './outboundText.js';
+import { prepareSummaryTitle, preparedCodeSpan, outboundTildeRuns } from './outboundText.js';
 
 // Findings with a missing/unknown `dimension` are silently excluded from every row's
 // count: the discovery contracts pin `dimension` to one of the nine registry names, so
@@ -263,8 +269,10 @@ function fenceFor(text) {
   return '`'.repeat(Math.max(3, longest + 1));
 }
 
-function inline(value) {
-  return foldInline(oneLine(value));
+function inline(value, prefixLimit) {
+  let text = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' ')));
+  if (prefixLimit !== undefined) text = text.slice(0, prefixLimit);
+  return prepareLine(foldInline(text), true);
 }
 
 // Model prose is deliberately multiline, but a model-controlled line must not become a
@@ -296,12 +304,9 @@ function foldedProse(value, limit = REPORT_FOLD_LIMITS.proseChars) {
   return safeProse(foldProse(value, limit));
 }
 
-// Table cells are a separate primitive from receipt lines: methodology details are prose
-// assembled by the pipeline, but a replayed detector error or provider value can still
-// contain a newline or pipe. Keep each row physically one line and keep Markdown's column
-// boundary intact.
-export function tableCell(value) {
-  return oneLine(value).replaceAll('|', '\\|');
+// Replayed cell components can carry Markdown boundaries, unlike the diagnostic receipt grammar.
+export function tableCell(value, codeOwned = false) {
+  return reportAsText(codeOwned ? value : inline(value)).replaceAll('|', '\\|');
 }
 
 function isPresent(value) {
@@ -317,14 +322,25 @@ function normalizeFindings(value) {
   return coerceReportFindings(value);
 }
 
-// Collect protected evidence offsets while composing, then neutralize comment openers
-// in one final pass everywhere else. Evidence must preserve source bytes verbatim.
+// Evidence and code-owned spans preserve literal bytes; neutralize comment openers everywhere else.
 function reportBuilder() {
   let text = '';
-  const evidenceRanges = [];
+  const protectedRanges = [];
   const add = (line = '') => {
     if (text.length) text += '\n';
     text += reportAsText(line);
+  };
+  const addSpans = (line, spans) => {
+    const start = text.length + (text.length ? 1 : 0);
+    add(line);
+    let cursor = 0;
+    for (const span of spans) {
+      if (!span) continue;
+      const index = line.indexOf(span, cursor);
+      if (index < 0) continue;
+      protectedRanges.push([start + index, start + index + span.length]);
+      cursor = index + span.length;
+    }
   };
   const addEvidence = (evidence) => {
     const folded = foldEvidence(evidence);
@@ -333,7 +349,7 @@ function reportBuilder() {
     add(fence);
     add(folded);
     add(fence);
-    evidenceRanges.push([start, text.length]);
+    protectedRanges.push([start, text.length]);
   };
   const finish = () => {
     let out = '';
@@ -342,24 +358,24 @@ function reportBuilder() {
       const index = text.indexOf('<!--', cursor);
       if (index < 0) break;
       out += text.slice(cursor, index);
-      const protectedEvidence = evidenceRanges.some(([start, end]) => index >= start && index < end);
-      out += protectedEvidence ? '<!--' : '&lt;!--';
+      const protectedLiteral = protectedRanges.some(([start, end]) => index >= start && index < end);
+      out += protectedLiteral ? '<!--' : '&lt;!--';
       cursor = index + 4;
     }
     return out + text.slice(cursor);
   };
-  return { add, addEvidence, finish };
+  return { add, addSpans, addEvidence, finish };
 }
 
 function location(finding) {
   if (!isPresent(finding.file)) return '';
-  const file = inline(finding.file);
-  if (!isPresent(finding.line_start)) return file;
+  const file = oneLine(finding.file);
+  if (!isPresent(finding.line_start)) return preparedCodeSpan(file);
   const start = oneLine(finding.line_start);
   if (!isPresent(finding.line_end) || String(finding.line_end) === String(finding.line_start)) {
-    return `${file}:${start}`;
+    return preparedCodeSpan(`${file}:${start}`);
   }
-  return `${file}:${start}-${oneLine(finding.line_end)}`;
+  return preparedCodeSpan(`${file}:${start}-${oneLine(finding.line_end)}`);
 }
 
 function quotedSummaryLocation(finding) {
@@ -373,13 +389,7 @@ function quotedSummaryLocation(finding) {
       display += `-${oneLine(outboundBase(finding.line_end))}`;
     }
   }
-  display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
-  display = outboundDefinitions(display, true);
-  let longest = 0;
-  for (const match of display.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
-  const delimiter = '`'.repeat(longest + 1);
-  if (/^[` ]|[` ]$/.test(display)) display = ` ${display} `;
-  return `${delimiter}${display}${delimiter}`;
+  return preparedCodeSpan(display, true);
 }
 
 export function encodeUrlSegment(segment) {
@@ -461,7 +471,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   const bullets = [];
   const where = location(finding);
   const url = locationUrl(finding, permalinks);
-  if (where) bullets.push(url ? `- **Location:** [\`${where}\`](${url})` : `- **Location:** \`${where}\``);
+  if (where) bullets.push(url ? `- **Location:** [${where}](${url})` : `- **Location:** ${where}`);
   const classification = [];
   if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
   if (isPresent(finding.confidence)) classification.push(`**Confidence:** ${inline(finding.confidence)}%`);
@@ -479,7 +489,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   if (finding.challenge_contested === true) {
     bullets.push('- **Contested:** the challenger could not confirm the cited location');
   }
-  if (bullets.length) blocks.push(() => bullets.forEach(builder.add));
+  if (bullets.length) blocks.push(() => bullets.forEach((line) => builder.addSpans(line, [where])));
 
   if (isPresent(finding.description)) blocks.push(() => builder.add(foldedProse(finding.description)));
   if (isPresent(finding.evidence)) {
@@ -524,11 +534,11 @@ function renderFinding(builder, finding, unverified, permalinks) {
   if (Array.isArray(finding.corroborations) && finding.corroborations.length) {
     blocks.push(() => {
       for (const corroboration of finding.corroborations) {
-        const agent = inline(corroboration.agent);
-        const dimension = inline(corroboration.dimension);
+        const agent = preparedCodeSpan(corroboration.agent);
+        const dimension = preparedCodeSpan(corroboration.dimension);
         const confidence = inline(corroboration.confidence);
         const title = inline(corroboration.title);
-        builder.add(`- **Corroborated by** \`${agent}\` (\`${dimension}\`, confidence ${confidence}) — ${title}`);
+        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, confidence ${confidence}) — ${title}`, [agent, dimension]);
         if (isPresent(corroboration.description)) {
           builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
@@ -672,7 +682,9 @@ export function summaryBlock(builder, input) {
     const url = locationUrl(finding, permalinks);
     const link = url ? `[${where}](${url})` : where;
     const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? ' (improvement suggestion)' : '';
-    const bullet = outboundTildeRuns(`- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`);
+    const bullet = outboundTildeRuns(
+      `- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`,
+    );
     const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
     if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
       cutForLength = true;
@@ -730,7 +742,7 @@ function countSummary(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 'none';
   const entries = Object.entries(value).filter(([key, item]) => key !== 'replay_path_rejected' || item > 0).map(([key, item]) => {
     const count = Array.isArray(item) ? item.length : item;
-    return `${key}=${tableCell(count)}`;
+    return `${inline(key)}=${inline(count)}`;
   });
   return entries.length ? entries.join(', ') : 'none';
 }
@@ -739,11 +751,17 @@ function countSummary(value) {
 // precedence in one table: an unresolvable SHA and rewritten history both imply no advanced
 // head, but they are materially different operator outcomes.
 export const REVIEW_SCOPE_FALLBACK_RULES = [
-  { when: (detector) => typeof detector.error === 'string' && detector.error !== '', reason: (detector) => `detection failed: ${oneLine(detector.error).slice(0, 120)}` },
+  { when: (detector) => typeof detector.error === 'string' && detector.error !== '',
+    reason: (detector) => `detection failed: ${inline(detector.error, 120)}` },
   { when: (detector) => detector.previously_reviewed === false, reason: () => 'no prior review recorded' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === false, reason: () => 'recorded SHA not resolvable' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true && detector.sha_is_ancestor === true && detector.head_advanced === false, reason: () => 'head has not advanced' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true && detector.sha_is_ancestor === false, reason: () => 'history rewritten (recorded SHA is not an ancestor)' },
+  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === false,
+    reason: () => 'recorded SHA not resolvable' },
+  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true
+      && detector.sha_is_ancestor === true && detector.head_advanced === false,
+    reason: () => 'head has not advanced' },
+  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true
+      && detector.sha_is_ancestor === false,
+    reason: () => 'history rewritten (recorded SHA is not an ancestor)' },
 ];
 
 export function reviewScopeFallbackReason(scope) {
@@ -766,12 +784,12 @@ function methodologyRows(input, rawFindings) {
   const gateway = policy.gateway === true;
   const conditional = conditionalSchemaActive({ ...policy, provider });
   const rows = [];
-  const version = receiptSafe(input.pipelineVersion);
+  const version = inline(input.pipelineVersion) || 'unknown';
   rows.push(['Version', `${version} (plugin and pipeline)`]);
-  rows.push(['Provider', `provider=${provider}; gateway=${gateway}; conditional schema active=${conditional}`]);
+  rows.push(['Provider', `provider=${inline(provider)}; gateway=${gateway}; conditional schema active=${conditional}`]);
 
   if (policy.subagentModel) {
-    rows.push(['Subagent model override', `EVERY stage uses ${receiptSafe(policy.subagentModel)}`]);
+    rows.push(['Subagent model override', `EVERY stage uses ${inline(policy.subagentModel)}`]);
   }
   const stageTypes = [
     'change-summarizer', ...AGENTS.map((agentType) => agentType.split(':').pop()),
@@ -782,18 +800,18 @@ function methodologyRows(input, rawFindings) {
       subagentModelEnv: policy.subagentModel,
       provider,
     }).model;
-    return `${agentType}=${model}`;
+    return `${agentType}=${inline(model)}`;
   }).join(', ');
   rows.push(['Per-stage models', models]);
 
   const tier = input.deliveryTier ?? 'all';
   const cap = typeof input.deliveryCap === 'number' ? String(input.deliveryCap) : 'uncapped';
-  rows.push(['Delivery selection', `selection policy: tier=${tier}, cap=${cap}`]);
+  rows.push(['Delivery selection', `selection policy: tier=${inline(tier)}, cap=${inline(cap)}`]);
 
   const scope = input.reviewScope && typeof input.reviewScope === 'object' ? input.reviewScope : { kind: 'full' };
   if (scope.kind === 'incremental') {
-    const commits = scope.commits === null || scope.commits === undefined ? 'commits unknown' : `${scope.commits} commits`;
-    rows.push(['Review scope', `Incremental since ${scope.since || 'unknown'} (${commits})`]);
+    const commits = scope.commits === null || scope.commits === undefined ? 'commits unknown' : `${inline(scope.commits)} commits`;
+    rows.push(['Review scope', `Incremental since ${inline(scope.since || 'unknown')} (${commits})`]);
   } else {
     const reason = reviewScopeFallbackReason(scope);
     rows.push(['Review scope', reason ? `Full (incremental requested; ${reason})` : 'Full']);
@@ -802,14 +820,17 @@ function methodologyRows(input, rawFindings) {
   const stats = input.stats && typeof input.stats === 'object' ? input.stats : {};
   const merge = stats.merge && typeof stats.merge === 'object' ? stats.merge : {};
   const channels = merge.findings_per_channel && typeof merge.findings_per_channel === 'object'
-    ? `ndjson=${merge.findings_per_channel.ndjson ?? 0}, text_fallback=${merge.findings_per_channel.text_fallback ?? 0}`
+    ? `ndjson=${inline(merge.findings_per_channel.ndjson ?? 0)}, text_fallback=${inline(merge.findings_per_channel.text_fallback ?? 0)}`
     : 'ndjson=0, text_fallback=0';
-  const mergeCounts = `per-channel: ${channels}; duplicates resolved=${merge.duplicates_resolved ?? 0}; dropped-no-id=${merge.dropped_no_id ?? 0}; truncation warnings=${merge.truncation_warnings ?? 0}; validation warnings=${merge.validation_warnings ?? 0}`;
+  const mergeCounts = `per-channel: ${channels}; duplicates resolved=${inline(merge.duplicates_resolved ?? 0)}; `
+    + `dropped-no-id=${inline(merge.dropped_no_id ?? 0)}; truncation warnings=${inline(merge.truncation_warnings ?? 0)}; `
+    + `validation warnings=${inline(merge.validation_warnings ?? 0)}`;
   const pathCounts = Object.entries(stats.pathNormalization || {})
-    .map(([phase, counts]) => `; ${tableCell(phase)} paths: ${countSummary(counts)}`).join('');
+    .map(([phase, counts]) => `; ${inline(phase)} paths: ${countSummary(counts)}`).join('');
   rows.push([
     'Findings pipeline',
-    `discovered=${stats.discovered ?? rawFindings.length}; validate: ${countSummary(stats.validate)}; filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}${pathCounts}`,
+    `discovered=${inline(stats.discovered ?? rawFindings.length)}; validate: ${countSummary(stats.validate)}; `
+      + `filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}${pathCounts}`,
   ]);
 
   const gapCount = Number.isInteger(input.gapCount) ? input.gapCount : 0;
@@ -834,10 +855,12 @@ function renderMethodology(builder, input, rawFindings) {
   builder.add('| Aspect | Details |');
   builder.add('|--------|---------|');
   for (const [aspect, details] of methodologyRows(input, rawFindings)) {
-    builder.add(`| ${tableCell(aspect)} | ${tableCell(details)} |`);
+    // Component containment keeps assembled code-owned cells readable without truncating pipeline facts.
+    builder.add(`| ${tableCell(aspect, true)} | ${tableCell(details, true)} |`);
   }
   builder.add();
-  builder.add('This section covers the pipeline up to the report stage; persistence, delivery, and duration are reported by the orchestrator at delivery.');
+  builder.add('This section covers the pipeline up to the report stage; persistence, delivery, and duration are reported '
+    + 'by the orchestrator at delivery.');
 }
 
 // Complete report.md with no trailing newline. Pure and total for absent/empty input:
@@ -860,30 +883,39 @@ export function renderReport(input) {
       ? templateValue(PERMALINK_TEMPLATES[identity.platform].ref, { number: oneLine(identity.pr_number) })
       : `#${oneLine(identity.pr_number)}`}`
     : null;
+  const referenceSpan = reference ? preparedCodeSpan(reference) : '';
 
   let subject = 'local changes';
+  const subjectSpans = [];
   if (identity && typeof identity.title === 'string' && identity.title.trim()) {
     subject = inline(identity.title);
   } else if (reference) {
-    subject = `\`${reference}\``;
+    subject = referenceSpan;
+    subjectSpans.push(referenceSpan);
   }
 
   const identityParts = ['Reviewed'];
-  if (isPresent(inp.headShaShort)) identityParts.push(`head \`${oneLine(inp.headShaShort)}\``);
-  if (isPresent(inp.generatedAt)) identityParts.push(`at ${oneLine(inp.generatedAt)}`);
+  const identitySpans = [];
+  if (isPresent(inp.headShaShort)) {
+    const head = preparedCodeSpan(inp.headShaShort);
+    identityParts.push(`head ${head}`);
+    identitySpans.push(head);
+  }
+  if (isPresent(inp.generatedAt)) identityParts.push(`at ${inline(inp.generatedAt)}`);
   if (permalinks.repositoryBase && identityCheck(identity, 'pr_number')) {
     const refUrl = templateValue(permalinks.template.refUrl, {
       ...permalinks.values,
       number: String(identity.pr_number),
     });
-    identityParts.push(`for [\`${reference}\`](${refUrl})`);
+    identityParts.push(`for [${referenceSpan}](${refUrl})`);
+    identitySpans.push(referenceSpan);
   }
   identityParts.push(`by ${BRAND_NAME}.`);
 
   const builder = reportBuilder();
-  builder.add(`# ${BRAND_MARK} ${BRAND_NAME}: ${subject}`);
+  builder.addSpans(`# ${BRAND_MARK} ${BRAND_NAME}: ${subject}`, subjectSpans);
   builder.add();
-  builder.add(identityParts.join(' '));
+  builder.addSpans(identityParts.join(' '), identitySpans);
   builder.add();
   builder.add('## Summary');
   builder.add();
@@ -910,7 +942,8 @@ export function renderReport(input) {
     builder.add();
     builder.add('## Unverified / pipeline-degraded findings');
     builder.add();
-    builder.add('These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. They are not confirmed findings.');
+    builder.add('These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. '
+      + 'They are not confirmed findings.');
     renderSeverityBuckets(builder, unverifiedView, true, permalinks);
   }
 

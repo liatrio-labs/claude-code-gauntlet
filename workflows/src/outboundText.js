@@ -129,7 +129,8 @@ export function oneLine(value) {
   return reportAsText(value).replace(/[\r\n]+/g, ' ').replace(/ +/g, ' ').trim();
 }
 
-const OUTBOUND_INVISIBLES = /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/;
+const OUTBOUND_INVISIBLES =
+  /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/;
 
 const OUTBOUND_NAMED_ENTITY_PREFIXES = new Set(Object.keys(OUTBOUND_NAMED_ENTITIES).flatMap((name) => (
   Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
@@ -385,6 +386,19 @@ export function prepareLine(value, forceColon = false) {
 
 export function prepareSummaryTitle(value) {
   return prepareLine(foldInline(oneLine(outboundBase(value))), true);
+}
+
+export function preparedCodeSpan(value, substituteVisible = false) {
+  let display = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' ')));
+  if (substituteVisible) {
+    display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
+    display = outboundDefinitions(display, true);
+  }
+  let longest = 0;
+  for (const match of display.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
+  const delimiter = '`'.repeat(longest + 1);
+  if (/^[` ]|[` ]$/.test(display)) display = ` ${display} `;
+  return `${delimiter}${display}${delimiter}`;
 }
 
 export function outboundTildeRuns(line) {

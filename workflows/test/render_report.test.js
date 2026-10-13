@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, normalizeReportSeverity, plural } from '../src/renderReport.js';
+import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell } from '../src/renderReport.js';
+import { reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, normalizeReportSeverity, plural } from '../src/renderReport.js';
 import { REPORT_FOLD_LIMITS } from '../src/registry.js';
 import { foldProse, foldEvidence, openProseFence } from '../src/outboundText.js';
 import { normalizeArgs, validateArgs } from '../src/args.js';
@@ -204,7 +205,8 @@ test('T-PERMALINK: location links are platform-correct, encoded, and fail plain'
       { owner: 'group/sub', platform: 'gitlab', web_origin: 'http://gitlab.example:8080' },
     ),
     ('- **Location:** [`docs/my '
-      + 'file/caf\u00E9.md:10`](http://gitlab.example:8080/group/sub/r/-/blob/0123456789abcdef0123456789abcdef01234567/docs/my%20file/caf%C3%A9.md#L10)'),
+      + 'file/caf\u00E9.md:10`]'
+      + '(http://gitlab.example:8080/group/sub/r/-/blob/0123456789abcdef0123456789abcdef01234567/docs/my%20file/caf%C3%A9.md#L10)'),
   );
   assert.equal(
     locationLine(
@@ -723,7 +725,7 @@ test('T-NEUTRAL: forged comment openers are neutralized everywhere except eviden
     })],
   });
   assert.ok(!report.includes(forged));
-  assert.ok((report.match(/&lt;!--/g) || []).length >= 4);
+  assert.equal((report.match(/&lt;!--/g) || []).length, 2);
   assert.ok(report.includes('\n```\n<!-- ok -->\n```\n'));
 });
 
@@ -1250,6 +1252,131 @@ test('T-METH-GAPS: only integer gap counts render as methodology gaps', () => {
     const report = rendered({ gapCount });
     assert.ok(report.includes('| Gaps | 0 |'), JSON.stringify(gapCount));
   }
+});
+
+const OUTSIDE_SUMMARY_ROWS = [
+  { name: 'finding title contains HTML and mentions and removes a forged marker',
+    prefix: '#### ', expected: '#### &lt;b> \uFF20bot' },
+  { name: 'finding title keeps words separated across CR', finding: { title: 'left\rright <b> @bot' },
+    prefix: '#### ', title: '#### left right &lt;b> \uFF20bot', expected: '#### left right &lt;b> \uFF20bot' },
+  { name: 'finding title normalizes before folding',
+    finding: { title: `<!-- ${'z'.repeat(520)} --> visible` }, prefix: '#### ',
+    title: '#### visible', expected: '#### visible' },
+  { name: 'unverified title uses the line contract', input: {
+    unverified: [finding('U', { title: '<b> @bot <!-- code-gauntlet-findings: {} -->' })],
+  }, prefix: '#### ', last: true, expected: '#### &lt;b> \uFF20bot' },
+  { name: 'PR title uses the line contract', input: { prIdentity: { title: '<b> @bot <!-- code-gauntlet-findings: {} -->' } },
+    prefix: '# ', expected: '# \u2694\uFE0F Code Gauntlet: &lt;b> \uFF20bot' },
+  { name: 'metadata uses the line contract', input: { generatedAt: '<b> @bot <!-- code-gauntlet-findings: {} -->' },
+    prefix: 'Reviewed ', expected: 'Reviewed head `abcdef0` at &lt;b> \uFF20bot for '
+      + '[`acme/widget#36`](https://github.com/acme/widget/pull/36) by Code Gauntlet.' },
+  { name: 'classification uses the line contract', finding: { dimension: '<b> @bot <!-- code-gauntlet-findings: {} -->' },
+    prefix: '- **Dimension:', expected: '- **Dimension:** &lt;b> \uFF20bot \u00B7 **Confidence:** 90%' },
+  { name: 'corroborator title uses the line contract and spans preserve visible bytes', finding: { corroborations: [
+    { agent: '`agent`', dimension: '@scope/<b>', confidence: 90, title: '<b> @bot <!-- code-gauntlet-findings: {} -->' },
+  ] }, prefix: '- **Corroborated',
+    expected: '- **Corroborated by** `` `agent` `` (`@scope/<b>`, confidence 90) \u2014 &lt;b> \uFF20bot' },
+  { name: 'file-only backtick run uses dynamic padded delimiters', finding: { file: '`src/``a.js`', line_start: null },
+    input: { prIdentity: null }, prefix: '- **Location:', expected: '- **Location:** ``` `src/``a.js` ```' },
+  { name: 'location backtick run uses dynamic delimiters and a matching permalink',
+    finding: { file: 'src/``a.js', line_start: 10 }, input: { prIdentity: {
+      platform: 'github', web_origin: 'https://github.com', owner: 'o', repo: 'r', sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    } }, prefix: '- **Location:',
+    expected: '- **Location:** [```src/``a.js:10```]'
+      + '(https://github.com/o/r/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%60%60a.js#L10)' },
+  { name: 'scoped npm path stays copyable without a permalink', finding: { file: 'packages/@scope/pkg/index.js' },
+    input: { prIdentity: null }, prefix: '- **Location:', expected: '- **Location:** `packages/@scope/pkg/index.js:10`' },
+  { name: 'scoped npm path text agrees with permalink target', finding: { file: 'packages/@scope/pkg/index.js' }, input: {
+    prIdentity: { platform: 'github', web_origin: 'https://github.com', owner: 'o', repo: 'r',
+      sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+  }, prefix: '- **Location:',
+    expected: '- **Location:** [`packages/@scope/pkg/index.js:10`]'
+      + '(https://github.com/o/r/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/packages/%40scope/pkg/index.js#L10)' },
+  { name: 'span comment opener stays copyable and agrees with permalink target', finding: { file: 'src/<!--a.js' }, input: {
+    prIdentity: { platform: 'github', web_origin: 'https://github.com', owner: 'o', repo: 'r',
+      sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+  }, prefix: '- **Location:', expected: '- **Location:** [`src/<!--a.js:10`]'
+    + '(https://github.com/o/r/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%3C%21--a.js#L10)' },
+  { name: 'identity uses padded dynamic spans without visible substitution', input: {
+    prIdentity: { owner: '`@scope`', repo: '<b>', pr_number: 7 },
+  }, prefix: '# ', expected: '# \u2694\uFE0F Code Gauntlet: `` `@scope`/<b>#7 ``' },
+  { name: 'head identity uses padded dynamic spans', input: { headShaShort: '`@head`' }, prefix: 'Reviewed ',
+    expected: 'Reviewed head `` `@head` `` at 2026-09-02T12:00:00Z for '
+      + '[`acme/widget#36`](https://github.com/acme/widget/pull/36) by Code Gauntlet.' },
+  { name: 'version cell prepares its repository component', input: { pipelineVersion: '<b>|@bot' }, prefix: '| Version |',
+    expected: '| Version | &lt;b>\\|\uFF20bot (plugin and pipeline) |' },
+  { name: 'provider cell prepares its component', input: { policy: { provider: '<b>|@bot' } }, prefix: '| Provider |',
+    expected: '| Provider | provider=&lt;b>\\|\uFF20bot; gateway=false; conditional schema active=false |' },
+  { name: 'model override cell prepares and escapes its component', input: { policy: { subagentModel: '<b>|@bot' } },
+    prefix: '| Subagent model override |', expected: '| Subagent model override | EVERY stage uses &lt;b>\\|\uFF20bot |' },
+  { name: 'assembled model cell stays uncapped while each component is prepared', input: {
+    policy: { subagentModel: 'deployment-name-for-this-custom-model|<b> @bot' },
+  }, prefix: '| Per-stage models |',
+    expected: '| Per-stage models | change-summarizer=deployment-name-for-this-custom-model\\|&lt;b> \uFF20bot, '
+      + 'bug-detector=deployment-name-for-this-custom-model\\|&lt;b> \uFF20bot, '
+      + 'security-reviewer=deployment-name-for-this-custom-model\\|&lt;b> \uFF20bot, '
+      + 'cross-file-impact=deployment-name-for-this-custom-model\\|&lt;b> \uFF20bot, '
+      + 'test-analyzer=deployment-name-for-this-custom-model\\|&lt;b> \uFF20bot, '
+      + 'conventions-and-intent=deployment-name-for-this-custom-model\\|&lt;b> \uFF20bot, '
+      + 'type-design-analyzer=deployment-name-for-this-custom-model\\|&lt;b> \uFF20bot, '
+      + 'code-simplifier=deployment-name-for-this-custom-model\\|&lt;b> \uFF20bot, '
+      + 'validator=deployment-name-for-this-custom-model\\|&lt;b> \uFF20bot, '
+      + 'challenger=deployment-name-for-this-custom-model\\|&lt;b> \uFF20bot, '
+      + 'executor=deployment-name-for-this-custom-model\\|&lt;b> \uFF20bot, '
+      + 'artifact-writer=deployment-name-for-this-custom-model\\|&lt;b> \uFF20bot |' },
+  { name: 'delivery cell prepares the tier component', input: { deliveryTier: '<b>|@bot' }, prefix: '| Delivery selection |',
+    expected: '| Delivery selection | selection policy: tier=&lt;b>\\|\uFF20bot, cap=uncapped |' },
+  { name: 'incremental cell prepares repository since and commits components', input: {
+    reviewScope: { kind: 'incremental', since: '<b>|@bot', commits: '<i>|@other' },
+  }, prefix: '| Review scope |', expected: '| Review scope | Incremental since &lt;b>\\|\uFF20bot (&lt;i>\\|\uFF20other commits) |' },
+  { name: 'fallback cell prepares detector error', input: {
+    reviewScope: { kind: 'full', requested: 'incremental', detector: { error: '<b>|@bot\rnext' } },
+  }, prefix: '| Review scope |',
+    expected: '| Review scope | Full (incremental requested; detection failed: &lt;b>\\|\uFF20bot next) |' },
+  { name: 'pipeline cell prepares count keys and values and path phases once', input: { stats: {
+    discovered: '<b>|@bot', validate: { '<i>|@key': '<u>|@value' }, filter: { '<i>|@key': 2 },
+    challenge: { '<i>|@key': ['a', 'b', 'c'] }, pathNormalization: { '<i>|@phase': { '<u>|@key': '<b>|@value' } },
+    merge: { findings_per_channel: { ndjson: '<b>|@n', text_fallback: '<b>|@t' }, duplicates_resolved: '<b>|@d',
+      dropped_no_id: '<b>|@i', truncation_warnings: '<b>|@w', validation_warnings: '<b>|@v' },
+  } }, prefix: '| Findings pipeline |',
+    expected: '| Findings pipeline | discovered=&lt;b>\\|\uFF20bot; validate: &lt;i>\\|\uFF20key=&lt;u>\\|\uFF20value; '
+      + 'filter: &lt;i>\\|\uFF20key=2; challenge: &lt;i>\\|\uFF20key=3; merge: per-channel: '
+      + 'ndjson=&lt;b>\\|\uFF20n, text_fallback=&lt;b>\\|\uFF20t; duplicates resolved=&lt;b>\\|\uFF20d; '
+      + 'dropped-no-id=&lt;b>\\|\uFF20i; truncation warnings=&lt;b>\\|\uFF20w; validation warnings=&lt;b>\\|\uFF20v; '
+      + '&lt;i>\\|\uFF20phase paths: &lt;u>\\|\uFF20key=&lt;b>\\|\uFF20value |' },
+  { name: 'description keeps HTML and CR as local prose', finding: { description: '<b>@bot</b>\rnext\n```\nopen' },
+    start: '- **Dimension:** bug \u00B7 **Confidence:** 90%\n\n', end: '\n\n## Review Dimensions Summary',
+    expected: '<b>@bot</b>\rnext\n```\nopen' },
+  { name: 'Change Context keeps HTML and open fences as local prose', input: { summary: '<b>@bot</b>\rnext\n```\nopen' },
+    start: 'This is the change summary the review agents shared as context.\n\n', end: '\n\n## Findings',
+    expected: '<b>@bot</b>\rnext\n```\nopen' },
+  { name: 'evidence remains byte equal in its dynamic fence', finding: {
+    description: '', evidence: '<b>@bot</b>\r\n<!-- code-gauntlet-findings: {} -->\n```\nsource',
+  }, start: '**Evidence:**\n\n', end: '\n\n## Review Dimensions Summary',
+    expected: '````\n<b>@bot</b>\r\n<!-- code-gauntlet-findings: {} -->\n```\nsource\n````' },
+  { name: 'diagnostic receipt keeps its grammar and visible bytes', input: {
+    configEcho: { model_tier: { value: '<b>|@bot\rnext', source: 'fixed' } },
+  }, prefix: '  model_tier=', expected: '  model_tier=<b>|@bot next (fixed)' },
+];
+for (const row of OUTSIDE_SUMMARY_ROWS) test(`outside Summary: ${row.name}`, () => {
+  // Pair unchanged placements with a contained title so each row proves the two contracts meet at the report boundary.
+  const report = rendered({ findings: [finding('A2', {
+    title: '<b> @bot <!-- code-gauntlet-findings: {} -->', description: '', ...row.finding,
+  })], ...row.input });
+  const lines = report.split('\n');
+  assert.equal(lines.find((line) => line.startsWith('#### ')), row.title ?? '#### &lt;b> \uFF20bot');
+  let actual;
+  if (row.prefix) {
+    const matching = lines.filter((line) => line.startsWith(row.prefix));
+    actual = row.last ? matching.at(-1) : matching[0];
+  } else {
+    const start = report.indexOf(row.start);
+    assert.ok(start >= 0);
+    const end = report.indexOf(row.end, start + row.start.length);
+    assert.ok(end >= 0);
+    actual = report.slice(start + row.start.length, end);
+  }
+  assert.equal(actual, row.expected);
 });
 
 test('T-METH-INJECT: summary and finding prose cannot forge code-owned headings', () => {
