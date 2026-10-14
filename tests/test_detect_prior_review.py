@@ -875,7 +875,7 @@ def test_build_result_cases(
     expected: dict[str, object],
 ) -> None:
     result = detect_prior_review.build_result(signal, facts)
-    view = cast("Mapping[str, object]", result)
+    view = cast(Mapping[str, object], result)
     assert {key: view[key] for key in expected} == expected
 
 

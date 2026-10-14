@@ -170,7 +170,7 @@ def test_withheld_primary_summary_cross_runtime() -> None:
     )
     report, body = rendered
     assert compose.summary_body_from_report(report) == body
-    delivered = cast("list[Finding]", [findings[2], findings[1]])
+    delivered = cast(list[Finding], [findings[2], findings[1]])
     groups = compose.consolidate_delivery(delivered)
     bullets = [line for line in body.splitlines() if line.startswith("- ")]
     assert len(bullets) == len(groups) == 1
