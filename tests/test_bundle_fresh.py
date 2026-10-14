@@ -55,16 +55,14 @@ def test_bundle_runtime_shape(bundle_text: str) -> None:
     # return.
     assert len([line for line in lines if re.match(r"^\s*export\b", line)]) == 1
     assert lines[-1].strip().startswith("return await run(")
+    script = (
+        "import { readFileSync } from 'node:fs';"
+        "const { meta } = await import('data:text/javascript,' + "
+        "encodeURIComponent(readFileSync(0, 'utf8')));"
+        "process.stdout.write(JSON.stringify(meta.description));"
+    )
     result = subprocess.run(
-        [
-            "node",
-            "--input-type=module",
-            "-e",
-            "import { readFileSync } from 'node:fs';"
-            "const { meta } = await import('data:text/javascript,' + "
-            "encodeURIComponent(readFileSync(0, 'utf8')));"
-            "process.stdout.write(JSON.stringify(meta.description));",
-        ],
+        ["node", "--input-type=module", "-e", script],
         input=lines[0],
         capture_output=True,
         text=True,
@@ -84,14 +82,14 @@ def test_bundle_body_compiles_as_async_function(bundle_text: str) -> None:
         for line in bundle_text.splitlines()
         if not re.match(r"^\s*export\s+const\s+meta\b", line)
     )
+    script = (
+        "const body = require('node:fs').readFileSync(0, 'utf8');"
+        "const AsyncFunction ="
+        " Object.getPrototypeOf(async function () {}).constructor;"
+        "new AsyncFunction(body);"
+    )
     result = subprocess.run(
-        [
-            "node",
-            "-e",
-            "const body = require('node:fs').readFileSync(0, 'utf8');"
-            "const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;"
-            "new AsyncFunction(body);",
-        ],
+        ["node", "-e", script],
         input=body,
         capture_output=True,
         text=True,
