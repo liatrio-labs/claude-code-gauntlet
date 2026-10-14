@@ -389,7 +389,7 @@ def test_invalid_asset_override_is_usage_error(pin_file: Path, tmp_path: Path) -
             None,
             {"HOME": "home"},
             "home/.cache/code-gauntlet/biome",
-            "home/cache/code-gauntlet/biome",
+            "home/code-gauntlet/biome",
             id="home-dot-cache-fallback",
         ),
     ],

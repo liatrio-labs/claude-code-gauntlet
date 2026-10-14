@@ -11,6 +11,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, unquote
 
@@ -400,32 +401,38 @@ RENDER_CONTAINMENT_CASES = {
     ),
 }
 
-GITLAB_METADATA_CASES = {
+GITLAB_BLOB_PREFIX_CASES = {
     "encoded-project-nonmain-branch": (
-        "prefix",
         {"web_url": "https://gitlab.test/team/probe/", "default_branch": "develop"},
         "https://gitlab.test/team/probe/-/blob/develop/",
         None,
     ),
     "missing-branch": (
-        "prefix",
         {"web_url": "https://gitlab.test/team/probe"},
         None,
         "GitLab project metadata is incomplete for team/probe",
     ),
-    "enterprise-flag": (
-        "version",
-        {"version": "19.4.1", "enterprise": True},
-        "19.4.1 ee",
-        None,
-    ),
-    "ee-suffix": (
-        "version",
-        {"version": "19.4.1-ee", "enterprise": False},
-        "19.4.1 ee",
-        None,
-    ),
 }
+
+GITLAB_VERSION_CASES = {
+    "enterprise-flag": ({"version": "19.4.1", "enterprise": True}, "19.4.1 ee"),
+    "ee-suffix": ({"version": "19.4.1-ee", "enterprise": False}, "19.4.1 ee"),
+}
+
+
+def _gitlab_metadata_client(
+    monkeypatch: pytest.MonkeyPatch, details: dict[str, str | bool]
+) -> tuple[GitLabClient, list[tuple[str, str]]]:
+    client = GitLabClient("http://gitlab.test", "fake-token")
+    requests: list[tuple[str, str]] = []
+
+    def request(method: str, path: str) -> dict[str, str | bool]:
+        requests.append((method, path))
+        return details
+
+    monkeypatch.setattr(client, "json_request", request)
+    return client, requests
+
 
 HANDLE_DERIVATION_CASES = {
     "ascii-fullwidth-path-lookbehind-suffix": (
@@ -499,15 +506,6 @@ CHECK_DRIFT_CASES = {
     "gitlab-hash-only": ("gitlab", "input_sha256", "0" * 64, ["probe_row"], None),
     "github-hash-only": ("github", "input_sha256", "0" * 64, ["probe_row"], None),
     "version-only": ("gitlab", "version", "19.4.0 ce", [], ("19.4.0 ce", "19.4.1 ce")),
-}
-
-RECORD_REJECTS_BEFORE_WRITE_CASES = {
-    "gitlab-preflight": ("gitlab", "canary", "alice"),
-    "github-preflight": ("github", "plain", "lee"),
-    "github-missing-class": ("github", "no-class", "lee"),
-    "github-wrong-login": ("github", "wrong-login", "lee"),
-    "expected-reference": ("gitlab", "reference", "GitLab reference link"),
-    "extra-root-key": ("gitlab", "extra", "only a cases"),
 }
 
 
@@ -666,35 +664,29 @@ def test_render_containment(platform, rendered, problem) -> None:
 
 
 @pytest.mark.parametrize(
-    ("kind", "details", "expected", "error"),
-    GITLAB_METADATA_CASES.values(),
-    ids=GITLAB_METADATA_CASES,
+    ("details", "expected", "error"),
+    GITLAB_BLOB_PREFIX_CASES.values(),
+    ids=GITLAB_BLOB_PREFIX_CASES,
 )
-def test_gitlab_metadata(monkeypatch, kind, details, expected, error) -> None:
-    client = GitLabClient("http://gitlab.test", "fake-token")
-    requests = []
-
-    def request(method, path):
-        requests.append((method, path))
-        return details
-
-    monkeypatch.setattr(client, "json_request", request)
-    call = (
-        (lambda: _gitlab_blob_prefix(client, "team/probe"))
-        if kind == "prefix"
-        else (lambda: _gitlab_version(client))
-    )
+def test_gitlab_blob_prefix(monkeypatch, details, expected, error) -> None:
+    client, requests = _gitlab_metadata_client(monkeypatch, details)
     if error:
         with pytest.raises(ValueError, match=error):
-            call()
+            _gitlab_blob_prefix(client, "team/probe")
     else:
-        assert call() == expected
-    assert requests == [
-        (
-            "GET",
-            "/api/v4/projects/team%2Fprobe" if kind == "prefix" else "/api/v4/version",
-        )
-    ]
+        assert _gitlab_blob_prefix(client, "team/probe") == expected
+    assert requests == [("GET", "/api/v4/projects/team%2Fprobe")]
+
+
+@pytest.mark.parametrize(
+    ("details", "expected"),
+    GITLAB_VERSION_CASES.values(),
+    ids=GITLAB_VERSION_CASES,
+)
+def test_gitlab_version(monkeypatch, details, expected) -> None:
+    client, requests = _gitlab_metadata_client(monkeypatch, details)
+    assert _gitlab_version(client) == expected
+    assert requests == [("GET", "/api/v4/version")]
 
 
 @pytest.mark.parametrize(
@@ -1002,6 +994,43 @@ def _read_fixture(path: Path) -> str:
         return str(stream.read())
 
 
+def _add_extra_root_key(path: Path) -> None:
+    source = _read_fixture(path).replace('"cases": [', '"extra": true, "cases": [')
+    write_utf8(str(path), source)
+
+
+class RejectCase(NamedTuple):
+    platform: str
+    html: str
+    error_type: type[Exception]
+    error: str
+    setup: Callable[[Path], None] | None = None
+
+
+RECORD_REJECTS_BEFORE_WRITE_CASES: dict[str, RejectCase] = {
+    "gitlab-preflight": RejectCase("gitlab", "<p>@alice</p>", RuntimeError, "alice"),
+    "github-preflight": RejectCase("github", "<p>@lee</p>", RuntimeError, "lee"),
+    "github-missing-class": RejectCase(
+        "github", '<a href="https://github.com/lee">@lee</a>', RuntimeError, "lee"
+    ),
+    "github-wrong-login": RejectCase(
+        "github",
+        '<a class="user-mention" href="https://github.com/other">@other</a>',
+        RuntimeError,
+        "lee",
+    ),
+    "expected-reference": RejectCase(
+        "gitlab",
+        '<p><a data-reference-type="user" data-original="@alice">@alice</a></p>',
+        ValueError,
+        "GitLab reference link",
+    ),
+    "extra-root-key": RejectCase(
+        "gitlab", "<p>b</p>", ValueError, "only a cases", _add_extra_root_key
+    ),
+}
+
+
 @pytest.mark.parametrize(
     ("platform", "state"),
     [
@@ -1013,16 +1042,6 @@ def _read_fixture(path: Path) -> str:
         ("github", "equal"),
         ("gitlab", "href"),
         ("gitlab", "nesting"),
-    ],
-    ids=[
-        "gitlab-valid",
-        "github-valid",
-        "gitlab-stale",
-        "github-stale",
-        "gitlab-equal",
-        "github-equal",
-        "gitlab-href",
-        "gitlab-nesting",
     ],
 )
 def test_record_pair_states(probe_file, platform, state) -> None:
@@ -1126,42 +1145,22 @@ def test_check_drift_reports_gitlab_content_and_version_together(probe_file) -> 
 
 
 @pytest.mark.parametrize(
-    ("platform", "failure", "error"),
+    ("platform", "html", "error_type", "error", "setup"),
     RECORD_REJECTS_BEFORE_WRITE_CASES.values(),
     ids=RECORD_REJECTS_BEFORE_WRITE_CASES,
 )
-def test_record_rejects_before_write(probe_file, platform, failure, error) -> None:
-    if failure == "extra":
-        source = _read_fixture(probe_file).replace(
-            '"cases": [', '"extra": true, "cases": ['
-        )
-        write_utf8(str(probe_file), source)
+def test_record_rejects_before_write(
+    probe_file, platform, html, error_type, error, setup
+) -> None:
+    if setup is not None:
+        setup(probe_file)
     before = probe_file.read_bytes()
     writes = []
-    canary_html = {
-        "plain": "<p>@lee</p>",
-        "no-class": '<a href="https://github.com/lee">@lee</a>',
-        "wrong-login": '<a class="user-mention" href="https://github.com/other">@other</a>',
-    }.get(failure)
-    render = _renderer(platform, "<p>b</p>")
-    if failure == "canary":
 
-        def render(text):
-            return f"<p>{text}</p>"
-    elif canary_html:
+    def render(_text: str) -> str:
+        return str(html)
 
-        def render(text):
-            return canary_html if text == "@lee" else "<p>x</p>"
-    elif failure == "reference":
-
-        def render(text):
-            return (
-                '<p><a data-reference-type="user" data-original="@alice">@alice</a></p>'
-            )
-
-    with pytest.raises(
-        ValueError if failure in {"reference", "extra"} else RuntimeError, match=error
-    ):
+    with pytest.raises(error_type, match=error):
         record_fixture(
             str(probe_file),
             platform=platform,

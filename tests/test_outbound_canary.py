@@ -282,6 +282,7 @@ def test_preflight_failure(
     lines = capsys.readouterr().out.splitlines()
     diagnostic: dict[str, object] = json.loads(lines[0])
     assert diagnostic["property"] == "preflight"
+    assert (diagnostic["index"], diagnostic["operation"]) == (None, "preflight")
     assert calls == expected_calls
     assert lines[1] == expected_replay
 

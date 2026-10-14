@@ -7,7 +7,7 @@ import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import gauntlet.delivery.post as post_review
 import pytest
@@ -104,6 +104,12 @@ RAW_CONTROL_CASES = {
 }
 
 
+class Oracle(NamedTuple):
+    document: dict[str, Any]
+    current: list[dict[str, str]]
+    composed: list[dict[str, Any]]
+
+
 def _fake_rails_runner(
     argv: list[str], **kwargs: Any
 ) -> subprocess.CompletedProcess[str]:
@@ -191,7 +197,7 @@ def _assert_no_raw_slash_in_candidate_paragraphs(
 
 
 @pytest.fixture(scope="module")
-def oracle():
+def oracle() -> Oracle:
     path = (
         Path(__file__).parent / "fixtures" / "gitlab_quick_action_verdicts_19_4_1.json"
     )
@@ -203,7 +209,7 @@ def oracle():
         probe_fixtures._read_cases(probe_fixtures._fixture_path())
     )
     composed = build_composed_quick_action_cases()
-    return document, current, composed
+    return Oracle(document, current, composed)
 
 
 def test_recorded_oracle_freshness_and_safe_effects(oracle) -> None:
@@ -239,11 +245,12 @@ def test_recorded_oracle_freshness_and_safe_effects(oracle) -> None:
     ids=COMPOSED_PAYLOADS_CASES,
 )
 def test_composed_payloads(oracle, case_id, payload) -> None:
-    assert payload in next(case["text"] for case in oracle[2] if case["id"] == case_id)
+    composed = oracle.composed
+    assert payload in next(case["text"] for case in composed if case["id"] == case_id)
 
 
 def test_composed_route_headers_and_trailers_are_outside_trusted_fences(oracle) -> None:
-    for case in oracle[2]:
+    for case in oracle.composed:
         body = case["text"]
         fences: list[tuple[int, int]] = []
         open_fence(body, strict=True, intervals=fences)
@@ -489,12 +496,12 @@ def test_quick_action_freshness_rejects_a_stale_expected_row_hash() -> None:
 
 @pytest.mark.parametrize(
     ("case_name", "command_name"),
-    [(name, command) for name, command in RAW_CONTROL_CASES.items()],
+    RAW_CONTROL_CASES.items(),
     ids=RAW_CONTROL_CASES,
 )
 def test_recorded_raw_positive_controls(oracle, case_name, command_name) -> None:
     case_id = f"raw:{case_name}"
-    row = next(row for row in oracle[0]["cases"] if row["id"] == case_id)
+    row = next(row for row in oracle.document["cases"] if row["id"] == case_id)
     commands = row["commands"]
     assert commands, case_id
     if command_name is not None:
@@ -505,8 +512,9 @@ def test_recorded_raw_positive_controls(oracle, case_name, command_name) -> None
 
 
 def test_recorded_container_no_action_control(oracle) -> None:
+    document = oracle.document
     row = next(
-        row for row in oracle[0]["cases"] if row["id"] == "raw:mbq_container_quote"
+        row for row in document["cases"] if row["id"] == "raw:mbq_container_quote"
     )
     assert row["commands"] == []
     assert row["stored_equals_posted"] is True

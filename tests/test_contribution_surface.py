@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any, NamedTuple
 from unittest.mock import patch
 
 import pytest
@@ -544,15 +544,32 @@ def test_labels_loader_reads_utf8_bytes_with_cp1252_text_wrapper() -> None:
     assert labels[0]["description"] == "café"
 
 
-RefusedInputRow: TypeAlias = (
-    tuple[str, tuple[str, ...], bytes | None, bytes | None]
-    | tuple[str, tuple[str, ...], bytes | None, bytes | None, str, bool]
-)
+class RefusedRow(NamedTuple):
+    name: str
+    argv: tuple[str, ...]
+    stdin: bytes | None
+    file_bytes: bytes | None
+    diagnostic: str = ""
+    empty_output: bool = False
+
+    @property
+    def test_arguments(
+        self,
+    ) -> tuple[tuple[str, ...], bytes | None, bytes | None, str, bool]:
+        return (
+            self.argv,
+            self.stdin,
+            self.file_bytes,
+            self.diagnostic,
+            self.empty_output,
+        )
+
+
 manifest_commands = ("--manifest", "{path}", "--commands")
 stdin_response = ("--live", "-")
-REFUSED_LABEL_INPUTS: tuple[RefusedInputRow, ...] = (
+REFUSED_LABEL_INPUTS: tuple[RefusedRow, ...] = (
     *(
-        (f"manifest-{name}", manifest_commands, None, payload)
+        RefusedRow(f"manifest-{name}", manifest_commands, None, payload)
         for name, payload in (
             ("not-json", b"{oops"),
             ("no-labels-key", b'{"tags": []}'),
@@ -562,107 +579,93 @@ REFUSED_LABEL_INPUTS: tuple[RefusedInputRow, ...] = (
             ("missing-color", b'{"labels": [{"name": "bug", "description": "x"}]}'),
         )
     ),
-    (
+    RefusedRow(
         "manifest-live-not-json",
         ("--manifest", "{path}", "--live", "{path}"),
         None,
         b"{oops",
     ),
-    (
+    RefusedRow(
         "manifest-live-no-labels-key",
         ("--manifest", "{path}", "--live", "{path}"),
         None,
         b'{"tags": []}',
     ),
-    ("live-required", (), None, None),
-    ("empty-response", stdin_response, b"", None),
-    (
+    RefusedRow("live-required", (), None, None),
+    RefusedRow("empty-response", stdin_response, b"", None),
+    RefusedRow(
         "api-error-object",
         stdin_response,
         b'{"message": "Not Found", "status": "404"}',
         None,
     ),
-    (
+    RefusedRow(
         "single-label-object",
         stdin_response,
         b'{"name": "bug", "color": "d73a4a"}',
         None,
     ),
-    ("names-only", stdin_response, b'["bug", "enhancement"]', None),
-    ("non-json-response", stdin_response, b"gh: command not found", None),
-    (
+    RefusedRow("names-only", stdin_response, b'["bug", "enhancement"]', None),
+    RefusedRow("non-json-response", stdin_response, b"gh: command not found", None),
+    RefusedRow(
         "missing-manifest-file",
         ("--manifest", "/nonexistent/labels.json", "--commands"),
         None,
         None,
     ),
-    ("missing-live-file", ("--live", "/nonexistent/live.json"), None, None),
-    (
+    RefusedRow("missing-live-file", ("--live", "/nonexistent/live.json"), None, None),
+    RefusedRow(
         "non-utf8-stdin",
         stdin_response,
         b'[{"name": "caf\xe9"}]',
         None,
         "not UTF-8",
-        False,
     ),
-    (
+    RefusedRow(
         "non-utf8-live-file",
         ("--live", "{path}"),
         None,
         b'[{"name": "caf\xe9"}]',
         "not UTF-8",
-        False,
     ),
-    (
+    RefusedRow(
         "non-utf8-manifest",
         manifest_commands,
         None,
         b'[{"name": "caf\xe9"}]',
         "not UTF-8",
-        False,
     ),
-    (
+    RefusedRow(
         "name-is-flag",
         manifest_commands,
         None,
         b'{"labels":[{"name":"-wip","color":"ffffff",'
         b'"description":"leading dash in name"}]}',
-        "",
-        True,
+        empty_output=True,
     ),
-    (
+    RefusedRow(
         "description-is-flag",
         manifest_commands,
         None,
         b'{"labels":[{"name":"ok","color":"ffffff",'
         b'"description":"-leading dash in description"}]}',
-        "",
-        True,
+        empty_output=True,
     ),
-    (
+    RefusedRow(
         "color-injection",
         manifest_commands,
         None,
         b'{"labels":[{"name":"ok","color":"fff; echo pwned","description":"not hex"}]}',
-        "",
-        True,
+        empty_output=True,
     ),
 )
-
-
-def _refused_input(
-    row: RefusedInputRow,
-) -> tuple[tuple[str, ...], bytes | None, bytes | None, str, bool]:
-    if len(row) == 4:
-        return row[1], row[2], row[3], "", False
-    return row[1], row[2], row[3], row[4], row[5]
 
 
 # Exit 1 means drift; corrupt manifests must exit 2 rather than emit a false report.
 # Each reader needs its own UTF-8 refusal so a decode traceback cannot read as drift.
 @pytest.mark.parametrize(
     "argv,stdin,file_bytes,diagnostic,empty_output",
-    [pytest.param(*_refused_input(row), id=row[0]) for row in REFUSED_LABEL_INPUTS],
+    [pytest.param(*row.test_arguments, id=row.name) for row in REFUSED_LABEL_INPUTS],
 )
 def test_labels_refused_input(
     tmp_path: Path,

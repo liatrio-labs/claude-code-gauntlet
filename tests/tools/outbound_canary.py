@@ -5,12 +5,14 @@ import json
 import os
 import random
 import re
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal, TypedDict
 
 GENERATOR_VERSION = 1
 Operation = Literal["prose", "line"]
+DiagnosticOperation = Operation | Literal["preflight"]
 OPERATIONS: tuple[Operation, ...] = ("prose", "line")
 Property = Literal[
     "fixpoint", "marker", "mention", "raw-html", "renderer", "preparer", "preflight"
@@ -30,8 +32,8 @@ class Diagnostic(TypedDict):
     generator_version: int
     seed: int
     handle: str
-    index: int
-    operation: str
+    index: int | None
+    operation: DiagnosticOperation
     property: Property
     original: str
     prepared: str
@@ -154,8 +156,6 @@ def main(
     render: Callable[[str], str] | None = None,
     login: Callable[[], str] | None = None,
 ) -> int:
-    import sys
-
     from gauntlet.text import prepare_line, prepare_prose
 
     from tests.tools.probe_github import github_login, render_github, run_github_canary
@@ -191,13 +191,16 @@ def main(
     }
 
     def report(
-        failure: Failure, original: str, index: int | None, operation: str
+        failure: Failure,
+        original: str,
+        index: int | None,
+        operation: DiagnosticOperation,
     ) -> int:
         diagnostic: Diagnostic = {
             "generator_version": GENERATOR_VERSION,
             "seed": seed,
             "handle": handle,
-            "index": index if index is not None else 0,
+            "index": index,
             "operation": operation,
             "property": failure.property,
             "original": original,
@@ -243,7 +246,6 @@ def main(
 
 
 if __name__ == "__main__":
-    import sys
     from pathlib import Path
 
     # Direct execution from another directory still needs the repository packages.
