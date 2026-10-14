@@ -38,7 +38,8 @@ def workflow_header(root: Path) -> dict:
         "const header = build().split('\\n')[0];"
         "if (!/^export const meta = \\{.*\\};$/.test(header)) "
         "throw new Error('workflow must begin with the hoisted meta declaration');"
-        "const { meta } = await import('data:text/javascript,' + encodeURIComponent(header));"
+        "const { meta } = await import("
+        "'data:text/javascript,' + encodeURIComponent(header));"
         "console.log(JSON.stringify(meta));"
     )
     result = subprocess.run(

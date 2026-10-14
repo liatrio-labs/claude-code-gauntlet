@@ -251,9 +251,9 @@ def test_cli_refuses_before_transport(
         ),
         pytest.param(
             POSITIVE,
-            "ghost",
-            ["@ghost"],
-            "Replay: python3 tests/tools/outbound_canary.py --live --seed 375 --cases 1 --mention ghost",
+            "gh_ost",
+            ["@gh_ost"],
+            "Replay: python3 tests/tools/outbound_canary.py --live --seed 375 --cases 1 --mention gh_ost",
             id="different-mentioned-account",
         ),
     ],

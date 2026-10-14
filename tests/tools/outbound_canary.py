@@ -84,7 +84,10 @@ def generate_cases(seed: int, mention: str, count: int) -> list[str]:
             right = "".join(rng.choice(atoms) for _ in range(rng.randint(2, 12)))
             body = rng.choice(templates).format(left, right)
         sentinel = f"OUTBOUND_PROBE_HTML_{index}"
-        controls = f"\n&lt;b&gt;{sentinel}&lt;/b&gt;\n```\n<b>{sentinel}</b>\n```\n<b>{sentinel}</b>"
+        controls = (
+            f"\n&lt;b&gt;{sentinel}&lt;/b&gt;\n```\n<b>{sentinel}</b>\n```"
+            f"\n<b>{sentinel}</b>"
+        )
         cases.append(body + controls)
     return cases
 
@@ -103,7 +106,8 @@ def check_case(
     try:
         prepared = prepare(original)
         second = prepare(prepared)
-    except Exception as exc:  # noqa: BLE001 - preparation errors cannot pass containment
+    # A preparation error cannot pass containment.
+    except Exception as exc:  # noqa: BLE001
         return Failure("preparer", prepared, error=str(exc))
     if second != prepared:
         return Failure("fixpoint", prepared, second=second)
@@ -112,7 +116,8 @@ def check_case(
         return Failure("marker", prepared)
     try:
         rendered = render(prepared)
-    except Exception as exc:  # noqa: BLE001 - a failed renderer provides no safety evidence
+    # A failed renderer provides no safety evidence.
+    except Exception as exc:  # noqa: BLE001
         return Failure("renderer", prepared, error=str(exc))
     parser = _TreeParser()
     parser.feed(rendered)
@@ -205,7 +210,12 @@ def main(
             "error": failure.error,
         }
         print(json.dumps(diagnostic, ensure_ascii=True))
-        replay = f"python3 tests/tools/outbound_canary.py --live --seed {seed} --cases {count}{' --mention ' + handle if handle else ''}{' --case-index ' + str(index) if index is not None else ''}"
+        replay = f"python3 tests/tools/outbound_canary.py --live --seed {seed}"
+        replay += f" --cases {count}"
+        if handle:
+            replay += f" --mention {handle}"
+        if index is not None:
+            replay += f" --case-index {index}"
         print("Replay: " + replay)
         return 1
 
@@ -213,7 +223,8 @@ def main(
         authenticated = get_login()
         handle = handle or authenticated
         run_github_canary(handle, renderer)
-    except Exception as exc:  # noqa: BLE001 - preflight must fail closed before generated cases
+    # Preflight fails closed before any generated case runs.
+    except Exception as exc:  # noqa: BLE001
         return report(Failure("preflight", error=str(exc)), "", None, "preflight")
     completed = 0
     for index, original in enumerate(generate_cases(seed, handle, count)):
@@ -225,7 +236,8 @@ def main(
                 return report(failure, original, index, operation)
         completed += 1
     print(
-        f"Passed {completed} cases (both operations); seed={seed} version={GENERATOR_VERSION} mention={handle}"
+        f"Passed {completed} cases (both operations); seed={seed} "
+        f"version={GENERATOR_VERSION} mention={handle}"
     )
     return 0
 

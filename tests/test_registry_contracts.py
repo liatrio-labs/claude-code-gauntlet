@@ -400,12 +400,9 @@ def test_contract_schema(agent_type: str) -> None:
                     r"\b(?:otherwise|or)\s*,?\s+null\b", value, re.IGNORECASE
                 )
                 assert "\\'" not in value
-    remainder = _JSON_BLOCK.sub("", text)
     for field in (set(all_extras()) | {"claude_md_rule"}) & declared.keys():
         if declared[field] == "string":
-            assert not re.search(
-                r'"' + re.escape(field) + r'"\s*:\s*null', remainder
-            ), (
+            assert not re.search(r'"' + re.escape(field) + r'"\s*:\s*null', text), (
                 agent_type,
                 field,
             )

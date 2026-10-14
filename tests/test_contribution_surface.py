@@ -514,7 +514,7 @@ def test_labels_accepted_input(
     payload: bytes,
     status: int,
     stdout_fragments: tuple[bytes, ...],
-    stderr_fragment: bytes | None,
+    stderr_fragment: bytes,
 ) -> None:
     result = subprocess.run(
         [sys.executable, str(LABELS_DIFF), "--live", "-"],
@@ -526,8 +526,6 @@ def test_labels_accepted_input(
     assert result.returncode == status, result.stdout + result.stderr
     for fragment in stdout_fragments:
         assert fragment in result.stdout
-    if stderr_fragment is None:
-        return
     if not stderr_fragment:
         assert not result.stderr
     else:
