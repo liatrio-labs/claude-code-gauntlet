@@ -458,13 +458,11 @@ def test_unexpected_failure(tmp_path, monkeypatch, capsys):
 
 
 def test_command_discovery_failure(monkeypatch, capsys):
-    target_flags = ["--nonce", "run"]
-
     def fail(*args):
         raise OSError("discovery failed")
 
     monkeypatch.setattr(tasks, "roots_from_environment", fail)
-    assert materialize.CLI.invoke(["--output-dir", ".", *target_flags]) == 1
+    assert materialize.CLI.invoke(["--output-dir", ".", "--nonce", "run"]) == 1
     assert (
         capsys.readouterr().out.strip()
         == '{"ok": false, "channel": "return", "source": null, "scanned": '

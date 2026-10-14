@@ -279,49 +279,40 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
     )
 
 
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_CODE_BLOCK_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+_BACKTICK_SPAN_RE = re.compile(r"`([^`]+)`")
+_CODE_PUNCTUATION_RE = re.compile(
+    r"\b([A-Za-z_][A-Za-z0-9_]*"
+    r"(?:[.()\[\]#]|::|->)"
+    r"[A-Za-z0-9_.()#\[\]:>-]*)"
+)
+_SNAKE_CASE_RE = re.compile(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b")
+_SPLIT_PUNCTUATION_RE = re.compile(r"[.()\[\]#:>-]+")
+
+
 def _extract_symbols(description: str, evidence: str) -> set[str]:
     """Extract definite code tokens, excluding ambiguous bare CamelCase prose."""
     combined_text = description + "\n" + evidence
+    raw_symbols: set[str] = set()
 
-    _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-
-    raw_symbols = set()
-
-    _CODE_BLOCK_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
     for block_m in _CODE_BLOCK_RE.finditer(combined_text):
-        block_content = block_m.group(1)
-        for ident_m in _IDENT_RE.finditer(block_content):
-            raw_symbols.add(ident_m.group(0))
+        raw_symbols.update(m.group(0) for m in _IDENT_RE.finditer(block_m.group(1)))
 
-    _BACKTICK_SPAN_RE = re.compile(r"`([^`]+)`")
     for span_m in _BACKTICK_SPAN_RE.finditer(combined_text):
-        span = span_m.group(1).strip()
-        parts = span.strip("._").split(".")
-        for part in parts:
+        for part in span_m.group(1).strip().strip("._").split("."):
             clean = re.sub(r"[^A-Za-z0-9_]", "", part)
-            if clean and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", clean):
+            if _IDENT_RE.fullmatch(clean):
                 raw_symbols.add(clean)
 
-    _CODE_PUNCTUATION_RE = re.compile(
-        r"\b([A-Za-z_][A-Za-z0-9_]*"
-        r"(?:[.()\[\]#]|::|->)"
-        r"[A-Za-z0-9_.()#\[\]:>-]*)"
-    )
-    _SNAKE_CASE_RE = re.compile(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b")
-    _SPLIT_PUNCTUATION_RE = re.compile(r"[.()\[\]#:>-]+")
-
     for m in _CODE_PUNCTUATION_RE.finditer(combined_text):
-        token = m.group(1)
-        parts = _SPLIT_PUNCTUATION_RE.split(token)
-        for part in parts:
-            if part and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", part) and len(part) > 2:
+        for part in _SPLIT_PUNCTUATION_RE.split(m.group(1)):
+            if len(part) > 2 and _IDENT_RE.fullmatch(part):
                 raw_symbols.add(part)
 
-    for m in _SNAKE_CASE_RE.finditer(combined_text):
-        raw_symbols.add(m.group(1))
+    raw_symbols.update(m.group(1) for m in _SNAKE_CASE_RE.finditer(combined_text))
 
     # Bare CamelCase may be English prose; treating it as code kills true positives.
-
     return {s for s in raw_symbols if s not in _SKIP_SYMBOLS and len(s) > 2}
 
 

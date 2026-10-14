@@ -195,14 +195,13 @@ def test_scan_reason_marker(tmp_path, monkeypatch, capsys):
 
 
 def test_elision(tmp_path, capsys):
-    channel = "return"
     target = tmp_path / "task.output"
     terminal = {
         "ok": True,
         "stats": {"n": 2},
         "unknown": "kept",
         "persistReturn": {
-            "channel": channel,
+            "channel": "return",
             "nonce": "n",
             "planPath": "/out/plan",
             "unknown": 7,
@@ -213,12 +212,12 @@ def test_elision(tmp_path, capsys):
     assert awaiting.CLI.invoke([str(target), "--timeout-seconds", "0"]) == 0
     expected = (
         '{"ok":true,"stats":{"n":2},"unknown":"kept","persistReturn":'
-        '{"channel":"CHANNEL","nonce":"n","planPath":"/out/plan","unknown":7,'
+        '{"channel":"return","nonce":"n","planPath":"/out/plan","unknown":7,'
         '"elided":true,"resolvedPath":PATH,"paths":["/out/a"]}}'
     )
     assert capsys.readouterr().out.strip() == expected.replace(
-        "CHANNEL", channel
-    ).replace("PATH", json.dumps(str(target)))
+        "PATH", json.dumps(str(target))
+    )
     assert terminal["persistReturn"]["entries"][0]["text"] == "x" * 5000
 
 
@@ -508,8 +507,8 @@ def test_broken_pipe_redirect_prevents_shutdown_failure(tmp_path):
 
 
 def test_paired_flags(capsys):
-    flags = ["--head-sha", "abc"]
-    assert awaiting.CLI.invoke(["task", "--timeout-seconds", "0", *flags]) == 2
+    args = ["task", "--timeout-seconds", "0", "--head-sha", "abc"]
+    assert awaiting.CLI.invoke(args) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert (

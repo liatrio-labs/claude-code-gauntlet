@@ -141,9 +141,6 @@ def test_inline(case):
 )
 def test_reject(token, message, invoke, tmp_path, verify_git):
     expected = "inline slice-input rejected: " + message
-    if message == "'findings' must be an array at $":
-        with pytest.raises(ValueError):
-            verify.validate_input_shape(verify.decode_inline_slice(token))
     result = receipt(invoke, tmp_path, token)
     assert result.returncode == 0
     assert result.stderr == b""

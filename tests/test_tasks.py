@@ -300,15 +300,14 @@ def test_scan_limits(kind, count, expected, reason):
 
 
 def test_sweep_policy(tmp_path):
-    mtimes = (1, 3, 3)
     root = tmp_path / "root[g]"
-    old = task_file(root, "old", mtime=mtimes[0])
-    new = task_file(root, "new", mtime=mtimes[1])
+    old = task_file(root, "old", mtime=1)
+    new = task_file(root, "new", mtime=3)
     direct = tmp_path / "direct[g]"
     direct.mkdir()
     override = direct / "override.output"
     override.write_text("", encoding="utf-8")
-    os.utime(override, (mtimes[2], mtimes[2]))
+    os.utime(override, (3, 3))
     roots = tasks.TaskRoots((str(root),), str(direct))
     assert tasks.sweep_paths(roots) == (str(override), str(new), str(old))
     assert tasks.sweep_paths(roots, limit=2) == (str(override), str(new))
