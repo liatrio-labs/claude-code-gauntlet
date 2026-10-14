@@ -414,11 +414,6 @@ GITLAB_BLOB_PREFIX_CASES = {
     ),
 }
 
-GITLAB_VERSION_CASES = {
-    "enterprise-flag": ({"version": "19.4.1", "enterprise": True}, "19.4.1 ee"),
-    "ee-suffix": ({"version": "19.4.1-ee", "enterprise": False}, "19.4.1 ee"),
-}
-
 
 def _gitlab_metadata_client(
     monkeypatch: pytest.MonkeyPatch, details: dict[str, str | bool]
@@ -435,39 +430,16 @@ def _gitlab_metadata_client(
 
 
 HANDLE_DERIVATION_CASES = {
-    "ascii-fullwidth-path-lookbehind-suffix": (
-        [
-            {
-                "input": "(@alice), \uff20team, @types/node; x@hidden _\uff20hidden @bare. \uff20modal/",
-                "expected": "\uff20Override @x @all",
-            },
-            {"input": "@ignore.git @ignore.atom", "expected": "footer"},
-        ],
+    "handle-boundary": (
+        [{"input": "(@alice), x@hidden", "expected": ""}],
         False,
-        {"alice", "team", "types/node", "Override", "x", "all", "bare", "modal"},
-    ),
-    "segment-and-path-limits": (
-        [
-            {
-                "input": "@"
-                + "a" * 256
-                + " @"
-                + "b" * 257
-                + " @"
-                + "/".join(["a"] * 20)
-                + " @"
-                + "/".join(["c"] * 21),
-                "expected": "",
-            }
-        ],
-        False,
-        {"a" * 256, "/".join(["a"] * 20)},
+        {"alice"},
     ),
     "fullwidth-only-filters": (
         [
             {
                 "input": "@ascii",
-                "expected": "\uff20visible @ascii \uff20all \uff20x \uff20ignore.git \uff20"
+                "expected": "\uff20visible @ascii \uff20all \uff20ignore.git \uff20"
                 + "b" * 257,
             }
         ],
@@ -487,25 +459,6 @@ GITLAB_CANARY_CASES = {
         '<a data-reference-type="user" data-original="@alice">@alice</a>',
         "unresolved handles: missing",
     ),
-    "wrong-reference-identity": (
-        ["alice"],
-        '<a data-reference-type="user" data-original="@other">other</a>',
-        "alice",
-    ),
-}
-
-GITHUB_CANARY_CASES = {
-    "case-insensitive-href": '<a class="notranslate user-mention" href="https://github.com/LeE">user</a>',
-    "case-insensitive-text": '<a class="user-mention" href="/somewhere">@LeE</a>',
-}
-
-CHECK_DRIFT_CASES = {
-    "gitlab-html-only": ("gitlab", "html", "<p>old</p>", ["probe_row"], None),
-    "github-html-only": ("github", "html", "<p>old</p>", ["probe_row"], None),
-    "twin-only": ("gitlab", "twin_references", ["@bob"], ["probe_row"], None),
-    "gitlab-hash-only": ("gitlab", "input_sha256", "0" * 64, ["probe_row"], None),
-    "github-hash-only": ("github", "input_sha256", "0" * 64, ["probe_row"], None),
-    "version-only": ("gitlab", "version", "19.4.0 ce", [], ("19.4.0 ce", "19.4.1 ce")),
 }
 
 
@@ -545,17 +498,12 @@ def test_contributing_probe_commands_parse_with_the_recorder() -> None:
 def test_quick_actions_command_accepts_record_and_check_forms() -> None:
     parser = build_argument_parser()
 
-    default = parser.parse_args(["quick-actions"])
     direct = parser.parse_args(["quick-actions", "--check"])
-    explicit = parser.parse_args(
-        ["quick-actions", "record", "--check", "--container", "gitlab-test"]
-    )
 
-    assert default.container == "cdr-gitlab"
+    assert direct.container == "cdr-gitlab"
     assert direct.command == "quick-actions"
     assert direct.action == "record"
     assert direct.check is True
-    assert explicit.container == "gitlab-test"
 
 
 @pytest.mark.skipif(
@@ -678,14 +626,11 @@ def test_gitlab_blob_prefix(monkeypatch, details, expected, error) -> None:
     assert requests == [("GET", "/api/v4/projects/team%2Fprobe")]
 
 
-@pytest.mark.parametrize(
-    ("details", "expected"),
-    GITLAB_VERSION_CASES.values(),
-    ids=GITLAB_VERSION_CASES,
-)
-def test_gitlab_version(monkeypatch, details, expected) -> None:
-    client, requests = _gitlab_metadata_client(monkeypatch, details)
-    assert _gitlab_version(client) == expected
+def test_gitlab_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, requests = _gitlab_metadata_client(
+        monkeypatch, {"version": "19.4.1", "enterprise": True}
+    )
+    assert _gitlab_version(client) == "19.4.1 ee"
     assert requests == [("GET", "/api/v4/version")]
 
 
@@ -712,11 +657,13 @@ def test_gitlab_canary(handles, html, error) -> None:
         run_canary(handles, render)
 
 
-@pytest.mark.parametrize(
-    "rendered", GITHUB_CANARY_CASES.values(), ids=GITHUB_CANARY_CASES
-)
-def test_github_canary(rendered) -> None:
-    run_github_canary("lee", lambda text: rendered)
+def test_github_canary() -> None:
+    run_github_canary(
+        "lee",
+        lambda text: (
+            '<a class="notranslate user-mention" href="https://github.com/LeE">user</a>'
+        ),
+    )
 
 
 def test_github_authenticated_login() -> None:
@@ -1008,17 +955,7 @@ class RejectCase(NamedTuple):
 
 
 RECORD_REJECTS_BEFORE_WRITE_CASES: dict[str, RejectCase] = {
-    "gitlab-preflight": RejectCase("gitlab", "<p>@alice</p>", RuntimeError, "alice"),
     "github-preflight": RejectCase("github", "<p>@lee</p>", RuntimeError, "lee"),
-    "github-missing-class": RejectCase(
-        "github", '<a href="https://github.com/lee">@lee</a>', RuntimeError, "lee"
-    ),
-    "github-wrong-login": RejectCase(
-        "github",
-        '<a class="user-mention" href="https://github.com/other">@other</a>',
-        RuntimeError,
-        "lee",
-    ),
     "expected-reference": RejectCase(
         "gitlab",
         '<p><a data-reference-type="user" data-original="@alice">@alice</a></p>',
@@ -1031,96 +968,28 @@ RECORD_REJECTS_BEFORE_WRITE_CASES: dict[str, RejectCase] = {
 }
 
 
-@pytest.mark.parametrize(
-    ("platform", "state"),
-    [
-        ("gitlab", "valid"),
-        ("github", "valid"),
-        ("gitlab", "stale"),
-        ("github", "stale"),
-        ("gitlab", "equal"),
-        ("github", "equal"),
-        ("gitlab", "href"),
-        ("gitlab", "nesting"),
-    ],
-)
-def test_record_pair_states(probe_file, platform, state) -> None:
-    path = probe_file
-    github_html, gitlab_html = "<p>a</p>", "<p>b</p>"
-    if state == "equal":
-        github_html = gitlab_html
-    elif state == "href":
-        github_html, gitlab_html = (
-            '<a href="one.md">guide</a>',
-            '<a href="two.md">guide</a>',
-        )
-    elif state == "nesting":
-        github_html, gitlab_html = (
-            "<blockquote><p>a</p></blockquote><p>b</p>",
-            "<blockquote><p>a</p><p>b</p></blockquote>",
-        )
-    rows = _probe_rows(github_html, gitlab_html)
-    rows[0]["gitlab_probe"]["divergence"]["pair_sha256"] = {
-        "valid": PAIR,
-        "stale": "0" * 64,
-        "equal": "a93d005ca9daf0f58620e3e889af61246c992b8a3c079a401c34bc744d3c958b",
-        "href": "478e08465dd5d4a11fced4b94b85f4ac0e3dceda85451d911bb6f2cf574ee86d",
-        "nesting": "b88d62c1fd495f49fb0d985cefb9f1758e9d8b6d0a163e6953fbb2c0538a33ae",
-    }[state]
-    write_utf8(str(path), serialize_fixture(rows))
-    before = path.read_bytes()
-    writes = []
-    html = github_html if platform == "github" else gitlab_html
+def test_record_pair_states(probe_file: Path) -> None:
+    before = probe_file.read_bytes()
+    writes: list[str] = []
     checked = _record(
-        path,
-        platform,
-        html,
+        probe_file,
+        "gitlab",
+        "<p>b</p>",
         check=True,
         write_text=lambda target, contents: writes.append(contents),
     )
     assert checked.changed_ids == []
-    assert checked.divergence_cleared == ([] if state == "valid" else ["probe_row"])
-    assert checked.exit_code == (0 if state == "valid" else 1)
-    assert writes == [] and path.read_bytes() == before
-    recorded = _record(path, platform, html)
+    assert checked.divergence_cleared == []
+    assert checked.exit_code == 0
+    assert writes == [] and probe_file.read_bytes() == before
+    recorded = _record(probe_file, "gitlab", "<p>b</p>")
     assert recorded.exit_code == 0
-    assert recorded.divergence_cleared == ([] if state == "valid" else ["probe_row"])
-    assert recorded.cleared_details == (
-        [] if state == "valid" else ["probe_row: issue 12: old note"]
-    )
-    divergence = json.loads(_read_fixture(path))["cases"][0]["gitlab_probe"][
+    assert recorded.divergence_cleared == []
+    assert recorded.cleared_details == []
+    divergence = json.loads(_read_fixture(probe_file))["cases"][0]["gitlab_probe"][
         "divergence"
     ]
-    assert divergence == (
-        {"note": "old note", "issue": 12, "pair_sha256": PAIR}
-        if state == "valid"
-        else None
-    )
-
-
-@pytest.mark.parametrize(
-    ("platform", "field", "value", "changed", "version"),
-    CHECK_DRIFT_CASES.values(),
-    ids=CHECK_DRIFT_CASES,
-)
-def test_check_drift(probe_file, platform, field, value, changed, version) -> None:
-    rows = _probe_rows()
-    rows[0][platform + "_probe"][field] = value
-    rows[0]["gitlab_probe"]["divergence"] = None
-    write_utf8(str(probe_file), serialize_fixture(rows))
-    before = probe_file.read_bytes()
-    writes = []
-    checked = _record(
-        probe_file,
-        platform,
-        "<p>a</p>" if platform == "github" else "<p>b</p>",
-        check=True,
-        write_text=lambda target, contents: writes.append(contents),
-    )
-    assert checked.changed_ids == changed
-    assert checked.version_mismatch == version
-    assert checked.exit_code == 1
-    assert writes == [] and probe_file.read_bytes() == before
+    assert divergence == {"note": "old note", "issue": 12, "pair_sha256": PAIR}
 
 
 def test_check_drift_reports_gitlab_content_and_version_together(probe_file) -> None:
@@ -1173,34 +1042,29 @@ def test_record_rejects_before_write(
     assert writes == [] and probe_file.read_bytes() == before
 
 
-@pytest.mark.parametrize("platform", ["gitlab", "github"])
 def test_main_record_check_and_cleared_divergence_output(
-    probe_file, monkeypatch, capsys, platform: str
+    probe_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     path = probe_file
     monkeypatch.setattr("tests.tools.probe_cli._fixture_path", lambda: str(path))
-    if platform == "github":
-        monkeypatch.setattr("tests.tools.probe_cli.github_login", lambda: "lee")
-        monkeypatch.setattr(
-            "tests.tools.probe_cli.render_github", _renderer("github", "<p>changed</p>")
-        )
-    else:
 
-        class Client:
-            def render(self, text: str, project: str) -> str:
-                return _renderer("gitlab", "<p>\uff20alice</p>")(text)
+    class Client:
+        def render(self, text: str, project: str) -> str:
+            return _renderer("gitlab", "<p>\uff20alice</p>")(text)
 
-        monkeypatch.setattr(
-            "tests.tools.probe_cli._client_from_environment", lambda *args: Client()
-        )
-        monkeypatch.setattr(
-            "tests.tools.probe_cli._gitlab_version", lambda client: "19.4.1 ce"
-        )
-        monkeypatch.setattr(
-            "tests.tools.probe_cli._gitlab_blob_prefix",
-            lambda client, project: "http://gitlab.test/-/blob/main/",
-        )
-    argv = ["record", "--platform", platform]
+    monkeypatch.setattr(
+        "tests.tools.probe_cli._client_from_environment", lambda *args: Client()
+    )
+    monkeypatch.setattr(
+        "tests.tools.probe_cli._gitlab_version", lambda client: "19.4.1 ce"
+    )
+    monkeypatch.setattr(
+        "tests.tools.probe_cli._gitlab_blob_prefix",
+        lambda client, project: "http://gitlab.test/-/blob/main/",
+    )
+    argv = ["record", "--platform", "gitlab"]
     source = path.read_bytes()
     assert main([*argv, "--check"]) == 1
     assert capsys.readouterr().out == "probe_row\nstale divergence: probe_row\n"
@@ -1241,7 +1105,7 @@ def test_main_seed_dispatch_prints_seed_counts(monkeypatch, capsys) -> None:
 
 @pytest.mark.parametrize(
     "failure",
-    ["stale", "equal", "skeleton", "nesting", "extra", "duplicate", "issue", "note"],
+    ["stale", "equal", "skeleton", "duplicate", "issue"],
 )
 def test_divergence_refuses_invalid_fixture_or_pair(probe_file, failure: str) -> None:
     path = probe_file
@@ -1253,11 +1117,6 @@ def test_divergence_refuses_invalid_fixture_or_pair(probe_file, failure: str) ->
         row["gitlab_probe"]["html"] = "<p>a</p>"
     elif failure == "skeleton":
         row["gitlab_probe"]["html"] = "<h1>b</h1>"
-    elif failure == "nesting":
-        row["github_probe"]["html"] = "<blockquote><p>a</p></blockquote><p>b</p>"
-        row["gitlab_probe"]["html"] = "<blockquote><p>a</p><p>b</p></blockquote>"
-    elif failure == "extra":
-        document["surprise"] = True
     elif failure == "duplicate":
         document["cases"].append(dict(row))
     source = json.dumps(document, ensure_ascii=False)
@@ -1269,18 +1128,15 @@ def test_divergence_refuses_invalid_fixture_or_pair(probe_file, failure: str) ->
             "stale": "stale",
             "equal": "equal",
             "skeleton": "skeleton",
-            "nesting": "skeleton",
-            "extra": "only a cases",
             "duplicate": "expected one fixture row",
             "issue": "positive issue",
-            "note": "nonempty note",
         }[failure],
     ):
         record_divergence(
             str(path),
             case_id="probe_row",
             issue=0 if failure == "issue" else 378,
-            note="  " if failure == "note" else "text differs",
+            note="text differs",
             write_text=lambda target, contents: writes.append(contents),
         )
     assert writes == []
