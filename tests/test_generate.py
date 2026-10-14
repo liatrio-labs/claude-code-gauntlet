@@ -6,11 +6,14 @@ from gauntlet.cli import CliError
 from gauntlet.generate import finish, sync_targets
 
 
-def test_changed_text(tmp_path):
-    target = tmp_path / "target.md"
-    target.write_text("old", encoding="utf-8")
-    assert sync_targets(tmp_path, {"target.md": "new"}, False) == ["target.md"]
-    assert target.read_bytes() == b"new"
+def test_literal_targets(tmp_path):
+    (tmp_path / "z.md").write_text("old", encoding="utf-8")
+    assert sync_targets(tmp_path, {"z.md": "new", "a.md": "created"}, False) == [
+        "z.md",
+        "a.md",
+    ]
+    assert (tmp_path / "z.md").read_bytes() == b"new"
+    assert (tmp_path / "a.md").read_bytes() == b"created"
 
 
 def test_unchanged_text(tmp_path, monkeypatch):
@@ -42,18 +45,6 @@ def test_check_writes_nothing(tmp_path, monkeypatch):
     assert sync_targets(tmp_path, {"target.md": "new"}, True) == ["target.md"]
     assert writes == []
     assert target.read_bytes() == b"old"
-
-
-def test_mapping_order(tmp_path):
-    assert sync_targets(tmp_path, {"z.md": "z", "a.md": "a"}, True) == [
-        "z.md",
-        "a.md",
-    ]
-
-
-def test_missing_whole_file(tmp_path):
-    assert sync_targets(tmp_path, {"new.md": "created"}, False) == ["new.md"]
-    assert (tmp_path / "new.md").read_bytes() == b"created"
 
 
 def test_later_failure_keeps_earlier_write(tmp_path):

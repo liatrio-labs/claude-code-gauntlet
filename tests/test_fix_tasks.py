@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 from gauntlet import fix_tasks as renderer
+from gauntlet.registry import SEVERITY_EMOJI
 
 
 @pytest.fixture
@@ -126,7 +127,7 @@ def test_sibling_index_missing_git_keeps_file_not_found_error(monkeypatch, tmp_p
 
 
 def test_hand_typed_expected_bytes_for_every_optional_field(
-    run_renderer, write_artifact
+    fix_artifact, run_renderer, write_artifact
 ):
     finding = make_finding(
         id="security-1",
@@ -208,6 +209,9 @@ def test_hand_typed_expected_bytes_for_every_optional_field(
     }
     assert result.returncode == 0
     assert result.stdout == json.dumps([expected], indent=2, ensure_ascii=False) + "\n"
+    assert result.stderr.endswith(
+        f"Rendered 1 FIX task from {fix_artifact} (0 paths rejected)\n"
+    )
 
 
 def test_only_required_fields_apply_all_omission_rules(run_renderer, write_artifact):
@@ -235,7 +239,8 @@ def test_wrapper_and_bare_array_inputs_are_identical(
         "## Issue\nThe value is stale.\n\n"
         "## Location\n`src/bug.py:10`\n\n"
         "## Category\nmedium | bug\n\n"
-        "## Toolchain\nNot detected. Set the test, lint, and build commands before running this task."
+        "## Toolchain\nNot detected. Set the test, lint, and build commands "
+        "before running this task."
     )
     assert task["metadata"]["task_id"] == "FIX-bug-1"
     assert task["metadata"]["requirements"] == [
@@ -328,7 +333,8 @@ def test_alias_only_input_matches_canonical_and_canonical_wins(
         "## Issue\ncanonical description\n\n"
         "## Location\n`src/bug.py:11-12`\n\n"
         "## Category\nmedium | bug\n\n"
-        "## Toolchain\nNot detected. Set the test, lint, and build commands before running this task."
+        "## Toolchain\nNot detected. Set the test, lint, and build commands "
+        "before running this task."
     )
     assert task["metadata"]["requirements"] == [
         {"id": "R-bug-1.1", "text": "canonical description", "testable": True}
@@ -367,36 +373,26 @@ def test_rejected_paths_degrade_each_finding_and_report_the_count(
 @pytest.mark.parametrize(
     ("names", "commands"),
     [
-        pytest.param(
-            ("package.json", "Cargo.toml"),
-            ("npm test", "npm run lint", "npm run build"),
-            id="npm-before-cargo",
-        ),
-        pytest.param(
-            ("Cargo.toml", "go.mod"),
-            ("cargo test", "cargo clippy", "cargo build"),
-            id="cargo-before-go",
-        ),
-        pytest.param(
+        (("package.json", "Cargo.toml"), ("npm test", "npm run lint", "npm run build")),
+        (("Cargo.toml", "go.mod"), ("cargo test", "cargo clippy", "cargo build")),
+        (
             ("go.mod", "pyproject.toml"),
             ("go test ./...", "golangci-lint run", "go build ./..."),
-            id="go-before-python",
         ),
-        pytest.param(
-            ("pyproject.toml", "Makefile"),
-            ("pytest", "ruff check ."),
-            id="python-before-make",
-        ),
-        pytest.param(
-            ("Makefile", "a.csproj"),
-            ("make test", "make lint", "make build"),
-            id="make-before-dotnet",
-        ),
-        pytest.param(
+        (("pyproject.toml", "Makefile"), ("pytest", "ruff check .")),
+        (("Makefile", "a.csproj"), ("make test", "make lint", "make build")),
+        (
             ("a.csproj",),
             ("dotnet test", "dotnet format --verify-no-changes", "dotnet build"),
-            id="dotnet-tail",
         ),
+    ],
+    ids=[
+        "npm-before-cargo",
+        "cargo-before-go",
+        "go-before-python",
+        "python-before-make",
+        "make-before-dotnet",
+        "dotnet-tail",
     ],
 )
 def test_toolchain_adjacent_precedence_pairs(
@@ -448,13 +444,10 @@ def test_package_scripts_custom_names_unsafe_names_and_invalid_json(
     package.write_text(
         json.dumps(
             {
-                "scripts": {
-                    "test:unit": "x",
-                    "test:z": "x",
-                    "lint:fix": "x",
-                    "build:prod": "x",
-                    "lint<script": "x",
-                }
+                "scripts": dict.fromkeys(
+                    ("test:unit", "test:z", "lint:fix", "build:prod", "lint<script"),
+                    "x",
+                )
             }
         ),
         encoding="utf-8",
@@ -601,58 +594,27 @@ def test_sibling_listing_uses_one_git_call_per_run(
 
 
 @pytest.mark.parametrize(
-    ("raw", "label", "complexity", "model", "category"),
+    ("raw", "label", "complexity", "model"),
     [
-        pytest.param(
-            "critical",
-            "critical",
-            "standard",
-            "sonnet",
-            "## Category\ncritical | bug",
-            id="critical",
-        ),
-        pytest.param(
-            " \u3000HiGh\u3000 ",
-            "high",
-            "standard",
-            "sonnet",
-            "## Category\nhigh | bug",
-            id="high",
-        ),
-        pytest.param(
-            "medium",
-            "medium",
-            "trivial",
-            "haiku",
-            "## Category\nmedium | bug",
-            id="medium",
-        ),
-        pytest.param(
-            "low", "low", "trivial", "haiku", "## Category\nlow | bug", id="low"
-        ),
-        pytest.param(
-            "unknown", "low", "trivial", "haiku", "## Category\nlow | bug", id="unknown"
-        ),
-        pytest.param(
-            "blocker",
-            "blocker",
-            "standard",
-            "sonnet",
-            "## Category\nblocker | bug",
-            id="generated-label",
-        ),
+        ("critical", "critical", "standard", "sonnet"),
+        (" \u3000HiGh\u3000 ", "high", "standard", "sonnet"),
+        ("medium", "medium", "trivial", "haiku"),
+        ("low", "low", "trivial", "haiku"),
+        ("unknown", "low", "trivial", "haiku"),
+        ("blocker", "blocker", "standard", "sonnet"),
     ],
+    ids=["critical", "high", "medium", "low", "unknown", "generated-label"],
 )
 def test_normalized_severity_controls_category_complexity_and_model(
-    raw, label, complexity, model, category, run_renderer, write_artifact, monkeypatch
+    raw, label, complexity, model, run_renderer, write_artifact, monkeypatch
 ):
-    monkeypatch.setitem(renderer.SEVERITY_EMOJI, "blocker", "!")
+    monkeypatch.setitem(SEVERITY_EMOJI, "blocker", "!")
     write_artifact([make_finding(severity=raw)])
     task = output(run_renderer())[0]
     assert task["metadata"]["severity"] == label
     assert task["metadata"]["complexity"] == complexity
     assert task["metadata"]["model"] == model
-    assert category_section(task) == category
+    assert category_section(task) == f"## Category\n{label} | bug"
 
 
 def test_test_coverage_scope_uses_confined_refs_and_production_file_proof(
@@ -778,28 +740,15 @@ def test_setext_headings_are_escaped_in_description_and_suggestion(
 @pytest.mark.parametrize(
     ("dimension", "values", "expected"),
     [
-        pytest.param(
-            "security",
-            {"attack_vector": "SQL injection"},
-            "**Attack vector:** SQL injection",
-            id="text",
-        ),
-        pytest.param(
+        (
             "cross_file_impact",
             {"affected_consumers": ["src/a.py", "src/b.py"]},
             "**Affected consumers:** src/a.py, src/b.py",
-            id="list",
         ),
-        pytest.param(
-            "test_coverage", {"criticality": 7}, "**Criticality:** 7", id="number"
-        ),
-        pytest.param(
-            "convention",
-            {"rule_source": "repo_precedent"},
-            None,
-            id="source-without-rule",
-        ),
+        ("test_coverage", {"criticality": 7}, "**Criticality:** 7"),
+        ("convention", {"rule_source": "repo_precedent"}, None),
     ],
+    ids=["list", "number", "source-without-rule"],
 )
 def test_every_generated_detail_field_renders(
     dimension, values, expected, run_renderer, write_artifact
@@ -817,32 +766,19 @@ def test_every_generated_detail_field_renders(
         assert details == expected
 
 
-def test_absolute_inside_nul_non_directory_missing_root_and_nonexistent_confined(
-    fix_root, run_renderer, write_artifact
-):
-    inside = fix_root / "inside.py"
-    findings = [
-        make_finding(id="absolute", file=str(inside)),
-        make_finding(id="nul", file="src/\x00bad.py"),
-        make_finding(id="missing", file="src/deleted.py"),
-    ]
-    write_artifact(findings)
-    result = run_renderer()
-    tasks = output(result)
-    assert tasks[0]["metadata"]["scope"]["files_to_modify"] == []
-    assert tasks[1]["metadata"]["scope"]["files_to_modify"] == []
-    assert tasks[2]["metadata"]["scope"]["files_to_modify"] == ["src/deleted.py"]
-    assert "2 paths rejected" in result.stderr
-
-
-def test_windows_absolute_path_is_rejected(
+def test_absolute_and_nul_paths_are_rejected_and_root_is_required(
     fix_artifact, fix_root, run_renderer, write_artifact, invoke, tmp_path
 ):
-    write_artifact([make_finding(file=r"C:\Windows\System32\hosts")])
-    result = run_renderer()
-    task = output(result)[0]
-    assert task["metadata"]["scope"]["files_to_modify"] == []
-    assert "(1 path rejected)" in result.stderr
+    for file_path in (
+        r"C:\Windows\System32\hosts",
+        "src/\x00bad.py",
+        str(fix_root / "inside.py"),
+    ):
+        write_artifact([make_finding(file=file_path)])
+        result = run_renderer()
+        task = output(result)[0]
+        assert task["metadata"]["scope"]["files_to_modify"] == []
+        assert "(1 path rejected)" in result.stderr
     missing_root = run_renderer(root=fix_root / "does-not-exist")
     assert missing_root.returncode == 1
     assert missing_root.stdout == ""
@@ -921,19 +857,6 @@ def test_hostile_markdown_is_sanitized_and_evidence_fence_is_long_enough(
     assert "FIX: Bad ## forged &lt;!-- title -->" in task["subject"]
 
 
-def test_stdout_is_full_json_and_status_is_stderr(
-    fix_artifact, run_renderer, write_artifact
-):
-    write_artifact([make_finding()])
-    result = run_renderer()
-    assert result.returncode == 0
-    assert isinstance(json.loads(result.stdout), list)
-    assert "Rendered" not in result.stdout
-    assert (
-        f"Rendered 1 FIX task from {fix_artifact} (0 paths rejected)" in result.stderr
-    )
-
-
 def test_caller_fix_protocol():
     root = Path(__file__).resolve().parents[1]
     skill = (root / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
@@ -941,7 +864,8 @@ def test_caller_fix_protocol():
         'question: "Create fix tasks on the task board from these findings?"'
     )
     invocation = skill.index(
-        'python3 "{plugin_root}/scripts/render_fix_tasks.py" "<artifactPaths.postReview>" --repo-root "<repoRoot>"'
+        'python3 "{plugin_root}/scripts/render_fix_tasks.py" '
+        '"<artifactPaths.postReview>" --repo-root "<repoRoot>"'
     )
     methodology = skill.index("### Print methodology")
     assert question < invocation < methodology

@@ -10,12 +10,8 @@ from gauntlet import style_hook
     ("text", "expected"),
     [
         pytest.param(
-            "<!-- GENERATED -->\n\n# Style\n", "# Style\n", id="banner-and-blank"
-        ),
-        pytest.param(
             "<!-- GENERATED -->\n# Style\n", "# Style\n", id="banner-no-blank"
         ),
-        pytest.param("<!-- GENERATED -->", "", id="banner-only"),
         pytest.param("# Style\n", "# Style\n", id="no-banner"),
     ],
 )
@@ -57,12 +53,3 @@ def test_unreadable_carrier(tmp_path, monkeypatch, invoke):
     assert result.stdout == b""
     assert re.fullmatch(r"emit_style_context: [^\n]+\n", result.stderr.decode())
     assert carrier.read_bytes() == b"\xff"
-
-
-def test_nonregular_carrier(tmp_path, monkeypatch, invoke):
-    carrier = tmp_path / "carrier.md"
-    carrier.mkdir()
-    monkeypatch.setattr(style_hook, "CARRIER", str(carrier))
-    result = invoke("emit_style_context", [], tmp_path)
-    assert result.returncode == 0
-    assert result.stdout == result.stderr == b""

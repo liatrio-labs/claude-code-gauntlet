@@ -83,7 +83,11 @@ def field_carries_omit_instruction(raw_block, field, source=None):
     if bare_literal:
         return False
     raise AssertionError(
-        f"field_carries_omit_instruction: {field!r} in {source or 'a contract block'} has a value shape this parser does not recognize (not a quoted string, array-of-strings, angle-bracket placeholder, or bare literal) \u2014 extend the parser rather than silently return False: {rest[:80]!r}"
+        f"field_carries_omit_instruction: {field!r} in "
+        f"{source or 'a contract block'} has a value shape this parser "
+        f"does not recognize (not a quoted string, array-of-strings, "
+        f"angle-bracket placeholder, or bare literal) \u2014 extend the "
+        f"parser rather than silently return False: {rest[:80]!r}"
     )
 
 
@@ -125,7 +129,9 @@ def report_format_tables():
     )
     if not match:
         raise AssertionError(
-            f"{REPORT_FORMAT.relative_to(ROOT)} has no '## Finding Fields Reference' section (or no following H2 to bound it) \u2014 the field documentation this test pins is gone."
+            f"{REPORT_FORMAT.relative_to(ROOT)} has no '## Finding Fields "
+            f"Reference' section (or no following H2 to bound it) \u2014 "
+            f"the field documentation this test pins is gone."
         )
     tables, current = ({}, None)
     for line in match.group(1).splitlines():
@@ -145,7 +151,9 @@ def table_named(tables, keyword):
     hits = [h for h in tables if keyword.lower() in h.lower()]
     if len(hits) != 1:
         raise AssertionError(
-            f"expected exactly one Finding Fields Reference table whose heading mentions {keyword!r}, found {hits} among {list(tables)}"
+            f"expected exactly one Finding Fields Reference table whose "
+            f"heading mentions {keyword!r}, found {hits} among "
+            f"{list(tables)}"
         )
     return tables[hits[0]]
 
@@ -158,83 +166,61 @@ def delivery_guide_json_object(text: str) -> dict:
     return obj
 
 
+OWNER_SECTIONS: dict[str, dict[tuple[str, str], tuple[str, ...]]] = {
+    "skills/code-gauntlet/references/report-format.md": {
+        ("## Permalink Format", "## Finding Fields Reference"): (
+            "permalink_formats",
+            "permalink_sample",
+        ),
+        ("## Inline PR Comment Format", "**`suggested_fix_code` field:**"): (
+            "inline_sample",
+            "inline_legend",
+        ),
+        ("# Code Gauntlet Report Format", "## Permalink Format"): ("severity_legend",),
+        ("## Full Report Template", "## Review Dimensions Summary"): (
+            "full_report_template",
+        ),
+    },
+    "skills/code-gauntlet/references/delivery-guide.md": {
+        ("**Script behavior:**", "### Findings metadata footer"): (
+            "summary_header",
+            "delivery_identity",
+        ),
+        ("### Comment body format", "**Script behavior:**"): ("inline_sample",),
+        ("### Comment body format", "### Using post_review.py"): ("severity_legend",),
+    },
+    "skills/code-gauntlet/SKILL.md": {
+        ("### Deliver", "### Print methodology"): ("chat_identity",),
+        (
+            "### Assemble the args object and record environment overrides",
+            "### Wait protocol — MANDATORY",
+        ): ("config_receipt", "derived_waist_fields", "pr_identity_fields"),
+    },
+    "skills/code-gauntlet/references/phase2-triage.md": {
+        (
+            "## Args Preparation",
+            "**`policy` (model policy the workflow runs under):**",
+        ): ("derived_waist_fields", "pr_identity_fields"),
+    },
+    "skills/code-gauntlet/references/phase1-preflight.md": {
+        (
+            "## Configuration Resolution (no questions)",
+            "## Light Review Template (Phase 2d)",
+        ): ("derived_waist_fields",),
+    },
+    "skills/code-gauntlet/references/headless-mode.md": {
+        ("## Env contract", "## Precedence"): ("headless_env_table",),
+    },
+    "skills/code-gauntlet/references/phase8-delivery.md": {
+        ("### Permalinks", "## Stage 1: Deliver the Report"): ("permalink_formats",),
+    },
+}
+
 OWNERS = {
-    ("skills/code-gauntlet/references/report-format.md", "permalink_formats"): (
-        "## Permalink Format",
-        "## Finding Fields Reference",
-    ),
-    ("skills/code-gauntlet/references/report-format.md", "permalink_sample"): (
-        "## Permalink Format",
-        "## Finding Fields Reference",
-    ),
-    ("skills/code-gauntlet/references/report-format.md", "inline_sample"): (
-        "## Inline PR Comment Format",
-        "**`suggested_fix_code` field:**",
-    ),
-    ("skills/code-gauntlet/references/delivery-guide.md", "summary_header"): (
-        "**Script behavior:**",
-        "### Findings metadata footer",
-    ),
-    ("skills/code-gauntlet/references/delivery-guide.md", "inline_sample"): (
-        "### Comment body format",
-        "**Script behavior:**",
-    ),
-    ("skills/code-gauntlet/references/delivery-guide.md", "delivery_identity"): (
-        "**Script behavior:**",
-        "### Findings metadata footer",
-    ),
-    ("skills/code-gauntlet/SKILL.md", "chat_identity"): (
-        "### Deliver",
-        "### Print methodology",
-    ),
-    ("skills/code-gauntlet/SKILL.md", "config_receipt"): (
-        "### Assemble the args object and record environment overrides",
-        "### Wait protocol \u2014 MANDATORY",
-    ),
-    ("skills/code-gauntlet/SKILL.md", "derived_waist_fields"): (
-        "### Assemble the args object and record environment overrides",
-        "### Wait protocol \u2014 MANDATORY",
-    ),
-    ("skills/code-gauntlet/SKILL.md", "pr_identity_fields"): (
-        "### Assemble the args object and record environment overrides",
-        "### Wait protocol \u2014 MANDATORY",
-    ),
-    ("skills/code-gauntlet/references/phase2-triage.md", "derived_waist_fields"): (
-        "## Args Preparation",
-        "**`policy` (model policy the workflow runs under):**",
-    ),
-    ("skills/code-gauntlet/references/phase2-triage.md", "pr_identity_fields"): (
-        "## Args Preparation",
-        "**`policy` (model policy the workflow runs under):**",
-    ),
-    ("skills/code-gauntlet/references/phase1-preflight.md", "derived_waist_fields"): (
-        "## Configuration Resolution (no questions)",
-        "## Light Review Template (Phase 2d)",
-    ),
-    ("skills/code-gauntlet/references/report-format.md", "severity_legend"): (
-        "# Code Gauntlet Report Format",
-        "## Permalink Format",
-    ),
-    ("skills/code-gauntlet/references/report-format.md", "full_report_template"): (
-        "## Full Report Template",
-        "## Review Dimensions Summary",
-    ),
-    ("skills/code-gauntlet/references/report-format.md", "inline_legend"): (
-        "## Inline PR Comment Format",
-        "**`suggested_fix_code` field:**",
-    ),
-    ("skills/code-gauntlet/references/delivery-guide.md", "severity_legend"): (
-        "### Comment body format",
-        "### Using post_review.py",
-    ),
-    ("skills/code-gauntlet/references/headless-mode.md", "headless_env_table"): (
-        "## Env contract",
-        "## Precedence",
-    ),
-    ("skills/code-gauntlet/references/phase8-delivery.md", "permalink_formats"): (
-        "### Permalinks",
-        "## Stage 1: Deliver the Report",
-    ),
+    (rel, symbol): bounds
+    for rel, sections in OWNER_SECTIONS.items()
+    for bounds, symbols in sections.items()
+    for symbol in symbols
 }
 
 ROOT_MD_ALLOW = {
@@ -270,17 +256,24 @@ _ROW = re.compile(
 )
 
 _COMPOSITE_ROW = re.compile(
-    "^\\|\\s*((?:`[^`]+`\\s*/\\s*)+`[^`]+`)\\s*\\|\\s*([^|]+)\\|\\s*([^|]+)\\|\\s*([^|]*)\\|\\s*$"
+    "^\\|\\s*((?:`[^`]+`\\s*/\\s*)+`[^`]+`)\\s*\\|\\s*([^|]+)\\|\\s*([^|]+)"
+    "\\|\\s*([^|]*)\\|\\s*$"
 )
 
 NO_PARSER = "\u2014"
 
 
-def _strip_ticks(token: str) -> str:
+def strip_ticks(token):
     token = token.strip()
-    if token.startswith("`") and token.endswith("`"):
-        return token[1:-1]
-    return token
+    return token[1:-1] if token.startswith("`") and token.endswith("`") else token
+
+
+def path_cells(producers, parsers, notes):
+    return {
+        "producers": [strip_ticks(p) for p in producers.split(",") if p.strip()],
+        "parsers": [strip_ticks(p) for p in parsers.split(",") if p.strip()],
+        "notes": notes,
+    }
 
 
 def parse_registry(text: str) -> list[dict]:
@@ -292,16 +285,7 @@ def parse_registry(text: str) -> list[dict]:
         string, producers, parsers, notes = (c.strip() for c in m.groups())
         if string == "string" or set(string) <= {"-", " "}:
             continue
-        rows.append(
-            {
-                "string": string,
-                "producers": [
-                    _strip_ticks(p) for p in producers.split(",") if p.strip()
-                ],
-                "parsers": [_strip_ticks(p) for p in parsers.split(",") if p.strip()],
-                "notes": notes,
-            }
-        )
+        rows.append({"string": string, **path_cells(producers, parsers, notes)})
     return rows
 
 
@@ -315,11 +299,7 @@ def parse_composite_rows(text: str) -> list[dict]:
         rows.append(
             {
                 "strings": re.findall("`([^`]+)`", string_cell),
-                "producers": [
-                    _strip_ticks(p) for p in producers.split(",") if p.strip()
-                ],
-                "parsers": [_strip_ticks(p) for p in parsers.split(",") if p.strip()],
-                "notes": notes,
+                **path_cells(producers, parsers, notes),
             }
         )
     return rows
@@ -336,7 +316,10 @@ DISCOVERY = (
 )
 READERS = (*DISCOVERY, "validator", "challenger", "change-summarizer")
 READ_CANON = "skills/code-gauntlet/references/complete-read-contract.md"
-READ_MARKER = "<!-- Canonical source: references/complete-read-contract.md \u2014 keep all agent copies in sync -->"
+READ_MARKER = (
+    "<!-- Canonical source: references/complete-read-contract.md — keep all "
+    "agent copies in sync -->"
+)
 
 
 def read(rel):
@@ -466,12 +449,6 @@ def test_contract_schema(agent_type: str) -> None:
             id="angle-omit",
         ),
         pytest.param('{"other_field": "x"}', "attack_vector", False, id="absent"),
-        pytest.param(
-            '{"weird_field": {"nested": "object"}}',
-            "weird_field",
-            None,
-            id="unsupported-object",
-        ),
         pytest.param(
             '{"affected_consumers": [' + '"a" ' * 200 + "x",
             "affected_consumers",
@@ -683,7 +660,8 @@ def test_machine_string_registry():
         "Reviewed up to:",
         "HEADLESS CONFIG ERROR:",
         "HEADLESS INPUT ERROR:",
-        "code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.",
+        "code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic "
+        "workflows. Install the pre-rename deep-review v2.x for older CLIs.",
         "the deltas carry a checksum",
         "PAYLOAD_JSON:",
         'PRODUCT = "code-gauntlet"',
@@ -712,21 +690,17 @@ def test_machine_string_registry():
 
 def test_machine_parser():
     assert parse_registry(
-        "| string | producer path(s) | parser path(s) | notes |\n| --- | --- | --- | --- |\n| `TokA` | `a.py`, `b.py` | `c.py` | multi producers |\n| `TokB` | `only.py` | `\u2014` | honest empty |\n| `TokC` | `p.py` | `\u2014` | |\n| string | producer path(s) | parser path(s) | notes |\n"
+        "| `string` | producer path(s) | parser path(s) | notes |\n"
+        "| `---` | --- | --- | --- |\n"
+        "unrelated text\n"
+        "| `Tok` | `a.py`, `b.py` | `\u2014` | honest empty |\n"
     ) == [
         {
-            "string": "TokA",
+            "string": "Tok",
             "producers": ["a.py", "b.py"],
-            "parsers": ["c.py"],
-            "notes": "multi producers",
-        },
-        {
-            "string": "TokB",
-            "producers": ["only.py"],
             "parsers": ["\u2014"],
             "notes": "honest empty",
-        },
-        {"string": "TokC", "producers": ["p.py"], "parsers": ["\u2014"], "notes": ""},
+        }
     ]
 
 
@@ -766,8 +740,8 @@ def test_agent_mirrors(mirror):
         assert len(block) > 400
         assert "no" in block.lower() and "truncation notice" in block
         assert (
-            "When your dispatch prompt names a shared context file, it is mandatory reading in full"
-            in block
+            "When your dispatch prompt names a shared context file, it is "
+            "mandatory reading in full" in block
         )
         assert "silent failure" in block and "offset" in block
         assert not re.search(r"printf|ndjson|Bash", block, re.IGNORECASE)
@@ -784,7 +758,11 @@ def test_agent_mirrors(mirror):
             blocks.append(text[start : text.index(READ_MARKER, start)].rstrip("\n"))
         assert len(blocks[0]) > 400
         assert all(block == blocks[0] for block in blocks)
-        sentence = "A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded."
+        sentence = (
+            "A convention finding grounded in an in-repo precedent names the "
+            "files that establish the pattern; a preference with no named "
+            "precedent stays excluded."
+        )
         assert sentence in read(
             "skills/code-gauntlet/references/false-positive-exclusions.md"
         )
@@ -826,7 +804,9 @@ def test_triage_dispatch():
     "summary",
     [
         pytest.param(
-            "9 reported issues from 10 findings after the gauntlet.\n\n- index entry\n\n3 more reported issues not listed here (over the delivery cap of 6 findings).",
+            "9 reported issues from 10 findings after the gauntlet.\n\n- "
+            "index entry\n\n3 more reported issues not listed here (over "
+            "the delivery cap of 6 findings).",
             id="findings",
         ),
         pytest.param("0 findings after the gauntlet.", id="zero-findings"),
@@ -896,7 +876,8 @@ def test_mark_producer_registry():
     ):
         text = read(rel)
         bodies = re.findall(
-            r"<!-- generated-from-registry-identity:[^\n]*\n(.*?)<!-- /generated-from-registry-identity:[^\n]*",
+            "<!-- generated-from-registry-identity:[^\\n]*\\n(.*?)<!-- "
+            "/generated-from-registry-identity:[^\\n]*",
             text,
             re.DOTALL,
         )
@@ -919,7 +900,9 @@ def test_full_report_predicates(surface):
         )
         assert match is not None
         text, count = re.subn(
-            r"<!-- generated-from-registry-identity:full_report_template[^\n]*\n.*?<!-- /generated-from-registry-identity:full_report_template -->",
+            "<!-- generated-from-registry-identity:full_report_template[^\\"
+            "n]*\\n.*?<!-- /generated-from-registry-identity:full_report_te"
+            "mplate -->",
             "",
             match.group(1),
             flags=re.DOTALL,

@@ -48,171 +48,78 @@ def config_cli(invoke, monkeypatch):
     return call
 
 
+ENUM_RULE = {"kind": "enum", "values": ["Chat"]}
+CSV_RULE = {"kind": "csv_subset", "values": ["chat", "markdown"]}
+POSITIVE_RULE = {"kind": "positive_digits"}
+NULLABLE_RULE = {"kind": "digits_or_null"}
+_RULE_ROWS = [
+    ("enum-exact", ENUM_RULE, "Chat", "headless", True),
+    ("enum-case", ENUM_RULE, "chat", "headless", False),
+    ("csv-subset", CSV_RULE, "chat,markdown", "headless", True),
+    ("csv-empty", CSV_RULE, "", "headless", False),
+    ("csv-empty-part", CSV_RULE, "chat,,markdown", "headless", False),
+    ("csv-duplicate", CSV_RULE, "chat,chat", "headless", False),
+    ("csv-untrimmed", CSV_RULE, "chat, markdown", "headless", False),
+    ("csv-case", CSV_RULE, "Chat", "headless", False),
+    ("positive-one", POSITIVE_RULE, "1", "headless", True),
+    ("positive-zero", POSITIVE_RULE, "0", "headless", False),
+    ("digits-zero", NULLABLE_RULE, "0", "interactive", True),
+    ("digits-null", NULLABLE_RULE, "null", "interactive", True),
+    ("digits-zero-padded", NULLABLE_RULE, "00", "interactive", False),
+    ("digits-padded", NULLABLE_RULE, "01", "interactive", False),
+    ("digits-unsafe", NULLABLE_RULE, "9007199254740992", "interactive", False),
+    ("digits-nonascii", NULLABLE_RULE, "\u0661", "interactive", False),
+    ("unknown-kind", {"kind": "bogus"}, "x", "headless", False),
+    (
+        "missing-mode",
+        {"headless": {"kind": "enum", "values": ["x"]}},
+        "x",
+        "interactive",
+        False,
+    ),
+    ("nonstring-value", {"kind": "enum", "values": [1]}, 1, "headless", False),
+]
+
+
 @pytest.mark.parametrize(
     ("rule", "value", "mode", "expected"),
-    [
-        pytest.param(
-            {"kind": "enum", "values": ["Chat"]},
-            "Chat",
-            "headless",
-            True,
-            id="enum-exact",
-        ),
-        pytest.param(
-            {"kind": "enum", "values": ["Chat"]},
-            "chat",
-            "headless",
-            False,
-            id="enum-case",
-        ),
-        pytest.param(
-            {"kind": "csv_subset", "values": ["chat", "markdown"]},
-            "chat,markdown",
-            "headless",
-            True,
-            id="csv-subset",
-        ),
-        pytest.param(
-            {"kind": "csv_subset", "values": ["chat", "markdown"]},
-            "",
-            "headless",
-            False,
-            id="csv-empty",
-        ),
-        pytest.param(
-            {"kind": "csv_subset", "values": ["chat", "markdown"]},
-            "chat,,markdown",
-            "headless",
-            False,
-            id="csv-empty-part",
-        ),
-        pytest.param(
-            {"kind": "csv_subset", "values": ["chat", "markdown"]},
-            "chat,chat",
-            "headless",
-            False,
-            id="csv-duplicate",
-        ),
-        pytest.param(
-            {"kind": "csv_subset", "values": ["chat", "markdown"]},
-            "chat, markdown",
-            "headless",
-            False,
-            id="csv-untrimmed",
-        ),
-        pytest.param(
-            {"kind": "csv_subset", "values": ["chat", "markdown"]},
-            "Chat",
-            "headless",
-            False,
-            id="csv-case",
-        ),
-        pytest.param(
-            {"kind": "positive_digits"}, "1", "headless", True, id="positive-one"
-        ),
-        pytest.param(
-            {"kind": "positive_digits"}, "0", "headless", False, id="positive-zero"
-        ),
-        pytest.param(
-            {"kind": "digits_or_null"}, "0", "interactive", True, id="digits-zero"
-        ),
-        pytest.param(
-            {"kind": "digits_or_null"}, "null", "interactive", True, id="digits-null"
-        ),
-        pytest.param(
-            {"kind": "digits_or_null"},
-            "00",
-            "interactive",
-            False,
-            id="digits-zero-padded",
-        ),
-        pytest.param(
-            {"kind": "digits_or_null"}, "01", "interactive", False, id="digits-padded"
-        ),
-        pytest.param(
-            {"kind": "digits_or_null"},
-            "9007199254740992",
-            "interactive",
-            False,
-            id="digits-unsafe",
-        ),
-        pytest.param(
-            {"kind": "digits_or_null"},
-            "\u0661",
-            "interactive",
-            False,
-            id="digits-nonascii",
-        ),
-        pytest.param({"kind": "bogus"}, "x", "headless", False, id="unknown-kind"),
-        pytest.param(
-            {"headless": {"kind": "enum", "values": ["x"]}},
-            "x",
-            "interactive",
-            False,
-            id="missing-mode",
-        ),
-        pytest.param(
-            {"kind": "enum", "values": [1]}, 1, "headless", False, id="nonstring-value"
-        ),
-    ],
+    [pytest.param(*row, id=name) for name, *row in _RULE_ROWS],
 )
 def test_rules_are_exact_and_fail_closed(rule, value, mode, expected):
     assert resolver.matches_rule(rule, value, mode) is expected
 
 
+_DELIVERY_ROWS = [
+    ("next-heading", "chat,pr_comments\n## Ignore\nmarkdown", "chat,pr_comments"),
+    ("subheading", "chat\n### Ignore\nmarkdown", "chat"),
+    ("backtick-fence", "chat\n```yaml\nmarkdown\n```:", "chat"),
+    ("tilde-fence", "chat\n~~~\nmarkdown\n~~~", "chat"),
+    ("multiline-comment", "<!-- chat,\npr_comments -->\nmarkdown", "markdown"),
+    ("comment-only", "<!-- chat,pr_comments -->", None),
+    ("prose", "prose about chat", None),
+    ("spaced-list", "chat, pr_comments", None),
+    ("case", "Chat", None),
+    ("empty-item", "chat,,markdown", None),
+    ("root-heading-ends-section", "<!--\n# Ignore\n-->\nchat\n", None),
+    ("unicode-line-separator", "chat\u2028markdown\n", None),
+    ("comment-wrapped-fence", "<!--\n```\n-->\nchat\n", None),
+]
+
+
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        pytest.param(
-            "## Default Delivery\nchat,pr_comments\n## Ignore\nmarkdown",
-            "chat,pr_comments",
-            id="next-heading",
-        ),
-        pytest.param(
-            "## Default Delivery\nchat\n### Ignore\nmarkdown", "chat", id="subheading"
-        ),
-        pytest.param(
-            "## Default Delivery\nchat\n```yaml\nmarkdown\n```:",
-            "chat",
-            id="backtick-fence",
-        ),
-        pytest.param(
-            "## Default Delivery\nchat\n~~~\nmarkdown\n~~~", "chat", id="tilde-fence"
-        ),
-        pytest.param(
-            "## Default Delivery\n<!-- chat,\npr_comments -->\nmarkdown",
-            "markdown",
-            id="multiline-comment",
-        ),
-        pytest.param(
-            "## Default Delivery\n<!-- chat,pr_comments -->", None, id="comment-only"
-        ),
-        pytest.param("## Default Delivery\nprose about chat", None, id="prose"),
-        pytest.param("## Default Delivery\nchat, pr_comments", None, id="spaced-list"),
-        pytest.param("## Default Delivery\nChat", None, id="case"),
-        pytest.param("## Default Delivery\nchat,,markdown", None, id="empty-item"),
+        pytest.param("## Default Delivery\n" + body, expected, id=name)
+        for name, body, expected in _DELIVERY_ROWS
+    ]
+    + [
         pytest.param("# Default Delivery\nchat", None, id="wrong-heading"),
-        pytest.param(
-            "## Default Delivery\n<!--\n# Ignore\n-->\nchat\n",
-            None,
-            id="root-heading-ends-section",
-        ),
         pytest.param(
             "prefix\r\n## Default Delivery\r\n\r\n  chat  \r\n",
             "chat",
             id="crlf-preamble-indented-value",
         ),
         pytest.param("## Default Delivery\rchat\r", "chat", id="bare-cr"),
-        pytest.param(
-            "## Default Delivery\nchat\u2028markdown\n",
-            None,
-            id="unicode-line-separator",
-        ),
-        pytest.param(
-            "## Default Delivery\n<!--\n```\n-->\nchat\n",
-            None,
-            id="comment-wrapped-fence",
-        ),
     ],
 )
 def test_default_delivery_parser(source, expected):
@@ -286,44 +193,32 @@ def test_pr_mr_and_unset_targets_accept_pr_comments(target, source):
     }
 
 
+_INVALID_PIN_ROWS = [
+    ("model-enum", "headless", "MODEL_TIER", "bad", "{optimized}"),
+    ("delivery-csv", "headless", "DELIVERY", "bad", "{chat,pr_comments,markdown}"),
+    ("positive-cap", "headless", "PR_COMMENT_CAP", "0", "{positive integer}"),
+    (
+        "interactive-cap",
+        "interactive",
+        "PR_COMMENT_CAP",
+        "not-a-cap",
+        "{digits or null}",
+    ),
+    (
+        "interactive-model-standard",
+        "interactive",
+        "MODEL_TIER",
+        "standard",
+        "{optimized}",
+    ),
+]
+
+
 @pytest.mark.parametrize(
     ("mode", "variable", "value", "allowed"),
     [
-        pytest.param(
-            "headless",
-            "CODE_GAUNTLET_MODEL_TIER",
-            "bad",
-            "{optimized}",
-            id="model-enum",
-        ),
-        pytest.param(
-            "headless",
-            "CODE_GAUNTLET_DELIVERY",
-            "bad",
-            "{chat,pr_comments,markdown}",
-            id="delivery-csv",
-        ),
-        pytest.param(
-            "headless",
-            "CODE_GAUNTLET_PR_COMMENT_CAP",
-            "0",
-            "{positive integer}",
-            id="positive-cap",
-        ),
-        pytest.param(
-            "interactive",
-            "CODE_GAUNTLET_PR_COMMENT_CAP",
-            "not-a-cap",
-            "{digits or null}",
-            id="interactive-cap",
-        ),
-        pytest.param(
-            "interactive",
-            "CODE_GAUNTLET_MODEL_TIER",
-            "standard",
-            "{optimized}",
-            id="interactive-model-standard",
-        ),
+        pytest.param(mode, "CODE_GAUNTLET_" + variable, value, allowed, id=name)
+        for name, mode, variable, value, allowed in _INVALID_PIN_ROWS
     ],
 )
 def test_invalid_pins_are_exact_and_stdout_is_empty(
@@ -360,7 +255,8 @@ def test_control_values_are_json_encoded_on_the_error_line(value, spelling, conf
     assert result.stdout == b""
     assert (
         result.stderr.decode()
-        == f"HEADLESS CONFIG ERROR: CODE_GAUNTLET_DELIVERY={spelling} not in {{chat,pr_comments,markdown}}\n"
+        == f"HEADLESS CONFIG ERROR: CODE_GAUNTLET_DELIVERY={spelling} "
+        "not in {chat,pr_comments,markdown}\n"
     )
 
 
@@ -398,8 +294,8 @@ def test_cli_shape_identity_and_stderr_block(config_cli, mode):
         "  delivery_tier=all (default)\n"
     )
     block = (
-        prefix
-        + f"  pipeline_version={manifest['version']} (bundle)\n  plugin_root={ROOT} (resolved)"
+        prefix + f"  pipeline_version={manifest['version']} (bundle)\n"
+        f"  plugin_root={ROOT} (resolved)"
     )
     expected = {
         "mode": mode,
@@ -488,14 +384,16 @@ def test_caller_preflight_commands_and_targetless_gate():
     skill = (ROOT / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
     assert (
         'echo "=== output_dir ==="\n'
-        'if ! OUTPUT_DIR=$(python3 "{plugin_root}/scripts/ensure_output_dir.py"); then\n'
+        'if ! OUTPUT_DIR=$(python3 "{plugin_root}/scripts/ensure_output_dir.py"); '
+        "then\n"
         '  echo "output_dir: FAILED"\n  exit 1\nfi\necho "$OUTPUT_DIR"'
     ) in skill
     composite = skill.split('echo "=== config ==="\n', 1)[1].split(
         'echo "=== pr_view ==="', 1
     )[0]
     assert composite == (
-        'if ! CONFIG_JSON=$(python3 "{plugin_root}/scripts/resolve_config.py" --target {target_type} --plugin-root "{plugin_root}"); then\n'
+        'if ! CONFIG_JSON=$(python3 "{plugin_root}/scripts/resolve_config.py" '
+        '--target {target_type} --plugin-root "{plugin_root}"); then\n'
         '  echo "config: FAILED"\n  exit 1\nfi\necho "$CONFIG_JSON"\n\n'
     )
     assert "review_md_root" not in skill
@@ -508,9 +406,11 @@ def test_caller_preflight_commands_and_targetless_gate():
         if line.startswith("> Headless exception")
     )
     assert line == (
-        "> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): call `scripts/resolve_config.py` "
-        "with no `--target` on this path. The question is never presented in headless mode. "
-        "Branch on `resolved.pr_not_found_policy`: `error` stops the run, and `local` proceeds "
+        "> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): "
+        "call `scripts/resolve_config.py` with no `--target` on this path. "
+        "The question is never presented in headless mode. "
+        "Branch on `resolved.pr_not_found_policy`: `error` stops the run, "
+        "and `local` proceeds "
         "with `pr_number` cleared. See `references/headless-mode.md`."
     )
 
@@ -520,8 +420,8 @@ def test_caller_headless_fallback():
         encoding="utf-8"
     )
     assert (
-        "If no report materializes, repeat the block in the final message as the fallback receipt."
-        in reference
+        "If no report materializes, repeat the block in the final message "
+        "as the fallback receipt." in reference
     )
 
 
@@ -574,7 +474,6 @@ def assert_resolved_mentions(root):
 
 def test_caller_resolved_mentions(tmp_path):
     assert_resolved_mentions(ROOT / "skills/code-gauntlet")
-    # A negative fixture proves the inventory check rejects an unowned gate input.
     (tmp_path / "invalid.md").write_text(
         "Use `resolved.pr_comment_cap`.\n", encoding="utf-8"
     )
