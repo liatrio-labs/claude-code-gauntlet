@@ -1,0 +1,13 @@
+extend = "../pyproject.toml"
+# Keep import sorting rooted at the repository rather than this directory.
+src = [".."]
+
+[lint.flake8-tidy-imports.banned-api]
+"scripts".msg = "Import gauntlet modules from gauntlet.* instead."
+"unittest.TestCase".msg = "Use pytest; unittest.mock is allowed."
+"unittest.IsolatedAsyncioTestCase".msg = "Use pytest; unittest.mock is allowed."
+"unittest.FunctionTestCase".msg = "Use pytest; unittest.mock is allowed."
+"unittest.main".msg = "Use pytest; unittest.mock is allowed."
+"unittest.TestSuite".msg = "Use pytest; unittest.mock is allowed."
+"unittest.TextTestRunner".msg = "Use pytest; unittest.mock is allowed."
+"unittest.case".msg = "Use pytest; unittest.mock is allowed."

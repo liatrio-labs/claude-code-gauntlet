@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.forge import FakeForgeFactory, install_forge_factory
 from tests.support.pipeline import PersistedPayload
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -134,24 +135,15 @@ def symlink_or_skip(tmp_path_factory):
 
 
 @pytest.fixture
-def forge_factory(monkeypatch, request):
+def forge_factory(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> FakeForgeFactory:
     from gauntlet.delivery import post
 
-    from tests.support.forge import install_forge_factory
-
     factory = install_forge_factory(monkeypatch, getattr(request, "param", post))
-    if request.instance is not None:
-        request.instance.forge_factory = factory
     return factory
 
 
 @pytest.fixture
 def poster_state(monkeypatch):
     monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
-
-
-@pytest.fixture
-def poster_workspace(tmp_path, request):
-    if request.instance is not None:
-        request.instance.tmp = str(tmp_path)
-        request.instance.findings_path = str(tmp_path / "findings.json")
