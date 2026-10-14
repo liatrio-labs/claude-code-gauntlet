@@ -5,7 +5,6 @@ from bisect import bisect_left
 from dataclasses import dataclass
 
 
-# Twin of ``openProseFence`` in ``workflows/src/outboundText.js``.
 def open_fence(
     text: str,
     *,
@@ -15,7 +14,7 @@ def open_fence(
 ) -> tuple[str, int, int] | None:
     """Return the final open fence as ``(char, run length, opener offset)``.
 
-    Collected intervals are half-open Python string offsets. ``strict`` constrains openers.
+    Collect half-open string offsets; strict openers start at column zero.
     """
     state: tuple[str, int, int] | None = None
     opened_at: int | None = None
@@ -79,7 +78,6 @@ def open_fence(
     return state
 
 
-# Twin of ``proseFenceCloser`` in ``workflows/src/outboundText.js``.
 def fence_closer(prefix: str) -> str:
     state = open_fence(prefix)
     return "" if state is None else state[0] * state[1]
@@ -192,7 +190,7 @@ def protected_line_flags(
 
 
 def code_spans(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
-    """Pair equal-width one-line spans outside top-level fences; escaped openers skip."""
+    """Pair one-line spans outside top-level fences."""
     fences: list[tuple[int, int]] = []
     spans: list[tuple[int, int]] = []
     open_fence(text, intervals=fences)
@@ -221,7 +219,7 @@ def fence_run(payload: str) -> str:
 
 
 def code_span(value: str, *, pad_space_edges: bool = False) -> str:
-    """Padding separates backtick edges; outbound locations also preserve space edges."""
+    """Pad backtick edges; optionally preserve space edges."""
     runs = re.findall(r"`+", value)
     delimiter = "`" * (max((len(run) for run in runs), default=0) + 1)
     edges = ("`", " ") if pad_space_edges else ("`",)

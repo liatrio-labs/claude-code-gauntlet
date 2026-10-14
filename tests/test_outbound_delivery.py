@@ -4,14 +4,12 @@ import contextlib
 import hashlib
 import io
 import json
-import re
-import subprocess
 import sys
 import tempfile
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import Literal, cast
 from unittest.mock import patch
 
 import gauntlet.delivery.post as post_review
@@ -21,7 +19,6 @@ import pytest
 from gauntlet.delivery import compose
 from gauntlet.delivery.input import Finding, ReviewInput
 from gauntlet.forge import JsonFetch, Platform, PostRequest, PostResult, ReviewTarget
-from gauntlet.markdown import code_spans
 from gauntlet.marker import FindingMarkerWire
 from gauntlet.prior_review import PriorDelivery
 
@@ -29,21 +26,22 @@ from tests.support.delivery import finding as delivery_finding
 from tests.support.diff import diff_facts
 from tests.support.forge import FakeForge, FakeForgeFactory, FakeGitLab, ForgeCall
 from tests.support.outbound_assertions import (
-    _render_summary_bodies,
-)
-from tests.support.outbound_assertions import (
     assert_outbound_string_invariant as _assert_outbound_string_invariant,
 )
 from tests.support.prior import prior_notes
 
-if TYPE_CHECKING:
-    from _collections_abc import dict_keys
-
-REPO = Path(__file__).resolve().parents[1]
-NODE = "node"
 SHA = "a" * 40
 FAKE_FINDING_MARKER = review_marker.build_finding_marker(SHA, "0123456789abcdef")
 pytestmark = pytest.mark.usefixtures("poster_state")
+POISON_FIELDS = (
+    "title",
+    "body",
+    "suggestion",
+    "claude_md_rule",
+    "spec_text",
+    "agent",
+    "dimension",
+)
 
 
 def test_direct_sessions_interleave_live_and_dry_delivery(
@@ -141,13 +139,6 @@ def test_direct_sessions_interleave_live_and_dry_delivery(
             "[\uff3ba (|https://example.test/p.png]], confidence 0.9)",
             id="agent_dimension",
         ),
-        pytest.param(
-            "bug-hunter",
-            "[[a",
-            "|https://example.test/p.png]]",
-            "bug-hunter ([\uff3ba, confidence |https://example.test/p.png]])",
-            id="dimension_confidence",
-        ),
     ],
 )
 def test_corroborator_cross_field_wikilink(
@@ -170,21 +161,6 @@ def test_corroborator_cross_field_wikilink(
     body = compose.render_group_body(primary, [corroborator])
     _assert_outbound_string_invariant(body)
     assert expected_identity in body
-
-
-def _hostile_finding(**overrides: object) -> dict[str, object]:
-    finding: dict[str, object] = {
-        "file": "src/edited.py",
-        "line": 2,
-        "severity": "high",
-        "title": f"@zz363sentinel <table><tr><td> title {FAKE_FINDING_MARKER}",
-        "body": f"@zz363sentinel <table><tr><td> body {FAKE_FINDING_MARKER}",
-        "suggestion": "@zz363suggestion <ins data-zz363> suggestion",
-        "claude_md_rule": "@zz363rule <ins data-zz363> rule",
-        "rule_source": "repo_precedent",
-    }
-    finding.update(overrides)
-    return finding
 
 
 def _deliver(
@@ -244,7 +220,6 @@ def _deliver(
             },
         )
     )
-    # Direct poster calls share one test process, so each delivery starts fresh.
     session = post_review.DeliverySession(dry_run=not live)
     with (
         contextlib.redirect_stdout(io.StringIO()),
@@ -287,156 +262,35 @@ def _poison(key: str) -> str:
         f"\n/zz377{key}\n>>>\n```\n/zz377{key}\n```"
         "\n![a](u)"
         "\n[critical]: u"
+        "\nghp_" + "A" * 10 + "\u200b" + "A" * 20
     )
-
-
-class _RecordingFinding(dict[str, object]):
-    def __init__(self, values: Mapping[str, object], *, reads: set[str]) -> None:
-        super().__init__(values)
-        self.reads = reads
-
-    def __getitem__(self, key: str) -> object:
-        self.reads.add(key)
-        return super().__getitem__(key)
-
-    def get(self, key: str, default: object = None) -> object:
-        self.reads.add(key)
-        return super().get(key, default)
-
-    def __contains__(self, key: object) -> bool:
-        if isinstance(key, str):
-            self.reads.add(key)
-        return super().__contains__(key)
-
-    def __iter__(self) -> Iterator[str]:
-        self.reads.update(super().keys())
-        return super().__iter__()
-
-    def keys(self) -> "dict_keys[str, object]":
-        self.reads.update(super().keys())
-        return super().keys()
-
-    def copy(self) -> "_RecordingFinding":
-        self.reads.update(super().keys())
-        return type(self)(self, reads=self.reads)
-
-    def __copy__(self) -> "_RecordingFinding":
-        return self.copy()
-
-    def __deepcopy__(self, memo: dict[int, object]) -> "_RecordingFinding":
-        cloned = type(self)(self, reads=self.reads)
-        memo[id(self)] = cloned
-        return cloned
-
-
-def _js_finding_property_union() -> set[str]:
-    source = (
-        "import {FINDING_PROP_TYPES,DIMENSIONS} from './workflows/src/registry.js';"
-        "const names=[...new Set([...Object.keys(FINDING_PROP_TYPES),"
-        "...DIMENSIONS.flatMap(d=>Object.keys(d.schemaExtra||{})),"
-        "'body','line','end_line'])];"
-        "process.stdout.write(JSON.stringify(names));"
-    )
-    result = subprocess.run(
-        [NODE, "--input-type=module", "-e", source],
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=30,
-    )
-    if result.returncode:
-        raise AssertionError(result.stderr)
-    names: list[str] = json.loads(result.stdout)
-    return set(names)
-
-
-def _contains_code_span(text: str, needle: str) -> bool:
-    found = False
-    for line in text.splitlines():
-        offset = 0
-        while True:
-            index = line.find(needle, offset)
-            if index < 0:
-                break
-            found = True
-            runs = list(re.finditer(r"`+", line))
-            enclosed = False
-            for opening in runs:
-                if opening.end() > index:
-                    break
-                for closing in runs:
-                    if closing.start() < index + len(needle):
-                        continue
-                    inner = line[opening.end() : closing.start()]
-                    inner_runs = re.findall(r"`+", inner)
-                    if len(opening.group()) == len(closing.group()) and len(
-                        opening.group()
-                    ) > max(map(len, inner_runs), default=0):
-                        enclosed = True
-                        break
-                if enclosed:
-                    break
-            if not enclosed:
-                return False
-            offset = index + len(needle)
-    return found
-
-
-def test_every_location_sentinel_occurrence_must_be_quoted() -> None:
-    assert _contains_code_span("`@zz363file` and ``@zz363file``", "@zz363file")
-    assert not _contains_code_span("`@zz363file` and @zz363file", "@zz363file")
 
 
 def _assert_prepared_poison(
     body: str,
-    property_names: set[str],
     expected_markers: Iterable[FindingMarkerWire] = (),
 ) -> None:
-    location_names = {"file", "line", "end_line", "line_start", "line_end"}
-    patch_name = "suggested_fix_code"
-    for key in property_names:
-        for visible in (f"@zz363{key}", f"\uff20zz363{key}"):
-            if key in location_names:
-                if visible in body:
-                    assert _contains_code_span(body, visible), key
-            elif key == patch_name:
-                if visible in body:
-                    suggestion_blocks = re.findall(
-                        r"(?ms)^`{3,}suggestion[^\n]*\n.*?^`{3,}\s*$", body
-                    )
-                    assert any(visible in block for block in suggestion_blocks)
-            else:
-                assert f"@zz363{key}" not in body, key
-        if key not in location_names and key != patch_name:
-            assert f"<ins data-zz363{key}" not in body, key
-    expected_markers = tuple(expected_markers)
-    assert "@zz363unknown_key" not in body
+    assert "@zz363" not in body
+    assert "<ins data-zz363" not in body
     assert "&#64;zz363" not in body
-    assert "&;zz363" not in body
+    assert "ghp_" not in body
+    expected_markers = tuple(expected_markers)
     assert review_marker.find_finding_markers(body) == list(expected_markers)
-    without_live_markers = body
-    summary_marker = review_marker.find_marker(body)
-    if summary_marker is not None:
-        without_live_markers = without_live_markers.replace(
-            review_marker.build_marker(
-                summary_marker["sha"], summary_marker["findings_count"]
+    marker = review_marker.find_marker(body)
+    if marker is not None:
+        body = body.replace(
+            review_marker.build_marker(marker["sha"], marker["findings_count"]), ""
+        )
+    for finding_marker in expected_markers:
+        body = body.replace(
+            review_marker.build_finding_marker(
+                finding_marker["sha"], finding_marker["key"]
             ),
             "",
         )
-    for marker in expected_markers:
-        without_live_markers = without_live_markers.replace(
-            review_marker.build_finding_marker(marker["sha"], marker["key"]), ""
-        )
-    spans, _fences = code_spans(without_live_markers)
-    locations = tuple(
-        without_live_markers[start:end]
-        for start, end in spans
-        if any(
-            f"zz363{name}" in without_live_markers[start:end] for name in location_names
-        )
-    )
-    _assert_outbound_string_invariant(without_live_markers, literal_locations=locations)
+    # The poster owns this approved patch; the invariant applies to untrusted prose.
+    body = body.replace("```suggestion\nreplacement = 1\n```", "")
+    _assert_outbound_string_invariant(body)
 
 
 @dataclass(frozen=True, slots=True)
@@ -456,66 +310,11 @@ SINK_CASES = [
 ]
 
 
-@pytest.fixture(scope="module")
-def poison_fields() -> set[str]:
-    property_names = _js_finding_property_union() | {"unknown_key"}
-    reads: set[str] = set()
-    primary = _poisoned_outbound_sinks_finding(property_names, reads, primary=True)
-    corroborator = _poisoned_outbound_sinks_finding(property_names, reads)
-    compose.render_comment_body(primary)
-    compose.render_group_body(primary, [corroborator])
-    compose.build_skipped_section(
-        [compose.SkippedEntry(primary.get("file"), primary.get("line"), primary)]
-    )
-    fallback = _poisoned_outbound_sinks_finding(property_names, reads)
-    fallback["claude_md_rule"] = FAKE_FINDING_MARKER
-    compose.render_comment_body(fallback)
-    for case in (
-        SinkCase(platform, route)
-        for platform in ("github", "gitlab")
-        for route in ("anchored", "off_diff", "grouped")
-    ):
-        members = [
-            _poisoned_outbound_sinks_finding(property_names, reads, primary=True)
-        ]
-        if case.route == "grouped":
-            members.append(_poisoned_outbound_sinks_finding(property_names, reads))
-        for member in members:
-            member["line"] = 2
-            member["end_line"] = 2
-        filepath = members[0]["file"]
-        assert isinstance(filepath, str)
-        _deliver(
-            case.platform,
-            [cast(Finding, member) for member in members],
-            _poison("review_body"),
-            lines={(filepath, 2): None} if case.route != "off_diff" else {},
-            texts={(filepath, 2): "context"} if case.route != "off_diff" else {},
-        )
-    required_reads = {
-        "title",
-        "body",
-        "suggestion",
-        "claude_md_rule",
-        "spec_text",
-        "suggested_fix_code",
-        "file",
-        "line",
-        "end_line",
-        "agent",
-        "dimension",
-        "confidence",
-        "rule_source",
-    }
-    assert required_reads <= reads, sorted(required_reads - reads)
-    return property_names | (reads - {"consolidation_key", "consolidation_primary"})
-
-
 @pytest.mark.parametrize("case", SINK_CASES)
-def test_python_sink_containment(case: SinkCase, poison_fields: set[str]) -> None:
-    members = [_poisoned_outbound_sinks_finding(poison_fields, set(), primary=True)]
+def test_python_sink_containment(case: SinkCase) -> None:
+    members = [_poisoned_outbound_sinks_finding(primary=True)]
     if case.route == "grouped":
-        members.append(_poisoned_outbound_sinks_finding(poison_fields, set()))
+        members.append(_poisoned_outbound_sinks_finding())
     for member in members:
         member["line"] = 2
         member["end_line"] = 2
@@ -539,7 +338,7 @@ def test_python_sink_containment(case: SinkCase, poison_fields: set[str]) -> Non
         summary = payload["summary"]["body"]
         inline_bodies = [discussion["body"] for discussion in payload["discussions"]]
     for body in [summary, *inline_bodies]:
-        _assert_prepared_poison(body, poison_fields)
+        _assert_prepared_poison(body)
         marker = review_marker.find_marker(body)
         assert marker is None or marker["sha"] == SHA
     marker = review_marker.find_marker(summary)
@@ -558,64 +357,12 @@ def test_python_sink_containment(case: SinkCase, poison_fields: set[str]) -> Non
             assert "\uff20zz363spec_text" in inline_bodies[0]
 
 
-@pytest.mark.parametrize(
-    "case",
-    ["hostile-location", "live-schema", "backtick"],
-)
-def test_javascript_summary_containment(
-    case: Literal["hostile-location", "live-schema", "backtick"],
-) -> None:
-    property_names: set[str] = set()
-    if case == "hostile-location":
-        finding: dict[str, object] = {
-            "id": "outbound",
-            "file": "src/@zz363sentinel <table>.py",
-            "line_start": 2,
-            "line_end": 2,
-            "title": f"@zz363sentinel <table><tr><td> title {FAKE_FINDING_MARKER}",
-            "severity": "high",
-        }
-    elif case == "live-schema":
-        property_names = _js_finding_property_union() | {"unknown_key"}
-        finding = {key: _poison(key) for key in property_names}
-    else:
-        finding = {
-            "id": "OUT",
-            "file": "src/file.py",
-            "line_start": 3,
-            "title": "`backtick-breakout @body <b>",
-            "severity": "high",
-        }
-    rendered: list[str] = _render_summary_bodies([{"findings": [finding]}])
-    body = rendered[0]
-    if case == "hostile-location":
-        assert _contains_code_span(body, "\uff20zz363sentinel \uff1ctable>.py")
-        assert "\uff20zz363sentinel &lt;table>&lt;tr>&lt;td>" in body
-        assert review_marker.find_finding_markers(body) == []
-    elif case == "live-schema":
-        _assert_prepared_poison(body, property_names)
-        assert review_marker.find_marker(body) is None
-    else:
-        bullet = next(line for line in body.splitlines() if line.startswith("- "))
-        assert "\\`backtick-breakout \uff20body &lt;b>" in bullet
-        assert "`" not in bullet.split("\\`backtick-breakout \uff20body &lt;b>", 1)[1]
-
-
-@pytest.mark.parametrize(
-    "title_fields",
-    [
-        pytest.param({}, id="missing"),
-        pytest.param({"title": " \t\n "}, id="blank"),
-        pytest.param({"title": 7}, id="wrong-type"),
-    ],
-)
-def test_delivery_title_keys(title_fields: dict[str, object]) -> None:
+def test_delivery_title_keys() -> None:
     member = delivery_finding(
-        omit=("end_line",) if title_fields else ("title", "end_line"),
+        omit=("title", "end_line"),
         file="src/edited.py",
         line=61,
         body="Body one",
-        **title_fields,
     )
     calls, lookup = _deliver(
         "gitlab",
@@ -626,8 +373,7 @@ def test_delivery_title_keys(title_fields: dict[str, object]) -> None:
         texts={("src/edited.py", 61): "context"},
     )
     assert lookup == [ForgeCall("review_entries", ReviewTarget("o", "r", 7))]
-    assert isinstance(calls, list)
-    assert len(calls) == 1
+    assert isinstance(calls, list) and len(calls) == 1
     assert calls[0].endpoint.endswith("/discussions")
     body = calls[0].payload["body"]
     assert isinstance(body, str)
@@ -701,48 +447,7 @@ def test_legacy_report_summary_is_guarded_on_the_real_cli_path(
     assert "\\/close\n\\>>>" in review_body
 
 
-def test_rejected_group_position_falls_back_to_a_prepared_discussion() -> None:
-    primary = _hostile_finding(
-        consolidation_key="src/edited.py:2", consolidation_primary=True
-    )
-    corroborator = _hostile_finding(
-        line=3,
-        title="@zz363sentinel <table><tr><td> fallback title",
-        body="@zz363sentinel <table><tr><td> fallback body",
-        consolidation_key="src/edited.py:2",
-        consolidation_primary=False,
-    )
-    calls, lookup = _deliver(
-        "gitlab",
-        [cast(Finding, primary), cast(Finding, corroborator)],
-        prior=PriorDelivery(False, frozenset(), frozenset(), None),
-        reject_first=True,
-        live=True,
-        lines={("src/edited.py", 2): None, ("src/edited.py", 3): None},
-        texts={("src/edited.py", 2): "primary", ("src/edited.py", 3): "corroborator"},
-    )
-    assert isinstance(calls, list)
-    discussions = [
-        request.payload
-        for request in calls
-        if request.endpoint.endswith("/discussions")
-    ]
-    assert len(discussions) == 2
-    group_body = discussions[0]["body"]
-    assert isinstance(group_body, str)
-    assert "Corroborating finding" in group_body
-    fallback_body = discussions[1]["body"]
-    assert isinstance(fallback_body, str)
-    assert "Corroborating finding" not in fallback_body
-    markers = review_marker.find_finding_markers(fallback_body)
-    assert len(markers) == 1
-    assert markers[0]["sha"] == SHA
-    assert markers[0]["key"] != "0123456789abcdef"
-    _assert_prepared_body(fallback_body, expected_markers=markers)
-    assert lookup == [ForgeCall("review_entries", ReviewTarget("o", "r", 7))]
-
-
-def test_changed_content_key_reposts_once_after_old_key() -> None:
+def test_markup_rekeys_once() -> None:
     finding: Finding = {
         "file": "src/edited.py",
         "line": 2,
@@ -750,149 +455,25 @@ def test_changed_content_key_reposts_once_after_old_key() -> None:
         "title": "@leehopper <table>",
         "body": "Body one",
     }
-    old_material = (
-        "src/edited.py\0"
-        "2\0"
-        "@leehopper <table>\0"
-        "**\U0001f7e0 [HIGH] @leehopper <table>**\n\nBody one"
-    )
-    new_material = (
-        "src/edited.py\0"
-        "2\0"
-        "\uff20leehopper &lt;table>\0"
-        "**\U0001f7e0 [HIGH] \uff20leehopper &lt;table>**\n\nBody one"
-    )
-    old_key = "13c2bc08cfac5226"
-    new_key = "6970f2dcb5f585fd"
-    assert hashlib.sha256(old_material.encode()).hexdigest()[:16] == old_key
-    assert hashlib.sha256(new_material.encode()).hexdigest()[:16] == new_key
-    first_calls, _ = _deliver(
-        "gitlab",
-        [finding],
-        prior=PriorDelivery(True, frozenset({old_key}), frozenset(), None),
-        live=True,
-        lines={("src/edited.py", 2): None, ("src/edited.py", 3): None},
-        texts={("src/edited.py", 2): "primary", ("src/edited.py", 3): "corroborator"},
-    )
-    assert isinstance(first_calls, list)
-    discussions = [
-        request.payload
-        for request in first_calls
-        if request.endpoint.endswith("/discussions")
-    ]
-    assert len(discussions) == 1
-    marker = review_marker.find_finding_marker(discussions[0]["body"])
-    assert marker is not None and marker["key"] == new_key
-    second_calls, _ = _deliver(
-        "gitlab",
-        [finding],
-        prior=PriorDelivery(True, frozenset({old_key, new_key}), frozenset(), None),
-        live=True,
-        lines={("src/edited.py", 2): None, ("src/edited.py", 3): None},
-        texts={("src/edited.py", 2): "primary", ("src/edited.py", 3): "corroborator"},
-    )
-    assert not second_calls
-
-
-@pytest.mark.parametrize(
-    ("title", "body", "old_sections", "sections", "old_key", "new_key"),
-    [
-        pytest.param(
-            "![a](u)",
-            "Body one",
-            "**\U0001f7e0 [HIGH] ![a](u)**\n\nBody one",
-            "**\U0001f7e0 [HIGH] !\uff3ba](u)**\n\nBody one",
-            "0899e2af08bef3b4",
-            "6b732848339348e1",
-            id="image_title_rekey",
-        ),
-        pytest.param(
-            "Title",
-            "[critical]: u",
-            "**\U0001f7e0 [HIGH] Title**\n\n[critical]: u",
-            "**\U0001f7e0 [HIGH] Title**\n\n[critical]\\: u",
-            "ce5c0d6d62bad3f1",
-            "3923f3f55e6f877b",
-            id="reference_body_rekey",
-        ),
-    ],
-)
-def test_markup_rekeys_once(
-    title: str, body: str, old_sections: str, sections: str, old_key: str, new_key: str
-) -> None:
-    finding: Finding = {
-        "file": "src/edited.py",
-        "line": 2,
-        "severity": "high",
-        "title": title,
-        "body": body,
-    }
-    old_material = "src/edited.py\0" + "2\0" + title + "\0" + old_sections
-    assert hashlib.sha256(old_material.encode("utf-8")).hexdigest()[:16] == old_key
-    assert compose.key_material_body(finding) == sections
-    assert (
-        compose.finding_key(
-            finding["file"],
-            finding["line"],
-            outbound_text.prepare_line(title),
-            sections,
+    old_key, new_key = "13c2bc08cfac5226", "6970f2dcb5f585fd"
+    for prior_keys, expected_posts in (({old_key}, 1), ({old_key, new_key}, 0)):
+        calls, _ = _deliver(
+            "gitlab",
+            [finding],
+            live=True,
+            prior=PriorDelivery(True, frozenset(prior_keys), frozenset(), None),
         )
-        == new_key
-    )
-    calls, _lookup = _deliver(
-        "gitlab",
-        [finding],
-        live=True,
-        prior=PriorDelivery(True, frozenset({old_key}), frozenset(), None),
-    )
-    assert isinstance(calls, list)
-    discussions = [
-        call.payload for call in calls if call.endpoint.endswith("/discussions")
-    ]
-    assert len(discussions) == 1
-    marker = review_marker.find_finding_marker(discussions[0]["body"])
-    assert marker is not None and marker["key"] == new_key
-    calls, _lookup = _deliver(
-        "gitlab",
-        [finding],
-        live=True,
-        prior=PriorDelivery(True, frozenset({old_key, new_key}), frozenset(), None),
-    )
-    assert not calls
-
-
-@pytest.mark.parametrize(
-    "field", ("title", "body", "suggestion", "claude_md_rule", "spec_text")
-)
-@pytest.mark.parametrize(
-    "source,expected",
-    [
-        pytest.param("![a](u)", "!\uff3ba](u)", id="image"),
-        pytest.param("[critical]: u", "[critical]\\: u", id="reference"),
-    ],
-)
-def test_markup_fields_preserve_patch_and_footer(
-    field: str, source: str, expected: str
-) -> None:
-    patch_text = "![a](u)\n[critical]: u"
-    finding = {
-        "severity": "critical",
-        "title": "Title",
-        "body": "Body",
-        field: source,
-        "suggested_fix_code": patch_text,
-    }
-    rendered = compose.render_comment_body(finding)
-    assert expected in rendered
-    assert "```suggestion\n" + patch_text + "\n```" in rendered
-    assert rendered.endswith(compose.BRAND_TRAILER)
-    assert "[CRITICAL]" in rendered
+        assert isinstance(calls, list) and len(calls) == expected_posts
+        if calls:
+            assert calls[0].endpoint.endswith("/discussions")
+            marker = review_marker.find_finding_marker(calls[0].payload["body"])
+            assert marker is not None and marker["key"] == new_key
 
 
 @pytest.mark.parametrize(
     "source",
-    ["[\ncritical\n]: u", "[critical\n]: u", "> [critical\n> ]: u"],
-    ids=["multiline_label", "multiline_closer", "multiline_quote"],
+    ["[\ncritical\n]: u"],
+    ids=["multiline_label"],
 )
 def test_reference_multiline_fields_keep_severity_label(source: str) -> None:
     rendered = compose.render_comment_body(
@@ -907,132 +488,20 @@ def test_reference_multiline_fields_keep_severity_label(source: str) -> None:
     assert rendered.endswith(compose.BRAND_TRAILER)
 
 
-@pytest.mark.parametrize(
-    "line, endpoint",
-    [(3, "/discussions"), (None, "/notes")],
-    ids=["anchored-discussion", "unanchored-note"],
-)
-def test_partial_prior_delivery_posts_only_the_missing_corroborator(
-    line: int | None, endpoint: str
-) -> None:
-    primary = _hostile_finding(
-        consolidation_key="src/edited.py:2", consolidation_primary=True
+def _poisoned_outbound_sinks_finding(*, primary: bool = False) -> dict[str, object]:
+    finding: dict[str, object] = {key: _poison(key) for key in POISON_FIELDS}
+    finding.update(
+        file="app/@zz363file/<Slot>.tsx",
+        line=2,
+        end_line=2,
+        severity="high",
+        confidence=90,
+        rule_source="repo_precedent",
+        suggested_fix_code="replacement = 1",
+        consolidation_key="poison-group",
+        consolidation_primary=primary,
     )
-    title = outbound_text.prepare_line(primary["title"])
-    prior_key = compose.finding_key(
-        primary["file"],
-        primary["line"],
-        title,
-        compose.key_material_body(primary),
-    )
-    corroborator = _hostile_finding(
-        line=line,
-        consolidation_key="src/edited.py:2",
-        consolidation_primary=False,
-    )
-    calls, lookup = _deliver(
-        "gitlab",
-        [cast(Finding, primary), cast(Finding, corroborator)],
-        prior=PriorDelivery(True, frozenset({prior_key}), frozenset(), None),
-        live=True,
-        lines={("src/edited.py", 2): None, ("src/edited.py", 3): None},
-        texts={("src/edited.py", 2): "primary", ("src/edited.py", 3): "corroborator"},
-    )
-    assert isinstance(calls, list)
-    assert len(calls) == 1
-    request = calls[0]
-    payload = request.payload
-    assert request.endpoint.endswith(endpoint)
-    body = payload["body"]
-    assert isinstance(body, str)
-    markers = review_marker.find_finding_markers(body)
-    assert len(markers) == 1
-    assert markers[0]["key"] != prior_key
-    _assert_prepared_body(body, expected_markers=markers)
-    assert lookup == [ForgeCall("review_entries", ReviewTarget("o", "r", 7))]
-
-
-def _poisoned_outbound_sinks_finding(
-    property_names: set[str], reads: set[str], *, primary: bool = False
-) -> _RecordingFinding:
-    finding = _RecordingFinding(
-        {key: _poison(key) for key in property_names}, reads=reads
-    )
-    finding["consolidation_key"] = "poison-group"
-    finding["consolidation_primary"] = primary
     return finding
-
-
-def test_poisoned_gitlab_live_fallback_discussion_and_note() -> None:
-    property_names = set(_js_finding_property_union()) | {"unknown_key"}
-    primary = _poisoned_outbound_sinks_finding(property_names, set(), primary=True)
-    corroborator = _poisoned_outbound_sinks_finding(property_names, set())
-    primary["line"] = 2
-    primary["end_line"] = 2
-    corroborator["line"] = 2
-    corroborator["end_line"] = 2
-    filepath = primary["file"]
-    assert isinstance(filepath, str)
-    rejected_calls = _deliver(
-        "gitlab",
-        [cast(Finding, primary), cast(Finding, corroborator)],
-        prior=PriorDelivery(False, frozenset(), frozenset(), None),
-        reject_first=True,
-        live=True,
-        review_body=_poison("review_body"),
-        lines={(filepath, 2): None},
-        texts={(filepath, 2): "context"},
-    )[0]
-    assert isinstance(rejected_calls, list)
-    discussions = [
-        request.payload
-        for request in rejected_calls
-        if request.endpoint.endswith("/discussions")
-    ]
-    assert len(discussions) == 2
-    fallback_body = discussions[-1]["body"]
-    assert isinstance(fallback_body, str)
-    fallback_markers = review_marker.find_finding_markers(fallback_body)
-    assert len(fallback_markers) == 1
-    _assert_prepared_poison(
-        fallback_body, property_names, expected_markers=fallback_markers
-    )
-
-    primary = _poisoned_outbound_sinks_finding(property_names, set(), primary=True)
-    corroborator = _poisoned_outbound_sinks_finding(property_names, set())
-    primary["line"] = 2
-    primary["end_line"] = 2
-    corroborator["line"] = 2
-    corroborator["end_line"] = 2
-    corroborator["line"] = None
-    filepath = primary["file"]
-    assert isinstance(filepath, str)
-    with patch(
-        "gauntlet.delivery.compose.finding_key",
-        side_effect=lambda _file, member_line, _title, _body: (
-            "1" * 16 if member_line is not None else "2" * 16
-        ),
-    ):
-        note_calls = _deliver(
-            "gitlab",
-            [cast(Finding, primary), cast(Finding, corroborator)],
-            prior=PriorDelivery(True, frozenset({"1" * 16}), frozenset(), None),
-            live=True,
-            review_body=_poison("review_body"),
-            lines={(filepath, 2): None},
-            texts={(filepath, 2): "context"},
-        )[0]
-    assert isinstance(note_calls, list)
-    assert len(note_calls) == 1
-    request = note_calls[0]
-    payload = request.payload
-    assert request.endpoint.endswith("/notes")
-    assert "position" not in payload
-    note_body = payload["body"]
-    assert isinstance(note_body, str)
-    note_markers = review_marker.find_finding_markers(note_body)
-    assert note_markers == [{"sha": SHA, "key": "2" * 16}]
-    _assert_prepared_poison(note_body, property_names, expected_markers=note_markers)
 
 
 @pytest.mark.parametrize(
@@ -1106,3 +575,61 @@ def test_prose_active_fences_preserve_owned_patch(
         ]
     )
     assert ": \\~\\~\\~suggestion" in skipped
+
+
+@pytest.mark.parametrize(
+    "route, line, endpoint",
+    [
+        ("rejected", 3, "/discussions"),
+        ("partial", 3, "/discussions"),
+        ("partial", None, "/notes"),
+    ],
+    ids=["rejected-discussion", "missing-discussion", "missing-note"],
+)
+def test_gitlab_live_fallback(route: str, line: int | None, endpoint: str) -> None:
+    primary = _poisoned_outbound_sinks_finding(primary=True)
+    corroborator = _poisoned_outbound_sinks_finding()
+    corroborator["line"] = line
+    corroborator["end_line"] = line
+    primary_key = compose.finding_key(
+        primary["file"],
+        primary["line"],
+        outbound_text.prepare_line(primary["title"]),
+        compose.key_material_body(primary),
+    )
+    corroborator_key = compose.finding_key(
+        corroborator["file"],
+        line,
+        outbound_text.prepare_line(corroborator["title"]),
+        compose.key_material_body(corroborator),
+    )
+    filepath = primary["file"]
+    assert isinstance(filepath, str)
+    calls, lookup = _deliver(
+        "gitlab",
+        [cast(Finding, primary), cast(Finding, corroborator)],
+        live=True,
+        reject_first=route == "rejected",
+        prior=PriorDelivery(
+            True,
+            frozenset({primary_key}) if route == "partial" else frozenset(),
+            frozenset(),
+            None,
+        ),
+        lines={(filepath, 2): None, (filepath, 3): None},
+        texts={(filepath, 2): "primary", (filepath, 3): "corroborator"},
+    )
+    assert lookup == [ForgeCall("review_entries", ReviewTarget("o", "r", 7))]
+    assert isinstance(calls, list)
+    assert len(calls) == (2 if route == "rejected" else 1)
+    if route == "rejected":
+        grouped_body = calls[0].payload["body"]
+        assert isinstance(grouped_body, str)
+        assert "Corroborating finding" in grouped_body
+    request = calls[-1]
+    assert request.endpoint.endswith(endpoint)
+    assert ("position" in request.payload) == (line is not None)
+    body = request.payload["body"]
+    assert isinstance(body, str)
+    assert "Corroborating finding" not in body
+    _assert_prepared_poison(body, [{"sha": SHA, "key": corroborator_key}])

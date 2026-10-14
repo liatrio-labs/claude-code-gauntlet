@@ -1,6 +1,7 @@
 import json
 import re
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 
 import gauntlet.text as outbound_text
@@ -108,7 +109,7 @@ def assert_outbound_string_invariant(
                 ), line
 
 
-def _run_node(script, value):
+def _run_node(script: str, value: object) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=REPO,
@@ -129,10 +130,10 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
 """
 
 
-def _render_summary_bodies(inputs):
+def _render_summary_bodies(inputs: Sequence[object]) -> list[str]:
     result = _run_node(_SUMMARY_BATCH_SCRIPT, inputs)
     assert result.returncode == 0, result.stderr
-    summaries = json.loads(result.stdout)
+    summaries: list[str] = json.loads(result.stdout)
     assert len(summaries) == len(inputs), (
         "summary renderer must return one body per input"
     )

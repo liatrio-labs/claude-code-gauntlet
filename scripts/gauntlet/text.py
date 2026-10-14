@@ -22,7 +22,6 @@ from gauntlet.registry import JS_TRIM_CHARS as JS_TRIM_CHARS
 
 
 def normalize_report_severity(raw: object, labels: Mapping[str, object]) -> str:
-    # Twin fallback: workflows/src/renderReport.js::normalizeReportSeverity.
     fallback = "low"
     if not isinstance(raw, str):
         return fallback
@@ -35,15 +34,9 @@ def neutralize_comment_openers(text: str) -> str:
     return text.replace("<!--", "&lt;!--")
 
 
-def _rendered_text(value: object) -> str | None:
-    """Strip LF edges because compose supplies separators; patch blanks stay separate."""
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        value = str(value)
-    if not value.strip():
-        return None
-    return value.strip("\n")
+def _rendered_text(value: str) -> str | None:
+    """Strip LF edges because compose owns field separators."""
+    return value.strip("\n") if value.strip() else None
 
 
 _RULE_TEXT_CAP = 500
@@ -509,7 +502,7 @@ def _cap_rule_text(text: str, limit: int = _RULE_TEXT_CAP) -> str:
 
 
 def prepared_prose(text: object, *, cap: bool = False) -> str | None:
-    """Optional fields may disappear after normalization; capped rules distrust fences."""
+    """Prepare optional prose; capped rule citations distrust fences."""
     prepared = _prepare_text(
         text,
         collapse_ticks=True,
