@@ -1,5 +1,14 @@
-"""Write the shared agent context from paths and triage text supplied as data.
+"""Write the shared agent context from paths and triage text supplied as data."""
 
+import argparse
+import os
+import sys
+
+from gauntlet.cli import Command, Parser, UsageError, require_head_sha
+
+DESCRIPTION = (
+    "Write the shared agent context from paths and triage text supplied as data.\n"
+    """
 Paths belong in argv and artifact names are derived here so output-directory
 characters cannot become Python source. The collector's rules file is always
 read and an empty file is refused: its successful no-rules result is a message,
@@ -15,12 +24,7 @@ ends with LF, so the newline count equals the Read tool's line numbering.
 ``contextChars`` counts decoded code points with replacement and is advisory;
 it only narrows the Read chunk size.
 """
-
-import argparse
-import os
-import sys
-
-from gauntlet.cli import Command, Parser, UsageError, require_head_sha
+)
 
 
 def _read_input(path: str, label: str) -> bytes:
@@ -92,7 +96,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     return {"contextLines": lines, "contextChars": chars}, 0
 
 
-parser = Parser(prog="write_shared_context", description=__doc__)
+parser = Parser(prog="write_shared_context", description=DESCRIPTION)
 parser.add_argument("--output-dir", required=True)
 parser.add_argument("--head-sha", required=True)
 CLI = Command(

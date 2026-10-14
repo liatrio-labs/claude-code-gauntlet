@@ -1,12 +1,4 @@
-"""Truncate stale artifacts for a SHA without embedding paths in code.
-
-The gate is conditional because a Skip at the already-reviewed current SHA must
-preserve its artifacts. ``head_advanced`` cannot decide this: it is also false
-for an unresolvable recorded SHA and rewritten history, which must truncate.
-The four outcomes are: no prior review, unresolvable prior SHA, and a different
-resolvable SHA all truncate; a resolvable prior review at this SHA defers until
-the Skip/Review-again answer is known.
-"""
+"""Truncate stale artifacts for a SHA without embedding paths in code."""
 
 import argparse
 import json
@@ -15,6 +7,16 @@ import sys
 
 from gauntlet.cli import CliError, Command, Parser, require_head_sha
 from gauntlet.fs import glob_under
+
+DESCRIPTION = """Truncate stale artifacts for a SHA without embedding paths in code.
+
+The gate is conditional because a Skip at the already-reviewed current SHA must
+preserve its artifacts. ``head_advanced`` cannot decide this: it is also false
+for an unresolvable recorded SHA and rewritten history, which must truncate.
+The four outcomes are: no prior review, unresolvable prior SHA, and a different
+resolvable SHA all truncate; a resolvable prior review at this SHA defers until
+the Skip/Review-again answer is known.
+"""
 
 DEFERRED = (
     "DEFERRED: previously reviewed at the current SHA -- truncation withheld "
@@ -65,7 +67,7 @@ def _execute(args: argparse.Namespace) -> int:
     return _truncate(args.output_dir, args.head_sha)
 
 
-parser = Parser(prog="stale_truncate", description=__doc__)
+parser = Parser(prog="stale_truncate", description=DESCRIPTION)
 parser.add_argument("--output-dir", required=True)
 parser.add_argument("--head-sha", required=True)
 parser.add_argument("--unconditional", action="store_true")
