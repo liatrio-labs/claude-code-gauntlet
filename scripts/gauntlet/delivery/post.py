@@ -424,10 +424,10 @@ def _activate_degraded(
     )
 
 
-def resolve_members(
+def resolve_corroborators(
     group: AnchoredGroup, facts: DiffFacts | None
 ) -> tuple[FindingPlan, ...]:
-    members: list[FindingPlan] = [group.primary]
+    members: list[FindingPlan] = []
     platform = _site_platform(group.primary.anchor.site)
     for index, finding in enumerate(group.group.corroborators, 1):
         line = finding.get("line")
@@ -910,11 +910,8 @@ def post_gitlab(
         primary_key = member_key(group.primary)
         # Resolve member anchors and render keys after the summary request.
         # Unanchored members key their raw location, even within a grouped body.
-        members = resolve_members(group, facts)
-        member_keys = (
-            primary_key,
-            *(member_key(member) for member in members[1:]),
-        )
+        corroborators = resolve_corroborators(group, facts)
+        member_keys = (primary_key, *(member_key(m) for m in corroborators))
         if primary_key in prior.legacy_group_keys:
             # Unkeyed corroborators make the group body the whole delivery.
             counters["already_present"] += len(member_keys)
@@ -927,7 +924,7 @@ def post_gitlab(
                 if primary_key in delivered_keys
                 else deliver(group.primary, (), (primary_key,))
             ] += 1
-            for member, key in zip(members[1:], member_keys[1:], strict=True):
+            for member, key in zip(corroborators, member_keys[1:], strict=True):
                 if key in delivered_keys:
                     counters["already_present"] += 1
                 elif isinstance(member, AnchoredFinding):
@@ -938,7 +935,7 @@ def post_gitlab(
         outcome = deliver(group.primary, group.group.corroborators, member_keys)
         if outcome == "failed":
             counters[outcome] += 1
-            for member, key in zip(members[1:], member_keys[1:], strict=True):
+            for member, key in zip(corroborators, member_keys[1:], strict=True):
                 counters[deliver_corroborator(member, key)] += 1
         else:
             counters[outcome] += len(member_keys)

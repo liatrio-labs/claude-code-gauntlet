@@ -49,7 +49,6 @@ def pipeline_payload(_recorded_pipeline_payload: PersistedPayload) -> PersistedP
 
 @dataclass(frozen=True, slots=True)
 class Invocation:
-    converted: bool
     returncode: int
     stdout: bytes
     stderr: bytes
@@ -81,7 +80,6 @@ def invoke(
             code = 1
         captured = capsys.readouterr()
         return Invocation(
-            cli.parser is not None,
             code,
             captured.out.encode("utf-8", errors="surrogateescape"),
             captured.err.encode("utf-8", errors="backslashreplace"),
@@ -140,8 +138,7 @@ def forge_factory(
 ) -> FakeForgeFactory:
     from gauntlet.delivery import post
 
-    factory = install_forge_factory(monkeypatch, getattr(request, "param", post))
-    return factory
+    return install_forge_factory(monkeypatch, getattr(request, "param", post))
 
 
 @pytest.fixture

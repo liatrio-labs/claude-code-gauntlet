@@ -670,6 +670,11 @@ def test_push_failure_reports_last_nonempty_stderr_line(stderr, capsys):
         ("description", None, "release manifest description must be a string"),
         (
             "keywords",
+            "not-an-array",
+            "release manifest keywords must be an array of strings",
+        ),
+        (
+            "keywords",
             ["review", 1],
             "release manifest keywords must be an array of strings",
         ),
