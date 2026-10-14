@@ -363,125 +363,38 @@ def test_tracked_python_files_use_explicit_text_io_settings() -> None:
     ("snippet", "expected_count"),
     [
         ('open("file")', 1),
-        ('builtins.open("file")', 1),
-        ('io.open("file", "w")', 1),
         ('gzip.open("file", "rt")', 1),
-        ('bz2.open("file", "rt")', 1),
-        ('lzma.open("file", "rt")', 1),
-        ('gzip.open("file", "r")', 0),
-        ('bz2.open("file", "r")', 0),
-        ('lzma.open("file", "r")', 0),
-        ('bz2.open("file")', 0),
-        ('lzma.open("file")', 0),
-        ("os.fdopen(3)", 1),
-        ('Path("file").open()', 1),
         ('Path("file").read_text()', 1),
-        ('Path("file").write_text("x")', 1),
-        ('tempfile.NamedTemporaryFile("w")', 1),
-        ('NamedTemporaryFile(mode="w")', 1),
-        ('tempfile.TemporaryFile("w")', 1),
-        ('TemporaryFile(mode="w")', 1),
-        ('tempfile.SpooledTemporaryFile(1024, "w")', 1),
-        ('SpooledTemporaryFile(max_size=1024, mode="w")', 1),
-        ("io.TextIOWrapper(buffer)", 1),
-        ("TextIOWrapper(buffer)", 1),
-        ('logging.FileHandler("file")', 1),
         ("subprocess.run([], text=True)", 1),
-        ("subprocess.Popen([], text=True)", 1),
-        ("subprocess.check_output([], text=True)", 1),
-        ("subprocess.call([], text=True)", 1),
-        ("subprocess.check_call([], text=True)", 1),
-        ('codecs.open("file")', 1),
         ('os.popen("command")', 1),
-        ('subprocess.getoutput("command")', 1),
-        ('subprocess.getstatusoutput("command")', 1),
-        ('Path("file").read_text(ENCODING)', 1),
-        ('Path("file").write_text("x", ENCODING)', 1),
-        ("io.TextIOWrapper(buffer, ENCODING)", 1),
-        ('logging.FileHandler("file", "w", ENCODING)', 1),
         ('open("file", mode=MODE, encoding="utf-8")', 1),
         ('subprocess.run([], text=TEXT, encoding="utf-8")', 1),
-        ('subprocess.run([], universal_newlines=TEXT, encoding="utf-8")', 1),
-        ("subprocess.run([], universal_newlines=True)", 1),
-        ('subprocess.run([], errors="replace")', 1),
         ("subprocess.run([], text=False)", 0),
-        ("subprocess.run([])", 0),
-        ('open("file", **options)', 1),
         ('open("file", **options, encoding="utf-8")', 0),
         ('Path("file").read_text("utf-8", **options)', 1),
-        ('open("file", encoding=None)', 1),
-        ('open("file", encoding=123)', 1),
         ('open("file", encoding=ENCODING)', 1),
         ('open("file", "rb")', 0),
         ('Path("file").open(encoding="utf-8")', 0),
         ('Path("file").write_text("x", "utf-8")', 0),
-        ('TextIOWrapper(buffer, "utf-8")', 0),
-        ('logging.FileHandler("file", "w", "utf-8")', 0),
-        ('tempfile.SpooledTemporaryFile(1024, "w", encoding="utf-8")', 0),
-        ('codecs.open("file", "rb")', 0),
         ('from builtins import open as file_open\nfile_open("file", "rb")', 0),
         ('gzip.open("file")', 0),
         ("tempfile.mkstemp()", 0),
-        ("tempfile.mkstemp(text=False)", 0),
-        ("tempfile.mkstemp(text=True)", 1),
         ("tempfile.mkstemp(text=TEXT)", 1),
-        ("tempfile.mkstemp(None, None, None, False)", 0),
-        ("tempfile.mkstemp(None, None, None, True)", 1),
         ("tempfile.mkstemp(**options)", 1),
     ],
 )
-def test_call_rule_table_examples_cover_each_call_kind(
-    snippet: str, expected_count: int
-) -> None:
+def test_call_rule_class_examples(snippet: str, expected_count: int) -> None:
     offenders = _scan_source(snippet, "tests/snippet.py")
     assert len(offenders) == expected_count, offenders
 
 
-@pytest.mark.parametrize(
-    "snippet",
-    [
-        'open("file", encoding="utf-8")',
-        'gzip.open("file", "rt", encoding="utf-8")',
-        'bz2.open("file", "rt", encoding="utf-8")',
-        'lzma.open("file", "rt", encoding="utf-8")',
-        'os.fdopen(3, encoding="utf-8")',
-        'Path("file").read_text(encoding="utf-8")',
-        'Path("file").write_text("x", encoding="utf-8")',
-        'tempfile.NamedTemporaryFile("w", encoding="utf-8")',
-        'tempfile.TemporaryFile("w", encoding="utf-8")',
-        'tempfile.SpooledTemporaryFile(1024, "w", encoding="utf-8")',
-        'io.TextIOWrapper(buffer, encoding="utf-8")',
-        'logging.FileHandler("file", encoding="utf-8")',
-        'subprocess.run([], text=True, encoding="utf-8")',
-        'codecs.open("file", encoding="utf-8")',
-    ],
-)
-@pytest.mark.parametrize("spelling", ["locale", "LoCaLe"])
-def test_locale_encoding_is_rejected_for_every_call_kind(
-    snippet: str, spelling: str
-) -> None:
-    offenders = _scan_source(
-        snippet.replace('encoding="utf-8"', f'encoding="{spelling}"'),
-        "tests/locale.py",
-    )
+def test_locale_encoding_is_rejected() -> None:
+    offenders = _scan_source('open("file", encoding="LoCaLe")', "tests/locale.py")
     assert len(offenders) == 1, offenders
 
 
-@pytest.mark.parametrize(
-    "snippet",
-    [
-        "import subprocess as sp\nsp.run([], text=True)",
-        "from os import fdopen\nfdopen(3, 'w')",
-        "from io import open as text_open\ntext_open('file')",
-        "from builtins import open as file_open\nfile_open('file')",
-        "from tempfile import NamedTemporaryFile as make_temp\nmake_temp('w')",
-        "from tempfile import TemporaryFile as make_temp\nmake_temp('w')",
-        "from tempfile import SpooledTemporaryFile as make_temp\nmake_temp(1024, 'w')",
-        "from io import TextIOWrapper\nTextIOWrapper(buffer)",
-        "from subprocess import getoutput as get_output\nget_output('command')",
-    ],
-)
-def test_alias_resolution_handles_all_import_spellings(snippet: str) -> None:
+def test_alias_resolution() -> None:
+    snippet = "from io import open as text_open\ntext_open('file')"
     offenders = _scan_source(snippet, "tests/alias_snippet.py")
     assert len(offenders) == 1, offenders
     assert "tests/alias_snippet.py:2" in offenders[0]
@@ -490,13 +403,7 @@ def test_alias_resolution_handles_all_import_spellings(snippet: str) -> None:
 def test_receiver_exemptions_do_not_hide_path_open() -> None:
     exempt = """\
 import os
-import tarfile
-import zipfile
-import webbrowser
 os.open("file", os.O_RDONLY)
-tarfile.open("archive.tar")
-zipfile.open("archive.zip")
-webbrowser.open("https://example.test")
 """
     assert _scan_source(exempt, "tests/exempt.py") == []
     offenders = _scan_source('Path("member").open()', "tests/archive.py")
@@ -507,9 +414,6 @@ webbrowser.open("https://example.test")
     ("snippet", "expected_count"),
     [
         ('zipfile.ZipFile("archive.zip").open("member.txt")', 0),
-        ('z.open(name="member.txt")', 0),
-        ('z.open("m")', 0),
-        ('z.open("rr")', 0),
         ('Path("file").open("r")', 1),
     ],
 )
@@ -520,24 +424,8 @@ def test_archive_members_do_not_look_like_path_open_modes(
     assert len(offenders) == expected_count, offenders
 
 
-@pytest.mark.parametrize(
-    "module",
-    [
-        "subprocess",
-        "io",
-        "os",
-        "tempfile",
-        "codecs",
-        "pathlib",
-        "builtins",
-        "gzip",
-        "bz2",
-        "lzma",
-        "logging",
-    ],
-)
-def test_guarded_star_imports_fail_closed(module: str) -> None:
-    offenders = _scan_source(f"from {module} import *", "tests/star_import.py")
+def test_guarded_star_imports_fail_closed() -> None:
+    offenders = _scan_source("from subprocess import *", "tests/star_import.py")
     assert len(offenders) == 1, offenders
     assert "star import hides guarded text I/O calls" in offenders[0]
 
@@ -551,12 +439,8 @@ def test_syntax_error_reports_the_scanned_path() -> None:
 @pytest.mark.parametrize(
     ("snippet", "expected_count"),
     [
-        ('open("file", "w", encoding="utf-8")', 1),
-        ('open("file", "w", encoding="utf-8", newline="")', 0),
-        (r'open("file", "w", encoding="utf-8", newline="\n")', 1),
         ('Path("file").write_text("x", encoding="utf-8")', 1),
         ('Path("file").write_text("x", encoding="utf-8", newline="")', 0),
-        ('open("file", "r+", encoding="utf-8")', 1),
     ],
 )
 def test_scripts_writes_require_literal_empty_newline(

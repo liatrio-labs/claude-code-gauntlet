@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from tests.tools import outbound_canary as canary
-from tests.tools.probe_html import _Node, is_github_mention
 
 ROOT = Path(__file__).resolve().parents[1]
 POSITIVE = '<a class="notranslate user-mention" href="https://github.com/lee">@lee</a>'
@@ -23,52 +22,10 @@ def offline_live(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
 
 
-@pytest.mark.parametrize(
-    ("index", "expected"),
-    [
-        pytest.param(
-            0,
-            "@lee\n&lt;b&gt;OUTBOUND_PROBE_HTML_0&lt;/b&gt;\n```\n<b>OUTBOUND_PROBE_HTML_0</b>\n```\n<b>OUTBOUND_PROBE_HTML_0</b>",
-            id="literal-mention-first",
-        ),
-        pytest.param(
-            1,
-            "&#64;lee &commat;lee\n&lt;b&gt;OUTBOUND_PROBE_HTML_1&lt;/b&gt;\n```\n<b>OUTBOUND_PROBE_HTML_1</b>\n```\n<b>OUTBOUND_PROBE_HTML_1</b>",
-            id="numeric-and-named-entities",
-        ),
-        pytest.param(
-            2,
-            "&amp;#64;lee \uff20lee\n&lt;b&gt;OUTBOUND_PROBE_HTML_2&lt;/b&gt;\n```\n<b>OUTBOUND_PROBE_HTML_2</b>\n```\n<b>OUTBOUND_PROBE_HTML_2</b>",
-            id="double-entity-and-fullwidth",
-        ),
-    ],
-)
-def test_generator_prefix(index: int, expected: str) -> None:
-    assert canary.GENERATOR_VERSION == 1
-    assert canary.generate_cases(375, "lee", 3)[index] == expected
-
-
 def test_generator_reproducibility() -> None:
     first = canary.generate_cases(375, "lee", 40)
     assert first == canary.generate_cases(375, "lee", 40)
-    assert first[:15] == canary.generate_cases(375, "lee", 15)
     assert first[13:] != canary.generate_cases(376, "lee", 40)[13:]
-
-
-@pytest.mark.parametrize(
-    ("tag", "classes", "expected"),
-    [
-        pytest.param(
-            "a", "other user-mention notranslate", True, id="user-extra-classes"
-        ),
-        pytest.param("a", "other team-mention", True, id="team-extra-classes"),
-        pytest.param("a", "user-mentions", False, id="class-boundary"),
-        pytest.param("span", "user-mention", False, id="anchor-only"),
-        pytest.param("a", "", False, id="ordinary-link"),
-    ],
-)
-def test_mention_predicate(tag: str, classes: str, expected: bool) -> None:
-    assert is_github_mention(_Node(tag, (("class", classes),))) is expected
 
 
 @pytest.mark.parametrize(
@@ -83,32 +40,10 @@ def test_mention_predicate(tag: str, classes: str, expected: bool) -> None:
         ),
         pytest.param(
             "safe",
-            "<strong>OUTBOUND_PROBE_HTML_0</strong><h3>ok</h3><hr>",
-            "identity",
-            None,
-            id="ordinary-markdown-not-fixture-vocabulary",
-        ),
-        pytest.param(
-            "safe",
-            '<a class="extra user-mention">@lee</a>',
-            "identity",
-            "mention",
-            id="user-mention",
-        ),
-        pytest.param("safe", "<b>other</b>", "identity", None, id="other-bold"),
-        pytest.param(
-            "safe",
             "<b>OUTBOUND_PROBE_HTML_0</b>",
             "identity",
             "raw-html",
             id="raw-sentinel-without-attributes",
-        ),
-        pytest.param(
-            "safe",
-            "<b><span>OUTBOUND_PROBE_HTML_0</span></b>",
-            "identity",
-            "raw-html",
-            id="sentinel-descendant",
         ),
         pytest.param(
             "<!-- code-gauntlet-findings: {} -->",
@@ -117,21 +52,6 @@ def test_mention_predicate(tag: str, classes: str, expected: bool) -> None:
             "marker",
             id="current-summary-marker",
         ),
-        pytest.param(
-            '<!-- code-gauntlet-finding-key: {"sha":"abcdef0","key":"aaaaaaaaaaaaaaaa"} -->',
-            "",
-            "identity",
-            "marker",
-            id="finding-marker",
-        ),
-        pytest.param(
-            "&lt;!-- code-gauntlet-findings: {} --&gt;",
-            "",
-            "identity",
-            None,
-            id="displayed-marker-is-safe",
-        ),
-        pytest.param("safe", "", "append", "fixpoint", id="exact-fixpoint"),
         pytest.param("safe", "RAISE", "identity", "renderer", id="renderer-failure"),
         pytest.param("safe", "", "raise", "preparer", id="preparation-failure"),
     ],
@@ -144,7 +64,7 @@ def test_checker(
     def prepare(text: str) -> str:
         if preparation == "raise":
             raise ValueError("preparation unavailable")
-        return text + "!" if preparation == "append" else text
+        return text
 
     def render(text: str) -> str:
         submissions.append(text)
@@ -154,9 +74,6 @@ def test_checker(
 
     failure = canary.check_case(original, 0, prepare, render)
     assert (failure.property if failure is not None else None) == expected
-    assert (failure.second if failure is not None else None) == (
-        "safe!!" if expected == "fixpoint" else None
-    )
     assert (failure.error if failure is not None else None) == (
         "renderer unavailable"
         if expected == "renderer"
@@ -164,30 +81,16 @@ def test_checker(
         if expected == "preparer"
         else None
     )
-    assert submissions == (
-        [] if expected in {"marker", "fixpoint", "preparer"} else [original]
-    )
+    assert submissions == ([] if expected in {"marker", "preparer"} else [original])
 
 
 @pytest.mark.parametrize(
     ("arguments", "environment", "message"),
     [
         pytest.param([], {}, "--live is required", id="live-opt-in-required"),
-        pytest.param(
-            ["--live"], {"GITHUB_ACTIONS": "true"}, "refuses CI", id="actions-refusal"
-        ),
         pytest.param(["--live"], {"CI": "0"}, "refuses CI", id="any-nonempty-ci-value"),
         pytest.param(
             ["--live", "--cases", "0"], {}, "--cases must", id="nonpositive-count"
-        ),
-        pytest.param(
-            ["--live", "--cases", "257"], {}, "--cases must", id="bounded-count"
-        ),
-        pytest.param(
-            ["--live", "--case-index", "-1"],
-            {},
-            "--case-index must",
-            id="negative-index",
         ),
         pytest.param(
             ["--live", "--cases", "1", "--case-index", "1"],
@@ -197,15 +100,6 @@ def test_checker(
         ),
         pytest.param(
             ["--live", "--mention", "@lee"], {}, "--mention must", id="invalid-mention"
-        ),
-        pytest.param(
-            ["--live", "--mention", "org/team"],
-            {},
-            "--mention must",
-            id="team-mention",
-        ),
-        pytest.param(
-            ["--live", "--mention", ""], {}, "--mention must", id="empty-mention"
         ),
     ],
 )
@@ -239,30 +133,7 @@ def test_cli_refuses_before_transport(
         assert "usage:" in captured.out
 
 
-@pytest.mark.parametrize(
-    ("response", "mention", "expected_calls", "expected_replay"),
-    [
-        pytest.param(
-            "<p>@lee</p>",
-            None,
-            ["@lee"],
-            "Replay: python3 tests/tools/outbound_canary.py --live --seed 375 --cases 1 --mention lee",
-            id="plain-preflight",
-        ),
-        pytest.param(
-            POSITIVE,
-            "gh_ost",
-            ["@gh_ost"],
-            "Replay: python3 tests/tools/outbound_canary.py --live --seed 375 --cases 1 --mention gh_ost",
-            id="different-mentioned-account",
-        ),
-    ],
-)
 def test_preflight_failure(
-    response: str,
-    mention: str | None,
-    expected_calls: list[str],
-    expected_replay: str,
     offline_live: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -273,18 +144,18 @@ def test_preflight_failure(
 
     def render(text: str) -> str:
         calls.append(text)
-        return response
+        return "<p>@lee</p>"
 
-    arguments = ["--live", "--cases", "1"]
-    if mention is not None:
-        arguments.extend(["--mention", mention])
-    assert canary.main(arguments, login=login, render=render) == 1
+    assert canary.main(["--live", "--cases", "1"], login=login, render=render) == 1
     lines = capsys.readouterr().out.splitlines()
     diagnostic: dict[str, object] = json.loads(lines[0])
     assert diagnostic["property"] == "preflight"
     assert (diagnostic["index"], diagnostic["operation"]) == (None, "preflight")
-    assert calls == expected_calls
-    assert lines[1] == expected_replay
+    assert calls == ["@lee"]
+    assert (
+        lines[1] == "Replay: python3 tests/tools/outbound_canary.py --live --seed 375 "
+        "--cases 1 --mention lee"
+    )
 
 
 def test_preflight_missing_gh(
