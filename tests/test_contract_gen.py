@@ -10,7 +10,7 @@ import pytest
 from gauntlet import contract_gen as gen
 from gauntlet.cli import CliError
 
-from tests.support.generator_inputs import declared_inputs
+from tests.support.repository import copy_generator_tree
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = (
@@ -31,11 +31,8 @@ TARGETS = (
 
 
 @pytest.fixture
-def registry_tree(tmp_path):
-    for rel in set(TARGETS) | declared_inputs(str(ROOT)):
-        target = tmp_path / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes((ROOT / rel).read_bytes())
+def registry_tree(tmp_path: Path) -> Path:
+    copy_generator_tree(ROOT, tmp_path, TARGETS)
     return tmp_path
 
 

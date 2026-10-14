@@ -32,12 +32,12 @@ from gauntlet.marker import (
 )
 from gauntlet.text import prepare_line, prepare_location, prepare_prose, prepared_prose
 
-from tests.test_outbound_contract import assert_outbound_string_invariant
-from tests.tools.outbound import (
+from tests.support.outbound import (
     FIXTURES,
     FoldVector,
     fold_vectors,
 )
+from tests.support.outbound_assertions import assert_outbound_string_invariant
 
 OWNED_FOLD_VECTORS = [
     row

@@ -1,43 +1,23 @@
-"""Contribution-surface guards (Issue #30).
+"""The narrow YAML reader fails closed so unreadable forms cannot pass vacuously.
 
-The public contribution surface — issue forms, label taxonomy, CONTRIBUTING, the PR
-template, SECURITY.md, and the maintainer work-queue standard — drifted behind the
-shipped v3 architecture and behind the CI-enforced JS gates. Three failure modes here
-are silent rather than loud, so they are pinned:
-
-1. GitHub applies an issue-form label only if the label already exists in the repo, so
-   a form referencing an absent label silently no-ops its triage labeling. The taxonomy
-   is checked in as `.github/labels.json` and every form label must resolve against it.
-2. A form that violates GitHub's issue-form schema — a duplicated dropdown option, a
-   misplaced `validations` block — fails to render, which is a public-facing outage with
-   no local signal. `check-yaml` validates YAML syntax only and knows nothing of the
-   form schema, so the schema constraints are asserted here.
-3. Phase names in `bug_report.yml` are only useful while they match the shipped
-   pipeline. CONTRIBUTING's Architecture section supplies the names for comparison.
-
-Stdlib only: CI installs pytest and nothing else, so these tests carry a small reader
-for the narrow issue-form YAML subset they inspect. The reader is deliberately strict —
-it raises on shapes it does not understand rather than returning an empty result that
-would make a test vacuously pass.
+Stdlib only: CI installs pytest and nothing else.
 """
 
-import importlib.util
-import io
 import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
-import unittest
 from pathlib import Path
-from unittest.mock import patch
+from typing import Any, NamedTuple
 
+import pytest
 from gauntlet import contract_gen as contract_gen
 
 from tests.support import generator_inputs
+from tests.support.repository import copy_generator_tree
 
 REPO = Path(__file__).resolve().parents[1]
 FORMS = REPO / ".github" / "ISSUE_TEMPLATE"
@@ -52,12 +32,9 @@ BIOME_ASSETS = {
     "biome-win32-arm64.exe",
     "biome-win32-x64.exe",
 }
-
 ADVISORY_URL = (
     "https://github.com/liatrio-labs/claude-code-gauntlet/security/advisories/new"
 )
-
-# Requirement 1 of Issue #30: the taxonomy the work-queue and the issue forms depend on.
 REQUIRED_TRIAGE_LABELS = {"needs-triage", "work-queue"}
 REQUIRED_TOPIC_LABELS = {
     "determinism",
@@ -80,11 +57,7 @@ REQUIRED_AREA_LABELS = {
     "area:ci",
 }
 LABEL_CATEGORIES = {"type", "state", "resolution", "outreach", "topic", "area"}
-
-# Plural area forms are canonical; singular drift in a sibling draft is a bug.
 SINGULAR_AREA_DRIFT = re.compile(r"area:(workflow|skill|script|doc|agent)(?![a-z])")
-
-# GitHub's issue-form schema (docs.github.com "Syntax for issue forms").
 FORM_TOP_LEVEL_KEYS = {
     "name",
     "description",
@@ -98,8 +71,7 @@ FORM_TOP_LEVEL_KEYS = {
 FORM_FIELD_TYPES = {"markdown", "input", "textarea", "dropdown", "checkboxes"}
 FORM_ITEM_KEYS = {"type", "id", "attributes", "validations"}
 FORM_TOP_LEVEL_REQUIRED = {"name", "description", "body"}
-# Per-type attributes GitHub accepts. An unknown one is a validation error, not a
-# silently ignored extra.
+# Unknown per-type attributes make forms fail validation rather than being ignored.
 FORM_ATTRIBUTES = {
     "markdown": {"value"},
     "input": {"label", "description", "placeholder", "value"},
@@ -107,22 +79,18 @@ FORM_ATTRIBUTES = {
     "dropdown": {"label", "description", "multiple", "options", "default"},
     "checkboxes": {"label", "description", "options"},
 }
-# `markdown` is display-only: it takes no id and cannot be required.
 FORM_TYPES_WITHOUT_VALIDATIONS = {"markdown"}
 FORM_TYPES_WITH_OPTIONS = {"dropdown", "checkboxes"}
-# checkboxes options are mappings (`- label: ...`), not bare scalars.
 FORM_TYPES_WITH_MAPPING_OPTIONS = {"checkboxes"}
-# GitHub rejects these as dropdown options: empty, or a value YAML would read as a bool
-# or as the reserved "None".
+# GitHub rejects empty, boolean-like and reserved None dropdown options.
 RESERVED_OPTIONS = {"none", "true", "false", "yes", "no", "on", "off"}
 
 
-def _read(path):
+def _read(path: str) -> str:
     return (REPO / path).read_text(encoding="utf-8")
 
 
-def _pre_commit_hook_span(text, hook_id):
-    """Return the unique local hook's character span, failing closed on drift."""
+def _pre_commit_hook_span(text: str, hook_id: str) -> tuple[int, int]:
     marker = re.compile(rf"(?m)^      - id: {re.escape(hook_id)}\s*$")
     matches = list(marker.finditer(text))
     if len(matches) != 1:
@@ -135,13 +103,12 @@ def _pre_commit_hook_span(text, hook_id):
     return start, end
 
 
-def _pre_commit_hook_block(text, hook_id):
+def _pre_commit_hook_block(text: str, hook_id: str) -> str:
     start, end = _pre_commit_hook_span(text, hook_id)
     return text[start:end]
 
 
-def _pre_commit_repo_block(text, hook_id):
-    """Return the unique enclosing repo block for a hook."""
+def _pre_commit_repo_block(text: str, hook_id: str) -> str:
     hook_start, _ = _pre_commit_hook_span(text, hook_id)
     repo_markers = list(re.finditer(r"(?m)^  - repo:\s*[^\n]*$", text))
     enclosing = []
@@ -160,7 +127,7 @@ def _pre_commit_repo_block(text, hook_id):
     return enclosing[0]
 
 
-def _pre_commit_hook_value(block, key):
+def _pre_commit_hook_value(block: str, key: str) -> str:
     matches = re.findall(rf"(?m)^        {re.escape(key)}:\s*(.*?)\s*$", block)
     if len(matches) != 1:
         raise AssertionError(
@@ -169,15 +136,14 @@ def _pre_commit_hook_value(block, key):
     return _unquote(matches[0])
 
 
-def _unquote(value):
+def _unquote(value: str) -> str:
     value = value.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
         return value[1:-1]
     return value
 
 
-def _form_files():
-    """Every issue form, excluding the config. Both YAML extensions GitHub accepts."""
+def _form_files() -> list[Path]:
     return sorted(
         p
         for p in list(FORMS.glob("*.yml")) + list(FORMS.glob("*.yaml"))
@@ -185,36 +151,31 @@ def _form_files():
     )
 
 
-def _indent(line):
+def _form_id(path: Path) -> str:
+    return path.stem
+
+
+def _indent(line: str) -> int:
     return len(line) - len(line.lstrip(" "))
 
 
-def _sequence_after(lines, start, indent):
-    """Items of a block sequence whose dashes sit at `indent`, beginning at `lines[start]`.
-
-    A sequence of mappings indents its continuation keys past the dash — a checkboxes
-    option's `required:` is the case here — so those lines are skipped rather than
-    ending the sequence. Getting that order wrong truncates the list silently, which is
-    worse than reading nothing.
-    """
+def _sequence_after(lines: list[str], start: int, indent: int) -> list[str]:
+    # Mapping continuation keys must not truncate option sequences silently.
     items = []
     for line in lines[start:]:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         if _indent(line) > indent:
-            continue  # continuation of the previous item, not the end of the sequence
+            continue
         if _indent(line) < indent or not line.lstrip(" ").startswith("- "):
             break
         items.append(_unquote(line.lstrip(" ")[2:]))
     return items
 
 
-def _form_labels(text):
-    """The labels a form auto-applies, from block or flow sequence form.
-
-    Raises rather than returning [] for an unrecognized shape: a silently empty result
-    would make the "every form label exists" guard pass without checking anything.
-    """
+def _form_labels(text: str) -> list[str]:
+    # An unreadable label sequence must fail closed; an empty result would make
+    # membership checks vacuous.
     lines = text.splitlines()
     for index, line in enumerate(lines):
         if not line.startswith("labels:"):
@@ -231,35 +192,31 @@ def _form_labels(text):
     return []
 
 
-def _single_key(block, name):
-    """The value of a body item's own `name:` key, wherever it sits in the item.
-
-    GitHub does not impose key order, so scanning the whole item avoids rejecting a form
-    that renders fine. Two of the same key is a duplicate-key bug worth raising on.
-    """
+def _single_key(block: list[str], name: str) -> str | None:
+    # GitHub permits key reordering, but duplicate keys must fail closed.
     found = [line for line in block if re.match(rf"^    {name}:", line)]
     if len(found) > 1:
         raise ValueError(f"duplicate {name}: keys in one body item: {found}")
     return _unquote(found[0].split(":", 1)[1]) if found else None
 
 
-def _form_fields(text):
-    """Parse one issue form's `body:` items into a list of field dicts.
-
-    Each body item starts at two-space indentation (`  - type: <kind>`); everything up
-    to the next such line belongs to it.
-    """
+def _form_fields(text: str) -> list[dict[str, Any]]:
+    # Checkbox mappings must yield label text so empty and reserved values remain
+    # detectable.
+    # Only sibling validations count; nested validations and description prose cannot
+    # establish a requirement.
     lines = text.splitlines()
     starts = [i for i, line in enumerate(lines) if re.match(r"^  - \w+:", line)]
     fields = []
     for position, start in enumerate(starts):
         end = starts[position + 1] if position + 1 < len(starts) else len(lines)
         block = lines[start:end]
-        # Normalize the leading `- ` so the item's own keys all sit at four spaces.
         block[0] = "    " + block[0].lstrip(" ")[2:]
-
-        item_keys, attributes, options, validations = [], {}, None, {}
-        section = None
+        item_keys: list[str] = []
+        attributes: dict[str, str | None] = {}
+        options: list[str] | None = None
+        validations: dict[str, str] = {}
+        section: str | None = None
         for index, line in enumerate(block):
             if not line.strip():
                 continue
@@ -276,12 +233,8 @@ def _form_fields(text):
                     options = _sequence_after(block, index + 1, indent=8)
             elif sub_match and section == "validations":
                 validations[sub_match.group(1)] = sub_match.group(2).strip()
-
         field_type = _single_key(block, "type")
         if field_type in FORM_TYPES_WITH_MAPPING_OPTIONS and options is not None:
-            # A checkboxes option is a mapping, so the raw item reads `label: <text>`.
-            # Carrying that prefix into the option value makes every emptiness and
-            # reserved-word assertion unfalsifiable, so the label text is extracted here.
             options = [re.sub(r"^label:\s*", "", option) for option in options]
         fields.append(
             {
@@ -290,26 +243,23 @@ def _form_fields(text):
                 "keys": item_keys,
                 "attributes": attributes,
                 "options": options,
-                # `required` counts only inside a `validations:` block that is a sibling of
-                # `attributes:`. GitHub rejects a nested one, and prose in a `description:`
-                # must never read as a requirement.
                 "required": validations.get("required") == "true",
             }
         )
     return fields
 
 
-def _field(form_name, field_id):
+def _field(form_name: str, field_id: str) -> dict[str, Any]:
     form = next(path for path in _form_files() if path.stem == Path(form_name).stem)
     for field in _form_fields(form.read_text(encoding="utf-8")):
         if field["id"] == field_id:
             return field
-    return None
+    raise AssertionError(f"missing {field_id} in {form_name}")
 
 
-def _contact_links(text):
-    """`config.yml` contact_links as (name, url) pairs, ignoring comments."""
-    links, current = [], None
+def _contact_links(text: str) -> list[tuple[str, str]]:
+    links: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
     for line in text.splitlines():
         if line.startswith("#"):
             continue
@@ -323,13 +273,12 @@ def _contact_links(text):
     return [(link.get("name", ""), link.get("url", "")) for link in links]
 
 
-def _contributing_phases():
-    """Read phase names from CONTRIBUTING's Architecture list."""
+def _contributing_phases() -> list[str]:
     architecture = (
         _read("CONTRIBUTING.md").split("\n## Architecture", 1)[1].split("\n## ", 1)[0]
     )
     phases = [
-        f"Phase {number} \u2014 {name}"
+        f"Phase {number} — {name}"
         for number, name in re.findall(r"^(\d+)\. ([^:\n]+):", architecture, re.M)
     ]
     if not phases:
@@ -339,789 +288,629 @@ def _contributing_phases():
     return phases
 
 
-def test_bug_form_phase_options_match_contributing_architecture():
+def test_bug_form_phase_options_match_contributing_architecture() -> None:
     options = _field("bug_report.yml", "phase")["options"]
-    assert [option for option in options if option.startswith("Phase ")] == (
-        _contributing_phases()
+    assert [
+        option for option in options if option.startswith("Phase ")
+    ] == _contributing_phases()
+
+
+def _labels() -> list[dict[str, str]]:
+    labels: list[dict[str, str]] = json.loads(_read(".github/labels.json"))["labels"]
+    return labels
+
+
+def test_taxonomy_covers_the_required_label_set() -> None:
+    labels = _labels()
+    names = {label["name"] for label in labels}
+    missing = (
+        REQUIRED_TRIAGE_LABELS | REQUIRED_TOPIC_LABELS | REQUIRED_AREA_LABELS
+    ) - names
+    assert missing == set(), f"labels.json is missing {sorted(missing)}"
+    area = {label["name"] for label in labels if label["category"] == "area"}
+    assert area == REQUIRED_AREA_LABELS
+
+
+def test_taxonomy_entries_are_well_formed_and_sorted() -> None:
+    # The labels API rejects descriptions over 100 characters instead of truncating
+    # them.
+    # A leading dash would be parsed as a flag by the sync recipe.
+    labels = _labels()
+    names = [label["name"] for label in labels]
+    assert names == sorted(names), "labels.json entries must be name-sorted"
+    assert len(names) == len(set(names)), "duplicate label names in labels.json"
+    for label in labels:
+        assert set(label) == {"name", "color", "description", "category"}
+        assert re.search(r"^[0-9a-f]{6}$", label["color"]), (
+            "color must be 6-digit lowercase hex, no leading '#'"
+        )
+        assert label["description"].strip(), "description must not be empty"
+        assert len(label["description"]) <= 100
+        assert label["category"] in LABEL_CATEGORIES
+        assert not label["name"].startswith("-"), "label name must not start with '-'"
+        assert not label["description"].startswith("-")
+
+
+def test_no_singular_area_label_drift_in_contribution_surface() -> None:
+    offenders = {}
+    candidates = [
+        path
+        for path in list((REPO / ".github").rglob("*"))
+        + list((REPO / "docs").rglob("*"))
+        if path.is_file() and path.suffix in {".md", ".yml", ".yaml", ".json"}
+    ] + [
+        REPO / name
+        for name in ("CONTRIBUTING.md", "README.md", "SECURITY.md", "AGENTS.md")
+    ]
+    for path in candidates:
+        hits = sorted(
+            set(SINGULAR_AREA_DRIFT.findall(path.read_text(encoding="utf-8")))
+        )
+        if hits:
+            offenders[str(path.relative_to(REPO))] = hits
+    assert offenders == {}, f"singular area-label drift: {offenders}"
+
+
+def _as_live(labels: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [
+        {
+            "name": label["name"],
+            "color": label["color"].upper(),
+            "description": label["description"],
+        }
+        for label in labels
+    ]
+
+
+def _run_labels(
+    *args: str, live: list[dict[str, str]] | None = None
+) -> subprocess.CompletedProcess[str]:
+    with tempfile.TemporaryDirectory() as tmp:
+        argv = [sys.executable, str(LABELS_DIFF), *args]
+        if live is not None:
+            path = Path(tmp) / "live.json"
+            path.write_text(json.dumps(live), encoding="utf-8")
+            argv += ["--live", str(path)]
+        return subprocess.run(
+            argv, cwd=REPO, capture_output=True, text=True, encoding="utf-8"
+        )
+
+
+def test_labels_commands() -> None:
+    result = _run_labels("--commands", "--repo", "acme/widgets")
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.strip().splitlines()
+    labels = _labels()
+    assert len(lines) == len(labels)
+    emitted = {}
+    for line in lines:
+        argv = shlex.split(line)
+        assert argv[:3] == ["gh", "label", "create"]
+        assert "--force" in argv
+        assert "--repo acme/widgets" in line
+        assert argv[argv.index("--repo") + 1] == "acme/widgets"
+        emitted[argv[3]] = argv[argv.index("--description") + 1]
+    assert emitted == {label["name"]: label["description"] for label in labels}
+
+
+@pytest.mark.parametrize(
+    "live,status,expected,commands",
+    [
+        pytest.param(
+            [
+                *_as_live(_labels()),
+                {
+                    "name": "hand-made",
+                    "color": "ffffff",
+                    "description": "not managed here",
+                },
+            ],
+            0,
+            ("unmanaged", "hand-made", "in sync"),
+            None,
+            id="uppercase-colors-are-in-sync",
+        ),
+        pytest.param(
+            [
+                _as_live(_labels())[1] | {"description": "stale description"},
+                *_as_live(_labels())[2:],
+                {
+                    "name": "hand-made",
+                    "color": "ffffff",
+                    "description": "not managed here",
+                },
+            ],
+            1,
+            ("missing: area:agents", "diverging: area:bench", "unmanaged", "hand-made"),
+            {"area:agents", "area:bench"},
+            id="missing-and-diverging-with-unmanaged",
+        ),
+    ],
+)
+def test_labels_drift(
+    live: list[dict[str, str]],
+    status: int,
+    expected: tuple[str, ...],
+    commands: set[str] | None,
+) -> None:
+    result = _run_labels(live=live)
+    assert result.returncode == status, result.stdout + result.stderr
+    for fragment in expected:
+        assert fragment in result.stdout
+    if commands is not None:
+        narrowed = _run_labels("--commands", live=live).stdout.strip().splitlines()
+        assert {shlex.split(line)[3] for line in narrowed} == commands
+
+
+def _live_pages() -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    live = _as_live(_labels())
+    half = len(live) // 2
+    return live[:half], live[half:]
+
+
+@pytest.mark.parametrize(
+    "payload,status,stdout_fragments,stderr_fragment",
+    [
+        pytest.param(
+            b"\n".join(json.dumps(page).encode("utf-8") for page in _live_pages()),
+            0,
+            (b"in sync",),
+            b"",
+            id="concatenated-pagination",
+        ),
+        pytest.param(
+            json.dumps(
+                [
+                    _as_live(_labels())[0]
+                    | {"description": "crème brûlée — live label"},
+                    *_as_live(_labels())[1:],
+                ],
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            1,
+            (b"diverging: area:agents", "crème brûlée".encode()),
+            "—".encode(),
+            id="utf8-cli-with-cp1252-stdio",
+        ),
+    ],
+)
+def test_labels_accepted_input(
+    payload: bytes,
+    status: int,
+    stdout_fragments: tuple[bytes, ...],
+    stderr_fragment: bytes,
+) -> None:
+    result = subprocess.run(
+        [sys.executable, str(LABELS_DIFF), "--live", "-"],
+        cwd=REPO,
+        env=dict(os.environ, PYTHONIOENCODING="cp1252"),
+        input=payload,
+        capture_output=True,
+    )
+    assert result.returncode == status, result.stdout + result.stderr
+    for fragment in stdout_fragments:
+        assert fragment in result.stdout
+    if not stderr_fragment:
+        assert not result.stderr
+    else:
+        assert stderr_fragment in result.stderr
+
+
+class RefusedRow(NamedTuple):
+    name: str
+    argv: tuple[str, ...]
+    stdin: bytes | None
+    file_bytes: bytes | None
+    diagnostic: str = ""
+    empty_output: bool = False
+
+    @property
+    def test_arguments(
+        self,
+    ) -> tuple[tuple[str, ...], bytes | None, bytes | None, str, bool]:
+        return (
+            self.argv,
+            self.stdin,
+            self.file_bytes,
+            self.diagnostic,
+            self.empty_output,
+        )
+
+
+manifest_commands = ("--manifest", "{path}", "--commands")
+stdin_response = ("--live", "-")
+REFUSED_LABEL_INPUTS: tuple[RefusedRow, ...] = (
+    *(
+        RefusedRow(f"manifest-{name}", manifest_commands, None, payload)
+        for name, payload in (
+            ("not-json", b"{oops"),
+            ("no-labels-key", b'{"tags": []}'),
+            ("string-entry", b'{"labels": ["bug"]}'),
+            ("missing-color", b'{"labels": [{"name": "bug", "description": "x"}]}'),
+        )
+    ),
+    RefusedRow("live-required", (), None, None),
+    RefusedRow("empty-response", stdin_response, b"", None),
+    RefusedRow(
+        "api-error-object",
+        stdin_response,
+        b'{"message": "Not Found", "status": "404"}',
+        None,
+    ),
+    RefusedRow("names-only", stdin_response, b'["bug", "enhancement"]', None),
+    RefusedRow("non-json-response", stdin_response, b"gh: command not found", None),
+    RefusedRow(
+        "missing-manifest-file",
+        ("--manifest", "/nonexistent/labels.json", "--commands"),
+        None,
+        None,
+    ),
+    RefusedRow("missing-live-file", ("--live", "/nonexistent/live.json"), None, None),
+    RefusedRow(
+        "non-utf8-stdin",
+        stdin_response,
+        b'[{"name": "caf\xe9"}]',
+        None,
+        "not UTF-8",
+    ),
+    RefusedRow(
+        "non-utf8-live-file",
+        ("--live", "{path}"),
+        None,
+        b'[{"name": "caf\xe9"}]',
+        "not UTF-8",
+    ),
+    RefusedRow(
+        "non-utf8-manifest",
+        manifest_commands,
+        None,
+        b'[{"name": "caf\xe9"}]',
+        "not UTF-8",
+    ),
+    RefusedRow(
+        "name-is-flag",
+        manifest_commands,
+        None,
+        b'{"labels":[{"name":"-wip","color":"ffffff",'
+        b'"description":"leading dash in name"}]}',
+        empty_output=True,
+    ),
+    RefusedRow(
+        "color-injection",
+        manifest_commands,
+        None,
+        b'{"labels":[{"name":"ok","color":"fff; echo pwned","description":"not hex"}]}',
+        empty_output=True,
+    ),
+)
+
+
+# Exit 1 means drift; corrupt manifests must exit 2 rather than emit a false report.
+# Each reader needs its own UTF-8 refusal so a decode traceback cannot read as drift.
+@pytest.mark.parametrize(
+    "argv,stdin,file_bytes,diagnostic,empty_output",
+    [pytest.param(*row.test_arguments, id=row.name) for row in REFUSED_LABEL_INPUTS],
+)
+def test_labels_refused_input(
+    tmp_path: Path,
+    argv: tuple[str, ...],
+    stdin: bytes | None,
+    file_bytes: bytes | None,
+    diagnostic: str,
+    empty_output: bool,
+) -> None:
+    path = tmp_path / "input.json"
+    if file_bytes is not None:
+        path.write_bytes(file_bytes)
+    args = [arg.format(path=path) for arg in argv]
+    result = subprocess.run(
+        [sys.executable, str(LABELS_DIFF), *args],
+        cwd=REPO,
+        input=stdin,
+        capture_output=True,
+    )
+    stderr = result.stderr.decode("utf-8")
+    assert result.returncode == 2, result.stdout
+    assert "Traceback" not in stderr
+    assert stderr.strip(), "the refusal must say what was wrong"
+    if diagnostic:
+        assert diagnostic in stderr
+    if empty_output:
+        assert result.stdout == b"", "nothing may be emitted into the shell recipe"
+
+
+@pytest.mark.parametrize("form", _form_files(), ids=_form_id)
+def test_form_schema(form: Path) -> None:
+    text = form.read_text(encoding="utf-8")
+    keys = {
+        line.split(":", 1)[0] for line in text.splitlines() if re.match(r"^\w+:", line)
+    }
+    assert keys <= FORM_TOP_LEVEL_KEYS
+    assert keys >= FORM_TOP_LEVEL_REQUIRED
+    fields = _form_fields(text)
+    assert fields, f"{form.name} has no body items"
+    ids = [field["id"] for field in fields if field["id"]]
+    assert len(ids) == len(set(ids)), f"duplicate field ids in {form.name}"
+    labels = [
+        field["attributes"].get("label")
+        for field in fields
+        if field["type"] != "markdown"
+    ]
+    assert len(labels) == len(set(labels)), f"duplicate field labels in {form.name}"
+    for field in fields:
+        assert field["type"] in FORM_FIELD_TYPES
+        assert set(field["keys"]) <= FORM_ITEM_KEYS
+        assert set(field["attributes"]) <= FORM_ATTRIBUTES[field["type"]], (
+            "unknown attribute for this field type"
+        )
+        if field["type"] in FORM_TYPES_WITHOUT_VALIDATIONS:
+            assert "validations" not in field["keys"], (
+                "a markdown block cannot be required"
+            )
+            assert field["id"] is None, "a markdown block takes no id"
+            assert "value" in field["attributes"]
+        else:
+            assert re.search(r"^[A-Za-z0-9_-]+$", field["id"] or "")
+            assert field["attributes"].get("label")
+        if field["type"] in FORM_TYPES_WITH_OPTIONS:
+            options = field["options"]
+            assert options, f"a {field['type']} must declare options"
+            assert len(options) == len(set(options))
+            for option in options:
+                assert option.strip()
+                assert option.strip().lower() not in RESERVED_OPTIONS
+
+
+def _declared_options(text: str) -> int:
+    lines = text.splitlines()
+    total = 0
+    for index, line in enumerate(lines):
+        if line.rstrip() != "      options:":
+            continue
+        for candidate in lines[index + 1 :]:
+            if not candidate.strip() or candidate.lstrip().startswith("#"):
+                continue
+            if _indent(candidate) > 8:
+                continue
+            if _indent(candidate) < 8 or not candidate.lstrip().startswith("- "):
+                break
+            total += 1
+    return total
+
+
+@pytest.mark.parametrize("form", _form_files(), ids=_form_id)
+def test_the_reader_reads_every_declared_option(form: Path) -> None:
+    # An independent count detects truncation after YAML comments or mapping
+    # continuation keys.
+    text = form.read_text(encoding="utf-8")
+    declared = _declared_options(text)
+    parsed = sum(
+        len(field["options"] or [])
+        for field in _form_fields(text)
+        if field["type"] in FORM_TYPES_WITH_OPTIONS
+    )
+    assert parsed == declared
+
+
+@pytest.mark.parametrize("form", _form_files(), ids=_form_id)
+def test_every_auto_applied_label_exists_in_the_taxonomy(form: Path) -> None:
+    # GitHub silently drops form labels that do not already exist.
+    known = {label["name"] for label in _labels()}
+    labels = _form_labels(form.read_text(encoding="utf-8"))
+    assert labels, f"{form.name} auto-applies no labels"
+    assert "needs-triage" in labels
+    for label in labels:
+        assert label in known
+
+
+def test_bug_form_components_include_workflows_and_bench() -> None:
+    joined = "\n".join(_field("bug_report.yml", "phase")["options"])
+    assert "workflows/" in joined
+    assert "bench/" in joined
+
+
+def test_bug_form_requires_install_method() -> None:
+    field = _field("bug_report.yml", "install_method")
+    assert field["type"] == "dropdown"
+    assert "validations" in field["keys"], (
+        "`validations` must be a sibling of `attributes`, not nested inside it"
+    )
+    assert field["required"], "install method is a first-order diagnostic"
+    options = " ".join(field["options"]).lower()
+    for expected in ("marketplace", "--plugin-dir", "clone"):
+        assert expected in options
+
+
+def test_bug_form_plugin_version_placeholder_is_3x() -> None:
+    # Either a pinned example or the 3.x line is accepted; the release tool does not
+    # update this form, so pinned examples age on release.
+    placeholder = _field("bug_report.yml", "plugin_version")["attributes"][
+        "placeholder"
+    ]
+    assert placeholder is not None
+    assert re.search(r"3\.(?:x|\d+\.\d+)", placeholder)
+    assert not re.search(r"2\.(?:x|\d+\.\d+)", placeholder)
+    assert ".claude-plugin/plugin.json" in placeholder
+
+
+def test_feature_form_area_options_include_workflows_and_bench() -> None:
+    options = "\n".join(_field("feature_request.yml", "area")["options"])
+    assert "workflows/" in options
+    assert "bench/" in options
+
+
+def test_no_form_points_at_disabled_discussions() -> None:
+    # Discussions are disabled for this repository, so forms must not send users there.
+    # Revisit the owner decision and this test together if Discussions are enabled.
+    for form in _form_files():
+        assert not re.search(r"(?i)discussion", form.read_text(encoding="utf-8"))
+
+
+def test_config_links_the_security_advisory_form() -> None:
+    links = _contact_links(_read(".github/ISSUE_TEMPLATE/config.yml"))
+    matching = [
+        name
+        for name, url in links
+        if url == ADVISORY_URL and re.search(r"(?i)security", name)
+    ]
+    assert matching, f"no security contact link among {links}"
+
+
+def test_security_md_exists_with_scope_and_supported_versions() -> None:
+    # The retired architecture must not be advertised as supported.
+    text = _read("SECURITY.md")
+    assert ADVISORY_URL in text, "must point at the enabled private advisory form"
+    for heading in ("reporting", "supported versions", "scope"):
+        assert re.search(rf"(?im)^#{{2,3}} .*{heading}", text)
+    major = json.loads(_read(".claude-plugin/plugin.json"))["version"].split(".")[0]
+    active_rows = re.findall(r"(?im)^\|\s*([^|]+?)\s*\|\s*Yes\s*\|$", text)
+    assert len(active_rows) == 1, "exactly one version row must receive security fixes"
+    supported_major = re.search(r"\b(\d+)\.x\b", active_rows[0])
+    assert supported_major is not None
+    assert supported_major.group(1) == major, (
+        "supported versions must name the shipped major line"
+    )
+    assert re.search(r"(?im)^\|\s*2\.x[^|]*\|\s*No", text)
+
+
+def test_contributing_describes_the_v3_js_pipeline_areas() -> None:
+    text = _read("CONTRIBUTING.md")
+    assert "workflows/src/" in text
+    assert "`bench/`" in text
+    assert "docs/maintainer-issues.md" in text
+
+
+def test_maintainer_issue_standard_has_the_required_sections() -> None:
+    text = _read("docs/maintainer-issues.md")
+    for section in (
+        "Problem / Goal",
+        "Requirements",
+        "Evidence",
+        "Candidate directions",
+        "Out of scope",
+        "Verification",
+    ):
+        assert re.search(rf"(?m)^#{{2,4}} {re.escape(section)}", text)
+
+
+def test_maintainer_issue_standard_defers_tier_definitions_to_the_runbook() -> None:
+    # Costs, tier invocations and prose tier tables would duplicate the canonical
+    # measurement ladder.
+    text = _read("docs/maintainer-issues.md")
+    for tier in ("suites-only", "smoke", "paired-mini"):
+        assert tier in text
+    assert not re.search(r"\$\d", text), (
+        "tier costs belong only in bench/MEASUREMENT.md"
+    )
+    assert "--tier" not in text, "tier invocations belong only in bench/MEASUREMENT.md"
+    ladder_rows = [
+        line
+        for line in text.splitlines()
+        if line.lstrip().startswith("|")
+        and re.search(r"(?i)\b(tier|trigger|smoke|mini-subset|holdout)\b", line)
+    ]
+    assert ladder_rows == [], (
+        "a tier table here is the ladder restated; link the runbook instead"
+    )
+    link = re.search(r"\[`bench/MEASUREMENT\.md`\]\((\.\./[^)]+)\)", text)
+    assert link is not None, "the canonical runbook must be linked, not just named"
+    assert (REPO / "docs" / link.group(1)).resolve().is_file()
+
+
+def test_every_tier_slug_the_standard_mandates_resolves_in_the_runbook() -> None:
+    # Read the standard vocabulary so a new normative slug cannot silently point to a
+    # missing runbook entry.
+    standard = _read("docs/maintainer-issues.md")
+    vocabulary = standard.split("names exactly one measurement tier", 1)[1].split(
+        "\n\n", 2
+    )[1]
+    slugs = re.findall(r"^- `([a-z-]+)`", vocabulary, re.M)
+    assert slugs, "the standard must list the tier slugs as a bullet list"
+    runbook_slugs = set(
+        re.findall(r"^\| [^|]+ \| `([a-z-]+)` \|", _read("bench/MEASUREMENT.md"), re.M)
+    )
+    for slug in slugs:
+        assert slug in runbook_slugs, (
+            "a slug the standard mandates must appear in the runbook's Slug column, "
+            f"which holds {sorted(runbook_slugs)}"
+        )
+
+
+def test_cspell_scope_includes_the_new_public_docs() -> None:
+    hooks = _read(".pre-commit-config.yaml")
+    cspell_block = hooks.split("- id: cspell", 1)
+    assert len(cspell_block) == 2, "cspell hook missing from .pre-commit-config.yaml"
+    block = cspell_block[1].split("\n  - repo:", 1)[0]
+    files_pattern = re.search(r"^        files: \^\((.*)\)\$", block, re.M)
+    assert files_pattern is not None, (
+        "the cspell hook must keep an explicit files: scope"
+    )
+    scope = re.compile(rf"^({files_pattern.group(1)})$")
+    for path in (
+        "README.md",
+        "CONTRIBUTING.md",
+        "SECURITY.md",
+        "docs/maintainer-issues.md",
+    ):
+        assert scope.match(path), f"cspell scope does not cover {path}"
+
+
+def test_contributing_python_lint_hook_ids_match_pre_commit_config() -> None:
+    expected = {"ruff-check", "ruff-format", "mypy"}
+    contributing = _read("CONTRIBUTING.md")
+    hooks = _read(".pre-commit-config.yaml")
+    declared = set(re.findall(r"^\s+- id: ([^\s#]+)", hooks, re.M))
+    documented = set(
+        re.findall(
+            r"pre-commit run (ruff-check|ruff-format|mypy) --all-files", contributing
+        )
+    )
+    assert documented == expected, (
+        "CONTRIBUTING.md must document exactly the Python lint/format/type hooks"
+    )
+    assert expected.issubset(declared), (
+        f"hooks {sorted(expected - declared)} missing from .pre-commit-config.yaml"
     )
 
 
-def _labels():
-    return json.loads(_read(".github/labels.json"))["labels"]
+def test_pin_file_has_all_known_assets_and_valid_digests() -> None:
+    pin = json.loads(_read("workflows/biome-pin.json"))
+    assert isinstance(pin, dict)
+    assert re.search(r"^\d+\.\d+\.\d+$", pin["version"])
+    assert set(pin["sha256"]) == BIOME_ASSETS
+    for asset, digest in pin["sha256"].items():
+        assert asset in BIOME_ASSETS
+        assert re.search(r"^[0-9a-f]{64}$", digest)
 
 
-class TestLabelTaxonomy(unittest.TestCase):
-    def test_taxonomy_covers_the_required_label_set(self):
-        names = {label["name"] for label in _labels()}
-        missing = (
-            REQUIRED_TRIAGE_LABELS | REQUIRED_TOPIC_LABELS | REQUIRED_AREA_LABELS
-        ) - names
-        self.assertEqual(missing, set(), f"labels.json is missing {sorted(missing)}")
-
-    def test_taxonomy_entries_are_well_formed_and_sorted(self):
-        labels = _labels()
-        names = [label["name"] for label in labels]
-        self.assertEqual(
-            names, sorted(names), "labels.json entries must be name-sorted"
-        )
-        self.assertEqual(
-            len(names), len(set(names)), "duplicate label names in labels.json"
-        )
-        for label in labels:
-            with self.subTest(label=label.get("name")):
-                self.assertEqual(
-                    set(label), {"name", "color", "description", "category"}
-                )
-                self.assertRegex(
-                    label["color"],
-                    r"^[0-9a-f]{6}$",
-                    "color must be 6-digit lowercase hex, no leading '#'",
-                )
-                self.assertTrue(
-                    label["description"].strip(), "description must not be empty"
-                )
-                # The labels API rejects a description over 100 characters (422); it does
-                # not truncate, so `gh label create` fails outright.
-                self.assertLessEqual(len(label["description"]), 100)
-                self.assertIn(label["category"], LABEL_CATEGORIES)
-                # A leading dash would be parsed as a flag by the documented sync recipe.
-                self.assertFalse(
-                    label["name"].startswith("-"), "label name must not start with '-'"
-                )
-                self.assertFalse(label["description"].startswith("-"))
-
-    def test_area_labels_are_plural_canonical(self):
-        area = {label["name"] for label in _labels() if label["category"] == "area"}
-        self.assertEqual(area, REQUIRED_AREA_LABELS)
-
-    def test_no_singular_area_label_drift_in_contribution_surface(self):
-        offenders = {}
-        candidates = [
-            path
-            for path in list((REPO / ".github").rglob("*"))
-            + list((REPO / "docs").rglob("*"))
-            if path.is_file() and path.suffix in {".md", ".yml", ".yaml", ".json"}
-        ] + [
-            REPO / name
-            for name in (
-                "CONTRIBUTING.md",
-                "README.md",
-                "SECURITY.md",
-                "AGENTS.md",
-            )
-        ]
-        for path in candidates:
-            hits = sorted(
-                set(SINGULAR_AREA_DRIFT.findall(path.read_text(encoding="utf-8")))
-            )
-            if hits:
-                offenders[str(path.relative_to(REPO))] = hits
-        self.assertEqual(offenders, {}, f"singular area-label drift: {offenders}")
+def test_ci_js_lint_uses_runner_without_another_biome_pin() -> None:
+    ci = _read(".github/workflows/ci.yml")
+    js_lint = ci.split("  js-lint:\n", 1)[1].split("\n  workflow-tests:", 1)[0]
+    assert "python3 workflows/test/tools/biome_check.py" in js_lint
+    for forbidden in (
+        "BIOME_VERSION",
+        "BIOME_SHA256",
+        "sha256sum",
+        "releases/download/@biomejs",
+    ):
+        assert forbidden not in ci
 
 
-class TestLabelsDiffHelper(unittest.TestCase):
-    """`.github/labels_diff.py` is what makes the manifest verifiable instead of
-    aspirational, so its own behavior is pinned here."""
-
-    def _run(self, *args, live=None):
-        with tempfile.TemporaryDirectory() as tmp:
-            argv = [sys.executable, str(LABELS_DIFF), *args]
-            if live is not None:
-                path = Path(tmp) / "live.json"
-                path.write_text(json.dumps(live), encoding="utf-8")
-                argv += ["--live", str(path)]
-            return subprocess.run(
-                argv, cwd=REPO, capture_output=True, text=True, encoding="utf-8"
-            )
-
-    @staticmethod
-    def _as_live(labels):
-        return [
-            {
-                "name": label["name"],
-                "color": label["color"].upper(),
-                "description": label["description"],
-            }
-            for label in labels
-        ]
-
-    def test_commands_cover_every_manifest_label_and_survive_the_shell(self):
-        result = self._run("--commands")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        lines = result.stdout.strip().splitlines()
-        self.assertEqual(len(lines), len(_labels()))
-        emitted = {}
-        for line in lines:
-            argv = shlex.split(line)
-            self.assertEqual(argv[:3], ["gh", "label", "create"])
-            self.assertIn("--force", argv)
-            emitted[argv[3]] = argv[argv.index("--description") + 1]
-        # Names with spaces and descriptions with apostrophes must round-trip intact.
-        for label in _labels():
-            with self.subTest(label=label["name"]):
-                self.assertEqual(emitted[label["name"]], label["description"])
-
-    def test_in_sync_repo_reports_no_drift(self):
-        # Live colors come back from the API upper-cased; that is not drift.
-        result = self._run(live=self._as_live(_labels()))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("in sync", result.stdout)
-
-    def test_missing_and_diverging_labels_fail_loudly(self):
-        live = self._as_live(_labels())
-        dropped = live.pop(0)["name"]
-        live[0]["description"] = "stale description"
-        changed = live[0]["name"]
-        live.append(
-            {"name": "hand-made", "color": "ffffff", "description": "not managed here"}
-        )
-
-        result = self._run(live=live)
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn(f"missing: {dropped}", result.stdout)
-        self.assertIn(f"diverging: {changed}", result.stdout)
-        # A label absent from the manifest is reported but never deleted.
-        self.assertIn("unmanaged", result.stdout)
-        self.assertIn("hand-made", result.stdout)
-
-        narrowed = self._run("--commands", live=live).stdout.strip().splitlines()
-        self.assertEqual(
-            {shlex.split(line)[3] for line in narrowed}, {dropped, changed}
-        )
-
-    def test_stdin_utf8_and_cli_output_ignore_pythonioencoding(self):
-        live = self._as_live(_labels())
-        changed = live[0]
-        changed["description"] = "crème brûlée — live label"
-        payload = json.dumps(live, ensure_ascii=False).encode("utf-8")
-        environment = dict(os.environ, PYTHONIOENCODING="cp1252")
-        result = subprocess.run(
-            [sys.executable, str(LABELS_DIFF), "--live", "-"],
-            cwd=REPO,
-            env=environment,
-            input=payload,
-            capture_output=True,
-        )
-
-        self.assertEqual(result.returncode, 1)
-        self.assertIn(f"diverging: {changed['name']}".encode(), result.stdout)
-        self.assertIn("crème brûlée".encode(), result.stdout)
-        self.assertIn("—".encode(), result.stderr)
-
-    def test_live_stdin_decodes_utf8_bytes_independent_of_text_encoding(self):
-        spec = importlib.util.spec_from_file_location("labels_diff_test", LABELS_DIFF)
-        labels_diff = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(labels_diff)
-        payload = json.dumps(
-            [{"name": "review", "color": "ffffff", "description": "café"}],
-            ensure_ascii=False,
-        ).encode("utf-8")
-        stream = io.TextIOWrapper(io.BytesIO(payload), encoding="cp1252")
-
-        with patch.object(labels_diff.sys, "stdin", stream):
-            labels = labels_diff.load_live("-")
-
-        self.assertEqual(labels[0]["description"], "café")
-
-    def test_a_label_the_manifest_does_not_manage_is_reported_but_not_drift(self):
-        # An extra label in the repo is informational: the sync never deletes, so it is
-        # not something the manifest can or should close. Exit stays 0.
-        live = self._as_live(_labels())
-        live.append(
-            {"name": "hand-made", "color": "ffffff", "description": "not managed here"}
-        )
-        result = self._run(live=live)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("unmanaged", result.stdout)
-        self.assertIn("hand-made", result.stdout)
-        self.assertNotIn("missing:", result.stdout)
-        self.assertNotIn("diverging:", result.stdout)
-        self.assertIn("in sync", result.stdout)
-
-    def test_paginated_and_slurped_gh_output_are_both_accepted(self):
-        labels = self._as_live(_labels())
-        half = len(labels) // 2
-        pages = json.dumps(labels[:half]) + "\n" + json.dumps(labels[half:])
-        slurped = json.dumps([labels[:half], labels[half:]])
-        for name, payload in (("--paginate", pages), ("--paginate --slurp", slurped)):
-            with self.subTest(gh_form=name):
-                result = subprocess.run(
-                    [sys.executable, str(LABELS_DIFF), "--live", "-"],
-                    cwd=REPO,
-                    input=payload,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                )
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn("in sync", result.stdout)
-
-    def test_live_is_required_for_a_drift_report(self):
-        self.assertEqual(self._run().returncode, 2)
-
-    def test_repo_flag_targets_the_emitted_commands(self):
-        # Without --repo, `gh` infers the target from the working directory's remote,
-        # which is how a taxonomy ends up synced into the wrong repository.
-        plain = self._run("--commands").stdout.splitlines()[0]
-        self.assertNotIn("--repo", plain)
-        targeted = self._run(
-            "--commands", "--repo", "acme/widgets"
-        ).stdout.splitlines()[0]
-        self.assertIn("--repo acme/widgets", targeted)
-
-    def test_unusable_gh_output_is_refused_by_name_not_by_traceback(self):
-        cases = {
-            "empty": "",
-            "error payload": '{"message": "Not Found", "status": "404"}',
-            "single object": '{"name": "bug", "color": "d73a4a"}',
-            "names only (--jq)": '["bug", "enhancement"]',
-            "not json": "gh: command not found",
-        }
-        for name, payload in cases.items():
-            with self.subTest(payload=name):
-                result = subprocess.run(
-                    [sys.executable, str(LABELS_DIFF), "--live", "-"],
-                    cwd=REPO,
-                    input=payload,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                )
-                self.assertEqual(result.returncode, 2, result.stdout)
-                self.assertNotIn("Traceback", result.stderr)
-                self.assertTrue(
-                    result.stderr.strip(), "the refusal must say what was wrong"
-                )
-
-    def test_an_unusable_manifest_is_refused_rather_than_read_as_drift(self):
-        # Exit 1 means drift and the workflow treats it that way, so a corrupt manifest
-        # must exit 2 instead of producing a plausible-looking report.
-        cases = {
-            "not json": "{oops",
-            "no labels key": '{"tags": []}',
-            "labels is a mapping": '{"labels": {"bug": "d73a4a"}}',
-            "labels is empty": '{"labels": []}',
-            "entry is a string": '{"labels": ["bug"]}',
-            "entry missing color": '{"labels": [{"name": "bug", "description": "x"}]}',
-        }
-        for name, payload in cases.items():
-            with self.subTest(manifest=name), tempfile.TemporaryDirectory() as tmp:
-                path = Path(tmp) / "labels.json"
-                path.write_text(payload, encoding="utf-8")
-                for mode in (["--commands"], ["--live", str(path)]):
-                    result = subprocess.run(
-                        [
-                            sys.executable,
-                            str(LABELS_DIFF),
-                            "--manifest",
-                            str(path),
-                            *mode,
-                        ],
-                        cwd=REPO,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                    )
-                    self.assertEqual(result.returncode, 2, f"{mode}: {result.stdout}")
-                    self.assertNotIn("Traceback", result.stderr)
-
-    def test_a_missing_file_is_refused_rather_than_read_as_drift(self):
-        for args in (
-            ["--manifest", "/nonexistent/labels.json", "--commands"],
-            ["--live", "/nonexistent/live.json"],
-        ):
-            with self.subTest(args=args):
-                result = subprocess.run(
-                    [sys.executable, str(LABELS_DIFF), *args],
-                    cwd=REPO,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                )
-                self.assertEqual(result.returncode, 2, result.stdout)
-                self.assertNotIn("Traceback", result.stderr)
-
-    def test_non_utf8_input_is_refused_rather_than_raising(self):
-        # UnicodeDecodeError is a ValueError, not an OSError, so each reader
-        # needs its own refusal; a traceback here would read as drift upstream.
-        invalid = b'[{"name": "caf\xe9"}]'
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "not-utf8.json"
-            path.write_bytes(invalid)
-            cases = (
-                (["--live", "-"], invalid),
-                (["--live", str(path)], None),
-                (["--manifest", str(path), "--commands"], None),
-            )
-            for args, stdin in cases:
-                with self.subTest(args=args):
-                    result = subprocess.run(
-                        [sys.executable, str(LABELS_DIFF), *args],
-                        cwd=REPO,
-                        input=stdin,
-                        capture_output=True,
-                    )
-                    stderr = result.stderr.decode("utf-8")
-                    self.assertEqual(result.returncode, 2, stderr)
-                    self.assertNotIn("Traceback", stderr)
-                    self.assertIn("not UTF-8", stderr)
-
-    def test_a_manifest_that_cannot_be_shell_quoted_is_refused(self):
-        # The documented recipe pipes this output into a shell, so a value that would
-        # not survive a command line must stop the run rather than be emitted.
-        unusable = [
-            {"name": "-wip", "color": "ffffff", "description": "leading dash in name"},
-            {
-                "name": "ok",
-                "color": "ffffff",
-                "description": "-leading dash in description",
-            },
-            {"name": "ok", "color": "fff; echo pwned", "description": "not hex"},
-        ]
-        for entry in unusable:
-            with (
-                self.subTest(entry=entry["description"]),
-                tempfile.TemporaryDirectory() as tmp,
-            ):
-                path = Path(tmp) / "labels.json"
-                path.write_text(json.dumps({"labels": [entry]}), encoding="utf-8")
-                result = subprocess.run(
-                    [
-                        sys.executable,
-                        str(LABELS_DIFF),
-                        "--manifest",
-                        str(path),
-                        "--commands",
-                    ],
-                    cwd=REPO,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                )
-                self.assertEqual(result.returncode, 2, result.stdout)
-                self.assertEqual(result.stdout, "", "nothing may be emitted")
+def test_operational_biome_version_lives_only_in_pin_file() -> None:
+    version = json.loads(_read("workflows/biome-pin.json"))["version"]
+    paths = (
+        ".github/workflows/ci.yml",
+        "workflows/AGENTS.md",
+        "CONTRIBUTING.md",
+        "README.md",
+        ".github/pull_request_template.md",
+    )
+    for path in paths:
+        assert version not in _read(path)
 
 
-class TestIssueFormSchema(unittest.TestCase):
-    """A form that violates GitHub's schema does not render, with no local signal."""
-
-    def test_top_level_keys_are_permitted_and_complete(self):
-        for form in _form_files():
-            with self.subTest(form=form.name):
-                keys = {
-                    line.split(":", 1)[0]
-                    for line in form.read_text(encoding="utf-8").splitlines()
-                    if re.match(r"^\w+:", line)
-                }
-                self.assertLessEqual(keys, FORM_TOP_LEVEL_KEYS)
-                # GitHub requires all three; a form missing one does not render.
-                self.assertLessEqual(FORM_TOP_LEVEL_REQUIRED, keys)
-
-    def test_body_items_are_well_formed(self):
-        for form in _form_files():
-            fields = _form_fields(form.read_text(encoding="utf-8"))
-            self.assertTrue(fields, f"{form.name} has no body items")
-            ids = [field["id"] for field in fields if field["id"]]
-            self.assertEqual(
-                len(ids), len(set(ids)), f"duplicate field ids in {form.name}"
-            )
-            labels = [
-                field["attributes"].get("label")
-                for field in fields
-                if field["type"] != "markdown"
-            ]
-            self.assertEqual(
-                len(labels), len(set(labels)), f"duplicate field labels in {form.name}"
-            )
-            for field in fields:
-                with self.subTest(form=form.name, field=field["id"] or field["type"]):
-                    self.assertIn(field["type"], FORM_FIELD_TYPES)
-                    self.assertLessEqual(set(field["keys"]), FORM_ITEM_KEYS)
-                    self.assertLessEqual(
-                        set(field["attributes"]),
-                        FORM_ATTRIBUTES[field["type"]],
-                        "unknown attribute for this field type",
-                    )
-                    if field["type"] in FORM_TYPES_WITHOUT_VALIDATIONS:
-                        self.assertNotIn(
-                            "validations",
-                            field["keys"],
-                            "a markdown block cannot be required",
-                        )
-                        self.assertIsNone(field["id"], "a markdown block takes no id")
-                        self.assertIn("value", field["attributes"])
-                    else:
-                        self.assertRegex(field["id"] or "", r"^[A-Za-z0-9_-]+$")
-                        self.assertTrue(field["attributes"].get("label"))
-
-    @staticmethod
-    def _declared_options(text):
-        """Count option lines directly, without going through the reader under test."""
-        lines = text.splitlines()
-        total = 0
-        for index, line in enumerate(lines):
-            if line.rstrip() != "      options:":
-                continue
-            for candidate in lines[index + 1 :]:
-                if not candidate.strip() or candidate.lstrip().startswith("#"):
-                    continue
-                if _indent(candidate) > 8:
-                    continue
-                if _indent(candidate) < 8 or not candidate.lstrip().startswith("- "):
-                    break
-                total += 1
-        return total
-
-    def test_the_reader_reads_every_declared_option(self):
-        # Two shapes end a sequence early for a naive reader: a checkboxes option is a
-        # mapping, so its `required:` line is indented past the dash, and a YAML comment
-        # sits at the sequence's own indent. Either way the reader reports a subset of
-        # the options and every assertion over them is born vacuous — a duplicated
-        # option hidden behind a comment would stop the form rendering while the schema
-        # tests stayed green. Parsed count is compared against an independent count.
-        for form in _form_files():
-            text = form.read_text(encoding="utf-8")
-            declared = self._declared_options(text)
-            parsed = sum(
-                len(field["options"] or [])
-                for field in _form_fields(text)
-                if field["type"] in FORM_TYPES_WITH_OPTIONS
-            )
-            with self.subTest(form=form.name):
-                self.assertEqual(parsed, declared)
-
-    def test_option_lists_are_unique_and_renderable(self):
-        for form in _form_files():
-            for field in _form_fields(form.read_text(encoding="utf-8")):
-                if field["type"] not in FORM_TYPES_WITH_OPTIONS:
-                    continue
-                with self.subTest(form=form.name, field=field["id"]):
-                    options = field["options"]
-                    self.assertTrue(options, f"a {field['type']} must declare options")
-                    # A duplicated option makes the whole form fail to render.
-                    self.assertEqual(len(options), len(set(options)))
-                    for option in options:
-                        self.assertTrue(option.strip())
-                        self.assertNotIn(option.strip().lower(), RESERVED_OPTIONS)
-
-
-class TestIssueForms(unittest.TestCase):
-    def test_every_auto_applied_label_exists_in_the_taxonomy(self):
-        known = {label["name"] for label in _labels()}
-        for form in _form_files():
-            labels = _form_labels(form.read_text(encoding="utf-8"))
-            with self.subTest(form=form.name):
-                self.assertTrue(labels, f"{form.name} auto-applies no labels")
-            for label in labels:
-                with self.subTest(form=form.name, label=label):
-                    # GitHub drops form labels that do not pre-exist, silently.
-                    self.assertIn(label, known)
-
-    def test_every_form_requests_triage(self):
-        for form in _form_files():
-            with self.subTest(form=form.name):
-                self.assertIn(
-                    "needs-triage", _form_labels(form.read_text(encoding="utf-8"))
-                )
-
-    def test_bug_form_components_include_workflows_and_bench(self):
-        joined = "\n".join(_field("bug_report.yml", "phase")["options"])
-        self.assertIn("workflows/", joined)
-        self.assertIn("bench/", joined)
-
-    def test_bug_form_requires_install_method(self):
-        field = _field("bug_report.yml", "install_method")
-        self.assertIsNotNone(
-            field, "bug_report.yml must ask how the plugin was installed"
-        )
-        self.assertEqual(field["type"], "dropdown")
-        self.assertIn(
-            "validations",
-            field["keys"],
-            "`validations` must be a sibling of `attributes`, not nested inside it",
-        )
-        self.assertTrue(field["required"], "install method is a first-order diagnostic")
-        options = " ".join(field["options"]).lower()
-        for expected in ("marketplace", "--plugin-dir", "clone"):
-            with self.subTest(option=expected):
-                self.assertIn(expected, options)
-
-    def test_bug_form_plugin_version_placeholder_is_3x(self):
-        placeholder = _field("bug_report.yml", "plugin_version")["attributes"][
-            "placeholder"
-        ]
-        self.assertIsNotNone(placeholder)
-        # Either a pinned example or the 3.x line; a pinned patch goes stale on every
-        # release, since python-semantic-release never touches the form.
-        self.assertRegex(placeholder, r"3\.(?:x|\d+\.\d+)")
-        self.assertNotRegex(placeholder, r"2\.(?:x|\d+\.\d+)")
-        self.assertIn(".claude-plugin/plugin.json", placeholder)
-
-    def test_feature_form_area_options_include_workflows_and_bench(self):
-        options = "\n".join(_field("feature_request.yml", "area")["options"])
-        self.assertIn("workflows/", options)
-        self.assertIn("bench/", options)
-
-    def test_no_form_points_at_disabled_discussions(self):
-        # Encodes the current owner decision: Discussions are disabled for this repo
-        # (`has_discussions=false`), so no form may send anyone there. If Discussions are
-        # ever enabled, that decision — and this test — get revisited together.
-        for form in _form_files():
-            with self.subTest(form=form.name):
-                self.assertNotRegex(form.read_text(encoding="utf-8"), r"(?i)discussion")
-
-    def test_config_links_the_security_advisory_form(self):
-        links = _contact_links(_read(".github/ISSUE_TEMPLATE/config.yml"))
-        matching = [
-            name
-            for name, url in links
-            if url == ADVISORY_URL and re.search(r"(?i)security", name)
-        ]
-        self.assertTrue(matching, f"no security contact link among {links}")
-
-
-class TestSecurityPolicy(unittest.TestCase):
-    def test_security_md_exists_with_scope_and_supported_versions(self):
-        text = _read("SECURITY.md")
-        self.assertIn(
-            ADVISORY_URL, text, "must point at the enabled private advisory form"
-        )
-        for heading in ("reporting", "supported versions", "scope"):
-            with self.subTest(heading=heading):
-                self.assertRegex(text, rf"(?im)^#{{2,3}} .*{heading}")
-
-    def test_supported_versions_track_the_shipped_major(self):
-        text = _read("SECURITY.md")
-        major = json.loads(_read(".claude-plugin/plugin.json"))["version"].split(".")[0]
-        self.assertIn(
-            f"{major}.x", text, "supported versions must name the shipped major line"
-        )
-        # The retired architecture must not be advertised as supported.
-        self.assertRegex(text, r"(?im)^\|\s*2\.x[^|]*\|\s*No")
-
-
-class TestContributingDocs(unittest.TestCase):
-    def test_contributing_lists_the_ci_enforced_commands_verbatim(self):
-        text = _read("CONTRIBUTING.md")
-        for command in (
-            "python -m pytest tests/ -q",
-            "node --test workflows/test/*.test.js",
-            "python3 workflows/test/tools/biome_check.py",
-            "pre-commit run --all-files",
-            "node workflows/build.js",
-        ):
-            with self.subTest(command=command):
-                self.assertIn(command, text)
-        self.assertIn(
-            "bare directory form is not a valid `node --test` target on node 24", text
-        )
-        self.assertIn("workflows/test/tools/record_parity.py", text)
-
-    def test_contributing_places_biome_command_in_each_relevant_bash_block(self):
-        text = _read("CONTRIBUTING.md")
-        command = "python3 workflows/test/tools/biome_check.py"
-        sections = (
-            (
-                "### Common Commands",
-                "## The v3 workflow pipeline (JS)",
-            ),
-            (
-                "## Testing",
-                "## Branching and Commit Conventions",
-            ),
-        )
-        for heading, next_heading in sections:
-            with self.subTest(heading=heading):
-                section = text.split(f"{heading}\n", 1)[1].split(
-                    f"\n{next_heading}\n", 1
-                )
-                blocks = re.findall(
-                    r"```bash\n(?P<block>.*?)```", section[0], re.DOTALL
-                )
-                self.assertEqual(len(blocks), 1)
-                self.assertIn(command, blocks[0])
-
-    def test_contributing_describes_the_v3_js_pipeline_areas(self):
-        text = _read("CONTRIBUTING.md")
-        self.assertIn("workflows/src/", text)
-        self.assertIn("`bench/`", text)
-        self.assertIn("docs/maintainer-issues.md", text)
-
-    def test_pr_template_covers_the_js_gates(self):
-        text = _read(".github/pull_request_template.md")
-        for gate in (
-            "node --test workflows/test/*.test.js",
-            "python3 workflows/test/tools/biome_check.py",
-            "node workflows/build.js",
-            "UPDATE_GOLDENS=1 node --test workflows/test/goldens.test.js",
-            "workflows/test/tools/record_parity.py",
-        ):
-            with self.subTest(gate=gate):
-                self.assertIn(gate, text)
-        self.assertIn(
-            "Transform goldens updated with "
-            "`UPDATE_GOLDENS=1 node --test workflows/test/goldens.test.js` "
-            "in a reviewed diff; verify-wire fixtures updated with "
-            "`workflows/test/tools/record_parity.py`",
-            text,
-        )
-
-    def test_maintainer_issue_standard_has_the_required_sections(self):
-        text = _read("docs/maintainer-issues.md")
-        for section in (
-            "Problem / Goal",
-            "Requirements",
-            "Evidence",
-            "Candidate directions",
-            "Out of scope",
-            "Verification",
-        ):
-            with self.subTest(section=section):
-                self.assertRegex(text, rf"(?m)^#{{2,4}} {re.escape(section)}")
-
-    def test_maintainer_issue_standard_defers_tier_definitions_to_the_runbook(self):
-        text = _read("docs/maintainer-issues.md")
-        for tier in ("suites-only", "smoke", "paired-mini"):
-            with self.subTest(tier=tier):
-                self.assertIn(tier, text)
-        # Requirement 8: reference the canonical home, do not restate the ladder. Costs
-        # and `--tier` invocations are the tell that the ladder was copied in — but a
-        # copy can be laundered into prose, so the ladder's own shape is rejected too.
-        self.assertNotRegex(
-            text, r"\$\d", "tier costs belong only in bench/MEASUREMENT.md"
-        )
-        self.assertNotIn(
-            "--tier", text, "tier invocations belong only in bench/MEASUREMENT.md"
-        )
-        ladder_rows = [
-            line
-            for line in text.splitlines()
-            if line.lstrip().startswith("|")
-            and re.search(r"(?i)\b(tier|trigger|smoke|mini-subset|holdout)\b", line)
-        ]
-        self.assertEqual(
-            ladder_rows,
-            [],
-            "a tier table here is the ladder restated; link the runbook instead",
-        )
-        link = re.search(r"\[`bench/MEASUREMENT\.md`\]\((\.\./[^)]+)\)", text)
-        self.assertIsNotNone(
-            link, "the canonical runbook must be linked, not just named"
-        )
-        self.assertTrue((REPO / "docs" / link.group(1)).resolve().is_file())
-
-    def test_every_tier_slug_the_standard_mandates_resolves_in_the_runbook(self):
-        # Read the standard's vocabulary rather than hardcoding it, so a slug coined here
-        # cannot quietly become normative without existing in the canonical home a
-        # reader is sent to. That drift shipped once already.
-        standard = _read("docs/maintainer-issues.md")
-        vocabulary = standard.split("names exactly one measurement tier", 1)[1].split(
-            "\n\n", 2
-        )[1]
-        slugs = re.findall(r"^- `([a-z-]+)`", vocabulary, re.M)
-        self.assertTrue(slugs, "the standard must list the tier slugs as a bullet list")
-        runbook_slugs = set(
-            re.findall(
-                r"^\| [^|]+ \| `([a-z-]+)` \|", _read("bench/MEASUREMENT.md"), re.M
-            )
-        )
-        for slug in slugs:
-            with self.subTest(slug=slug):
-                self.assertIn(
-                    slug,
-                    runbook_slugs,
-                    "a slug the standard mandates must appear in the runbook's "
-                    f"Slug column, which holds {sorted(runbook_slugs)}",
-                )
-
-    def test_cspell_scope_includes_the_new_public_docs(self):
-        hooks = _read(".pre-commit-config.yaml")
-        cspell_block = hooks.split("- id: cspell", 1)
-        self.assertEqual(
-            len(cspell_block), 2, "cspell hook missing from .pre-commit-config.yaml"
-        )
-        block = cspell_block[1].split("\n  - repo:", 1)[0]
-        files_pattern = re.search(r"^        files: \^\((.*)\)\$", block, re.M)
-        self.assertIsNotNone(
-            files_pattern, "the cspell hook must keep an explicit files: scope"
-        )
-        scope = re.compile(rf"^({files_pattern.group(1)})$")
-        for path in (
-            "README.md",
-            "CONTRIBUTING.md",
-            "SECURITY.md",
-            "docs/maintainer-issues.md",
-        ):
-            with self.subTest(path=path):
-                self.assertTrue(
-                    scope.match(path), f"cspell scope does not cover {path}"
-                )
-
-    def test_contributing_python_lint_hook_ids_match_pre_commit_config(self):
-        """Documented `pre-commit run <id>` commands stay tied to real hook ids."""
-        expected = {"ruff-check", "ruff-format", "mypy"}
-        contributing = _read("CONTRIBUTING.md")
-        hooks = _read(".pre-commit-config.yaml")
-        declared = set(re.findall(r"^\s+- id: ([^\s#]+)", hooks, re.M))
-        documented = set(
-            re.findall(
-                r"pre-commit run (ruff-check|ruff-format|mypy) --all-files",
-                contributing,
-            )
-        )
-        self.assertEqual(
-            documented,
-            expected,
-            "CONTRIBUTING.md must document exactly the Python lint/format/type hooks",
-        )
-        self.assertTrue(
-            expected.issubset(declared),
-            f"hooks {sorted(expected - declared)} missing from .pre-commit-config.yaml",
-        )
-
-
-class TestBiomeLintSurface(unittest.TestCase):
-    def test_pin_file_has_all_known_assets_and_valid_digests(self) -> None:
-        pin = json.loads(_read("workflows/biome-pin.json"))
-        self.assertIsInstance(pin, dict)
-        self.assertRegex(pin["version"], r"^\d+\.\d+\.\d+$")
-        self.assertEqual(set(pin["sha256"]), BIOME_ASSETS)
-        for asset, digest in pin["sha256"].items():
-            with self.subTest(asset=asset):
-                self.assertIn(asset, BIOME_ASSETS)
-                self.assertRegex(digest, r"^[0-9a-f]{64}$")
-
-    def test_ci_js_lint_uses_runner_without_another_biome_pin(self) -> None:
-        ci = _read(".github/workflows/ci.yml")
-        js_lint = ci.split("  js-lint:\n", 1)[1].split("\n  workflow-tests:", 1)[0]
-        self.assertIn("python3 workflows/test/tools/biome_check.py", js_lint)
-        for forbidden in (
-            "BIOME_VERSION",
-            "BIOME_SHA256",
-            "sha256sum",
-            "releases/download/@biomejs",
-        ):
-            with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, ci)
-
-    def test_operational_biome_version_lives_only_in_pin_file(self) -> None:
-        version = json.loads(_read("workflows/biome-pin.json"))["version"]
-        paths = (
-            ".github/workflows/ci.yml",
-            "workflows/AGENTS.md",
-            "CONTRIBUTING.md",
-            "README.md",
-            ".github/pull_request_template.md",
-        )
-        for path in paths:
-            with self.subTest(path=path):
-                self.assertNotIn(version, _read(path))
-
-
-# Required PR check-run names for ruleset 16049246 (protect-default-branch).
-# Any new always-on PR gate must update THIS tuple and the live ruleset in the
-# same change (see #108 / #102 / #105). GitHub matches check-run names, not
-# workflow `name:` titles alone.
+# Required check-run names must change with the live branch-protection ruleset.
+# GitHub matches check-run names rather than workflow titles alone.
 REQUIRED_PR_CHECK_CONTEXTS = (
     "Run Linting",
     "Run Tests (3.10)",
@@ -1136,12 +925,7 @@ REQUIRED_PR_CHECK_CONTEXTS = (
     "Validate plugin.json",
     "lint-pr-title",
 )
-
-# Every required check maps to the command a contributor runs locally to reproduce it,
-# or to None when the check is CI-only. CONTRIBUTING claims the PR checklist covers the
-# locally-runnable gates and names the CI-only ones; this mapping is what makes that
-# claim checkable instead of a promise. A new required check must be added here, which
-# forces the docs question to be answered rather than skipped.
+# Add each new required check here so its docs question cannot be skipped.
 LOCAL_COMMAND_FOR_REQUIRED_CHECK = {
     "Run Linting": "pre-commit run --all-files",
     "Run Tests (3.10)": "python -m pytest tests/ -q",
@@ -1157,6 +941,18 @@ LOCAL_COMMAND_FOR_REQUIRED_CHECK = {
     "lint-pr-title": None,  # Needs the PR title; nothing local to run.
 }
 
+
+def test_ci_only_required_checks_are_documented() -> None:
+    ci_only = [
+        context
+        for context, command in LOCAL_COMMAND_FOR_REQUIRED_CHECK.items()
+        if command is None
+    ]
+    assert ci_only
+    for context in ci_only:
+        assert context in _read("CONTRIBUTING.md")
+
+
 REQUIRED_PR_CHECK_WORKFLOWS = (
     ".github/workflows/ci.yml",
     ".github/workflows/validate.yml",
@@ -1164,115 +960,44 @@ REQUIRED_PR_CHECK_WORKFLOWS = (
 )
 
 
-def _derive_required_pr_check_contexts():
-    """Expand the required checks for ruleset 16049246 (protect-default-branch).
-
-    Update the frozen tuple and live ruleset together. Zero required approvals
-    is deliberate; required checks, conversations, and linear history are the
-    merge gates. Job-level name: wins; else the job id.
-    """
-    contexts = []
-    job_header = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
-    job_name = re.compile(r"^    name:\s*(.+?)\s*$")
-    matrix_versions = re.compile(r"^        python-version:\s*\[(.*)\]\s*$")
+def _derive_required_pr_check_contexts() -> list[str]:
+    # Update the frozen tuple and live ruleset together. Zero required approvals is
+    # deliberate; checks, conversations and linear history are the merge gates.
+    # Job-level names override job ids.
+    contexts: list[str] = []
     for rel in REQUIRED_PR_CHECK_WORKFLOWS:
-        text = _read(rel)
-        lines = text.splitlines()
-        i = 0
-        in_jobs = False
-        while i < len(lines):
-            line = lines[i]
-            if line.startswith("jobs:"):
-                in_jobs = True
-                i += 1
-                continue
-            if not in_jobs:
-                i += 1
-                continue
-            if line and not line.startswith(" ") and not line.startswith("#"):
-                break
-            m = job_header.match(line)
-            if not m:
-                i += 1
-                continue
-            job_id = m.group(1)
-            display = None
-            versions = None
-            i += 1
-            while i < len(lines):
-                nxt = lines[i]
-                if job_header.match(nxt) or (
-                    nxt and not nxt.startswith(" ") and not nxt.startswith("#")
-                ):
-                    break
-                nm = job_name.match(nxt)
-                if nm:
-                    display = _unquote(nm.group(1))
-                vm = matrix_versions.match(nxt)
-                if vm:
-                    versions = [
-                        _unquote(p.strip()) for p in vm.group(1).split(",") if p.strip()
-                    ]
-                i += 1
-            label = display if display is not None else job_id
+        for job_id, job in _ci_job_blocks(_read(rel)):
+            names = re.findall(r"(?m)^    name:\s*(.+?)\s*$", job)
+            label = _unquote(names[0]) if names else job_id
+            matrices = re.findall(r"(?m)^        python-version:\s*\[(.*)\]\s*$", job)
+            versions = [
+                _unquote(part.strip())
+                for matrix in matrices
+                for part in matrix.split(",")
+                if part.strip()
+            ]
             if versions:
-                contexts.extend(f"{label} ({v})" for v in versions)
+                contexts.extend(f"{label} ({version})" for version in versions)
             else:
                 contexts.append(label)
     return contexts
 
 
-class TestRequiredPrCheckContexts(unittest.TestCase):
-    def test_frozen_tuple_matches_workflow_derived_names(self):
-        derived = tuple(sorted(_derive_required_pr_check_contexts()))
-        frozen = tuple(sorted(REQUIRED_PR_CHECK_CONTEXTS))
-        self.assertEqual(
-            derived,
-            frozen,
-            "workflow job names drifted from REQUIRED_PR_CHECK_CONTEXTS — "
-            "update the tuple AND ruleset 16049246 together",
-        )
-
-    def test_every_required_check_is_classified_local_or_ci_only(self):
-        self.assertEqual(
-            tuple(sorted(LOCAL_COMMAND_FOR_REQUIRED_CHECK)),
-            tuple(sorted(REQUIRED_PR_CHECK_CONTEXTS)),
-        )
-
-    def test_locally_runnable_gates_are_on_the_pr_checklist(self):
-        contributing = _read("CONTRIBUTING.md")
-        template = _read(".github/pull_request_template.md")
-        for context, command in sorted(LOCAL_COMMAND_FOR_REQUIRED_CHECK.items()):
-            if command is None:
-                continue
-            with self.subTest(context=context):
-                self.assertIn(command, contributing)
-                self.assertIn(command, template)
-
-    def test_ci_only_gates_are_named_in_contributing(self):
-        contributing = _read("CONTRIBUTING.md")
-        ci_only = [
-            context
-            for context, command in LOCAL_COMMAND_FOR_REQUIRED_CHECK.items()
-            if command is None
-        ]
-        self.assertTrue(ci_only)
-        for context in ci_only:
-            with self.subTest(context=context):
-                self.assertIn(context, contributing)
-
-    def test_docstring_names_the_ruleset(self):
-        doc = _derive_required_pr_check_contexts.__doc__ or ""
-        self.assertIn("16049246", doc)
-        self.assertIn("protect-default-branch", doc)
+def test_frozen_tuple_matches_workflow_derived_names() -> None:
+    derived = tuple(sorted(_derive_required_pr_check_contexts()))
+    frozen = tuple(sorted(REQUIRED_PR_CHECK_CONTEXTS))
+    assert derived == frozen, (
+        "workflow job names drifted from REQUIRED_PR_CHECK_CONTEXTS — "
+        "update the tuple AND ruleset 16049246 together"
+    )
+    assert set(LOCAL_COMMAND_FOR_REQUIRED_CHECK) == set(REQUIRED_PR_CHECK_CONTEXTS)
 
 
 GATE_MARKERS = ("--cov-fail-under=", "--test-coverage-lines=")
 
 
 def _documented_coverage_gate_commands(text: str) -> set[str]:
-    """Commands inside the Coverage gates fenced bash block, split on blank lines."""
-    # Find the section heading, then the first ```bash fence after it.
+    # Ignore trailing cosmetic blank lines while preserving interior command bytes.
     heading = re.search(r"(?m)^Coverage gates\b.*$", text)
     if not heading:
         raise AssertionError("CONTRIBUTING.md missing 'Coverage gates' paragraph")
@@ -1282,8 +1007,6 @@ def _documented_coverage_gate_commands(text: str) -> set[str]:
         raise AssertionError("CONTRIBUTING.md Coverage gates missing ```bash fence")
     body = fence.group(1)
     chunks = re.split(r"\n\s*\n", body.strip("\n"))
-    # rstrip trailing newlines only — cosmetic blank lines after a command must
-    # not create a confusing residual-\n false fail (interior blanks stay).
     commands = {c.rstrip("\n") for c in chunks if c.strip()}
     if len(commands) < 3:
         raise AssertionError(
@@ -1293,7 +1016,6 @@ def _documented_coverage_gate_commands(text: str) -> set[str]:
 
 
 def _ci_run_blocks(text: str) -> list[str]:
-    """Literal bodies of run: | / run: |- block scalars (stdlib; no PyYAML)."""
     lines = text.splitlines()
     blocks = []
     i = 0
@@ -1328,30 +1050,30 @@ def _ci_run_blocks(text: str) -> list[str]:
 
 
 def _ci_job_blocks(text: str) -> list[tuple[str, str]]:
-    """Job bodies from ci.yml, using the file's fixed two-space job indentation."""
     lines = text.splitlines()
     jobs_index = next(
         (index for index, line in enumerate(lines) if line == "jobs:"), None
     )
     if jobs_index is None:
-        raise AssertionError("ci.yml is missing jobs:")
+        raise AssertionError("workflow is missing jobs:")
     starts = []
+    jobs_end = len(lines)
     for index in range(jobs_index + 1, len(lines)):
         line = lines[index]
         if line and not line.startswith(" ") and not line.startswith("#"):
+            jobs_end = index
             break
         match = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
         if match:
             starts.append((index, match.group(1)))
     jobs = []
     for position, (start, job_id) in enumerate(starts):
-        end = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
+        end = starts[position + 1][0] if position + 1 < len(starts) else jobs_end
         jobs.append((job_id, "\n".join(lines[start:end])))
     return jobs
 
 
 def _ci_step_blocks(job: str) -> list[str]:
-    """Step bodies from one ci.yml job."""
     lines = job.splitlines()
     starts = [index for index, line in enumerate(lines) if re.match(r"^      - ", line)]
     return [
@@ -1367,36 +1089,17 @@ def _ci_step_blocks(job: str) -> list[str]:
 
 
 def _ci_step_run_bodies(step: str) -> list[str]:
-    """Inline and block-scalar run bodies from one step."""
     inline = re.findall(r"(?m)^\s+run:\s+(?!\|-?$)(.+?)\s*$", step)
     return inline + _ci_run_blocks(step)
 
 
 def _ci_setup_node_steps(text: str) -> list[tuple[str, int, str]]:
-    """Every setup-node step, with its job and zero-based step index."""
     return [
         (job_id, index, step)
         for job_id, job in _ci_job_blocks(text)
         for index, step in enumerate(_ci_step_blocks(job))
         if "actions/setup-node@" in step
     ]
-
-
-def _copy_tracked_tree(destination: Path) -> None:
-    result = subprocess.run(
-        ["git", "ls-files", "-z"],
-        cwd=REPO,
-        check=True,
-        capture_output=True,
-    )
-    relatives = {path for path in result.stdout.decode().split("\0") if path}
-    for relative in sorted(relatives):
-        source = REPO / relative
-        if not source.is_file():
-            continue
-        target = destination / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
 
 
 def _ci_gate_commands(text: str) -> set[str]:
@@ -1406,7 +1109,6 @@ def _ci_gate_commands(text: str) -> set[str]:
 
 
 def _ci_workflow_tests_node_version(text: str) -> str:
-    """The workflow-level Node version used by ci.yml."""
     matches = re.findall(
         r'(?m)^env:\n  NODE_VERSION:\s*["\']?([^"\'\s]+)["\']?\s*$', text
     )
@@ -1420,15 +1122,18 @@ def _ci_workflow_tests_node_version(text: str) -> str:
 def test_layout_hook_owns_pytest_and_keeps_markdown_scope() -> None:
     text = _read(".pre-commit-config.yaml")
     block = _pre_commit_hook_block(text, "agent-instruction-layout")
-    assert _pre_commit_hook_value(block, "name") == (
-        "agent instruction files stay small, unshadowed, and name real code"
+    assert (
+        _pre_commit_hook_value(block, "name")
+        == "agent instruction files stay small, unshadowed, and name real code"
     )
-    assert _pre_commit_hook_value(block, "entry") == (
-        "python -m pytest tests/test_agent_instruction_layout.py -q -p no:cacheprovider"
+    assert (
+        _pre_commit_hook_value(block, "entry")
+        == "python -m pytest tests/test_agent_instruction_layout.py -q -p no:cacheprovider"
     )
     assert _pre_commit_hook_value(block, "language") == "python"
-    assert _pre_commit_hook_value(block, "files") == (
-        r"(^|/)(AGENTS|CLAUDE|CLAUDE\.local)\.md$|^REVIEW\.md$"
+    assert (
+        _pre_commit_hook_value(block, "files")
+        == r"(^|/)(AGENTS|CLAUDE|CLAUDE\.local)\.md$|^REVIEW\.md$"
     )
     assert _pre_commit_hook_value(block, "pass_filenames") == "false"
     assert not re.search(r"(?m)^        (types|types_or|stages):", block)
@@ -1446,260 +1151,197 @@ def test_pytest_hook_pins_match_dev_dependency() -> None:
     assert not mismatched, f"pytest hook pins differ from {pins[0]}: {mismatched}"
 
 
-class TestContractFenceHook(unittest.TestCase):
-    def test_contract_fence_hook_is_scoped_and_covers_derived_inputs(self):
-        text = _read(".pre-commit-config.yaml")
-        contract_start, _ = _pre_commit_hook_span(text, "contract-fences-current")
-        agent_start, _ = _pre_commit_hook_span(text, "agent-instruction-layout")
-        self.assertGreater(contract_start, agent_start)
+def test_contract_fence_hook_is_scoped_and_covers_derived_inputs() -> None:
+    text = _read(".pre-commit-config.yaml")
+    block = _pre_commit_hook_block(text, "contract-fences-current")
+    repo_block = _pre_commit_repo_block(text, "contract-fences-current")
+    repo_header = re.match(r"(?m)^  - repo:\s*(.*?)\s*$", repo_block)
+    assert repo_header is not None
+    assert _unquote(repo_header.group(1)) == "local"
+    assert (
+        _pre_commit_hook_value(block, "entry")
+        == "python3 scripts/generate_contract_requirements.py --check"
+    )
+    assert _pre_commit_hook_value(block, "pass_filenames") == "false"
+    assert _pre_commit_hook_value(block, "language") == "system"
+    assert not re.search(r"(?m)^\s+always_run:", block)
+    stage_values = re.findall(r"(?m)^        stages:\s*(.*?)\s*$", block)
+    if stage_values:
+        stages = _unquote(stage_values[0])
+        assert re.search(r"\[\s*pre-commit(?:\s*,|\s*\])", stages)
+    files_pattern = _pre_commit_hook_value(block, "files")
+    assert files_pattern == "^(agents|skills/code-gauntlet|scripts|workflows)/"
+    scope = re.compile(files_pattern)
+    declared_inputs = generator_inputs.declared_inputs(str(REPO))
+    assert {
+        "scripts/gauntlet/delivery/compose.py",
+        "scripts/gauntlet/delivery/gate.py",
+        "scripts/gauntlet/config.py",
+        "scripts/gauntlet/marker.py",
+        "scripts/gauntlet/generate.py",
+        "scripts/gauntlet/fs.py",
+    }.issubset(declared_inputs), declared_inputs
+    assert {
+        "workflows/src/registry.js",
+        "workflows/src/knobs.js",
+        "workflows/src/renderReport.js",
+    }.issubset(declared_inputs), declared_inputs
+    assert {
+        "workflows/src/filterFindings.js",
+        "workflows/src/applyChallenges.js",
+        "workflows/src/applyValidations.js",
+    }.issubset(declared_inputs), declared_inputs
+    registry = contract_gen.load_registry(str(REPO))
+    paths = set(contract_gen.rendered_targets(str(REPO), registry, ""))
+    paths.update(declared_inputs)
+    paths.add("scripts/generate_contract_requirements.py")
+    for path in sorted(paths):
+        if path in declared_inputs:
+            assert (REPO / path).is_file(), path
+        assert scope.match(path) is not None, path
 
-        block = _pre_commit_hook_block(text, "contract-fences-current")
-        repo_block = _pre_commit_repo_block(text, "contract-fences-current")
-        repo_header = re.match(r"(?m)^  - repo:\s*(.*?)\s*$", repo_block)
-        self.assertIsNotNone(repo_header)
-        self.assertEqual(_unquote(repo_header.group(1)), "local")
-        self.assertEqual(
-            _pre_commit_hook_value(block, "name"),
-            "generated contract fences are current (regenerate with scripts/generate_contract_requirements.py)",
+
+def test_contract_fence_hook_rejects_stale_fence_without_writing() -> None:
+    config = _read(".pre-commit-config.yaml")
+    block = _pre_commit_hook_block(config, "contract-fences-current")
+    entry = shlex.split(_pre_commit_hook_value(block, "entry"))
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        copy_generator_tree(
+            REPO,
+            root,
+            contract_gen.rendered_targets(
+                str(REPO), contract_gen.load_registry(str(REPO)), ""
+            ),
         )
-        self.assertEqual(
-            _pre_commit_hook_value(block, "entry"),
-            "python3 scripts/generate_contract_requirements.py --check",
+        target = root / "skills/code-gauntlet/references/phase1-preflight.md"
+        clean_result = subprocess.run(
+            entry, cwd=root, capture_output=True, text=True, encoding="utf-8"
         )
-        self.assertEqual(_pre_commit_hook_value(block, "pass_filenames"), "false")
-        self.assertEqual(_pre_commit_hook_value(block, "language"), "system")
-        self.assertNotRegex(block, r"(?m)^\s+always_run:")
-        stage_values = re.findall(r"(?m)^        stages:\s*(.*?)\s*$", block)
-        if stage_values:
-            stages = _unquote(stage_values[0])
-            self.assertRegex(stages, r"\[\s*pre-commit(?:\s*,|\s*\])")
-        files_pattern = _pre_commit_hook_value(block, "files")
-        self.assertEqual(
-            files_pattern, "^(agents|skills/code-gauntlet|scripts|workflows)/"
+        assert clean_result.returncode == 0, clean_result.stdout + clean_result.stderr
+        lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
+        open_index, close_index = contract_gen.find_identity_pairs(
+            [line.rstrip("\n") for line in lines],
+            "skills/code-gauntlet/references/phase1-preflight.md",
+        )["derived_waist_fields"]
+        body_index = next(
+            index
+            for index in range(open_index + 1, close_index)
+            if lines[index].strip()
         )
-        scope = re.compile(files_pattern)
-
-        declared_inputs = generator_inputs.declared_inputs(str(REPO))
-        self.assertTrue(
-            {
-                "scripts/gauntlet/delivery/compose.py",
-                "scripts/gauntlet/delivery/gate.py",
-                "scripts/gauntlet/config.py",
-                "scripts/gauntlet/marker.py",
-                "scripts/gauntlet/generate.py",
-                "scripts/gauntlet/fs.py",
-            }.issubset(declared_inputs),
-            declared_inputs,
+        lines[body_index] = lines[body_index].rstrip("\n") + " stale\n"
+        corrupted = "".join(lines).encode()
+        target.write_bytes(corrupted)
+        stale_result = subprocess.run(
+            entry, cwd=root, capture_output=True, text=True, encoding="utf-8"
         )
-        self.assertTrue(
-            {
-                "workflows/src/registry.js",
-                "workflows/src/knobs.js",
-                "workflows/src/renderReport.js",
-            }.issubset(declared_inputs),
-            declared_inputs,
+        assert stale_result.returncode == 1
+        assert (
+            "skills/code-gauntlet/references/phase1-preflight.md" in stale_result.stderr
         )
-        self.assertTrue(
-            {
-                "workflows/src/filterFindings.js",
-                "workflows/src/applyChallenges.js",
-                "workflows/src/applyValidations.js",
-            }.issubset(declared_inputs),
-            declared_inputs,
+        assert target.read_bytes() == corrupted
+
+
+def test_windows_pytest_job_contract_is_pinned() -> None:
+    text = _read(".github/workflows/ci.yml")
+    windows_jobs = [
+        job
+        for _, job in _ci_job_blocks(text)
+        if re.search(r"(?m)^    name: Run Tests on Windows\s*$", job)
+    ]
+    assert len(windows_jobs) == 1
+    job = windows_jobs[0]
+    assert re.search(r"(?m)^    runs-on:\s*windows-latest\s*$", job)
+    assert re.search(r"(?m)^      matrix:\s*$", job)
+    assert re.search(
+        r'(?m)^        python-version:\s*\[[^\]]*["\']3\.12["\'][^\]]*\]\s*$',
+        job,
+    )
+    assert re.search(r'(?m)^      PYTHONUTF8:\s*["\']?0["\']?\s*$', job)
+    run_bodies = [
+        body for step in _ci_step_blocks(job) for body in _ci_step_run_bodies(step)
+    ]
+    assert "python -m pytest tests/ -q" in run_bodies
+
+
+def test_node_is_pinned_before_every_relevant_ci_job() -> None:
+    text = _read(".github/workflows/ci.yml")
+    version = _ci_workflow_tests_node_version(text)
+    assert len(re.findall(r"(?m)^  NODE_VERSION:", text)) == 1
+    setup_steps = _ci_setup_node_steps(text)
+    assert setup_steps
+    assert text.count("actions/setup-node@") == len(setup_steps)
+    setup_node_uses = []
+    for _job_id, _index, step in setup_steps:
+        uses = re.search(
+            r"(?m)^\s+uses:\s*actions/setup-node@([0-9a-f]{40})\s+#\s+v\S+$", step
         )
-        registry = contract_gen.load_registry(str(REPO))
-        paths = set(contract_gen.rendered_targets(str(REPO), registry, ""))
-        paths.update(declared_inputs)
-        for path in sorted(paths):
-            with self.subTest(path=path):
-                if path in declared_inputs:
-                    self.assertTrue((REPO / path).is_file(), path)
-                self.assertIsNotNone(scope.match(path), path)
-
-    def test_contract_fence_hook_rejects_stale_fence_without_writing(self):
-        config = _read(".pre-commit-config.yaml")
-        block = _pre_commit_hook_block(config, "contract-fences-current")
-        entry = shlex.split(_pre_commit_hook_value(block, "entry"))
-
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            _copy_tracked_tree(root)
-            target = root / "skills/code-gauntlet/references/phase1-preflight.md"
-            clean_result = subprocess.run(
-                entry,
-                cwd=root,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-            )
-            self.assertEqual(
-                clean_result.returncode,
-                0,
-                clean_result.stdout + clean_result.stderr,
-            )
-
-            lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
-            open_index, close_index = contract_gen.find_identity_pairs(
-                [line.rstrip("\n") for line in lines],
-                "skills/code-gauntlet/references/phase1-preflight.md",
-            )["derived_waist_fields"]
-            body_index = next(
-                index
-                for index in range(open_index + 1, close_index)
-                if lines[index].strip()
-            )
-            lines[body_index] = lines[body_index].rstrip("\n") + " stale\n"
-            corrupted = "".join(lines).encode()
-            target.write_bytes(corrupted)
-
-            stale_result = subprocess.run(
-                entry,
-                cwd=root,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-            )
-            self.assertEqual(stale_result.returncode, 1)
-            self.assertIn(
-                "skills/code-gauntlet/references/phase1-preflight.md",
-                stale_result.stderr,
-            )
-            self.assertEqual(target.read_bytes(), corrupted)
-
-
-class TestWindowsCiContract(unittest.TestCase):
-    def test_windows_pytest_job_contract_is_pinned(self):
-        text = _read(".github/workflows/ci.yml")
-        windows_jobs = [
-            job
-            for _, job in _ci_job_blocks(text)
-            if re.search(r"(?m)^    name: Run Tests on Windows\s*$", job)
+        assert uses is not None
+        setup_node_uses.append(uses.group(1))
+        assert re.findall(r"(?m)^\s+node-version:\s*(.*?)\s*$", step) == [
+            "${{ env.NODE_VERSION }}"
         ]
-        self.assertEqual(len(windows_jobs), 1)
-        job = windows_jobs[0]
-
-        self.assertRegex(job, r"(?m)^    runs-on:\s*windows-latest\s*$")
-        self.assertRegex(job, r"(?m)^      matrix:\s*$")
-        self.assertRegex(
-            job,
-            r'(?m)^        python-version:\s*\[[^\]]*["\']3\.12["\'][^\]]*\]\s*$',
-        )
-        self.assertRegex(job, r'(?m)^      PYTHONUTF8:\s*["\']?0["\']?\s*$')
-
-        run_bodies = [
-            body for step in _ci_step_blocks(job) for body in _ci_step_run_bodies(step)
+    assert len(set(setup_node_uses)) == 1
+    bare_node = re.compile(r"(?<![A-Za-z0-9_-])node ")
+    consumer_markers = ("pre-commit run", "python -m pytest tests/")
+    for _job_id, job in _ci_job_blocks(text):
+        steps = _ci_step_blocks(job)
+        consumer_indexes = [
+            index
+            for index, step in enumerate(steps)
+            if any(
+                marker in body or bare_node.search(body)
+                for body in _ci_step_run_bodies(step)
+                for marker in consumer_markers
+            )
         ]
-        self.assertIn("python -m pytest tests/ -q", run_bodies)
+        if not consumer_indexes:
+            continue
+        setup_indexes = [
+            index for index, step in enumerate(steps) if "actions/setup-node@" in step
+        ]
+        assert setup_indexes
+        assert min(setup_indexes) < min(consumer_indexes)
+    contributing = _read("CONTRIBUTING.md")
+    assert f"CI pins Node `{version}` exactly" in contributing
 
 
-class TestCiNodePin(unittest.TestCase):
-    def test_node_is_pinned_before_every_relevant_ci_job(self):
-        text = _read(".github/workflows/ci.yml")
-        version = _ci_workflow_tests_node_version(text)
-        workflow_versions = re.findall(r"(?m)^env:\n  NODE_VERSION:\s*(.*?)\s*$", text)
-        self.assertEqual(len(workflow_versions), 1)
-        self.assertEqual(_unquote(workflow_versions[0]), version)
-        self.assertEqual(len(re.findall(r"(?m)^  NODE_VERSION:", text)), 1)
-
-        setup_steps = _ci_setup_node_steps(text)
-        self.assertTrue(setup_steps)
-        self.assertEqual(text.count("actions/setup-node@"), len(setup_steps))
-        setup_node_uses = []
-        for job_id, index, step in setup_steps:
-            with self.subTest(setup_node=(job_id, index)):
-                uses = re.search(
-                    r"(?m)^\s+uses:\s*actions/setup-node@([0-9a-f]{40})\s+#\s+v\S+$",
-                    step,
-                )
-                self.assertIsNotNone(uses)
-                setup_node_uses.append(uses.group(1))
-                self.assertEqual(
-                    re.findall(r"(?m)^\s+node-version:\s*(.*?)\s*$", step),
-                    ["${{ env.NODE_VERSION }}"],
-                )
-        self.assertEqual(len(set(setup_node_uses)), 1)
-
-        bare_node = re.compile(r"(?<![A-Za-z0-9_-])node ")
-        consumer_markers = ("pre-commit run", "python -m pytest tests/")
-        for job_id, job in _ci_job_blocks(text):
-            steps = _ci_step_blocks(job)
-            consumer_indexes = [
-                index
-                for index, step in enumerate(steps)
-                if any(
-                    marker in body or bare_node.search(body)
-                    for body in _ci_step_run_bodies(step)
-                    for marker in consumer_markers
-                )
-            ]
-            if not consumer_indexes:
-                continue
-            setup_indexes = [
-                index
-                for index, step in enumerate(steps)
-                if "actions/setup-node@" in step
-            ]
-            with self.subTest(job=job_id):
-                self.assertTrue(setup_indexes)
-                self.assertLess(min(setup_indexes), min(consumer_indexes))
-
-        contributing = _read("CONTRIBUTING.md")
-        self.assertIn(f"CI pins Node `{version}` exactly", contributing)
-
-    def test_getting_started_declares_the_node_prerequisite_for_the_hook(self):
-        text = _read("CONTRIBUTING.md")
-        section = text.split("## Getting Started\n", 1)[1].split("\n## ", 1)[0]
-        version = _ci_workflow_tests_node_version(_read(".github/workflows/ci.yml"))
-        sentences = re.findall(r"(?m)^.*contract-fences-current.*\.$", section)
-        self.assertEqual(len(sentences), 1)
-        self.assertIn(f"Node `{version}`", sentences[0])
-        self.assertLess(
-            section.index(sentences[0]), section.index("pre-commit install")
-        )
+def test_getting_started_declares_the_node_prerequisite_for_the_hook() -> None:
+    text = _read("CONTRIBUTING.md")
+    section = text.split("## Getting Started\n", 1)[1].split("\n## ", 1)[0]
+    version = _ci_workflow_tests_node_version(_read(".github/workflows/ci.yml"))
+    sentences = re.findall(r"(?m)^.*contract-fences-current.*\.$", section)
+    assert len(sentences) == 1
+    assert f"Node `{version}`" in sentences[0]
+    assert section.index(sentences[0]) < section.index("pre-commit install")
 
 
-class TestCoverageGateCommandIdentity(unittest.TestCase):
-    def test_documented_and_ci_gate_commands_are_byte_identical_sets(self):
-        documented = _documented_coverage_gate_commands(_read("CONTRIBUTING.md"))
-        ci = _ci_gate_commands(_read(".github/workflows/ci.yml"))
-        self.assertEqual(documented, ci)
-
-    def test_js_gate_includes_match_coverage_scope_json(self):
-        scope = json.loads(_read("workflows/test/tools/coverage_scope.json"))
-        documented = _documented_coverage_gate_commands(_read("CONTRIBUTING.md"))
-        js_gates = [c for c in documented if "--test-coverage-lines=" in c]
-        self.assertEqual(len(js_gates), 1, js_gates)
-        flags = re.findall(r"--test-coverage-include='([^']+)'", js_gates[0])
-        self.assertEqual(set(flags), set(scope["includes"]))
-
-    def test_contributing_documents_the_ci_node_version_pin(self):
-        text = _read(".github/workflows/ci.yml")
-        version = _ci_workflow_tests_node_version(text)
-        contributing = _read("CONTRIBUTING.md")
-        self.assertIn(f"`{version}`", contributing)
-        setup_steps = _ci_setup_node_steps(text)
-        self.assertTrue(setup_steps)
-        uses = []
-        for job_id, index, step in setup_steps:
-            with self.subTest(setup_node=(job_id, index)):
-                pinned = re.search(
-                    r"(?m)^\s+uses:\s*actions/setup-node@([0-9a-f]{40})\s+#\s+v\S+$",
-                    step,
-                )
-                self.assertIsNotNone(pinned)
-                uses.append(pinned.group(1))
-                self.assertEqual(
-                    re.findall(r"(?m)^\s+node-version:\s*(.*?)\s*$", step),
-                    ["${{ env.NODE_VERSION }}"],
-                )
-        self.assertEqual(len(set(uses)), 1)
+def test_documented_and_ci_gate_commands_are_byte_identical_sets() -> None:
+    documented = _documented_coverage_gate_commands(_read("CONTRIBUTING.md"))
+    ci = _ci_gate_commands(_read(".github/workflows/ci.yml"))
+    assert documented == ci
+    assert (
+        "bare directory form is not a valid `node --test` target on node 24"
+        in _read("CONTRIBUTING.md")
+    )
+    assert (
+        "Transform goldens updated with "
+        "`UPDATE_GOLDENS=1 node --test workflows/test/goldens.test.js` "
+        "in a reviewed diff; verify-wire fixtures updated with "
+        "`workflows/test/tools/record_parity.py`"
+    ) in _read(".github/pull_request_template.md")
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_js_gate_includes_match_coverage_scope_json() -> None:
+    scope = json.loads(_read("workflows/test/tools/coverage_scope.json"))
+    documented = _documented_coverage_gate_commands(_read("CONTRIBUTING.md"))
+    js_gates = [c for c in documented if "--test-coverage-lines=" in c]
+    assert len(js_gates) == 1, js_gates
+    flags = re.findall(r"--test-coverage-include='([^']+)'", js_gates[0])
+    assert set(flags) == set(scope["includes"])
 
 
-def test_no_sleep_poll_loop_survives_anywhere_under_skills():
+def test_no_sleep_poll_loop_survives_anywhere_under_skills() -> None:
     offenders = []
     for path in (REPO / "skills").rglob("*.md"):
         if re.search(r"\bsleep\s+\d+\b", path.read_text(encoding="utf-8")):
@@ -1707,7 +1349,7 @@ def test_no_sleep_poll_loop_survives_anywhere_under_skills():
     assert offenders == [], "sleep-based poll loop still present"
 
 
-def test_both_wait_protocol_copies_reference_the_awaiter():
+def test_both_wait_protocol_copies_reference_the_awaiter() -> None:
     for relative in (
         "skills/code-gauntlet/SKILL.md",
         "skills/code-gauntlet/references/phase3-dispatch.md",
@@ -1715,9 +1357,49 @@ def test_both_wait_protocol_copies_reference_the_awaiter():
         assert "await_workflow.py" in (REPO / relative).read_text(encoding="utf-8")
 
 
-def test_headless_reference_points_at_the_protocol():
+def test_headless_reference_points_at_the_protocol() -> None:
     text = (REPO / "skills/code-gauntlet/references/headless-mode.md").read_text(
         encoding="utf-8"
     )
     assert "await_workflow.py" in text
     assert "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS" in text
+
+
+@pytest.mark.parametrize(
+    "command",
+    sorted(
+        {command for command in LOCAL_COMMAND_FOR_REQUIRED_CHECK.values() if command}
+        | {
+            "node workflows/build.js",
+            "UPDATE_GOLDENS=1 node --test workflows/test/goldens.test.js",
+            "workflows/test/tools/record_parity.py",
+        }
+    ),
+)
+def test_contributor_gate_commands(command: str) -> None:
+    assert command in _read("CONTRIBUTING.md")
+    assert command in _read(".github/pull_request_template.md")
+
+
+@pytest.mark.parametrize(
+    "heading,next_heading",
+    [
+        pytest.param(
+            "### Common Commands",
+            "## The v3 workflow pipeline (JS)",
+            id="common-commands",
+        ),
+        pytest.param("## Testing", "## Branching and Commit Conventions", id="testing"),
+    ],
+)
+def test_biome_command_in_contributor_bash_blocks(
+    heading: str, next_heading: str
+) -> None:
+    section = (
+        _read("CONTRIBUTING.md")
+        .split(f"{heading}\n", 1)[1]
+        .split(f"\n{next_heading}\n", 1)[0]
+    )
+    blocks = re.findall(r"```bash\n(.*?)```", section, re.DOTALL)
+    assert len(blocks) == 1
+    assert "python3 workflows/test/tools/biome_check.py" in blocks[0]

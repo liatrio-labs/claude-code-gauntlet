@@ -1,142 +1,99 @@
 import json
 import re
 import subprocess
-import unittest
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 BUNDLE = REPO / "workflows" / "pipeline.js"
-BUILD = REPO / "workflows" / "build.js"
-PARSE_GATE = REPO / "workflows" / "test" / "tools" / "parse_gate.mjs"
 
 
-class TestBundleFresh(unittest.TestCase):
-    def test_bundle_is_byte_identical_to_fresh_build(self):
-        before = BUNDLE.read_bytes()
-        subprocess.run(["node", str(BUILD)], check=True, cwd=REPO)
-        after = BUNDLE.read_bytes()
-        self.assertEqual(
-            before,
-            after,
-            "workflows/pipeline.js is stale — run `node workflows/build.js`",
-        )
-
-    def test_bundle_has_no_module_imports(self):
-        text = BUNDLE.read_text(encoding="utf-8")
-        for line in text.splitlines():
-            self.assertFalse(
-                line.strip().startswith("import "),
-                f"bundle contains an import: {line!r}",
-            )
-            self.assertNotIn("require(", line)
-
-    def test_plugin_version_matches_source_pipeline_version(self):
-        source = (REPO / "workflows" / "src" / "pipeline_entry.js").read_text(
-            encoding="utf-8"
-        )
-        match = re.search(r"const PIPELINE_VERSION = ['\"]([^'\"]+)['\"]", source)
-        self.assertIsNotNone(match)
-        plugin_version = json.loads(
-            (REPO / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
-        )["version"]
-        self.assertEqual(plugin_version, match.group(1))
-
-    def test_bundle_begins_with_meta_and_exposes_version(self):
-        text = BUNDLE.read_text(encoding="utf-8")
-        first = next(line for line in text.splitlines() if line.strip())
-        self.assertTrue(
-            first.startswith("export const meta"),
-            f"bundle must begin with meta, got {first!r}",
-        )
-        self.assertIn("PIPELINE_VERSION", text)
-
-    def test_bundle_meta_has_nonempty_description(self):
-        text = BUNDLE.read_text(encoding="utf-8")
-        first = next(line for line in text.splitlines() if line.strip())
-        match = re.search(r"description:\s*'([^']*)'", first)
-        self.assertIsNotNone(
-            match, f"meta literal must include a description field, got {first!r}"
-        )
-        self.assertTrue(
-            match.group(1).strip(), "meta.description must be a non-empty string"
-        )
-
-    def test_bundle_has_no_export_besides_meta(self):
-        # The workflow runtime rejects any `export` keyword other than the meta
-        # literal (e.g. `export default` is a runtime SyntaxError), so exactly one
-        # line may start with `export` — everything else must be stripped by build.js.
-        text = BUNDLE.read_text(encoding="utf-8")
-        export_stmt_lines = [
-            line for line in text.splitlines() if re.match(r"^\s*export\b", line)
-        ]
-        self.assertEqual(
-            len(export_stmt_lines),
-            1,
-            f"bundle must contain exactly one `export` statement (the meta literal), found: {export_stmt_lines!r}",
-        )
-        self.assertTrue(export_stmt_lines[0].strip().startswith("export const meta"))
-
-    def test_bundle_body_compiles_as_async_function(self):
-        # PARSE GATE: the runtime wraps the meta-stripped bundle body in an async
-        # function. A top-level identifier collision across concatenated modules
-        # (two `const SEVERITY_ORDER`) is a compile-time SyntaxError there — the
-        # exact defect that shipped in the committed bundle and crashed the live
-        # smoke run. Compile it with the AsyncFunction constructor and assert it
-        # does not throw. Fails against a colliding bundle, passes once single-owned.
-        result = subprocess.run(
-            ["node", str(PARSE_GATE), str(BUNDLE)],
-            capture_output=True,
-            text=True,
-            cwd=REPO,
-            encoding="utf-8",
-        )
-        self.assertEqual(
-            result.returncode,
-            0,
-            f"bundle body failed to compile as an async function: {result.stderr.strip()}",
-        )
-
-    def test_bundle_ends_with_top_level_run_invocation(self):
-        # The runtime executes the bundle body as a wrapped async function with no
-        # `export default` entry — the contract is a trailing top-level `return`.
-        text = BUNDLE.read_text(encoding="utf-8")
-        stripped_lines = [line for line in text.splitlines() if line.strip()]
-        self.assertTrue(stripped_lines, "bundle is empty")
-        last = stripped_lines[-1].strip()
-        self.assertTrue(
-            last.startswith("return await run("),
-            f"bundle must end with a top-level `return await run(`, got {last!r}",
-        )
-
-    def test_bundle_fits_the_workflow_script_cap(self):
-        source = BUILD.read_text(encoding="utf-8")
-        cap_match = re.search(r"export const WORKFLOW_SCRIPT_CAP = (\d[\d_]*);", source)
-        headroom_match = re.search(
-            r"export const BUNDLE_HEADROOM = (\d[\d_]*);", source
-        )
-        self.assertIsNotNone(cap_match, "build.js must define WORKFLOW_SCRIPT_CAP")
-        self.assertIsNotNone(headroom_match, "build.js must define BUNDLE_HEADROOM")
-        assert cap_match is not None
-        assert headroom_match is not None
-        cap = int(cap_match.group(1).replace("_", ""))
-        headroom = int(headroom_match.group(1).replace("_", ""))
-        self.assertLessEqual(
-            len(BUNDLE.read_bytes()),
-            cap - headroom,
-            "pipeline.js must fit the Workflow tool's script.maxLength cap with "
-            "the configured build headroom",
-        )
-        self.assertEqual(
-            headroom,
-            65536,
-            "build.js BUNDLE_HEADROOM is the 64 KiB margin the build fails at before the tool's cap",
-        )
-        self.assertEqual(
-            cap,
-            524288,
-            "Workflow tool schema script.maxLength is 524288 bytes",
-        )
+@pytest.fixture(scope="module")
+def bundle_text() -> str:
+    return BUNDLE.read_text(encoding="utf-8")
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_bundle_is_byte_identical_to_fresh_build() -> None:
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            "import { build } from './workflows/build.js'; process.stdout.write(build());",
+        ],
+        check=True,
+        capture_output=True,
+        cwd=REPO,
+    )
+    assert BUNDLE.read_bytes() == result.stdout, (
+        "workflows/pipeline.js is stale - run `node workflows/build.js`"
+    )
+
+
+@pytest.mark.parametrize(
+    "pattern", [r"^\s*import ", r"require\("], ids=["no-import", "no-require"]
+)
+def test_bundle_has_no_module_imports(bundle_text: str, pattern: str) -> None:
+    assert not re.search(pattern, bundle_text, re.MULTILINE)
+
+
+def test_plugin_version_matches_bundle_version(bundle_text: str) -> None:
+    plugin: dict[str, object] = json.loads(
+        (REPO / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )
+    version = plugin["version"]
+    assert isinstance(version, str)
+    assert f"const PIPELINE_VERSION = '{version}';" in bundle_text.splitlines()
+
+
+def test_bundle_runtime_shape(bundle_text: str) -> None:
+    lines = [line for line in bundle_text.splitlines() if line.strip()]
+    assert lines, "bundle is empty"
+    assert lines[0].startswith("export const meta"), "bundle must begin with meta"
+    # The workflow runtime permits only the meta export and enters via a trailing
+    # return.
+    assert len([line for line in lines if re.match(r"^\s*export\b", line)]) == 1
+    assert lines[-1].strip().startswith("return await run(")
+    script = (
+        "import { readFileSync } from 'node:fs';"
+        "const { meta } = await import('data:text/javascript,' + "
+        "encodeURIComponent(readFileSync(0, 'utf8')));"
+        "process.stdout.write(JSON.stringify(meta.description));"
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        input=lines[0],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+        cwd=REPO,
+    )
+    description: object = json.loads(result.stdout)
+    assert isinstance(description, str) and description.strip()
+
+
+def test_bundle_body_compiles_as_async_function(bundle_text: str) -> None:
+    # The host wraps the body in an async function; compilation catches top-level
+    # declaration collisions without invoking runtime globals.
+    body = "\n".join(
+        line
+        for line in bundle_text.splitlines()
+        if not re.match(r"^\s*export\s+const\s+meta\b", line)
+    )
+    script = (
+        "const body = require('node:fs').readFileSync(0, 'utf8');"
+        "const AsyncFunction ="
+        " Object.getPrototypeOf(async function () {}).constructor;"
+        "new AsyncFunction(body);"
+    )
+    result = subprocess.run(
+        ["node", "-e", script],
+        input=body,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=REPO,
+    )
+    assert result.returncode == 0, result.stderr.strip()

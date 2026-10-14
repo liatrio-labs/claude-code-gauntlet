@@ -9,7 +9,7 @@ import pytest
 from gauntlet.config import matches_rule
 from gauntlet.jsjson import fnv1a32, js_stringify_pretty, normalize_content
 
-from tests.tools.outbound import FOLD_OPERATIONS, fold_vectors
+from tests.support.outbound import FOLD_OPERATIONS, fold_vectors
 
 FIXTURES = Path(__file__).with_name("fixtures") / "cross_runtime"
 Family = Literal["fnv1a32", "json_spelling", "config_rule"]

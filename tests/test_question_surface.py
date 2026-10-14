@@ -1,38 +1,20 @@
-"""Question-surface guard (Issue #35).
-
-The interactive skill asks the user nothing before the review runs and exactly two
-blocking questions after it. That is a property of the shipped prose, and prose
-regrows: every past attempt to hold it with an instruction ("never skip
-AskUserQuestion") produced the opposite — a gate that forced a question to exist.
-
-This test extracts every AskUserQuestion example block from skills/**/*.md and
-asserts the schema each one must satisfy, pins the total number of sites, and
-bans the gate patterns that keyed on prompt history rather than resolved state.
-"""
-
 import re
-import unittest
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 SKILLS = REPO / "skills"
 
-# Every AskUserQuestion example block in the shipped skills, counted per question
-# (a block may hold more than one). Raise or lower this deliberately, in the PR
-# that changes the surface, with the reason in the body.
+# Changing the question surface requires an explicit count change.
 EXPECTED_QUESTION_SITES = 9
-
-PINNED_SITES = {
-    "Task Board": "skills/code-gauntlet/SKILL.md",
-    "Delivery": "skills/code-gauntlet/references/phase8-delivery.md",
-}
 
 MAX_HEADER_CHARS = 12
 MIN_OPTIONS = 2
 MAX_OPTIONS = 4
 
 # Gate patterns that inspect whether a prompt happened instead of what was
-# resolved. Banned repo-wide under skills/ (issue #35).
+# resolved.
 FORBIDDEN_PATTERNS = (
     "was presented",
     "Never skip AskUserQuestion",
@@ -50,14 +32,8 @@ _FENCE = re.compile(r"^(\s*)(`{3,})")
 
 
 def fenced_blocks(text):
-    """Yield the body of every fenced code block, indentation-tolerant.
-
-    Reference docs indent example blocks inside list items, so the opening fence
-    is not always column 0. A block closes on the first line whose stripped form
-    is a backtick run at least as long as the opener's -- the same rule
-    CommonMark uses, which keeps ````markdown blocks (used for REVIEW.md
-    templates) from swallowing the ``` fences nested inside them.
-    """
+    # CommonMark fence lengths prevent an inner ``` in a REVIEW.md template
+    # from closing its outer ```` block; list examples may be indented.
     lines = text.splitlines()
     i = 0
     while i < len(lines):
@@ -83,19 +59,13 @@ def fenced_blocks(text):
 
 
 def question_segments(block):
-    """Split a block into one segment per question, in source order.
-
-    Every template writes the fields in the order question, header, multiSelect,
-    options, so a segment running from one `question:` to the next holds exactly
-    that question's fields. The ordering is part of the contract this test pins.
-    """
+    # Templates put question first, so each segment owns that question's fields.
     starts = [m.start() for m in _QUESTION.finditer(block)]
     bounds = [*starts, len(block)]
     return [block[bounds[i] : bounds[i + 1]] for i in range(len(starts))]
 
 
 def sites():
-    """Every question site: (path, question, header, multiSelect, options)."""
     found = []
     for path in sorted(SKILLS.rglob("*.md")):
         text = path.read_text(encoding="utf-8")
@@ -103,13 +73,12 @@ def sites():
             if "AskUserQuestion" not in block:
                 continue
             for seg in question_segments(block):
-                q = _QUESTION.search(seg)
                 h = _HEADER.search(seg)
                 ms = _MULTISELECT.search(seg)
                 found.append(
                     {
                         "path": path.relative_to(REPO).as_posix(),
-                        "question": q.group(1) if q else None,
+                        "question": _QUESTION.findall(seg)[0],
                         "header": h.group(1) if h else None,
                         "multiSelect": ms.group(1) if ms else None,
                         "options": _OPTION.findall(seg),
@@ -118,167 +87,117 @@ def sites():
     return found
 
 
-class TestQuestionSurface(unittest.TestCase):
-    def test_extractor_finds_a_known_shape(self):
-        # Fixture test: the live assertions below only exercise today's blocks.
-        # A broken fence walker or field regex must fail here even when the real
-        # files happen to still parse.
-        fixture = "\n".join(
-            [
-                "prose before",
-                "  ```",
-                "  AskUserQuestion(",
-                "    questions: [{",
-                '      question: "Q one?",',
-                '      header: "Head",',
-                "      multiSelect: false,",
-                "      options: [",
-                '        { label: "A", description: "first" },',
-                '        { label: "B", description: "second" }',
-                "      ]",
-                "    }]",
-                "  )",
-                "  ```",
-                "````markdown",
-                "```yaml",
-                "# not a question block",
-                "```",
-                "````",
-            ]
-        )
-        blocks = [b for b in fenced_blocks(fixture) if "AskUserQuestion" in b]
-        self.assertEqual(len(blocks), 1)
-        segs = question_segments(blocks[0])
-        self.assertEqual(len(segs), 1)
-        header_match = _HEADER.search(segs[0])
-        self.assertIsNotNone(header_match)
-        assert header_match is not None  # narrows for static analysis (pyright)
-        self.assertEqual(header_match.group(1), "Head")
-        self.assertEqual(_OPTION.findall(segs[0]), [("A", "first"), ("B", "second")])
-
-    def test_site_count_is_pinned(self):
-        found = sites()
-        self.assertEqual(
-            len(found),
-            EXPECTED_QUESTION_SITES,
-            "question surface changed: "
-            + ", ".join(f"{s['path']}:{s['header']}" for s in found),
-        )
-
-    def test_phase8_sites_live_where_pinned(self):
-        found = sites()
-        for header, expected_path in PINNED_SITES.items():
-            matches = [site for site in found if site["header"] == header]
-            with self.subTest(header=header):
-                self.assertEqual(len(matches), 1, f"expected one {header} site")
-                self.assertEqual(matches[0]["path"], expected_path)
-
-    def test_task_board_site_is_pinned_verbatim(self):
-        expected = {
-            "path": "skills/code-gauntlet/SKILL.md",
-            "question": "Create fix tasks on the task board from these findings?",
-            "header": "Task Board",
-            "multiSelect": "false",
-            "options": [
-                (
-                    "Yes — create tasks",
-                    "One FIX task per delivered finding via TaskCreate (FIX-bug-1, FIX-conv-2, ...)",
-                ),
-                ("No — done", "Finish the review without creating tasks"),
-            ],
-        }
-        task_board = next(site for site in sites() if site["header"] == "Task Board")
-        self.assertEqual(task_board, expected)
-
-    def test_task_board_gate_states_the_action_boundary(self):
-        # The gate paragraph is what the orchestrator reads when it asks; the
-        # boundary it states (TaskCreate only, never an outward-facing artifact)
-        # is the mechanism issue #207 pins, so a rewrite that drops it goes red.
-        skill = (SKILLS / "code-gauntlet" / "SKILL.md").read_text(encoding="utf-8")
-        gate = next(
-            line
-            for line in skill.splitlines()
-            if "MANDATORY GATE" in line and "task-board question" in line
-        )
-        self.assertIn("the only creation call is TaskCreate", gate)
-        self.assertIn("never creates issues, pull requests, or branches", gate)
-
-    def test_task_board_block_sits_at_its_gate(self):
-        # Point of use: the verbatim block follows its gate and precedes the next
-        # section, so the model meets the question where the gate fires.
-        skill = (SKILLS / "code-gauntlet" / "SKILL.md").read_text(encoding="utf-8")
-        gate = skill.index("task-board question below")
-        block = skill.index(
-            'question: "Create fix tasks on the task board from these findings?"'
-        )
-        next_section = skill.index("### Print methodology")
-        self.assertLess(gate, block)
-        self.assertLess(block, next_section)
-
-    def test_partial_artifacts_exception_is_between_gate_and_question(self):
-        skill = (SKILLS / "code-gauntlet" / "SKILL.md").read_text(encoding="utf-8")
-        gate = skill.index("task-board question below")
-        paragraph_end = skill.index("\n", gate)
-        exception = skill.index(
-            "> Partial-artifacts exception: when `artifactPaths.postReview` is null, "
-            "do not present the offer; say that no delivery set was persisted, so no "
-            "tasks can be created."
-        )
-        block = skill.index(
-            'question: "Create fix tasks on the task board from these findings?"'
-        )
-        self.assertGreater(exception, paragraph_end)
-        self.assertLess(exception, block)
-
-    def test_every_site_conforms_to_the_schema(self):
-        offenders = {}
-        for s in sites():
-            key = f"{s['path']}:{s['header']}"
-            msgs = offenders.setdefault(key, [])
-            if not s["question"]:
-                msgs.append("no question string")
-            if not s["header"]:
-                msgs.append("no header")
-            elif len(s["header"]) > MAX_HEADER_CHARS:
-                msgs.append(f"header {len(s['header'])} chars > {MAX_HEADER_CHARS}")
-            if s["multiSelect"] is None:
-                msgs.append("multiSelect not stated explicitly")
-            n = len(s["options"])
-            if not MIN_OPTIONS <= n <= MAX_OPTIONS:
-                msgs.append(f"{n} options")
-            for label, description in s["options"]:
-                if not label.strip() or not description.strip():
-                    msgs.append("empty label or description")
-            if not msgs:
-                del offenders[key]
-        self.assertEqual(offenders, {}, f"schema failures: {offenders}")
-
-    def test_no_two_sites_share_a_question_string(self):
-        seen = {}
-        dupes = {}
-        for s in sites():
-            q = s["question"]
-            if q in seen:
-                dupes[q] = [seen[q], s["path"]]
-            seen[q] = s["path"]
-        self.assertEqual(
-            dupes, {}, f"duplicated question text (single-source it): {dupes}"
-        )
-
-    def test_prompt_history_gates_are_absent(self):
-        offenders = []
-        for path in sorted(SKILLS.rglob("*.md")):
-            text = path.read_text(encoding="utf-8")
-            for pattern in FORBIDDEN_PATTERNS:
-                if pattern in text:
-                    offenders.append(f"{path.relative_to(REPO)}: {pattern!r}")
-        self.assertEqual(
-            offenders,
-            [],
-            "gates must inspect resolved configuration state, never whether a "
-            f"prompt occurred (issue #35): {offenders}",
-        )
+@pytest.fixture(scope="module")
+def question_sites():
+    return sites()
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_extractor_finds_a_known_shape():
+    fixture = "\n".join(
+        [
+            "prose before",
+            "  ```",
+            "  AskUserQuestion(",
+            "    questions: [{",
+            '      question: "Q one?",',
+            '      header: "Head",',
+            "      multiSelect: false,",
+            "      options: [",
+            '        { label: "A", description: "first" },',
+            '        { label: "B", description: "second" }',
+            "      ]",
+            "    }]",
+            "  )",
+            "  ```",
+            "````markdown",
+            "```yaml",
+            "# not a question block",
+            "```",
+            "````",
+        ]
+    )
+    blocks = [b for b in fenced_blocks(fixture) if "AskUserQuestion" in b]
+    assert len(blocks) == 1
+    segs = question_segments(blocks[0])
+    assert len(segs) == 1
+    header_match = _HEADER.search(segs[0])
+    assert header_match is not None
+    assert header_match.group(1) == "Head"
+    assert _OPTION.findall(segs[0]) == [("A", "first"), ("B", "second")]
+
+
+def test_task_board_site_is_pinned_verbatim(question_sites):
+    expected = {
+        "path": "skills/code-gauntlet/SKILL.md",
+        "question": "Create fix tasks on the task board from these findings?",
+        "header": "Task Board",
+        "multiSelect": "false",
+        "options": [
+            (
+                "Yes — create tasks",
+                "One FIX task per delivered finding via TaskCreate (FIX-bug-1, FIX-conv-2, ...)",
+            ),
+            ("No — done", "Finish the review without creating tasks"),
+        ],
+    }
+    matches = [site for site in question_sites if site["header"] == "Task Board"]
+    assert len(matches) == 1, "expected one Task Board site"
+    assert matches[0] == expected
+
+
+def test_task_board_gate_states_the_action_boundary():
+    skill = (SKILLS / "code-gauntlet" / "SKILL.md").read_text(encoding="utf-8")
+    gate_line = next(
+        line
+        for line in skill.splitlines()
+        if "MANDATORY GATE" in line and "task-board question" in line
+    )
+    assert "the only creation call is TaskCreate" in gate_line
+    assert "never creates issues, pull requests, or branches" in gate_line
+    gate = skill.index("task-board question below")
+    paragraph_end = skill.index("\n", gate)
+    exception = skill.index(
+        "> Partial-artifacts exception: when `artifactPaths.postReview` is null, "
+        "do not present the offer; say that no delivery set was persisted, so no "
+        "tasks can be created."
+    )
+    block = skill.index(
+        'question: "Create fix tasks on the task board from these findings?"'
+    )
+    next_section = skill.index("### Print methodology")
+    assert gate < block, "offer must follow its gate"
+    assert block < next_section, "offer must precede Print methodology"
+    assert paragraph_end < exception, "exception must follow the gate paragraph"
+    assert exception < block, "exception must precede the offer"
+
+
+def test_every_site_conforms_to_the_schema(question_sites):
+    assert len(question_sites) == EXPECTED_QUESTION_SITES, "question surface changed"
+    questions = [site["question"] for site in question_sites]
+    assert len(set(questions)) == len(questions), "duplicated question text"
+    delivery_sites = [site for site in question_sites if site["header"] == "Delivery"]
+    assert len(delivery_sites) == 1, "expected one Delivery site"
+    assert (
+        delivery_sites[0]["path"]
+        == "skills/code-gauntlet/references/phase8-delivery.md"
+    )
+    for site in question_sites:
+        assert site["question"], site
+        assert site["header"] and len(site["header"]) <= MAX_HEADER_CHARS, site
+        assert site["multiSelect"] is not None, site
+        assert MIN_OPTIONS <= len(site["options"]) <= MAX_OPTIONS, site
+        for label, description in site["options"]:
+            assert label.strip() and description.strip(), site
+
+
+def test_prompt_history_gates_are_absent():
+    offenders = []
+    for path in sorted(SKILLS.rglob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        for pattern in FORBIDDEN_PATTERNS:
+            if pattern in text:
+                offenders.append(f"{path.relative_to(REPO)}: {pattern!r}")
+    assert not offenders, (
+        "gates must inspect resolved configuration state, never whether a "
+        f"prompt occurred: {offenders}"
+    )

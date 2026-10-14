@@ -1,16 +1,3 @@
-"""
-Tests for the REVIEW.md defaults contract.
-
-references/review-md-spec.md carries one canonical, machine-anchored statement of
-the built-in confidence/severity defaults, inside an HTML marker comment pair
-(`<!-- code-gauntlet-defaults -->` ... `<!-- /code-gauntlet-defaults -->`). This
-test extracts the three numbers from that marker and asserts they match the
-actual constants in workflows/src/filterFindings.js. A skew turns
-this suite red; it is not prose-matching (the marker is a fixed anchor, not a
-sentence the test re-parses), so rewording the surrounding paragraph does not
-break it.
-"""
-
 import re
 from pathlib import Path
 
@@ -20,7 +7,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SPEC_PATH = REPO_ROOT / "skills" / "code-gauntlet" / "references" / "review-md-spec.md"
 
 
-def _extract_doc_defaults(text):
+# Fixed markers let surrounding prose change without weakening the defaults contract.
+def _extract_doc_defaults(text: str) -> dict[str, int | str]:
     m = re.search(
         r"<!--\s*code-gauntlet-defaults\s*-->(.*?)<!--\s*/code-gauntlet-defaults\s*-->",
         text,
@@ -29,11 +17,11 @@ def _extract_doc_defaults(text):
     if not m:
         raise AssertionError(
             "review-md-spec.md is missing the <!-- code-gauntlet-defaults --> "
-            "marker block that this test anchors on."
+            "marker block."
         )
     block = m.group(1)
 
-    def _num(label):
+    def _num(label: str) -> int:
         pattern = r"`" + re.escape(label) + r"`\D*?\*\*(\d+)\*\*"
         found = re.search(pattern, block)
         if not found:
@@ -57,6 +45,6 @@ def _extract_doc_defaults(text):
     }
 
 
-def test_doc_numbers_match_js_constants():
+def test_doc_numbers_match_js_constants() -> None:
     doc = _extract_doc_defaults(SPEC_PATH.read_text(encoding="utf-8"))
     assert doc == js_values()["REVIEW_DEFAULTS"]

@@ -1,16 +1,8 @@
-"""Structural guard for the repository tooling boundary (#176).
-
-The tooling boundary in AGENTS.md was convention-only before this test. The
-vendored scorer's own ``bench/vendor/code-review-benchmark/uv.lock`` is the one
-exact exemption, documented at bench/vendor/VENDORED.md:85-87; that vendored
-third-party tree is exempt from the stdlib rule and runs under uv against its
-own lockfile.
-"""
-
 import subprocess
-import unittest
 from collections.abc import Iterable
 from pathlib import Path
+
+from tests.support.repository import tracked_paths
 
 REPO = Path(__file__).resolve().parents[1]
 FORBIDDEN_BASENAMES = (
@@ -26,11 +18,11 @@ FORBIDDEN_BASENAMES = (
     "Pipfile",
     "Pipfile.lock",
 )
+# Only the vendored scorer's own lock belongs to its independent dependency tree.
 EXEMPT_PATH = "bench/vendor/code-review-benchmark/uv.lock"
 
 
 def violations(paths: Iterable[str]) -> list[str]:
-    """Return tracked paths that cross the local tooling boundary."""
     offenders = []
     for path in paths:
         if path == EXEMPT_PATH:
@@ -41,72 +33,48 @@ def violations(paths: Iterable[str]) -> list[str]:
     return offenders
 
 
-class TestToolingBoundary(unittest.TestCase):
-    def test_tracked_tooling_files_stay_outside_the_vendored_scorer(self) -> None:
-        result = subprocess.run(
-            ["git", "ls-files", "-z"],
-            cwd=REPO,
-            check=True,
-            capture_output=True,
-        )
-        paths = [path for path in result.stdout.decode().split("\0") if path]
-        self.assertEqual(violations(paths), [])
-        self.assertEqual(paths.count(EXEMPT_PATH), 1)
-
-    def test_violations_identifies_forbidden_synthetic_paths(self) -> None:
-        paths = [
-            "a/package.json",
-            "x/y/node_modules/z.js",
-            "bun.lockb",
-            EXEMPT_PATH,
-            "bench/vendor/other/package.json",
-            "bench/vendor/code-review-benchmark/package-lock.json",
-            "docs/Pipfile.lock",
-            "docs/uv.lock",
-        ]
-        self.assertEqual(
-            violations(paths),
-            [
-                "a/package.json",
-                "x/y/node_modules/z.js",
-                "bun.lockb",
-                "bench/vendor/other/package.json",
-                "bench/vendor/code-review-benchmark/package-lock.json",
-                "docs/Pipfile.lock",
-                "docs/uv.lock",
-            ],
-        )
-
-    def test_every_forbidden_basename_is_detected(self) -> None:
-        # Hand-typed pin: a fixture derived from the tuple under test would stay green
-        # if the tuple lost an entry, so the tuple is first checked against this literal.
-        self.assertEqual(
-            set(FORBIDDEN_BASENAMES),
-            {
-                "package.json",
-                "package-lock.json",
-                "npm-shrinkwrap.json",
-                "yarn.lock",
-                "pnpm-lock.yaml",
-                "bun.lock",
-                "bun.lockb",
-                "uv.lock",
-                "poetry.lock",
-                "Pipfile",
-                "Pipfile.lock",
-            },
-        )
-        forbidden_paths = [f"dir/{name}" for name in FORBIDDEN_BASENAMES]
-        paths = [*forbidden_paths, "nested/node_modules/package.json"]
-        self.assertEqual(violations(paths), paths)
-
-    def test_uv_lock_is_ignored_for_local_ci_tooling(self) -> None:
-        result = subprocess.run(
-            ["git", "check-ignore", "-q", "--", "uv.lock"],
-            cwd=REPO,
-        )
-        self.assertEqual(result.returncode, 0)
+def test_tracked_tooling_files_stay_outside_the_vendored_scorer():
+    paths = tracked_paths(REPO)
+    assert violations(paths) == []
+    assert paths.count(EXEMPT_PATH) == 1
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_every_forbidden_basename_is_detected():
+    rejected = [
+        "package.json",
+        "dir/package.json",
+        "dir/package-lock.json",
+        "dir/npm-shrinkwrap.json",
+        "dir/yarn.lock",
+        "dir/pnpm-lock.yaml",
+        "dir/bun.lock",
+        "dir/bun.lockb",
+        "dir/uv.lock",
+        "dir/poetry.lock",
+        "dir/Pipfile",
+        "dir/Pipfile.lock",
+        "nested/node_modules/package.json",
+        "x/y/node_modules/z.js",
+        "bench/vendor/other/package.json",
+        "bench/vendor/code-review-benchmark/package-lock.json",
+    ]
+    # A table derived from the policy would hide a deleted policy arm.
+    assert set(FORBIDDEN_BASENAMES) == {
+        "package.json",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "bun.lock",
+        "bun.lockb",
+        "uv.lock",
+        "poetry.lock",
+        "Pipfile",
+        "Pipfile.lock",
+    }
+    assert violations([*rejected, EXEMPT_PATH]) == rejected
+
+
+def test_uv_lock_is_ignored_for_local_ci_tooling():
+    result = subprocess.run(["git", "check-ignore", "-q", "--", "uv.lock"], cwd=REPO)
+    assert result.returncode == 0

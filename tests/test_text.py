@@ -11,11 +11,7 @@ import gauntlet.text as text
 import pytest
 from gauntlet.markdown import open_fence
 
-from tests.test_outbound_contract import (
-    _render_summary_bodies,
-    assert_outbound_string_invariant,
-)
-from tests.tools.outbound import (
+from tests.support.outbound import (
     TextOperation,
     TextVector,
     attack_corpus,
@@ -23,6 +19,10 @@ from tests.tools.outbound import (
     line_vectors,
     markup_corpus,
     text_vectors,
+)
+from tests.support.outbound_assertions import (
+    _render_summary_bodies,
+    assert_outbound_string_invariant,
 )
 
 

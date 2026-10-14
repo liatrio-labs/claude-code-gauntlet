@@ -1,22 +1,11 @@
-"""Guards for the agent-instruction files.
-
-`AGENTS.md` is the only instruction file, at the root and in the directories that need one.
-Codex and Cursor read it natively. Claude Code reads it too, at launch for the root file and
-on a Read for a nested one, but only where no `CLAUDE.md` or `CLAUDE.local.md` sits in that
-directory or above it. Measured on Claude Code 2.1.292 with one scratch repository per layout,
-each file carrying its own codeword: with no `CLAUDE.md` both the root and the nested
-`AGENTS.md` loaded, and a `CLAUDE.md` beside an `AGENTS.md` loaded in its place.
-
-The failures guarded here are silent: a shadowing file hides every rule from one tool, a rule
-names code that no longer exists, and the files grow one reasonable line at a time.
-"""
-
 import re
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+
+from tests.support.repository import tracked_paths
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -29,26 +18,12 @@ AGENTS_SET_BUDGET_BYTES = 4_131
 SHADOWING_NAMES = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md")
 
 
-def tracked(root: Path) -> list[str]:
-    out = subprocess.run(
-        ["git", "ls-files", "-z"],
-        cwd=root,
-        capture_output=True,
-        check=True,
-    ).stdout.decode()
-    return [path for path in out.split("\0") if path]
-
-
 def instruction_files(tracked_files: Sequence[str]) -> list[str]:
     return [path for path in tracked_files if Path(path).name == "AGENTS.md"]
 
 
 def check_instruction_shadows(root: Path, tracked_files: Sequence[str]) -> None:
-    """Tracked anywhere, or on disk beside or above an `AGENTS.md`.
-
-    The on-disk half matters because `CLAUDE.local.md` is normally personal and
-    untracked, and a session started in any subdirectory counts files above it.
-    """
+    # Personal untracked files above an instruction file also hide its rules.
     names = {Path(name).name for name in SHADOWING_NAMES}
     shadows = {path for path in tracked_files if Path(path).name in names}
     for path in instruction_files(tracked_files):
@@ -107,7 +82,7 @@ NOT_SYMBOLS = {
 
 @pytest.fixture(scope="module")
 def tracked_files() -> list[str]:
-    return tracked(REPO)
+    return tracked_paths(REPO)
 
 
 def test_no_claude_md_exists(tracked_files: list[str]) -> None:
@@ -164,7 +139,7 @@ def test_referenced_paths_exist(tracked_files: list[str]) -> None:
 
 
 def test_referenced_symbols_exist(tracked_files: list[str]) -> None:
-    """A grep, deliberately - the claim is only that the name occurs in the code."""
+    # Only a name occurrence in code is promised, not symbol resolution.
     pattern = re.compile(r"`([a-z][a-zA-Z0-9_]{4,}|[A-Z][A-Z0-9_]{4,})`")
     docs = [*instruction_files(tracked_files), "REVIEW.md"]
     missing = []
@@ -190,35 +165,55 @@ def test_referenced_symbols_exist(tracked_files: list[str]) -> None:
 
 
 @pytest.fixture
-def instruction_repo(tmp_path: Path) -> Path:
-    (tmp_path / "AGENTS.md").write_text("rules\n", encoding="utf-8")
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "add", "--", "AGENTS.md"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-    )
-    return tmp_path
+def instruction_repo(tmp_path: Path) -> tuple[Path, list[str]]:
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested/AGENTS.md").write_text("rules\n", encoding="utf-8")
+    return tmp_path, ["nested/AGENTS.md"]
 
 
-def test_grown_instruction_file_fails_size_check(instruction_repo: Path) -> None:
-    files = tracked(instruction_repo)
-    instructions = instruction_repo / "AGENTS.md"
+def test_grown_instruction_file_fails_size_check(instruction_repo) -> None:
+    root, files = instruction_repo
+    instructions = root / files[0]
     instructions.write_bytes(b"x" * AGENTS_SET_BUDGET_BYTES)
-    check_instruction_size(instruction_repo, files)
+    check_instruction_size(root, files)
     instructions.write_bytes(b"x" * (AGENTS_SET_BUDGET_BYTES + 1))
     with pytest.raises(
         AssertionError,
         match=r"AGENTS\.md files grew to \d+ bytes against a ratchet pinned at \d+",
     ):
-        check_instruction_size(instruction_repo, files)
+        check_instruction_size(root, files)
 
 
-def test_added_claude_md_fails_shadow_check(instruction_repo: Path) -> None:
-    files = tracked(instruction_repo)
-    check_instruction_shadows(instruction_repo, files)
-    # Personal instruction files can shadow rules without ever entering the git index.
-    (instruction_repo / "CLAUDE.md").write_text("shadow\n", encoding="utf-8")
-    with pytest.raises(AssertionError, match=r"CLAUDE\.md"):
-        check_instruction_shadows(instruction_repo, files)
+@pytest.mark.parametrize(
+    "shadow_path",
+    [
+        pytest.param("nested/CLAUDE.md", id="same-directory-untracked"),
+        pytest.param("CLAUDE.local.md", id="personal-untracked-ancestor"),
+    ],
+)
+def test_added_claude_md_fails_shadow_check(instruction_repo, shadow_path: str) -> None:
+    root, files = instruction_repo
+    check_instruction_shadows(root, files)
+    (root / shadow_path).write_text("shadow\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match=re.escape(shadow_path)):
+        check_instruction_shadows(root, files)
+
+
+def test_tracked_paths_preserve_selected_inputs(monkeypatch, tmp_path) -> None:
+    pathspecs = ("skills", "agents")
+    output = (
+        b"skills/doc with spaces.md\0skills/doc\nwith newline.md\0agents/AGENTS.md\0"
+    )
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        assert args == ["git", "ls-files", "-z", "--", *pathspecs]
+        assert kwargs["cwd"] == tmp_path
+        assert kwargs["check"] is True
+        return subprocess.CompletedProcess(args, 0, stdout=output)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert tracked_paths(tmp_path, pathspecs) == [
+        "skills/doc with spaces.md",
+        "skills/doc\nwith newline.md",
+        "agents/AGENTS.md",
+    ]
