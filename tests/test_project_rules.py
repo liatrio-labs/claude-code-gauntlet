@@ -365,22 +365,27 @@ def test_review_receipt_directories_pin_walk_order_and_root(collect_rules, write
     ]
 
 
+# A contributor's PR can plant either link; both collectors must refuse it.
+@pytest.mark.parametrize(
+    ("relative", "shown"),
+    [("api/REVIEW.md", "api/REVIEW.md"), ("api/CLAUDE.md", "CLAUDE.md")],
+)
 @pytest.mark.usefixtures("symlink_or_skip")
-def test_review_security_refusals_never_become_read_targets(
-    collect_rules, tmp_path, rule_root, write_rule, opened_paths
+def test_symlinks_out_of_the_repo_never_become_read_targets(
+    relative, shown, collect_rules, tmp_path, rule_root, write_rule, opened_paths
 ):
     outside = tmp_path / "outside-security.md"
     outside.write_text("OUTSIDE-CANARY\n", encoding="utf-8")
-    candidate = Path(rule_root) / "api/REVIEW.md"
+    candidate = Path(rule_root) / relative
     candidate.parent.mkdir()
     candidate.symlink_to(outside)
     changed = write_rule("../changed.json", '["api/x.py"]')
     code, receipt, body = collect_rules("--changed-files", changed)
     assert code == 0
     assert receipt["review_md"] == []
-    assert receipt["skipped"] == [{"path": "api/REVIEW.md", "reason": "outside_repo"}]
+    assert receipt["skipped"] == [{"path": shown, "reason": "outside_repo"}]
     assert (
-        "project_rules_refused: api/REVIEW.md (outside_repo) \u2014 "
+        f"project_rules_refused: {shown} (outside_repo) \u2014 "
         "pointer refused; it is not a markdown file inside the repository"
     ) in receipt["gaps"]
     assert "CANARY" not in body
