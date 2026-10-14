@@ -157,7 +157,6 @@ def render_finding_sections(
     fence_offsets: FenceOffsets | None = None,
     style: CommentStyle | None = None,
 ) -> str:
-    # The same style map defines both the labels and their displayed emoji.
     style = style if style is not None else _default_style()
     severity = normalize_report_severity(finding.get("severity"), style.severity_emoji)
     emoji = style.severity_emoji.get(severity, style.severity_emoji_fallback)
@@ -186,9 +185,6 @@ def render_finding_sections(
     if rule_text:
         parts += ["", f"**{rule_label}:**", _blockquote(rule_text)]
 
-    # criticality, failure_scenario, evidence, confidence and dimension belong to
-    # artifacts/reports; posted comments exclude them.
-    #
     # The gate removes ineligible patches at each render site so inline and degraded
     # bodies can differ. Patch content stays exact except for credential redaction.
     # Normalize once: a second pass removes another LF and changes the approved patch.
@@ -200,7 +196,7 @@ def render_finding_sections(
     return "\n".join(parts)
 
 
-# These unfolded, marker-free bodies equal posted bytes only without folds or live markers.
+# Folds and live markers change these unfolded bodies before posting.
 def render_comment_body(
     finding: Mapping[str, object],
     *,
@@ -290,7 +286,8 @@ def _skipped_frame(n: int, shown: int, inline_count: int | None) -> str:
         intro = (
             f"The following {shown} {_plural(shown, 'finding')} "
             f"{_plural(shown, 'references', 'reference')} lines outside this diff and "
-            f"{_plural(shown, 'is', 'are')} included here instead of as inline comments:{group_note}"
+            f"{_plural(shown, 'is', 'are')} included here instead of as inline "
+            f"comments:{group_note}"
         )
     else:
         intro = (
@@ -325,7 +322,8 @@ def _skipped_piece(
 def _closing_line(m: int, n: int, platform: Platform) -> str:
     limits = body_limit(platform)
     return (
-        f"_{m} of these {n} {_plural(n, 'finding')} {_plural(m, 'is', 'are')} not shown: this {limits.surface} "
+        f"_{m} of these {n} {_plural(n, 'finding')} {_plural(m, 'is', 'are')} "
+        f"not shown: this {limits.surface} "
         f"reached the {limits.bytes}-byte {limits.label} body limit._"
     )
 
@@ -496,7 +494,7 @@ def summary_body_from_report(report: str) -> str:
 
 
 def finding_key(filepath: object, line: object, title: object, body: str) -> str:
-    # Visible content, rather than optional upstream ids, makes edited findings distinct.
+    # Visible content makes edited findings distinct even without upstream ids.
     material = "\x00".join((str(filepath), str(line), str(title), body))
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 

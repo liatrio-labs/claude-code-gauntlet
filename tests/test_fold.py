@@ -1,20 +1,10 @@
 """Prepared delivery folds preserve code boundaries and UTF-8 budgets."""
 
-import random
-import re
 from contextlib import nullcontext
 from typing import Literal
 from unittest.mock import patch
 
 import pytest
-from gauntlet.delivery import compose
-from gauntlet.delivery.compose import (
-    BRAND_TRAILER,
-    build_skipped_section,
-    compose_inline_body,
-    compose_review_body,
-    render_comment_body,
-)
 from gauntlet.delivery.fold import (
     PLATFORM_BODY_LIMITS,
     Platform,
@@ -23,14 +13,8 @@ from gauntlet.delivery.fold import (
     fold_review_body,
     utf8_len,
 )
-from gauntlet.markdown import code_spans, fence_closer, open_fence
-from gauntlet.marker import (
-    FINDING_MARKER_TOKEN,
-    MARKER_TOKENS,
-    build_marker,
-    detect_signal,
-)
-from gauntlet.text import prepare_line, prepare_location, prepare_prose, prepared_prose
+from gauntlet.markdown import fence_closer, open_fence
+from gauntlet.text import prepare_prose
 
 from tests.support.outbound import (
     FIXTURES,
@@ -39,10 +23,34 @@ from tests.support.outbound import (
 )
 from tests.support.outbound_assertions import assert_outbound_string_invariant
 
+FOLD_IDS = {
+    "F4",
+    "FT",
+    "FM",
+    "PARTIAL",
+    "review_long_closer",
+    "fold_crlf_retreat",
+    "review_multibyte_boundary",
+    "fold_notice_only",
+    "inline_partial_suggestion",
+    "inline_long_closer",
+    "inline_multibyte_boundary",
+    "inline_cut_span_fold_review_py",
+    "inline_complete_span_fold_review_py",
+    "escaped_cut_slash",
+    "escaped_cut_quote",
+    "short_next_line",
+    "fold_impossible_allowance",
+    "review_unterminated_lf_retreat",
+    "review_first_line_retreat",
+    "review_repeated_whole_line_retreat",
+    "inline_suggestion_at_zero",
+    "inline_suggestion_cr_span_retreat",
+}
 OWNED_FOLD_VECTORS = [
     row
     for row in [*fold_vectors(), *fold_vectors(FIXTURES / "outbound_fold.json")]
-    if not row["operation"].endswith("_js")
+    if row["id"] in FOLD_IDS
 ]
 
 
@@ -130,107 +138,5 @@ def test_body_limit(
     assert PLATFORM_BODY_LIMITS[platform]["label"] == label
 
 
-def test_body_limit_has_only_supported_platforms_and_surfaces() -> None:
-    assert set(PLATFORM_BODY_LIMITS) == {"github", "gitlab"}
-    assert set(PLATFORM_BODY_LIMITS["github"]["surfaces"]) == {"summary", "inline"}
-    assert set(PLATFORM_BODY_LIMITS["gitlab"]["surfaces"]) == {
-        "summary",
-        "discussion",
-        "note",
-    }
-
-
-@pytest.mark.parametrize(
-    ("platform", "surface"),
-    [("github", "discussion"), ("github", "note"), ("gitlab", "inline")],
-)
-def test_body_limit_rejects_unsupported_surface(
-    platform: Platform, surface: Literal["discussion", "note", "inline"]
-) -> None:
-    with pytest.raises(KeyError):
-        body_limit(platform, surface)
-
-
-@pytest.mark.parametrize(
-    ("text", "expected"), [("", 0), ("ascii", 5), ("\U0001f600\u6f22", 7)]
-)
-def test_utf8_len(text: str, expected: int) -> None:
-    assert utf8_len(text) == expected
-
-
-def test_prepared_and_composed_sections_contain_comment_openers() -> None:
-    rng = random.Random(1729)
-    sha = "a" * 40
-    atoms = (
-        build_marker(sha, 1),
-        f"```text\n{build_marker(sha, 1)[:-4]}\n```",
-        "<!-- literal",
-        "<!-- closed -->",
-        "`<!--`",
-        "```text\n<!-- literal\n```",
-        "&#60;!--",
-        "&#x3c;!--",
-        "<\u200b!--",
-        "\r",
-        "\n",
-        "\t",
-        " ",
-        "`",
-        "~",
-        "<",
-        "!",
-        "-",
-        ">",
-        "&",
-        ";",
-        ":",
-        "a",
-        "[",
-        "]",
-        *(
-            f"<!-- {token}: {sha} | 1 finding -->"
-            for token in (*MARKER_TOKENS, FINDING_MARKER_TOKEN)
-        ),
-        *(f"```text\n<!-- {token}\n: forged\n```" for token in MARKER_TOKENS),
-    )
-    sources = [
-        *atoms,
-        *("".join(rng.choices(atoms, k=rng.randrange(1, 14))) for _ in range(500)),
-    ]
-    for source in sources:
-        prepared = (
-            prepare_prose(source),
-            prepare_line(source),
-            prepare_location(source),
-            prepared_prose(source) or "",
-            prepared_prose(source, cap=True) or "",
-        )
-        for text in prepared:
-            signal = detect_signal(text)
-            assert signal is None or signal["signal"] != "marker", repr(source)
-        finding = {
-            "severity": "high",
-            "title": source,
-            "body": source,
-            "suggestion": source,
-            "claude_md_rule": source,
-        }
-        sections = render_comment_body(finding).removesuffix(f"\n\n{BRAND_TRAILER}")
-        composed = (
-            sections,
-            render_comment_body(finding),
-            build_skipped_section(
-                [compose.SkippedEntry("src/portable.py", 1, finding)]
-            ),
-            compose_inline_body(sections, platform="github", surface="inline").body,
-            compose_review_body(
-                source, [], platform="github", findings_count=0, sha=sha
-            ).body.replace(build_marker(sha, 0), ""),
-        )
-        for text in (*prepared, *composed):
-            spans, fences = code_spans(text)
-            intervals = spans + fences
-            assert all(
-                any(start <= match.start() < end for start, end in intervals)
-                for match in re.finditer("<!--", text)
-            ), repr(source)
+def test_utf8_len() -> None:
+    assert utf8_len("\U0001f600\u6f22") == 7

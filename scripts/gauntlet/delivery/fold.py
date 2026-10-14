@@ -199,8 +199,7 @@ def _fold(
         if utf8_len(folded) <= allowance or not prefix:
             return folded, dropped_bytes
         # After an overlong-line cut the prefix ends mid-line, so retreat one code
-        # point at a time: dropping the line discards the partial opener run
-        # pinned by the PARTIAL fixture row.
+        # point at a time so a partial opener run survives the retreat.
         prefix, cut_inside_line = _retreat_fold_prefix(
             prefix,
             cut_inside_line=cut_inside_line,

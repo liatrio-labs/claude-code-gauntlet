@@ -185,7 +185,6 @@ class DeliverySession:
         reason = verdict.downgrade_reason
         self.downgraded_fixes += 1
         self.warn_skip(gate.format_fix_warning(finding, reason, label="suggested-fix"))
-        # Preserve unknown caller fields without mutating the original finding.
         stripped = finding.copy()
         del stripped["suggested_fix_code"]
         return stripped
@@ -352,7 +351,7 @@ def plan_delivery(
         line = primary.get("line")
         path = primary.get("file", "?")
         if line is not None:
-            # Ship the diff's spelling before validation or GitHub rejects the whole review.
+            # GitHub rejects the whole review if paths use the wrong spelling.
             path = diff.diff_path_spelling(facts, path, line)
         anchor = _anchor(primary, path, facts, platform)
         if anchor is None:
@@ -591,7 +590,7 @@ def resolve_marker_sha(data: ReviewInput) -> str:
         return sha.strip()
     head = get_head_sha()
     if not SHA_RE.fullmatch(head):
-        # An unreadable marker prevents prior-review detection, so warn without refusing delivery.
+        # An unreadable marker prevents prior-review detection.
         warn(
             f"could not resolve a commit SHA for the review marker (git returned "
             f"{head!r}); the posted review will not be detectable as a prior review. "
@@ -640,7 +639,6 @@ def post_github(
             comment["line"] = anchor.site.apply_range[1]
         comments.append(comment)
 
-    # Inline warnings, envelope checks and fold notices precede marker SHA resolution.
     finalized = plan_summary(
         data, skipped_groups, platform="github", inline_count=len(comments)
     )
@@ -729,7 +727,6 @@ def post_gitlab(
 
     base_sha, head_sha, start_sha = fetch_gitlab_shas(target, forge=forge)
 
-    # Refuse unusable SHAs once, before planning diagnostics or the summary request.
     validated_shas: list[str] = []
     for name, value in (
         ("base_sha", base_sha),
@@ -785,20 +782,49 @@ def post_gitlab(
             compose.key_material_body(finding),
         )
 
+    def submit_inline(
+        member: FindingPlan,
+        inline: InlinePlan,
+        marker_suffix: str,
+        position: GitLabPosition | None = None,
+    ) -> DeliveryOutcome:
+        finding = member.finding
+        surface: Surface = "discussion" if position is not None else "note"
+        filepath = position["new_path"] if position else finding.get("file")
+        line = position["new_line"] if position else finding.get("line")
+        _report_inline_budget(inline.body, "gitlab", surface, filepath, line)
+        body = inline.body.body + ("" if session.dry_run else marker_suffix)
+        request = (
+            gitlab_discussion_request(target, {"body": body, "position": position})
+            if position is not None
+            else gitlab_note_request(target, {"body": body})
+        )
+        _response, error = session.try_post(request, forge=forge)
+        if error is not None:
+            # A rejected member must not strand siblings after the summary lands.
+            title = finding.get("title", "?")
+            message = (
+                f"Skipping finding '{title}' at {filepath}:{line} "
+                "— GitLab rejected the inline discussion."
+                if position is not None
+                else f"Skipping corroborating finding '{title}' — GitLab "
+                "rejected the position-less note."
+            )
+            session.warn_skip(f"{message}\n{error}")
+            return "failed"
+        return "posted"
+
     def deliver(
-        member: AnchoredFinding,
+        member: FindingPlan,
         corroborators: Sequence[Finding],
         keys: tuple[str, ...],
     ) -> DeliveryOutcome:
-        anchor = member.anchor
-        filepath, line = anchor.path, anchor.line
-        finding = member.finding
         # Render before dedup for rerun counts; fold notices follow dedup.
         marker_suffix = _delivery_marker_suffix(sha, keys)
         inline = render_inline(
             member,
             corroborators,
-            surface="discussion",
+            surface="discussion" if isinstance(member, AnchoredFinding) else "note",
             plan=plan,
             facts=facts,
             session=session,
@@ -807,8 +833,12 @@ def post_gitlab(
         if inline.budget_error is not None:
             warn(inline.budget_error)
             return "failed"
-        if keys and all(key in delivered_keys for key in keys):
+        if all(key in delivered_keys for key in keys):
             return "already_present"
+        if isinstance(member, UnanchoredFinding):
+            return submit_inline(member, inline, marker_suffix)
+        anchor = member.anchor
+        filepath, line = anchor.path, anchor.line
         # Never send line_code because GitLab derives it and rejects a synthesized one.
         position: GitLabPosition = {
             "position_type": "text",
@@ -818,73 +848,20 @@ def post_gitlab(
             "new_path": filepath,
             "new_line": line,
         }
-        # Context needs both sides; added lines omit the old side.
         old_line = diff.old_line_for(facts, filepath, line)
         if old_line is not None:
             position["old_line"] = old_line
-        # A new-file old_path causes HTTP 500 after creation; modified files need it for anchoring.
+        # A new-file old_path causes HTTP 500 after creation.
         if not diff.is_new_file(facts, filepath):
-            # Renames need the old spelling; unavailable facts leave only the finding path.
             position["old_path"] = diff.old_path_for(facts, filepath)
 
-        _report_inline_budget(inline.body, "gitlab", "discussion", filepath, line)
-        payload: GitLabDiscussionPayload = {
-            "body": inline.body.body
-            if session.dry_run
-            else inline.body.body + marker_suffix,
-            "position": position,
-        }
-        _response, error = session.try_post(
-            gitlab_discussion_request(target, payload), forge=forge
-        )
-        if error is not None:
-            # The summary is already posted; rejecting one position must not strand siblings.
-            session.warn_skip(
-                f"Skipping finding '{finding.get('title', '?')}' at {filepath}:{line} "
-                f"— GitLab rejected the inline discussion.\n{error}"
-            )
-            return "failed"
-        return "posted"
-
-    def deliver_unanchored(member: UnanchoredFinding, key: str) -> DeliveryOutcome:
-        finding = member.finding
-        marker_suffix = _delivery_marker_suffix(sha, (key,))
-        inline = render_inline(
-            member,
-            (),
-            surface="note",
-            plan=plan,
-            facts=facts,
-            session=session,
-            marker_suffix=marker_suffix,
-        )
-        if inline.budget_error is not None:
-            warn(inline.budget_error)
-            return "failed"
-        _report_inline_budget(
-            inline.body, "gitlab", "note", finding.get("file"), finding.get("line")
-        )
-        payload: GitLabNotePayload = {
-            "body": inline.body.body
-            if session.dry_run
-            else inline.body.body + marker_suffix
-        }
-        _response, error = session.try_post(
-            gitlab_note_request(target, payload), forge=forge
-        )
-        if error is not None:
-            session.warn_skip(
-                f"Skipping corroborating finding '{finding.get('title', '?')}' — GitLab "
-                f"rejected the position-less note.\n{error}"
-            )
-            return "failed"
-        return "posted"
+        return submit_inline(member, inline, marker_suffix, position)
 
     def deliver_corroborator(member: FindingPlan, key: str) -> DeliveryOutcome:
         finding = member.finding
         line = finding.get("line")
         title = finding.get("title", "?")
-        # Nothing from this group landed, so report an unanchored member instead of posting a note.
+        # Without a delivered primary, a positionless note would lose group context.
         if line is None:
             session.warn_skip(
                 f"Skipping corroborating finding '{title}' — no line number to "
@@ -908,8 +885,8 @@ def post_gitlab(
     }
     for group in remaining:
         primary_key = member_key(group.primary)
-        # Resolve member anchors and render keys after the summary request.
-        # Unanchored members key their raw location, even within a grouped body.
+        # Unanchored members key their raw location, even within a grouped body, so
+        # a member keeps one marker identity whether it posts grouped or split.
         corroborators = resolve_corroborators(group, facts)
         member_keys = (primary_key, *(member_key(m) for m in corroborators))
         if primary_key in prior.legacy_group_keys:
@@ -930,7 +907,7 @@ def post_gitlab(
                 elif isinstance(member, AnchoredFinding):
                     counters[deliver_corroborator(member, key)] += 1
                 else:
-                    counters[deliver_unanchored(member, key)] += 1
+                    counters[deliver(member, (), (key,))] += 1
             continue
         outcome = deliver(group.primary, group.group.corroborators, member_keys)
         if outcome == "failed":
@@ -959,7 +936,6 @@ def post_gitlab(
         print(f"  {invalid} finding(s) had a malformed position (see warnings above).")
     session.print_fix_summary()
 
-    # Failure messages must acknowledge discussions left by earlier runs.
     standing = (
         f" {already_present} from an earlier run remain on the MR."
         if already_present
@@ -969,7 +945,7 @@ def post_gitlab(
     if failed:
         print(f"  {failed} inline discussion(s) not delivered (see warnings above).")
         if posted == 0:
-            # Report failure after every attempt; prior deliveries and invalid positions are not attempts.
+            # Prior deliveries and invalid positions are not attempts.
             die(
                 f"all {failed} finding(s) attempted this run were not delivered "
                 f"— nothing new was posted inline.{standing} The MR summary note "

@@ -55,7 +55,7 @@ GITLAB_SUGGESTION_OFFSET_CAP: Final[int] = 100
 
 
 def is_plain_int(value: object) -> TypeGuard[int]:
-    # Bool and float hash equality would otherwise let malformed locations match diff keys.
+    # Bool and float hash equality could match malformed locations to diff keys.
     return isinstance(value, int) and not isinstance(value, bool)
 
 
@@ -215,7 +215,7 @@ def evaluate_fix(
         evaluated = cast(ApplyRange, apply_range)
     if "suggested_fix_code" not in finding:
         return FixVerdict(True, None, evaluated)
-    # Resolve at the finding's own line so verdict and render agree; None means no fence can apply there.
+    # Resolve at the finding's own line so verdict and render agree.
     path_lookup = diff.diff_path_spelling(
         facts,
         cast(str, finding.get("file", "?")),
@@ -225,7 +225,6 @@ def evaluate_fix(
         finding, apply_range=apply_range, facts=facts, path_lookup=path_lookup
     )
     keep = reason is None
-    # Only anchor failure is renamed.
     if not keep and reason == "anchor_mismatch":
         reason = mismatch_reason
     return FixVerdict(keep, reason, evaluated)
@@ -237,7 +236,7 @@ def github_apply_range(
     line: int,
     end_line: int | None,
 ) -> GitHubApplySite:
-    # Keep multiline ranges in one hunk because an end outside it rejects the whole review.
+    # An end outside the anchor's hunk rejects the whole review.
     if (
         end_line is not None
         and end_line > line
@@ -251,7 +250,7 @@ def gitlab_apply_range(line: int, end_line: int | None, anchor: int) -> GitLabAp
     if end_line is None:
         return GitLabApplySite((anchor, anchor))
     above, below = anchor - line, end_line - anchor
-    # Offsets extend outward from the anchor, so an outside anchor cannot realize a range.
+    # Offsets extend outward, so an outside anchor cannot realize a range.
     if above < 0 or below < 0:
         return GitLabApplySite((anchor, anchor))
     if above > GITLAB_SUGGESTION_OFFSET_CAP or below > GITLAB_SUGGESTION_OFFSET_CAP:
@@ -280,4 +279,7 @@ def overlap_losers(records: Iterable[OverlapCandidate]) -> set[int]:
 def format_fix_warning(
     finding: Mapping[str, object], reason: FixReason, *, label: str
 ) -> str:
-    return f"{label} downgraded: {finding.get('file', '?')}:{finding.get('line')} ({reason})"
+    return (
+        f"{label} downgraded: {finding.get('file', '?')}:"
+        f"{finding.get('line')} ({reason})"
+    )
