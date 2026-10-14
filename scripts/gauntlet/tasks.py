@@ -288,6 +288,7 @@ def find_terminal(text: str) -> tuple[Mapping[str, object] | None, bool, str | N
         if found is not None:
             return found, saw_bare_ok, None
 
+    # After the whole-document parse, so an oversized single document still resolves.
     if len(text) > SCAN_MAX_CHARS:
         return None, saw_bare_ok, "max_chars"
 

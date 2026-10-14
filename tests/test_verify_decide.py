@@ -383,9 +383,9 @@ def test_fact(
             id="DIFF-out-downgrade",
         ),
         pytest.param(
-            {"line_start": 2, "line_end": 5},
-            DIFF,
-            {"in_diff": True, "reason": "line 2 found in diff"},
+            {"line_start": 1, "line_end": 5},
+            DIFF.replace("-1,1 +1,2", "-3,1 +3,2"),
+            {"in_diff": True, "reason": "line 3 found in diff"},
             "new",
             "high",
             id="DIFF-partial-overlap",

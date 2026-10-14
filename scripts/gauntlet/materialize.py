@@ -216,6 +216,7 @@ def _materialize(
         return _receipt(False, source, scanned, materialized, None, gaps, errors)
 
     receipt = assemble(plan_path)
+    # plan_entries proved plan_path is among the entries; the default is unreachable.
     plan_text = {entry.path: entry.text for entry in entries}.get(plan_path, "")
     gaps.extend(proof_gaps(receipt, plan_text))
     if not receipt.get("ok"):
