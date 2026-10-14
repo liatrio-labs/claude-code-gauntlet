@@ -10,12 +10,7 @@ DeltaKey = Literal[
 ]
 DeltaValueField = Literal["origin", "severity", "confidence", "elimination_reason"]
 
-SEVERITY_ORDER: tuple[Severity, ...] = (
-    "critical",
-    "high",
-    "medium",
-    "low",
-)
+SEVERITY_ORDER: tuple[Severity, ...] = ("critical", "high", "medium", "low")
 
 REACHABILITY_VALUES: tuple[Reachability, ...] = (
     "current",
@@ -87,14 +82,8 @@ DETAIL_FIELDS_BY_DIMENSION = {
     "bug": ("hidden_errors",),
     "security": ("attack_vector",),
     "cross_file_impact": ("affected_consumers",),
-    "test_coverage": (
-        "criticality",
-        "failure_scenario",
-    ),
-    "convention": (
-        "rule_source",
-        "claude_md_rule",
-    ),
+    "test_coverage": ("criticality", "failure_scenario"),
+    "convention": ("rule_source", "claude_md_rule"),
     "intent": ("spec_text",),
     "comment_accuracy": (),
     "type_design": ("invalid_state_example",),
@@ -104,36 +93,20 @@ DETAIL_FIELDS_BY_DIMENSION = {
 KNOB_REGISTRY = (
     {
         "key": "model_tier",
-        "modes": [
-            "headless",
-            "interactive",
-        ],
+        "modes": ["headless", "interactive"],
         "allowedSources": {
-            "headless": [
-                "env",
-                "default",
-            ],
-            "interactive": [
-                "fixed",
-            ],
+            "headless": ["env", "default"],
+            "interactive": ["fixed"],
         },
         "rule": {
             "kind": "enum",
-            "values": [
-                "optimized",
-            ],
+            "values": ["optimized"],
         },
         "env": "CODE_GAUNTLET_MODEL_TIER",
         "reviewMdKey": None,
         "defaults": {
-            "headless": [
-                "optimized",
-                "default",
-            ],
-            "interactive": [
-                "optimized",
-                "fixed",
-            ],
+            "headless": ["optimized", "default"],
+            "interactive": ["optimized", "fixed"],
         },
         "type": "string",
         "waistPath": None,
@@ -145,31 +118,18 @@ KNOB_REGISTRY = (
     },
     {
         "key": "delivery",
-        "modes": [
-            "headless",
-        ],
+        "modes": ["headless"],
         "allowedSources": {
-            "headless": [
-                "env",
-                "review_md",
-                "default",
-            ],
+            "headless": ["env", "review_md", "default"],
         },
         "rule": {
             "kind": "csv_subset",
-            "values": [
-                "chat",
-                "pr_comments",
-                "markdown",
-            ],
+            "values": ["chat", "pr_comments", "markdown"],
         },
         "env": "CODE_GAUNTLET_DELIVERY",
         "reviewMdKey": "default_delivery",
         "defaults": {
-            "headless": [
-                "markdown",
-                "default",
-            ],
+            "headless": ["markdown", "default"],
         },
         "type": "csv_list",
         "waistPath": None,
@@ -181,29 +141,18 @@ KNOB_REGISTRY = (
     },
     {
         "key": "post_mode",
-        "modes": [
-            "headless",
-        ],
+        "modes": ["headless"],
         "allowedSources": {
-            "headless": [
-                "env",
-                "default",
-            ],
+            "headless": ["env", "default"],
         },
         "rule": {
             "kind": "enum",
-            "values": [
-                "dry-run",
-                "live",
-            ],
+            "values": ["dry-run", "live"],
         },
         "env": "CODE_GAUNTLET_POST_MODE",
         "reviewMdKey": None,
         "defaults": {
-            "headless": [
-                "dry-run",
-                "default",
-            ],
+            "headless": ["dry-run", "default"],
         },
         "type": "string",
         "waistPath": None,
@@ -215,19 +164,10 @@ KNOB_REGISTRY = (
     },
     {
         "key": "pr_comment_cap",
-        "modes": [
-            "headless",
-            "interactive",
-        ],
+        "modes": ["headless", "interactive"],
         "allowedSources": {
-            "headless": [
-                "env",
-                "default",
-            ],
-            "interactive": [
-                "env",
-                "default",
-            ],
+            "headless": ["env", "default"],
+            "interactive": ["env", "default"],
         },
         "rule": {
             "headless": {
@@ -240,59 +180,33 @@ KNOB_REGISTRY = (
         "env": "CODE_GAUNTLET_PR_COMMENT_CAP",
         "reviewMdKey": None,
         "defaults": {
-            "headless": [
-                "6",
-                "default",
-            ],
-            "interactive": [
-                "null",
-                "default",
-            ],
+            "headless": ["6", "default"],
+            "interactive": ["null", "default"],
         },
         "type": "int_or_null",
         "waistPath": "limits.deliveryCap",
         "waistMap": None,
         "derivedFrom": None,
         "deriveWhen": None,
-        "nullReceipt": [
-            "interactive",
-        ],
+        "nullReceipt": ["interactive"],
         "resolvedKey": False,
     },
     {
         "key": "delivery_tier",
-        "modes": [
-            "headless",
-            "interactive",
-        ],
+        "modes": ["headless", "interactive"],
         "allowedSources": {
-            "headless": [
-                "env",
-                "default",
-            ],
-            "interactive": [
-                "env",
-                "default",
-            ],
+            "headless": ["env", "default"],
+            "interactive": ["env", "default"],
         },
         "rule": {
             "kind": "enum",
-            "values": [
-                "all",
-                "main_only",
-            ],
+            "values": ["all", "main_only"],
         },
         "env": "CODE_GAUNTLET_DELIVERY_TIER",
         "reviewMdKey": None,
         "defaults": {
-            "headless": [
-                "all",
-                "default",
-            ],
-            "interactive": [
-                "all",
-                "default",
-            ],
+            "headless": ["all", "default"],
+            "interactive": ["all", "default"],
         },
         "type": "string",
         "waistPath": "delivery.tier",
@@ -304,29 +218,18 @@ KNOB_REGISTRY = (
     },
     {
         "key": "draft_policy",
-        "modes": [
-            "headless",
-        ],
+        "modes": ["headless"],
         "allowedSources": {
-            "headless": [
-                "env",
-                "default",
-            ],
+            "headless": ["env", "default"],
         },
         "rule": {
             "kind": "enum",
-            "values": [
-                "review",
-                "skip",
-            ],
+            "values": ["review", "skip"],
         },
         "env": "CODE_GAUNTLET_DRAFT_POLICY",
         "reviewMdKey": None,
         "defaults": {
-            "headless": [
-                "review",
-                "default",
-            ],
+            "headless": ["review", "default"],
         },
         "type": "string",
         "waistPath": None,
@@ -338,30 +241,18 @@ KNOB_REGISTRY = (
     },
     {
         "key": "reviewed_policy",
-        "modes": [
-            "headless",
-        ],
+        "modes": ["headless"],
         "allowedSources": {
-            "headless": [
-                "env",
-                "default",
-            ],
+            "headless": ["env", "default"],
         },
         "rule": {
             "kind": "enum",
-            "values": [
-                "incremental",
-                "full",
-                "skip",
-            ],
+            "values": ["incremental", "full", "skip"],
         },
         "env": "CODE_GAUNTLET_REVIEWED_POLICY",
         "reviewMdKey": None,
         "defaults": {
-            "headless": [
-                "full",
-                "default",
-            ],
+            "headless": ["full", "default"],
         },
         "type": "string",
         "waistPath": "reviewScope.requested",
@@ -375,29 +266,18 @@ KNOB_REGISTRY = (
     },
     {
         "key": "pr_not_found_policy",
-        "modes": [
-            "headless",
-        ],
+        "modes": ["headless"],
         "allowedSources": {
-            "headless": [
-                "env",
-                "default",
-            ],
+            "headless": ["env", "default"],
         },
         "rule": {
             "kind": "enum",
-            "values": [
-                "local",
-                "error",
-            ],
+            "values": ["local", "error"],
         },
         "env": "CODE_GAUNTLET_PR_NOT_FOUND_POLICY",
         "reviewMdKey": None,
         "defaults": {
-            "headless": [
-                "error",
-                "default",
-            ],
+            "headless": ["error", "default"],
         },
         "type": "string",
         "waistPath": None,
@@ -409,29 +289,18 @@ KNOB_REGISTRY = (
     },
     {
         "key": "trivial_scope",
-        "modes": [
-            "headless",
-        ],
+        "modes": ["headless"],
         "allowedSources": {
-            "headless": [
-                "env",
-                "default",
-            ],
+            "headless": ["env", "default"],
         },
         "rule": {
             "kind": "enum",
-            "values": [
-                "light",
-                "full",
-            ],
+            "values": ["light", "full"],
         },
         "env": "CODE_GAUNTLET_TRIVIAL_SCOPE",
         "reviewMdKey": None,
         "defaults": {
-            "headless": [
-                "full",
-                "default",
-            ],
+            "headless": ["full", "default"],
         },
         "type": "string",
         "waistPath": "scopeAnswer",
@@ -443,28 +312,18 @@ KNOB_REGISTRY = (
     },
     {
         "key": "review_md",
-        "modes": [
-            "interactive",
-        ],
+        "modes": ["interactive"],
         "allowedSources": {
-            "interactive": [
-                "discovery",
-            ],
+            "interactive": ["discovery"],
         },
         "rule": {
             "kind": "enum",
-            "values": [
-                "present",
-                "absent",
-            ],
+            "values": ["present", "absent"],
         },
         "env": None,
         "reviewMdKey": None,
         "defaults": {
-            "interactive": [
-                "absent",
-                "discovery",
-            ],
+            "interactive": ["absent", "discovery"],
         },
         "type": "string",
         "waistPath": None,
@@ -513,4 +372,10 @@ ARTIFACT_PATH_TEMPLATES = MappingProxyType(
 ARTIFACT_BASENAMES = tuple(ARTIFACT_PATH_TEMPLATES.values())
 FIX_MAX_LINES = 100
 FIX_MAX_CHARS = 8000
-JS_TRIM_CHARS = "\t\n\u000b\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+JS_TRIM_CHARS = (
+    "\t\n\u000b\f\r "
+    "\u00a0\u1680\u2000\u2001\u2002\u2003"
+    "\u2004\u2005\u2006\u2007\u2008\u2009"
+    "\u200a\u2028\u2029\u202f\u205f\u3000"
+    "\ufeff"
+)

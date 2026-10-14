@@ -30,13 +30,12 @@ MARKER_CLOSE = "<!-- /generated-from-registry -->"
 REPORT_FORMAT_REL = "skills/code-gauntlet/references/report-format.md"
 
 _IDENTITY_TAG = "generated-from-registry-identity"
-# Recognizes EITHER marker in EITHER comment syntax (Python `#`, Markdown `<!--`), so an
-# orphan pair naming a symbol no target declares is reported rather than silently left to rot.
+# Detect both syntaxes so undeclared orphan markers cannot evade validation.
 _IDENTITY_MARKER_RE = re.compile(
-    rf"^\s*(?:#|<!--)\s*(?P<close>/)?{re.escape(_IDENTITY_TAG)}:(?P<symbol>[A-Za-z0-9_]+)"
+    rf"^\s*(?:#|<!--)\s*(?P<close>/)?{re.escape(_IDENTITY_TAG)}:(?P<symbol>"
+    rf"[A-Za-z0-9_]+)"
 )
 
-# {rel_path: [symbol, ...]} — the fences this file must carry, exactly once each.
 IDENTITY_FENCES = {
     REPORT_FORMAT_REL: [
         "severity_legend",
@@ -68,9 +67,7 @@ IDENTITY_FENCES = {
     "skills/code-gauntlet/references/phase8-delivery.md": ["permalink_formats"],
 }
 
-# English phrasing for fields that carry a dimension-conditional requirement. Not derivable
-# from the registry (it has no room for prose nouns) — kept as the one small hand-authored
-# table the templates below parameterize on.
+# The registry carries field names, not the prose nouns their templates need.
 _CONDITIONAL_NOUNS = {
     "claude_md_rule": ("rule", "rule"),
     "spec_text": ("spec text", "spec"),
@@ -105,43 +102,67 @@ def _run_node(node_src: str, repo_root: str) -> proc.CompletedProcess[str]:
         raise CliError(_node_failure_message(command, error.stderr)) from None
 
 
+# Import order binds the module aliases m, a, v, f, o and w used below.
+_REGISTRY_MODULES = (
+    "registry",
+    "knobs",
+    "applyValidations",
+    "injection",
+    "outputPaths",
+    "verifyWire",
+)
+# Field order is the JSON key order the generated registry is checked against.
+_REGISTRY_FIELDS = (
+    "required: m.FINDING_REQUIRED",
+    "waistRequired: m.REQUIRED",
+    "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
+    "findingTypes: m.FINDING_PROP_TYPES",
+    "dimensions: m.DIMENSIONS.map(d => ({dimension: d.dimension,"
+    " agentType: d.agentType, requiredExtra: d.requiredExtra || [],"
+    " requiredWhenDimension: d.requiredWhenDimension || [],"
+    " extraFields: Object.keys(d.schemaExtra || {})}))",
+    "brand: {mark: m.BRAND_MARK, name: m.BRAND_NAME}",
+    "severityEmoji: m.SEVERITY_EMOJI",
+    "severityOrder: m.SEVERITY_ORDER",
+    "reachability: v.REACHABILITY_VALUES",
+    "deltaKeys: w.DELTA_KEYS",
+    "verifySliceFields: w.VERIFY_SLICE_FIELDS",
+    "fixMaxLines: f.FIX_MAX_LINES",
+    "fixMaxChars: f.FIX_MAX_CHARS",
+    "artifactPaths: o.plannedArtifactPaths("
+    "'/__gauntlet_registry_root__', '__GAUNTLET_SHA__')",
+    "jsTrimChars: Array.from({length: 65536}, (_, i) => String.fromCharCode(i))"
+    ".filter(c => c.trim() === '' && c !== '').join('')",
+    "severityEmojiFallback: m.SEVERITY_EMOJI_FALLBACK",
+    "ruleSourceLabels: m.RULE_SOURCE_LABELS",
+    "ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK",
+    "codeOwnedHeadings: m.CODE_OWNED_HEADINGS",
+    "agents: m.AGENTS",
+    "prIdentityFields: m.PR_IDENTITY_FIELDS.map(f => ({name: f.name,"
+    " required: f.required, describe: f.describe}))",
+    "permalinkTemplates: m.PERMALINK_TEMPLATES",
+    "shaFullRe: m.SHA_FULL_RE.source",
+    "webOriginRe: m.WEB_ORIGIN_RE.source",
+    "knobs: a.KNOB_REGISTRY.map(d => ({...d}))",
+    "knobKeys: a.KNOB_REGISTRY.map(d => Object.keys(d))",
+    "deriveWhen: Object.fromEntries(Object.entries(a.DERIVE_WHEN)"
+    ".map(([name, d]) => [name, d.describe]))",
+    "derivedFrom: Object.fromEntries(Object.entries(a.DERIVED_FROM)"
+    ".map(([name, d]) => [name, d.describe]))",
+)
+
+
 def load_registry(repo_root: str) -> Mapping[str, Any]:
     """Import the live schemas and keep finding and waist required lists distinct."""
+    fields = ",".join(_REGISTRY_FIELDS)
     node_src = (
-        "Promise.all([import('./workflows/src/registry.js'), import('./workflows/src/knobs.js'), import('./workflows/src/applyValidations.js'), import('./workflows/src/injection.js'), import('./workflows/src/outputPaths.js'), import('./workflows/src/verifyWire.js')]).then(([m, a, v, f, o, w]) => console.log(JSON.stringify({"
-        "  required: m.FINDING_REQUIRED,"
-        "  waistRequired: m.REQUIRED,"
-        "  canonicalFields: Object.keys(m.FINDING_PROP_TYPES),"
-        "  findingTypes: m.FINDING_PROP_TYPES,"
-        "  dimensions: m.DIMENSIONS.map(d => ({"
-        "    dimension: d.dimension, agentType: d.agentType,"
-        "    requiredExtra: d.requiredExtra || [],"
-        "    requiredWhenDimension: d.requiredWhenDimension || [],"
-        "    extraFields: Object.keys(d.schemaExtra || {}),"
-        "  })),"
-        "  brand: { mark: m.BRAND_MARK, name: m.BRAND_NAME },"
-        "  severityEmoji: m.SEVERITY_EMOJI,"
-        "  severityOrder: m.SEVERITY_ORDER,"
-        "  reachability: v.REACHABILITY_VALUES,"
-        "  deltaKeys: w.DELTA_KEYS,"
-        "  verifySliceFields: w.VERIFY_SLICE_FIELDS,"
-        "  fixMaxLines: f.FIX_MAX_LINES, fixMaxChars: f.FIX_MAX_CHARS,"
-        "  artifactPaths: o.plannedArtifactPaths('/__gauntlet_registry_root__', '__GAUNTLET_SHA__'),"
-        "  jsTrimChars: Array.from({length: 65536}, (_, i) => String.fromCharCode(i)).filter(c => c.trim() === '' && c !== '').join(''),"
-        "  severityEmojiFallback: m.SEVERITY_EMOJI_FALLBACK,"
-        "  ruleSourceLabels: m.RULE_SOURCE_LABELS,"
-        "  ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK,"
-        "  codeOwnedHeadings: m.CODE_OWNED_HEADINGS,"
-        "  agents: m.AGENTS,"
-        "  prIdentityFields: m.PR_IDENTITY_FIELDS.map(f => ({ name: f.name, required: f.required, describe: f.describe })),"
-        "  permalinkTemplates: m.PERMALINK_TEMPLATES,"
-        "  shaFullRe: m.SHA_FULL_RE.source,"
-        "  webOriginRe: m.WEB_ORIGIN_RE.source,"
-        "  knobs: a.KNOB_REGISTRY.map(d => ({ ...d })),"
-        "  knobKeys: a.KNOB_REGISTRY.map(d => Object.keys(d)),"
-        "  deriveWhen: Object.fromEntries(Object.entries(a.DERIVE_WHEN).map(([name, d]) => [name, d.describe])),"
-        "  derivedFrom: Object.fromEntries(Object.entries(a.DERIVED_FROM).map(([name, d]) => [name, d.describe])),"
-        "})))"
+        "Promise.all(["
+        + ", ".join(
+            f"import('./workflows/src/{name}.js')" for name in _REGISTRY_MODULES
+        )
+        + "]).then(([m, a, v, f, o, w]) => console.log(JSON.stringify({"
+        + fields
+        + "})))"
     )
     out = _run_node(node_src, repo_root)
     registry: Mapping[str, Any] = json.loads(out.stdout)
@@ -149,12 +170,13 @@ def load_registry(repo_root: str) -> Mapping[str, Any]:
 
 
 def dispatch_required_sentence(fields: Sequence[str]) -> str:
-    """Render every required field so schema growth cannot silently truncate the sentence."""
+    """Render all required fields so schema growth cannot truncate the sentence."""
     if len(fields) == 1:
         return (
-            f"`{fields[0]}` is required by the dispatch schema — a finding without it is "
-            "rejected at the StructuredOutput boundary and retried, so it must always be "
-            "present."
+            f"`{fields[0]}` is required by the dispatch schema — a finding "
+            f"without it is "
+            "rejected at the StructuredOutput boundary and retried, so it "
+            "must always be present."
         )
     backticked = [f"`{f}`" for f in fields]
     if len(backticked) == 2:
@@ -162,7 +184,8 @@ def dispatch_required_sentence(fields: Sequence[str]) -> str:
     else:
         joined = ", ".join(backticked[:-1]) + f", and {backticked[-1]}"
     return (
-        f"{joined} are required by the dispatch schema — a finding missing any of them is "
+        f"{joined} are required by the dispatch schema — a finding missing "
+        f"any of them is "
         "rejected at the StructuredOutput boundary and retried, so all must always be "
         "present."
     )
@@ -177,7 +200,8 @@ def _conditional_paragraph(
 ) -> str:
     noun, noun2 = _CONDITIONAL_NOUNS[field]
     lead = (
-        f"For {dimension} findings: the `{field}` field MUST be non-null and MUST quote "
+        f"For {dimension} findings: the `{field}` field MUST be non-null "
+        f"and MUST quote "
         f"the specific {noun}. Findings without a cited {noun2} will be rejected. "
         f"`{field}` is a dimension-conditional dispatch requirement"
     )
@@ -186,27 +210,36 @@ def _conditional_paragraph(
         dims = ", ".join(all_dims[:-1]) + f", and {all_dims[-1]}"
         body = (
             ". On a dispatch that targets the first-party API directly (no third-party "
-            "provider, no gateway), the schema enforces it specifically for findings whose "
-            f"dimension is {dimension} — sibling {sib} findings correctly omit it — and this "
-            "contract is the enforcement floor on every run, including third-party providers "
-            "and gateway sessions where the schema stays flat. This agent's dispatch mixes "
-            f"{dims} findings in ONE schema, so a dimension-blind schema requirement (the flat "
-            "`requiredExtra` mechanism, which only single-dimension agents can use) was never "
-            "an option here — omitting the field on the wrong dimension is correct while "
-            "omitting it on this one is a contract violation."
+            "provider, no gateway), the schema enforces it specifically "
+            "for findings whose "
+            f"dimension is {dimension} — sibling {sib} findings correctly "
+            f"omit it — and this "
+            "contract is the enforcement floor on every run, including "
+            "third-party providers "
+            "and gateway sessions where the schema stays flat. This "
+            "agent's dispatch mixes "
+            f"{dims} findings in ONE schema, so a dimension-blind schema "
+            f"requirement (the flat "
+            "`requiredExtra` mechanism, which only single-dimension agents "
+            "can use) was never "
+            "an option here — omitting the field on the wrong dimension is "
+            "correct while omitting it on this one is a contract violation."
         )
     else:
         body = (
-            f", on the same terms as {first_field} above: enforced by the schema for findings "
-            f"whose dimension is {dimension} only on a first-party-direct dispatch, and by "
-            "this contract as the floor everywhere else — omitting the field on the wrong "
-            "dimension is correct while omitting it on this one is a contract violation."
+            f", on the same terms as {first_field} above: enforced by the "
+            f"schema for findings "
+            f"whose dimension is {dimension} only on a first-party-direct "
+            f"dispatch, and by "
+            "this contract as the floor everywhere else — omitting the "
+            "field on the wrong "
+            "dimension is correct while omitting it on this one is a "
+            "contract violation."
         )
     return lead + body
 
 
 def conditional_paragraphs(agent_rows: Sequence[Mapping[str, Any]]) -> list[str]:
-    """Keep multi-dimension paragraphs in registry order."""
     all_dims = [row["dimension"] for row in agent_rows]
     conditional_fields = [
         (row["dimension"], field)
@@ -229,7 +262,8 @@ _EXISTING_BLOCK = re.compile(
 
 # Loose first-run anchors swallow earlier hand-written wording into the generated block.
 _SINGLE_SENTENCE_ANCHOR = re.compile(
-    r"`[a-z_]+`(?:, `[a-z_]+`)*(?:,? and `[a-z_]+`)? (?:is|are) required by the dispatch "
+    "`[a-z_]+`(?:, `[a-z_]+`)*(?:,? and `[a-z_]+`)? (?:is|are) required by "
+    "the dispatch "
     r"schema[^\n]*"
 )
 _CONDITIONAL_ANCHOR = re.compile(
@@ -238,13 +272,15 @@ _CONDITIONAL_ANCHOR = re.compile(
 
 
 def splice(text: str, anchor_re: re.Pattern[str], body: str) -> str:
-    """Reject duplicate or orphan markers so a later check cannot silently accept stale debris."""
+    """Reject broken markers so --check cannot silently accept stale debris."""
     open_count = text.count(MARKER_OPEN)
     close_count = text.count(MARKER_CLOSE)
     if open_count > 1 or open_count != close_count:
         raise CliError(
-            f"malformed generated-block markers ({open_count} open, {close_count} close) "
-            "— expected exactly one matched pair or none; fix by hand before regenerating"
+            f"malformed generated-block markers ({open_count} open, "
+            f"{close_count} close) "
+            "— expected exactly one matched pair or none; fix by hand "
+            "before regenerating"
         )
     new_block = f"{MARKER_OPEN}\n{body}\n{MARKER_CLOSE}"
     if open_count == 1:
@@ -259,7 +295,6 @@ def splice(text: str, anchor_re: re.Pattern[str], body: str) -> str:
 
 
 def single_dimension_targets(registry: Mapping[str, Any]) -> dict[str, str]:
-    """Return registry-defined requiredExtra dispatch targets."""
     targets: dict[str, str] = {}
     for row in registry["dimensions"]:
         fields = row["requiredExtra"]
@@ -291,7 +326,6 @@ _PERDIM_ROW = re.compile(
 
 
 def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
-    """Rewrite only the Required cell of rows whose first cell names a registry-known field."""
     known = set(registry["canonicalFields"])
     for row in registry["dimensions"]:
         known.update(row["extraFields"])
@@ -314,8 +348,8 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
     return text_out
 
 
-def _python_literal(value: object, indent: int = 0) -> str:
-    """Render JSON-safe data as a fully exploded, ruff-stable Python literal."""
+def _python_literal(value: object, indent: int = 0, *, column: int = 0) -> str:
+    """Render JSON-safe data with short scalar sequences on one line."""
     pad = " " * indent
     if value is None:
         return "None"
@@ -329,11 +363,16 @@ def _python_literal(value: object, indent: int = 0) -> str:
         is_tuple = isinstance(value, tuple)
         if not value:
             return "()" if is_tuple else "[]"
-        if is_tuple and len(value) == 1 and isinstance(value[0], (str, int, float)):
-            return "(" + _python_literal(value[0]) + ",)"
+        if all(not isinstance(item, (list, tuple, dict)) for item in value):
+            members = ", ".join(_python_literal(item) for item in value)
+            if is_tuple and len(value) == 1:
+                members += ","
+            flat = ("(" if is_tuple else "[") + members + (")" if is_tuple else "]")
+            if column + len(flat) + 1 <= 88:
+                return flat
         lines = ["(" if is_tuple else "["]
         for item in value:
-            rendered = _python_literal(item, indent + 4)
+            rendered = _python_literal(item, indent + 4, column=indent + 4)
             item_lines = rendered.splitlines()
             lines.append(" " * (indent + 4) + item_lines[0])
             lines.extend(item_lines[1:])
@@ -345,14 +384,12 @@ def _python_literal(value: object, indent: int = 0) -> str:
             return "{}"
         lines = ["{"]
         for key, item in value.items():
-            rendered = _python_literal(item, indent + 4)
-            item_lines = rendered.splitlines()
-            lines.append(
-                " " * (indent + 4)
-                + json.dumps(str(key), ensure_ascii=False)
-                + ": "
-                + item_lines[0]
+            prefix = (
+                " " * (indent + 4) + json.dumps(str(key), ensure_ascii=False) + ": "
             )
+            rendered = _python_literal(item, indent + 4, column=len(prefix))
+            item_lines = rendered.splitlines()
+            lines.append(prefix + item_lines[0])
             lines.extend(item_lines[1:])
             lines[-1] += ","
         lines.append(pad + "}")
@@ -386,38 +423,14 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             {"type": "array", "items": {"type": "string"}},
         ):
             raise CliError(f"unknown finding schema type for {field}: {schema!r}")
-    if not set(identity["required"]) <= set(field_types):
-        raise CliError("required finding field absent from schema")
     delta_keys = identity["deltaKeys"]
-    required_delta_keys = delta_keys[:2]
     delta_value_fields = delta_keys[2:]
-    if required_delta_keys != ["id", "verified"] or len(delta_keys) != len(
-        set(delta_keys)
-    ):
-        raise CliError("invalid ordered delta keys")
-    if not set(identity["verifySliceFields"]) <= set(field_types):
-        raise CliError("verify slice field absent from finding schema")
-    templates = {}
     root = "/__gauntlet_registry_root__/"
     sha = "__GAUNTLET_SHA__"
-    paths: Mapping[str, str] = identity["artifactPaths"]
-    if list(paths) != ["findings", "report", "postReview", "checkpoints"]:
-        raise CliError("unexpected artifact path keys")
-    for key, path in paths.items():
-        if not path.startswith(root) or path.count(sha) != 1:
-            raise CliError(f"invalid artifact path for {key}")
-        basename = path[len(root) :]
-        if "/" in basename:
-            raise CliError(f"artifact path is not a basename for {key}")
-        templates[key] = basename.replace(sha, "{sha}")
-    for key in ("fixMaxLines", "fixMaxChars"):
-        value = identity[key]
-        if type(value) is not int or not 0 < value <= 9007199254740991:
-            raise CliError(f"invalid fix bound: {key}")
-    for key in ("severityOrder", "reachability", "deltaKeys", "verifySliceFields"):
-        values = identity[key]
-        if not values or len(values) != len(set(values)):
-            raise CliError(f"invalid ordered values: {key}")
+    templates = {
+        key: path[len(root) :].replace(sha, "{sha}")
+        for key, path in identity["artifactPaths"].items()
+    }
 
     def literal_type(values: Sequence[str]) -> str:
         members = ", ".join(json.dumps(v) for v in values)
@@ -466,7 +479,8 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     }
     for name, value in values.items():
         annotation = f": {annotations[name]}" if name in annotations else ""
-        lines.append(f"{name}{annotation} = {_python_literal(value)}")
+        prefix = f"{name}{annotation} = "
+        lines.append(prefix + _python_literal(value, column=len(prefix)))
         lines.append("")
     lines.extend(
         [
@@ -497,7 +511,13 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "ARTIFACT_BASENAMES = tuple(ARTIFACT_PATH_TEMPLATES.values())",
             f"FIX_MAX_LINES = {identity['fixMaxLines']}",
             f"FIX_MAX_CHARS = {identity['fixMaxChars']}",
-            "JS_TRIM_CHARS = " + json.dumps(identity["jsTrimChars"], ensure_ascii=True),
+            "JS_TRIM_CHARS = (\n"
+            + "\n".join(
+                "    "
+                + json.dumps(identity["jsTrimChars"][i : i + 6], ensure_ascii=True)
+                for i in range(0, len(identity["jsTrimChars"]) or 1, 6)
+            )
+            + "\n)",
             "",
         ]
     )
@@ -517,18 +537,14 @@ def _load_resolver(repo_root: str) -> types.ModuleType:
     return module
 
 
-# A placeholder fixture whose every field value is its own placeholder, run through the REAL
-# renderer, so the documented template IS the renderer's literal output. The critical finding
-# carries every optional field; the other severity examples stay minimal.
-_TEMPLATE_FINDING = {
-    "id": "{finding.id}",
-    "file": "{finding.file}",
-    "line_start": "{finding.line_start}",
-    "title": "{finding.title}",
-    "description": "{finding.description}",
-    "confidence": "{finding.confidence}",
-    "dimension": "{finding.dimension}",
-}
+# Render placeholders through the real renderer so the copyable template cannot drift.
+def _placeholders(prefix: str, fields: str) -> dict[str, str]:
+    return {field: "{" + prefix + "." + field + "}" for field in fields.split()}
+
+
+_TEMPLATE_FINDING = _placeholders(
+    "finding", "id file line_start title description confidence dimension"
+)
 
 _TEMPLATE_FIXTURE: dict[str, Any] = {
     "mode": "interactive",
@@ -556,30 +572,18 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
         {
             **_TEMPLATE_FINDING,
             "severity": "critical",
-            "line_end": "{finding.line_end}",
             "origin": "surfaced",
-            "evidence": "{finding.evidence}",
-            "suggestion": "{finding.suggestion}",
-            "claude_md_rule": "{finding.claude_md_rule}",
-            "rule_source": "{finding.rule_source}",
-            "spec_text": "{finding.spec_text}",
-            "cross_file_refs": "{finding.cross_file_refs}",
-            "affected_consumers": "{finding.affected_consumers}",
-            "attack_vector": "{finding.attack_vector}",
-            "behavior_preserved": "{finding.behavior_preserved}",
-            "criticality": "{finding.criticality}",
-            "failure_scenario": "{finding.failure_scenario}",
-            "hidden_errors": "{finding.hidden_errors}",
-            "invalid_state_example": "{finding.invalid_state_example}",
+            **_placeholders(
+                "finding",
+                "line_end evidence suggestion claude_md_rule rule_source spec_text "
+                "cross_file_refs affected_consumers attack_vector behavior_preserved "
+                "criticality failure_scenario hidden_errors invalid_state_example",
+            ),
             "challenge_contested": True,
             "corroborations": [
-                {
-                    "agent": "{corroboration.agent}",
-                    "dimension": "{corroboration.dimension}",
-                    "confidence": "{corroboration.confidence}",
-                    "title": "{corroboration.title}",
-                    "description": "{corroboration.description}",
-                }
+                _placeholders(
+                    "corroboration", "agent dimension confidence title description"
+                )
             ],
         },
         {**_TEMPLATE_FINDING, "severity": "high"},
@@ -726,7 +730,8 @@ _INLINE_SAMPLE_FINDING = {
     "body": "{body}",
     "suggestion": "{suggestion}",
     "claude_md_rule": (
-        "{claude_md_rule, falling back to spec_text — blockquoted, one `>` line per source line}"
+        "{claude_md_rule, falling back to spec_text — blockquoted, one `>` "
+        "line per source line}"
     ),
     "rule_source": "documented_rule",
     "suggested_fix_code": "{suggested_fix_code}",
@@ -734,7 +739,7 @@ _INLINE_SAMPLE_FINDING = {
 
 
 def render_inline_comment_sample(identity: Mapping[str, Any]) -> str:
-    # The generated registry can be missing or invalid until the temporary module supplies it.
+    # Repair must work even when the generated registry cannot be imported.
     from gauntlet.delivery import compose
 
     # Explicit style keeps isolated generator inputs from changing registry globals.
@@ -748,41 +753,6 @@ def render_inline_comment_sample(identity: Mapping[str, Any]) -> str:
     rendered = compose.render_comment_body(_INLINE_SAMPLE_FINDING, style=style)
     # Keep generator control comments outside the copyable fenced sample.
     return "````markdown\n" + rendered + "\n````"
-
-
-_DERIVED_WAIST_TYPES = {"string", "csv_list", "int_or_null"}
-
-
-def _require_description(
-    identity: Mapping[str, Any], table_name: str, name: str
-) -> None:
-    descriptions = identity[table_name]
-    if name not in descriptions:
-        raise CliError(
-            f"identity_body: {table_name} has no describe entry for {name!r}"
-        )
-    description = descriptions[name]
-    if not isinstance(description, str) or not description.strip():
-        raise CliError(
-            f"identity_body: {table_name} description for {name!r} is empty or whitespace"
-        )
-
-
-def _validate_derived_waist_identity(identity: Mapping[str, Any]) -> None:
-    """Validate every registry metadata value needed by the derived-waist renderer."""
-    for table_name in ("deriveWhen", "derivedFrom", "waistRequired"):
-        if table_name not in identity:
-            raise CliError(f"identity_body: identity lacks a {table_name} key")
-    for row in identity["knobs"]:
-        row_type = row.get("type")
-        if row_type not in _DERIVED_WAIST_TYPES:
-            raise CliError(
-                f"identity_body: row {row.get('key')!r} has unknown type {row_type!r}"
-            )
-        for table_name in ("deriveWhen", "derivedFrom"):
-            name = row.get(table_name)
-            if name is not None:
-                _require_description(identity, table_name, name)
 
 
 def _modes_phrase(modes: Sequence[str]) -> str:
@@ -808,15 +778,19 @@ def _derived_waist_instruction(
 
 
 def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
-    _validate_derived_waist_identity(identity)
     rows = identity["knobs"]
-    waist_rows = [row for row in rows if row.get("waistPath") is not None]
-    derived_rows = [row for row in rows if row.get("derivedFrom") is not None]
+    waist_rows = [row for row in rows if row["waistPath"] is not None]
+    derived_rows = [row for row in rows if row["derivedFrom"] is not None]
     lines: list[str] = []
     if waist_rows:
         lines.extend(
             [
-                "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; when a listed derivation applies, a stamped value that disagrees with its receipt is refused before dispatch.",
+                (
+                    "The workflow derives these waist fields from the copied "
+                    "`configEcho` receipt. Do not stamp a derived field; when "
+                    "a listed derivation applies, a stamped value that "
+                    "disagrees with its receipt is refused before dispatch."
+                ),
                 "",
             ]
         )
@@ -824,21 +798,22 @@ def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
             type_note = ""
             if row["type"] == "int_or_null":
                 type_note = "; digits derive as a JSON number"
-                if row.get("nullReceipt"):
+                if row["nullReceipt"]:
                     type_note += (
-                        f"; on {_modes_phrase(row['nullReceipt'])} the receipt spelling "
+                        f"; on {_modes_phrase(row['nullReceipt'])} the "
+                        f"receipt spelling "
                         "`null` derives as JSON `null`"
                     )
             elif row["type"] == "csv_list":
                 type_note = "; the comma-separated value derives as a list"
             condition = ""
-            if row.get("deriveWhen") is not None:
+            if row["deriveWhen"] is not None:
                 condition = ", when " + identity["deriveWhen"][row["deriveWhen"]]
             line = (
                 f"- `{row['waistPath']}` ({_modes_phrase(row['modes'])}{condition}): "
                 f"from `configEcho.{row['key']}`{type_note}"
             )
-            if row.get("waistMap") is not None:
+            if row["waistMap"] is not None:
                 for source, target in row["waistMap"].items():
                     line += f"; `{source}` derives as `{target}`"
             line += ". " + _derived_waist_instruction(row, identity["waistRequired"])
@@ -868,7 +843,7 @@ def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
 def identity_body(
     rel_path: str, symbol: str, identity: Mapping[str, Any], repo_root: str
 ) -> list[str]:
-    """Render by file and symbol because the same legend has different wording in each file."""
+    """Legends differ by file, so dispatch on both the file and the symbol."""
     mark = identity["brand"]["mark"]
     name = identity["brand"]["name"]
     pairs = [(emoji, severity) for severity, emoji in identity["severityEmoji"].items()]
@@ -893,8 +868,10 @@ def identity_body(
         return render_inline_comment_sample(identity).split("\n")
     if symbol == "delivery_identity":
         return [
-            f"- **Identity:** prepends `### {mark} {name}` to `review_body` and appends "
-            f"`{mark} *{name}*` to every rendered comment body — one mark per delivered "
+            f"- **Identity:** prepends `### {mark} {name}` to "
+            f"`review_body` and appends "
+            f"`{mark} *{name}*` to every rendered comment body — one mark "
+            f"per delivered "
             "surface, never one per finding. Never hand-type either."
         ]
     if symbol == "headless_env_table":
@@ -903,35 +880,27 @@ def identity_body(
             "| --- | --- | --- |",
         ]
         for row in identity["knobs"]:
-            if not row.get("env"):
+            if not row["env"]:
                 continue
             env_name = row["env"]
-            rule = row.get("rule")
-            if isinstance(rule, dict) and "kind" not in rule:
-                rule = rule.get("headless")
-            if not isinstance(rule, dict):
-                values = "valid value"
+            rule = row["rule"]
+            if "kind" not in rule:
+                rule = rule["headless"]
+            kind = rule["kind"]
+            if kind == "positive_digits":
+                values = "positive integer"
+            elif kind == "digits_or_null":
+                values = "digits or null"
             else:
-                kind = rule.get("kind")
-                if kind == "positive_digits":
-                    values = "positive integer"
-                elif kind == "digits_or_null":
-                    values = "digits or null"
-                else:
-                    choices = rule.get("values")
-                    values = (
-                        ",".join(str(value) for value in choices)
-                        if isinstance(choices, list)
-                        else "valid value"
-                    )
-            default = row.get("defaults", {}).get("headless", ["", ""])[0]
+                values = ",".join(rule["values"])
+            default = row["defaults"]["headless"][0]
             lines.append(f"| `{env_name}` | `{values}` | `{default}` |")
         return lines
     if symbol == "chat_identity":
         return [
             (
-                f"The final delivery summary opens with `{mark} {name}` on its first line and "
-                + "carries no other"
+                f"The final delivery summary opens with `{mark} {name}` on "
+                f"its first line and " + "carries no other"
             ),
             "emoji, except severity emoji when listing findings.",
         ]
@@ -941,78 +910,68 @@ def identity_body(
             "pipeline_version": "{pipeline_version}",
             "plugin_root": "/absolute/path/to/claude-code-gauntlet",
         }
-        rendered: dict[str, list[str]] = {}
-        receipts: dict[str, list[str]] = {}
+        lines = [
+            "The resolver owns the printed configuration block and the "
+            "keyed `configEcho` receipt.",
+        ]
         for mode in ("interactive", "headless"):
             resolved = resolver.resolve(
                 mode, {}, None, "pr", registry=identity["knobs"]
             )
-            receipts[mode] = resolver.serialize_receipt(
-                mode, resolved["configEcho"], registry=identity["knobs"]
-            ).splitlines()
-            rendered[mode] = resolver.render_block(
+            block = resolver.render_block(
                 mode, resolved["configEcho"], docs_identity, registry=identity["knobs"]
-            ).splitlines()
-        return [
-            "The resolver owns the printed configuration block and the keyed `configEcho` receipt.",
-            "",
-            "**Interactive block:**",
-            "",
-            "```text",
-            *rendered["interactive"],
-            "```",
-            "",
-            "**Interactive receipt:**",
-            "",
-            "```json",
-            *receipts["interactive"],
-            "```",
-            "",
-            "**Headless block:**",
-            "",
-            "```text",
-            *rendered["headless"],
-            "```",
-            "",
-            "**Headless receipt:**",
-            "",
-            "```json",
-            *receipts["headless"],
-            "```",
-        ]
+            )
+            receipt = resolver.serialize_receipt(
+                mode, resolved["configEcho"], registry=identity["knobs"]
+            )
+            lines.extend(
+                [
+                    "",
+                    f"**{mode.title()} block:**",
+                    "",
+                    "```text",
+                    *block.splitlines(),
+                    "```",
+                    "",
+                    f"**{mode.title()} receipt:**",
+                    "",
+                    "```json",
+                    *receipt.splitlines(),
+                    "```",
+                ]
+            )
+        return lines
     if symbol == "derived_waist_fields":
         return _derived_waist_body(identity)
     if symbol == "inline_legend":
         return [
-            f"`{{emoji}}` is {slashes}, `{{SEVERITY}}` is the normalized severity uppercased.",
+            f"`{{emoji}}` is {slashes}, `{{SEVERITY}}` is the normalized "
+            f"severity uppercased.",
         ]
     if key == (REPORT_FORMAT_REL, "severity_legend"):
         return [
             f"Product mark: {mark} ({name}). Severity emoji: {commas}.",
-            f"Rule source labels: {rule_source_labels}; unknown values -> {identity['ruleSourceLabelFallback']}.",
+            f"Rule source labels: {rule_source_labels}; unknown values -> "
+            f"{identity['ruleSourceLabelFallback']}.",
             (
-                "Always use the Unicode characters, never GitHub shortcodes (`:red_circle:`) — "
-                + "shortcodes do"
+                "Always use the Unicode characters, never GitHub "
+                "shortcodes (`:red_circle:`) — " + "shortcodes do"
             ),
             "not render in terminal/chat output.",
         ]
     if symbol == "severity_legend":
         return [
             f"Product mark: {mark} ({name}). Severity emojis: {commas}.",
-            f"Rule source labels: {rule_source_labels}; unknown values -> {identity['ruleSourceLabelFallback']}.",
+            f"Rule source labels: {rule_source_labels}; unknown values -> "
+            f"{identity['ruleSourceLabelFallback']}.",
         ]
     raise CliError(f"no identity body for {symbol!r} in {rel_path}")
-
-
-# Product identity comes from `workflows/src/registry.js`. Each generated symbol
-# has a paired marker fence, validated by `_IDENTITY_MARKER_RE` and `find_identity_pairs`.
-# A file may carry several symbols, so a whole-file marker count is insufficient.
 
 
 def find_identity_pairs(
     lines: Sequence[str], rel_path: str
 ) -> dict[str, tuple[int, int]]:
-    """Validate per symbol because one file may carry several independent identity fences."""
+    """Validate per symbol because a file can carry several independent fences."""
     opens: dict[str, int] = {}
     closes: dict[str, int] = {}
     for index, line in enumerate(lines):
@@ -1025,22 +984,24 @@ def find_identity_pairs(
             raise CliError(
                 f"{rel_path}: duplicate {'close' if match.group('close') else 'open'} "
                 f"identity marker for {symbol} (lines {bucket[symbol] + 1} and "
-                f"{index + 1}) — expected exactly one matched pair per symbol; fix by hand"
+                f"{index + 1}) — expected exactly one matched pair per "
+                f"symbol; fix by hand"
             )
         bucket[symbol] = index
     unmatched = sorted(set(opens) ^ set(closes))
     if unmatched:
         raise CliError(
             f"{rel_path}: unmatched identity marker(s) for {', '.join(unmatched)} — an "
-            "orphaned marker would make --check call the file current while real debris "
-            "sits in it; fix by hand"
+            "orphaned marker would make --check call the file current "
+            "while real debris sits in it; fix by hand"
         )
     pairs: dict[str, tuple[int, int]] = {}
     for symbol, open_index in opens.items():
         close_index = closes[symbol]
         if close_index <= open_index:
             raise CliError(
-                f"{rel_path}: close identity marker for {symbol} precedes its open marker "
+                f"{rel_path}: close identity marker for {symbol} precedes "
+                f"its open marker "
                 f"(lines {close_index + 1} and {open_index + 1}); fix by hand"
             )
         pairs[symbol] = (open_index, close_index)
@@ -1057,7 +1018,7 @@ def find_identity_pairs(
 def fill_identity_fences(
     text: str, rel_path: str, identity: Mapping[str, Any], repo_root: str
 ) -> str:
-    """Reject missing and undeclared fences so neither unmaintained copies nor stale debris ship."""
+    """Refuse missing/undeclared fences so unmaintained copies cannot ship."""
     lines = text.split("\n")
     pairs = find_identity_pairs(lines, rel_path)
     expected = set(IDENTITY_FENCES[rel_path])
@@ -1070,7 +1031,8 @@ def fill_identity_fences(
     orphans = sorted(set(pairs) - expected)
     if orphans:
         raise CliError(
-            f"{rel_path}: identity marker pair(s) {', '.join(orphans)} match no declared "
+            f"{rel_path}: identity marker pair(s) {', '.join(orphans)} "
+            f"match no declared "
             "symbol — remove the fence or add it to IDENTITY_FENCES"
         )
     for symbol in sorted(pairs, key=lambda s: pairs[s][0], reverse=True):
@@ -1149,7 +1111,7 @@ def main(args: argparse.Namespace) -> int:
         registry = load_registry(args.repo_root)
         source = render_python_registry(registry)
         targets = rendered_targets(args.repo_root, registry, source)
-        # Inline composition must import the freshly rendered registry, even during repair.
+        # Repair needs inline composition to use the freshly rendered registry.
         with _rendered_registry_module(source):
             stale = sync_targets(args.repo_root, targets, args.check)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -1165,7 +1127,9 @@ def main(args: argparse.Namespace) -> int:
 
 parser = Parser(
     prog="generate_contract_requirements",
-    description="Generate Python registry and Markdown contracts from live workflow sources.",
+    description=(
+        "Generate Python registry and Markdown contracts from live workflow sources."
+    ),
 )
 parser.add_argument("--repo-root", default=ENTRY_ROOT)
 parser.add_argument(

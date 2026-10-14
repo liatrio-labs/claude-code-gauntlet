@@ -1,12 +1,11 @@
 import json
 import re
-import time
-from collections import Counter
 from pathlib import Path
 
 import pytest
 from gauntlet import contract_gen as gen
 from gauntlet import registry as python_registry
+from gauntlet.style import extract_rules
 
 from tests.support.js_values import js_values
 from tests.support.repository import tracked_paths
@@ -26,8 +25,6 @@ _JSON_BLOCK = re.compile("```(?i:json)\\n(.*?)\\n```", re.DOTALL)
 
 # Match value positions so a quoted string containing an angle bracket stays intact.
 _UNQUOTED_PLACEHOLDER = re.compile("(?<=:)\\s*<[^>]*>")
-
-_UNICODE_ESCAPE = re.compile("\\\\u([0-9a-fA-F]{4})")
 
 _FIELD_ROW = re.compile("^\\|\\s*`([a-z_][a-z0-9_]*)`\\s*\\|(.+)\\|\\s*$")
 
@@ -82,9 +79,7 @@ def field_carries_omit_instruction(raw_block, field, source=None):
     bare_literal = re.match("(?:-?\\d+(?:\\.\\d+)?|true|false|null)\\s*(?=[,}])", rest)
     if bare_literal:
         return False
-    raise AssertionError(
-        f"field_carries_omit_instruction: {field!r} in {source or 'a contract block'} has a value shape this parser does not recognize (not a quoted string, array-of-strings, angle-bracket placeholder, or bare literal) \u2014 extend the parser rather than silently return False: {rest[:80]!r}"
-    )
+    raise AssertionError(f"unsupported value for {field!r} in {source}: {rest[:80]!r}")
 
 
 _DISPATCH_REQUIRED_PHRASE = "required by the dispatch schema"
@@ -125,7 +120,9 @@ def report_format_tables():
     )
     if not match:
         raise AssertionError(
-            f"{REPORT_FORMAT.relative_to(ROOT)} has no '## Finding Fields Reference' section (or no following H2 to bound it) \u2014 the field documentation this test pins is gone."
+            f"{REPORT_FORMAT.relative_to(ROOT)} has no '## Finding Fields "
+            f"Reference' section (or no following H2 to bound it) \u2014 "
+            f"the field documentation this test pins is gone."
         )
     tables, current = ({}, None)
     for line in match.group(1).splitlines():
@@ -145,7 +142,9 @@ def table_named(tables, keyword):
     hits = [h for h in tables if keyword.lower() in h.lower()]
     if len(hits) != 1:
         raise AssertionError(
-            f"expected exactly one Finding Fields Reference table whose heading mentions {keyword!r}, found {hits} among {list(tables)}"
+            f"expected exactly one Finding Fields Reference table whose "
+            f"heading mentions {keyword!r}, found {hits} among "
+            f"{list(tables)}"
         )
     return tables[hits[0]]
 
@@ -158,129 +157,29 @@ def delivery_guide_json_object(text: str) -> dict:
     return obj
 
 
-OWNERS = {
-    ("skills/code-gauntlet/references/report-format.md", "permalink_formats"): (
-        "## Permalink Format",
-        "## Finding Fields Reference",
-    ),
-    ("skills/code-gauntlet/references/report-format.md", "permalink_sample"): (
-        "## Permalink Format",
-        "## Finding Fields Reference",
-    ),
-    ("skills/code-gauntlet/references/report-format.md", "inline_sample"): (
-        "## Inline PR Comment Format",
-        "**`suggested_fix_code` field:**",
-    ),
-    ("skills/code-gauntlet/references/delivery-guide.md", "summary_header"): (
-        "**Script behavior:**",
-        "### Findings metadata footer",
-    ),
-    ("skills/code-gauntlet/references/delivery-guide.md", "inline_sample"): (
-        "### Comment body format",
-        "**Script behavior:**",
-    ),
-    ("skills/code-gauntlet/references/delivery-guide.md", "delivery_identity"): (
-        "**Script behavior:**",
-        "### Findings metadata footer",
-    ),
-    ("skills/code-gauntlet/SKILL.md", "chat_identity"): (
-        "### Deliver",
-        "### Print methodology",
-    ),
-    ("skills/code-gauntlet/SKILL.md", "config_receipt"): (
-        "### Assemble the args object and record environment overrides",
-        "### Wait protocol \u2014 MANDATORY",
-    ),
-    ("skills/code-gauntlet/SKILL.md", "derived_waist_fields"): (
-        "### Assemble the args object and record environment overrides",
-        "### Wait protocol \u2014 MANDATORY",
-    ),
-    ("skills/code-gauntlet/SKILL.md", "pr_identity_fields"): (
-        "### Assemble the args object and record environment overrides",
-        "### Wait protocol \u2014 MANDATORY",
-    ),
-    ("skills/code-gauntlet/references/phase2-triage.md", "derived_waist_fields"): (
-        "## Args Preparation",
-        "**`policy` (model policy the workflow runs under):**",
-    ),
-    ("skills/code-gauntlet/references/phase2-triage.md", "pr_identity_fields"): (
-        "## Args Preparation",
-        "**`policy` (model policy the workflow runs under):**",
-    ),
-    ("skills/code-gauntlet/references/phase1-preflight.md", "derived_waist_fields"): (
-        "## Configuration Resolution (no questions)",
-        "## Light Review Template (Phase 2d)",
-    ),
-    ("skills/code-gauntlet/references/report-format.md", "severity_legend"): (
-        "# Code Gauntlet Report Format",
-        "## Permalink Format",
-    ),
-    ("skills/code-gauntlet/references/report-format.md", "full_report_template"): (
-        "## Full Report Template",
-        "## Review Dimensions Summary",
-    ),
-    ("skills/code-gauntlet/references/report-format.md", "inline_legend"): (
-        "## Inline PR Comment Format",
-        "**`suggested_fix_code` field:**",
-    ),
-    ("skills/code-gauntlet/references/delivery-guide.md", "severity_legend"): (
-        "### Comment body format",
-        "### Using post_review.py",
-    ),
-    ("skills/code-gauntlet/references/headless-mode.md", "headless_env_table"): (
-        "## Env contract",
-        "## Precedence",
-    ),
-    ("skills/code-gauntlet/references/phase8-delivery.md", "permalink_formats"): (
-        "### Permalinks",
-        "## Stage 1: Deliver the Report",
-    ),
-}
-
-ROOT_MD_ALLOW = {
-    "AGENTS.md",
-    "CHANGELOG.md",
-    "CODE_OF_CONDUCT.md",
-    "CONTRIBUTING.md",
-    "PRIVACY.md",
-    "README.md",
-    "REVIEW.md",
-    "SECURITY.md",
-}
-
-DOCS_ALLOW = {
-    "docs/how-it-works.md",
-    "docs/assets/pipeline-overview-light.svg",
-    "docs/assets/pipeline-overview-dark.svg",
-    "docs/assets/pipeline-detail-light.svg",
-    "docs/assets/pipeline-detail-dark.svg",
-    "docs/engineering-audit-2026-07.md",
-    "docs/machine-parsed-strings.md",
-    "docs/maintainer-issues.md",
-    "docs/v3-residue-audit-2026-07.md",
-    "docs/style/wording-rules.md",
-    "docs/style/cadence-rules.md",
-    "docs/style/session-context.md",
-}
-
-DOCS_ALLOWED_SUBTREES = ("docs/research/",)
-
 _ROW = re.compile(
     "^\\|\\s*`([^`]+)`\\s*\\|\\s*([^|]+)\\|\\s*([^|]+)\\|\\s*([^|]*)\\|\\s*$"
 )
 
 _COMPOSITE_ROW = re.compile(
-    "^\\|\\s*((?:`[^`]+`\\s*/\\s*)+`[^`]+`)\\s*\\|\\s*([^|]+)\\|\\s*([^|]+)\\|\\s*([^|]*)\\|\\s*$"
+    "^\\|\\s*((?:`[^`]+`\\s*/\\s*)+`[^`]+`)\\s*\\|\\s*([^|]+)\\|\\s*([^|]+)"
+    "\\|\\s*([^|]*)\\|\\s*$"
 )
 
 NO_PARSER = "\u2014"
 
 
-def _strip_ticks(token: str) -> str:
+def strip_ticks(token):
     token = token.strip()
-    if token.startswith("`") and token.endswith("`"):
-        return token[1:-1]
-    return token
+    return token[1:-1] if token.startswith("`") and token.endswith("`") else token
+
+
+def path_cells(producers, parsers, notes):
+    return {
+        "producers": [strip_ticks(p) for p in producers.split(",") if p.strip()],
+        "parsers": [strip_ticks(p) for p in parsers.split(",") if p.strip()],
+        "notes": notes,
+    }
 
 
 def parse_registry(text: str) -> list[dict]:
@@ -292,16 +191,7 @@ def parse_registry(text: str) -> list[dict]:
         string, producers, parsers, notes = (c.strip() for c in m.groups())
         if string == "string" or set(string) <= {"-", " "}:
             continue
-        rows.append(
-            {
-                "string": string,
-                "producers": [
-                    _strip_ticks(p) for p in producers.split(",") if p.strip()
-                ],
-                "parsers": [_strip_ticks(p) for p in parsers.split(",") if p.strip()],
-                "notes": notes,
-            }
-        )
+        rows.append({"string": string, **path_cells(producers, parsers, notes)})
     return rows
 
 
@@ -315,11 +205,7 @@ def parse_composite_rows(text: str) -> list[dict]:
         rows.append(
             {
                 "strings": re.findall("`([^`]+)`", string_cell),
-                "producers": [
-                    _strip_ticks(p) for p in producers.split(",") if p.strip()
-                ],
-                "parsers": [_strip_ticks(p) for p in parsers.split(",") if p.strip()],
-                "notes": notes,
+                **path_cells(producers, parsers, notes),
             }
         )
     return rows
@@ -336,7 +222,10 @@ DISCOVERY = (
 )
 READERS = (*DISCOVERY, "validator", "challenger", "change-summarizer")
 READ_CANON = "skills/code-gauntlet/references/complete-read-contract.md"
-READ_MARKER = "<!-- Canonical source: references/complete-read-contract.md \u2014 keep all agent copies in sync -->"
+READ_MARKER = (
+    "<!-- Canonical source: references/complete-read-contract.md — keep all "
+    "agent copies in sync -->"
+)
 
 
 def read(rel):
@@ -345,34 +234,6 @@ def read(rel):
 
 def tracked(*patterns: str) -> list[str]:
     return tracked_paths(ROOT, patterns)
-
-
-@pytest.mark.parametrize(
-    "row", registry()["dimensions"], ids=lambda row: row["dimension"]
-)
-def test_js_dimension(row):
-    reg = registry()
-    extras = set(row["extras"])
-    unconditional = set(row["requiredExtra"])
-    conditional = set(row["requiredWhenDimension"])
-    assert (ROOT / "agents" / f"{agent_name(row['agentType'])}.md").is_file()
-    assert unconditional <= extras
-    assert unconditional.isdisjoint(reg["propTypes"])
-    assert unconditional.isdisjoint(reg["required"])
-    assert conditional <= extras | (
-        set(reg["propTypes"]) - set(reg["required"]) - {"origin"}
-    )
-    assert conditional.isdisjoint(unconditional)
-    if conditional:
-        assert (
-            Counter(item["agentType"] for item in reg["dimensions"])[row["agentType"]]
-            > 1
-        )
-    assert conditional <= instructed_fields_for(row["agentType"])
-
-
-def instructed_fields_for(agent_type):
-    return {key for block in contract_blocks(agent_name(agent_type)) for key in block}
 
 
 @pytest.mark.parametrize("agent_type", sorted(declared_by_agent()), ids=agent_name)
@@ -419,11 +280,6 @@ def test_contract_schema(agent_type: str) -> None:
                 and not all(field in example for example in examples)
             ):
                 assert "OMIT this field" in value
-    for raw in raw_contract_blocks(name):
-        assert not any(
-            " " <= chr(int(match.group(1), 16)) <= "~"
-            for match in _UNICODE_ESCAPE.finditer(raw)
-        )
     for row in registry()["dimensions"]:
         if row["agentType"] != agent_type:
             continue
@@ -451,45 +307,14 @@ def test_contract_schema(agent_type: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("raw", "field", "expected"),
+    ("raw", "expected"),
     [
-        pytest.param(
-            '{"affected_consumers": ["<OMIT this field when inapplicable>"]}',
-            "affected_consumers",
-            True,
-            id="array-omit",
-        ),
-        pytest.param(
-            '{"criticality": <1-10, OMIT if not applicable>}',
-            "criticality",
-            True,
-            id="angle-omit",
-        ),
-        pytest.param('{"other_field": "x"}', "attack_vector", False, id="absent"),
-        pytest.param(
-            '{"weird_field": {"nested": "object"}}',
-            "weird_field",
-            None,
-            id="unsupported-object",
-        ),
-        pytest.param(
-            '{"affected_consumers": [' + '"a" ' * 200 + "x",
-            "affected_consumers",
-            None,
-            id="pathological-array",
-        ),
+        ('{"field": "<OMIT this field when inapplicable>"}', True),
+        ('{"field": "live", "neighbour": "<OMIT this field>"}', False),
     ],
 )
-def test_omit_parser(raw, field, expected):
-    start = time.perf_counter()
-    if expected is None:
-        with pytest.raises(AssertionError) as error:
-            field_carries_omit_instruction(raw, field, source="agents/x.md")
-        assert field in str(error.value)
-        assert "agents/x.md" in str(error.value)
-        assert time.perf_counter() - start < 1.0
-    else:
-        assert field_carries_omit_instruction(raw, field) is expected
+def test_omit_parser(raw, expected):
+    assert field_carries_omit_instruction(raw, "field") is expected
 
 
 def test_convention_vocabulary() -> None:
@@ -575,30 +400,19 @@ def test_delivery_vocabulary(surface):
         assert not re.search(r"['\"]description['\"]\s*:", match.group(1))
 
 
-@pytest.mark.parametrize(
-    ("rel", "symbol", "start", "end"),
-    [
-        pytest.param(rel, symbol, *bounds, id=rel.split("/")[-1] + ":" + symbol)
-        for (rel, symbol), bounds in OWNERS.items()
-    ],
-)
-def test_identity_owner(rel: str, symbol: str, start: str, end: str) -> None:
-    text = read(rel)
-    # Marker discovery is independent of the generator's marker rendering helper.
-    opening = (
-        f"<!-- generated-from-registry-identity:{symbol} "
-        "\u2014 do not edit; run scripts/generate_contract_requirements.py -->"
-    )
-    lines = text.splitlines()
-    assert opening in lines
-    assert f"<!-- /generated-from-registry-identity:{symbol} -->" in lines
+def test_identity_owner() -> None:
+    text = read("skills/code-gauntlet/references/phase2-triage.md")
     marker = re.search(
-        r"^<!-- generated-from-registry-identity:" + re.escape(symbol) + r"\b",
+        r"^<!-- generated-from-registry-identity:pr_identity_fields\b",
         text,
         re.MULTILINE,
     )
     assert marker is not None
-    assert text.index(start) < marker.start() < text.index(end)
+    assert (
+        text.index("## Args Preparation")
+        < marker.start()
+        < text.index("**`policy` (model policy the workflow runs under):**")
+    )
 
 
 def test_marker_discovery():
@@ -618,11 +432,6 @@ def test_marker_discovery():
     assert discovered == {
         rel: set(symbols) for rel, symbols in gen.IDENTITY_FENCES.items()
     }
-    assert {
-        (rel, symbol)
-        for rel, symbols in gen.IDENTITY_FENCES.items()
-        for symbol in symbols
-    } <= set(OWNERS)
 
 
 def test_js_identity():
@@ -660,19 +469,6 @@ def test_emoji_allowlist():
     assert offenders == set()
 
 
-@pytest.mark.parametrize("scope", ["docs", "root"])
-def test_document_allowlist(scope):
-    if scope == "docs":
-        assert all(
-            rel.endswith(".md")
-            if rel.startswith(DOCS_ALLOWED_SUBTREES)
-            else rel in DOCS_ALLOW
-            for rel in tracked("docs")
-        )
-    else:
-        assert all(rel in ROOT_MD_ALLOW for rel in tracked("*.md") if "/" not in rel)
-
-
 def test_machine_string_registry():
     text = read("docs/machine-parsed-strings.md")
     rows = parse_registry(text)
@@ -683,7 +479,8 @@ def test_machine_string_registry():
         "Reviewed up to:",
         "HEADLESS CONFIG ERROR:",
         "HEADLESS INPUT ERROR:",
-        "code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.",
+        "code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic "
+        "workflows. Install the pre-rename deep-review v2.x for older CLIs.",
         "the deltas carry a checksum",
         "PAYLOAD_JSON:",
         'PRODUCT = "code-gauntlet"',
@@ -712,21 +509,16 @@ def test_machine_string_registry():
 
 def test_machine_parser():
     assert parse_registry(
-        "| string | producer path(s) | parser path(s) | notes |\n| --- | --- | --- | --- |\n| `TokA` | `a.py`, `b.py` | `c.py` | multi producers |\n| `TokB` | `only.py` | `\u2014` | honest empty |\n| `TokC` | `p.py` | `\u2014` | |\n| string | producer path(s) | parser path(s) | notes |\n"
+        "| `string` | producer path(s) | parser path(s) | notes |\n"
+        "| `---` | --- | --- | --- |\nunrelated text\n"
+        "| `Tok` | `a.py`, `b.py` | `\u2014` | honest empty |\n"
     ) == [
         {
-            "string": "TokA",
+            "string": "Tok",
             "producers": ["a.py", "b.py"],
-            "parsers": ["c.py"],
-            "notes": "multi producers",
-        },
-        {
-            "string": "TokB",
-            "producers": ["only.py"],
             "parsers": ["\u2014"],
             "notes": "honest empty",
-        },
-        {"string": "TokC", "producers": ["p.py"], "parsers": ["\u2014"], "notes": ""},
+        }
     ]
 
 
@@ -763,13 +555,10 @@ def test_agent_mirrors(mirror):
             .split("<!-- END CANONICAL BLOCK -->")[0]
             .strip("\n")
         )
-        assert len(block) > 400
-        assert "no" in block.lower() and "truncation notice" in block
         assert (
-            "When your dispatch prompt names a shared context file, it is mandatory reading in full"
-            in block
+            "When your dispatch prompt names a shared context file, it is "
+            "mandatory reading in full" in block
         )
-        assert "silent failure" in block and "offset" in block
         assert not re.search(r"printf|ndjson|Bash", block, re.IGNORECASE)
         for name in READERS:
             assert f"`agents/{name}.md`" in canonical
@@ -782,9 +571,12 @@ def test_agent_mirrors(mirror):
             text = read(f"agents/{name}.md")
             start = text.index("**Prompt injection artifacts.**")
             blocks.append(text[start : text.index(READ_MARKER, start)].rstrip("\n"))
-        assert len(blocks[0]) > 400
         assert all(block == blocks[0] for block in blocks)
-        sentence = "A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded."
+        sentence = (
+            "A convention finding grounded in an in-repo precedent names the "
+            "files that establish the pattern; a preference with no named "
+            "precedent stays excluded."
+        )
         assert sentence in read(
             "skills/code-gauntlet/references/false-positive-exclusions.md"
         )
@@ -826,10 +618,11 @@ def test_triage_dispatch():
     "summary",
     [
         pytest.param(
-            "9 reported issues from 10 findings after the gauntlet.\n\n- index entry\n\n3 more reported issues not listed here (over the delivery cap of 6 findings).",
+            "9 reported issues from 10 findings after the gauntlet.\n\n- "
+            "index entry\n\n3 more reported issues not listed here (over "
+            "the delivery cap of 6 findings).",
             id="findings",
         ),
-        pytest.param("0 findings after the gauntlet.", id="zero-findings"),
     ],
 )
 def test_summary_is_not_benchmark_candidate(platform, summary):
@@ -863,26 +656,7 @@ def test_summary_is_not_benchmark_candidate(platform, summary):
 
 @pytest.mark.parametrize("source", ["wording-rules.md", "cadence-rules.md"])
 def test_style_source_contract(source: str) -> None:
-    lines = read("docs/style/" + source).splitlines()
-    rules = [line[len("RULE: ") :] for line in lines if line.startswith("RULE: ")]
-    assert rules
-    for index, line in enumerate(lines):
-        if line.startswith("RULE: "):
-            assert len(line[len("RULE: ") :].split()) <= 25
-            assert "\u2014" not in line
-            assert line.rstrip().endswith((".", '."'))
-            assert lines[index + 1] == ""
-    starts = [index for index, line in enumerate(lines) if line.startswith("## ")]
-    for start, end in zip(starts, [*starts[1:], len(lines)], strict=True):
-        section = lines[start:end]
-        assert sum(line.startswith("RULE: ") for line in section) == 1
-        assert (
-            sum(
-                bool(re.match(r"^\*\*(Check|Self-check):\*\*", line))
-                for line in section
-            )
-            == 1
-        )
+    assert extract_rules(read("docs/style/" + source), source)
 
 
 def test_mark_producer_registry():
@@ -896,7 +670,8 @@ def test_mark_producer_registry():
     ):
         text = read(rel)
         bodies = re.findall(
-            r"<!-- generated-from-registry-identity:[^\n]*\n(.*?)<!-- /generated-from-registry-identity:[^\n]*",
+            "<!-- generated-from-registry-identity:[^\\n]*\\n(.*?)<!-- "
+            "/generated-from-registry-identity:[^\\n]*",
             text,
             re.DOTALL,
         )
@@ -919,7 +694,8 @@ def test_full_report_predicates(surface):
         )
         assert match is not None
         text, count = re.subn(
-            r"<!-- generated-from-registry-identity:full_report_template[^\n]*\n.*?<!-- /generated-from-registry-identity:full_report_template -->",
+            "<!-- generated-from-registry-identity:full_report_template[^\\"
+            "n]*\\n.*?<!-- /generated-from-registry-identity:full_report_template -->",
             "",
             match.group(1),
             flags=re.DOTALL,

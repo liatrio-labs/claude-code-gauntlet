@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CHILD_TIMEOUT_SECONDS = 300
 NODE_IDS = (
     "tests/test_output_dir.py::test_not_a_git_repository_is_usage_error",
-    "tests/test_fix_tasks.py::test_root_level_siblings_and_non_git_root",
+    "tests/test_fix_tasks.py::test_root_level_siblings_are_ranked_and_capped",
     "tests/test_config.py::test_usage_and_setup_fail_without_process_stream_noise[nonrepo]",
     "bench/tests/test_report.py::TestCli::test_git_sha_tolerates_non_repo",
     "tests/test_tasks.py::"
