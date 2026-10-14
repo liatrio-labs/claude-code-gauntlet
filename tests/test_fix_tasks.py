@@ -233,12 +233,20 @@ def test_unexpected_build_failure_keeps_stdout_empty(
     )
 
 
-def test_outside_path_is_omitted_and_counted(run_renderer, write_artifact):
-    write_artifact([make_finding(file="../outside.py")])
+# A symlink planted by the reviewed PR must not send the fix agent outside the repo.
+@pytest.mark.parametrize("file", ["../outside.py", "link.py"])
+def test_outside_path_is_omitted_and_counted(
+    file, request, fix_root, tmp_path, run_renderer, write_artifact
+):
+    if file == "link.py":
+        request.getfixturevalue("symlink_or_skip")
+        (tmp_path / "outside.py").write_text("x", encoding="utf-8")
+        (fix_root / "link.py").symlink_to(tmp_path / "outside.py")
+    write_artifact([make_finding(file=file)])
     result = run_renderer()
     task = output(result)[0]
     assert "(1 path rejected)" in result.stderr
-    assert "../outside.py" not in result.stdout
+    assert file not in result.stdout
     assert "## Location\n(path rejected: outside repo root)" in task["description"]
     assert task["metadata"]["scope"] == {
         "files_to_create": [],
