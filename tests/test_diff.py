@@ -1,6 +1,6 @@
 """Unified diff event and facts boundary proofs."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Literal, cast
 
@@ -32,6 +32,7 @@ from gauntlet.diff import (
     walk_diff,
 )
 
+from tests.conftest import Invocation
 from tests.support.diff import diff_facts
 
 
@@ -74,7 +75,14 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
             id="null-header",
         ),
         pytest.param(
-            "diff --git a/logo.png b/logo.png\nold mode 100644\nnew mode 100755\nindex 1111111..2222222\nsimilarity index 94%\nBinary files a/logo.png and b/logo.png differ\n",
+            (
+                "diff --git a/logo.png b/logo.png\n"
+                "old mode 100644\n"
+                "new mode 100755\n"
+                "index 1111111..2222222\n"
+                "similarity index 94%\n"
+                "Binary files a/logo.png and b/logo.png differ\n"
+            ),
             [HeaderEvent("git_header", "a/logo.png b/logo.png")],
             id="git-and-noise",
         ),
@@ -99,7 +107,17 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
             id="omitted-counts",
         ),
         pytest.param(
-            "+++ b/multi.py\n@@ -1,2 +1,3 @@\n a\n+b\n c\n@@ -50,2 +51,3 @@\n d\n+e\n f\n",
+            (
+                "+++ b/multi.py\n"
+                "@@ -1,2 +1,3 @@\n"
+                " a\n"
+                "+b\n"
+                " c\n"
+                "@@ -50,2 +51,3 @@\n"
+                " d\n"
+                "+e\n"
+                " f\n"
+            ),
             [
                 HeaderEvent("new_path", "b/multi.py"),
                 HunkEvent(1, 1, 2, 3),
@@ -135,7 +153,14 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
             id="newline-marker",
         ),
         pytest.param(
-            "--- a/schema.sql\n+++ b/schema.sql\n@@ -1,3 +1,2 @@\n CREATE TABLE t (\n--- deprecated: drop me\n );\n",
+            (
+                "--- a/schema.sql\n"
+                "+++ b/schema.sql\n"
+                "@@ -1,3 +1,2 @@\n"
+                " CREATE TABLE t (\n"
+                "--- deprecated: drop me\n"
+                " );\n"
+            ),
             [
                 HeaderEvent("old_path", "a/schema.sql"),
                 HeaderEvent("new_path", "b/schema.sql"),
@@ -147,7 +172,14 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
             id="minus-header-body",
         ),
         pytest.param(
-            "--- a/notes.md\n+++ b/notes.md\n@@ -1,2 +1,3 @@\n intro\n+++ x marks a diff-of-a-diff\n outro\n",
+            (
+                "--- a/notes.md\n"
+                "+++ b/notes.md\n"
+                "@@ -1,2 +1,3 @@\n"
+                " intro\n"
+                "+++ x marks a diff-of-a-diff\n"
+                " outro\n"
+            ),
             [
                 HeaderEvent("old_path", "a/notes.md"),
                 HeaderEvent("new_path", "b/notes.md"),
@@ -191,7 +223,22 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
             id="unterminated-last-line",
         ),
         pytest.param(
-            "diff --git a/gone.py b/gone.py\ndeleted file mode 100644\n--- a/gone.py\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-alpha\n-beta\n-gamma\ndiff --git a/next.py b/next.py\n--- a/next.py\n+++ b/next.py\n@@ -10,1 +10,2 @@\n ctx\n+added\n",
+            (
+                "diff --git a/gone.py b/gone.py\n"
+                "deleted file mode 100644\n"
+                "--- a/gone.py\n"
+                "+++ /dev/null\n"
+                "@@ -1,3 +0,0 @@\n"
+                "-alpha\n"
+                "-beta\n"
+                "-gamma\n"
+                "diff --git a/next.py b/next.py\n"
+                "--- a/next.py\n"
+                "+++ b/next.py\n"
+                "@@ -10,1 +10,2 @@\n"
+                " ctx\n"
+                "+added\n"
+            ),
             [
                 HeaderEvent("git_header", "a/gone.py b/gone.py"),
                 HeaderEvent("old_path", "a/gone.py"),
@@ -269,7 +316,12 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
             id="quoted-tab-terminator",
         ),
         pytest.param(
-            '--- "a/bad\\q.py"\n+++ "b/\\377.py"\n+++ "b/\\400.py"\n+++ "b/trailing\\"\n',
+            (
+                '--- "a/bad\\q.py"\n'
+                '+++ "b/\\377.py"\n'
+                '+++ "b/\\400.py"\n'
+                '+++ "b/trailing\\"\n'
+            ),
             [
                 HeaderEvent("old_path", '"a/bad\\q.py"'),
                 HeaderEvent("new_path", '"b/\\377.py"'),
@@ -594,7 +646,16 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             + _patch(
                 "a/b/inner.py",
                 "b/b/inner.py",
-                " line_02\n line_03\n line_04\n-line_05\n+changed_05\n line_06\n line_07\n line_08\n",
+                (
+                    " line_02\n"
+                    " line_03\n"
+                    " line_04\n"
+                    "-line_05\n"
+                    "+changed_05\n"
+                    " line_06\n"
+                    " line_07\n"
+                    " line_08\n"
+                ),
                 hunk="@@ -2,7 +2,7 @@ line_01",
             )
             + "diff --git a/src/added.py b/src/added.py\nnew file mode 100644\n"
@@ -608,7 +669,16 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             + _patch(
                 "a/src/edited.py",
                 "b/src/edited.py",
-                " line_02\n line_03\n line_04\n-line_05\n+changed_05\n line_06\n line_07\n line_08\n",
+                (
+                    " line_02\n"
+                    " line_03\n"
+                    " line_04\n"
+                    "-line_05\n"
+                    "+changed_05\n"
+                    " line_06\n"
+                    " line_07\n"
+                    " line_08\n"
+                ),
                 hunk="@@ -2,7 +2,7 @@ line_01",
             )
             + "diff --git a/src/removed.py b/src/removed.py\ndeleted file mode 100644\n"
@@ -618,7 +688,11 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
                 "-gone_1\n-gone_2\n",
                 hunk="@@ -1,2 +0,0 @@",
             )
-            + "diff --git a/old_name.py b/new_name.py\nrename from old_name.py\nrename to new_name.py\n"
+            + (
+                "diff --git a/old_name.py b/new_name.py\n"
+                "rename from old_name.py\n"
+                "rename to new_name.py\n"
+            )
             + _patch(
                 "a/old_name.py",
                 "b/new_name.py",
@@ -673,7 +747,11 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             + _patch("/dev/null", "b/café.py", "+a\n", hunk="@@ -0,0 +1 @@")
             + "diff --git a/my file.py b/my file.py\nnew file mode 100644\n"
             + _patch("/dev/null", "b/my file.py", "+added_01\n", hunk="@@ -0,0 +1 @@")
-            + "diff --git a/old name.py b/new name.py\nrename from old name.py\nrename to new name.py\n"
+            + (
+                "diff --git a/old name.py b/new name.py\n"
+                "rename from old name.py\n"
+                "rename to new name.py\n"
+            )
             + _patch(
                 "a/old name.py",
                 "b/new name.py",
@@ -808,7 +886,15 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             id="one-pair-proof:failed-proof-consumed",
         ),
         pytest.param(
-            "diff --git a/x.py b/x.py\n--- /dev/null\ndiff --git a/y.py b/y.py\n+++ b/y.py\n@@ -1 +1 @@\n-o\n+n\n",
+            (
+                "diff --git a/x.py b/x.py\n"
+                "--- /dev/null\n"
+                "diff --git a/y.py b/y.py\n"
+                "+++ b/y.py\n"
+                "@@ -1 +1 @@\n"
+                "-o\n"
+                "+n\n"
+            ),
             ("glab-verbatim",),
             {"b/y.py": {1: (None, "n")}},
             set(),
@@ -909,7 +995,13 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             id="consumed-old",
         ),
         pytest.param(
-            "diff --git a/empty_new.py b/empty_new.py\nnew file mode 100644\nindex 0000000..e69de29\n--- /dev/null\n+++ b/empty_new.py\n",
+            (
+                "diff --git a/empty_new.py b/empty_new.py\n"
+                "new file mode 100644\n"
+                "index 0000000..e69de29\n"
+                "--- /dev/null\n"
+                "+++ b/empty_new.py\n"
+            ),
             ("git-prefixed", "glab-verbatim"),
             {},
             {"empty_new.py"},
@@ -989,7 +1081,12 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             id="literal-quote-limitation",
         ),
         pytest.param(
-            'diff --git "a/caf\\303\\251 old.py" b/new.py\nsimilarity index 100%\nrename from "caf\\303\\251 old.py"\nrename to new.py\n'
+            (
+                'diff --git "a/caf\\303\\251 old.py" b/new.py\n'
+                "similarity index 100%\n"
+                'rename from "caf\\303\\251 old.py"\n'
+                "rename to new.py\n"
+            )
             + _patch(
                 '"a/caf\\303\\251 old.py"', "b/new.py", " ctx\n", hunk="@@ -1 +1 @@"
             ),
@@ -1369,7 +1466,11 @@ def test_path_old_path(facts: DiffFacts | None, path: str, expected: str) -> Non
             id="body-binary",
         ),
         pytest.param(
-            " Binary files a/x and b/x differ\nBinary files a/x and b/x differ!\n+Binary files a/x and b/x differ\n",
+            (
+                " Binary files a/x and b/x differ\n"
+                "Binary files a/x and b/x differ!\n"
+                "+Binary files a/x and b/x differ\n"
+            ),
             DiffCounts(0, 0, 0),
             id="binary-exact-prose",
         ),
@@ -1379,10 +1480,39 @@ def test_path_old_path(facts: DiffFacts | None, path: str, expected: str) -> Non
         pytest.param(
             _fixture("git_style_spaces.diff"), DiffCounts(4, 1, 0), id="captured-spaces"
         ),
+        pytest.param(
+            "".join(
+                _fixture(name)
+                for name in (
+                    "added.diff",
+                    "deleted.diff",
+                    "git_style.diff",
+                    "git_style_spaces.diff",
+                    "modified.diff",
+                    "rename.diff",
+                )
+            ),
+            DiffCounts(27, 11, 0),
+            id="captured-glab-corpus",
+        ),
     ],
 )
 def test_counts(diff_text: str, expected: DiffCounts) -> None:
     assert diff_counts(diff_text) == expected
+
+
+def test_numstat_crlf_binary(tmp_path: Path, invoke: Callable[..., Invocation]) -> None:
+    patch = (
+        b"diff --git a/a.bin b/a.bin\r\nnew file mode 100644\r\n"
+        b"Binary files /dev/null and b/a.bin differ\r\n"
+        b"diff --git a/t.txt b/t.txt\r\n--- a/t.txt\r\n+++ b/t.txt\r\n"
+        b"@@ -1 +1 @@\r\n-old\r\n+new\r\n"
+    )
+    patch_path = tmp_path / "crlf.patch"
+    patch_path.write_bytes(patch)
+    result = invoke("diff_numstat", [str(patch_path)], tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == b"changed_lines=2\nbinary_files=1\n"
 
 
 @pytest.mark.parametrize(
@@ -1433,7 +1563,11 @@ def test_fixture_anchors(
         pytest.param(
             "glab-verbatim",
             "--- b/inner.py\n+++ b/inner.py\n",
-            "diff --git a/b/inner.py b/b/inner.py\n--- a/b/inner.py\n+++ b/b/inner.py\n",
+            (
+                "diff --git a/b/inner.py b/b/inner.py\n"
+                "--- a/b/inner.py\n"
+                "+++ b/b/inner.py\n"
+            ),
             "b/inner.py",
             "inner.py",
             (True, False),
@@ -1511,7 +1645,13 @@ def test_path_aliases(
                 " keep\n+added\n tail\n",
                 hunk="@@ -1,2 +1,3 @@",
             )
-            + "diff --git a/logo.png b/logo.png\nindex 3333333..4444444 100644\nBinary files a/logo.png and b/logo.png differ\ndiff --git a/next.py b/next.py\nindex 5555555..6666666 100644\n"
+            + (
+                "diff --git a/logo.png b/logo.png\n"
+                "index 3333333..4444444 100644\n"
+                "Binary files a/logo.png and b/logo.png differ\n"
+                "diff --git a/next.py b/next.py\n"
+                "index 5555555..6666666 100644\n"
+            )
             + _patch(
                 "a/next.py", "b/next.py", " ctx\n+added2\n", hunk="@@ -10,1 +10,2 @@"
             ),

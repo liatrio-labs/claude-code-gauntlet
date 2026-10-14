@@ -1,31 +1,45 @@
-"""Persisted findings must carry both canonical verifier fields and delivery aliases."""
+"""Persisted findings and resolver payloads cross the live runtime boundaries."""
 
-import contextlib
-import io
 import json
-import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
-import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import patch
 
-import gauntlet.delivery.post as post_review
-import gauntlet.patches as report_patches
 import gauntlet.text as outbound_text
 import pytest
 from gauntlet import config as resolve_config
-from gauntlet import contract_gen as generate_contract_requirements
+from gauntlet import patches as report_patches
 from gauntlet.delivery import compose
+from gauntlet.delivery.input import Finding
 
 from bench.runner import invoke
-from tests.support.forge import FakeForge
+from tests.support.forge import FakeForgeFactory
+from tests.support.pipeline import (
+    REPO,
+    PersistedPayload,
+    build_gh_diff,
+    methodology_input,
+    run_node,
+)
+from tests.support.posting import invoke_posting
 
-REPO = Path(__file__).resolve().parents[1]
+READ_INPUT = (
+    "let source = ''; for await (const chunk of process.stdin) source += chunk;"
+)
+RENDER_REPORT = (
+    "import { renderReport } from './workflows/src/renderReport.js';"
+    + READ_INPUT
+    + "process.stdout.write(renderReport(JSON.parse(source)));"
+)
+RENDER_SUMMARIES = (
+    "import { renderReport, renderSummaryBody } "
+    "from './workflows/src/renderReport.js';"
+    + READ_INPUT
+    + "const x=JSON.parse(source);"
+)
 
 
 @pytest.mark.parametrize(
@@ -43,26 +57,12 @@ def test_summary_and_skipped_location_bytes(filepath: str, expected: str) -> Non
         "line_start": 12,
         "title": "Location",
     }
-    result = subprocess.run(
-        [
-            "node",
-            "--input-type=module",
-            "-e",
-            (
-                "import { renderSummaryBody } from './workflows/src/renderReport.js';"
-                "let source = ''; for await (const chunk of process.stdin) source += chunk;"
-                "process.stdout.write(renderSummaryBody(JSON.parse(source)));"
-            ),
-        ],
-        input=json.dumps({"findings": [finding]}),
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=30,
-        check=True,
-    )
-    summary = result.stdout
+    summary = run_node(
+        "import { renderSummaryBody } from './workflows/src/renderReport.js';"
+        + READ_INPUT
+        + "process.stdout.write(renderSummaryBody(JSON.parse(source)));",
+        {"findings": [finding]},
+    ).stdout
     assert expected in summary
     assert outbound_text.prepare_prose(summary) == summary
     skipped = compose.build_skipped_section(
@@ -75,338 +75,487 @@ def test_summary_and_skipped_location_bytes(filepath: str, expected: str) -> Non
     assert location.encode("utf-8") in summary.encode("utf-8")
 
 
-RECORDER = REPO / "workflows" / "test" / "tools" / "emit_persisted_findings.mjs"
-IDENTITY_SCRIPT = REPO / "scripts" / "resolve_pr_identity.py"
-
-# The canonical fields the brief pins as the pipeline schema surface (Task 13 Step 4).
-CANONICAL_FIELDS = [
-    "id",
-    "title",
-    "description",
-    "dimension",
-    "severity",
-    "confidence",
-    "file",
-    "line_start",
-    "line_end",
-    "origin",
-    "cross_file_refs",
-    "report_destination",
-]
-# The v2 aliases the retained post_review poster indexes/reads.
-V2_ALIAS_FIELDS = ["file", "line", "body", "end_line"]
-
-# The fields issue #47 added to the schema. Before that change every one of them was
-# instructed by an agent contract, declared by no schema, and therefore discarded at the
-# discovery StructuredOutput boundary — so nothing downstream, including this boundary,
-# ever saw them. The recorder seeds them onto the findings it drives through the WIRED
-# pipeline, which makes the assertions below an end-to-end carriage proof rather than a
-# restatement of the registry: if any stage between discovery and persist starts
-# reconstructing findings field-by-field, they vanish here.
-ISSUE_47_FIELDS = [
-    "suggestion",
-    "claude_md_rule",
-    "spec_text",
-    "criticality",
-    "failure_scenario",
-]
-
-
-class TestSummaryIndexParity(unittest.TestCase):
-    def test_permalinked_summary_slice_and_guard_equality(self):
-        fixture = {
-            "prIdentity": {
-                "platform": "github",
-                "web_origin": "https://github.com",
-                "owner": "o",
-                "repo": "r",
-                "sha_full": "a" * 40,
-            },
-            "findings": [
-                {
-                    "id": "p",
-                    "severity": "high",
-                    "file": "app/@modal/<Slot>.tsx",
-                    "line_start": 8,
-                    "title": "Use `foo()` and `<Slot>`; mail dev@example.test; &#٦٤;",
-                },
-                {
-                    "id": "crossing-location",
-                    "severity": "low",
-                    "file": "src/a<`b.py",
-                    "line_start": 1,
-                    "title": "Path boundary",
-                },
-                {
-                    "id": "wikilink-location",
-                    "severity": "low",
-                    "file": "app/[[...slug]]/page.tsx",
-                    "line_start": 12,
-                    "title": "Wikilink path",
-                },
-                {
-                    "id": "image-location",
-                    "severity": "low",
-                    "file": "src/![a](u).py",
-                    "line_start": 12,
-                    "title": "Image path",
-                },
-            ],
-        }
-        script = (
-            "import {renderReport,renderSummaryBody} from './workflows/src/renderReport.js';"
-            "const x="
-            + json.dumps(fixture)
-            + ";process.stdout.write(JSON.stringify([renderReport(x),renderSummaryBody(x)]));"
-        )
-        result = subprocess.run(
-            ["node", "--input-type=module", "-e", script],
-            cwd=REPO,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=30,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        report, summary = json.loads(result.stdout)
-        self.assertEqual(compose.summary_body_from_report(report), summary)
-        self.assertEqual(outbound_text.prepare_prose(summary), summary)
-        self.assertIn("app/\uff20modal/\uff1cSlot>.tsx", summary)
-        self.assertIn("dev@example.test", summary)
-        self.assertIn("&#٦٤;", summary)
-        self.assertIn("%40modal", summary)
-        self.assertIn("%3CSlot%3E.tsx", summary)
-        self.assertIn("src/a\uff1c`b.py", summary)
-        self.assertIn("src/a%3C%60b.py", summary)
-
-    def test_delivered_groups_and_summary_slice_cross_runtime(self):
-        findings = [
+def test_permalinked_summary_slice_and_guard_equality() -> None:
+    fixture = {
+        "prIdentity": {
+            "platform": "github",
+            "web_origin": "https://github.com",
+            "owner": "o",
+            "repo": "r",
+            "sha_full": "a" * 40,
+        },
+        "findings": [
             {
                 "id": "p",
-                "title": "Primary",
-                "file": "a.js",
+                "severity": "high",
+                "file": "app/@modal/<Slot>.tsx",
+                "line_start": 8,
+                "title": (
+                    "Use `foo()` and `<Slot>`; mail dev@example.test; &#\u0666\u0664;"
+                ),
+            },
+            {
+                "id": "crossing-location",
+                "severity": "low",
+                "file": "src/a<`b.py",
                 "line_start": 1,
-                "severity": "high",
-                "confidence": 10,
-                "consolidation_key": "g",
-                "consolidation_primary": True,
+                "title": "Path boundary",
             },
+        ],
+    }
+    rendered: list[str] = json.loads(
+        run_node(
+            RENDER_SUMMARIES + "process.stdout.write(JSON.stringify([renderReport(x),"
+            "renderSummaryBody(x)]));",
+            fixture,
+        ).stdout
+    )
+    report, summary = rendered
+    assert compose.summary_body_from_report(report) == summary
+    assert outbound_text.prepare_prose(summary) == summary
+    assert "app/\uff20modal/\uff1cSlot>.tsx" in summary
+    assert "dev@example.test" in summary
+    assert "&#\u0666\u0664;" in summary
+    assert "%40modal" in summary
+    assert "%3CSlot%3E.tsx" in summary
+    assert "src/a\uff1c`b.py" in summary
+    assert "src/a%3C%60b.py" in summary
+
+
+def test_withheld_primary_summary_cross_runtime() -> None:
+    findings = [
+        {
+            "id": "p",
+            "title": "Primary",
+            "file": "a.js",
+            "line_start": 1,
+            "severity": "high",
+            "confidence": 10,
+            "consolidation_key": "g",
+            "consolidation_primary": True,
+        },
+        {
+            "id": "c",
+            "title": "Lower ranked child",
+            "file": "lower.js",
+            "line_start": 11,
+            "severity": "high",
+            "confidence": 60,
+            "consolidation_key": "g",
+            "consolidation_primary": False,
+        },
+        {
+            "id": "h",
+            "title": "Higher ranked child",
+            "file": "higher.js",
+            "line_start": 12,
+            "severity": "high",
+            "confidence": 95,
+            "consolidation_key": "g",
+            "consolidation_primary": False,
+        },
+    ]
+    rendered: list[str] = json.loads(
+        run_node(
+            RENDER_SUMMARIES + "x.delivered=x.deliveredIndexes.map(i=>x.findings[i]);"
+            "delete x.deliveredIndexes;"
+            "process.stdout.write(JSON.stringify([renderReport(x),"
+            "renderSummaryBody(x)]));",
             {
-                "id": "c",
-                "title": "Lower ranked child",
-                "file": "lower.js",
-                "line_start": 11,
-                "severity": "high",
-                "confidence": 60,
-                "consolidation_key": "g",
-                "consolidation_primary": False,
-            },
-            {
-                "id": "h",
-                "title": "Higher ranked child",
-                "file": "higher.js",
-                "line_start": 12,
-                "severity": "high",
-                "confidence": 95,
-                "consolidation_key": "g",
-                "consolidation_primary": False,
-            },
-        ]
-        for delivered_indexes in ([], [0, 1, 2], [1], [2, 1]):
-            fixture = {
                 "summary": "The PR claims to change things.",
                 "findings": findings,
-                "deliveredIndexes": delivered_indexes,
-            }
-            script = (
-                "import {renderReport, renderSummaryBody} from './workflows/src/renderReport.js'; const x="
-                + json.dumps(fixture)
-                + "; x.delivered=x.deliveredIndexes.map(i=>x.findings[i]); delete x.deliveredIndexes; process.stdout.write(JSON.stringify([renderReport(x),renderSummaryBody(x)]));"
-            )
-            result = subprocess.run(
-                ["node", "--input-type=module", "-e", script],
-                cwd=REPO,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=30,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            report, body = json.loads(result.stdout)
-            self.assertEqual(compose.summary_body_from_report(report), body)
-            delivered = [findings[index] for index in delivered_indexes]
-            groups = compose.consolidate_delivery(delivered)
-            bullets = [line for line in body.splitlines() if line.startswith("- ")]
-            self.assertEqual(len(bullets), len(groups))
-            for group, bullet in zip(groups, bullets, strict=True):
-                self.assertIn(group.primary["title"], bullet)
-                self.assertIn(group.primary["file"], bullet)
-            if delivered_indexes == [2, 1]:
-                self.assertEqual(len(bullets), 1)
-                self.assertIn("Higher ranked child", bullets[0])
-                self.assertNotIn("Lower ranked child", bullets[0])
-            self.assertNotIn("The PR claims", body)
+                "deliveredIndexes": [2, 1],
+            },
+        ).stdout
+    )
+    report, body = rendered
+    assert compose.summary_body_from_report(report) == body
+    delivered = cast("list[Finding]", [findings[2], findings[1]])
+    groups = compose.consolidate_delivery(delivered)
+    bullets = [line for line in body.splitlines() if line.startswith("- ")]
+    assert len(bullets) == len(groups) == 1
+    assert groups[0].primary["title"] == "Higher ranked child"
+    assert groups[0].primary["title"] in bullets[0]
+    assert groups[0].primary["file"] in bullets[0]
+    assert "Lower ranked child" not in bullets[0]
+    assert "The PR claims" not in body
 
 
-def load_pipeline_payload():
-    """Run the wired pipeline and return its real persisted payload."""
-    tmp = tempfile.mkdtemp()
-    try:
-        out = os.path.join(tmp, "persisted.json")
-        proc = subprocess.run(
-            ["node", str(RECORDER), out],
-            cwd=str(REPO),
-            capture_output=True,
-            text=True,
-            timeout=60,
-            encoding="utf-8",
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(f"recorder failed: {proc.stderr}")
-        with open(out, encoding="utf-8") as fh:
-            return json.load(fh)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+def test_pipeline_fields_reach_poster(
+    pipeline_payload: PersistedPayload,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    forge_factory: FakeForgeFactory,
+) -> None:
+    findings = pipeline_payload["findings"]
+    assert [finding["id"] for finding in findings] == ["F1", "F2"]
+    assert findings[0]["suggestion"] == (
+        "Guard the member lookup before dereferencing it on the API-key path."
+    )
+    assert findings[0]["claude_md_rule"] == (
+        "Every auth path must null-check the member (CLAUDE.md section 4)"
+    )
+    assert findings[1]["suggestion"] == (
+        "Add a test that raises PaymentGatewayError and asserts the rollback."
+    )
+    assert findings[1]["spec_text"] == (
+        "A failed payment MUST leave no partial transaction."
+    )
+    assert findings[1]["criticality"] == 9
+    assert findings[1]["failure_scenario"] == (
+        "A regression dropping the rollback would go undetected."
+    )
+    result = invoke_posting(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        forge_factory,
+        pipeline_payload["postReview"],
+        diff=build_gh_diff(findings),
+    )
+    assert result.code == 0, result.err
+    assert result.payload is not None
+    assert result.payload["platform"] == "github"
+    comments = result.payload["payload"]["comments"]
+    assert len(comments) == 2
+    for finding, comment in zip(findings, comments, strict=True):
+        body = comment["body"]
+        assert "**Suggested fix:**" in body
+        assert finding["suggestion"] in body
+        assert "**Cited rule:**" in body
+        assert (finding.get("claude_md_rule") or finding["spec_text"]) in body
+        trailer = "\u2694\ufe0f *Code Gauntlet*"
+        assert body.splitlines()[-1] == trailer
+        assert body.count(trailer) == 1
 
 
-# Recorded once for the module — the pipeline persist output is deterministic.
-PERSISTED_PAYLOAD = load_pipeline_payload()
-PERSISTED_FINDINGS = PERSISTED_PAYLOAD["findings"]
+def test_missing_line_alias_degrades_gracefully_not_a_crash(
+    pipeline_payload: PersistedPayload,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    forge_factory: FakeForgeFactory,
+) -> None:
+    findings = pipeline_payload["findings"]
+    stripped = [
+        {
+            key: value
+            for key, value in finding.items()
+            if key not in ("line", "end_line", "body")
+        }
+        for finding in findings
+    ]
+    result = invoke_posting(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        forge_factory,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Code gauntlet summary",
+            "findings": stripped,
+        },
+        diff=build_gh_diff(findings),
+    )
+    assert result.code == 0, result.err
+    assert result.payload is not None
+    payload = result.payload["payload"]
+    assert len(payload["comments"]) == 0
+    assert "could not be anchored inline" in payload["body"]
 
 
-def build_gh_diff(findings):
-    """A unified diff (as `gh pr diff` would emit) making every finding's (file, line)
-    a valid inline-comment anchor — derived from the REAL findings, not hard-coded."""
-    max_line = {}
-    for f in findings:
-        line = int(f.get("line") or f.get("line_start") or 1)
-        max_line[f["file"]] = max(max_line.get(f["file"], 0), line)
-    parts = []
-    for path, ml in max_line.items():
-        n = ml + 1  # new-side lines 1..n (>= the finding's line)
-        parts.append(f"diff --git a/{path} b/{path}\n")
-        parts.append(f"--- a/{path}\n")
-        parts.append(f"+++ b/{path}\n")
-        parts.append(f"@@ -1,1 +1,{n} @@\n")
-        parts.append(" context\n")
-        for i in range(2, n + 1):
-            parts.append(f"+added {i}\n")
-    return "".join(parts)
+@pytest.mark.parametrize(
+    ("drop_end_alias", "kept", "reasons"),
+    [
+        pytest.param(False, 2, {}, id="kept"),
+        pytest.param(True, 0, {"missing_end_line": 2}, id="missing-end-alias"),
+    ],
+)
+def test_pipeline_patch_alias_contract(
+    drop_end_alias: bool,
+    kept: int,
+    reasons: dict[str, int],
+    pipeline_payload: PersistedPayload,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    findings = pipeline_payload["findings"]
+    diff = build_gh_diff(findings)
+    for finding in findings:
+        finding["suggested_fix_code"] = "const patched = true;"
+        if drop_end_alias:
+            finding.pop("end_line", None)
+    (tmp_path / "code-gauntlet-findings-abc1234.json").write_text(
+        json.dumps(findings), encoding="utf-8"
+    )
+    (tmp_path / "code-gauntlet-diff-abc1234.patch").write_text(diff, encoding="utf-8")
+    code = report_patches.CLI.invoke(
+        ["--output-dir", str(tmp_path), "--head-sha", "abc1234"]
+    )
+    output = capsys.readouterr().out
+    assert code == 0, output
+    receipt: dict[str, Any] = json.loads(output.strip().splitlines()[-1])
+    assert receipt["kept"] == kept
+    assert receipt["reasons"] == reasons
+    assert receipt["findings"] == receipt["candidates"] == 2
+    assert receipt["downgraded"] == 2 - kept
 
 
-@contextlib.contextmanager
-def _boundary_run(factory, diff):
-    factory.configure(FakeForge(diffs=[(diff, "", 0)]))
-    with patch("gauntlet.proc.run", side_effect=_fake_run()):
-        yield
+@pytest.mark.parametrize("mode", ["headless", "interactive"])
+def test_both_receipt_modes_cross_the_bench_parsers(mode: str) -> None:
+    if mode == "headless":
+        echo = {
+            "model_tier": {"value": "optimized", "source": "env"},
+            "delivery": {"value": "pr_comments,markdown", "source": "env"},
+            "post_mode": {"value": "dry-run", "source": "env"},
+            "pr_comment_cap": {"value": "25", "source": "env"},
+            "delivery_tier": {"value": "all", "source": "default"},
+            "draft_policy": {"value": "review", "source": "env"},
+            "reviewed_policy": {"value": "full", "source": "env"},
+            "pr_not_found_policy": {"value": "error", "source": "env"},
+            "trivial_scope": {"value": "full", "source": "env"},
+        }
+        expected = dict(invoke.EXPECTED_ECHO)
+    else:
+        echo = {
+            "model_tier": {"value": "optimized", "source": "fixed"},
+            "pr_comment_cap": {"value": "null", "source": "default"},
+            "delivery_tier": {"value": "all", "source": "default"},
+            "review_md": {"value": "absent", "source": "discovery"},
+        }
+        expected = {
+            "model_tier": "optimized",
+            "delivery_tier": "all",
+            "pr_comment_cap": "null",
+            "review_md": "absent",
+        }
+    report = run_node(
+        RENDER_REPORT,
+        methodology_input(mode, echo, delivery_cap=25 if mode == "headless" else None),
+    ).stdout
+    with patch.object(invoke, "EXPECTED_ECHO", expected):
+        assert invoke._echo_in_text(report), mode
+    assert dict(invoke._IDENTITY_LINE_RE.findall(report)) == {
+        "pipeline_version": "3.26.0",
+        "plugin_root": "/absolute/path/to/claude-code-gauntlet",
+    }
 
 
-def _fake_run(remote="git@github.com:o/r.git\n"):
-    """Mock read-only CLI calls while dry-run suppresses POSTs."""
-
-    def _run(cmd, *_a, **_k):
-        def res(out="", err="", rc=0):
-            return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
-
-        if cmd[:3] == ["git", "remote", "get-url"]:
-            return res(out=remote)
-        if cmd[:2] == ["git", "rev-parse"]:
-            return res(out="deadbeefcafe\n")
-        raise AssertionError(f"Unexpected Git call: {cmd}")
-
-    return _run
-
-
-class TestSchemaCarriesBoundaryFields(unittest.TestCase):
-    """The REAL persisted finding carries every field the two boundaries read."""
-
-    def test_canonical_fields_all_present(self):
-        f = PERSISTED_FINDINGS[0]
-        for field in CANONICAL_FIELDS:
-            self.assertIn(
-                field,
-                f,
-                f"persisted pipeline finding must carry canonical field '{field}'",
-            )
-
-    def test_v2_aliases_present_for_retained_poster(self):
-        f = PERSISTED_FINDINGS[0]
-        for field in V2_ALIAS_FIELDS:
-            self.assertIn(
-                field,
-                f,
-                f"persisted schema must carry v2 alias '{field}' for post_review.py",
-            )
-
-    def test_real_emitted_wrapper_carries_platform_in_wire_order(self):
-        # Mutation: drop platform from postReviewWrapper; the recorder's actual wrapper turns red.
-        self.assertEqual(
-            list(PERSISTED_PAYLOAD["postReview"]),
-            [
-                "owner",
-                "repo",
-                "pr_number",
-                "sha",
-                "platform",
-                "review_body",
-                "findings",
-            ],
-        )
-
-    def test_aliases_mirror_canonical_values(self):
-        f = PERSISTED_FINDINGS[0]
-        self.assertEqual(f["line"], f["line_start"])
-        self.assertEqual(f["end_line"], f["line_end"])
-        self.assertEqual(f["body"], f["description"])
-
-    def test_issue_47_fields_survive_the_whole_pipeline_to_persist(self):
-        # Discovery -> merge -> verify echo -> validate -> filter -> challenge -> persist.
-        # Every hop must carry these; the two schema hops (discovery dispatch and the verify
-        # echo) are the ones that used to drop them.
-        seen = {field for f in PERSISTED_FINDINGS for field in f}
-        missing = [field for field in ISSUE_47_FIELDS if field not in seen]
-        self.assertEqual(
-            missing,
-            [],
-            f"fields lost somewhere between discovery and persist: {missing}",
-        )
-
-    def test_issue_47_field_values_are_not_hollowed_out(self):
-        # Present-but-empty is the failure mode a presence check alone would pass: a stage
-        # that reconstructs findings through an under-declared schema tends to keep the key
-        # and drop the content (exactly what the verify executor once did to `description`).
-        values = {}
-        for f in PERSISTED_FINDINGS:
-            for field in ISSUE_47_FIELDS:
-                if field in f:
-                    values.setdefault(field, []).append(f[field])
-        for field, vals in values.items():
-            self.assertTrue(
-                any(v not in (None, "", []) for v in vals),
-                f"'{field}' survived to persist but every value is empty",
-            )
+@pytest.mark.parametrize(
+    ("mode", "carrier", "value", "token"),
+    [
+        pytest.param("headless", None, None, None, id="headless-default"),
+        pytest.param("interactive", None, None, None, id="interactive-default"),
+        pytest.param("headless", "value", "`code`", "code", id="backticks"),
+        pytest.param("interactive", "source", "env\rinjected", "env injected", id="cr"),
+        pytest.param("headless", "pipeline_version", "v\nnext", "v next", id="lf"),
+        pytest.param("interactive", "plugin_root", "\t/root\t", "/root", id="trim"),
+        pytest.param("headless", "value", "a  b", "a b", id="spaces"),
+        pytest.param("interactive", "source", "", "unknown", id="empty-source"),
+    ],
+)
+def test_receipt_rendering_parity(
+    mode: str, carrier: str | None, value: str | None, token: str | None
+) -> None:
+    resolved = resolve_config.resolve(mode, {}, None, "pr")
+    echo = resolved["configEcho"]
+    if mode == "interactive":
+        echo["review_md"] = {"value": "absent", "source": "discovery"}
+    identity = {"pipeline_version": "version", "plugin_root": "/absolute/root"}
+    if carrier in ("value", "source"):
+        echo["model_tier"][carrier] = value
+    elif carrier is not None:
+        assert value is not None
+        identity[carrier] = value
+    expected = resolve_config.render_block(mode, echo, identity)
+    report = run_node(
+        RENDER_REPORT,
+        methodology_input(
+            mode,
+            echo,
+            pipeline_version=identity["pipeline_version"],
+            plugin_root=identity["plugin_root"],
+        ),
+    ).stdout
+    label = "Headless" if mode == "headless" else "Resolved"
+    match = re.search(rf"```text\n({label} config:\n(?:  [^\n]+\n)+)```", report)
+    assert match is not None
+    actual = match.group(1).rstrip("\n")
+    assert actual == expected
+    if carrier is None:
+        source = "default" if mode == "headless" else "fixed"
+        assert f"  model_tier=optimized ({source})" in actual
+        assert "  pipeline_version=version (bundle)" in actual
+        assert "  plugin_root=/absolute/root (resolved)" in actual
+        assert "  delivery_tier=all (default)" in actual
+    else:
+        key = carrier if carrier in identity else "model_tier"
+        if carrier == "source":
+            assert f"  {key}=optimized ({token})" in actual
+        else:
+            assert f"  {key}={token} (" in actual
 
 
-def test_verify_consumes_pipeline_findings_without_error(tmp_path):
-    """Receipt verification consumes the wired pipeline's persisted findings."""
+@pytest.mark.parametrize(
+    ("mode", "env", "light_eligible", "with_detector", "cap", "tier"),
+    [
+        pytest.param("headless", {}, False, False, 6, "all", id="headless"),
+        pytest.param(
+            "headless",
+            {
+                "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
+                "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
+                "CODE_GAUNTLET_REVIEWED_POLICY": "skip",
+                "CODE_GAUNTLET_TRIVIAL_SCOPE": "light",
+            },
+            True,
+            True,
+            25,
+            "main_only",
+            id="combined-with-detector",
+        ),
+        pytest.param(
+            "headless",
+            {"CODE_GAUNTLET_TRIVIAL_SCOPE": "light"},
+            True,
+            False,
+            6,
+            "all",
+            id="eligible-light",
+        ),
+        pytest.param("interactive", {}, False, False, None, "all", id="interactive"),
+        pytest.param(
+            "interactive",
+            {
+                "CODE_GAUNTLET_PR_COMMENT_CAP": "0",
+                "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
+            },
+            False,
+            False,
+            0,
+            "main_only",
+            id="zero-cap",
+        ),
+        pytest.param(
+            "interactive",
+            {"CODE_GAUNTLET_PR_COMMENT_CAP": "null"},
+            False,
+            False,
+            None,
+            "all",
+            id="explicit-null",
+        ),
+    ],
+)
+def test_resolver_payload_crosses_args_waist(
+    mode: str,
+    env: dict[str, str],
+    light_eligible: bool,
+    with_detector: bool,
+    cap: int | None,
+    tier: str,
+) -> None:
+    payload = resolve_config.resolve(mode, env, None, "pr")
+    payload["mode"] = mode
+    if with_detector:
+        payload["reviewScope"] = {
+            "kind": "full",
+            "since": None,
+            "commits": None,
+            "detector": {
+                "previously_reviewed": True,
+                "sha_resolvable": True,
+                "head_advanced": True,
+                "sha_is_ancestor": True,
+                "incremental_safe": True,
+                "error": None,
+            },
+        }
+    result: dict[str, Any] = json.loads(
+        run_node(
+            "import { normalizeArgsReport, validateArgs } "
+            "from './workflows/src/args.js';"
+            "import { validArgs } from './workflows/test/helpers/argsFixtures.js';"
+            + READ_INPUT
+            + "const {payload,lightEligible}=JSON.parse(source);"
+            "const args=validArgs();"
+            "args.mode=payload.mode; args.configEcho=payload.waist.configEcho;"
+            "args.limits={...args.limits}; delete args.limits.deliveryCap;"
+            "delete args.delivery; delete args.scopeAnswer;"
+            "if (Object.hasOwn(payload,'reviewScope')) "
+            "args.reviewScope=payload.reviewScope;"
+            "if (lightEligible) {args.riskTable=[{path:'a.js',risk:'low'}];"
+            "args.changedLines=1;}"
+            "const normalized=normalizeArgsReport(args).args;"
+            "process.stdout.write(JSON.stringify({"
+            "result:validateArgs(normalized),args:normalized}));",
+            {"payload": payload, "lightEligible": light_eligible},
+        ).stdout
+    )
+    assert result["result"] == {"ok": True, "errors": []}
+    args = result["args"]
+    assert args["limits"]["deliveryCap"] == cap
+    assert args["delivery"]["tier"] == tier
+    assert args["reviewScope"]["requested"] == "full"
+    if light_eligible:
+        assert args["scopeAnswer"] == "light"
+    else:
+        assert "scopeAnswer" not in args
+
+
+def test_identity_payload_crosses_args_waist() -> None:
+    produced = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "scripts/resolve_pr_identity.py"),
+            "--platform",
+            "gitlab",
+            "--url",
+            "http://gitlab.example:8080/group/sub/repo/-/merge_requests/281",
+            "--sha",
+            "0123456789abcdef0123456789abcdef01234567",
+        ],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        encoding="utf-8",
+        check=True,
+    )
+    identity: dict[str, Any] = json.loads(produced.stdout)
+    result: dict[str, Any] = json.loads(
+        run_node(
+            "import { validateArgs } from './workflows/src/args.js';"
+            "import { validArgs } from './workflows/test/helpers/argsFixtures.js';"
+            + READ_INPUT
+            + "const identity=JSON.parse(source);"
+            "const args=validArgs({delivery:{tier:'all',prIdentity:identity}});"
+            "process.stdout.write(JSON.stringify(validateArgs(args)));",
+            identity,
+        ).stdout
+    )
+    assert result == {"ok": True, "errors": []}
+
+
+def test_verify_consumes_pipeline_findings_without_error(
+    tmp_path: Path, pipeline_payload: PersistedPayload
+) -> None:
+    findings = pipeline_payload["findings"]
     findings_path = tmp_path / "findings.json"
     out_path = tmp_path / "out.json"
     diff_path = tmp_path / "diff.patch"
-    diff_path.write_text(build_gh_diff(PERSISTED_FINDINGS), encoding="utf-8")
+    diff_path.write_text(build_gh_diff(findings), encoding="utf-8")
     source = (
         "import { encodeSliceInline } from './workflows/src/verifyWire.js';"
         "let source = ''; for await (const chunk of process.stdin) source += chunk;"
         "process.stdout.write(encodeSliceInline(JSON.parse(source)));"
     )
-    token = subprocess.run(
-        ["node", "--input-type=module", "-e", source],
-        input=json.dumps({"findings": PERSISTED_FINDINGS, "base_branch": "main"}),
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
-        timeout=60,
+    token = run_node(
+        source, {"findings": findings, "base_branch": "main"}, timeout=60
     ).stdout
     result = subprocess.run(
         [
@@ -433,7 +582,7 @@ def test_verify_consumes_pipeline_findings_without_error(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == ""
-    envelope = json.loads(out_path.read_text(encoding="utf-8"))
+    envelope: dict[str, Any] = json.loads(out_path.read_text(encoding="utf-8"))
     assert list(envelope) == ["status", "receipt", "result"]
     assert envelope["status"] == "ok"
     assert list(envelope["receipt"]) == [
@@ -462,962 +611,8 @@ def test_verify_consumes_pipeline_findings_without_error(tmp_path):
         "surfaced": 0,
         "eliminated": 2,
     }
-    assert json.loads(findings_path.read_text(encoding="utf-8")) == {
-        "findings": PERSISTED_FINDINGS,
+    saved: dict[str, Any] = json.loads(findings_path.read_text(encoding="utf-8"))
+    assert saved == {
+        "findings": findings,
         "base_branch": "main",
     }
-
-
-@pytest.mark.usefixtures("forge_factory", "poster_state", "poster_workspace")
-class TestPostReviewBoundary(unittest.TestCase):
-    """post_review.py --dry-run consumes the persisted findings without a missing-field error."""
-
-    def _write(self, findings):
-        with open(self.findings_path, "w", encoding="utf-8") as fh:
-            json.dump(
-                {
-                    "platform": "github",
-                    "owner": "o",
-                    "repo": "r",
-                    "pr_number": 5,
-                    "review_body": "Code gauntlet summary",
-                    "findings": findings,
-                },
-                fh,
-            )
-
-    def test_post_review_consumes_pipeline_findings_without_error(self):
-        diff = build_gh_diff(PERSISTED_FINDINGS)
-        self._write(PERSISTED_FINDINGS)
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            _boundary_run(self.forge_factory, diff),
-        ):
-            post_review.CLI.invoke(
-                sys.argv[1:]
-            )  # must not raise: every field it reads is present
-
-        payload_path = os.path.join(self.tmp, "post-review-payload.json")
-        self.assertTrue(
-            os.path.exists(payload_path), "dry-run payload was not captured"
-        )
-        with open(payload_path, encoding="utf-8") as fh:
-            cap = json.load(fh)
-        self.assertEqual(cap["platform"], "github")
-        # Every persisted finding rendered into an inline comment (file:line valid).
-        self.assertEqual(len(cap["payload"]["comments"]), len(PERSISTED_FINDINGS))
-
-    def test_the_posted_comment_renders_the_suggestion_and_cited_rule(self):
-        # The end of the chain issue #47 is about: a reviewer reads a PR comment, not
-        # findings.json. This drives the REAL persisted findings through the REAL poster and
-        # asserts the rendered comment bodies actually carry the prose fix and the cited
-        # rule — the promise report-format.md's inline-comment template makes.
-        diff = build_gh_diff(PERSISTED_FINDINGS)
-        self._write(PERSISTED_FINDINGS)
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            _boundary_run(self.forge_factory, diff),
-        ):
-            post_review.CLI.invoke(sys.argv[1:])
-
-        with open(
-            os.path.join(self.tmp, "post-review-payload.json"), encoding="utf-8"
-        ) as fh:
-            comments = json.load(fh)["payload"]["comments"]
-        bodies = "\n".join(c["body"] for c in comments)
-
-        self.assertIn(
-            "**Suggested fix:**",
-            bodies,
-            "the prose suggestion never reached the posted comment",
-        )
-        self.assertIn(
-            "**Cited rule:**", bodies, "the cited rule never reached the posted comment"
-        )
-        # The actual VALUES, not just the headings — a heading with an empty body would
-        # satisfy the assertions above while telling the reviewer nothing.
-        for finding in PERSISTED_FINDINGS:
-            if finding.get("suggestion"):
-                self.assertIn(finding["suggestion"], bodies)
-            rule = finding.get("claude_md_rule") or finding.get("spec_text")
-            if rule:
-                self.assertIn(rule, bodies)
-        # And the identity trailer reaches the wire through the REAL poster — one per
-        # delivered comment, last line, pinned by codepoint rather than by glyph.
-        trailer = "\u2694\ufe0f *Code Gauntlet*"
-        for comment in comments:
-            self.assertEqual(comment["body"].splitlines()[-1], trailer)
-            self.assertEqual(comment["body"].count(trailer), 1)
-
-    def test_the_posted_comment_omits_the_artifact_only_fields(self):
-        # criticality / failure_scenario ride the schema end to end but are deliberately
-        # kept out of the comment body (issue #47). Asserted against REAL pipeline output so
-        # the scoping decision is pinned where it actually takes effect.
-        diff = build_gh_diff(PERSISTED_FINDINGS)
-        self._write(PERSISTED_FINDINGS)
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            _boundary_run(self.forge_factory, diff),
-        ):
-            post_review.CLI.invoke(sys.argv[1:])
-
-        with open(
-            os.path.join(self.tmp, "post-review-payload.json"), encoding="utf-8"
-        ) as fh:
-            comments = json.load(fh)["payload"]["comments"]
-        bodies = "\n".join(c["body"] for c in comments)
-        for finding in PERSISTED_FINDINGS:
-            if finding.get("failure_scenario"):
-                self.assertNotIn(finding["failure_scenario"], bodies)
-
-    def test_missing_line_alias_degrades_gracefully_not_a_crash(self):
-        stripped = [
-            {k: v for k, v in f.items() if k not in ("line", "end_line", "body")}
-            for f in PERSISTED_FINDINGS
-        ]
-        self._write(stripped)
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            _boundary_run(self.forge_factory, build_gh_diff(PERSISTED_FINDINGS)),
-        ):
-            post_review.CLI.invoke(sys.argv[1:])  # must not raise
-
-        with open(
-            os.path.join(self.tmp, "post-review-payload.json"), encoding="utf-8"
-        ) as fh:
-            payload = json.load(fh)["payload"]
-        self.assertEqual(len(payload["comments"]), 0)
-        self.assertIn("could not be anchored inline", payload["body"])
-
-
-class TestReportPatchesBoundary(unittest.TestCase):
-    """report_patches.py --output-dir/--head-sha (issue #226) consumes the SAME
-    persisted findings envelope post_review.py --dry-run consumes above, without
-    erroring on a missing/mismatched field. No diff file is needed here — the
-    receipt's ``findings`` count reports the whole persisted array regardless of
-    the (missing) diff oracle."""
-
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
-
-    def test_report_patches_consumes_pipeline_findings_without_error(self):
-        sha = "abc1234"
-        findings_path = os.path.join(self.tmp, f"code-gauntlet-findings-{sha}.json")
-        with open(findings_path, "w", encoding="utf-8") as fh:
-            json.dump(PERSISTED_FINDINGS, fh)
-
-        stdout_buf = io.StringIO()
-        with contextlib.redirect_stdout(stdout_buf):
-            exit_code = report_patches.CLI.invoke(
-                ["--output-dir", self.tmp, "--head-sha", sha]
-            )
-
-        self.assertEqual(
-            exit_code,
-            0,
-            f"report_patches.py errored on the persisted schema: {stdout_buf.getvalue()}",
-        )
-        receipt = json.loads(stdout_buf.getvalue().strip().splitlines()[-1])
-        self.assertEqual(receipt["findings"], len(PERSISTED_FINDINGS))
-
-    def _run_report_patches(self, findings, sha="abc1234", diff=None):
-        findings_path = os.path.join(self.tmp, f"code-gauntlet-findings-{sha}.json")
-        with open(findings_path, "w", encoding="utf-8") as fh:
-            json.dump(findings, fh)
-        if diff is not None:
-            diff_path = os.path.join(self.tmp, f"code-gauntlet-diff-{sha}.patch")
-            with open(diff_path, "w", encoding="utf-8") as fh:
-                fh.write(diff)
-
-        stdout_buf = io.StringIO()
-        with contextlib.redirect_stdout(stdout_buf):
-            exit_code = report_patches.CLI.invoke(
-                ["--output-dir", self.tmp, "--head-sha", sha]
-            )
-        self.assertEqual(exit_code, 0, stdout_buf.getvalue())
-        return json.loads(stdout_buf.getvalue().strip().splitlines()[-1])
-
-    def test_every_persisted_finding_with_a_patch_is_kept_against_a_matching_diff(
-        self,
-    ):
-        """Every REAL persisted finding, given a ``suggested_fix_code`` and a
-        diff built to make its (file, line) a real, DIFFERING anchor, passes
-        the SAME gate delivery runs — this drives the gate with the actual
-        pipeline schema rather than a hand-built fixture."""
-        patched = [
-            dict(f, suggested_fix_code="const patched = true;")
-            for f in PERSISTED_FINDINGS
-        ]
-        receipt = self._run_report_patches(
-            patched, diff=build_gh_diff(PERSISTED_FINDINGS)
-        )
-        self.assertEqual(receipt["kept"], len(patched))
-        self.assertEqual(receipt["reasons"], {})
-
-    def test_dropping_end_line_from_every_finding_downgrades_all_as_missing_end_line(
-        self,
-    ):
-        """RED against the alias-drop bug the module docstring names: an
-        ``end_line``-less v2 finding must downgrade with the gate's OWN
-        ``missing_end_line`` reason, not silently pass or fail some other way.
-        """
-        patched = []
-        for f in PERSISTED_FINDINGS:
-            copy = dict(f, suggested_fix_code="const patched = true;")
-            copy.pop("end_line", None)
-            patched.append(copy)
-        receipt = self._run_report_patches(
-            patched, diff=build_gh_diff(PERSISTED_FINDINGS)
-        )
-        self.assertEqual(receipt["kept"], 0)
-        self.assertEqual(receipt["reasons"], {"missing_end_line": len(patched)})
-
-
-class TestReportMethodologyRuntimeParity(unittest.TestCase):
-    """The Python receipt consumers accept the real JS renderer output in both modes."""
-
-    _DERIVED_WAIST_BULLET_RE = re.compile(
-        r"^- `(?P<path>[^`]+)` "
-        r"\((?P<modes>headless runs|interactive runs|headless and interactive runs)"
-        r"(?:, when (?P<condition>[^)]+))?\): "
-        r"from `configEcho\.(?P<receipt>[^`]+)`(?P<notes>.*?)\. "
-        r"(?P<instruction>"
-        r"Stamp `(?P<stamp_root>[^`]+)` and leave `(?P<stamp_leaf>[^`]+)` out of it\."
-        r"|Leave `(?P<omit_leaf>[^`]+)` out of any stamped `(?P<omit_root>[^`]+)`\."
-        r"|Leave it out\."
-        r")$"
-    )
-
-    def _render(self, mode):
-        if mode == "headless":
-            echo = {
-                "model_tier": {"value": "optimized", "source": "env"},
-                "delivery": {"value": "pr_comments,markdown", "source": "env"},
-                "post_mode": {"value": "dry-run", "source": "env"},
-                "pr_comment_cap": {"value": "25", "source": "env"},
-                "delivery_tier": {"value": "all", "source": "default"},
-                "draft_policy": {"value": "review", "source": "env"},
-                "reviewed_policy": {"value": "full", "source": "env"},
-                "pr_not_found_policy": {"value": "error", "source": "env"},
-                "trivial_scope": {"value": "full", "source": "env"},
-            }
-            expected = dict(invoke.EXPECTED_ECHO)
-        else:
-            echo = {
-                "model_tier": {"value": "optimized", "source": "fixed"},
-                "pr_comment_cap": {"value": "null", "source": "default"},
-                "delivery_tier": {"value": "all", "source": "default"},
-                "review_md": {"value": "absent", "source": "discovery"},
-            }
-            expected = {
-                "model_tier": "optimized",
-                "delivery_tier": "all",
-                "pr_comment_cap": "null",
-                "review_md": "absent",
-            }
-        fixture = {
-            "mode": mode,
-            "configEcho": echo,
-            "pluginRoot": "/absolute/path/to/claude-code-gauntlet",
-            "pipelineVersion": "3.26.0",
-            "reviewScope": {
-                "requested": "full",
-                "kind": "full",
-                "since": None,
-                "commits": None,
-                "detector": None,
-            },
-            "policy": {"tier": "optimized", "provider": "firstParty", "gateway": False},
-            "deliveryTier": "all",
-            "deliveryCap": None if mode == "interactive" else 25,
-            "gapCount": 0,
-            "summary": "summary",
-            "findings": [],
-            "unverified": [],
-            "dimensions": {"dispatched": [], "degraded": []},
-            "stats": {
-                "discovered": 0,
-                "validate": {},
-                "filter": {},
-                "challenge": {},
-                "merge": {},
-            },
-        }
-        node = (
-            "import('./workflows/src/renderReport.js').then(m => "
-            "process.stdout.write(m.renderReport(" + json.dumps(fixture) + ")))"
-        )
-        proc = subprocess.run(
-            ["node", "--input-type=module", "-e", node],
-            cwd=str(REPO),
-            capture_output=True,
-            text=True,
-            timeout=30,
-            encoding="utf-8",
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        return proc.stdout, expected
-
-    def test_both_receipt_modes_cross_the_bench_parsers(self):
-        for mode in ("headless", "interactive"):
-            report, expected = self._render(mode)
-            with patch.object(invoke, "EXPECTED_ECHO", expected):
-                self.assertTrue(invoke._echo_in_text(report), mode)
-            identity = invoke._IDENTITY_LINE_RE.findall(report)
-            self.assertEqual(
-                {key: value for key, value in identity},
-                {
-                    "pipeline_version": "3.26.0",
-                    "plugin_root": "/absolute/path/to/claude-code-gauntlet",
-                },
-                mode,
-            )
-
-    def _render_receipt(self, mode, echo, pipeline_version, plugin_root):
-        fixture = {
-            "mode": mode,
-            "configEcho": echo,
-            "pluginRoot": plugin_root,
-            "pipelineVersion": pipeline_version,
-            "reviewScope": {
-                "requested": "full",
-                "kind": "full",
-                "since": None,
-                "commits": None,
-                "detector": None,
-            },
-            "policy": {"tier": "optimized", "provider": "firstParty", "gateway": False},
-            "deliveryTier": "all",
-            "deliveryCap": None,
-            "gapCount": 0,
-            "summary": "summary",
-            "findings": [],
-            "unverified": [],
-            "dimensions": {"dispatched": [], "degraded": []},
-            "stats": {
-                "discovered": 0,
-                "validate": {},
-                "filter": {},
-                "challenge": {},
-                "merge": {},
-            },
-        }
-        node = (
-            "import('./workflows/src/renderReport.js').then(m => "
-            "process.stdout.write(m.renderReport(" + json.dumps(fixture) + ")))"
-        )
-        proc = subprocess.run(
-            ["node", "--input-type=module", "-e", node],
-            cwd=str(REPO),
-            capture_output=True,
-            text=True,
-            timeout=30,
-            encoding="utf-8",
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        match = re.search(
-            rf"```text\n(({('Headless' if mode == 'headless' else 'Resolved')} config:\n(?:  [^\n]+\n)+))```",
-            proc.stdout,
-        )
-        self.assertIsNotNone(match)
-        return match.group(1).rstrip("\n")
-
-    def test_resolver_block_matches_report_renderer_with_receipt_lures(self):
-        lures = ["`", "\r", "\n", "\t", "  ", ""]
-        for mode in ("interactive", "headless"):
-            resolved = resolve_config.resolve(mode, {}, None, "pr")
-            echo = json.loads(json.dumps(resolved["configEcho"]))
-            if mode == "interactive":
-                echo["review_md"] = {"value": "absent", "source": "discovery"}
-            for key in echo:
-                for field in ("value", "source"):
-                    for lure in lures:
-                        with self.subTest(mode=mode, key=key, field=field, lure=lure):
-                            changed = json.loads(json.dumps(echo))
-                            changed[key][field] = lure
-                            identity = {
-                                "pipeline_version": "version",
-                                "plugin_root": "/absolute/root",
-                            }
-                            expected = resolve_config.render_block(
-                                mode, changed, identity
-                            )
-                            actual = self._render_receipt(
-                                mode,
-                                changed,
-                                identity["pipeline_version"],
-                                identity["plugin_root"],
-                            )
-                            self.assertEqual(actual, expected)
-            for field in ("pipeline_version", "plugin_root"):
-                for lure in lures:
-                    with self.subTest(mode=mode, field=field, lure=lure):
-                        identity = {
-                            "pipeline_version": "version",
-                            "plugin_root": "/absolute/root",
-                        }
-                        identity[field] = lure
-                        expected = resolve_config.render_block(mode, echo, identity)
-                        actual = self._render_receipt(
-                            mode,
-                            echo,
-                            identity["pipeline_version"],
-                            identity["plugin_root"],
-                        )
-                        self.assertEqual(actual, expected)
-
-    def _validate_resolver_waist(self, payload, *, light_eligible=False):
-        script = (
-            "import { normalizeArgsReport, validateArgs } from './workflows/src/args.js';"
-            "import { validArgs } from './workflows/test/helpers/argsFixtures.js';"
-            "const payload = "
-            + json.dumps(payload)
-            + ";"
-            + "const args = validArgs();"
-            + "args.mode = payload.mode;"
-            + "args.configEcho = payload.waist.configEcho;"
-            + "args.limits = {...args.limits}; delete args.limits.deliveryCap;"
-            + "delete args.delivery; delete args.scopeAnswer;"
-            + "if (Object.hasOwn(payload, 'reviewScope')) args.reviewScope = payload.reviewScope;"
-            + (
-                "args.riskTable = [{path:'a.js', risk:'low'}]; args.changedLines = 1;"
-                if light_eligible
-                else ""
-            )
-            + "const normalized = normalizeArgsReport(args).args;"
-            + "process.stdout.write(JSON.stringify({result: validateArgs(normalized), args: normalized}));"
-        )
-        proc = subprocess.run(
-            ["node", "--input-type=module", "-e", script],
-            cwd=str(REPO),
-            capture_output=True,
-            text=True,
-            timeout=30,
-            encoding="utf-8",
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        return json.loads(proc.stdout)
-
-    def test_resolver_waist_derives_typed_fields_before_validate_args(self):
-        cases = [
-            ("headless", {}, False),
-            (
-                "headless",
-                {
-                    "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
-                    "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
-                },
-                False,
-            ),
-            ("headless", {"CODE_GAUNTLET_TRIVIAL_SCOPE": "light"}, True),
-            ("interactive", {}, False),
-            (
-                "interactive",
-                {
-                    "CODE_GAUNTLET_PR_COMMENT_CAP": "0",
-                    "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
-                },
-                False,
-            ),
-            ("interactive", {"CODE_GAUNTLET_PR_COMMENT_CAP": "null"}, False),
-        ]
-        for mode, env, light_eligible in cases:
-            with self.subTest(mode=mode, env=env):
-                payload = resolve_config.resolve(mode, env, None, "pr")
-                payload["mode"] = mode
-                result = self._validate_resolver_waist(
-                    payload, light_eligible=light_eligible
-                )
-                self.assertTrue(result["result"]["ok"], result["result"]["errors"])
-                args = result["args"]
-                self.assertEqual(
-                    args["limits"]["deliveryCap"],
-                    None
-                    if mode == "interactive"
-                    and env.get("CODE_GAUNTLET_PR_COMMENT_CAP") in (None, "null")
-                    else (
-                        int(env["CODE_GAUNTLET_PR_COMMENT_CAP"])
-                        if "CODE_GAUNTLET_PR_COMMENT_CAP" in env
-                        else (6 if mode == "headless" else None)
-                    ),
-                )
-                self.assertEqual(
-                    args["delivery"]["tier"],
-                    env.get("CODE_GAUNTLET_DELIVERY_TIER", "all"),
-                )
-                if light_eligible:
-                    self.assertEqual(args["scopeAnswer"], "light")
-
-    def test_resolver_waist_derivation_carries_all_typed_fields_together(self):
-        detector = {
-            "previously_reviewed": True,
-            "sha_resolvable": True,
-            "head_advanced": True,
-            "sha_is_ancestor": True,
-            "incremental_safe": True,
-            "error": None,
-        }
-        payload = resolve_config.resolve(
-            "headless",
-            {
-                "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
-                "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
-                "CODE_GAUNTLET_REVIEWED_POLICY": "skip",
-                "CODE_GAUNTLET_TRIVIAL_SCOPE": "light",
-            },
-            None,
-            "pr",
-        )
-        payload["mode"] = "headless"
-        payload["reviewScope"] = {
-            "kind": "full",
-            "since": None,
-            "commits": None,
-            "detector": detector,
-        }
-        result = self._validate_resolver_waist(payload, light_eligible=True)
-        self.assertTrue(result["result"]["ok"], result["result"]["errors"])
-        args = result["args"]
-        self.assertEqual(args["limits"]["deliveryCap"], 25)
-        self.assertEqual(args["delivery"]["tier"], "main_only")
-        self.assertEqual(args["reviewScope"]["requested"], "full")
-        self.assertEqual(args["scopeAnswer"], "light")
-
-    def test_derived_waist_fence_is_followable_against_the_live_runtime(self):
-        identity = generate_contract_requirements.load_registry(str(REPO))
-        body = "\n".join(
-            generate_contract_requirements.identity_body(
-                "skills/code-gauntlet/SKILL.md",
-                "derived_waist_fields",
-                identity,
-                str(REPO),
-            )
-        )
-        waist_body = body.split(
-            "\n\nThe workflow fills these receipt entries itself; never stamp them.\n\n",
-            1,
-        )[0]
-        bullet_lines = [
-            line for line in waist_body.split("\n") if line.startswith("- ")
-        ]
-        rows = []
-        for line in bullet_lines:
-            match = self._DERIVED_WAIST_BULLET_RE.fullmatch(line)
-            self.assertIsNotNone(match, line)
-            groups = match.groupdict()
-            instruction = groups["instruction"]
-            if groups["stamp_root"] is not None:
-                action = "stamp"
-                root = groups["stamp_root"]
-                leaf = groups["stamp_leaf"]
-            elif groups["omit_root"] is not None:
-                action = "omit_root"
-                root = groups["omit_root"]
-                leaf = groups["omit_leaf"]
-            else:
-                action = "omit_root"
-                root = groups["path"]
-                leaf = None
-            notes = groups["notes"]
-            rows.append(
-                {
-                    "path": groups["path"],
-                    "modes": groups["modes"],
-                    "condition": groups["condition"],
-                    "receipt": groups["receipt"],
-                    "notes": notes,
-                    "instruction": instruction,
-                    "action": action,
-                    "root": root,
-                    "leaf": leaf,
-                    "map": dict(re.findall(r"; `([^`]+)` derives as `([^`]+)`", notes)),
-                }
-            )
-        self.assertEqual(len(rows), len(bullet_lines))
-
-        detector = {
-            "previously_reviewed": True,
-            "sha_resolvable": True,
-            "head_advanced": True,
-            "sha_is_ancestor": True,
-            "incremental_safe": True,
-            "error": None,
-        }
-        condition_fixtures = {
-            "`reviewScope.detector` is an object": {
-                "reviewScope": {
-                    "kind": "full",
-                    "since": None,
-                    "commits": None,
-                    "detector": detector,
-                }
-            },
-            "every changed file is low risk and fewer than 50 lines changed": {
-                "riskTable": [{"path": "a.js", "risk": "low"}],
-                "changedLines": 1,
-            },
-        }
-        for row in rows:
-            if row["condition"] is not None:
-                self.assertIn(row["condition"], condition_fixtures)
-
-        modes = {
-            "headless runs": {"headless"},
-            "interactive runs": {"interactive"},
-            "headless and interactive runs": {"headless", "interactive"},
-        }
-        env = {
-            "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
-            "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
-            "CODE_GAUNTLET_REVIEWED_POLICY": "skip",
-            "CODE_GAUNTLET_TRIVIAL_SCOPE": "light",
-        }
-        for mode in ("headless", "interactive"):
-            with self.subTest(mode=mode):
-                payload = resolve_config.resolve(mode, env, None, "pr")
-                relevant = [row for row in rows if mode in modes[row["modes"]]]
-                overrides = {}
-                for row in relevant:
-                    if row["condition"] is not None:
-                        overrides.update(condition_fixtures[row["condition"]])
-                expected = {}
-                for row in relevant:
-                    receipt = payload["waist"]["configEcho"].get(row["receipt"])
-                    self.assertIsNotNone(receipt, row["receipt"])
-                    value = row["map"].get(receipt["value"], receipt["value"])
-                    if "digits derive as a JSON number" in row["notes"]:
-                        value = None if value == "null" else int(value)
-                    elif "comma-separated value derives as a list" in row["notes"]:
-                        value = value.split(",")
-                    expected[row["path"]] = value
-
-                spec = {
-                    "mode": mode,
-                    "configEcho": payload["waist"]["configEcho"],
-                    "rows": [
-                        {
-                            "path": row["path"],
-                            "action": row["action"],
-                            "root": row["root"],
-                        }
-                        for row in relevant
-                    ],
-                    "overrides": overrides,
-                    "expected": expected,
-                }
-                script = (
-                    "import { normalizeArgsReport, validateArgs } from './workflows/src/args.js';"
-                    "import { validArgs } from './workflows/test/helpers/argsFixtures.js';"
-                    "const spec = "
-                    + json.dumps(spec)
-                    + ";"
-                    + "const args = validArgs({ mode: spec.mode });"
-                    + "args.mode = spec.mode;"
-                    + "args.configEcho = spec.configEcho;"
-                    + "Object.assign(args, spec.overrides);"
-                    + "for (const row of spec.rows) delete args[row.root];"
-                    + "for (const row of spec.rows) {"
-                    + "  if (row.action === 'stamp') {"
-                    + "    args[row.root] = {};"
-                    + "    if (row.root === 'reviewScope' && spec.overrides.reviewScope) "
-                    + "Object.assign(args[row.root], spec.overrides.reviewScope);"
-                    + "  }"
-                    + "}"
-                    + "const normalized = normalizeArgsReport(args);"
-                    + "process.stdout.write(JSON.stringify({ result: validateArgs(normalized.args), args: normalized.args }));"
-                )
-                proc = subprocess.run(
-                    ["node", "--input-type=module", "-e", script],
-                    cwd=str(REPO),
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    encoding="utf-8",
-                )
-                self.assertEqual(proc.returncode, 0, proc.stderr)
-                result = json.loads(proc.stdout)
-                self.assertTrue(result["result"]["ok"], result["result"]["errors"])
-                for path, expected_value in expected.items():
-                    current = result["args"]
-                    for part in path.split("."):
-                        self.assertIsInstance(current, dict, path)
-                        self.assertIn(part, current, path)
-                        current = current[part]
-                    self.assertEqual(current, expected_value, path)
-
-    def test_headless_review_scope_derivation_matches_the_hand_typed_boundary_table(
-        self,
-    ):
-        expected = {"full": "full", "incremental": "incremental", "skip": "full"}
-        detector = {
-            "previously_reviewed": True,
-            "sha_resolvable": True,
-            "head_advanced": True,
-            "sha_is_ancestor": True,
-            "incremental_safe": True,
-            "error": None,
-        }
-        for policy, requested in expected.items():
-            with self.subTest(policy=policy):
-                payload = resolve_config.resolve(
-                    "headless",
-                    {"CODE_GAUNTLET_REVIEWED_POLICY": policy},
-                    None,
-                    "pr",
-                )
-                payload["mode"] = "headless"
-                payload["reviewScope"] = {
-                    "kind": "incremental" if policy == "incremental" else "full",
-                    "since": "abc123" if policy == "incremental" else None,
-                    "commits": None,
-                    "detector": detector,
-                }
-                result = self._validate_resolver_waist(payload)
-                self.assertTrue(result["result"]["ok"], result["result"]["errors"])
-                self.assertEqual(result["args"]["reviewScope"]["requested"], requested)
-
-    def test_resolver_cap_matrix_reaches_validate_args_only_for_canonical_values(self):
-        caps = (
-            "00",
-            "01",
-            "06",
-            "0",
-            "6",
-            "25",
-            "9007199254740991",
-            "9007199254740992",
-            "null",
-        )
-        for mode in ("headless", "interactive"):
-            for cap in caps:
-                env = {"CODE_GAUNTLET_PR_COMMENT_CAP": cap}
-                if mode == "headless":
-                    env["CODE_GAUNTLET_HEADLESS"] = "1"
-                with self.subTest(mode=mode, cap=cap):
-                    stdout_stream, stderr_stream = io.StringIO(), io.StringIO()
-                    clean_env = {
-                        key: value
-                        for key, value in os.environ.items()
-                        if not key.startswith("CODE_GAUNTLET_")
-                    }
-                    with (
-                        patch.dict(os.environ, {**clean_env, **env}, clear=True),
-                        contextlib.redirect_stdout(stdout_stream),
-                        contextlib.redirect_stderr(stderr_stream),
-                    ):
-                        code = resolve_config.CLI.invoke(["--target", "pr"])
-                    stdout, stderr = stdout_stream.getvalue(), stderr_stream.getvalue()
-                    accepted = (
-                        cap in {"6", "25", "9007199254740991"}
-                        if mode == "headless"
-                        else cap in {"0", "6", "25", "9007199254740991", "null"}
-                    )
-                    if not accepted:
-                        self.assertEqual(code, 1)
-                        self.assertEqual(stdout, "")
-                        self.assertEqual(stderr.count("\n"), 1)
-                        continue
-                    self.assertEqual(code, 0, stderr)
-                    payload = json.loads(stdout)
-                    result = self._validate_resolver_waist(payload)
-                    self.assertTrue(result["result"]["ok"], result["result"]["errors"])
-                    expected = None if cap == "null" else int(cap)
-                    self.assertEqual(result["args"]["limits"]["deliveryCap"], expected)
-
-    def test_rule_verdicts_match_between_python_and_exported_javascript(self):
-        arabic_one = "\u0661"
-        cases = [
-            {
-                "rule": {"kind": "enum", "values": ["optimized"]},
-                "value": "optimized",
-                "mode": "headless",
-            },
-            {
-                "rule": {"kind": "enum", "values": ["optimized"]},
-                "value": "Optimized",
-                "mode": "headless",
-            },
-            {
-                "rule": {"kind": "csv_subset", "values": ["chat", "markdown"]},
-                "value": "chat,markdown",
-                "mode": "headless",
-            },
-            {
-                "rule": {"kind": "csv_subset", "values": ["chat", "markdown"]},
-                "value": "",
-                "mode": "headless",
-            },
-            {
-                "rule": {"kind": "csv_subset", "values": ["chat", "markdown"]},
-                "value": "chat,,markdown",
-                "mode": "headless",
-            },
-            {
-                "rule": {"kind": "csv_subset", "values": ["chat", "markdown"]},
-                "value": "chat,chat",
-                "mode": "headless",
-            },
-            {
-                "rule": {"kind": "csv_subset", "values": ["chat", "markdown"]},
-                "value": "Chat",
-                "mode": "headless",
-            },
-            {
-                "rule": {"kind": "positive_digits"},
-                "value": "1",
-                "mode": "headless",
-            },
-            {"rule": {"kind": "positive_digits"}, "value": "0", "mode": "headless"},
-            {"rule": {"kind": "positive_digits"}, "value": "00", "mode": "headless"},
-            {"rule": {"kind": "positive_digits"}, "value": "01", "mode": "headless"},
-            {"rule": {"kind": "positive_digits"}, "value": "-1", "mode": "headless"},
-            {"rule": {"kind": "positive_digits"}, "value": " 5", "mode": "headless"},
-            {"rule": {"kind": "positive_digits"}, "value": "5 ", "mode": "headless"},
-            {
-                "rule": {"kind": "positive_digits"},
-                "value": "9007199254740991",
-                "mode": "headless",
-            },
-            {
-                "rule": {"kind": "positive_digits"},
-                "value": "9007199254740992",
-                "mode": "headless",
-            },
-            {
-                "rule": {"kind": "positive_digits"},
-                "value": arabic_one,
-                "mode": "headless",
-            },
-            {"rule": {"kind": "digits_or_null"}, "value": "00", "mode": "interactive"},
-            {"rule": {"kind": "digits_or_null"}, "value": "0", "mode": "interactive"},
-            {"rule": {"kind": "digits_or_null"}, "value": "01", "mode": "interactive"},
-            {"rule": {"kind": "digits_or_null"}, "value": "-1", "mode": "interactive"},
-            {"rule": {"kind": "digits_or_null"}, "value": " 5", "mode": "interactive"},
-            {"rule": {"kind": "digits_or_null"}, "value": "5 ", "mode": "interactive"},
-            {
-                "rule": {"kind": "digits_or_null"},
-                "value": arabic_one,
-                "mode": "interactive",
-            },
-            {
-                "rule": {"kind": "digits_or_null"},
-                "value": "9007199254740991",
-                "mode": "interactive",
-            },
-            {
-                "rule": {"kind": "digits_or_null"},
-                "value": "9007199254740992",
-                "mode": "interactive",
-            },
-            {
-                "rule": {"kind": "digits_or_null"},
-                "value": "null",
-                "mode": "interactive",
-            },
-            {"rule": {"kind": "bogus"}, "value": "x", "mode": "headless"},
-            {
-                "rule": {"headless": {"kind": "enum", "values": ["x"]}},
-                "value": "x",
-                "mode": "interactive",
-            },
-            {
-                "rule": {"headless": {"kind": "enum", "values": ["x"]}},
-                "value": "x",
-            },
-            {"rule": {"kind": "enum", "values": ["x"]}, "value": 1, "mode": "headless"},
-            {"rule": {"kind": "enum", "values": ["x"]}, "value": "x"},
-        ]
-        node_cases = json.dumps(cases, ensure_ascii=False)
-        script = (
-            "import('./workflows/src/knobs.js').then(m => { const cases = "
-            + node_cases
-            + "; process.stdout.write(JSON.stringify(cases.map(c => Object.hasOwn(c, 'mode')"
-            + " ? m.matchesRule(c.rule, c.value, c.mode) : m.matchesRule(c.rule, c.value)))); })"
-        )
-        proc = subprocess.run(
-            ["node", "--input-type=module", "-e", script],
-            cwd=str(REPO),
-            capture_output=True,
-            text=True,
-            timeout=30,
-            encoding="utf-8",
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        js_verdicts = json.loads(proc.stdout)
-        python_verdicts = [
-            resolve_config.matches_rule(case["rule"], case["value"], case.get("mode"))
-            for case in cases
-        ]
-        self.assertEqual(js_verdicts, python_verdicts)
-
-
-class TestPrIdentityProducerParity(unittest.TestCase):
-    def test_github_and_nested_gitlab_outputs_cross_the_args_waist(self):
-        # Mutation: omit platform or web_origin from the producer object; its output no
-        # longer crosses the registry-owned args waist.
-        cases = [
-            (
-                "github",
-                "https://github.com/openai/codex/pull/278",
-            ),
-            (
-                "gitlab",
-                "http://gitlab.example:8080/group/sub/repo/-/merge_requests/281",
-            ),
-        ]
-        for platform, url in cases:
-            with self.subTest(platform=platform):
-                produced = subprocess.run(
-                    [
-                        sys.executable,
-                        str(IDENTITY_SCRIPT),
-                        "--platform",
-                        platform,
-                        "--url",
-                        url,
-                        "--sha",
-                        "0123456789abcdef0123456789abcdef01234567",
-                    ],
-                    cwd=REPO,
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    encoding="utf-8",
-                )
-                self.assertEqual(produced.returncode, 0, produced.stderr)
-                identity = json.loads(produced.stdout)
-                node = (
-                    "import { validateArgs } from './workflows/src/args.js';"
-                    "import { validArgs } from './workflows/test/helpers/argsFixtures.js';"
-                    "const identity = "
-                    + json.dumps(identity)
-                    + "; const args = validArgs({delivery:{tier:'all',prIdentity:identity}});"
-                    "process.stdout.write(JSON.stringify(validateArgs(args)));"
-                )
-                accepted = subprocess.run(
-                    ["node", "--input-type=module", "-e", node],
-                    cwd=REPO,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    encoding="utf-8",
-                )
-                self.assertEqual(accepted.returncode, 0, accepted.stderr)
-                self.assertEqual(
-                    json.loads(accepted.stdout), {"ok": True, "errors": []}
-                )
-
-
-if __name__ == "__main__":
-    unittest.main()
