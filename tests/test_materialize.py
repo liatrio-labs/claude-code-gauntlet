@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from gauntlet import materialize, tasks
+from gauntlet import artifacts, materialize, tasks
 
 from tests.support.artifacts import (
     NONCE,
@@ -172,7 +172,7 @@ def test_validation_precedes_every_write(defect, message, tmp_path, monkeypatch)
         payload["planPath"] = str(bad)
     task = returned_task(tmp_path / "task.output", payload)
     monkeypatch.setattr(
-        materialize,
+        artifacts,
         "write_atomic",
         lambda *_: pytest.fail("validation wrote a primary"),
     )

@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Callable, Collection, Hashable, Mapping, Sequence
+from collections.abc import Collection, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, TypedDict, cast
 
@@ -326,7 +326,7 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
         return _receipt(False, plan_version, actual, verified, [], errors)
 
     written: list[WrittenArtifact] = []
-    write_entries(pending, written, errors, write_atomic)
+    write_entries(pending, written, errors)
 
     return _receipt(not errors, plan_version, actual, verified, written, errors)
 
@@ -335,13 +335,13 @@ def write_entries(
     entries: Sequence[PlanEntry],
     written: list[WrittenArtifact],
     errors: list[str],
-    writer: Callable[[str, str], None],
 ) -> bool:
+    # Atomic replacement, so an interrupted write never leaves a truncated artifact.
     ok = True
     for entry in entries:
         path, text = entry.path, entry.text
         try:
-            writer(path, text)
+            write_atomic(path, text)
         except Exception as exc:  # noqa: BLE001 - reported, never raised
             errors.append(f"could not write {path} ({type(exc).__name__}: {exc})")
             ok = False

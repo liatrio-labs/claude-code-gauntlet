@@ -18,7 +18,7 @@ from gauntlet.artifacts import (
     write_entries,
 )
 from gauntlet.cli import Command, Parser, UsageError
-from gauntlet.fs import confined, write_atomic
+from gauntlet.fs import confined
 
 # Only this persist channel carries primary text rather than a writer plan.
 CHANNEL = "return"
@@ -212,7 +212,7 @@ def _materialize(
     entries, plan_path = plan.entries, plan.plan_path
 
     # Skip derivation after a partial write: its source could belong to an earlier run.
-    if not write_entries(entries, materialized, errors, write_atomic):
+    if not write_entries(entries, materialized, errors):
         return _receipt(False, source, scanned, materialized, None, gaps, errors)
 
     receipt = assemble(plan_path)
