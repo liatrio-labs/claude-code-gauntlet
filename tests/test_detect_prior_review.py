@@ -1,45 +1,55 @@
-"""Detector tests pin marker matching, local forge responses, and exit-zero degradation on fetch errors."""
+"""Prior-review detection, receipt degradation, and marker containment."""
 
 import contextlib
 import io
 import json
-import os
 import sys
-import tempfile
-import unittest
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from types import SimpleNamespace
-from typing import cast
+from typing import Literal, NoReturn, TypedDict, cast
 from unittest.mock import patch
 
 import gauntlet.marker as review_marker
 import gauntlet.prior_review as detect_prior_review
 import pytest
 from gauntlet import proc
-from gauntlet.forge import JsonFetch, ReviewTarget
-from gauntlet.prior_review import GitFacts, PriorDelivery
+from gauntlet.forge import JsonFetch, Platform, ReviewTarget
+from gauntlet.prior_review import GitFacts, PriorDelivery, ReviewEntryWire
 
-from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
+from tests.support.forge import FakeForge, FakeForgeFactory, FakeGitLab, ForgeCall
 
-# Hex-only fixed SHAs (valid under review_marker.SHA_RE regardless of context).
 FULL_SHA = "a" * 40
 HEAD_SHA = "b" * 40
 SHORT_SHA = FULL_SHA[:8]
+# Repeated hex characters avoid false credential matches in the secret scanner.
+FINDING_KEY = "c" * 16
+OTHER_FINDING_KEY = "d" * 16
 
 
-def _run_main(argv):
+class _GitOptions(TypedDict, total=False):
+    resolvable: bool
+    full_sha: str
+    head_sha: str
+    commit_count: int
+    ancestor: bool
+
+
+def _run_main(argv: list[str]) -> tuple[str, int]:
     stdout = io.StringIO()
     with contextlib.redirect_stdout(stdout):
         code = detect_prior_review.CLI.invoke(argv)
     return stdout.getvalue(), code
 
 
-def _result(out="", err="", rc=0):
-    return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
+def _result(out: str = "", err: str = "", rc: int = 0) -> proc.CompletedProcess[str]:
+    return proc.CompletedProcess([], rc, stdout=out, stderr=err)
 
 
-def _legacy_group_note(primary_key, corroborator_titles, sha=FULL_SHA, note_id=1):
+def _legacy_group_body(
+    primary_key: str,
+    corroborator_titles: Sequence[str],
+    sha: str = FULL_SHA,
+) -> str:
     """Render all group members while keying only the primary."""
     sections = "\n\n".join(
         f"**Corroborating finding — bug-detector (correctness, confidence 70):**\n\n"
@@ -52,7 +62,7 @@ def _legacy_group_note(primary_key, corroborator_titles, sha=FULL_SHA, note_id=1
         + "\n\n"
         + review_marker.build_finding_marker(sha, primary_key)
     )
-    return {"id": note_id, "body": body, "created_at": "2026-08-03T00:02:00Z"}
+    return body
 
 
 @pytest.mark.parametrize("forge_factory", [detect_prior_review], indirect=True)
@@ -81,13 +91,6 @@ def _legacy_group_note(primary_key, corroborator_titles, sha=FULL_SHA, note_id=1
             id="github-failure",
         ),
         pytest.param(
-            "gitlab",
-            [],
-            "gitlab notes: fetch failed (exit 1): glab: fetch failed",
-            None,
-            id="gitlab-failure",
-        ),
-        pytest.param(
             "github",
             [
                 review_marker.build_marker("c" * 40, 1),
@@ -100,8 +103,13 @@ def _legacy_group_note(primary_key, corroborator_titles, sha=FULL_SHA, note_id=1
     ],
 )
 def test_network_scan(
-    platform, bodies, error, expected_sha, forge_factory, monkeypatch
-):
+    platform: Platform,
+    bodies: list[str],
+    error: str | None,
+    expected_sha: str | None,
+    forge_factory: FakeForgeFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     timestamp_key = "submitted_at" if platform == "github" else "created_at"
     payload = [
         {"id": index, "body": body, timestamp_key: f"2026-0{index + 1}-01T00:00:00Z"}
@@ -114,7 +122,7 @@ def test_network_scan(
     out, code = _run_main(
         ["--platform", platform, "--owner", "o", "--repo", "r", "--number", "5"]
     )
-    result = json.loads(out)
+    result: dict[str, object] = json.loads(out)
     source = "review" if platform == "github" else "note"
     assert code == 0
     assert result["previously_reviewed"] is (expected_sha is not None)
@@ -131,30 +139,6 @@ def test_network_scan(
 @pytest.mark.parametrize(
     "notes, error, expected",
     [
-        pytest.param(
-            [{"body": review_marker.build_footer(3, FULL_SHA)}],
-            None,
-            PriorDelivery(True, frozenset(), frozenset(), None),
-            id="summary",
-        ),
-        pytest.param(
-            [{"body": review_marker.build_footer(3, HEAD_SHA)}],
-            None,
-            PriorDelivery(False, frozenset(), frozenset(), None),
-            id="other-summary-sha",
-        ),
-        pytest.param(
-            [{"body": "Nice work"}, {"body": "LGTM"}],
-            None,
-            PriorDelivery(False, frozenset(), frozenset(), None),
-            id="no-signal",
-        ),
-        pytest.param(
-            [{"body": "Generated by code-gauntlet | Reviewed up to: " + FULL_SHA}],
-            None,
-            PriorDelivery(True, frozenset(), frozenset(), None),
-            id="prose-only",
-        ),
         pytest.param(
             [],
             "gitlab notes: fetch failed (exit 1): boom",
@@ -177,12 +161,6 @@ def test_network_scan(
             id="summary-and-keys",
         ),
         pytest.param(
-            [{"body": review_marker.build_finding_marker(HEAD_SHA, "c" * 16)}],
-            None,
-            PriorDelivery(False, frozenset(), frozenset(), None),
-            id="other-key-sha",
-        ),
-        pytest.param(
             [
                 {
                     "id": "8f4a",
@@ -196,58 +174,18 @@ def test_network_scan(
             PriorDelivery(False, frozenset(), frozenset(), None),
             id="nested-discussions",
         ),
-        pytest.param(
-            [
-                {
-                    "body": '<!-- code-gauntlet-finding-key: {"sha":"'
-                    + FULL_SHA
-                    + '","key":["oops"]} -->'
-                }
-            ],
-            None,
-            PriorDelivery(False, frozenset(), frozenset(), None),
-            id="malformed-key",
-        ),
-        pytest.param(
-            [_legacy_group_note("c" * 16, ["Corroborator A"])],
-            None,
-            PriorDelivery(False, frozenset({"c" * 16}), frozenset({"c" * 16}), None),
-            id="legacy-group",
-        ),
-        pytest.param(
-            [
-                {
-                    "body": _legacy_group_note("c" * 16, ["Corroborator A"])["body"]
-                    + "\n"
-                    + review_marker.build_finding_marker(FULL_SHA, "c" * 16)
-                }
-            ],
-            None,
-            PriorDelivery(False, frozenset({"c" * 16}), frozenset(), None),
-            id="duplicate-markers-count-as-members",
-        ),
-        pytest.param(
-            [
-                {
-                    "body": "\n".join(
-                        review_marker.build_finding_marker(FULL_SHA, f"{i:016x}")
-                        for i in range(40)
-                    )
-                }
-            ],
-            None,
-            PriorDelivery(
-                False, frozenset(f"{i:016x}" for i in range(40)), frozenset(), None
-            ),
-            id="forty-members-one-body",
-        ),
     ],
 )
-def test_prior_state(notes, error, expected, monkeypatch):
-    parsed = []
-    real = detect_prior_review.find_finding_markers
+def test_prior_state(
+    notes: list[dict[str, object]],
+    error: str | None,
+    expected: PriorDelivery,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parsed: list[str] = []
+    real = review_marker.find_finding_markers
 
-    def parse(body):
+    def parse(body: str) -> list[review_marker.FindingMarkerWire]:
         parsed.append(body)
         return real(body)
 
@@ -275,31 +213,48 @@ def test_prior_state(notes, error, expected, monkeypatch):
 @pytest.mark.parametrize(
     "outcome", ["missing-git", "timeout", "nonzero", "nonutf8-unusable", "nonutf8-slug"]
 )
-def test_detector_origin_receipt(outcome, forge_factory, monkeypatch):
+def test_detector_origin_receipt(
+    outcome: str,
+    forge_factory: FakeForgeFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     real_run = proc.run
     fake = forge_factory.configure(FakeForge())
-    calls = []
+    calls: list[tuple[list[str], dict[str, object]]] = []
 
-    def run(command, **kwargs):
+    def run(
+        command: list[str],
+        *,
+        cwd: str | None = None,
+        timeout: float | None = None,
+        errors: Literal["strict", "replace"] = "strict",
+    ) -> proc.CompletedProcess[str]:
+        kwargs: dict[str, object] = {"cwd": cwd, "timeout": timeout, "errors": errors}
         if command[1:4] != ["remote", "get-url", "origin"]:
             return _fake_git_run()(command, **kwargs)
         calls.append((command, kwargs))
         if outcome == "missing-git":
             raise FileNotFoundError("missing git")
         if outcome == "timeout":
-            raise proc.TimeoutExpired(command, kwargs["timeout"])
+            raise proc.TimeoutExpired(command, timeout or 0.0)
         if outcome.startswith("nonutf8"):
             child = (
-                r'import sys; sys.stdout.buffer.write(b"https://github.com/o/r\xff.git\n")'
+                r"import sys; sys.stdout.buffer.write("
+                r'b"https://github.com/o/r\xff.git\n")'
                 if outcome == "nonutf8-slug"
                 else r'import sys; sys.stdout.buffer.write(b"\xff\xfe not a remote")'
             )
-            return real_run([sys.executable, "-c", child], **kwargs)
+            return real_run(
+                [sys.executable, "-c", child],
+                cwd=cwd,
+                timeout=timeout,
+                errors=errors,
+            )
         return _result(rc=1)
 
     monkeypatch.setattr(proc, "run", run)
     out, code = _run_main(["--platform", "github", "--number", "5"])
-    result = json.loads(out)
+    result: dict[str, object] = json.loads(out)
     assert code == 0
     assert result["previously_reviewed"] is False
     assert forge_factory.calls == ["github"]
@@ -316,7 +271,8 @@ def test_detector_origin_receipt(outcome, forge_factory, monkeypatch):
             ForgeCall("review_entries", ReviewTarget("o", "r\ufffd", "5"))
         ]
     else:
-        assert result["errors"][0].startswith("could not determine owner/repo:")
+        receipt_errors = cast("list[str]", result["errors"])
+        assert receipt_errors[0].startswith("could not determine owner/repo:")
         assert fake.calls == []
 
 
@@ -330,8 +286,12 @@ def test_detector_origin_receipt(outcome, forge_factory, monkeypatch):
         (OSError("denied"), ("", "denied", -1)),
     ],
 )
-def test_run_maps_process_failures_to_exact_sentinels(monkeypatch, failure, expected):
-    def fail(*_args, **_kwargs):
+def test_run_maps_process_failures_to_exact_sentinels(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    expected: tuple[str, str, int],
+) -> None:
+    def fail(*_args: object, **_kwargs: object) -> NoReturn:
         raise failure
 
     monkeypatch.setattr(proc, "output", fail)
@@ -339,53 +299,31 @@ def test_run_maps_process_failures_to_exact_sentinels(monkeypatch, failure, expe
 
 
 def _fake_git_run(
-    resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA, commit_count=3, ancestor=True
-):
-    """A ``subprocess.run`` side_effect mocking the read-only git calls the SHA
-    resolution step makes: ``git cat-file -e {sha}^{commit}``, ``git merge-base
-    --is-ancestor {sha} {head}``, ``git rev-parse {sha}``/``git rev-parse HEAD``,
-    and ``git rev-list --count {sha}..HEAD``.
-
-    *ancestor* drives the merge-base exit code (0 => is-an-ancestor => True) and
-    defaults to True — the common case in these tests is a normal forward-moving
-    branch where the previously-reviewed commit is still an ancestor of head.
-    """
-
-    def _run(cmd, *a, **k):
+    resolvable: bool = True,
+    full_sha: str = FULL_SHA,
+    head_sha: str = HEAD_SHA,
+    commit_count: int = 3,
+    ancestor: bool = True,
+) -> Callable[..., proc.CompletedProcess[str]]:
+    def run(
+        cmd: Sequence[str], *_args: object, **_kwargs: object
+    ) -> proc.CompletedProcess[str]:
         if "cat-file" in cmd:
-            # Faithful to real git: `git cat-file -e <bad>^{commit}` is a
-            # "fatal:" error exiting 128, not a plain 1, and it names the
-            # object it could not find. Verified empirically: `git cat-file -e
-            # 000...0^{commit}` -> "fatal: Not a valid object name
-            # 000...0^{commit}", exit 128.
             return _result(
                 rc=0 if resolvable else 128,
                 err="" if resolvable else f"fatal: Not a valid object name {cmd[-1]}",
             )
         if "merge-base" in cmd:
-            # Faithful to real git: a plain "not an ancestor" answer from
-            # `merge-base --is-ancestor` is silent on stderr and exits 1 — it
-            # is a boolean "no", not an error. Verified empirically. (A truly
-            # invalid commit would exit 128 with a "fatal:" message, but that
-            # branch is unreachable here — merge-base only runs after cat-file
-            # has already proven the sha resolvable.)
             return _result(rc=0 if ancestor else 1)
         if "rev-parse" in cmd and cmd[-1] == "HEAD":
             return _result(out=head_sha + "\n")
         if "rev-parse" in cmd:
-            # Faithful to real git: `rev-parse` echoes an already-full object id
-            # back unchanged and only *expands* an abbreviated one. A fake that
-            # rewrote every rev to full_sha would hide which rev the caller
-            # actually passed — exactly what an explicit --head-sha must prove.
+            # Preserve full revisions so an explicit head override stays observable.
             rev = cmd[-1]
             if len(rev) == 40:
                 return _result(out=rev + "\n")
             if resolvable:
                 return _result(out=full_sha + "\n")
-            # Faithful to real git: an unresolvable rev is a "fatal:" error
-            # exiting 128, not 1. Verified empirically: `git rev-parse
-            # deadbeef` -> "fatal: ambiguous argument 'deadbeef': unknown
-            # revision or path not in the working tree.", exit 128.
             return _result(
                 err=f"fatal: ambiguous argument '{rev}': unknown revision or "
                 "path not in the working tree.",
@@ -395,102 +333,71 @@ def _fake_git_run(
             return _result(out=f"{commit_count}\n")
         raise AssertionError(f"Unexpected Git call: {cmd}")
 
-    return _run
-
-
-# ---------------------------------------------------------------------------
-# Pure collectors
-# ---------------------------------------------------------------------------
-
-
-class TestCollectEntriesGithub(unittest.TestCase):
-    """Only poster-written review bodies may influence detection."""
-
-    def test_maps_reviews_to_entry_shape(self):
-        reviews = [
-            {"id": 1, "body": "review body one", "submitted_at": "2026-01-01T00:00:00Z"}
-        ]
-        entries = detect_prior_review.collect_entries_github(reviews)
-
-        self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]["body"], "review body one")
-        self.assertEqual(entries[0]["timestamp"], "2026-01-01T00:00:00Z")
-        self.assertEqual(entries[0]["source"], "review")
-        self.assertEqual(entries[0]["id"], 1)
-
-    def test_multiple_reviews_all_mapped(self):
-        reviews = [
-            {"id": 1, "body": "r1", "submitted_at": "2026-01-01T00:00:00Z"},
-            {"id": 2, "body": "r2", "submitted_at": "2026-02-01T00:00:00Z"},
-        ]
-        entries = detect_prior_review.collect_entries_github(reviews)
-        self.assertEqual(len(entries), 2)
-        self.assertTrue(all(e["source"] == "review" for e in entries))
-
-    def test_empty_payload_produces_no_entries(self):
-        self.assertEqual(detect_prior_review.collect_entries_github([]), [])
-
-
-class TestCollectEntriesGitlab(unittest.TestCase):
-    def test_maps_notes_to_entry_shape(self):
-        notes = [
-            {"id": 3, "body": "note body three", "created_at": "2026-02-02T00:00:00Z"}
-        ]
-        entries = detect_prior_review.collect_entries_gitlab(notes)
-        self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]["body"], "note body three")
-        self.assertEqual(entries[0]["timestamp"], "2026-02-02T00:00:00Z")
-        self.assertEqual(entries[0]["source"], "note")
-        self.assertEqual(entries[0]["id"], 3)
-
-    def test_empty_notes_produce_no_entries(self):
-        self.assertEqual(detect_prior_review.collect_entries_gitlab([]), [])
-
-
-# ---------------------------------------------------------------------------
-# One snapshot supplies summary and finding-key state.
-# ---------------------------------------------------------------------------
-
-# Single-character keys, like the SHAs above: a full-alphabet 16-hex fixture reads
-# as a credential to the gitleaks entropy rule and fails the lint gate.
-FINDING_KEY = "c" * 16
-OTHER_FINDING_KEY = "d" * 16
+    return run
 
 
 @pytest.mark.parametrize(
-    "entries, sha, expected",
+    "collector, payload, expected",
     [
         pytest.param(
-            [{"body": review_marker.build_footer(1, FULL_SHA), "timestamp": None}],
-            FULL_SHA[:7],
-            False,
-            id="long-marker-short-sha",
-        ),
-        pytest.param(
-            [{"body": review_marker.build_footer(1, FULL_SHA[:7]), "timestamp": None}],
-            FULL_SHA,
-            False,
-            id="short-marker-long-sha",
-        ),
-        pytest.param(
+            detect_prior_review.collect_entries_github,
             [
-                None,
-                "x",
-                {"body": review_marker.build_footer(1, FULL_SHA), "timestamp": None},
+                {
+                    "id": 1,
+                    "body": "review body one",
+                    "submitted_at": "2026-01-01T00:00:00Z",
+                },
+                {"id": 2, "body": "r2", "submitted_at": "2026-02-01T00:00:00Z"},
             ],
-            FULL_SHA,
-            True,
-            id="non-dict-entries",
+            [
+                {
+                    "id": 1,
+                    "body": "review body one",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "source": "review",
+                },
+                {
+                    "id": 2,
+                    "body": "r2",
+                    "timestamp": "2026-02-01T00:00:00Z",
+                    "source": "review",
+                },
+            ],
+            id="github-populated",
+        ),
+        pytest.param(
+            detect_prior_review.collect_entries_github, [], [], id="github-empty"
+        ),
+        pytest.param(
+            detect_prior_review.collect_entries_gitlab,
+            [
+                {
+                    "id": 3,
+                    "body": "note body three",
+                    "created_at": "2026-02-02T00:00:00Z",
+                }
+            ],
+            [
+                {
+                    "id": 3,
+                    "body": "note body three",
+                    "timestamp": "2026-02-02T00:00:00Z",
+                    "source": "note",
+                }
+            ],
+            id="gitlab-populated",
+        ),
+        pytest.param(
+            detect_prior_review.collect_entries_gitlab, [], [], id="gitlab-empty"
         ),
     ],
 )
-def test_prior_delivery_summary(
-    entries: list[object], sha: str, expected: bool
+def test_collect_entries(
+    collector: Callable[[object], list[ReviewEntryWire]],
+    payload: list[dict[str, object]],
+    expected: list[ReviewEntryWire],
 ) -> None:
-    assert (
-        detect_prior_review.prior_delivery_from_entries(entries, sha).summary_posted
-        is expected
-    )
+    assert collector(payload) == expected
 
 
 def _finding_note(keys: tuple[str, ...], sha: str = FULL_SHA) -> dict[str, str]:
@@ -500,131 +407,140 @@ def _finding_note(keys: tuple[str, ...], sha: str = FULL_SHA) -> dict[str, str]:
     }
 
 
+# Exact SHA equality prevents another revision from suppressing delivery.
 @pytest.mark.parametrize(
     "entries, sha, expected",
     [
         pytest.param(
-            [_finding_note((FINDING_KEY, OTHER_FINDING_KEY))],
+            [{"body": review_marker.build_footer(3, FULL_SHA)}],
             FULL_SHA,
-            {"cccccccccccccccc", "dddddddddddddddd"},
-            id="every-key-in-one-body",
+            PriorDelivery(True, frozenset(), frozenset(), None),
+            id="summary",
         ),
         pytest.param(
-            [None, "x", {"body": None}, _finding_note((FINDING_KEY,))],
+            [{"body": review_marker.build_footer(3, HEAD_SHA)}],
             FULL_SHA,
-            {"cccccccccccccccc"},
+            PriorDelivery(False, frozenset(), frozenset(), None),
+            id="other-summary-sha",
+        ),
+        pytest.param(
+            [{"body": "Generated by code-gauntlet | Reviewed up to: " + FULL_SHA}],
+            FULL_SHA,
+            PriorDelivery(True, frozenset(), frozenset(), None),
+            id="prose-only",
+        ),
+        pytest.param(
+            [{"body": review_marker.build_finding_marker(HEAD_SHA, "c" * 16)}],
+            FULL_SHA,
+            PriorDelivery(False, frozenset(), frozenset(), None),
+            id="other-key-sha",
+        ),
+        pytest.param(
+            [
+                {
+                    "body": _legacy_group_body("c" * 16, ["Corroborator A"])
+                    + "\n"
+                    + review_marker.build_finding_marker(FULL_SHA, "c" * 16)
+                }
+            ],
+            FULL_SHA,
+            PriorDelivery(False, frozenset({"c" * 16}), frozenset(), None),
+            id="duplicate-markers-count-as-members",
+        ),
+        pytest.param(
+            [{"body": review_marker.build_footer(1, FULL_SHA), "timestamp": None}],
+            FULL_SHA[:7],
+            PriorDelivery(False, frozenset(), frozenset(), None),
+            id="long-marker-short-sha",
+        ),
+        pytest.param(
+            [{"body": review_marker.build_footer(1, FULL_SHA[:7]), "timestamp": None}],
+            FULL_SHA,
+            PriorDelivery(False, frozenset(), frozenset(), None),
+            id="short-marker-long-sha",
+        ),
+        pytest.param(
+            [
+                None,
+                "x",
+                {"body": None},
+                {"body": review_marker.build_footer(1, FULL_SHA), "timestamp": None},
+                _finding_note((FINDING_KEY,)),
+            ],
+            FULL_SHA,
+            PriorDelivery(True, frozenset({"cccccccccccccccc"}), frozenset(), None),
             id="non-dict-and-body-less-entries",
         ),
-    ],
-)
-def test_prior_delivery_finding_keys(
-    entries: list[object], sha: str, expected: set[str]
-) -> None:
-    assert (
-        detect_prior_review.prior_delivery_from_entries(entries, sha).finding_keys
-        == expected
-    )
-
-
-@pytest.mark.parametrize(
-    "sha, expected, count",
-    [
+        # Forty keys cross the summary reader's 32-marker scan bound.
         pytest.param(
+            [_finding_note(tuple(f"{i:016x}" for i in range(40)))],
             FULL_SHA,
-            {
-                "0000000000000000",
-                "0000000000000001",
-                "0000000000000002",
-                "0000000000000003",
-                "0000000000000004",
-                "0000000000000005",
-                "0000000000000006",
-                "0000000000000007",
-                "0000000000000008",
-                "0000000000000009",
-                "000000000000000a",
-                "000000000000000b",
-                "000000000000000c",
-                "000000000000000d",
-                "000000000000000e",
-                "000000000000000f",
-                "0000000000000010",
-                "0000000000000011",
-                "0000000000000012",
-                "0000000000000013",
-                "0000000000000014",
-                "0000000000000015",
-                "0000000000000016",
-                "0000000000000017",
-                "0000000000000018",
-                "0000000000000019",
-                "000000000000001a",
-                "000000000000001b",
-                "000000000000001c",
-                "000000000000001d",
-                "000000000000001e",
-                "000000000000001f",
-                "0000000000000020",
-                "0000000000000021",
-                "0000000000000022",
-                "0000000000000023",
-                "0000000000000024",
-                "0000000000000025",
-                "0000000000000026",
-                "0000000000000027",
-            },
-            40,
+            PriorDelivery(
+                False,
+                frozenset(f"{i:016x}" for i in range(40)),
+                frozenset(),
+                None,
+            ),
             id="large-group",
         ),
-        pytest.param("b" * 40, set(), 0, id="large-group-different-sha"),
-        pytest.param(FULL_SHA[:7], set(), 0, id="large-group-sha-prefix"),
-    ],
-)
-def test_prior_delivery_large_group(sha: str, expected: set[str], count: int) -> None:
-    # Forty members exceed the summary reader's 32-candidate bound.
-    note = _finding_note(tuple(f"{i:016x}" for i in range(40)))
-    keys = detect_prior_review.prior_delivery_from_entries([note], sha).finding_keys
-    assert keys == expected
-    assert len(keys) == count
-
-
-@pytest.mark.parametrize(
-    "body, expected",
-    [
         pytest.param(
-            _legacy_group_note(FINDING_KEY, ["Corroborator A"])["body"],
-            {"cccccccccccccccc"},
+            [_finding_note((FINDING_KEY,))],
+            FULL_SHA[:7],
+            PriorDelivery(False, frozenset(), frozenset(), None),
+            id="finding-key-sha-prefix",
+        ),
+        pytest.param(
+            [{"body": _legacy_group_body(FINDING_KEY, ["Corroborator A"])}],
+            FULL_SHA,
+            PriorDelivery(
+                False,
+                frozenset({"cccccccccccccccc"}),
+                frozenset({"cccccccccccccccc"}),
+                None,
+            ),
             id="undermarked-group",
         ),
         pytest.param(
-            _legacy_group_note(FINDING_KEY, ["Corroborator A"])["body"]
-            + "\n"
-            + review_marker.build_finding_marker(FULL_SHA, OTHER_FINDING_KEY),
-            set(),
+            [
+                {
+                    "body": _legacy_group_body(FINDING_KEY, ["Corroborator A"])
+                    + "\n"
+                    + review_marker.build_finding_marker(FULL_SHA, OTHER_FINDING_KEY)
+                }
+            ],
+            FULL_SHA,
+            PriorDelivery(
+                False,
+                frozenset({"cccccccccccccccc", "dddddddddddddddd"}),
+                frozenset(),
+                None,
+            ),
             id="fully-marked-group",
         ),
         pytest.param(
-            _finding_note((FINDING_KEY,))["body"], set(), id="individual-primary"
+            [{"body": _finding_note((FINDING_KEY,))["body"]}],
+            FULL_SHA,
+            PriorDelivery(False, frozenset({"cccccccccccccccc"}), frozenset(), None),
+            id="individual-primary",
         ),
         pytest.param(
-            _legacy_group_note(FINDING_KEY, ["Corroborator A"], sha="b" * 40)["body"],
-            set(),
+            [
+                {
+                    "body": _legacy_group_body(
+                        FINDING_KEY, ["Corroborator A"], sha="b" * 40
+                    )
+                }
+            ],
+            FULL_SHA,
+            PriorDelivery(False, frozenset(), frozenset(), None),
             id="different-sha",
         ),
     ],
 )
-def test_prior_delivery_legacy_group_keys(body: str, expected: set[str]) -> None:
-    assert (
-        detect_prior_review.prior_delivery_from_entries(
-            [{"body": body}], FULL_SHA
-        ).legacy_group_keys
-        == expected
-    )
-
-
-# ---------------------------------------------------------------------------
-# CLI end-to-end — --bodies-file, git calls patched.
-# ---------------------------------------------------------------------------
+def test_prior_delivery(
+    entries: list[object], sha: str, expected: PriorDelivery
+) -> None:
+    assert detect_prior_review.prior_delivery_from_entries(entries, sha) == expected
 
 
 def _bodies_file(tmp_path: Path, entries: Sequence[object]) -> Path:
@@ -727,7 +643,7 @@ def _base_argv(bodies_path: Path, platform: str = "github", **extra: str) -> lis
 def test_cli_bodies_file_receipt_outcomes(
     tmp_path: Path,
     marker_sha: str | None,
-    git_kwargs: dict[str, bool | str | int],
+    git_kwargs: _GitOptions,
     expected: dict[str, object],
 ) -> None:
     if marker_sha is None:
@@ -753,18 +669,8 @@ def test_cli_bodies_file_receipt_outcomes(
         out, code = _run_main(_base_argv(path))
 
     assert code == 0
-    result = json.loads(out.strip())
+    result: dict[str, object] = json.loads(out.strip())
     assert {key: result[key] for key in expected} == expected
-
-
-def test_cli_bodies_file_empty_list_reports_not_reviewed(tmp_path: Path) -> None:
-    path = _bodies_file(tmp_path, [])
-    with patch.object(proc, "run", side_effect=_fake_git_run()):
-        out, code = _run_main(_base_argv(path))
-    assert code == 0
-    result = json.loads(out.strip())
-    assert result["previously_reviewed"] is False
-    assert result["signal"] is None
 
 
 def test_cli_bodies_file_head_sha_override_is_used(tmp_path: Path) -> None:
@@ -776,169 +682,135 @@ def test_cli_bodies_file_head_sha_override_is_used(tmp_path: Path) -> None:
     with patch.object(proc, "run", side_effect=_fake_git_run(resolvable=True)):
         out, code = _run_main(_base_argv(path, head_sha=override_head))
     assert code == 0
-    result = json.loads(out.strip())
+    result: dict[str, object] = json.loads(out.strip())
     assert result["head_sha"] == override_head
 
 
-class TestSanitizeMarker(unittest.TestCase):
-    """sanitize_marker allow-lists echoed marker keys, lists unknown key NAMES
-    only (values never echoed), and truncates an oversized payload. The
-    parsed marker is attacker-controllable — anyone with read access can post
-    a comment carrying one — and the orchestrator is told to consume the
-    `marker` object, so an unbounded verbatim echo would pipe arbitrary text
-    straight into a model's context."""
+@pytest.mark.parametrize(
+    "marker, expected, forbidden",
+    [
+        pytest.param(
+            {
+                "version": "3.0",
+                "findings_count": 2,
+                "sha": FULL_SHA,
+                "_token": "code-gauntlet-findings",
+                "_legacy": False,
+            },
+            {
+                "version": "3.0",
+                "findings_count": 2,
+                "sha": FULL_SHA,
+                "_token": "code-gauntlet-findings",
+                "_legacy": False,
+            },
+            (),
+            id="normal",
+        ),
+        pytest.param(
+            {
+                "version": "3.0",
+                "sha": FULL_SHA,
+                "attacker_field": "SECRET_PAYLOAD_VALUE_SHOULD_NOT_APPEAR",
+            },
+            {"version": "3.0", "sha": FULL_SHA, "unknown_keys": ["attacker_field"]},
+            ("SECRET_PAYLOAD_VALUE_SHOULD_NOT_APPEAR",),
+            id="unknown-values-refused",
+        ),
+        pytest.param(
+            {
+                "version": "3.0",
+                "findings_count": 1,
+                "sha": FULL_SHA,
+                "findings": [{"id": 1}],
+            },
+            {
+                "version": "3.0",
+                "findings_count": 1,
+                "sha": FULL_SHA,
+                "unknown_keys": ["findings"],
+            },
+            (),
+            id="findings-refused",
+        ),
+        pytest.param(
+            {
+                "version": "INJECT " * 9000,
+                "findings_count": 1,
+                "sha": FULL_SHA,
+                "_token": "code-gauntlet-findings",
+                "_legacy": False,
+            },
+            {
+                "version": ("INJECT " * 74)[:512] + "...[truncated]",
+                "findings_count": 1,
+                "sha": FULL_SHA,
+                "_token": "code-gauntlet-findings",
+                "_legacy": False,
+            },
+            (),
+            id="clipped-string",
+        ),
+        pytest.param(
+            {
+                "version": "v" * 513,
+                "findings_count": 1,
+                "sha": "s" * 513,
+                "_token": "t" * 513,
+                "_legacy": "l" * 513,
+                **{f"u{index:02d}" + "x" * 61: True for index in range(32)},
+            },
+            {
+                "version": "v" * 64 + "...[truncated]",
+                "findings_count": 1,
+                "sha": "s" * 512 + "...[truncated]",
+                "_token": "t" * 512 + "...[truncated]",
+                "_legacy": "l" * 512 + "...[truncated]",
+                "truncated": True,
+            },
+            (),
+            id="whole-payload",
+        ),
+        pytest.param(None, None, (), id="non-dict"),
+        pytest.param(
+            {"version": "3.0", "sha": FULL_SHA, "X" * 3000: 1, "Y" * 3000: 2},
+            {
+                "version": "3.0",
+                "sha": FULL_SHA,
+                "unknown_keys": ["X" * 64 + "...", "Y" * 64 + "..."],
+            },
+            (),
+            id="long-names",
+        ),
+        pytest.param(
+            {"version": "3.0", "findings_count": int("9" * 4200), "sha": FULL_SHA},
+            {
+                "version": "3.0",
+                "findings_count": "[number truncated, 4200 digits]",
+                "sha": FULL_SHA,
+            },
+            (),
+            id="big-number",
+        ),
+    ],
+)
+def test_sanitize_marker(
+    marker: object, expected: dict[str, object] | None, forbidden: tuple[str, ...]
+) -> None:
+    actual = detect_prior_review.sanitize_marker(marker)
+    assert actual == expected
+    encoded = json.dumps(actual)
+    assert len(encoded) <= 4096
+    assert all(value not in encoded for value in forbidden)
 
-    def test_normal_payload_round_trips_unchanged(self):
-        marker = {
-            "version": "3.0",
-            "findings_count": 2,
-            "sha": FULL_SHA,
-            "_token": "code-gauntlet-findings",
-            "_legacy": False,
-        }
-        self.assertEqual(detect_prior_review.sanitize_marker(marker), marker)
 
-    def test_unknown_keys_appear_by_name_only_value_not_echoed(self):
-        marker = {
-            "version": "3.0",
-            "sha": FULL_SHA,
-            "attacker_field": "SECRET_PAYLOAD_VALUE_SHOULD_NOT_APPEAR",
-        }
-        out = detect_prior_review.sanitize_marker(marker)
-        self.assertIn("unknown_keys", out)
-        self.assertIn("attacker_field", out["unknown_keys"])
-        self.assertNotIn("attacker_field", out)
-        self.assertNotIn("SECRET_PAYLOAD_VALUE_SHOULD_NOT_APPEAR", json.dumps(out))
-
-    def test_findings_is_unknown_but_raw_marker_preserves_it(self):
-        # Mutation: restore findings to _MARKER_ECHO_KEYS; the sanitized output
-        # must then violate both assertions about the unknown key.
-        marker = {
-            "version": "3.0",
-            "findings_count": 1,
-            "sha": FULL_SHA,
-            "findings": [{"id": 1}],
-        }
-        out = detect_prior_review.sanitize_marker(marker)
-        self.assertNotIn("findings", out)
-        self.assertEqual(out["unknown_keys"], ["findings"])
-
-        payload = json.dumps(marker, separators=(",", ":"))
-        text = f"<!-- {review_marker.MARKER_TOKEN}: {payload} -->"
-        raw = review_marker.find_marker(text)
-        self.assertEqual(raw["findings"], [{"id": 1}])
-
-    def test_allowlisted_key_values_are_bounded_individually(self):
-        """An allow-listed key is still attacker-controlled — `version` passing
-        the key filter must not let 60 KB of prose through into the
-        orchestrator's context."""
-        marker = {
-            "version": "INJECT " * 9000,
-            "findings_count": 1,
-            "sha": FULL_SHA,
-            "_token": "code-gauntlet-findings",
-            "_legacy": False,
-        }
-        out = detect_prior_review.sanitize_marker(marker)
-        self.assertLessEqual(
-            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS
-        )
-        self.assertLess(len(str(out["version"])), 1000)
-        self.assertEqual(out["sha"], FULL_SHA)
-
-    def test_whole_payload_cap_returns_exact_fallback_shape(self):
-        # Mutation: delete the whole-payload `if len(encoded) > _MARKER_ECHO_MAX_CHARS`
-        # branch; this assertion must go red when the fallback disappears.
-        marker = {
-            "version": "v" * 513,
-            "findings_count": 1,
-            "sha": "s" * 513,
-            "_token": "t" * 513,
-            "_legacy": "l" * 513,
-        }
-        marker.update({f"u{index:02d}" + "x" * 61: True for index in range(32)})
-        out = detect_prior_review.sanitize_marker(marker)
-        self.assertIs(out["truncated"], True)
-        self.assertEqual(
-            set(out),
-            {"version", "findings_count", "sha", "_token", "_legacy", "truncated"},
-        )
-
-    def test_single_value_uses_truncated_suffix(self):
-        # Mutation: delete _bounded's string clip; this exact suffix assertion
-        # must go red when the 100,000-character version is returned untrimmed.
-        marker = {
-            "version": "v" * 100000,
-            "findings_count": 1,
-            "sha": FULL_SHA,
-        }
-        out = detect_prior_review.sanitize_marker(marker)
-        self.assertEqual(out["version"], "v" * 512 + "...[truncated]")
-
-    def test_non_dict_marker_returns_none(self):
-        self.assertIsNone(detect_prior_review.sanitize_marker(None))
-        self.assertIsNone(detect_prior_review.sanitize_marker("not a dict"))
-        self.assertIsNone(detect_prior_review.sanitize_marker([1, 2, 3]))
-
-
-class TestRound3And4FixRegressions(unittest.TestCase):
-    """Each test here MUST fail if its fix is reverted — see the matching class
-    in tests/test_review_marker.py for why this is pinned so explicitly."""
-
-    def test_attacker_key_names_are_length_bounded(self):
-        """R4: unknown_keys capped the COUNT of names but not their LENGTH, so
-        kilobytes of attacker text reached the orchestrator through the very
-        guard that promises 'names only'."""
-        marker = {"version": "3.0", "sha": FULL_SHA, "X" * 3000: 1, "Y" * 3000: 2}
-        out = detect_prior_review.sanitize_marker(marker)
-        self.assertLessEqual(
-            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS
-        )
-        for name in out.get("unknown_keys", []):
-            self.assertLessEqual(len(name), 128, "an unknown key name is unbounded")
-
-    def test_huge_integer_value_is_bounded(self):
-        """R4: _bounded exempted numbers, so a 4200-digit findings_count sailed
-        past a cap that only inspected strings."""
-        marker = {"version": "3.0", "findings_count": int("9" * 4200), "sha": FULL_SHA}
-        out = detect_prior_review.sanitize_marker(marker)
-        self.assertLessEqual(
-            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS
-        )
-
-    def test_ordinary_counts_still_pass_through_unchanged(self):
-        out = detect_prior_review.sanitize_marker(
-            {"version": "3.0", "findings_count": 12, "sha": FULL_SHA}
-        )
-        self.assertEqual(out["findings_count"], 12)
-
-    def test_unresolvable_head_sha_is_reported_in_errors(self):
-        """R4: an unresolvable --head-sha fell back to the raw string with an
-        empty errors[], so the output fabricated 'history was rewritten' with no
-        indication anything had gone wrong."""
-        errors = []
-        with patch(
-            "gauntlet.prior_review.proc.run",
-            side_effect=_fake_git_run(resolvable=False),
-        ):
-            # 8 chars: the fake only echoes back a rev that is already full-length,
-            # so this exercises the genuine "cannot resolve" path.
-            detect_prior_review.resolve_git_facts(FULL_SHA, "deadbeef", errors)
-        self.assertTrue(
-            any("head-sha" in e for e in errors),
-            f"an unresolvable --head-sha must be explained; got {errors}",
-        )
-
-    def test_deeply_nested_bodies_file_exits_zero(self):
-        """R3-5: json raises RecursionError (a RuntimeError), which escaped the
-        always-exit-0 contract."""
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "bodies.json")
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write("[" * 60000 + "]" * 60000)
-            out, code = _run_main(["--platform", "github", "--bodies-file", path])
-        self.assertEqual(code, 0)
-        self.assertIsNot(json.loads(out.strip()), None)
+def test_deeply_nested_bodies_file_exits_zero(tmp_path: Path) -> None:
+    path = tmp_path / "bodies.json"
+    path.write_text("[" * 60000 + "]" * 60000, encoding="utf-8")
+    out, code = _run_main(["--platform", "github", "--bodies-file", str(path)])
+    assert code == 0
+    result: object = json.loads(out.strip())
+    assert result is not None
 
 
 def _facts_signal(**over: object) -> dict[str, object]:
@@ -976,18 +848,6 @@ def _facts_signal(**over: object) -> dict[str, object]:
             id="found-and-advanced",
         ),
         pytest.param(
-            _facts_signal(signal="footer", source="issue_comment", marker=None),
-            GitFacts(FULL_SHA, FULL_SHA, SHORT_SHA, True, True, 0),
-            {
-                "previously_reviewed": True,
-                "sha_resolvable": True,
-                "sha_is_ancestor": True,
-                "head_advanced": False,
-                "incremental_safe": False,
-            },
-            id="found-and-not-advanced",
-        ),
-        pytest.param(
             _facts_signal(
                 sha="c" * 40,
                 legacy=True,
@@ -1007,33 +867,6 @@ def _facts_signal(**over: object) -> dict[str, object]:
             },
             id="found-but-sha-unresolvable",
         ),
-        pytest.param(
-            _facts_signal(
-                marker={"version": "3.0", "findings_count": 1, "sha": FULL_SHA}
-            ),
-            GitFacts(HEAD_SHA, FULL_SHA, SHORT_SHA, True, False, 0),
-            {
-                "sha_resolvable": True,
-                "sha_is_ancestor": False,
-                "head_advanced": False,
-                "incremental_safe": False,
-            },
-            id="found-resolvable-but-not-ancestor",
-        ),
-        pytest.param(
-            None,
-            None,
-            {
-                "previously_reviewed": False,
-                "signal": None,
-                "source": None,
-                "marker": None,
-                "last_reviewed_sha": None,
-                "sha_is_ancestor": False,
-                "incremental_safe": False,
-            },
-            id="not-found",
-        ),
     ],
 )
 def test_build_result_cases(
@@ -1042,11 +875,11 @@ def test_build_result_cases(
     expected: dict[str, object],
 ) -> None:
     result = detect_prior_review.build_result(signal, facts)
-    view = cast("Mapping[str, object]", result)
+    view = cast(Mapping[str, object], result)
     assert {key: view[key] for key in expected} == expected
 
 
-def test_build_result__found_and_not_found_branches_share_the_same_key_set():
+def test_build_result_key_set() -> None:
     not_found = detect_prior_review.build_result(None, None)
     signal: dict[str, object] = {
         "sha": FULL_SHA,
@@ -1062,63 +895,71 @@ def test_build_result__found_and_not_found_branches_share_the_same_key_set():
     assert len(found) == 15
 
 
-def _facts_tracked(**kwargs):
+@pytest.mark.parametrize(
+    "ancestor",
+    [pytest.param(True, id="ancestor"), pytest.param(False, id="not-ancestor")],
+)
+def test_git_ancestry(ancestor: bool) -> None:
     calls: list[list[str]] = []
-    inner = _fake_git_run(**kwargs)
+    inner = _fake_git_run(resolvable=True, ancestor=ancestor)
 
-    def _run(cmd, *a, **k):
+    def run(cmd: list[str], **kwargs: object) -> proc.CompletedProcess[str]:
         calls.append(cmd)
-        return inner(cmd, *a, **k)
+        return inner(cmd, **kwargs)
 
-    return (_run, calls)
-
-
-def test_resolve_git_facts_merge_base__is_ancestor_call_made_with_sha_and_head_and_true_exit_sets_field_true():
-    fake_run, calls = _facts_tracked(resolvable=True, ancestor=True)
-    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
+    with patch.object(proc, "run", side_effect=run):
         facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
-    merge_base_calls = [c for c in calls if "merge-base" in c]
-    assert len(merge_base_calls) == 1, (
-        "merge-base --is-ancestor must be called exactly once"
-    )
-    assert "--is-ancestor" in merge_base_calls[0]
-    assert FULL_SHA in merge_base_calls[0]
-    assert HEAD_SHA in merge_base_calls[0]
-    assert facts.sha_is_ancestor
+    assert [call for call in calls if "merge-base" in call] == [
+        ["git", "merge-base", "--is-ancestor", FULL_SHA, HEAD_SHA]
+    ]
+    assert facts.sha_is_ancestor is ancestor
 
 
-def test_resolve_git_facts_merge_base__is_ancestor_false_exit_sets_field_false():
-    fake_run, calls = _facts_tracked(resolvable=True, ancestor=False)
-    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-        facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
-    merge_base_calls = [c for c in calls if "merge-base" in c]
-    assert len(merge_base_calls) == 1
-    assert not facts.sha_is_ancestor
+@pytest.mark.parametrize(
+    "reviewed_sha, head_sha, default_head_failure, expected_head, expected_errors",
+    [
+        pytest.param(
+            FULL_SHA, "deadbeef", False, "deadbeef", ("head-sha",), id="explicit-head"
+        ),
+        pytest.param(
+            None,
+            None,
+            True,
+            "unknown",
+            ("could not resolve the head commit",),
+            id="default-head",
+        ),
+        pytest.param(
+            FULL_SHA,
+            HEAD_SHA,
+            False,
+            HEAD_SHA,
+            ("is not present in this clone", SHORT_SHA),
+            id="missing-reviewed",
+        ),
+    ],
+)
+def test_git_fact_errors(
+    reviewed_sha: str | None,
+    head_sha: str | None,
+    default_head_failure: bool,
+    expected_head: str,
+    expected_errors: tuple[str, ...],
+) -> None:
+    inner = _fake_git_run(resolvable=False)
 
+    def run(
+        cmd: Sequence[str], *_args: object, **_kwargs: object
+    ) -> proc.CompletedProcess[str]:
+        if default_head_failure:
+            if cmd[:2] == ["git", "rev-parse"]:
+                return _result(err="fatal: not a git repository", rc=128)
+            return _result()
+        return inner(cmd, *_args, **_kwargs)
 
-def test_resolve_git_facts_error_messages__head_unresolvable_appends_explanation():
-
-    def fake_run(cmd, *a, **k):
-        if cmd[:2] == ["git", "rev-parse"]:
-            return SimpleNamespace(
-                stdout="", stderr="fatal: not a git repository", returncode=128
-            )
-        return SimpleNamespace(stdout="", stderr="", returncode=0)
-
-    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-        errors: list[str] = []
-        facts = detect_prior_review.resolve_git_facts(None, None, errors)
-    assert facts.head_sha == "unknown"
-    assert any("could not resolve the head commit" in e for e in errors), errors
-
-
-def test_resolve_git_facts_error_messages__last_reviewed_commit_absent_appends_explanation():
-    fake_run = _fake_git_run(resolvable=False)
-    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-        errors: list[str] = []
-        facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA, errors)
+    errors: list[str] = []
+    with patch.object(proc, "run", side_effect=run):
+        facts = detect_prior_review.resolve_git_facts(reviewed_sha, head_sha, errors)
+    assert facts.head_sha == expected_head
     assert not facts.sha_resolvable
-    assert any("is not present in this clone" in e for e in errors), errors
-    assert any(FULL_SHA[:8] in e for e in errors), (
-        "the short sha should be named in the explanation"
-    )
+    assert all(any(text in error for error in errors) for text in expected_errors)

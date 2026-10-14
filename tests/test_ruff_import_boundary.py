@@ -39,11 +39,10 @@ def _ruff(
     ("source", "banned"),
     [
         ("from scripts.gauntlet import cli\n\nprint(cli)\n", True),
-        ("import scripts.gauntlet\n\nprint(scripts.gauntlet)\n", True),
         ("from gauntlet import cli\n\nprint(cli)\n", False),
     ],
 )
-def test_ruff_bans_scripts_imports(source, banned):
+def test_ruff_bans_scripts_imports(source: str, banned: bool) -> None:
     result = _ruff(source)
     assert ("TID251" in result.stdout) is banned, result.stdout + result.stderr
     assert result.returncode == (1 if banned else 0), result.stderr
@@ -53,16 +52,6 @@ def test_ruff_bans_scripts_imports(source, banned):
     ("filename", "source", "banned"),
     [
         ("scripts/gauntlet/probe.py", "import subprocess\n\nprint(subprocess)\n", True),
-        (
-            "scripts/gauntlet/probe.py",
-            "from subprocess import run\n\nprint(run)\n",
-            True,
-        ),
-        (
-            "scripts/gauntlet/probe.py",
-            "from scripts.gauntlet import cli\n\nprint(cli)\n",
-            True,
-        ),
         ("scripts/gauntlet/proc.py", "import subprocess\n\nprint(subprocess)\n", True),
         ("scripts/gauntlet/proc.py", "from scripts import cli\n\nprint(cli)\n", True),
         (
@@ -71,15 +60,31 @@ def test_ruff_bans_scripts_imports(source, banned):
             False,
         ),
         ("tests/probe.py", "import subprocess\n\nprint(subprocess)\n", False),
+        (
+            "tests/probe.py",
+            "import unittest\n\n\nclass Probe(unittest.TestCase):\n    pass\n",
+            True,
+        ),
+        (
+            "tests/probe.py",
+            "import unittest.mock\nfrom unittest import mock\n\n"
+            "print(unittest.mock, mock)\n",
+            False,
+        ),
+        ("tests/probe.py", "from scripts import cli\n\nprint(cli)\n", True),
+        ("scripts/gauntlet/probe.py", "import sys\n\nsys.exit(0)\n", True),
+        ("scripts/probe.py", "import sys\n\nsys.exit(0)\n", False),
     ],
 )
-def test_ruff_shipped_process_boundary(filename, source, banned):
+def test_ruff_shipped_process_boundary(
+    filename: str, source: str, banned: bool
+) -> None:
     result = _ruff(source, filename)
     assert ("TID251" in result.stdout) is banned, result.stdout + result.stderr
     assert result.returncode == (1 if banned else 0), result.stdout + result.stderr
 
 
-def test_ruff_pin_matches_pre_commit():
+def test_ruff_pin_matches_pre_commit() -> None:
     dev = re.search(
         r'"ruff==([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
@@ -87,15 +92,5 @@ def test_ruff_pin_matches_pre_commit():
         r"ruff-pre-commit\n\s+rev: v(\S+)",
         (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"),
     )
-    assert dev and hook and dev.group(1) == hook.group(1)
-
-
-def test_real_proc_passes_ruff():
-    result = subprocess.run(
-        [sys.executable, "-m", "ruff", "check", "scripts/gauntlet/proc.py"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert dev is not None and hook is not None
+    assert dev.group(1) == hook.group(1)

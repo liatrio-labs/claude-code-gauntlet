@@ -59,42 +59,7 @@ mypy_path = "scripts"
 exclude = "(?x)(^(bench/vendor|bench/workspace)/)"
 
 [[tool.mypy.overrides]]
-module = [
-  "gauntlet.cli",
-  "gauntlet.contract_gen",
-  "gauntlet.style",
-  "gauntlet.style_hook",
-  "gauntlet.generate",
-  "gauntlet.config",
-  "gauntlet.output_dir",
-  "gauntlet.project_rules",
-  "gauntlet.fix_tasks",
-  "gauntlet.tasks",
-  "gauntlet.awaiting",
-  "gauntlet.materialize",
-  "gauntlet.artifacts",
-  "gauntlet.diff",
-  "gauntlet.forge",
-  "gauntlet.prior_review",
-  "gauntlet.pr_identity",
-  "gauntlet.marker",
-  "gauntlet.paths",
-  "gauntlet.jsjson",
-  "gauntlet.markdown",
-  "gauntlet.text",
-  "gauntlet.delivery.fold",
-  "gauntlet.delivery.gate",
-  "gauntlet.delivery.compose",
-  "gauntlet.delivery.post",
-  "gauntlet.delivery.input",
-  "gauntlet.patches",
-  "gauntlet.verify.wire",
-  "gauntlet.verify.decide",
-  "tests.support.delivery",
-  "gauntlet.numstat",
-  "gauntlet.stale",
-  "gauntlet.shared_context",
-]
+module = ["gauntlet.*", "tests.support.delivery"]
 disallow_any_generics = true
 disallow_subclassing_any = true
 disallow_untyped_calls = true

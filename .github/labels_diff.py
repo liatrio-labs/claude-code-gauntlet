@@ -257,6 +257,7 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-    from gauntlet.cli import Command
+    from gauntlet.cli import utf8_stdio
 
-    Command.legacy(main, prog="labels_diff.py").run()
+    utf8_stdio()
+    raise SystemExit(main())

@@ -110,19 +110,40 @@ class Anchor:
 
 
 @dataclass(frozen=True, slots=True)
-class FindingPlan:
+class AnchoredFinding:
     index: int
     finding: Finding
     path: str
-    anchor: Anchor | None
     verdict: FixVerdict | None
+    anchor: Anchor
 
 
 @dataclass(frozen=True, slots=True)
-class GroupPlan:
+class UnanchoredFinding:
+    index: int
+    finding: Finding
+    path: str
+    verdict: FixVerdict | None
+    platform: Platform
+
+
+FindingPlan = AnchoredFinding | UnanchoredFinding
+
+
+@dataclass(frozen=True, slots=True)
+class AnchoredGroup:
     group: compose.Group
-    members: tuple[FindingPlan, ...]
-    skip_warning: str | None
+    primary: AnchoredFinding
+
+
+@dataclass(frozen=True, slots=True)
+class DegradedGroup:
+    group: compose.Group
+    members: tuple[UnanchoredFinding, ...]
+    warning: str
+
+
+GroupPlan = AnchoredGroup | DegradedGroup
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +293,10 @@ def _site_verdict(
     )
 
 
+def _site_platform(site: gate.ApplySite) -> Platform:
+    return "github" if isinstance(site, gate.GitHubApplySite) else "gitlab"
+
+
 def _anchor(
     finding: Finding,
     path: str,
@@ -330,23 +355,37 @@ def plan_delivery(
             # Ship the diff's spelling before validation or GitHub rejects the whole review.
             path = diff.diff_path_spelling(facts, path, line)
         anchor = _anchor(primary, path, facts, platform)
-        members = tuple(
-            FindingPlan(
-                indexes[id(member)],
-                member,
-                path if index == 0 else member.get("file", "?"),
-                anchor if index == 0 else None,
-                _site_verdict(member, anchor if index == 0 else None, facts)
-                if index == 0 or anchor is None
-                else None,
+        if anchor is None:
+            members = tuple(
+                UnanchoredFinding(
+                    indexes[id(member)],
+                    member,
+                    path if index == 0 else member.get("file", "?"),
+                    _site_verdict(member, None, facts),
+                    platform,
+                )
+                for index, member in enumerate((primary, *group.corroborators))
             )
-            for index, member in enumerate((primary, *group.corroborators))
+            groups.append(
+                DegradedGroup(
+                    group,
+                    members,
+                    _group_skip_warning(
+                        group, facts, path if line is not None else None
+                    ),
+                )
+            )
+            continue
+        planned = AnchoredFinding(
+            indexes[id(primary)],
+            primary,
+            path,
+            _site_verdict(primary, anchor, facts),
+            anchor,
         )
-        planned = members[0]
         verdict = planned.verdict
         if (
-            anchor is not None
-            and "suggested_fix_code" in primary
+            "suggested_fix_code" in primary
             and verdict is not None
             and verdict.keep
             and verdict.apply_range is not None
@@ -354,27 +393,18 @@ def plan_delivery(
             candidates.append(
                 gate.OverlapCandidate(planned.index, anchor.path, verdict.apply_range)
             )
-        groups.append(
-            GroupPlan(
-                group,
-                members,
-                _group_skip_warning(group, facts, path if line is not None else None)
-                if anchor is None
-                else None,
-            )
-        )
+        groups.append(AnchoredGroup(group, planned))
     losers = gate.overlap_losers(candidates)
     for index, group_plan in enumerate(groups):
-        primary_plan = group_plan.members[0]
+        if isinstance(group_plan, DegradedGroup):
+            continue
+        primary_plan = group_plan.primary
         verdict = primary_plan.verdict
         if primary_plan.index in losers and verdict is not None and verdict.keep:
             demoted = gate.demote(verdict)
             groups[index] = replace(
                 group_plan,
-                members=(
-                    replace(primary_plan, verdict=demoted),
-                    *group_plan.members[1:],
-                ),
+                primary=replace(primary_plan, verdict=demoted),
             )
     return DeliveryPlan(
         tuple(groups),
@@ -383,10 +413,9 @@ def plan_delivery(
 
 
 def _activate_degraded(
-    group: GroupPlan, *, session: DeliverySession
+    group: DegradedGroup, *, session: DeliverySession
 ) -> tuple[compose.SkippedEntry, ...]:
-    if group.skip_warning is not None:
-        session.warn_skip(group.skip_warning)
+    session.warn_skip(group.warning)
     return tuple(
         compose.SkippedEntry(
             member.path, member.finding.get("line"), session.activate(member)
@@ -395,35 +424,44 @@ def _activate_degraded(
     )
 
 
-def resolve_members(group: GroupPlan, facts: DiffFacts | None) -> GroupPlan:
-    members = [group.members[0]]
-    for member in group.members[1:]:
-        finding = member.finding
+def resolve_corroborators(
+    group: AnchoredGroup, facts: DiffFacts | None
+) -> tuple[FindingPlan, ...]:
+    members: list[FindingPlan] = []
+    platform = _site_platform(group.primary.anchor.site)
+    for index, finding in enumerate(group.group.corroborators, 1):
         line = finding.get("line")
-        path = member.path
+        path = finding.get("file", "?")
         anchor = None
         if line is not None:
-            path = diff.diff_path_spelling(facts, finding.get("file", "?"), line)
-            anchor = _anchor(finding, path, facts, "gitlab")
-        members.append(replace(member, path=path, anchor=anchor))
-    return replace(group, members=tuple(members))
+            path = diff.diff_path_spelling(facts, path, line)
+            anchor = _anchor(finding, path, facts, platform)
+        members.append(
+            AnchoredFinding(index, finding, path, None, anchor)
+            if anchor is not None
+            else UnanchoredFinding(index, finding, path, None, platform)
+        )
+    return tuple(members)
 
 
 def render_inline(
-    group: GroupPlan,
+    member: FindingPlan,
+    corroborators: Sequence[Finding],
     *,
-    member_index: int,
-    grouped: bool,
     surface: Surface,
     plan: DeliveryPlan,
     facts: DiffFacts | None,
-    platform: Platform,
     session: DeliverySession,
     marker_suffix: str = "",
 ) -> InlinePlan:
-    member = group.members[member_index]
     positionless = surface == "note"
-    anchor = None if positionless else member.anchor
+    platform: Platform
+    if isinstance(member, AnchoredFinding):
+        platform = _site_platform(member.anchor.site)
+        anchor = None if positionless else member.anchor
+    else:
+        platform = member.platform
+        anchor = None
     if positionless or member.verdict is None:
         verdict = _site_verdict(member.finding, anchor, facts)
         # Static winners occupy ranges even after failure; reactive sites claim none.
@@ -447,7 +485,7 @@ def render_inline(
         else None
     )
     sections = compose.render_group_sections(
-        finding, group.group.corroborators if grouped else (), fence_offsets=offsets
+        finding, corroborators, fence_offsets=offsets
     )
     body = compose.compose_inline_body(
         sections, platform=platform, surface=surface, marker_suffix=marker_suffix
@@ -574,19 +612,17 @@ def post_github(
     comments: list[GitHubComment] = []
     skipped_groups: list[tuple[compose.SkippedEntry, ...]] = []
     for group in plan.groups:
-        primary = group.members[0]
-        anchor = primary.anchor
-        if anchor is None:
+        if isinstance(group, DegradedGroup):
             skipped_groups.append(_activate_degraded(group, session=session))
             continue
+        primary = group.primary
+        anchor = primary.anchor
         inline = render_inline(
-            group,
-            member_index=0,
-            grouped=True,
+            primary,
+            group.group.corroborators,
             surface="inline",
             plan=plan,
             facts=facts,
-            platform="github",
             session=session,
         )
         if inline.budget_error is not None:
@@ -712,10 +748,10 @@ def post_gitlab(
     skipped_groups = [
         _activate_degraded(group, session=session)
         for group in plan.groups
-        if group.members[0].anchor is None
+        if isinstance(group, DegradedGroup)
     ]
     remaining = tuple(
-        group for group in plan.groups if group.members[0].anchor is not None
+        group for group in plan.groups if isinstance(group, AnchoredGroup)
     )
     finalized = plan_summary(data, skipped_groups, platform="gitlab")
     composed, sha = finalized.summary, finalized.sha
@@ -739,7 +775,7 @@ def post_gitlab(
 
     def member_key(member: FindingPlan) -> str:
         finding = member.finding
-        anchor = member.anchor
+        anchor = member.anchor if isinstance(member, AnchoredFinding) else None
         raw_title = finding.get("title")
         title = prepare_line(raw_title) if isinstance(raw_title, str) else ""
         return compose.finding_key(
@@ -750,23 +786,21 @@ def post_gitlab(
         )
 
     def deliver(
-        group: GroupPlan, member_index: int, keys: tuple[str, ...], *, grouped: bool
+        member: AnchoredFinding,
+        corroborators: Sequence[Finding],
+        keys: tuple[str, ...],
     ) -> DeliveryOutcome:
-        member = group.members[member_index]
         anchor = member.anchor
-        assert anchor is not None
         filepath, line = anchor.path, anchor.line
         finding = member.finding
         # Render before dedup for rerun counts; fold notices follow dedup.
         marker_suffix = _delivery_marker_suffix(sha, keys)
         inline = render_inline(
-            group,
-            member_index=member_index,
-            grouped=grouped,
+            member,
+            corroborators,
             surface="discussion",
             plan=plan,
             facts=facts,
-            platform="gitlab",
             session=session,
             marker_suffix=marker_suffix,
         )
@@ -812,20 +846,15 @@ def post_gitlab(
             return "failed"
         return "posted"
 
-    def deliver_unanchored(
-        group: GroupPlan, member_index: int, key: str
-    ) -> DeliveryOutcome:
-        member = group.members[member_index]
+    def deliver_unanchored(member: UnanchoredFinding, key: str) -> DeliveryOutcome:
         finding = member.finding
         marker_suffix = _delivery_marker_suffix(sha, (key,))
         inline = render_inline(
-            group,
-            member_index=member_index,
-            grouped=False,
+            member,
+            (),
             surface="note",
             plan=plan,
             facts=facts,
-            platform="gitlab",
             session=session,
             marker_suffix=marker_suffix,
         )
@@ -851,10 +880,7 @@ def post_gitlab(
             return "failed"
         return "posted"
 
-    def deliver_corroborator(
-        group: GroupPlan, member_index: int, key: str
-    ) -> DeliveryOutcome:
-        member = group.members[member_index]
+    def deliver_corroborator(member: FindingPlan, key: str) -> DeliveryOutcome:
         finding = member.finding
         line = finding.get("line")
         title = finding.get("title", "?")
@@ -865,14 +891,14 @@ def post_gitlab(
                 f"anchor its own discussion on."
             )
             return "invalid"
-        if member.anchor is None:
+        if isinstance(member, UnanchoredFinding):
             filepath = member.path
             session.warn_skip(
                 f"Skipping corroborating finding '{title}' at {filepath}:{line} "
                 f"— line not found in diff."
             )
             return "invalid"
-        return deliver(group, member_index, (key,), grouped=False)
+        return deliver(member, (), (key,))
 
     counters: dict[DeliveryOutcome, int] = {
         "posted": 0,
@@ -881,16 +907,13 @@ def post_gitlab(
         "failed": 0,
     }
     for group in remaining:
-        primary_key = member_key(group.members[0])
+        primary_key = member_key(group.primary)
         # Resolve member anchors and render keys after the summary request.
         # Unanchored members key their raw location, even within a grouped body.
-        group = resolve_members(group, facts)
-        member_keys = (
-            primary_key,
-            *(member_key(member) for member in group.members[1:]),
-        )
+        corroborators = resolve_corroborators(group, facts)
+        member_keys = (primary_key, *(member_key(m) for m in corroborators))
         if primary_key in prior.legacy_group_keys:
-            # Older group bodies carried unkeyed corroborators, so the body is the whole delivery and no missing member is posted again.
+            # Unkeyed corroborators make the group body the whole delivery.
             counters["already_present"] += len(member_keys)
             continue
         if any(key in delivered_keys for key in member_keys) and not all(
@@ -899,21 +922,21 @@ def post_gitlab(
             counters[
                 "already_present"
                 if primary_key in delivered_keys
-                else deliver(group, 0, (primary_key,), grouped=False)
+                else deliver(group.primary, (), (primary_key,))
             ] += 1
-            for member_index, key in enumerate(member_keys[1:], 1):
+            for member, key in zip(corroborators, member_keys[1:], strict=True):
                 if key in delivered_keys:
                     counters["already_present"] += 1
-                elif group.members[member_index].anchor is not None:
-                    counters[deliver_corroborator(group, member_index, key)] += 1
+                elif isinstance(member, AnchoredFinding):
+                    counters[deliver_corroborator(member, key)] += 1
                 else:
-                    counters[deliver_unanchored(group, member_index, key)] += 1
+                    counters[deliver_unanchored(member, key)] += 1
             continue
-        outcome = deliver(group, 0, member_keys, grouped=True)
+        outcome = deliver(group.primary, group.group.corroborators, member_keys)
         if outcome == "failed":
             counters[outcome] += 1
-            for member_index, key in enumerate(member_keys[1:], 1):
-                counters[deliver_corroborator(group, member_index, key)] += 1
+            for member, key in zip(corroborators, member_keys[1:], strict=True):
+                counters[deliver_corroborator(member, key)] += 1
         else:
             counters[outcome] += len(member_keys)
 

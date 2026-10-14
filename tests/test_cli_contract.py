@@ -781,10 +781,8 @@ def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch, forge_factory):
             result.stderr
             == posting_cases.ERRORS["missing-findings"].format(path=argv[0]).encode()
         )
-    if result.returncode and not result.stdout and result.converted:
+    if result.returncode and not result.stdout:
         assert re.fullmatch(rf"{name}: [^\n]+\n", result.stderr.decode())
-    elif result.returncode and not result.stdout:
-        assert result.stderr
 
 
 def test_recording_covers_all_entry_files():

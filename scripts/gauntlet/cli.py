@@ -60,11 +60,8 @@ class Parser(argparse.ArgumentParser):
 
 @dataclass(frozen=True, slots=True)
 class Command:
-    prog: str | None = None
-    parser: Parser | None = None
-    main: (
-        Callable[[argparse.Namespace], int | tuple[Mapping[str, object], int]] | None
-    ) = None
+    parser: Parser
+    main: Callable[[argparse.Namespace], int | tuple[Mapping[str, object], int]]
     failure_receipt: Callable[[str], Mapping[str, object]] | None = None
     ascii: bool = True
     compact: bool = False
@@ -72,34 +69,12 @@ class Command:
     fallback_receipt: Callable[[Exception], Mapping[str, object]] | None = None
     fallback_line: str = '{"ok": false, "errors": ["receipt serialization failed"]}'
     fallback_code: int = 1
-    _legacy: Callable[[], int | None] | None = None
-
-    @classmethod
-    def legacy(cls, main: Callable[[], int | None], *, prog: str) -> Command:
-        return cls(prog=prog, _legacy=main)
 
     def run(self) -> NoReturn:
         utf8_stdio()
         raise SystemExit(self.invoke(sys.argv[1:]))
 
     def invoke(self, argv: Sequence[str]) -> int:
-        if self._legacy is not None:
-            saved = sys.argv
-            sys.argv = [self.prog or saved[0], *argv]
-            try:
-                result = self._legacy()
-                return 0 if result is None else result
-            except SystemExit as exc:
-                if isinstance(exc.code, int):
-                    return exc.code
-                if exc.code is None:
-                    return 0
-                print(exc.code, file=sys.stderr)
-                return 1
-            finally:
-                sys.argv = saved
-        if self.parser is None or self.main is None:
-            raise RuntimeError("command has no parser or main")
         try:
             outcome = self.main(self.parser.parse_args(argv))
         except CliError as exc:
@@ -123,7 +98,8 @@ class Command:
                     receipt, ascii=self.ascii, compact=self.compact, indent=self.indent
                 )
             )
-        except Exception as exc:  # noqa: BLE001 - receipt serialization must have a fallback
+        # Keep a receipt on serialization failure.
+        except Exception as exc:  # noqa: BLE001
             line = self.fallback_line
             try:
                 if self.fallback_receipt is not None:

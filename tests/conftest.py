@@ -2,30 +2,69 @@
 
 import importlib
 import io
+import json
 import re
+import subprocess
 import sys
+from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
+from tests.support.forge import FakeForgeFactory, install_forge_factory
+from tests.support.pipeline import PersistedPayload
+
 ROOT = Path(__file__).resolve().parents[1]
 ENTRY_IMPORT = re.compile(r"^from gauntlet\.([\w.]+) import CLI$", re.MULTILINE)
 
 
+@pytest.fixture(scope="module")
+def _recorded_pipeline_payload(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> PersistedPayload:
+    destination = tmp_path_factory.mktemp("pipeline") / "persisted.json"
+    subprocess.run(
+        [
+            "node",
+            str(ROOT / "workflows/test/tools/emit_persisted_findings.mjs"),
+            str(destination),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=True,
+    )
+    payload: PersistedPayload = json.loads(destination.read_text(encoding="utf-8"))
+    return payload
+
+
+@pytest.fixture
+def pipeline_payload(_recorded_pipeline_payload: PersistedPayload) -> PersistedPayload:
+    return deepcopy(_recorded_pipeline_payload)
+
+
 @dataclass(frozen=True, slots=True)
 class Invocation:
-    converted: bool
     returncode: int
     stdout: bytes
     stderr: bytes
 
 
 @pytest.fixture
-def invoke(monkeypatch, capsys):
-    def call(name, arguments, cwd, stdin=b"{}\n"):
+def invoke(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> Callable[..., Invocation]:
+    def call(
+        name: str, arguments: list[str], cwd: Path, stdin: bytes = b"{}\n"
+    ) -> Invocation:
         entry = (ROOT / "scripts" / f"{name}.py").read_text(encoding="utf-8")
-        cli = importlib.import_module(f"gauntlet.{ENTRY_IMPORT.search(entry)[1]}").CLI
+        match = ENTRY_IMPORT.search(entry)
+        assert match
+        cli = importlib.import_module(f"gauntlet.{match[1]}").CLI
         monkeypatch.chdir(cwd)
         monkeypatch.setattr(
             sys, "stdin", io.TextIOWrapper(io.BytesIO(stdin), encoding="utf-8")
@@ -35,12 +74,12 @@ def invoke(monkeypatch, capsys):
             code = cli.invoke(arguments)
         except SystemExit as exc:
             code = exc.code if isinstance(exc.code, int) else 1
-        except Exception as exc:  # noqa: BLE001 - the wrapper exits one on an uncaught exception
+        except Exception as exc:  # noqa: BLE001
+            # Match the wrapper's exit for uncaught exceptions.
             print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
             code = 1
         captured = capsys.readouterr()
         return Invocation(
-            cli.parser is not None,
             code,
             captured.out.encode("utf-8", errors="surrogateescape"),
             captured.err.encode("utf-8", errors="backslashreplace"),
@@ -94,24 +133,14 @@ def symlink_or_skip(tmp_path_factory):
 
 
 @pytest.fixture
-def forge_factory(monkeypatch, request):
+def forge_factory(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> FakeForgeFactory:
     from gauntlet.delivery import post
 
-    from tests.support.forge import install_forge_factory
-
-    factory = install_forge_factory(monkeypatch, getattr(request, "param", post))
-    if request.instance is not None:
-        request.instance.forge_factory = factory
-    return factory
+    return install_forge_factory(monkeypatch, getattr(request, "param", post))
 
 
 @pytest.fixture
 def poster_state(monkeypatch):
     monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
-
-
-@pytest.fixture
-def poster_workspace(tmp_path, request):
-    if request.instance is not None:
-        request.instance.tmp = str(tmp_path)
-        request.instance.findings_path = str(tmp_path / "findings.json")

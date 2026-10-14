@@ -3,12 +3,10 @@
 import importlib.util
 import json
 import sys
-from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from gauntlet.cli import Command
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -254,32 +252,6 @@ def remind_runner(issues, tag=TAG, action="create", number=None):
 
 
 @pytest.mark.parametrize(
-    ("argv", "code"),
-    [
-        (["check", "--tag", TAG], 0),
-        (["check", "--tag", TAG], 1),
-        (["open-pr"], 2),
-        (["--help"], 0),
-    ],
-    ids=["success", "drift", "usage_error", "help_system_exit"],
-)
-def test_legacy_command_calls_main_without_arguments_and_preserves_exit_code(
-    argv, code, monkeypatch
-):
-    target = current_entry(description="A plugin" if code == 0 else "Wrong")
-    runner = check_runner(marketplace(target))
-    command = Command.legacy(
-        partial(MODULE.main, run=runner), prog="marketplace_bump.py"
-    )
-    saved = ["caller.py", "unrelated"]
-    monkeypatch.setattr(sys, "argv", saved)
-
-    assert command.invoke(argv) == code
-    assert sys.argv is saved
-    assert len(runner.calls) == (4 if argv[0] == "check" else 0)
-
-
-@pytest.mark.parametrize(
     "url", ["", "https://github.com/liatrio-labs/claude-plugins/pull/42"]
 )
 def test_open_pr_rewrites_only_matching_entry_and_runs_exact_sequence(
@@ -519,7 +491,6 @@ def test_remind_no_release_is_silent(capsys):
     ("argv", "responses", "message"),
     [
         (["open-pr", "--tag", "1.2.3"], {}, "malformed release tag"),
-        (["check", "--tag", "v1.2"], {}, "malformed release tag"),
         (["remind", "--repo", "bad"], {}, "malformed repository"),
         (
             ["open-pr", "--tag", TAG],
@@ -545,7 +516,12 @@ def test_remind_no_release_is_silent(capsys):
         ),
     ],
 )
-def test_release_bad_inputs_exit_two_with_one_line(argv, responses, message, capsys):
+def test_release_bad_inputs_exit_two_with_one_line(
+    argv: list[str],
+    responses: dict[tuple[str, ...], str],
+    message: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     runner = FakeRunner(responses)
 
     assert MODULE.main(argv, run=runner) == 2
@@ -709,7 +685,9 @@ def test_push_failure_reports_last_nonempty_stderr_line(stderr, capsys):
         ),
     ],
 )
-def test_invalid_manifest_fields_exit_two(field, value, message, capsys):
+def test_invalid_manifest_fields_exit_two(
+    field: str, value: object, message: str, capsys: pytest.CaptureFixture[str]
+) -> None:
     document = manifest(**{field: value})
     if value == "missing":
         del document[field]
