@@ -17,6 +17,10 @@ Every PR also pays down tech debt in and around the code it touches. Trim code c
 
 Test bloat is debt too. When logic moves, cut its tests down to what they prove. Mapping each old test to a new one is a port, not a consolidation. Put a cut list in the plan. Judge the result by a kill matrix over arm-level mutants: keep the smallest set of tests that still kills every mutant, plus any test that pins output a user sees. Keep the matrix cheap. Generate mutants only for the functions and tables whose tests are cut or rewritten, not for every declaration in every touched module. Run the old tests and the cut tests over that one mutant set and compare by mutant; run no matrix for a stage that only moves code or comments, where the suites and a line-for-line comparison are the proof. Run one matrix at a time, and never alongside agents that run the suites themselves. An audit of the cut covers only what the matrix cannot model (regex alternatives, object keys and key order, literal strings); it does not build a second mutation sweep. Report tests cut, not tests mapped.
 
+Size each test's net to what it protects. Give full proof where a miss reaches users, security or a published contract. Give developer tooling, and tests of test helpers, one accepting and one rejecting case per behaviour. The old suite is not the standard: drop a proof it held when the proof fails that bar. If the cut list misses the issue's line target, stop before the build and put the value call to me.
+
+You judge every agent finding before it becomes work. A finding is a claim, not an instruction. Accept it only when you can name a realistic edit or input that causes the failure, and who it hurts. Reject a scenario that needs a change no maintainer would make, a mutant finer than the arm level, or a difference with no visible effect, and say why in one line. A reviewer's own mutants never widen the matrix. Brief reviewers with this bar, and tell them a finding without a realistic cause is not a finding.
+
 Triage every out-of-scope finding:
 
 - Fix it in this PR when it is in or next to code you touched, small, and needs no new design decision. This is the default.
