@@ -1809,11 +1809,10 @@ def test_review_input_overrides_and_report(data, posting, tmp_path):
     assert existing.payload["payload"]["body"] == EMPTY_SUMMARY
 
 
-@pytest.mark.parametrize("number", ["5"])
-def test_review_input_accepted_scalar_values(number, posting):
+def test_string_pr_number_and_explicit_group_primary(posting):
     run = posting(
         review(
-            pr_number=number,
+            pr_number="5",
             findings=[
                 grouped(PRIMARY_A),
                 grouped(MEMBER_B, primary=True),
