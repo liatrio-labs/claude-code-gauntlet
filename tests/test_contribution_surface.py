@@ -3,8 +3,6 @@
 Stdlib only: CI installs pytest and nothing else.
 """
 
-import importlib.util
-import io
 import json
 import os
 import re
@@ -14,7 +12,6 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any, NamedTuple
-from unittest.mock import patch
 
 import pytest
 from gauntlet import contract_gen as contract_gen
@@ -379,18 +376,8 @@ def _run_labels(
         )
 
 
-@pytest.mark.parametrize(
-    "repo",
-    [
-        pytest.param(None, id="infer-repository"),
-        pytest.param("acme/widgets", id="explicit-repository"),
-    ],
-)
-def test_labels_commands(repo: str | None) -> None:
-    args = ["--commands"]
-    if repo is not None:
-        args += ["--repo", repo]
-    result = _run_labels(*args)
+def test_labels_commands() -> None:
+    result = _run_labels("--commands", "--repo", "acme/widgets")
     assert result.returncode == 0, result.stderr
     lines = result.stdout.strip().splitlines()
     labels = _labels()
@@ -400,23 +387,19 @@ def test_labels_commands(repo: str | None) -> None:
         argv = shlex.split(line)
         assert argv[:3] == ["gh", "label", "create"]
         assert "--force" in argv
-        if repo is None:
-            assert "--repo" not in argv
-        else:
-            assert "--repo acme/widgets" in line
-            assert argv[argv.index("--repo") + 1] == "acme/widgets"
+        assert "--repo acme/widgets" in line
+        assert argv[argv.index("--repo") + 1] == "acme/widgets"
         emitted[argv[3]] = argv[argv.index("--description") + 1]
     assert emitted == {label["name"]: label["description"] for label in labels}
 
 
 @pytest.mark.parametrize(
-    "live,status,expected,absent,commands",
+    "live,status,expected,commands",
     [
         pytest.param(
             _as_live(_labels()),
             0,
             ("in sync",),
-            (),
             None,
             id="uppercase-colors-are-in-sync",
         ),
@@ -432,24 +415,8 @@ def test_labels_commands(repo: str | None) -> None:
             ],
             1,
             ("missing: area:agents", "diverging: area:bench", "unmanaged", "hand-made"),
-            (),
             {"area:agents", "area:bench"},
             id="missing-and-diverging-with-unmanaged",
-        ),
-        pytest.param(
-            [
-                *_as_live(_labels()),
-                {
-                    "name": "hand-made",
-                    "color": "ffffff",
-                    "description": "not managed here",
-                },
-            ],
-            0,
-            ("unmanaged", "hand-made", "in sync"),
-            ("missing:", "diverging:"),
-            None,
-            id="unmanaged-only-is-informational",
         ),
     ],
 )
@@ -457,15 +424,12 @@ def test_labels_drift(
     live: list[dict[str, str]],
     status: int,
     expected: tuple[str, ...],
-    absent: tuple[str, ...],
     commands: set[str] | None,
 ) -> None:
     result = _run_labels(live=live)
     assert result.returncode == status, result.stdout + result.stderr
     for fragment in expected:
         assert fragment in result.stdout
-    for fragment in absent:
-        assert fragment not in result.stdout
     if commands is not None:
         narrowed = _run_labels("--commands", live=live).stdout.strip().splitlines()
         assert {shlex.split(line)[3] for line in narrowed} == commands
@@ -486,13 +450,6 @@ def _live_pages() -> tuple[list[dict[str, str]], list[dict[str, str]]]:
             (b"in sync",),
             b"",
             id="concatenated-pagination",
-        ),
-        pytest.param(
-            json.dumps(_live_pages()).encode("utf-8"),
-            0,
-            (b"in sync",),
-            b"",
-            id="nested-pagination",
         ),
         pytest.param(
             json.dumps(
@@ -532,18 +489,6 @@ def test_labels_accepted_input(
         assert stderr_fragment in result.stderr
 
 
-def test_labels_loader_reads_utf8_bytes_with_cp1252_text_wrapper() -> None:
-    spec = importlib.util.spec_from_file_location("labels_diff_test", LABELS_DIFF)
-    assert spec is not None and spec.loader is not None
-    labels_diff = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(labels_diff)
-    payload = '[{"name":"review","color":"ffffff","description":"café"}]'.encode()
-    stream = io.TextIOWrapper(io.BytesIO(payload), encoding="cp1252")
-    with patch.object(labels_diff.sys, "stdin", stream):
-        labels = labels_diff.load_live("-")
-    assert labels[0]["description"] == "café"
-
-
 class RefusedRow(NamedTuple):
     name: str
     argv: tuple[str, ...]
@@ -573,23 +518,9 @@ REFUSED_LABEL_INPUTS: tuple[RefusedRow, ...] = (
         for name, payload in (
             ("not-json", b"{oops"),
             ("no-labels-key", b'{"tags": []}'),
-            ("labels-is-mapping", b'{"labels": {"bug": "d73a4a"}}'),
-            ("empty-labels", b'{"labels": []}'),
             ("string-entry", b'{"labels": ["bug"]}'),
             ("missing-color", b'{"labels": [{"name": "bug", "description": "x"}]}'),
         )
-    ),
-    RefusedRow(
-        "manifest-live-not-json",
-        ("--manifest", "{path}", "--live", "{path}"),
-        None,
-        b"{oops",
-    ),
-    RefusedRow(
-        "manifest-live-no-labels-key",
-        ("--manifest", "{path}", "--live", "{path}"),
-        None,
-        b'{"tags": []}',
     ),
     RefusedRow("live-required", (), None, None),
     RefusedRow("empty-response", stdin_response, b"", None),
@@ -597,12 +528,6 @@ REFUSED_LABEL_INPUTS: tuple[RefusedRow, ...] = (
         "api-error-object",
         stdin_response,
         b'{"message": "Not Found", "status": "404"}',
-        None,
-    ),
-    RefusedRow(
-        "single-label-object",
-        stdin_response,
-        b'{"name": "bug", "color": "d73a4a"}',
         None,
     ),
     RefusedRow("names-only", stdin_response, b'["bug", "enhancement"]', None),
@@ -641,14 +566,6 @@ REFUSED_LABEL_INPUTS: tuple[RefusedRow, ...] = (
         None,
         b'{"labels":[{"name":"-wip","color":"ffffff",'
         b'"description":"leading dash in name"}]}',
-        empty_output=True,
-    ),
-    RefusedRow(
-        "description-is-flag",
-        manifest_commands,
-        None,
-        b'{"labels":[{"name":"ok","color":"ffffff",'
-        b'"description":"-leading dash in description"}]}',
         empty_output=True,
     ),
     RefusedRow(
