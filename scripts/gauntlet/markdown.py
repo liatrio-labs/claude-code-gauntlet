@@ -5,6 +5,7 @@ from bisect import bisect_left
 from dataclasses import dataclass
 
 
+# Twin of ``openProseFence`` in ``workflows/src/outboundText.js``.
 def open_fence(
     text: str,
     *,
@@ -78,6 +79,7 @@ def open_fence(
     return state
 
 
+# Twin of ``proseFenceCloser`` in ``workflows/src/outboundText.js``.
 def fence_closer(prefix: str) -> str:
     state = open_fence(prefix)
     return "" if state is None else state[0] * state[1]

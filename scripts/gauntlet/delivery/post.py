@@ -885,7 +885,8 @@ def post_gitlab(
     }
     for group in remaining:
         primary_key = member_key(group.primary)
-        # Unanchored members key their raw location, even within a grouped body.
+        # Unanchored members key their raw location, even within a grouped body, so
+        # a member keeps one marker identity whether it posts grouped or split.
         corroborators = resolve_corroborators(group, facts)
         member_keys = (primary_key, *(member_key(m) for m in corroborators))
         if primary_key in prior.legacy_group_keys:

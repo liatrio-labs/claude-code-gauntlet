@@ -22,6 +22,7 @@ from gauntlet.registry import JS_TRIM_CHARS as JS_TRIM_CHARS
 
 
 def normalize_report_severity(raw: object, labels: Mapping[str, object]) -> str:
+    # Twin fallback: workflows/src/renderReport.js::normalizeReportSeverity.
     fallback = "low"
     if not isinstance(raw, str):
         return fallback

@@ -1499,7 +1499,15 @@ def test_capture_gl_dry_and_live_reserve_all_group_keys(posting, monkeypatch):
         (("gitlab", "discussion", 500),),
     )
     run = check(row, posting, monkeypatch)
+    # A dry run never reads prior delivery, so it captures every finding.
+    assert [c.method for c in run.fake.calls] == [
+        "diff",
+        "ensure_available",
+        "ensure_available",
+        "diff_refs",
+    ]
     live = posting(row.data, diff=CONTRACT_DIFF, dry_run=False)
+    assert "2 inline discussion(s) posted." in live.out
     body = live.requests[1].payload["body"]
     assert body.startswith(run.payload["discussions"][0]["body"])
     assert len(body.encode("utf-8")) <= 500
