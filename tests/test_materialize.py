@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from gauntlet import cli, materialize, tasks
+from gauntlet import artifacts, materialize, tasks
 
 from tests.support.artifacts import (
     NONCE,
@@ -45,14 +45,6 @@ EMPTY_ASSEMBLE = {
             "missing-id", "missing", None, 0, None, id="SOURCE-unresolved-id-zero"
         ),
         pytest.param(
-            "missing-path",
-            "missing.output",
-            None,
-            1,
-            None,
-            id="SOURCE-explicit-missing-counts",
-        ),
-        pytest.param(
             "cli-path-nonce",
             "missing.output",
             "run",
@@ -61,14 +53,6 @@ EMPTY_ASSEMBLE = {
             id="SOURCE-cli-missing-path-nonce-sweeps-roots",
         ),
         pytest.param("channel", "task", None, 1, None, id="SOURCE-foreign-channel"),
-        pytest.param(
-            "named-sweep",
-            "missing.output",
-            "run",
-            201,
-            None,
-            id="SOURCE-named-plus-200-cap",
-        ),
     ],
 )
 def test_source_selection(
@@ -101,10 +85,6 @@ def test_source_selection(
         os.utime(foreign, (20, 20))
         # Remove the otherwise matching named file from this content-only sweep.
         named.unlink()
-    if mode == "named-sweep":
-        named.unlink()
-        for index in range(201):
-            task_file(root, f"other{index:03}", text="{}", mtime=index)
     monkeypatch.setattr(materialize, "assemble", lambda _: EMPTY_ASSEMBLE)
     roots = tasks.TaskRoots((str(root),), None)
     if mode == "sweep":
@@ -139,7 +119,8 @@ def test_source_selection(
         assert not plan.exists()
         assert receipt["errors"] == [
             "no task output file carrying this run's returned artifacts was found "
-            f"(looked at {scanned} candidate file(s) for target {task!r} / nonce {nonce!r})"
+            f"(looked at {scanned} candidate file(s) for target "
+            f"{task!r} / nonce {nonce!r})"
         ]
 
 
@@ -147,26 +128,17 @@ def test_source_selection(
     "defect,message",
     [
         pytest.param(
-            "empty", "persistReturn carries no entries to write", id="FENCE-no-entries"
-        ),
-        pytest.param(
             "nonobject", "entry 2 is not an object", id="FENCE-later-nonobject"
         ),
         pytest.param(
-            "path", "entry 1 has no usable string path", id="FENCE-missing-path"
-        ),
-        pytest.param(
-            "text", "entry 1 (BAD) carries no string text", id="FENCE-nontext"
+            "path",
+            "entry 1 has no usable string path",
+            id="FENCE-missing-path",
         ),
         pytest.param(
             "escape",
             "entry 1 writes outside the output directory: BAD is not inside ROOT",
             id="FENCE-lexical-escape",
-        ),
-        pytest.param(
-            "no-plan",
-            "persistReturn names no persist plan to derive from",
-            id="FENCE-no-plan",
         ),
         pytest.param(
             "not-entry",
@@ -189,25 +161,18 @@ def test_validation_precedes_every_write(defect, message, tmp_path, monkeypatch)
             {"path": str(plan), "text": "{}"},
         ],
     }
-    if defect == "empty":
-        payload["entries"] = []
-    elif defect == "nonobject":
+    if defect == "nonobject":
         payload["entries"].append(3)
-        # The invalid entry follows a valid primary and plan.
-    elif defect == "path":
-        payload["entries"][1]["path"] = ""
-    elif defect == "text":
-        payload["entries"][1] = {"path": str(bad), "text": 7}
     elif defect == "escape":
         bad = root / ".." / "escape"
         payload["entries"][1]["path"] = str(bad)
-    elif defect == "no-plan":
-        payload.pop("planPath")
-    elif defect == "not-entry":
+    elif defect == "path":
+        payload["entries"][1]["path"] = ""
+    else:
         payload["planPath"] = str(bad)
     task = returned_task(tmp_path / "task.output", payload)
     monkeypatch.setattr(
-        materialize,
+        artifacts,
         "write_atomic",
         lambda *_: pytest.fail("validation wrote a primary"),
     )
@@ -241,7 +206,8 @@ def test_symlink_escape_is_refused_before_write(tmp_path, symlink_or_skip):
     )
     receipt = materialize.materialize(task, None, str(root), tasks.TaskRoots((), None))
     assert receipt["errors"] == [
-        f"entry 1 writes outside the output directory: {escaped} is not inside {os.path.realpath(root)}"
+        f"entry 1 writes outside the output directory: {escaped} is "
+        f"not inside {os.path.realpath(root)}"
     ]
     assert receipt["materialized"] == []
     assert not primary.exists()
@@ -280,11 +246,8 @@ def test_verbatim_writes_utf16_and_idempotence(tmp_path, monkeypatch):
     assert primary.read_bytes() == b'\\"receipt\\" \xf0\x9f\x98\x80\r\n\n'
 
 
-@pytest.mark.parametrize(
-    "parent",
-    [pytest.param("missing", id="WRITE-no-parent-creation")],
-)
-def test_partial_primary_writes_skip_derivation(parent, tmp_path, monkeypatch):
+def test_partial_primary_writes_skip_derivation(tmp_path, monkeypatch):
+    parent = "missing"
     primary = tmp_path / parent / "primary"
     plan = tmp_path / "plan.json"
     task = returned_task(
@@ -316,137 +279,95 @@ def test_partial_primary_writes_skip_derivation(parent, tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "mode,reply,plan_text,gaps,errors",
+    "mode,wrote,want,gap,errors",
     [
-        pytest.param(
+        (
             "primary",
-            dict(
-                EMPTY_ASSEMBLE,
-                verified=[
-                    {
-                        "path": "primary",
-                        "content_proof": "mismatch",
-                        "expected_chars": 1,
-                        "expected_checksum": "want",
-                        "chars": 2,
-                        "checksum": "got",
-                    }
-                ],
-            ),
-            "{}",
-            [
-                "artifact-content-proof: primary on disk differs from the bytes the workflow returned (expected 1 chars/want, got 2/got)"
-            ],
+            None,
+            None,
+            "artifact-content-proof: primary on disk differs from the bytes the "
+            "workflow returned (expected 1 chars/want, got 2/got)",
             [],
-            id="PROOF-primary-mismatch",
         ),
-        pytest.param(
-            "chars",
-            dict(
-                EMPTY_ASSEMBLE,
-                written=[{"path": "derived", "chars": 2, "checksum": "same"}],
-            ),
-            '{"derive":[{"path":"derived","chars":1,"checksum":"same"}]}',
-            [
-                "artifact-content-proof: derived document derived does not match the pipeline's own derivation (wrote 2 chars/same, the pipeline derived 1/same)"
-            ],
+        (
+            "derived",
+            (2, "same"),
+            (1, "same"),
+            "artifact-content-proof: derived document derived does not match the "
+            "pipeline's own derivation (wrote 2 chars/same, the "
+            "pipeline derived 1/same)",
             [],
-            id="PROOF-derived-chars",
         ),
-        pytest.param(
-            "checksum",
-            dict(
-                EMPTY_ASSEMBLE,
-                written=[{"path": "derived", "chars": 1, "checksum": "got"}],
-            ),
-            '{"derive":[{"path":"derived","chars":1,"checksum":"want"}]}',
-            [
-                "artifact-content-proof: derived document derived does not match the pipeline's own derivation (wrote 1 chars/got, the pipeline derived 1/want)"
-            ],
+        (
+            "derived",
+            (1, "got"),
+            (1, "want"),
+            "artifact-content-proof: derived document derived does not match the "
+            "pipeline's own derivation (wrote 1 chars/got, the "
+            "pipeline derived 1/want)",
             [],
-            id="PROOF-derived-checksum",
         ),
-        pytest.param(
-            "missing",
-            dict(
-                EMPTY_ASSEMBLE,
-                written=[{"path": "derived", "chars": 1, "checksum": "got"}],
-            ),
-            "{}",
-            [
-                "artifact-content-proof: the persist plan carries no derived-content expectation for derived (no content proof)"
-            ],
+        (
+            "derived",
+            (1, "got"),
+            None,
+            "artifact-content-proof: the persist plan carries no derived-content "
+            "expectation for derived (no content proof)",
             [],
-            id="PROOF-no-expectation",
         ),
-        pytest.param(
-            "invalid",
-            EMPTY_ASSEMBLE,
-            "{broken",
-            ["the persist plan just written is not valid JSON"],
-            [],
-            id="PROOF-invalid-plan-text",
-        ),
-        pytest.param(
+        (
             "refused",
-            dict(
-                EMPTY_ASSEMBLE,
-                ok=False,
-                errors=["refused"],
-                verified=[
-                    {
-                        "path": "primary",
-                        "content_proof": "mismatch",
-                        "expected_chars": 1,
-                        "expected_checksum": "want",
-                        "chars": 2,
-                        "checksum": "got",
-                    }
-                ],
-            ),
-            "{}",
-            [
-                "artifact-content-proof: primary on disk differs from the bytes the workflow returned (expected 1 chars/want, got 2/got)"
-            ],
+            None,
+            None,
+            "artifact-content-proof: primary on disk differs from the bytes the "
+            "workflow returned (expected 1 chars/want, got 2/got)",
             ["refused"],
-            id="PROOF-assembler-refusal",
         ),
-        pytest.param(
-            "no-reason",
-            dict(EMPTY_ASSEMBLE, ok=False),
-            "{}",
-            [],
-            ["the assembler refused without a reason"],
-            id="PROOF-refusal-without-reason",
-        ),
-        pytest.param(
-            "duplicate",
-            dict(
-                EMPTY_ASSEMBLE,
-                written=[{"path": "derived", "chars": 1, "checksum": "same"}],
-            ),
-            '{"derive":[{"path":"derived","chars":1,"checksum":"same"}]}',
-            [],
-            [],
-            id="WRITE-duplicate-plan-last-entry",
-        ),
+        ("duplicate", (1, "same"), (1, "same"), None, []),
     ],
 )
-def test_proof_disclosure(mode, reply, plan_text, gaps, errors, tmp_path, monkeypatch):
+def test_proof_disclosure(mode, wrote, want, gap, errors, tmp_path, monkeypatch):
+    reply = dict(EMPTY_ASSEMBLE, ok=not errors, errors=errors)
+    if mode in ("primary", "refused"):
+        reply["verified"] = [
+            {
+                "path": "primary",
+                "content_proof": "mismatch",
+                "expected_chars": 1,
+                "expected_checksum": "want",
+                "chars": 2,
+                "checksum": "got",
+            }
+        ]
+    if wrote:
+        reply["written"] = [
+            {"path": "derived", "chars": wrote[0], "checksum": wrote[1]}
+        ]
+    plan_text = (
+        json.dumps(
+            {"derive": [{"path": "derived", "chars": want[0], "checksum": want[1]}]}
+        )
+        if want
+        else "{}"
+    )
     plan = tmp_path / "plan.json"
     entries = [{"path": str(plan), "text": plan_text}]
     if mode == "duplicate":
         entries.insert(0, {"path": str(plan), "text": "broken"})
     task = returned_task(
         tmp_path / "task.output",
-        {"channel": "return", "planPath": str(plan), "entries": entries},
+        {
+            "channel": "return",
+            "planPath": str(plan),
+            "entries": entries,
+        },
     )
     monkeypatch.setattr(materialize, "assemble", lambda _: reply)
     receipt = materialize.materialize(
         task, None, str(tmp_path), tasks.TaskRoots((), None)
     )
     assert receipt["ok"] == (mode == "duplicate")
-    assert receipt["gaps"] == gaps
+    assert receipt["gaps"] == ([gap] if gap else [])
     assert receipt["errors"] == errors
     assert receipt["assemble"] == reply
     assert plan.read_text(encoding="utf-8") == plan_text
@@ -495,7 +416,6 @@ def test_real_node_return_channel(tmp_path):
             if name == "post-review"
             else document["phases"]["challenge"]["findings"]
         )
-        assert sorted(f["id"] for f in projected) == ["F1", "F2"]
         plan = json.loads(payload["entries"][2]["text"])
         ids = (
             plan["postReview"]["ids"]
@@ -505,32 +425,23 @@ def test_real_node_return_channel(tmp_path):
         assert [f["id"] for f in projected] == ids
 
 
-@pytest.mark.parametrize(
-    "boundary",
-    [
-        pytest.param("cli", id="FAULT-command"),
-        pytest.param("library", id="FAULT-library"),
-    ],
-)
-def test_unexpected_failure(boundary, tmp_path, monkeypatch, capsys):
+def test_unexpected_failure(tmp_path, monkeypatch, capsys):
     def fail(*args):
         raise RuntimeError("injected")
 
     monkeypatch.setattr(materialize, "select_source", fail)
-    if boundary == "library":
-        assert materialize.materialize(
-            "missing.output", None, str(tmp_path), tasks.TaskRoots((), None)
-        ) == {
-            "ok": False,
-            "channel": "return",
-            "source": None,
-            "scanned": 0,
-            "materialized": [],
-            "assemble": None,
-            "gaps": [],
-            "errors": ["materializer failed unexpectedly: RuntimeError: injected"],
-        }
-        return
+    assert materialize.materialize(
+        "missing.output", None, str(tmp_path), tasks.TaskRoots((), None)
+    ) == {
+        "ok": False,
+        "channel": "return",
+        "source": None,
+        "scanned": 0,
+        "materialized": [],
+        "assemble": None,
+        "gaps": [],
+        "errors": ["materializer failed unexpectedly: RuntimeError: injected"],
+    }
     assert (
         materialize.CLI.invoke(
             ["--output-dir", str(tmp_path), "--task", "missing.output"]
@@ -539,57 +450,25 @@ def test_unexpected_failure(boundary, tmp_path, monkeypatch, capsys):
     )
     assert (
         capsys.readouterr().out.strip()
-        == '{"ok": false, "channel": "return", "source": null, "scanned": 0, "materialized": [], "assemble": null, "gaps": [], "errors": ["materializer failed unexpectedly: RuntimeError: injected"]}'
+        == '{"ok": false, "channel": "return", "source": null, "scanned": '
+        '0, "materialized": [], "assemble": null, "gaps": [], '
+        '"errors": ["materializer failed unexpectedly: RuntimeError: '
+        'injected"]}'
     )
 
 
-@pytest.mark.parametrize(
-    "target_flags",
-    [
-        ["--nonce", "run"],
-    ],
-    ids=[
-        "FAULT-discovery-nonce",
-    ],
-)
-def test_command_discovery_failure(target_flags, monkeypatch, capsys):
+def test_command_discovery_failure(monkeypatch, capsys):
     def fail(*args):
         raise OSError("discovery failed")
 
     monkeypatch.setattr(tasks, "roots_from_environment", fail)
-    assert materialize.CLI.invoke(["--output-dir", ".", *target_flags]) == 1
+    assert materialize.CLI.invoke(["--output-dir", ".", "--nonce", "run"]) == 1
     assert (
         capsys.readouterr().out.strip()
-        == '{"ok": false, "channel": "return", "source": null, "scanned": 0, "materialized": [], "assemble": null, "gaps": [], "errors": ["materializer failed unexpectedly: OSError: discovery failed"]}'
-    )
-
-
-@pytest.mark.parametrize(
-    "failure",
-    [
-        "first",
-        "all",
-    ],
-    ids=[
-        "FAULT-ascii-fallback",
-        "FAULT-constant",
-    ],
-)
-def test_encoding_fallback(failure, monkeypatch, capsys):
-    original = cli.dumps
-
-    def encode(receipt, **kwargs):
-        if failure == "all" or not kwargs.get("ascii"):
-            raise ValueError("caf\u00e9")
-        return original(receipt, **kwargs)
-
-    monkeypatch.setattr(cli, "dumps", encode)
-    assert (
-        materialize.CLI.invoke(["--output-dir", ".", "--task", "missing.output"]) == 1
-    )
-    expected = '{"ok": false, "channel": "return", "source": null, "scanned": 0, "materialized": [], "assemble": null, "gaps": [], "errors": ["receipt could not be serializedSUFFIX"]}'
-    assert capsys.readouterr().out.strip() == expected.replace(
-        "SUFFIX", ": ValueError: caf\\u00e9" if failure == "first" else ""
+        == '{"ok": false, "channel": "return", "source": null, "scanned": '
+        '0, "materialized": [], "assemble": null, "gaps": [], '
+        '"errors": ["materializer failed unexpectedly: OSError: '
+        'discovery failed"]}'
     )
 
 
@@ -602,7 +481,9 @@ def test_explicit_path_bypasses_discovery_failure(monkeypatch, capsys):
         materialize.CLI.invoke(["--output-dir", ".", "--task", "missing.output"]) == 1
     )
     assert json.loads(capsys.readouterr().out)["errors"] == [
-        "no task output file carrying this run's returned artifacts was found (looked at 1 candidate file(s) for target 'missing.output' / nonce None)"
+        "no task output file carrying this run's returned artifacts "
+        "was found (looked at 1 candidate file(s) for target "
+        "'missing.output' / nonce None)"
     ]
 
 

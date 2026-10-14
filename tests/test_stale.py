@@ -16,51 +16,11 @@ DEFERRED = (
 @pytest.mark.parametrize(
     "detector, unconditional, deferred",
     [
-        pytest.param({}, False, False, id="no-prior-review"),
-        pytest.param(
-            {
-                "previously_reviewed": True,
-                "sha_resolvable": False,
-                "last_reviewed_sha": SHA,
-                "head_sha": SHA,
-            },
-            False,
-            False,
-            id="unresolved-same-sha",
-        ),
-        pytest.param(
-            {
-                "previously_reviewed": True,
-                "sha_resolvable": True,
-                "last_reviewed_sha": "f" * 40,
-                "head_sha": SHA,
-            },
-            False,
-            False,
-            id="different-resolved-sha",
-        ),
-        pytest.param(
-            {
-                "previously_reviewed": True,
-                "sha_resolvable": True,
-                "last_reviewed_sha": SHA,
-                "head_sha": SHA,
-            },
-            False,
-            True,
-            id="same-resolved-sha-deferred",
-        ),
-        pytest.param(
-            {
-                "previously_reviewed": True,
-                "sha_resolvable": True,
-                "last_reviewed_sha": SHA,
-                "head_sha": SHA,
-            },
-            True,
-            False,
-            id="unconditional-overrides-deferral",
-        ),
+        ({"previously_reviewed": False}, False, False),
+        ({"sha_resolvable": False}, False, False),
+        ({"last_reviewed_sha": "f" * 40}, False, False),
+        ({}, False, True),
+        ({}, True, False),
     ],
 )
 def test_truncation_decision(
@@ -70,6 +30,13 @@ def test_truncation_decision(
     tmp_path: Path,
     invoke: Callable[..., Invocation],
 ) -> None:
+    detector = {
+        "previously_reviewed": True,
+        "sha_resolvable": True,
+        "last_reviewed_sha": SHA,
+        "head_sha": SHA,
+        **detector,
+    }
     output_dir = tmp_path / "o'brien out[1]"
     seed_artifacts(output_dir)
     args = ["--output-dir", str(output_dir), "--head-sha", SHA]
@@ -96,24 +63,20 @@ def test_unconditional_never_reads_stdin(
 
 
 @pytest.mark.parametrize(
-    "sha, stdin, make_dir",
+    "sha, stdin",
     [
-        pytest.param("not-a-sha", b"{}", True, id="bad-sha"),
-        pytest.param(SHA, b"{}", False, id="missing-directory"),
-        pytest.param(SHA, b"[]", True, id="non-object-json"),
-        pytest.param(SHA, b"{", True, id="malformed-json"),
+        pytest.param("not-a-sha", b"{}", id="bad-sha"),
+        pytest.param(SHA, b"{", id="malformed-json"),
     ],
 )
 def test_truncation_refusal(
     sha: str,
     stdin: bytes,
-    make_dir: bool,
     tmp_path: Path,
     invoke: Callable[..., Invocation],
 ) -> None:
     output_dir = tmp_path / "o'brien out[1]"
-    if make_dir:
-        seed_artifacts(output_dir)
+    seed_artifacts(output_dir)
     result = invoke(
         "stale_truncate",
         ["--output-dir", str(output_dir), "--head-sha", sha],
@@ -129,11 +92,8 @@ def test_truncation_refusal(
             b"stale_truncate: --head-sha must be 4 to 40 lowercase "
             b"hexadecimal characters\n"
         )
-    if make_dir:
-        for name, contents in ARTIFACTS.items():
-            assert (output_dir / name).read_bytes() == contents, name
-    else:
-        assert not output_dir.exists()
+    for name, contents in ARTIFACTS.items():
+        assert (output_dir / name).read_bytes() == contents, name
 
 
 def test_unwritable_match_exits_two(

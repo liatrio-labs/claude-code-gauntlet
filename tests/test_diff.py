@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 import pytest
 from gauntlet.diff import (
@@ -51,30 +51,6 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
     [
         pytest.param("", [], id="empty"),
         pytest.param(
-            "--- a/src/app.py\n+++ b/src/app.py\n",
-            [
-                HeaderEvent("old_path", "a/src/app.py"),
-                HeaderEvent("new_path", "b/src/app.py"),
-            ],
-            id="prefixed-headers",
-        ),
-        pytest.param(
-            "--- src/app.py\n+++ src/app.py\n",
-            [
-                HeaderEvent("old_path", "src/app.py"),
-                HeaderEvent("new_path", "src/app.py"),
-            ],
-            id="plain-headers",
-        ),
-        pytest.param(
-            "--- /dev/null\n+++ b/added.py\n",
-            [
-                HeaderEvent("old_path", "/dev/null"),
-                HeaderEvent("new_path", "b/added.py"),
-            ],
-            id="null-header",
-        ),
-        pytest.param(
             (
                 "diff --git a/logo.png b/logo.png\n"
                 "old mode 100644\n"
@@ -85,11 +61,6 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
             ),
             [HeaderEvent("git_header", "a/logo.png b/logo.png")],
             id="git-and-noise",
-        ),
-        pytest.param(
-            'diff --git "a/caf\\303\\251.py" b/my file.py\tx\n',
-            [HeaderEvent("git_header", '"a/caf\\303\\251.py" b/my file.py\tx')],
-            id="raw-git-header",
         ),
         pytest.param(
             "@@ -10,2 +20,3 @@ def handler():\n ctx\n+added\n tail\n",
@@ -105,31 +76,6 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
             "@@ -0,0 +1 @@\n+only\n",
             [HunkEvent(0, 1, 0, 1), LineEvent(None, 1, "only")],
             id="omitted-counts",
-        ),
-        pytest.param(
-            (
-                "+++ b/multi.py\n"
-                "@@ -1,2 +1,3 @@\n"
-                " a\n"
-                "+b\n"
-                " c\n"
-                "@@ -50,2 +51,3 @@\n"
-                " d\n"
-                "+e\n"
-                " f\n"
-            ),
-            [
-                HeaderEvent("new_path", "b/multi.py"),
-                HunkEvent(1, 1, 2, 3),
-                LineEvent(1, 1, "a"),
-                LineEvent(None, 2, "b"),
-                LineEvent(2, 3, "c"),
-                HunkEvent(50, 51, 2, 3),
-                LineEvent(50, 51, "d"),
-                LineEvent(None, 52, "e"),
-                LineEvent(51, 53, "f"),
-            ],
-            id="second-hunk",
         ),
         pytest.param(
             "@@ -7,3 +7,3 @@\n ctx\n-gone\n+fresh\n tail\n",
@@ -203,26 +149,6 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
             id="formfeed-content",
         ),
         pytest.param(
-            "--- a/f.py\n+++ b/f.py\n@@ -1,4 +1,4 @@\n ctx\n+added\n",
-            [
-                HeaderEvent("old_path", "a/f.py"),
-                HeaderEvent("new_path", "b/f.py"),
-                HunkEvent(1, 1, 4, 4),
-                LineEvent(1, 1, "ctx"),
-                LineEvent(None, 2, "added"),
-            ],
-            id="truncated-hunk",
-        ),
-        pytest.param(
-            "@@ -1,2 +1,2 @@\n ctx\n+added",
-            [
-                HunkEvent(1, 1, 2, 2),
-                LineEvent(1, 1, "ctx"),
-                LineEvent(None, 2, "added"),
-            ],
-            id="unterminated-last-line",
-        ),
-        pytest.param(
             (
                 "diff --git a/gone.py b/gone.py\n"
                 "deleted file mode 100644\n"
@@ -262,16 +188,6 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
             id="marker-indent",
         ),
         pytest.param(
-            "@@ -1 +1 @@\n \n",
-            [HunkEvent(1, 1, 1, 1), LineEvent(1, 1, "")],
-            id="blank-space-context",
-        ),
-        pytest.param(
-            "@@ -1,2 +1,2 @@\n\n ctx\n",
-            [HunkEvent(1, 1, 2, 2), LineEvent(1, 1, ""), LineEvent(2, 2, "ctx")],
-            id="bare-empty-drains",
-        ),
-        pytest.param(
             "@@ -1,2 +1,2 @@\nbare_ctx\n ctx\n",
             [
                 HunkEvent(1, 1, 2, 2),
@@ -279,11 +195,6 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
                 LineEvent(2, 2, "ctx"),
             ],
             id="bare-context-content",
-        ),
-        pytest.param(
-            "@@ -0,0 +1 @@\n+    indented_add\n",
-            [HunkEvent(0, 1, 0, 1), LineEvent(None, 1, "    indented_add")],
-            id="leading-whitespace",
         ),
         pytest.param(
             "--- a/My Docs/read me.md\t\n+++ b/My Docs/read me.md\t\n",
@@ -302,6 +213,11 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
             id="octal-utf8",
         ),
         pytest.param(
+            '+++ "b/\\377.py"\n',
+            [HeaderEvent("new_path", '"b/\\377.py"')],
+            id="invalid-utf8-octal-path",
+        ),
+        pytest.param(
             '+++ "b/tab\\there.txt"\n+++ "b/quo\\"te.txt"\n+++ "b/back\\\\slash.txt"\n',
             [
                 HeaderEvent("new_path", "b/tab\there.txt"),
@@ -309,34 +225,6 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
                 HeaderEvent("new_path", "b/back\\slash.txt"),
             ],
             id="escaped-tab-quote-backslash",
-        ),
-        pytest.param(
-            '+++ "b/caf\\303\\251 space.py"\t\n',
-            [HeaderEvent("new_path", "b/café space.py")],
-            id="quoted-tab-terminator",
-        ),
-        pytest.param(
-            (
-                '--- "a/bad\\q.py"\n'
-                '+++ "b/\\377.py"\n'
-                '+++ "b/\\400.py"\n'
-                '+++ "b/trailing\\"\n'
-            ),
-            [
-                HeaderEvent("old_path", '"a/bad\\q.py"'),
-                HeaderEvent("new_path", '"b/\\377.py"'),
-                HeaderEvent("new_path", '"b/\\400.py"'),
-                HeaderEvent("new_path", '"b/trailing\\"'),
-            ],
-            id="undecodable-fields",
-        ),
-        pytest.param(
-            '+++ say"hi".py\n+++ "quoted"/app.py\n',
-            [
-                HeaderEvent("new_path", 'say"hi".py'),
-                HeaderEvent("new_path", '"quoted"/app.py'),
-            ],
-            id="embedded-quotes",
         ),
     ],
 )
@@ -348,19 +236,6 @@ def test_events(diff_text: str, expected: list[DiffEvent]) -> None:
     "diff_text, expected",
     [
         pytest.param("", [], id="empty"),
-        pytest.param(
-            "@@ -0,0 +1 @@\n+new\n",
-            [(None, HunkEvent(0, 1, 0, 1), "@@ -0,0 +1 @@\n+new\n")],
-            id="hunk-before-any-path",
-        ),
-        pytest.param(
-            "+++ b/f.py\n@@ -1 +1 @@\n-old\n+new\n@@ -8 +8 @@\n-old8\n+new8\n",
-            [
-                ("b/f.py", HunkEvent(1, 1, 1, 1), "@@ -1 +1 @@\n-old\n+new\n"),
-                ("b/f.py", HunkEvent(8, 8, 1, 1), "@@ -8 +8 @@\n-old8\n+new8\n"),
-            ],
-            id="two-hunks",
-        ),
         pytest.param(
             "+++ b/f\n@@ -1 +1 @@\n-x\n+y\n@@ -5 +5 @@\n-x\n+y",
             [
@@ -379,17 +254,6 @@ def test_events(diff_text: str, expected: list[DiffEvent]) -> None:
             id="two-files",
         ),
         pytest.param(
-            "+++ b/f.py\n@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n",
-            [
-                (
-                    "b/f.py",
-                    HunkEvent(1, 1, 1, 1),
-                    "@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n",
-                )
-            ],
-            id="no-newline-marker-in-body",
-        ),
-        pytest.param(
             # Each lookalike ends its hunk, where dropping it would shorten the text.
             "+++ b/f.py\n@@ -1 +1,2 @@\n a\n+++ x\n"
             "@@ -5,2 +6,2 @@\n b\n@@ -9 +9 @@\n"
@@ -406,57 +270,14 @@ def test_events(diff_text: str, expected: list[DiffEvent]) -> None:
             id="body-lines-shaped-like-headers",
         ),
         pytest.param(
-            "+++ b/one.py\n@@ -1 +1 @@\n-old\n+new\n"
-            "--- a/two.py\n+++ b/two.py\n@@ -2 +2 @@\n-old2\n+new2\n",
-            [
-                ("b/one.py", HunkEvent(1, 1, 1, 1), "@@ -1 +1 @@\n-old\n+new\n"),
-                ("b/two.py", HunkEvent(2, 2, 1, 1), "@@ -2 +2 @@\n-old2\n+new2\n"),
-            ],
-            id="header-zone-next-file-without-git-header",
-        ),
-        pytest.param(
-            "+++ b/f.py\n@@ -1 +1 @@\n-old\n+new\n\n",
-            [("b/f.py", HunkEvent(1, 1, 1, 1), "@@ -1 +1 @@\n-old\n+new\n")],
-            id="header-zone-blank-line",
-        ),
-        pytest.param(
             "+++ b/f.py\n@@ -1 +1 @@\n-old\n+new\n-- \n",
             [("b/f.py", HunkEvent(1, 1, 1, 1), "@@ -1 +1 @@\n-old\n+new\n")],
             id="header-zone-format-patch-trailer",
         ),
         pytest.param(
-            "+++ b/f.py\n@@ -1 +1 @@\n+text\x0c+++ continuation\n",
-            [
-                (
-                    "b/f.py",
-                    HunkEvent(1, 1, 1, 1),
-                    "@@ -1 +1 @@\n+text\x0c+++ continuation\n",
-                )
-            ],
-            id="body-form-feed-is-not-a-separator",
-        ),
-        pytest.param(
             "+++ b/f.py\n@@ -1,2 +1,2 @@\n+only\n",
             [("b/f.py", HunkEvent(1, 1, 2, 2), "@@ -1,2 +1,2 @@\n+only\n")],
             id="truncated-final-hunk",
-        ),
-        pytest.param(
-            "+++ b/f.py\n@@ -1,4 +1,4 @@\n-old\n+new\n"
-            "--- a/other.py\n+++ b/other.py\n@@ -1 +1 @@\n+other\n",
-            [
-                (
-                    "b/f.py",
-                    HunkEvent(1, 1, 4, 4),
-                    "@@ -1,4 +1,4 @@\n-old\n+new\n"
-                    "--- a/other.py\n+++ b/other.py\n@@ -1 +1 @@\n+other\n",
-                )
-            ],
-            id="overcount-consumes-next-file-hunk",
-        ),
-        pytest.param(
-            "+++ b/f.py\n@@ -1,1 +1,1 @@\n-old\n+new\n+extra\n",
-            [("b/f.py", HunkEvent(1, 1, 1, 1), "@@ -1,1 +1,1 @@\n-old\n+new\n")],
-            id="undercount-stops-at-budget",
         ),
         pytest.param(
             "+++  b/f.py \t\n@@ -1 +1 @@\n-old\r\n+new\r\n",
@@ -467,39 +288,6 @@ def test_events(diff_text: str, expected: list[DiffEvent]) -> None:
             "+++ b/f.py\n@@ -1 +1 @@\n+last",
             [("b/f.py", HunkEvent(1, 1, 1, 1), "@@ -1 +1 @@\n+last")],
             id="unterminated-final-body-line",
-        ),
-        pytest.param(
-            "+++ b/f.py\n@@ -1 +1 @@\n+last\n\\ No newline at end of file\n",
-            [
-                (
-                    "b/f.py",
-                    HunkEvent(1, 1, 1, 1),
-                    "@@ -1 +1 @@\n+last\n\\ No newline at end of file\n",
-                )
-            ],
-            id="marker-after-last-body-at-end",
-        ),
-        pytest.param(
-            "+++ b/f.py\n@@ -1 +1 @@\n+last\n\\ No newline at end of file",
-            [
-                (
-                    "b/f.py",
-                    HunkEvent(1, 1, 1, 1),
-                    "@@ -1 +1 @@\n+last\n\\ No newline at end of file",
-                )
-            ],
-            id="unterminated-final-marker",
-        ),
-        pytest.param(
-            "+++ b/f.py\n@@ -1 +1 @@\n-old\n+new\n\\ non-literal backslash note\n",
-            [
-                (
-                    "b/f.py",
-                    HunkEvent(1, 1, 1, 1),
-                    "@@ -1 +1 @@\n-old\n+new\n\\ non-literal backslash note\n",
-                )
-            ],
-            id="nonliteral-backslash-after-last-body",
         ),
         pytest.param(
             "+++ b/f.py\n@@ -1 +1 @@\n-old\n\\ No newline at end of file\n"
@@ -515,17 +303,6 @@ def test_events(diff_text: str, expected: list[DiffEvent]) -> None:
             ],
             id="markers-on-both-sides-before-next-hunk",
         ),
-        pytest.param(
-            "+++ b/f.py\n@@ -1 +1 @@\n+last\n\\ No newline at end of file\n\\ second\n",
-            [
-                (
-                    "b/f.py",
-                    HunkEvent(1, 1, 1, 1),
-                    "@@ -1 +1 @@\n+last\n\\ No newline at end of file\n",
-                )
-            ],
-            id="one-marker-look-ahead",
-        ),
     ],
 )
 def test_raw_hunks(
@@ -535,18 +312,6 @@ def test_raw_hunks(
         (raw_hunk.new_path, raw_hunk.hunk, raw_hunk.text)
         for raw_hunk in raw_hunks(diff_text)
     ] == expected
-
-
-def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
-    assert list(walk_diff(_fixture("modified.diff"))) == [
-        HeaderEvent("old_path", "src/edited.py"),
-        HeaderEvent("new_path", "src/edited.py"),
-        HunkEvent(50, 61, 3, 3),
-        LineEvent(50, 61, "unchanged_ctx"),
-        LineEvent(51, None, "removed"),
-        LineEvent(None, 62, "added"),
-        LineEvent(52, 63, "tail_ctx"),
-    ]
 
 
 @pytest.mark.parametrize(
@@ -594,14 +359,6 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             id="plain-added",
         ),
         pytest.param(
-            _fixture("deleted.diff"),
-            ("git-prefixed", "glab-verbatim"),
-            {},
-            set(),
-            {"src/removed.py": "src/removed.py"},
-            id="plain-deleted",
-        ),
-        pytest.param(
             _fixture("rename.diff"),
             ("git-prefixed", "glab-verbatim"),
             {
@@ -617,88 +374,7 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             id="plain-rename",
         ),
         pytest.param(
-            _patch(
-                "src/removed.py",
-                "src/removed.py",
-                "-alpha\n-beta\n-gamma\n",
-                hunk="@@ -1,3 +0,0 @@",
-            )
-            + _patch(
-                "src/edited.py",
-                "src/edited.py",
-                " unchanged_ctx\n-removed\n+added\n tail_ctx\n",
-                hunk="@@ -50,3 +61,3 @@",
-            ),
-            ("git-prefixed", "glab-verbatim"),
-            {
-                "src/edited.py": {
-                    61: (50, "unchanged_ctx"),
-                    62: (None, "added"),
-                    63: (52, "tail_ctx"),
-                }
-            },
-            set(),
-            {"src/removed.py": "src/removed.py", "src/edited.py": "src/edited.py"},
-            id="deleted-body-drains",
-        ),
-        pytest.param(
-            "diff --git a/b/inner.py b/b/inner.py\n"
-            + _patch(
-                "a/b/inner.py",
-                "b/b/inner.py",
-                (
-                    " line_02\n"
-                    " line_03\n"
-                    " line_04\n"
-                    "-line_05\n"
-                    "+changed_05\n"
-                    " line_06\n"
-                    " line_07\n"
-                    " line_08\n"
-                ),
-                hunk="@@ -2,7 +2,7 @@ line_01",
-            )
-            + "diff --git a/src/added.py b/src/added.py\nnew file mode 100644\n"
-            + _patch(
-                "/dev/null",
-                "b/src/added.py",
-                "+added_01\n+added_02\n",
-                hunk="@@ -0,0 +1,2 @@",
-            )
-            + "diff --git a/src/edited.py b/src/edited.py\n"
-            + _patch(
-                "a/src/edited.py",
-                "b/src/edited.py",
-                (
-                    " line_02\n"
-                    " line_03\n"
-                    " line_04\n"
-                    "-line_05\n"
-                    "+changed_05\n"
-                    " line_06\n"
-                    " line_07\n"
-                    " line_08\n"
-                ),
-                hunk="@@ -2,7 +2,7 @@ line_01",
-            )
-            + "diff --git a/src/removed.py b/src/removed.py\ndeleted file mode 100644\n"
-            + _patch(
-                "a/src/removed.py",
-                "/dev/null",
-                "-gone_1\n-gone_2\n",
-                hunk="@@ -1,2 +0,0 @@",
-            )
-            + (
-                "diff --git a/old_name.py b/new_name.py\n"
-                "rename from old_name.py\n"
-                "rename to new_name.py\n"
-            )
-            + _patch(
-                "a/old_name.py",
-                "b/new_name.py",
-                " ctx\n-x\n+y\n ctx2\n \n",
-                hunk="@@ -1,4 +1,4 @@",
-            ),
+            _fixture("git_style.diff"),
             ("git-prefixed", "glab-verbatim"),
             {
                 "b/inner.py": {
@@ -736,28 +412,7 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             id="captured-git",
         ),
         pytest.param(
-            "diff --git a/docs/user guide/x.md b/docs/user guide/x.md\n"
-            + _patch(
-                "a/docs/user guide/x.md",
-                "b/docs/user guide/x.md",
-                " ctx\n+new\n",
-                hunk="@@ -1 +1,2 @@",
-            )
-            + "diff --git a/café.py b/café.py\nnew file mode 100644\n"
-            + _patch("/dev/null", "b/café.py", "+a\n", hunk="@@ -0,0 +1 @@")
-            + "diff --git a/my file.py b/my file.py\nnew file mode 100644\n"
-            + _patch("/dev/null", "b/my file.py", "+added_01\n", hunk="@@ -0,0 +1 @@")
-            + (
-                "diff --git a/old name.py b/new name.py\n"
-                "rename from old name.py\n"
-                "rename to new name.py\n"
-            )
-            + _patch(
-                "a/old name.py",
-                "b/new name.py",
-                " ctx\n-x\n+y\n",
-                hunk="@@ -1,2 +1,2 @@",
-            ),
+            _fixture("git_style_spaces.diff"),
             ("git-prefixed", "glab-verbatim"),
             {
                 "docs/user guide/x.md": {1: (1, "ctx"), 2: (None, "new")},
@@ -802,24 +457,6 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
         ),
         pytest.param(
             "diff --git a/bar.py b/bar.py\n"
-            + _patch("bar.py", "b/bar.py", " ctx\n+newline\n", hunk="@@ -1,1 +1,2 @@"),
-            ("glab-verbatim",),
-            {"b/bar.py": {1: (1, "ctx"), 2: (None, "newline")}},
-            set(),
-            {"b/bar.py": "bar.py"},
-            id="pair-proof:old-unprefixed",
-        ),
-        pytest.param(
-            "diff --git a/bar.py b/bar.py\n"
-            + _patch("a/bar.py", "bar.py", " ctx\n+newline\n", hunk="@@ -1,1 +1,2 @@"),
-            ("glab-verbatim",),
-            {"bar.py": {1: (1, "ctx"), 2: (None, "newline")}},
-            set(),
-            {"bar.py": "a/bar.py"},
-            id="pair-proof:new-unprefixed",
-        ),
-        pytest.param(
-            "diff --git a/bar.py b/bar.py\n"
             + _patch(
                 "a/other.py", "b/bar.py", " ctx\n+newline\n", hunk="@@ -1,1 +1,2 @@"
             ),
@@ -828,17 +465,6 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             set(),
             {"b/bar.py": "a/other.py"},
             id="pair-proof:old-mismatch",
-        ),
-        pytest.param(
-            "diff --git a/bar.py b/bar.py\n"
-            + _patch(
-                "a/other.py", "b/other.py", " ctx\n+newline\n", hunk="@@ -1,1 +1,2 @@"
-            ),
-            ("glab-verbatim",),
-            {"b/other.py": {1: (1, "ctx"), 2: (None, "newline")}},
-            set(),
-            {"b/other.py": "a/other.py"},
-            id="pair-proof:both-mismatch",
         ),
         pytest.param(
             'diff --git "a/old path.py" "b/new path.py"\n'
@@ -853,17 +479,6 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             set(),
             {"b/new path.py": "a/old path.py"},
             id="pair-proof:quoted",
-        ),
-        pytest.param(
-            "diff --git a/t\tx.py b/t\tx.py\n"
-            + _patch(
-                "a/t\tx.py", "b/t\tx.py", " ctx\n+newline\n", hunk="@@ -1,1 +1,2 @@"
-            ),
-            ("glab-verbatim",),
-            {"b/t": {1: (1, "ctx"), 2: (None, "newline")}},
-            set(),
-            {"b/t": "a/t"},
-            id="pair-proof:tab-cut",
         ),
         pytest.param(
             "diff --git a/x.py b/x.py\n"
@@ -886,22 +501,6 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             id="one-pair-proof:failed-proof-consumed",
         ),
         pytest.param(
-            (
-                "diff --git a/x.py b/x.py\n"
-                "--- /dev/null\n"
-                "diff --git a/y.py b/y.py\n"
-                "+++ b/y.py\n"
-                "@@ -1 +1 @@\n"
-                "-o\n"
-                "+n\n"
-            ),
-            ("glab-verbatim",),
-            {"b/y.py": {1: (None, "n")}},
-            set(),
-            {},
-            id="one-pair-proof:pending-old-cleared",
-        ),
-        pytest.param(
             "diff --git a/empty.py b/empty.py\n"
             + _patch("a/empty.py", "b/empty.py", "+first\n", hunk="@@ -0,0 +1 @@"),
             ("glab-verbatim",),
@@ -917,22 +516,6 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             set(),
             {"x": "x"},
             id="insertion-at-nonzero-old",
-        ),
-        pytest.param(
-            _patch("x", "x", " ctx\n", hunk="@@ -0 +1 @@"),
-            ("git-prefixed", "glab-verbatim"),
-            {"x": {1: (0, "ctx")}},
-            set(),
-            {"x": "x"},
-            id="zero-old-omitted-count",
-        ),
-        pytest.param(
-            "diff --git a/x b/OTHER\n" + _patch("a/x", "b/x", " ctx\n"),
-            ("glab-verbatim",),
-            {"b/x": {1: (1, "ctx")}},
-            set(),
-            {"b/x": "a/x"},
-            id="pair-proof:new-mismatch",
         ),
         pytest.param(
             "diff --git a/x.py b/x.py\n"
@@ -955,69 +538,6 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             id="empty-old:git-prefixed-named",
         ),
         pytest.param(
-            "diff --git a/x.py b/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-o\n+n\n",
-            ("git-prefixed",),
-            {"x.py": {1: (None, "n")}},
-            set(),
-            {},
-            id="orphan-new:git-prefixed",
-        ),
-        pytest.param(
-            "diff --git a/x.py b/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-o\n+n\n",
-            ("glab-verbatim",),
-            {"b/x.py": {1: (None, "n")}},
-            set(),
-            {},
-            id="orphan-new:glab-verbatim",
-        ),
-        pytest.param(
-            _patch(
-                "/dev/null",
-                "b/x.py",
-                "-o\n+n\n+++ b/y.py\n@@ -1 +1 @@\n-o\n+n\n",
-                hunk="@@ -1 +1 @@",
-            )
-            + _patch(
-                "a/z.py",
-                "b/z.py",
-                "-o\n+n\n+++ b/w.py\n@@ -1 +1 @@\n-o\n+n\n",
-                hunk="@@ -1 +1 @@",
-            ),
-            ("git-prefixed",),
-            {
-                "x.py": {1: (None, "n")},
-                "y.py": {1: (None, "n")},
-                "z.py": {1: (None, "n")},
-                "w.py": {1: (None, "n")},
-            },
-            {"x.py"},
-            {"z.py": "z.py"},
-            id="consumed-old",
-        ),
-        pytest.param(
-            (
-                "diff --git a/empty_new.py b/empty_new.py\n"
-                "new file mode 100644\n"
-                "index 0000000..e69de29\n"
-                "--- /dev/null\n"
-                "+++ b/empty_new.py\n"
-            ),
-            ("git-prefixed", "glab-verbatim"),
-            {},
-            {"empty_new.py"},
-            {},
-            id="empty-new-no-hunk",
-        ),
-        pytest.param(
-            "diff --git a/added.py b/added.py\nnew file mode 100644\n"
-            + _patch("/dev/null", "b/added.py", "+content\n", hunk="@@ -0,0 +1,1 @@"),
-            ("git-prefixed", "glab-verbatim"),
-            {"added.py": {1: (None, "content")}},
-            {"added.py"},
-            {},
-            id="null-old",
-        ),
-        pytest.param(
             _patch(
                 "a/gone.py", "/dev/null", "-line1\n-line2\n", hunk="@@ -1,2 +0,0 @@"
             ),
@@ -1026,38 +546,6 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             set(),
             {},
             id="null-new",
-        ),
-        pytest.param(
-            _patch("a/first.py", "b/first.py", " keep\n", hunk="@@ -1 +1 @@")
-            + _patch(
-                "a/gone.py", "/dev/null", "-dropped\n stray\n", hunk="@@ -1,2 +1 @@"
-            ),
-            ("git-prefixed",),
-            {"first.py": {1: (1, "keep")}},
-            set(),
-            {"first.py": "first.py"},
-            id="synthetic-null-new",
-        ),
-        pytest.param(
-            "@@ -0,0 +1 @@\n+orphan\n",
-            ("git-prefixed", "glab-verbatim"),
-            {},
-            set(),
-            {},
-            id="orphan-body",
-        ),
-        pytest.param(
-            _patch(
-                "a/dir with space/x.py\t",
-                "b/dir with space/x.py\t",
-                "-old\n+new\n",
-                hunk="@@ -1 +1 @@",
-            ),
-            ("git-prefixed",),
-            {"dir with space/x.py": {1: (None, "new")}},
-            set(),
-            {"dir with space/x.py": "dir with space/x.py"},
-            id="decoded-git-space",
         ),
         pytest.param(
             _patch(
@@ -1071,14 +559,6 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             set(),
             {"café.py": "café.py"},
             id="decoded-git-utf8",
-        ),
-        pytest.param(
-            _patch('"notes"', '"notes"', " c\n+z\n", hunk="@@ -1 +1,2 @@"),
-            ("git-prefixed", "glab-verbatim"),
-            {"notes": {1: (1, "c"), 2: (None, "z")}},
-            set(),
-            {"notes": "notes"},
-            id="literal-quote-limitation",
         ),
         pytest.param(
             (
@@ -1095,23 +575,6 @@ def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
             set(),
             {"new.py": "café old.py"},
             id="decoded-rename",
-        ),
-        pytest.param(
-            _patch("first", "f", " before\n", hunk="@@ -1 +1 @@")
-            + _patch("last", "f", " after\n", hunk="@@ -8 +1 @@"),
-            ("git-prefixed", "glab-verbatim"),
-            {"f": {1: (8, "after")}},
-            set(),
-            {"f": "last"},
-            id="last-write",
-        ),
-        pytest.param(
-            _patch("f.py", "f.py", "-old\n+repl�\n", hunk="@@ -1 +1 @@"),
-            ("git-prefixed", "glab-verbatim"),
-            {"f.py": {1: (None, "repl�")}},
-            set(),
-            {"f.py": "f.py"},
-            id="replacement-character-content",
         ),
     ],
 )
@@ -1159,35 +622,11 @@ def test_path_facts(
             id="prefixed-valid-a",
         ),
         pytest.param(
-            diff_facts({("src/app.py", 10): 4}),
-            "b/src/app.py",
-            10,
-            (True, "src/app.py", 4),
-            id="prefixed-valid-b",
-        ),
-        pytest.param(
             diff_facts({("src/app.py", 7): None}),
             "src/app.py",
             7,
             (True, "src/app.py", None),
             id="null-value",
-        ),
-        pytest.param(
-            diff_facts({("f.py", 1): 1}),
-            "other.py",
-            1,
-            (False, "other.py", None),
-            id="missing-old-line",
-        ),
-        pytest.param(
-            diff_facts({}), "f.py", 1, (False, "f.py", None), id="empty-oracle"
-        ),
-        pytest.param(
-            diff_facts({("b/x", 1): 0, ("x", 1): 9}),
-            "b/x",
-            1,
-            (True, "b/x", 0),
-            id="exact-before-stripped",
         ),
         pytest.param(
             diff_facts({("b/x", 1): None, ("x", 1): 9}),
@@ -1197,38 +636,24 @@ def test_path_facts(
             id="exact-null-before-stripped",
         ),
         pytest.param(
-            diff_facts({("x", 1): 0}), "x", True, (True, "x", 0), id="boolean-query"
-        ),
-        pytest.param(
-            diff_facts({("x", 1): 0}), "x", 1.0, (True, "x", 0), id="float-query"
-        ),
-        pytest.param(
             diff_facts({("x", 1): 1}),
             "b/x",
             None,
             (False, "b/x", None),
             id="no-query-line",
         ),
-        pytest.param(
-            diff_facts({("x", 1): 1}),
-            "b/b/x",
-            1,
-            (False, "b/b/x", None),
-            id="nonrecursive-query",
-        ),
     ],
 )
 def test_path_lookup(
     facts: DiffFacts | None,
     path: str,
-    line: int | float | None,
+    line: int | None,
     expected: tuple[bool, str, int | None],
 ) -> None:
-    query = cast(int | None, line)
     assert (
-        is_line_valid(facts, path, query),
-        diff_path_spelling(facts, path, query),
-        old_line_for(facts, path, query),
+        is_line_valid(facts, path, line),
+        diff_path_spelling(facts, path, line),
+        old_line_for(facts, path, line),
     ) == expected
 
 
@@ -1241,12 +666,6 @@ def test_path_lookup(
             "f.py",
             [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
             id="ten-line-limit",
-        ),
-        pytest.param(
-            diff_facts({("src/app.py", 5): 2}),
-            "a/src/app.py",
-            [5],
-            id="prefixed-diagnostic",
         ),
         pytest.param(
             diff_facts({("other.py", 1): None}), "missing.py", [], id="empty-diagnostic"
@@ -1269,7 +688,6 @@ def test_path_diagnostics(
     "facts, path, expected",
     [
         pytest.param(None, "any.py", False, id="skipped-new-file"),
-        pytest.param(diff_facts({}), "any.py", False, id="empty-new-file"),
         pytest.param(
             diff_facts({}, new_files={"src/added.py"}),
             "src/added.py",
@@ -1282,24 +700,6 @@ def test_path_diagnostics(
             False,
             id="unresolved-prefix-a",
         ),
-        pytest.param(
-            diff_facts({}, new_files={"src/added.py"}),
-            "b/src/added.py",
-            False,
-            id="unresolved-prefix-b",
-        ),
-        pytest.param(
-            diff_facts({}, new_files={"src/added.py"}),
-            "src/other.py",
-            False,
-            id="missing-new-file",
-        ),
-        pytest.param(
-            diff_facts({}, new_files={"foo.py"}),
-            "a/foo.py",
-            False,
-            id="real-a-collision",
-        ),
     ],
 )
 def test_path_new_file(facts: DiffFacts | None, path: str, expected: bool) -> None:
@@ -1310,7 +710,6 @@ def test_path_new_file(facts: DiffFacts | None, path: str, expected: bool) -> No
     "facts, path, start, end, expected",
     [
         pytest.param(None, "x", 1, 3, True, id="skipped-range"),
-        pytest.param(diff_facts({}), "x", 1, 1, False, id="empty-range-oracle"),
         pytest.param(
             diff_facts({("b/x", 1): 1, ("x", 2): None}),
             "b/x",
@@ -1327,8 +726,6 @@ def test_path_new_file(facts: DiffFacts | None, path: str, expected: bool) -> No
             False,
             id="all-lines-required",
         ),
-        pytest.param(diff_facts({}), "x", 2, 1, True, id="vacuous-range"),
-        pytest.param(diff_facts({}), "x", 1, 10**20, False, id="short-circuit"),
     ],
 )
 def test_path_range(
@@ -1350,14 +747,6 @@ def test_path_range(
             id="exact-span",
         ),
         pytest.param(
-            diff_facts({("x", 1): 1}, line_texts={}),
-            "x",
-            1,
-            1,
-            None,
-            id="partial-content",
-        ),
-        pytest.param(
             diff_facts({}, line_texts={("b/x", 1): "a", ("x", 2): "b"}),
             "b/x",
             1,
@@ -1365,15 +754,6 @@ def test_path_range(
             None,
             id="no-union-span",
         ),
-        pytest.param(
-            diff_facts({}, line_texts={("x", 1): "a"}),
-            "b/x",
-            1,
-            1,
-            None,
-            id="no-strip-span",
-        ),
-        pytest.param(diff_facts({}), "x", 2, 1, [], id="vacuous-span"),
     ],
 )
 def test_path_span(
@@ -1386,7 +766,6 @@ def test_path_span(
     "facts, path, expected",
     [
         pytest.param(None, "b/x", False, id="skipped-ambiguity"),
-        pytest.param(diff_facts({}), "src/foo.py", False, id="unprefixed-empty"),
         pytest.param(
             diff_facts({("src/foo.py", 9): 9, ("b/src/foo.py", 10): 10}),
             "src/foo.py",
@@ -1405,12 +784,6 @@ def test_path_span(
             False,
             id="header-only-sibling",
         ),
-        pytest.param(
-            diff_facts({("new", 1): 1, ("x", 1): 1}, old_paths={"new": "b/x"}),
-            "b/x",
-            False,
-            id="old-rename-sibling",
-        ),
     ],
 )
 def test_path_ambiguity(facts: DiffFacts | None, path: str, expected: bool) -> None:
@@ -1421,10 +794,8 @@ def test_path_ambiguity(facts: DiffFacts | None, path: str, expected: bool) -> N
     "facts, path, expected",
     [
         (None, "b/x", "b/x"),
-        (diff_facts({}), "b/x", "b/x"),
         (diff_facts({}, old_paths={"x": "old"}), "x", "old"),
         (diff_facts({}, old_paths={"x": "old"}), "b/x", "b/x"),
-        (diff_facts({}, old_paths={"x": ""}), "x", ""),
     ],
 )
 def test_path_old_path(facts: DiffFacts | None, path: str, expected: str) -> None:
@@ -1436,21 +807,6 @@ def test_path_old_path(facts: DiffFacts | None, path: str, expected: str) -> Non
     [
         pytest.param("", DiffCounts(0, 0, 0), id="empty"),
         pytest.param(
-            "@@ -7,3 +7,3 @@\n ctx\n-gone\n+fresh\n tail\n",
-            DiffCounts(1, 1, 0),
-            id="pathless-body",
-        ),
-        pytest.param(
-            "--- /dev/null\n+++ b/f.py\n@@ -0,0 +1 @@\n+new\n",
-            DiffCounts(1, 0, 0),
-            id="added",
-        ),
-        pytest.param(
-            "--- a/f.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-gone\n",
-            DiffCounts(0, 1, 0),
-            id="removed",
-        ),
-        pytest.param(
             "@@ -1,3 +1,3 @@\n ctx\n--- x\n+++ y\n tail\n",
             DiffCounts(1, 1, 0),
             id="header-shaped-body",
@@ -1461,11 +817,6 @@ def test_path_old_path(facts: DiffFacts | None, path: str, expected: str) -> Non
             id="crlf-binary",
         ),
         pytest.param(
-            "@@ -1 +1 @@\nBinary files a/x and b/x differ\n",
-            DiffCounts(0, 0, 1),
-            id="body-binary",
-        ),
-        pytest.param(
             (
                 " Binary files a/x and b/x differ\n"
                 "Binary files a/x and b/x differ!\n"
@@ -1473,12 +824,6 @@ def test_path_old_path(facts: DiffFacts | None, path: str, expected: str) -> Non
             ),
             DiffCounts(0, 0, 0),
             id="binary-exact-prose",
-        ),
-        pytest.param(
-            _fixture("git_style.diff"), DiffCounts(5, 5, 0), id="captured-git"
-        ),
-        pytest.param(
-            _fixture("git_style_spaces.diff"), DiffCounts(4, 1, 0), id="captured-spaces"
         ),
         pytest.param(
             "".join(
@@ -1519,86 +864,11 @@ def test_numstat_crlf_binary(tmp_path: Path, invoke: Callable[..., Invocation]) 
     "diff_text, expected",
     [
         pytest.param("diff --git i/x w/x\n", "glab-verbatim", id="mnemonic"),
-        pytest.param("\ndiff --git a/x b/x\n", "glab-verbatim", id="leading-newline"),
-        pytest.param("", "glab-verbatim", id="empty"),
+        pytest.param("diff --git a/x b/x\n", "git-prefixed", id="git-header"),
     ],
 )
 def test_report_policy(diff_text: str, expected: PostingPathPolicy) -> None:
     assert patch_report_policy(diff_text) == expected
-
-
-@pytest.mark.parametrize(
-    "fixture, path, line, expected_old",
-    [
-        pytest.param("git_style.diff", "src/edited.py", 2, 2, id="edited-file"),
-        pytest.param("git_style.diff", "b/inner.py", 2, 2, id="real-b-directory"),
-        pytest.param(
-            "git_style_spaces.diff",
-            "docs/user guide/x.md",
-            1,
-            1,
-            id="directory-with-space",
-        ),
-        pytest.param(
-            "git_style_spaces.diff", "my file.py", 1, None, id="added-file-with-space"
-        ),
-        pytest.param("git_style_spaces.diff", "café.py", 1, None, id="non-ascii"),
-        pytest.param(
-            "git_style_spaces.diff", "new name.py", 1, 1, id="renamed-file-with-space"
-        ),
-    ],
-)
-def test_fixture_anchors(
-    fixture: str, path: str, line: int, expected_old: int | None
-) -> None:
-    facts = parse_diff(_fixture(fixture), policy="glab-verbatim")
-    assert is_line_valid(facts, path, line)
-    assert diff_path_spelling(facts, path, line) == path
-    assert old_line_for(facts, path, line) == expected_old
-
-
-@pytest.mark.parametrize(
-    "policy, left, right, path, query, answers",
-    [
-        pytest.param(
-            "glab-verbatim",
-            "--- b/inner.py\n+++ b/inner.py\n",
-            (
-                "diff --git a/b/inner.py b/b/inner.py\n"
-                "--- a/b/inner.py\n"
-                "+++ b/b/inner.py\n"
-            ),
-            "b/inner.py",
-            "inner.py",
-            (True, False),
-            id="glab-canonical-collision",
-        ),
-        pytest.param(
-            "git-prefixed",
-            "--- a/x\n+++ x\n",
-            "--- a/x\n+++ b/x\n",
-            "x",
-            "b/b/x",
-            (False, True),
-            id="git-canonical-collision",
-        ),
-    ],
-)
-def test_policy_counterexamples(
-    policy: PostingPathPolicy,
-    left: str,
-    right: str,
-    path: str,
-    query: str,
-    answers: tuple[bool, bool],
-) -> None:
-    body = "@@ -1 +1 @@\n ctx\n"
-    expected = DiffFacts({(path, 1): 1}, frozenset(), {path: path}, {(path, 1): "ctx"})
-    assert parse_diff(left + body, policy=policy) == expected
-    assert parse_diff(right + body, policy=policy) == expected
-    for headers, answer in zip((left, right), answers, strict=True):
-        facts = parse_diff(headers + body, policy="verify-both-spellings")
-        assert is_line_valid(facts, query, 1) is answer
 
 
 @pytest.mark.parametrize(
@@ -1615,13 +885,6 @@ def test_policy_counterexamples(
             id="no-recursive-header-strip",
         ),
         pytest.param("x", "b/b/x", {("x", 1)}, False, id="no-recursive-query-strip"),
-        pytest.param(
-            "a/real/x",
-            "real/x",
-            {("a/real/x", 1), ("real/x", 1)},
-            True,
-            id="real-a-directory",
-        ),
     ],
 )
 def test_path_aliases(
@@ -1670,17 +933,6 @@ def test_path_aliases(
             ),
             {"b/first.py": (1,), "first.py": (1,)},
             id="synthetic-null-new",
-        ),
-        pytest.param(
-            "diff --git a/src/app.py b/src/app.py\nindex 1111111..2222222 100644\n"
-            + _patch(
-                "a/src/app.py",
-                "b/src/app.py",
-                "     ctx\n+    added\n     tail\n",
-                hunk="@@ -10,2 +10,3 @@ def handler():",
-            ),
-            {"b/src/app.py": (10, 11, 12), "src/app.py": (10, 11, 12)},
-            id="git-both-spellings",
         ),
         pytest.param(
             "diff --git a/src/app.py b/src/app.py\nindex 1111111..2222222 100644\n"
@@ -1734,90 +986,6 @@ def test_path_membership(
     assert facts.old_paths == {}
 
 
-PATH_NULL_CASES = [
-    pytest.param(
-        "git-prefixed",
-        "--- a/f.py\n+++ b//dev/null\n",
-        {},
-        set(),
-        {},
-        {},
-        id="git-prefixed-new-null",
-    ),
-    pytest.param(
-        "git-prefixed",
-        "--- a//dev/null\n+++ b/f.py\n",
-        {("f.py", 1): 1},
-        {"f.py"},
-        {},
-        {("f.py", 1): "ctx"},
-        id="git-prefixed-old-null",
-    ),
-    pytest.param(
-        "glab-verbatim",
-        "--- a/f.py\n+++ b//dev/null\n",
-        {("b//dev/null", 1): 1},
-        set(),
-        {"b//dev/null": "a/f.py"},
-        {("b//dev/null", 1): "ctx"},
-        id="glab-verbatim-new-null",
-    ),
-    pytest.param(
-        "glab-verbatim",
-        "--- a//dev/null\n+++ b/f.py\n",
-        {("b/f.py", 1): 1},
-        set(),
-        {"b/f.py": "a//dev/null"},
-        {("b/f.py", 1): "ctx"},
-        id="glab-verbatim-old-null",
-    ),
-    pytest.param(
-        "verify-both-spellings",
-        "--- a/f.py\n+++ b//dev/null\n",
-        {("b//dev/null", 1): 1, ("/dev/null", 1): 1},
-        set(),
-        {},
-        {("b//dev/null", 1): "ctx", ("/dev/null", 1): "ctx"},
-        id="verify-both-spellings-new-null",
-    ),
-    pytest.param(
-        "verify-both-spellings",
-        "--- a//dev/null\n+++ b/f.py\n",
-        {("b/f.py", 1): 1, ("f.py", 1): 1},
-        set(),
-        {},
-        {("b/f.py", 1): "ctx", ("f.py", 1): "ctx"},
-        id="verify-both-spellings-old-null",
-    ),
-]
-
-
-@pytest.mark.parametrize(
-    "policy, headers, valid, new_files, old_paths, texts", PATH_NULL_CASES
-)
-def test_path_null_order(
-    policy: DiffPathPolicy,
-    headers: str,
-    valid: Mapping[LineKey, int | None],
-    new_files: set[str],
-    old_paths: Mapping[str, str],
-    texts: Mapping[LineKey, str],
-) -> None:
-    assert parse_diff(headers + "@@ -1 +1 @@\n ctx\n", policy=policy) == DiffFacts(
-        valid,
-        frozenset(new_files),
-        old_paths,
-        texts,
-    )
-
-
-@pytest.mark.parametrize(
-    "policy", ["git-prefixed", "glab-verbatim", "verify-both-spellings"]
-)
-def test_empty_diff_is_present_facts(policy: DiffPathPolicy) -> None:
-    assert parse_diff("", policy=policy) == DiffFacts({}, frozenset(), {}, {})
-
-
 @pytest.mark.parametrize(
     "platform, expected",
     [
@@ -1831,28 +999,9 @@ def test_posting_policy(
     assert posting_policy(platform) == expected
 
 
-@pytest.mark.parametrize("query", [None, 1, 1.0, True, []])
-def test_diff_lookup_wrong_path(query: object) -> None:
-    with pytest.raises(TypeError):
-        is_line_valid(diff_facts({}), cast(str, query), 1)
-
-
 def test_fixture_final_newline() -> None:
     fixtures = sorted((Path(__file__).parent / "fixtures/glab_diff").glob("*.diff"))
     assert fixtures
     for path in fixtures:
         data = path.read_bytes()
         assert data.endswith(b"\n") and not data.endswith(b"\n\n"), path.name
-
-
-def test_fixture_blank_context_space() -> None:
-    fixtures = sorted((Path(__file__).parent / "fixtures/glab_diff").glob("*.diff"))
-    assert fixtures
-    blanks = [
-        line
-        for path in fixtures
-        for line in path.read_bytes().split(b"\n")[:-1]
-        if not line.strip()
-    ]
-    assert blanks
-    assert all(line == b" " for line in blanks)

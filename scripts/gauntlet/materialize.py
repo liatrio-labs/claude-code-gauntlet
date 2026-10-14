@@ -5,15 +5,20 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from collections.abc import Hashable, Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TypedDict, cast
+from typing import TypedDict
 
 from gauntlet import tasks
-from gauntlet.artifacts import AssembleReceipt, PlanEntry, WrittenArtifact, assemble
+from gauntlet.artifacts import (
+    AssembleReceipt,
+    PlanEntry,
+    WrittenArtifact,
+    assemble,
+    write_entries,
+)
 from gauntlet.cli import Command, Parser, UsageError
-from gauntlet.fs import confined, write_atomic
-from gauntlet.jsjson import fnv1a32, utf16_len
+from gauntlet.fs import confined
 
 # Only this persist channel carries primary text rather than a writer plan.
 CHANNEL = "return"
@@ -78,7 +83,8 @@ def select_source(
     return SourceSelection(None, None, scanned)
 
 
-# Validate the whole payload before writing anything; malformed later entries cannot be ignored.
+# Validate the whole payload before writing anything; malformed later entries cannot be
+# ignored.
 def plan_entries(
     payload: Mapping[str, object], output_root: str, errors: list[str]
 ) -> MaterializePlan | None:
@@ -119,29 +125,12 @@ def plan_entries(
     return MaterializePlan(checked, plan_path)
 
 
-def write_entries(
-    entries: Sequence[PlanEntry], materialized: list[WrittenArtifact], errors: list[str]
-) -> bool:
-    ok = True
-    for entry in entries:
-        path, text = entry.path, entry.text
-        try:
-            write_atomic(path, text)
-        except Exception as exc:  # noqa: BLE001 - reported, never raised
-            errors.append(f"could not write {path} ({type(exc).__name__}: {exc})")
-            ok = False
-            continue
-        materialized.append(
-            {"path": path, "chars": utf16_len(text), "checksum": fnv1a32(text)}
-        )
-    return ok
-
-
-# Use the assembler numbers; derive expectations detect serializer divergence or stale plans.
-def proof_gaps(receipt: Mapping[str, object], plan_text: str) -> list[str]:
+# Use the assembler numbers; derive expectations detect serializer divergence or stale
+# plans.
+def proof_gaps(receipt: AssembleReceipt, plan_text: str) -> list[str]:
     gaps = []
-    for entry in cast(Sequence[object], receipt.get("verified") or []):
-        if not isinstance(entry, dict) or entry.get("content_proof") == "match":
+    for entry in receipt["verified"]:
+        if entry["content_proof"] == "match":
             continue
         gaps.append(
             f"artifact-content-proof: {entry.get('path')} on disk differs from the "
@@ -152,30 +141,27 @@ def proof_gaps(receipt: Mapping[str, object], plan_text: str) -> list[str]:
         )
     try:
         expected = {
-            cast(Hashable, item.get("path")): item
-            for item in (json.loads(plan_text).get("derive") or [])
-            if isinstance(item, dict)
+            item["path"]: item for item in (json.loads(plan_text).get("derive") or [])
         }
     except ValueError:
         return [*gaps, "the persist plan just written is not valid JSON"]
-    for entry in cast(Sequence[object], receipt.get("written") or []):
-        if not isinstance(entry, dict):
-            continue
-        want = expected.get(cast(Hashable, entry.get("path")))
+    for written in receipt["written"]:
+        want = expected.get(written["path"])
         if want is None:
             gaps.append(
                 "artifact-content-proof: the persist plan carries no derived-content "
-                f"expectation for {entry.get('path')} (no content proof)"
+                f"expectation for {written.get('path')} (no content proof)"
             )
             continue
-        if entry.get("chars") == want.get("chars") and entry.get(
+        if written.get("chars") == want.get("chars") and written.get(
             "checksum"
         ) == want.get("checksum"):
             continue
         gaps.append(
-            f"artifact-content-proof: derived document {entry.get('path')} does not "
+            f"artifact-content-proof: derived document {written.get('path')} does not "
             "match the pipeline's own derivation "
-            f"(wrote {entry.get('chars')} chars/{entry.get('checksum')}, the pipeline "
+            f"(wrote {written.get('chars')} "
+            f"chars/{written.get('checksum')}, the pipeline "
             f"derived {want.get('chars')}/{want.get('checksum')})"
         )
     return gaps
@@ -229,8 +215,8 @@ def _materialize(
     if not write_entries(entries, materialized, errors):
         return _receipt(False, source, scanned, materialized, None, gaps, errors)
 
-    # plan_entries proved that plan_path is a string present among the validated entries.
     receipt = assemble(plan_path)
+    # plan_entries proved plan_path is among the entries; the default is unreachable.
     plan_text = {entry.path: entry.text for entry in entries}.get(plan_path, "")
     gaps.extend(proof_gaps(receipt, plan_text))
     if not receipt.get("ok"):
@@ -270,7 +256,8 @@ def _failure_receipt(message: str) -> MaterializeReceipt:
 def build_parser() -> Parser:
     parser = Parser(
         prog="materialize_artifacts",
-        description="Write the review's artifacts from the workflow's own return value.",
+        description="Write the review's artifacts from the workflow's own return "
+        "value.",
     )
     parser.add_argument(
         "--output-dir",

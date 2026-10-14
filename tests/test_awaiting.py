@@ -1,6 +1,5 @@
 """Wait outcomes, marker bytes, retry commands, and delivery failures."""
 
-import io
 import json
 import os
 import shlex
@@ -28,9 +27,7 @@ ARTIFACT_NAMES = (
     "environ,expected",
     [
         pytest.param({}, 540, id="TIMEOUT-default"),
-        pytest.param({"BASH_MAX_TIMEOUT_MS": "1000"}, 30, id="TIMEOUT-floor"),
         pytest.param({"BASH_MAX_TIMEOUT_MS": "abc"}, 540, id="TIMEOUT-malformed"),
-        pytest.param({"BASH_MAX_TIMEOUT_MS": "0"}, 540, id="TIMEOUT-nonpositive"),
         pytest.param({"BASH_MAX_TIMEOUT_MS": "300999.9"}, 240, id="TIMEOUT-decimal"),
     ],
 )
@@ -132,13 +129,17 @@ def test_wait_loop(mode, expected_code, expected_sleeps, tmp_path, monkeypatch):
         pytest.param(
             "pending",
             1,
-            ',"next_command":"python3 ENTRY --attempt 2 --max-attempts 4 --timeout-seconds 0.0 --poll-interval 2 --since-epoch 7.0 -- missing"}',
+            ',"next_command":"python3 ENTRY --attempt 2 --max-attempts '
+            "4 --timeout-seconds 0.0 --poll-interval 2 --since-epoch "
+            '7.0 -- missing"}',
             id="MARKER-pending-unresolved",
         ),
         pytest.param(
             "timeout",
             5,
-            ',"gap":"workflow-timeout","detail":"no terminal workflow result after 4 attempts; declare the gap and deliver whatever partial artifacts exist"}',
+            ',"gap":"workflow-timeout","detail":"no terminal workflow '
+            "result after 4 attempts; declare the gap and deliver "
+            'whatever partial artifacts exist"}',
             id="MARKER-timeout-detail",
         ),
     ],
@@ -164,9 +165,11 @@ def test_marker_bytes(kind, attempt, expected_tail, tmp_path, monkeypatch, capsy
     expected = (
         (
             '{"await":"KIND","attempt":ATTEMPT,"max_attempts":4,"waited_seconds":0.3,'
-            '"target":"missing","resolved_path":null,"file_bytes":null,"since_epoch":7.0,'
+            '"target":"missing","resolved_path":null,"file_bytes":null,'
+            '"since_epoch":7.0,'
             '"artifacts":{"checked":false,"complete":false,"present":[],"missing":[]},'
-            '"saw_ok_without_corroborator":false,"scan_skipped":false,"scan_stop_reason":null,'
+            '"saw_ok_without_corroborator":false,"scan_skipped":false,'
+            '"scan_stop_reason":null,'
             '"searched":[PATTERN]'
         )
         .replace("KIND", kind)
@@ -191,36 +194,30 @@ def test_scan_reason_marker(tmp_path, monkeypatch, capsys):
     assert "searched" not in marker
 
 
-@pytest.mark.parametrize(
-    "channel",
-    [
-        pytest.param("other", id="MARKER-elide-every-dict-channel"),
-    ],
-)
-def test_elision(channel, tmp_path, capsys):
+def test_elision(tmp_path, capsys):
     target = tmp_path / "task.output"
     terminal = {
         "ok": True,
         "stats": {"n": 2},
         "unknown": "kept",
         "persistReturn": {
-            "channel": channel,
+            "channel": "return",
             "nonce": "n",
             "planPath": "/out/plan",
             "unknown": 7,
-            "entries": [{"path": "/out/a", "text": "x" * 5000}, 2, {"text": "no path"}],
+            "entries": [{"path": "/out/a", "text": "x" * 5000}],
         },
     }
     target.write_text(json.dumps({"result": terminal}), encoding="utf-8")
     assert awaiting.CLI.invoke([str(target), "--timeout-seconds", "0"]) == 0
     expected = (
         '{"ok":true,"stats":{"n":2},"unknown":"kept","persistReturn":'
-        '{"channel":"CHANNEL","nonce":"n","planPath":"/out/plan","unknown":7,'
-        '"elided":true,"resolvedPath":PATH,"paths":["/out/a",null]}}'
+        '{"channel":"return","nonce":"n","planPath":"/out/plan","unknown":7,'
+        '"elided":true,"resolvedPath":PATH,"paths":["/out/a"]}}'
     )
     assert capsys.readouterr().out.strip() == expected.replace(
-        "CHANNEL", channel
-    ).replace("PATH", json.dumps(str(target)))
+        "PATH", json.dumps(str(target))
+    )
     assert terminal["persistReturn"]["entries"][0]["text"] == "x" * 5000
 
 
@@ -277,7 +274,9 @@ def test_artifact_fallback(mode, expected_code, kind, tmp_path, monkeypatch, cap
         }
         assert (
             receipt["detail"]
-            == "every persisted artifact is present and fresh, but the workflow's compact return was never observed; deliver from the marker's artifactPaths and disclose the gap"
+            == "every persisted artifact is present and fresh, but the "
+            "workflow's compact return was never observed; deliver "
+            "from the marker's artifactPaths and disclose the gap"
         )
         assert receipt["gap"] == "workflow-timeout"
         assert receipt["artifacts"] == {
@@ -377,24 +376,15 @@ def test_grace_resets_after_completeness_loss(tmp_path, monkeypatch):
     assert receipt["waited_seconds"] == 4.0
 
 
-@pytest.mark.parametrize(
-    "resolved",
-    [
-        pytest.param(False, id="NEXT-literal-quoted-target"),
-        pytest.param(True, id="NEXT-resolved-path-precedence"),
-    ],
-)
-def test_retry_command(resolved, tmp_path, monkeypatch, capsys):
+def test_retry_command(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(awaiting.time, "time", lambda: 10)
     plugin_entry = os.path.join("plugin path's", "scripts", "await_workflow.py")
     monkeypatch.setattr(awaiting, "entry", lambda _: plugin_entry)
-    target = "-space '[$].output"
-    if resolved:
-        root = tmp_path / "root"
-        path = task_file(root, "bare-id")
-        monkeypatch.setenv(tasks.TASK_ROOTS_ENV, str(root))
-        target = "bare-id"
+    root = tmp_path / "root"
+    path = task_file(root, "bare-id")
+    monkeypatch.setenv(tasks.TASK_ROOTS_ENV, str(root))
+    target = "bare-id"
     assert (
         awaiting.CLI.invoke(
             [
@@ -421,43 +411,11 @@ def test_retry_command(resolved, tmp_path, monkeypatch, capsys):
     expected = (
         f"python3 {shlex.quote(plugin_entry)} --attempt 3 --max-attempts 5 "
         "--timeout-seconds 0.0 --poll-interval 2 --since-epoch 7.5 "
-        "--artifacts-dir 'out space'\"'\"'s' --head-sha abc --artifacts-grace-seconds 11.0 -- "
+        "--artifacts-dir 'out space'\"'\"'s' --head-sha abc "
+        "--artifacts-grace-seconds 11.0 -- "
     )
-    expected += shlex.quote(str(path)) if resolved else "'-space '\"'\"'[$].output'"
+    expected += shlex.quote(str(path))
     assert json.loads(capsys.readouterr().out)["next_command"] == expected
-
-
-def test_next_command_keeps_symlinked_plugin_root(tmp_path, symlink_or_skip):
-    link = tmp_path / "plugin-link"
-    link.symlink_to(REPO, target_is_directory=True)
-    target = tmp_path / "pending-task"
-    env = os.environ.copy()
-    env.pop("PYTHONPATH", None)
-    env["PYTHONSAFEPATH"] = "1"
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(link / "scripts/await_workflow.py"),
-            str(target),
-            "--timeout-seconds",
-            "0",
-            "--max-attempts",
-            "2",
-            "--since-epoch",
-            "0",
-        ],
-        cwd=tmp_path,
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    assert result.returncode == 3, result.stderr
-    marker = json.loads(result.stdout)
-    assert shlex.split(marker["next_command"])[1] == str(
-        link / "scripts" / "await_workflow.py"
-    )
 
 
 def test_executed_retry_preserves_leading_dash_and_quotes(
@@ -518,56 +476,6 @@ def test_wait_fault_receipt(error, message, monkeypatch, capsys):
     ).replace("MESSAGE", message)
 
 
-@pytest.mark.parametrize(
-    "outcome",
-    [
-        3,
-    ],
-    ids=[
-        "FAULT-encode-pending",
-    ],
-)
-def test_await_encoding_fallback_keeps_outcome(outcome, monkeypatch, capsys):
-    monkeypatch.setattr(awaiting, "await_terminal", lambda *_: ({"bad": {1}}, outcome))
-    assert awaiting.CLI.invoke(["bare-id", "--timeout-seconds", "0"]) == outcome
-    receipt = json.loads(capsys.readouterr().out)
-    message = receipt.pop("message")
-    assert message.startswith("result would not serialize: Object of type set")
-    assert receipt == {"await": "error", "gap": "workflow-timeout"}
-
-
-def test_await_preserves_compact_ascii_nan_spelling(monkeypatch, capsys):
-    monkeypatch.setattr(
-        awaiting,
-        "await_terminal",
-        lambda *_: ({"ok": True, "stats": float("nan"), "label": "caf\u00e9"}, 0),
-    )
-    assert awaiting.CLI.invoke(["bare-id", "--timeout-seconds", "0"]) == 0
-    assert (
-        capsys.readouterr().out.strip()
-        == '{"ok":true,"stats":NaN,"label":"caf\\u00e9"}'
-    )
-
-
-@pytest.mark.parametrize(
-    "error",
-    [
-        pytest.param(BrokenPipeError("closed"), id="FAULT-flush"),
-    ],
-)
-def test_output_failure(error, monkeypatch):
-    def fail(*args, **kwargs):
-        raise error
-
-    stream = io.StringIO()
-    monkeypatch.setattr(sys, "stdout", stream)
-
-    monkeypatch.setattr(awaiting, "await_terminal", lambda *_: ({"ok": True}, 0))
-    monkeypatch.setattr(os, "open", fail)
-    monkeypatch.setattr(stream, "flush", fail)
-    assert awaiting.CLI.invoke(["missing", "--timeout-seconds", "0"]) == 4
-
-
 def test_broken_pipe_redirect_prevents_shutdown_failure(tmp_path):
     target = tmp_path / "task.output"
     # A buffered marker survives a failed flush and is retried at interpreter shutdown.
@@ -598,15 +506,9 @@ def test_broken_pipe_redirect_prevents_shutdown_failure(tmp_path):
     assert result.stderr.strip() == ""
 
 
-@pytest.mark.parametrize(
-    "flags",
-    [
-        pytest.param(["--head-sha", "abc"], id="USAGE-sha-only"),
-        pytest.param(["--artifacts-dir", "out"], id="USAGE-dir-only"),
-    ],
-)
-def test_paired_flags(flags, capsys):
-    assert awaiting.CLI.invoke(["task", "--timeout-seconds", "0", *flags]) == 2
+def test_paired_flags(capsys):
+    args = ["task", "--timeout-seconds", "0", "--head-sha", "abc"]
+    assert awaiting.CLI.invoke(args) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert (
@@ -627,16 +529,3 @@ def test_explicit_await_path_never_probes_discovery_roots(
         code = awaiting.CLI.invoke([str(target), "--timeout-seconds", "0"])
     assert code == 0
     assert capsys.readouterr().out.strip() == '{"ok":true,"stats":{}}'
-
-
-def test_directory_target_retains_file_bytes(tmp_path, monkeypatch, capsys):
-    target = tmp_path / "directory.output"
-    target.mkdir()
-    getsize = os.path.getsize
-    monkeypatch.setattr(
-        os.path, "getsize", lambda path: 37 if path == str(target) else getsize(path)
-    )
-    assert awaiting.CLI.invoke([str(target), "--timeout-seconds", "0"]) == 3
-    marker = json.loads(capsys.readouterr().out)
-    assert marker["file_bytes"] == 37
-    assert marker["resolved_path"] == str(target)

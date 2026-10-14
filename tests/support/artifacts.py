@@ -33,11 +33,6 @@ def finding(fid):
     return f
 
 
-def js_pretty(obj):
-    """Byte-equivalent of JSON.stringify(obj, null, 2)."""
-    return json.dumps(obj, indent=2, ensure_ascii=False)
-
-
 class _Workspace:
     """A temp output dir with findings.json + report.md already on disk."""
 
@@ -60,7 +55,7 @@ class _Workspace:
         self.plan_path = os.path.join(
             self.dir, "code-gauntlet-persist-plan-abc1234.json"
         )
-        self.findings_json = js_pretty(self.findings)
+        self.findings_json = json.dumps(self.findings, indent=2, ensure_ascii=False)
         self.write(self.findings_path, self.findings_json)
         self.write(self.report_path, self.report)
         return self
@@ -71,56 +66,38 @@ class _Workspace:
 
     def plan(self):
         ids = [f["id"] for f in self.findings if isinstance(f, dict) and "id" in f]
-        plan = {
-            "planVersion": 2,
-            "expect": [
-                {
-                    "path": self.findings_path,
-                    "chars": utf16_len(self.findings_json),
-                    "checksum": fnv1a32(self.findings_json),
+        plan = artifact_plan(self.findings_path, ids)
+        plan["expect"] = [
+            {"path": path, "chars": utf16_len(text), "checksum": fnv1a32(text)}
+            for path, text in (
+                (self.findings_path, self.findings_json),
+                (self.report_path, normalize_content(self.report)),
+            )
+        ]
+        plan["postReview"]["path"] = self.post_path
+        plan["checkpoint"].update(
+            path=self.checkpoint_path,
+            stripAliasFields=["line", "end_line", "body"],
+            skeleton={
+                "phases": {
+                    "challenge": {
+                        "findings": [],
+                        "unverified": [],
+                        "eliminated": [],
+                        "gaps": [],
+                        "stats": {},
+                        "generated_at": "2026-07-27T00:00:00Z",
+                    }
                 },
-                {
-                    "path": self.report_path,
-                    "chars": utf16_len(normalize_content(self.report)),
-                    "checksum": fnv1a32(normalize_content(self.report)),
-                },
-            ],
-            "postReview": {
-                "path": self.post_path,
-                "source": self.findings_path,
-                "ids": list(ids),
-                "wrapper": None,
+                "completed": ["challenge"],
+                "phaseReached": "report",
+                "counts": {"challenge": len(ids)},
             },
-            "checkpoint": {
-                "path": self.checkpoint_path,
-                "source": self.findings_path,
-                "challengeFindingIds": list(ids),
-                "stripAliasFields": ["line", "end_line", "body"],
-                "skeleton": {
-                    "phases": {
-                        "challenge": {
-                            "findings": [],
-                            "unverified": [],
-                            "eliminated": [],
-                            "gaps": [],
-                            "stats": {},
-                            "generated_at": "2026-07-27T00:00:00Z",
-                        }
-                    },
-                    "completed": ["challenge"],
-                    "phaseReached": "report",
-                    "counts": {"challenge": len(ids)},
-                },
-            },
-        }
+        )
         return plan
 
     def write_plan(self, plan):
-        """The self-proof covers the plan without its checksum field."""
-        out = dict(plan)
-        out.pop("planChecksum", None)
-        out["planChecksum"] = plan_checksum(out)
-        self.write(self.plan_path, js_pretty(out))
+        seal_plan(self.plan_path, plan)
         return self.plan_path
 
 

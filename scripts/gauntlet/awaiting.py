@@ -87,7 +87,7 @@ def default_timeout_seconds(environ: Mapping[str, str] | None = None) -> int:
         return DEFAULT_TIMEOUT_SECONDS
     try:
         ceiling = int(float(raw)) // 1000
-    except (TypeError, ValueError):
+    except ValueError:
         return DEFAULT_TIMEOUT_SECONDS
     if ceiling <= 0:
         return DEFAULT_TIMEOUT_SECONDS
@@ -97,13 +97,12 @@ def default_timeout_seconds(environ: Mapping[str, str] | None = None) -> int:
     )
 
 
-# Replace entries with a different key so a byte-consuming caller cannot write hollow files.
+# Replace entries with a different key so a byte-consuming caller cannot write hollow
+# files.
 # Materialize reads the original task file; every other terminal key stays untouched.
 def elide_persist_return(
     terminal: Mapping[str, object], resolved_path: str | None
 ) -> Mapping[str, object]:
-    if not isinstance(terminal, dict):
-        return terminal
     payload = terminal.get("persistReturn")
     if not isinstance(payload, dict):
         return terminal
@@ -159,7 +158,8 @@ def _artifact_paths(artifacts_dir: str, head_sha: str) -> dict[str, str]:
     }
 
 
-# Carry the original floor and resolved path; quote a literal Bash retry with target last behind -- to preserve leading dashes.
+# Carry the original floor and resolved path; quote a literal Bash retry with
+# target last behind -- to preserve leading dashes.
 def build_next_command(
     args: argparse.Namespace, resolved_path: str | None, since_epoch: float
 ) -> str:
@@ -222,7 +222,6 @@ def _emit(payload: Mapping[str, object]) -> None:
             try:
                 os.dup2(devnull, sys.stdout.fileno())
             finally:
-                # dup2 duplicates the descriptor; the original must still be closed.
                 os.close(devnull)
         except OSError:
             # Best effort: preserve the original delivery error.
@@ -250,7 +249,6 @@ def build_marker(
         "since_epoch": since_epoch,
         "artifacts": artifacts,
         "saw_ok_without_corroborator": saw_bare_ok,
-        # Disclose both whether scanning stopped and the bound that stopped it.
         "scan_skipped": observation.scan_stop_reason is not None,
         "scan_stop_reason": observation.scan_stop_reason,
     }
@@ -277,7 +275,8 @@ def await_terminal(
         observation = tasks.observe(args.target, roots)
         saw_bare_ok = saw_bare_ok or observation.saw_bare_ok
         if observation.terminal is not None:
-            # The Bash caller merges streams, so terminal delivery must stay silent on stderr.
+            # The Bash caller merges streams, so terminal delivery must stay silent on
+            # stderr.
             return elide_persist_return(
                 observation.terminal, observation.resolved_path
             ), 0
@@ -288,7 +287,8 @@ def await_terminal(
             if artifacts_complete_at is None:
                 artifacts_complete_at = now
             grace_elapsed = now - artifacts_complete_at >= args.artifacts_grace_seconds
-            # Fresh artifacts are the only fallback for an unresolved target; a resolved file may still receive its terminal return, so it waits to the deadline.
+            # A resolved file may still receive its terminal return, so it waits
+            # to the deadline before falling back to fresh artifacts.
             if (grace_elapsed and observation.resolved_path is None) or (
                 args.attempt >= args.max_attempts and now >= deadline
             ):
@@ -419,7 +419,6 @@ def main(args: argparse.Namespace) -> int:
         payload, code = _wait_error_payload(args, "interrupted"), 4
     except Exception as exc:  # noqa: BLE001 - every wait outcome needs a receipt
         payload, code = _wait_error_payload(args, f"{type(exc).__name__}: {exc}"), 4
-    # One delivery site gives interrupted and successful waits the same pipe handling.
     try:
         _emit(payload)
     except OSError:
