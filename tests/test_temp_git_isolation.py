@@ -4,6 +4,8 @@ import hashlib
 import os
 import subprocess
 import sys
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -49,15 +51,18 @@ def _git(cwd: Path, *args: str) -> str:
 
 
 @pytest.fixture
-def outer_repository(tmp_path: Path) -> Path:
-    outer = tmp_path / "claude-502" / "outer"
-    outer.mkdir(parents=True)
-    (outer / "tmp").mkdir()
-    _git(outer, "init", "-q")
-    (outer / "committed.txt").write_text("hello\n", encoding="utf-8")
-    _git(outer, "add", "committed.txt")
-    _git(outer, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "seed commit")
-    return outer
+def outer_repository() -> Iterator[Path]:
+    # pytest's tmp_path is long enough that the child's nested temp paths pass
+    # Windows MAX_PATH; a bare temporary directory keeps them under it.
+    with tempfile.TemporaryDirectory() as root:
+        outer = Path(root) / "claude-502" / "outer"
+        outer.mkdir(parents=True)
+        (outer / "tmp").mkdir()
+        _git(outer, "init", "-q")
+        (outer / "committed.txt").write_text("hello\n", encoding="utf-8")
+        _git(outer, "add", "committed.txt")
+        _git(outer, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "seed commit")
+        yield outer
 
 
 def _repository_facts(outer: Path) -> dict[str, str]:
