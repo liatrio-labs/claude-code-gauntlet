@@ -29,15 +29,14 @@ def _entry_template(name, module):
 
 
 @pytest.mark.parametrize("path", ENTRIES, ids=lambda path: path.stem)
-def test_entry_is_the_template_over_a_command(path):
+def test_entry_is_the_template_over_a_command(path: Path) -> None:
     source = path.read_text(encoding="utf-8")
-    module = IMPORT.search(source)[1]
+    match = IMPORT.search(source)
+    assert match
+    module = match[1]
     assert source == _entry_template(path.stem, module)
     command = importlib.import_module(f"gauntlet.{module}").CLI
     assert isinstance(command, Command)
-    assert command.parser is not None
-    assert command.main is not None
-    assert command._legacy is None
 
 
 def test_no_two_entries_share_a_module():
@@ -91,7 +90,7 @@ def test_both_tool_roots_have_bootstrapped_tools():
 
 
 @pytest.mark.parametrize("relative", TOOLS)
-def test_tool_bootstrap_inserts_scripts_then_runs_its_main(relative):
+def test_tool_bootstrap_inserts_scripts_then_runs_its_main(relative: str) -> None:
     tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
     local_functions = {
         node.name for node in tree.body if isinstance(node, ast.FunctionDef)
@@ -105,13 +104,14 @@ def test_tool_bootstrap_inserts_scripts_then_runs_its_main(relative):
     )
     guards = _bootstrap(relative)
     assert len(guards) == 1
-    prog = Path(relative).stem
     parent = 1 if relative.startswith(".github/") else 3
     expected = ast.parse(
-        f'if __name__ == "__main__":\n'
-        f'    sys.path.insert(0, str(Path(__file__).resolve().parents[{parent}] / "scripts"))\n'
-        "    from gauntlet.cli import Command\n"
-        f'    Command.legacy(main, prog="{prog}.py").run()\n'
+        'if __name__ == "__main__":\n'
+        "    sys.path.insert(0, "
+        f'str(Path(__file__).resolve().parents[{parent}] / "scripts"))\n'
+        "    from gauntlet.cli import utf8_stdio\n"
+        "    utf8_stdio()\n"
+        "    raise SystemExit(main())\n"
     ).body[0]
     assert ast.dump(guards[0]) == ast.dump(expected)
 

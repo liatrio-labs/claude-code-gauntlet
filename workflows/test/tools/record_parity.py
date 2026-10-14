@@ -156,6 +156,7 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-    from gauntlet.cli import Command
+    from gauntlet.cli import utf8_stdio
 
-    Command.legacy(main, prog="record_parity.py").run()
+    utf8_stdio()
+    raise SystemExit(main())
