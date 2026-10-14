@@ -23,7 +23,8 @@ MAX_SCANNED_FILES = 200
 SCAN_MAX_CANDIDATES = 500
 SCAN_MAX_PROBES = 2000
 SCAN_MAX_CHARS = 8_000_000
-# One deep document must not hide a later return; repeated stack exhaustion stops the scan.
+# One deep document must not hide a later return; repeated stack exhaustion stops the
+# scan.
 SCAN_MAX_DEEP_CANDIDATES = 8
 
 # Receipts also carry ok; only pipeline fields corroborate a terminal return.
@@ -81,7 +82,8 @@ def _deduplicate(directories: Sequence[str]) -> tuple[str, ...]:
     return tuple(roots)
 
 
-# /tmp can resolve to /private/tmp on macOS, so both spellings are searched and realpath-deduplicated.
+# /tmp can resolve to /private/tmp on macOS, so search both spellings and
+# deduplicate by realpath.
 def _default_roots(tmpdir: str | None) -> tuple[str, ...]:
     getuid = getattr(os, "getuid", None)
     uid = getuid() if callable(getuid) else None
@@ -121,7 +123,8 @@ def roots_for_request(target: str | None, nonce: str | None = None) -> TaskRoots
 
 
 # An mtime floor could reject a fast failure written before the first await call.
-# Short ids can collide across sessions, so newest favours the current run over another session's finished file; lexicographic order would not.
+# Short ids can collide across sessions, so newest favours the current run over
+# another session's finished file; lexicographic order would not.
 def _newest(paths: Sequence[str]) -> str | None:
     best, best_mtime = None, None
     for path in paths:
@@ -263,7 +266,6 @@ def _iter_json_objects(
         except ValueError:
             # The error position may be past a later valid document; do not skip to it.
             continue
-        # A successful span contains nested values, not sibling documents.
         consumed_to = end
         if isinstance(obj, dict):
             yielded += 1
@@ -286,7 +288,6 @@ def find_terminal(text: str) -> tuple[Mapping[str, object] | None, bool, str | N
         if found is not None:
             return found, saw_bare_ok, None
 
-    # Check before allocating scan state, while preserving the whole-document exception.
     if len(text) > SCAN_MAX_CHARS:
         return None, saw_bare_ok, "max_chars"
 

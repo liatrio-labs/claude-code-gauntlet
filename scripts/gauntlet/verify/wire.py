@@ -77,13 +77,12 @@ def _half_up_int(value: float) -> int | None:
     """Use finite half-up rounding so input arithmetic and delta proofs agree."""
     if not math.isfinite(value):
         return None
-    # Explicit half-up, not round(): Python's round() is half-to-even, and the
-    # spelling of this decision should not depend on which runtime reads the code.
+    # Not round(): Python's round() is half-to-even.
     return math.floor(value + 0.5)
 
 
 def coerce_numeric_fields(finding: object) -> object:
-    """Normalize numeric fields before arithmetic, preserving unknown keys and identity."""
+    """Normalize numeric fields before arithmetic, preserving unknown keys."""
     if not isinstance(finding, dict):
         return finding
     finding = cast(dict[str, object], finding)
@@ -132,7 +131,8 @@ def _decode_inline_string(value: str, path: str) -> str:
             unit = int(value[i + 2 : i + 6], 16)
             if not 0xD800 <= unit <= 0xDFFF:
                 _inline_reject(
-                    f"invalid %u escape U+{unit:04X} at {path} (only surrogates are allowed)"
+                    f"invalid %u escape U+{unit:04X} at {path} "
+                    "(only surrogates are allowed)"
                 )
             if (
                 0xD800 <= unit <= 0xDBFF
@@ -153,7 +153,8 @@ def _decode_inline_string(value: str, path: str) -> str:
             byte = int(pair, 16)
             if chr(byte) in _INLINE_SAFE:
                 _inline_reject(
-                    f"non-canonical percent escape %{pair} at {path} (byte is SAFE ASCII)"
+                    f"non-canonical percent escape %{pair} at {path} "
+                    "(byte is SAFE ASCII)"
                 )
             bytes_run.append(byte)
             i += 3
@@ -161,19 +162,16 @@ def _decode_inline_string(value: str, path: str) -> str:
             out.append(bytes(bytes_run).decode("utf-8", "strict"))
         except UnicodeDecodeError as exc:
             _inline_reject(
-                f"invalid UTF-8 at {path} (offending bytes {bytes_run.hex().upper()}, {exc})"
+                f"invalid UTF-8 at {path} "
+                f"(offending bytes {bytes_run.hex().upper()}, {exc})"
             )
     return "".join(out)
 
 
 def _decode_inline_node(node: object, path: str = "$") -> object:
     if isinstance(node, dict):
-        # No decoded-duplicate check here: the accepted spelling alphabet is injective as JS
-        # values, so two distinct raw keys cannot decode to the same JS string. A safe byte is
-        # spelled only as itself (a %XX escape of one is rejected as non-canonical), every
-        # other UTF-8 byte only as canonical uppercase %XX, a lone surrogate only as %uXXXX,
-        # and an astral character only as its UTF-8 bytes. Adjacent escaped high/low surrogate
-        # pairs are rejected by name. Raw duplicates are rejected earlier, by _inline_pairs.
+        # Canonical escapes are injective as JS strings; _inline_pairs already
+        # rejects raw duplicates, and paired surrogate escapes are non-canonical.
         decoded = {}
         for raw_key, raw_value in cast(dict[str, object], node).items():
             key = _decode_inline_string(raw_key, f"{path}.<key>")
@@ -240,9 +238,7 @@ def _delta_confidence(value: object) -> int | None:
         if rounded is None:
             return None
         value = rounded
-    if abs(value) > JS_MAX_SAFE_INTEGER:
-        return None
-    return int(value)
+    return int(value) if abs(value) <= JS_MAX_SAFE_INTEGER else None
 
 
 def build_deltas(findings: Sequence[object], verified: Sequence[object]) -> list[Delta]:
@@ -275,7 +271,7 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
     sha = args.head_sha or decide.resolve_head_sha() or ""
     try:
         # Proofs precede decoding and coercion: the token covers received bytes and the
-        # value proof covers the dispatched document before numeric values are rewritten.
+        # value proof covers the document before numeric values are rewritten.
         inline_checksum = fnv1a32(args.input_inline)
         data = validate_input_shape(decode_inline_slice(args.input_inline))
         input_checksum = checksum_or_none(data)
@@ -299,11 +295,11 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
             "deltas_checksum": checksum_or_none(deltas),
             "inline_checksum": inline_checksum,
         }
-        # Omit unavailable input proof rather than null: the executor schema only accepts
-        # strings, and trustSlice skips the check when dispatch cannot compute it either.
+        # The executor accepts only strings; omit an unavailable input proof.
+        # trustSlice skips this check when dispatch cannot compute it either.
         if input_checksum is not None:
             receipt["input_checksum"] = input_checksum
-        # Deltas must precede the full arrays so a capped executor Read preserves the echo.
+        # Deltas precede the arrays so a capped executor Read preserves the echo.
         return {
             "status": "ok",
             "receipt": receipt,
@@ -335,7 +331,6 @@ def _parser() -> Parser:
     )
     parser.add_argument(
         "--diff-file",
-        default=None,
         metavar="PATH",
         help=(
             "Path to a pre-fetched unified diff file. "
@@ -344,25 +339,24 @@ def _parser() -> Parser:
     )
     parser.add_argument(
         "--output",
-        default=None,
         metavar="PATH",
-        help=("Write output JSON to this file. If omitted, output goes to stdout."),
+        help="Write output JSON to this file. If omitted, output goes to stdout.",
     )
     parser.add_argument(
         "--input",
-        default=None,
         metavar="PATH",
-        help=("Receipt mode: code-written destination for the inline slice document."),
+        help="Receipt mode: code-written destination for the inline slice document.",
     )
     parser.add_argument(
         "--input-inline",
-        default=None,
         metavar="TEXT",
-        help="Receipt mode: the strict percent-encoded slice document to decode and write.",
+        help=(
+            "Receipt mode: the strict percent-encoded slice document "
+            "to decode and write."
+        ),
     )
     parser.add_argument(
         "--nonce",
-        default=None,
         metavar="STR",
         help=(
             "Receipt mode: opaque nonce echoed back verbatim in the receipt so "
@@ -371,7 +365,6 @@ def _parser() -> Parser:
     )
     parser.add_argument(
         "--head-sha",
-        default=None,
         metavar="SHA",
         help=(
             "Receipt mode: head sha echoed into the receipt. "

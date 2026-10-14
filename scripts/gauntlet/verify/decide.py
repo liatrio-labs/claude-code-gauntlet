@@ -67,77 +67,15 @@ _SEVERITY_DOWNGRADE = dict(
     zip(SEVERITY_ORDER, (*SEVERITY_ORDER[1:], SEVERITY_ORDER[-1]), strict=True)
 )
 _SKIP_SYMBOLS = frozenset(
-    [
-        "the",
-        "this",
-        "that",
-        "with",
-        "from",
-        "import",
-        "class",
-        "def",
-        "for",
-        "not",
-        "and",
-        "its",
-        "but",
-        "are",
-        "was",
-        "were",
-        "can",
-        "should",
-        "would",
-        "could",
-        "also",
-        "will",
-        "has",
-        "have",
-        "been",
-        "when",
-        "then",
-        "else",
-        "elif",
-        "True",
-        "False",
-        "None",
-        "self",
-        "return",
-        "raise",
-        "pass",
-        "break",
-        "continue",
-        "lambda",
-        "yield",
-        "async",
-        "await",
-        "print",
-        "isinstance",
-        "len",
-        "str",
-        "int",
-        "list",
-        "dict",
-        "set",
-        "tuple",
-        "type",
-        "super",
-        "object",
-        "Exception",
-        "ValueError",
-        "TypeError",
-        "KeyError",
-        "AttributeError",
-        "IndexError",
-        "RuntimeError",
-        "StopIteration",
-        "OSError",
-        "IOError",
-        "FileNotFoundError",
-        "NotImplementedError",
-        "AssertionError",
-        "OverflowError",
-        "ZeroDivisionError",
-    ]
+    (  # noqa: SIM905 - keep the stopword vocabulary compact
+        "the this that with from import class def for not and its but are was were "
+        "can should would could also will has have been when then else elif True "
+        "False None self return raise pass break continue lambda yield async await "
+        "print isinstance len str int list dict set tuple type super object "
+        "Exception ValueError TypeError KeyError AttributeError IndexError "
+        "RuntimeError StopIteration OSError IOError FileNotFoundError "
+        "NotImplementedError AssertionError OverflowError ZeroDivisionError"
+    ).split()
 )
 
 
@@ -147,7 +85,7 @@ def _downgrade_severity(finding: FindingWire) -> None:
         finding["severity"] = _SEVERITY_DOWNGRADE[severity]
 
 
-# The per-invocation lazy cache must be mutable so empty and ineligible slices query no log.
+# Lazy caching keeps empty and ineligible slices from querying git log.
 @dataclass(slots=True)
 class VerifyContext:
     repo_root: str
@@ -207,7 +145,8 @@ def get_diff(context: VerifyContext, diff_file: str | None = None) -> str | None
     )
     if rc == 0:
         print(
-            f"Diff source: git diff {base_branch}...HEAD (three-dot), {len(stdout)} bytes",
+            f"Diff source: git diff {base_branch}...HEAD (three-dot), "
+            f"{len(stdout)} bytes",
             file=sys.stderr,
         )
         return stdout
@@ -222,7 +161,8 @@ def get_diff(context: VerifyContext, diff_file: str | None = None) -> str | None
     )
     if rc == 0:
         print(
-            f"Diff source: git diff {base_branch} HEAD (two-dot fallback), {len(stdout)} bytes",
+            f"Diff source: git diff {base_branch} HEAD (two-dot fallback), "
+            f"{len(stdout)} bytes",
             file=sys.stderr,
         )
         return stdout
@@ -265,17 +205,18 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
         _downgrade_severity(finding)
         return _stamp_blame(finding, "surfaced", original_severity)
 
-    # File not found on disk → skip (return "new" to keep finding, conservative)
     if not os.path.exists(filepath):
         warn(
-            f"classify_blame: file not found '{filepath}' — classifying as 'new' (conservative)."
+            f"classify_blame: file not found '{filepath}' "
+            "— classifying as 'new' (conservative)."
         )
         return _stamp_blame(finding, "new", original_severity)
 
     pr_commits = context.commits()
     if pr_commits is None:
         warn(
-            f"classify_blame: git log failed for base '{base_branch}': {context.commit_error}"
+            f"classify_blame: git log failed for base '{base_branch}': "
+            f"{context.commit_error}"
             " — classifying as 'new' (conservative)."
         )
         return _stamp_blame(finding, "new", original_severity)
@@ -287,17 +228,17 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
         err_lower = blame_stderr.lower()
         if "binary" in err_lower:
             warn(
-                f"classify_blame: binary file '{filepath}' — classifying as 'new' (conservative)."
+                f"classify_blame: binary file '{filepath}' "
+                "— classifying as 'new' (conservative)."
             )
         else:
             warn(
-                f"classify_blame: git blame failed for '{filepath}': {blame_stderr.strip()}"
+                f"classify_blame: git blame failed for '{filepath}': "
+                f"{blame_stderr.strip()}"
                 " — classifying as 'new' (conservative)."
             )
         return _stamp_blame(finding, "new", original_severity)
 
-    # Standard porcelain format (short): "^SHA (Author Date HH:MM:SS +TZ LINE) code"
-    # Short format: "SHA (Author YYYY-MM-DD HH:MM:SS +TZ LINE) code"
     blame_sha_re = re.compile(r"^\^?([0-9a-f]{7,40})\s+\((.+?)\s+(\d{4}-\d{2}-\d{2})")
 
     blamed_shas = set()
@@ -317,15 +258,13 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
             first_date = date
 
     if not blamed_shas:
-        # Could not parse any blame output — conservative
         warn(
             f"classify_blame: could not parse blame output for '{filepath}' lines "
             f"{line_start}-{line_end} — classifying as 'new' (conservative)."
         )
         return _stamp_blame(finding, "new", original_severity)
 
-    # A blamed SHA may be a short prefix; check if any blamed commit is a PR commit.
-    # PR commits are full SHAs; blamed SHAs may be short (7+ chars).
+    # Git blame abbreviates the full commit hashes returned by git log.
     has_pr_commit = any(
         full_sha.startswith(s) for s in blamed_shas for full_sha in pr_commits
     )
@@ -342,23 +281,18 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
 
 def _extract_symbols(description: str, evidence: str) -> set[str]:
     """Extract definite code tokens, excluding ambiguous bare CamelCase prose."""
-    combined_text = (description or "") + "\n" + (evidence or "")
+    combined_text = description + "\n" + evidence
 
-    # Shared identifier pattern
     _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
     raw_symbols = set()
 
-    # --- Tier 1: backtick-delimited symbols (definite code) ---
-
-    # Triple-backtick code blocks: extract identifiers from content
     _CODE_BLOCK_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
     for block_m in _CODE_BLOCK_RE.finditer(combined_text):
         block_content = block_m.group(1)
         for ident_m in _IDENT_RE.finditer(block_content):
             raw_symbols.add(ident_m.group(0))
 
-    # Single-backtick inline code spans (split on dots for module paths)
     _BACKTICK_SPAN_RE = re.compile(r"`([^`]+)`")
     for span_m in _BACKTICK_SPAN_RE.finditer(combined_text):
         span = span_m.group(1).strip()
@@ -368,24 +302,16 @@ def _extract_symbols(description: str, evidence: str) -> set[str]:
             if clean and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", clean):
                 raw_symbols.add(clean)
 
-    # --- Tier 2: bare tokens with code-punctuation indicators ---
-    # Matches tokens that contain at least one code-punctuation char:
-    #   _ (snake_case), (), ., ::, ->, [], #
-    # These patterns don't appear in normal English prose.
-
     _CODE_PUNCTUATION_RE = re.compile(
-        r"\b([A-Za-z_][A-Za-z0-9_]*"  # identifier start
-        r"(?:[.()\[\]#]|::|->)"  # must contain code punctuation
-        r"[A-Za-z0-9_.()#\[\]:>-]*)"  # rest of token
+        r"\b([A-Za-z_][A-Za-z0-9_]*"
+        r"(?:[.()\[\]#]|::|->)"
+        r"[A-Za-z0-9_.()#\[\]:>-]*)"
     )
-    _SNAKE_CASE_RE = re.compile(
-        r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b"  # snake_case: at least one underscore
-    )
-    _SPLIT_PUNCTUATION_RE = re.compile(r"[.()\[\]#:>-]+")  # Split on code punctuation
+    _SNAKE_CASE_RE = re.compile(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b")
+    _SPLIT_PUNCTUATION_RE = re.compile(r"[.()\[\]#:>-]+")
 
     for m in _CODE_PUNCTUATION_RE.finditer(combined_text):
         token = m.group(1)
-        # Split on code punctuation to avoid concatenated identifiers
         parts = _SPLIT_PUNCTUATION_RE.split(token)
         for part in parts:
             if part and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", part) and len(part) > 2:
@@ -394,12 +320,8 @@ def _extract_symbols(description: str, evidence: str) -> set[str]:
     for m in _SNAKE_CASE_RE.finditer(combined_text):
         raw_symbols.add(m.group(1))
 
-    # --- Tier 3: pure CamelCase with no code punctuation → SKIP ---
-    # We intentionally do NOT extract bare CamelCase words like
-    # "Concrete", "Between", "However" — these are ambiguous and
-    # cause false-positive symbol misses that kill true positives.
+    # Bare CamelCase may be English prose; treating it as code kills true positives.
 
-    # Filter out very common English words, Python builtins, and short tokens
     return {s for s in raw_symbols if s not in _SKIP_SYMBOLS and len(s) > 2}
 
 
@@ -432,7 +354,6 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
         with open(filepath, encoding="utf-8", errors="strict") as fh:
             all_lines = fh.readlines()
     except UnicodeDecodeError:
-        # Binary file → skip verification, keep as-is
         warn(f"verify_factual: binary file '{filepath}' — skipping factual check.")
         finding["factual_verification"] = {
             "verified": True,
@@ -451,7 +372,6 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
 
     total_lines = len(all_lines)
 
-    # Lines are 1-indexed in findings; list is 0-indexed
     if line_start < 1 or line_start > total_lines:
         finding["confidence"] = 0
         finding["factual_verification"] = {
@@ -478,8 +398,6 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
         }
         return True
 
-    # We only grep for symbols not already visible in the relevant lines themselves —
-    # if the symbol appears in the code at the reported lines, it's trivially confirmed.
     total_symbols = len(symbols_to_check)
     missing_symbols = []
     for symbol in sorted(symbols_to_check):
@@ -491,7 +409,6 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
                 ["git", "grep", "-l", "-e", symbol], timeout=3, cwd=context.repo_root
             )
         except proc.TimeoutExpired:
-            # Timeout: skip symbol, Phase 5 validators will verify
             warn(
                 f"verify_factual: symbol search timed out for "
                 f"'{symbol}' — skipping (Phase 5 will validate)."
@@ -505,15 +422,11 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
             )
             continue
         if rc != 0 or not stdout.strip():
-            # rc=1 means git grep ran successfully but found no matches
             missing_symbols.append(symbol)
 
     if missing_symbols:
         original_confidence = finding.get("confidence", 100)
         miss_ratio = len(missing_symbols) / total_symbols
-        # Proportional penalty: scale reduction by fraction of symbols missing
-        # e.g., 1 of 4 found → miss_ratio=0.75 → reduction of ~52
-        # e.g., 3 of 4 found → miss_ratio=0.25 → reduction of ~18
         reduction = round(miss_ratio * 70)
         new_confidence = max(30, original_confidence - reduction)
         finding["confidence"] = new_confidence
@@ -528,7 +441,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
             "symbols_checked": total_symbols,
             "symbols_missing": len(missing_symbols),
         }
-        # Degrade but keep — don't eliminate (return True)
+        # Validators can still confirm missing symbols, so retain the finding.
         return True
 
     finding["factual_verification"] = {
@@ -587,7 +500,7 @@ def validate_diff_lines(finding: FindingWire, facts: DiffFacts | None) -> bool:
 def run_verification(
     findings: list[FindingWire], context: VerifyContext, diff_file: str | None = None
 ) -> VerificationResult:
-    """Mutate in blame, factual, then diff order, retaining dispatched object identities."""
+    """Mutate in phase order, retaining dispatched object identities."""
     for finding in findings:
         finding["origin"] = classify_blame(finding, context)
     verified: list[FindingWire] = []

@@ -58,8 +58,7 @@ class DiffCounts:
 
 
 # Prefixes may be syntax or real directories; policies decide after decoding.
-_OLD_HEADER_RE = re.compile(r"^--- (.+)$")
-_NEW_HEADER_RE = re.compile(r"^\+\+\+ (.+)$")
+_PATH_HEADER_RE = re.compile(r"^(---|\+\+\+) (.+)$")
 _GIT_HEADER_PREFIX = "diff --git "
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _DIFF_PREFIX_RE = re.compile(r"^[ab]/")
@@ -70,7 +69,6 @@ _DIFF_PREFIX_RE = re.compile(r"^[ab]/")
 # instead requires per-block proof, so quoted or mismatched pairs can differ.
 _GIT_SHAPED_RE = re.compile(r'\Adiff --git "?a/')
 
-# C quoting encodes bytes, with letter escapes or one to three octal digits.
 _C_ESCAPES = {
     ord("a"): 0x07,
     ord("b"): 0x08,
@@ -87,11 +85,7 @@ _OCTAL_DIGITS = range(0x30, 0x38)
 
 
 def _decode_header_path(field: str) -> str:
-    """Undo git's TAB terminator for spaces and byte-wise C quoting.
-
-    Git quotes the whole field outside its prefix for controls, quotes,
-    backslashes and, unless core.quotePath=false, non-ASCII bytes.
-    Literal TAB or quote-wrapped glab names are mis-read, an accepted limitation
+    """Literal TAB or quote-wrapped glab names are an accepted limitation
     that demotes findings on those names to summary-only.
     Malformed fields pass through verbatim to keep the walk lossless.
     """
@@ -133,10 +127,7 @@ def _decode_header_path(field: str) -> str:
 
 
 def _walk_diff_indexed(lines: list[str]) -> Iterator[tuple[int, DiffEvent]]:
-    old_line = 0
-    new_line = 0
-    old_rem = 0
-    new_rem = 0
+    old_line = new_line = old_rem = new_rem = 0
 
     for line_index, raw_line in enumerate(lines):
         if old_rem <= 0 and new_rem <= 0:
@@ -145,26 +136,16 @@ def _walk_diff_indexed(lines: list[str]) -> Iterator[tuple[int, DiffEvent]]:
                     line_index,
                     HeaderEvent("git_header", raw_line[len(_GIT_HEADER_PREFIX) :]),
                 )
-                continue
-
-            old_match = _OLD_HEADER_RE.match(raw_line)
-            if old_match:
+            elif path_match := _PATH_HEADER_RE.match(raw_line):
+                marker, field = path_match.groups()
                 yield (
                     line_index,
-                    HeaderEvent("old_path", _decode_header_path(old_match.group(1))),
+                    HeaderEvent(
+                        "old_path" if marker == "---" else "new_path",
+                        _decode_header_path(field),
+                    ),
                 )
-                continue
-
-            new_match = _NEW_HEADER_RE.match(raw_line)
-            if new_match:
-                yield (
-                    line_index,
-                    HeaderEvent("new_path", _decode_header_path(new_match.group(1))),
-                )
-                continue
-
-            hunk_match = _HUNK_RE.match(raw_line)
-            if hunk_match:
+            elif hunk_match := _HUNK_RE.match(raw_line):
                 old_start, old_count, new_start, new_count = hunk_match.groups()
                 old_line = int(old_start)
                 new_line = int(new_start)
@@ -172,7 +153,6 @@ def _walk_diff_indexed(lines: list[str]) -> Iterator[tuple[int, DiffEvent]]:
                 old_rem = 1 if old_count is None else int(old_count)
                 new_rem = 1 if new_count is None else int(new_count)
                 yield line_index, HunkEvent(old_line, new_line, old_rem, new_rem)
-                continue
 
             # Header-zone noise must not become phantom lines in the preceding file.
             continue
@@ -195,22 +175,14 @@ def _walk_diff_indexed(lines: list[str]) -> Iterator[tuple[int, DiffEvent]]:
             # Bare context has no marker; slicing it would eat a content character.
             old_rem -= 1
             new_rem -= 1
-            yield (
-                line_index,
-                LineEvent(
-                    old_line,
-                    new_line,
-                    raw_line[1:] if raw_line.startswith(" ") else raw_line,
-                ),
-            )
+            text = raw_line.removeprefix(" ")
+            yield line_index, LineEvent(old_line, new_line, text)
             new_line += 1
             old_line += 1
 
 
 def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
-    """Yield events using trusted hunk budgets to separate headers from bodies."""
     lines, _ = _split_lines(diff_text)
-
     for _, event in _walk_diff_indexed(lines):
         yield event
 
@@ -245,9 +217,7 @@ def _build_raw_hunk(
 
 
 def raw_hunks(diff_text: str) -> Iterator[RawHunk]:
-    """Yield budgeted hunks with their decoded new path and original text."""
     lines, has_final_newline = _split_lines(diff_text)
-
     current_path: str | None = None
     hunk: HunkEvent | None = None
     hunk_path: str | None = None
@@ -310,9 +280,7 @@ def patch_report_policy(diff_text: str) -> PostingPathPolicy:
 
 
 def parse_diff(diff_text: str, *, policy: DiffPathPolicy) -> DiffFacts:
-    """Collect new-side addressability and text, retaining old context numbers.
-
-    GitLab context positions need both numbers and the pre-rename old path.
+    """GitLab context positions need both numbers and the pre-rename old path.
     Added files must omit old_path to avoid HTTP 500. Plain empty-old hunks
     cannot distinguish additions from edits of empty files and guess added;
     proven git blocks instead use the null old side. Empty successful diffs
@@ -382,8 +350,7 @@ def parse_diff(diff_text: str, *, policy: DiffPathPolicy) -> DiffFacts:
 
 
 def diff_counts(diff_text: str) -> DiffCounts:
-    added = 0
-    removed = 0
+    added = removed = 0
     for event in walk_diff(diff_text):
         if isinstance(event, LineEvent):
             if event.new_line is not None and event.old_line is None:
@@ -445,7 +412,7 @@ def range_is_valid(facts: DiffFacts | None, path: str, start: int, end: int) -> 
 
 
 def is_new_file(facts: DiffFacts | None, resolved_path: str) -> bool:
-    # Already resolved: another strip could collide a modified real a/ file with a new one.
+    # Another strip could collide a modified real a/ file with a new one.
     return facts is not None and resolved_path in facts.new_files
 
 

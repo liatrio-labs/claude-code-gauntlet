@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Collection, Hashable, Mapping, Sequence
+from collections.abc import Callable, Collection, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, TypedDict, cast
 
@@ -64,7 +64,8 @@ def _derived_path(
     if not isinstance(path, str) or not path:
         errors.append(f"{label} path must be a non-empty string: {path}")
         return None
-    # A task-output file can supply the plan, so confine derived paths to its directory as primaries are confined to the output root.
+    # A task-output file can supply the plan, so confine derived paths to its
+    # directory as primaries are confined to the output root.
     if not fs.confined(path, plan_directory) or os.path.realpath(
         path
     ) == os.path.realpath(plan_directory):
@@ -91,8 +92,10 @@ def _receipt(
     }
 
 
-# The plan selects delivered ids. Prove its entire instruction set, dropping only its proof key.
-# Explicit id lists preserve the workflow's ranked, capped selection without re-deriving ranking here.
+# The plan selects delivered ids. Prove its entire instruction set, dropping only its
+# proof key.
+# Explicit id lists preserve the workflow's ranked, capped selection without
+# re-deriving ranking here.
 def plan_checksum(plan: Mapping[str, object]) -> str:
     body = dict((k, v) for (k, v) in plan.items() if k != PLAN_CHECKSUM_KEY)
     return fnv1a32(js_stringify_pretty(body))
@@ -109,7 +112,7 @@ def _load_source(
     cache[path] = None
     try:
         raw = _read_content(path)
-    except Exception as exc:  # noqa: BLE001 - includes UnicodeDecodeError (a ValueError)
+    except Exception as exc:  # noqa: BLE001 - includes decode errors
         errors.append(f"source not found or unreadable: {path} ({exc})")
         return None
     try:
@@ -137,7 +140,6 @@ def _load_source(
     return by_id
 
 
-# Missing ids are structural disagreement between the plan and on-disk source.
 def _project(
     by_id: Mapping[str, Mapping[str, object]],
     ids: Sequence[object],
@@ -223,7 +225,8 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
         )
         return _receipt(False, plan_version, actual, verified, [], errors)
 
-    # Primary mismatch is nonfatal: derive from on-disk truth and disclose the difference.
+    # Primary mismatch is nonfatal: derive from on-disk truth and disclose the
+    # difference.
     for entry in cast(Sequence[Mapping[str, object]], plan.get("expect", []) or []):
         path = entry.get("path")
         try:
@@ -262,7 +265,8 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
     cache: dict[Hashable, Mapping[str, Mapping[str, object]] | None] = {}
     pending: list[PlanEntry] = []
 
-    # Build both documents before any write, so structural failures leave outputs untouched.
+    # Build both documents before any write, so structural failures leave outputs
+    # untouched.
     post = cast(Mapping[str, object], plan.get("postReview") or {})
     cp = cast(Mapping[str, object], plan.get("checkpoint") or {})
     plan_directory = os.path.dirname(os.path.abspath(plan_path))
@@ -304,7 +308,8 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
         challenge = cast(Mapping[str, object], skeleton.get("phases") or {}).get(
             "challenge"
         )
-        # Mirror JS persistPlan: only replace an existing array, never fabricate findings.
+        # Mirror JS persistPlan: only replace an existing array, never fabricate
+        # findings.
         if isinstance(challenge, dict) and isinstance(challenge.get("findings"), list):
             # Assignment retains the existing key position for byte parity.
             challenge["findings"] = cp_projected
@@ -321,25 +326,30 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
         return _receipt(False, plan_version, actual, verified, [], errors)
 
     written: list[WrittenArtifact] = []
-    # Atomic replacements prevent truncation; individual failures retain partial accounting.
-    for planned in pending:
-        path, text = planned.path, planned.text
+    write_entries(pending, written, errors, write_atomic)
+
+    return _receipt(not errors, plan_version, actual, verified, written, errors)
+
+
+def write_entries(
+    entries: Sequence[PlanEntry],
+    written: list[WrittenArtifact],
+    errors: list[str],
+    writer: Callable[[str, str], None],
+) -> bool:
+    ok = True
+    for entry in entries:
+        path, text = entry.path, entry.text
         try:
-            write_atomic(path, text)
-        except Exception as exc:  # noqa: BLE001 - converted to a structural error
+            writer(path, text)
+        except Exception as exc:  # noqa: BLE001 - reported, never raised
             errors.append(f"could not write {path} ({type(exc).__name__}: {exc})")
+            ok = False
             continue
         written.append(
-            {
-                "path": path,
-                "chars": utf16_len(text),
-                "checksum": fnv1a32(text),
-            }
+            {"path": path, "chars": utf16_len(text), "checksum": fnv1a32(text)}
         )
-
-    if errors:
-        return _receipt(False, plan_version, actual, verified, written, errors)
-    return _receipt(True, plan_version, actual, verified, written, errors)
+    return ok
 
 
 # The library itself promises a receipt, including for unexpected failures.
@@ -347,25 +357,13 @@ def assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
     try:
         return _assemble(plan_path)
     except Exception as exc:  # noqa: BLE001 - the one-line-receipt contract
-        return _receipt(
-            False,
-            None,
-            None,
-            [],
-            [],
-            [f"assembler failed unexpectedly: {type(exc).__name__}: {exc}"],
-        )
+        error = f"assembler failed unexpectedly: {type(exc).__name__}: {exc}"
+        return _receipt(False, None, None, [], [], [error])
 
 
 def _fallback_receipt(exc: Exception) -> AssembleReceipt:
-    return _receipt(
-        False,
-        None,
-        None,
-        [],
-        [],
-        [f"receipt could not be serialized: {type(exc).__name__}: {exc}"],
-    )
+    error = f"receipt could not be serialized: {type(exc).__name__}: {exc}"
+    return _receipt(False, None, None, [], [], [error])
 
 
 def build_parser() -> Parser:

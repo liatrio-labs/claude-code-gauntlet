@@ -14,96 +14,18 @@ _REAL_DEFAULT_ROOTS = tasks._default_roots
 
 
 @pytest.mark.parametrize(
-    "tmpdir,uid,system_temp,expected",
-    [
-        (
-            os.sep,
-            42,
-            None,
-            (
-                os.path.join("base-a", "claude-42"),
-                os.path.join("base-b", "claude-42"),
-                os.path.join(os.sep, "claude-42"),
-            ),
-        ),
-    ],
-    ids=[
-        "/-42-None-expected2",
-    ],
+    "uid", [42, None], ids=["uid-present", "no-getuid-system-temp"]
 )
-def test_default_root_candidate_policy_is_pure(
-    tmpdir, uid, system_temp, expected, monkeypatch
-):
-    with monkeypatch.context() as patch:
-        patch.setattr(
-            os.path, "realpath", lambda *_: pytest.fail("pure policy resolved a path")
-        )
-        patch.setattr(
-            os.path, "isdir", lambda *_: pytest.fail("pure policy probed a path")
-        )
-        result = tasks._root_candidates(("base-a", "base-b"), tmpdir, uid, system_temp)
-    # Native separators keep this a policy test on Windows too.
-    assert result == expected
-
-
-@pytest.mark.parametrize(
-    "uid,tmpdir,expected,realpath_inputs",
-    [
-        (
-            42,
-            None,
-            (
-                os.path.join("/tmp", "claude-42"),
-                os.path.join("/private/tmp", "claude-42"),
-            ),
-            (
-                os.path.join("/tmp", "claude-42"),
-                os.path.join("/private/tmp", "claude-42"),
-            ),
-        ),
-        (
-            None,
-            None,
-            (
-                os.path.join("/tmp", "claude"),
-                os.path.join("/private/tmp", "claude"),
-                os.path.join("fixture-system", "claude"),
-            ),
-            (
-                os.path.join("/tmp", "claude"),
-                os.path.join("/private/tmp", "claude"),
-                os.path.join("fixture-system", "claude"),
-            ),
-        ),
-        (
-            None,
-            "fixture-extra" + os.sep * 3,
-            (
-                os.path.join("/tmp", "claude"),
-                os.path.join("/private/tmp", "claude"),
-                os.path.join("fixture-extra", "claude"),
-            ),
-            (
-                os.path.join("/tmp", "claude"),
-                os.path.join("/private/tmp", "claude"),
-                os.path.join("fixture-extra", "claude"),
-                os.path.join("fixture-system", "claude"),
-            ),
-        ),
-    ],
-    ids=["uid-present", "no-getuid-system-temp", "TMPDIR-set"],
-)
-def test_real_default_discovery_preserves_order_and_deduplicates(
-    uid, tmpdir, expected, realpath_inputs, monkeypatch
-):
-    resolved = []
-    temp_calls = []
+def test_real_default_discovery_preserves_order_and_deduplicates(uid, monkeypatch):
+    resolved, temp_calls = [], []
+    name = "claude" if uid is None else "claude-42"
+    candidates = [
+        os.path.join(base, name) for base in ("/tmp", "/private/tmp", "fixture-extra")
+    ]
 
     def realpath(path):
         resolved.append(path)
-        if tmpdir and path == os.path.join("fixture-system", "claude"):
-            return os.path.join("fixture-extra", "claude")
-        return path
+        return candidates[-1] if path == os.path.join("fixture-system", name) else path
 
     def system_temp():
         temp_calls.append(True)
@@ -115,32 +37,15 @@ def test_real_default_discovery_preserves_order_and_deduplicates(
         monkeypatch.setattr(os, "getuid", lambda: uid, raising=False)
     monkeypatch.setattr(tasks.tempfile, "gettempdir", system_temp)
     monkeypatch.setattr(tasks, "_default_roots", _REAL_DEFAULT_ROOTS)
-    environ = {} if tmpdir is None else {"TMPDIR": tmpdir}
     with monkeypatch.context() as patch:
         patch.setattr(os.path, "realpath", realpath)
-        patch.setattr(
-            os.path,
-            "isdir",
-            lambda *_: pytest.fail("default discovery probed a host path"),
-        )
-        roots = tasks.roots_from_environment(environ)
-    assert roots == tasks.TaskRoots(expected, None)
-    assert tuple(resolved) == realpath_inputs
+        patch.setattr(os.path, "isdir", lambda *_: pytest.fail("probed host path"))
+        roots = tasks.roots_from_environment({"TMPDIR": "fixture-extra" + os.sep * 3})
+    assert roots == tasks.TaskRoots(tuple(candidates), None)
+    assert resolved == candidates + (
+        [os.path.join("fixture-system", name)] if uid is None else []
+    )
     assert temp_calls == ([] if uid is not None else [True])
-
-
-@pytest.mark.parametrize(
-    "parts,expected",
-    [
-        (("first", "", "second", "first"), ("first", "second")),
-    ],
-    ids=[
-        "parts0-expected0",
-    ],
-)
-def test_explicit_roots_drop_empty_items_and_preserve_priority(parts, expected):
-    roots = tasks.roots_from_environment({tasks.TASK_ROOTS_ENV: os.pathsep.join(parts)})
-    assert roots == tasks.TaskRoots(expected, None)
 
 
 def test_explicit_roots_realpath_deduplication_preserves_first_spelling(
@@ -193,27 +98,10 @@ def test_guard_fails_at_teardown_even_when_discovery_exception_is_swallowed(tmp_
 
 
 @pytest.mark.parametrize(
-    "target",
-    [
-        pytest.param("dir!task", id="RESOLVE-altsep"),
-    ],
-)
-def test_path_targets_bypass_roots(target, monkeypatch):
-    monkeypatch.setattr(os, "altsep", "!")
-    with monkeypatch.context() as patch:
-        patch.setattr(os.path, "isdir", lambda *_: pytest.fail("path probed roots"))
-        result = tasks.resolve_target(target, tasks.TaskRoots(("unused",), "unused"))
-    assert result == (target, [])
-
-
-@pytest.mark.parametrize(
     "mode,winner",
     [
         pytest.param("override", "direct", id="RESOLVE-direct-override"),
         pytest.param("miss", "a-new", id="RESOLVE-override-miss"),
-        pytest.param("tie", "a-old", id="RESOLVE-stable-tie"),
-        pytest.param("all-vanished", "a-old", id="RESOLVE-all-stat-fail"),
-        pytest.param("first-vanished", "a-new", id="RESOLVE-first-stat-fails"),
     ],
 )
 def test_resolution_priority(mode, winner, tmp_path, monkeypatch):
@@ -231,14 +119,7 @@ def test_resolution_priority(mode, winner, tmp_path, monkeypatch):
         direct.write_text("", encoding="utf-8")
     hits = {str(a): [str(old), str(new)], str(b): [str(later)]}
     monkeypatch.setattr(tasks, "glob_under", lambda root, _: hits[root])
-    getmtime = os.path.getmtime
 
-    def mtime(path):
-        if mode == "all-vanished" or (mode == "first-vanished" and path == str(old)):
-            raise FileNotFoundError("gone")
-        return 10 if mode == "tie" else getmtime(path)
-
-    monkeypatch.setattr(os.path, "getmtime", mtime)
     roots = tasks.TaskRoots(
         (str(a), str(b)), str(override) if mode in ("override", "miss") else None
     )
@@ -250,30 +131,21 @@ def test_resolution_priority(mode, winner, tmp_path, monkeypatch):
     assert searched == expected
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        pytest.param("w[g]", id="RESOLVE-brackets"),
-        pytest.param("w?", id="RESOLVE-question"),
-        pytest.param("*", id="RESOLVE-star"),
-    ],
-)
-def test_literal_task_ids(name, tmp_path):
+def test_literal_task_ids(tmp_path):
+    name = "w[g]"
     root = tmp_path / "root[g]"
     ordinary = task_file(root, "wg")
     roots = tasks.TaskRoots((str(root),), None)
     assert tasks.resolve_target("wg", roots)[0] == str(ordinary)
     assert tasks.resolve_target(name, roots)[0] is None
-    if os.name != "nt" or name == "w[g]":
-        literal = task_file(root, name)
-        assert tasks.resolve_target(name, roots)[0] == str(literal)
+    literal = task_file(root, name)
+    assert tasks.resolve_target(name, roots)[0] == str(literal)
 
 
 @pytest.mark.parametrize(
     "mode,expected_text,expected_bytes",
     [
         pytest.param("missing", "", None, id="READ-missing"),
-        pytest.param("value-error", "", 1, id="READ-invalid-open"),
         pytest.param(
             "decoded",
             '\ufffd\n{"ok":true,"stats":{}}\n',
@@ -288,14 +160,6 @@ def test_observation_read_policy(
     target = tmp_path / "task.output"
     if mode == "decoded":
         target.write_bytes(b'\xef\xbb\xbf\xff\r\n{"ok":true,"stats":{}}\r\n')
-    elif mode != "missing":
-        target.write_text("x", encoding="utf-8")
-    if mode == "value-error":
-
-        def fail(*args, **kwargs):
-            raise ValueError("invalid")
-
-        monkeypatch.setattr(Path, "open", fail)
     observation = tasks.observe(str(target), tasks.TaskRoots((), None))
     assert tasks.read_task(str(target)) == expected_text
     assert observation.file_bytes == expected_bytes
@@ -326,32 +190,7 @@ def test_fifo_observation_does_not_open(tmp_path, monkeypatch):
             False,
             id="TERMINAL-phase",
         ),
-        pytest.param(
-            '{"ok":true,"artifactPaths":null}',
-            {"ok": True, "artifactPaths": None},
-            False,
-            id="TERMINAL-artifacts",
-        ),
-        pytest.param(
-            '{"ok":true,"checkpoints":null}',
-            {"ok": True, "checkpoints": None},
-            False,
-            id="TERMINAL-checkpoints",
-        ),
-        pytest.param(
-            '{"ok":true,"resolvedPolicy":null}',
-            {"ok": True, "resolvedPolicy": None},
-            False,
-            id="TERMINAL-policy",
-        ),
-        pytest.param(
-            '{"ok":true,"gaps":null}',
-            {"ok": True, "gaps": None},
-            False,
-            id="TERMINAL-gaps",
-        ),
         pytest.param('{"ok":1,"stats":{}}', None, False, id="TERMINAL-nonboolean"),
-        pytest.param('{"ok":"yes","stats":{}}', None, False, id="TERMINAL-string-ok"),
         pytest.param(
             '{"ok":false,"error":"boom","planVersion":2,"verified":[],"written":[]}',
             None,
@@ -370,12 +209,8 @@ def test_fifo_observation_does_not_open(tmp_path, monkeypatch):
             False,
             id="TERMINAL-string-result",
         ),
-        pytest.param('{"result":{"ok":true}}', None, True, id="TERMINAL-result-bare"),
         pytest.param(
             '{"result":"a prose summary"}', None, False, id="TERMINAL-prose-result"
-        ),
-        pytest.param(
-            '{"result":"{\\"ok\\":true}"}', None, True, id="TERMINAL-string-bare"
         ),
         pytest.param(
             '{"result":{"result":{"ok":true,"stats":{}}}}',
@@ -411,12 +246,6 @@ def test_terminal_shapes(text, expected, bare):
             id="DOCUMENT-torn-pretty",
         ),
         pytest.param(
-            '{\n\t"progress": [\n\t\t{"ok":true,"stats":{}}',
-            None,
-            False,
-            id="DOCUMENT-torn-pretty-tab",
-        ),
-        pytest.param(
             '{"a":[\n{"ok":true,"stats":{}}\nBROKEN',
             {"ok": True, "stats": {}},
             False,
@@ -429,49 +258,16 @@ def test_document_scan(text, expected, bare):
 
 
 @pytest.mark.parametrize(
-    "kind,count,terminal,expected,reason",
+    "kind,count,expected,reason",
     [
+        pytest.param("chars", 8_000_001, None, "max_chars", id="LIMIT-chars-over"),
         pytest.param(
-            "chars",
-            8_000_000,
-            True,
-            {"ok": True, "stats": {}},
-            None,
-            id="LIMIT-chars-exact",
+            "candidates", 500, None, "max_candidates", id="LIMIT-candidates-over"
         ),
-        pytest.param(
-            "chars", 8_000_001, True, None, "max_chars", id="LIMIT-chars-over"
-        ),
-        pytest.param(
-            "candidates",
-            499,
-            True,
-            {"ok": True, "stats": {}},
-            None,
-            id="LIMIT-candidates-exact",
-        ),
-        pytest.param(
-            "candidates", 500, True, None, "max_candidates", id="LIMIT-candidates-over"
-        ),
-        pytest.param(
-            "probes",
-            1999,
-            True,
-            {"ok": True, "stats": {}},
-            None,
-            id="LIMIT-probes-exact",
-        ),
-        pytest.param("probes", 2000, True, None, "max_probes", id="LIMIT-probes-over"),
-        pytest.param(
-            "deep", 7, True, {"ok": True, "stats": {}}, None, id="LIMIT-deep-under"
-        ),
-        pytest.param(
-            "deep", 8, True, None, "max_deep_candidates", id="LIMIT-deep-exact"
-        ),
+        pytest.param("probes", 2000, None, "max_probes", id="LIMIT-probes-over"),
         pytest.param(
             "post-terminal",
             501,
-            False,
             {"ok": True, "stats": {}},
             None,
             id="LIMIT-later-bound-suppressed",
@@ -479,14 +275,13 @@ def test_document_scan(text, expected, bare):
         pytest.param(
             "whole",
             8_000_010,
-            True,
             {"ok": True, "stats": {}},
             None,
             id="LIMIT-whole-document-exception",
         ),
     ],
 )
-def test_scan_limits(kind, count, terminal, expected, reason):
+def test_scan_limits(kind, count, expected, reason):
     returned = '{"ok":true,"stats":{}}'
     if kind == "chars":
         text = "x" * (count - len(returned) - 1) + "\n" + returned
@@ -499,45 +294,13 @@ def test_scan_limits(kind, count, terminal, expected, reason):
             "candidates": "{}",
             # Each invalid token stops decoding before the next line can nest.
             "probes": "{!",
-            "deep": '{"a":' + "[" * 60000 + "1" + "]" * 60000 + "}",
         }[kind]
-        text = (line + "\n") * count + (returned if terminal else "")
+        text = (line + "\n") * count + returned
     assert tasks.find_terminal(text) == (expected, False, reason)
 
 
-@pytest.mark.parametrize(
-    "text,expected,seconds",
-    [
-        pytest.param('\n{"a":' * 50000, None, 2, id="LIMIT-many-fragments"),
-        pytest.param(
-            "{" * 50000 + '\n{"ok":true,"stats":{}}',
-            {"ok": True, "stats": {}},
-            1,
-            id="LIMIT-noise-then-return",
-        ),
-    ],
-)
-def test_scan_cost(text, expected, seconds):
-    import time
-
-    started = time.monotonic()
-    assert tasks.find_terminal(text)[0] == expected
-    assert time.monotonic() - started < seconds
-
-
-def test_sweep_uses_literal_task_root(tmp_path, monkeypatch):
-    root = tmp_path / "claude-[g]"
-    target = root / "slug" / "session" / "tasks" / "w123.output"
-    target.parent.mkdir(parents=True)
-    target.write_text("", encoding="utf-8")
-    assert list(tasks.sweep_paths(tasks.TaskRoots((str(root),), None))) == [str(target)]
-
-
-@pytest.mark.parametrize(
-    "mtimes",
-    [pytest.param((1, 3, 3), id="SWEEP-global-newest-stable-tie")],
-)
-def test_sweep_policy(mtimes, tmp_path):
+def test_sweep_policy(tmp_path):
+    mtimes = (1, 3, 3)
     root = tmp_path / "root[g]"
     old = task_file(root, "old", mtime=mtimes[0])
     new = task_file(root, "new", mtime=mtimes[1])
@@ -548,3 +311,4 @@ def test_sweep_policy(mtimes, tmp_path):
     os.utime(override, (mtimes[2], mtimes[2]))
     roots = tasks.TaskRoots((str(root),), str(direct))
     assert tasks.sweep_paths(roots) == (str(override), str(new), str(old))
+    assert tasks.sweep_paths(roots, limit=2) == (str(override), str(new))

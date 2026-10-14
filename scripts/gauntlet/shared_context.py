@@ -89,8 +89,6 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
             f"cannot write context file ({exc.strerror or exc})", 2
         ) from exc
 
-    # The content ends with LF, so the newline count is the Read tool's last line
-    # number; the workflow has no disk and plans exact Reads from it.
     lines = content.count(b"\n")
     chars = len(content.decode("utf-8", errors="replace"))
     return {"contextLines": lines, "contextChars": chars}, 0
