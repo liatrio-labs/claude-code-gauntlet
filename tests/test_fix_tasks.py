@@ -343,7 +343,7 @@ def test_outside_symlink_package_candidate_is_absent(
     assert "toolchain candidate package.json rejected" in result.stderr
 
 
-def test_root_level_siblings_and_non_git_root(
+def test_root_level_siblings_are_ranked_and_capped(
     fix_root, tracked_files, run_renderer, write_artifact
 ):
     tracked = [

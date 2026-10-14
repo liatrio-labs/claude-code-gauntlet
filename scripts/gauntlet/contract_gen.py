@@ -102,45 +102,67 @@ def _run_node(node_src: str, repo_root: str) -> proc.CompletedProcess[str]:
         raise CliError(_node_failure_message(command, error.stderr)) from None
 
 
+# Import order binds the module aliases m, a, v, f, o and w used below.
+_REGISTRY_MODULES = (
+    "registry",
+    "knobs",
+    "applyValidations",
+    "injection",
+    "outputPaths",
+    "verifyWire",
+)
+# Field order is the JSON key order the generated registry is checked against.
+_REGISTRY_FIELDS = (
+    "required: m.FINDING_REQUIRED",
+    "waistRequired: m.REQUIRED",
+    "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
+    "findingTypes: m.FINDING_PROP_TYPES",
+    "dimensions: m.DIMENSIONS.map(d => ({dimension: d.dimension,"
+    " agentType: d.agentType, requiredExtra: d.requiredExtra || [],"
+    " requiredWhenDimension: d.requiredWhenDimension || [],"
+    " extraFields: Object.keys(d.schemaExtra || {})}))",
+    "brand: {mark: m.BRAND_MARK, name: m.BRAND_NAME}",
+    "severityEmoji: m.SEVERITY_EMOJI",
+    "severityOrder: m.SEVERITY_ORDER",
+    "reachability: v.REACHABILITY_VALUES",
+    "deltaKeys: w.DELTA_KEYS",
+    "verifySliceFields: w.VERIFY_SLICE_FIELDS",
+    "fixMaxLines: f.FIX_MAX_LINES",
+    "fixMaxChars: f.FIX_MAX_CHARS",
+    "artifactPaths: o.plannedArtifactPaths("
+    "'/__gauntlet_registry_root__', '__GAUNTLET_SHA__')",
+    "jsTrimChars: Array.from({length: 65536}, (_, i) => String.fromCharCode(i))"
+    ".filter(c => c.trim() === '' && c !== '').join('')",
+    "severityEmojiFallback: m.SEVERITY_EMOJI_FALLBACK",
+    "ruleSourceLabels: m.RULE_SOURCE_LABELS",
+    "ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK",
+    "codeOwnedHeadings: m.CODE_OWNED_HEADINGS",
+    "agents: m.AGENTS",
+    "prIdentityFields: m.PR_IDENTITY_FIELDS.map(f => ({name: f.name,"
+    " required: f.required, describe: f.describe}))",
+    "permalinkTemplates: m.PERMALINK_TEMPLATES",
+    "shaFullRe: m.SHA_FULL_RE.source",
+    "webOriginRe: m.WEB_ORIGIN_RE.source",
+    "knobs: a.KNOB_REGISTRY.map(d => ({...d}))",
+    "knobKeys: a.KNOB_REGISTRY.map(d => Object.keys(d))",
+    "deriveWhen: Object.fromEntries(Object.entries(a.DERIVE_WHEN)"
+    ".map(([name, d]) => [name, d.describe]))",
+    "derivedFrom: Object.fromEntries(Object.entries(a.DERIVED_FROM)"
+    ".map(([name, d]) => [name, d.describe]))",
+)
+
+
 def load_registry(repo_root: str) -> Mapping[str, Any]:
     """Import the live schemas and keep finding and waist required lists distinct."""
+    fields = ",".join(_REGISTRY_FIELDS)
     node_src = (
-        "Promise.all([import('./workflows/src/registry.js'), "
-        "import('./workflows/src/knobs.js'), "
-        "import('./workflows/src/applyValidations.js'), "
-        "import('./workflows/src/injection.js'), "
-        "import('./workflows/src/outputPaths.js'), "
-        "import('./workflows/src/verifyWire.js')]).then(([m, a, v, f, o, "
-        "w]) => console.log(JSON.stringify({  required: m.FINDING_REQUIRED,"
-        "  waistRequired: m.REQUIRED,"
-        "  canonicalFields: Object.keys(m.FINDING_PROP_TYPES),"
-        "  findingTypes: m.FINDING_PROP_TYPES,  dimensions: m.DIMENSIONS.map(d => ({"
-        "    dimension: d.dimension, agentType: d.agentType,"
-        "    requiredExtra: d.requiredExtra || [],"
-        "    requiredWhenDimension: d.requiredWhenDimension || [],"
-        "    extraFields: Object.keys(d.schemaExtra || {}),  })),"
-        "  brand: { mark: m.BRAND_MARK, name: m.BRAND_NAME },"
-        "  severityEmoji: m.SEVERITY_EMOJI,  severityOrder: m.SEVERITY_ORDER,"
-        "  reachability: v.REACHABILITY_VALUES,  deltaKeys: w.DELTA_KEYS,"
-        "  verifySliceFields: w.VERIFY_SLICE_FIELDS,"
-        "  fixMaxLines: f.FIX_MAX_LINES, fixMaxChars: f.FIX_MAX_CHARS,"
-        "  artifactPaths: o.plannedArtifactPaths('/__gauntlet_registry_root"
-        "__', '__GAUNTLET_SHA__'),  jsTrimChars: Array.from({length: 65536}, (_, i) => "
-        "String.fromCharCode(i)).filter(c => c.trim() === '' && c !== '').join(''),"
-        "  severityEmojiFallback: m.SEVERITY_EMOJI_FALLBACK,"
-        "  ruleSourceLabels: m.RULE_SOURCE_LABELS,"
-        "  ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK,"
-        "  codeOwnedHeadings: m.CODE_OWNED_HEADINGS,  agents: m.AGENTS,"
-        "  prIdentityFields: m.PR_IDENTITY_FIELDS.map(f => ({ name: "
-        "f.name, required: f.required, describe: f.describe })),"
-        "  permalinkTemplates: m.PERMALINK_TEMPLATES,  shaFullRe: m.SHA_FULL_RE.source,"
-        "  webOriginRe: m.WEB_ORIGIN_RE.source,"
-        "  knobs: a.KNOB_REGISTRY.map(d => ({ ...d })),"
-        "  knobKeys: a.KNOB_REGISTRY.map(d => Object.keys(d)),"
-        "  deriveWhen: Object.fromEntries(Object.entries(a.DERIVE_WHEN).map"
-        "(([name, d]) => [name, d.describe])),"
-        "  derivedFrom: Object.fromEntries(Object.entries(a.DERIVED_FROM).m"
-        "ap(([name, d]) => [name, d.describe])),})))"
+        "Promise.all(["
+        + ", ".join(
+            f"import('./workflows/src/{name}.js')" for name in _REGISTRY_MODULES
+        )
+        + "]).then(([m, a, v, f, o, w]) => console.log(JSON.stringify({"
+        + fields
+        + "})))"
     )
     out = _run_node(node_src, repo_root)
     registry: Mapping[str, Any] = json.loads(out.stdout)
@@ -763,10 +785,12 @@ def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
     if waist_rows:
         lines.extend(
             [
-                "The workflow derives these waist fields from the copied "
-                "`configEcho` receipt. Do not stamp a derived field; when "
-                "a listed derivation applies, a stamped value that "
-                "disagrees with its receipt is refused before dispatch.",
+                (
+                    "The workflow derives these waist fields from the copied "
+                    "`configEcho` receipt. Do not stamp a derived field; when "
+                    "a listed derivation applies, a stamped value that "
+                    "disagrees with its receipt is refused before dispatch."
+                ),
                 "",
             ]
         )
@@ -799,8 +823,7 @@ def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
             lines.extend(
                 [
                     "",
-                    "The workflow fills these receipt entries itself; "
-                    "never stamp them.",
+                    "The workflow fills these receipt entries itself; never stamp them.",
                     "",
                 ]
             )

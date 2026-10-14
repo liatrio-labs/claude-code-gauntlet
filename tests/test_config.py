@@ -142,7 +142,7 @@ def test_local_delivery_rejects_pr_comments_from_env_or_review(source):
     [("pr", "env"), (None, "review_md")],
     ids=["pr-env", "targetless-review"],
 )
-def test_pr_mr_and_unset_targets_accept_pr_comments(target, source):
+def test_pr_and_unset_targets_accept_pr_comments(target, source):
     environ = {"CODE_GAUNTLET_DELIVERY": "chat,pr_comments"} if source == "env" else {}
     review = "## Default Delivery\nchat,pr_comments" if source == "review_md" else None
     result = resolver.resolve("headless", environ, review, target)
