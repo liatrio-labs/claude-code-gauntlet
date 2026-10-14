@@ -397,9 +397,16 @@ def test_labels_commands() -> None:
     "live,status,expected,commands",
     [
         pytest.param(
-            _as_live(_labels()),
+            [
+                *_as_live(_labels()),
+                {
+                    "name": "hand-made",
+                    "color": "ffffff",
+                    "description": "not managed here",
+                },
+            ],
             0,
-            ("in sync",),
+            ("unmanaged", "hand-made", "in sync"),
             None,
             id="uppercase-colors-are-in-sync",
         ),

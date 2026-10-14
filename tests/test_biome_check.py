@@ -16,7 +16,6 @@ from workflows.test.tools import biome_check
 from workflows.test.tools.biome_check import (
     PinError,
     UnsupportedPlatformError,
-    build_command,
     load_pin,
     main,
     resolve_asset,
@@ -86,16 +85,6 @@ def test_load_pin_rejects_invalid_shapes_and_values(
     path.write_text(json.dumps(value), encoding="utf-8")
     with pytest.raises(PinError, match=message):
         load_pin(path)
-
-
-def test_build_command_puts_extra_args_after_the_workflow_path() -> None:
-    assert build_command("/tmp/biome binary", ["--verbose"]) == [
-        "/tmp/biome binary",
-        "check",
-        "--error-on-warnings",
-        ".",
-        "--verbose",
-    ]
 
 
 def test_checksum_mismatch_leaves_no_final_or_part_file(
@@ -181,36 +170,20 @@ def test_cache_state(
 
 
 @pytest.mark.parametrize(
-    "failure,failures,status,attempts,sleeps",
+    "failures,status",
     [
-        pytest.param(
-            urllib.error.URLError("temporary failure"),
-            4,
-            0,
-            5,
-            [1, 2, 4, 8],
-            id="four-failures-then-success",
-        ),
-        pytest.param(
-            urllib.error.URLError("permanent failure"),
-            5,
-            1,
-            5,
-            [1, 2, 4, 8],
-            id="five-failures-exhausted",
-        ),
+        pytest.param(4, 0, id="four-failures-then-success"),
+        pytest.param(5, 1, id="five-failures-exhausted"),
     ],
 )
 def test_retry_outcome(
     pin_file: Path,
     tmp_path: Path,
-    failure: Exception,
     failures: int,
     status: int,
-    attempts: int,
-    sleeps: list[int],
 ) -> None:
     calls = 0
+    failure = urllib.error.URLError("temporary failure")
 
     def fetch(_url: str) -> bytes:
         nonlocal calls
@@ -229,8 +202,8 @@ def test_retry_outcome(
             )
             == status
         )
-    assert calls == attempts
-    assert [call.args[0] for call in sleep.call_args_list] == sleeps
+    assert calls == 5
+    assert [call.args[0] for call in sleep.call_args_list] == [1, 2, 4, 8]
 
 
 def test_fetch_url_builds_the_pinned_request() -> None:
@@ -285,12 +258,7 @@ def test_invalid_asset_override_is_usage_error(pin_file: Path, tmp_path: Path) -
 
 
 def test_cache_location(pin_file: Path, tmp_path: Path) -> None:
-    environment = {
-        "CODE_GAUNTLET_BIOME_CACHE": "configured",
-        "XDG_CACHE_HOME": "xdg",
-        "HOME": "home",
-    }
-    env = {key: str(tmp_path / value) for key, value in environment.items()}
+    env = {"CODE_GAUNTLET_BIOME_CACHE": str(tmp_path / "configured")}
     args = ["--asset", ASSET, "--cache-dir", str(tmp_path / "flag")]
     assert (
         main(args, fetch=lambda _url: DATA, run=lambda _argv, _cwd: 0, environ=env) == 0

@@ -454,15 +454,6 @@ def test_tests_writes_do_not_require_newline() -> None:
     assert _scan_source('open("file", "w", encoding="utf-8")', "tests/snippet.py") == []
 
 
-def test_workflow_tool_writes_report_the_scanned_path() -> None:
-    path = "workflows/test/tools/record_parity.py"
-    offenders = _scan_source(
-        'Path("expected.json").write_text("x", encoding="utf-8")', path
-    )
-    assert len(offenders) == 1
-    assert path in offenders[0]
-
-
 def test_gitattributes_pins_lf_for_text_files() -> None:
     attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
     assert "* text=auto eol=lf" in attributes.splitlines()

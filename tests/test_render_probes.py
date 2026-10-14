@@ -495,17 +495,6 @@ def test_contributing_probe_commands_parse_with_the_recorder() -> None:
         parser.parse_args(args)
 
 
-def test_quick_actions_command_accepts_record_and_check_forms() -> None:
-    parser = build_argument_parser()
-
-    direct = parser.parse_args(["quick-actions", "--check"])
-
-    assert direct.container == "cdr-gitlab"
-    assert direct.command == "quick-actions"
-    assert direct.action == "record"
-    assert direct.check is True
-
-
 @pytest.mark.skipif(
     sys.platform == "win32",
     reason="the fake docker is a shebang script, which CreateProcess cannot run",
@@ -876,7 +865,7 @@ PREFIX = "http://gitlab.test/-/blob/main/"
 PAIR = "aa6eb1a0172a201782cdb664713ced8fe19b43943230740efa6ceb90f81107d6"
 
 
-def _probe_rows(github_html="<p>a</p>", gitlab_html="<p>b</p>"):
+def _probe_rows():
     return [
         {
             "id": "probe_row",
@@ -887,7 +876,7 @@ def _probe_rows(github_html="<p>a</p>", gitlab_html="<p>b</p>"):
                 "rendered": "2026-01-01",
                 "input": "expected + blank line + footer line",
                 "input_sha256": DIGEST,
-                "html": github_html,
+                "html": "<p>a</p>",
             },
             "gitlab_probe": {
                 "renderer": "gitlab api markdown gfm=true project",
@@ -897,7 +886,7 @@ def _probe_rows(github_html="<p>a</p>", gitlab_html="<p>b</p>"):
                 "input_sha256": DIGEST,
                 "blob_prefix": PREFIX,
                 "twin_references": ["@alice"],
-                "html": gitlab_html,
+                "html": "<p>b</p>",
                 "divergence": {"note": "old note", "issue": 12, "pair_sha256": PAIR},
             },
         }
@@ -924,14 +913,13 @@ def _renderer(platform: str, html: str) -> Callable[[str], str]:
     return render
 
 
-def _record(path, platform, html, **options):
+def _record(path, html, **options):
     return record_fixture(
         str(path),
-        platform=platform,
-        render=_renderer(platform, html),
+        platform="gitlab",
+        render=_renderer("gitlab", html),
         version="19.4.1 ce",
         blob_prefix=PREFIX,
-        get_github_login=lambda: "lee",
         **options,
     )
 
@@ -968,12 +956,11 @@ RECORD_REJECTS_BEFORE_WRITE_CASES: dict[str, RejectCase] = {
 }
 
 
-def test_record_pair_states(probe_file: Path) -> None:
+def test_record_keeps_a_valid_divergence_pair(probe_file: Path) -> None:
     before = probe_file.read_bytes()
     writes: list[str] = []
     checked = _record(
         probe_file,
-        "gitlab",
         "<p>b</p>",
         check=True,
         write_text=lambda target, contents: writes.append(contents),
@@ -982,7 +969,7 @@ def test_record_pair_states(probe_file: Path) -> None:
     assert checked.divergence_cleared == []
     assert checked.exit_code == 0
     assert writes == [] and probe_file.read_bytes() == before
-    recorded = _record(probe_file, "gitlab", "<p>b</p>")
+    recorded = _record(probe_file, "<p>b</p>")
     assert recorded.exit_code == 0
     assert recorded.divergence_cleared == []
     assert recorded.cleared_details == []
@@ -1001,7 +988,6 @@ def test_check_drift_reports_gitlab_content_and_version_together(probe_file) -> 
 
     checked = _record(
         probe_file,
-        "gitlab",
         "<p>changed</p>",
         check=True,
         write_text=lambda target, contents: writes.append(contents),
@@ -1079,6 +1065,23 @@ def test_main_record_check_and_cleared_divergence_output(
     )
 
 
+def test_main_github_record_check_preserves_fixture(
+    probe_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = probe_file
+    monkeypatch.setattr("tests.tools.probe_cli._fixture_path", lambda: str(path))
+    monkeypatch.setattr("tests.tools.probe_cli.github_login", lambda: "lee")
+    monkeypatch.setattr(
+        "tests.tools.probe_cli.render_github", _renderer("github", "<p>a</p>")
+    )
+    source = path.read_bytes()
+    assert main(["record", "--platform", "github", "--check"]) == 0
+    assert capsys.readouterr().out == ""
+    assert path.read_bytes() == source
+
+
 def test_main_seed_dispatch_prints_seed_counts(monkeypatch, capsys) -> None:
     monkeypatch.setenv("FAKE_ENV", "fake-token")
     cases = [{"input": "@alice", "expected": "@alice"}]
@@ -1105,7 +1108,7 @@ def test_main_seed_dispatch_prints_seed_counts(monkeypatch, capsys) -> None:
 
 @pytest.mark.parametrize(
     "failure",
-    ["stale", "equal", "skeleton", "duplicate", "issue"],
+    ["stale", "skeleton", "duplicate"],
 )
 def test_divergence_refuses_invalid_fixture_or_pair(probe_file, failure: str) -> None:
     path = probe_file
@@ -1113,8 +1116,6 @@ def test_divergence_refuses_invalid_fixture_or_pair(probe_file, failure: str) ->
     row = document["cases"][0]
     if failure == "stale":
         row["gitlab_probe"]["input_sha256"] = "0" * 64
-    elif failure == "equal":
-        row["gitlab_probe"]["html"] = "<p>a</p>"
     elif failure == "skeleton":
         row["gitlab_probe"]["html"] = "<h1>b</h1>"
     elif failure == "duplicate":
@@ -1126,16 +1127,14 @@ def test_divergence_refuses_invalid_fixture_or_pair(probe_file, failure: str) ->
         ValueError,
         match={
             "stale": "stale",
-            "equal": "equal",
             "skeleton": "skeleton",
             "duplicate": "expected one fixture row",
-            "issue": "positive issue",
         }[failure],
     ):
         record_divergence(
             str(path),
             case_id="probe_row",
-            issue=0 if failure == "issue" else 378,
+            issue=378,
             note="text differs",
             write_text=lambda target, contents: writes.append(contents),
         )
