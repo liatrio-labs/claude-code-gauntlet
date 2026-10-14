@@ -85,6 +85,16 @@ def test_truncation_decision(
         assert (output_dir / name).read_bytes() == expected_bytes, name
 
 
+def test_unconditional_never_reads_stdin(
+    tmp_path: Path, invoke: Callable[..., Invocation]
+) -> None:
+    # Local and branch runs pass no detector, so stdin may be empty or a terminal.
+    seed_artifacts(tmp_path / "out")
+    args = ["--output-dir", str(tmp_path / "out"), "--head-sha", SHA, "--unconditional"]
+    result = invoke("stale_truncate", args, tmp_path, b"")
+    assert (result.returncode, result.stdout) == (0, b"truncated 2 file(s)\n")
+
+
 @pytest.mark.parametrize(
     "sha, stdin, make_dir",
     [

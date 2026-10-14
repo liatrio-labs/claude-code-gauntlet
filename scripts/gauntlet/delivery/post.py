@@ -293,6 +293,10 @@ def _site_verdict(
     )
 
 
+def _site_platform(site: gate.ApplySite) -> Platform:
+    return "github" if isinstance(site, gate.GitHubApplySite) else "gitlab"
+
+
 def _anchor(
     finding: Finding,
     path: str,
@@ -424,11 +428,7 @@ def resolve_members(
     group: AnchoredGroup, facts: DiffFacts | None
 ) -> tuple[FindingPlan, ...]:
     members: list[FindingPlan] = [group.primary]
-    platform: Platform = (
-        "github"
-        if isinstance(group.primary.anchor.site, gate.GitHubApplySite)
-        else "gitlab"
-    )
+    platform = _site_platform(group.primary.anchor.site)
     for index, finding in enumerate(group.group.corroborators, 1):
         line = finding.get("line")
         path = finding.get("file", "?")
@@ -457,11 +457,7 @@ def render_inline(
     positionless = surface == "note"
     platform: Platform
     if isinstance(member, AnchoredFinding):
-        platform = (
-            "github"
-            if isinstance(member.anchor.site, gate.GitHubApplySite)
-            else "gitlab"
-        )
+        platform = _site_platform(member.anchor.site)
         anchor = None if positionless else member.anchor
     else:
         platform = member.platform

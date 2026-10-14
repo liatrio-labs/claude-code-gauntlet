@@ -98,7 +98,8 @@ class Command:
                     receipt, ascii=self.ascii, compact=self.compact, indent=self.indent
                 )
             )
-        except Exception as exc:  # noqa: BLE001 - keep a receipt on serialization failure
+        # Keep a receipt on serialization failure.
+        except Exception as exc:  # noqa: BLE001
             line = self.fallback_line
             try:
                 if self.fallback_receipt is not None:

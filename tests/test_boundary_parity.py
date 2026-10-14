@@ -225,6 +225,8 @@ def test_pipeline_fields_reach_poster(
         assert finding["suggestion"] in body
         assert "**Cited rule:**" in body
         assert (finding.get("claude_md_rule") or finding["spec_text"]) in body
+        # failure_scenario is artifact-only and must never reach a PR comment.
+        assert findings[1]["failure_scenario"] not in body
         trailer = "\u2694\ufe0f *Code Gauntlet*"
         assert body.splitlines()[-1] == trailer
         assert body.count(trailer) == 1

@@ -471,37 +471,23 @@ def _finding_note(keys: tuple[str, ...], sha: str = FULL_SHA) -> dict[str, str]:
             PriorDelivery(True, frozenset({"cccccccccccccccc"}), frozenset(), None),
             id="non-dict-and-body-less-entries",
         ),
+        # Forty keys cross the summary reader's 32-marker scan bound.
         pytest.param(
             [_finding_note(tuple(f"{i:016x}" for i in range(40)))],
             FULL_SHA,
             PriorDelivery(
                 False,
-                frozenset(
-                    "0000000000000000\n0000000000000001\n0000000000000002\n"
-                    "0000000000000003\n0000000000000004\n0000000000000005\n"
-                    "0000000000000006\n0000000000000007\n0000000000000008\n"
-                    "0000000000000009\n000000000000000a\n000000000000000b\n"
-                    "000000000000000c\n000000000000000d\n000000000000000e\n"
-                    "000000000000000f\n0000000000000010\n0000000000000011\n"
-                    "0000000000000012\n0000000000000013\n0000000000000014\n"
-                    "0000000000000015\n0000000000000016\n0000000000000017\n"
-                    "0000000000000018\n0000000000000019\n000000000000001a\n"
-                    "000000000000001b\n000000000000001c\n000000000000001d\n"
-                    "000000000000001e\n000000000000001f\n0000000000000020\n"
-                    "0000000000000021\n0000000000000022\n0000000000000023\n"
-                    "0000000000000024\n0000000000000025\n0000000000000026\n"
-                    "0000000000000027".splitlines()
-                ),
+                frozenset(f"{i:016x}" for i in range(40)),
                 frozenset(),
                 None,
             ),
             id="large-group",
         ),
         pytest.param(
-            [_finding_note(tuple(f"{i:016x}" for i in range(40)))],
+            [_finding_note((FINDING_KEY,))],
             FULL_SHA[:7],
             PriorDelivery(False, frozenset(), frozenset(), None),
-            id="large-group-sha-prefix",
+            id="finding-key-sha-prefix",
         ),
         pytest.param(
             [{"body": _legacy_group_body(FINDING_KEY, ["Corroborator A"])}],
