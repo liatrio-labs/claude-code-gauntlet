@@ -319,6 +319,22 @@ def test_custom_package_commands(fix_root, run_renderer, write_artifact):
     }
 
 
+# A contributor's PR can plant this link; the renderer must not read outside the repo.
+@pytest.mark.usefixtures("symlink_or_skip")
+def test_outside_symlink_package_candidate_is_absent(
+    fix_root, run_renderer, tmp_path, write_artifact
+):
+    outside = tmp_path / "package.json"
+    outside.write_text('{"scripts":{"test":"outside"}}', encoding="utf-8")
+    (fix_root / "package.json").symlink_to(outside)
+    (fix_root / "Cargo.toml").write_text("x", encoding="utf-8")
+    write_artifact([make_finding()])
+    result = run_renderer()
+    proof = output(result)[0]["metadata"]["proof_artifacts"][0]
+    assert proof["command"] == "cargo test"
+    assert "toolchain candidate package.json rejected" in result.stderr
+
+
 def test_root_level_siblings_and_non_git_root(
     fix_root, tracked_files, run_renderer, write_artifact
 ):
