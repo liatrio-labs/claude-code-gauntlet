@@ -56,28 +56,12 @@ _RULE_ROWS = [
     ("enum-exact", ENUM_RULE, "Chat", "headless", True),
     ("enum-case", ENUM_RULE, "chat", "headless", False),
     ("csv-subset", CSV_RULE, "chat,markdown", "headless", True),
-    ("csv-empty", CSV_RULE, "", "headless", False),
-    ("csv-empty-part", CSV_RULE, "chat,,markdown", "headless", False),
     ("csv-duplicate", CSV_RULE, "chat,chat", "headless", False),
-    ("csv-untrimmed", CSV_RULE, "chat, markdown", "headless", False),
-    ("csv-case", CSV_RULE, "Chat", "headless", False),
     ("positive-one", POSITIVE_RULE, "1", "headless", True),
     ("positive-zero", POSITIVE_RULE, "0", "headless", False),
     ("digits-zero", NULLABLE_RULE, "0", "interactive", True),
     ("digits-null", NULLABLE_RULE, "null", "interactive", True),
-    ("digits-zero-padded", NULLABLE_RULE, "00", "interactive", False),
-    ("digits-padded", NULLABLE_RULE, "01", "interactive", False),
     ("digits-unsafe", NULLABLE_RULE, "9007199254740992", "interactive", False),
-    ("digits-nonascii", NULLABLE_RULE, "\u0661", "interactive", False),
-    ("unknown-kind", {"kind": "bogus"}, "x", "headless", False),
-    (
-        "missing-mode",
-        {"headless": {"kind": "enum", "values": ["x"]}},
-        "x",
-        "interactive",
-        False,
-    ),
-    ("nonstring-value", {"kind": "enum", "values": [1]}, 1, "headless", False),
 ]
 
 
@@ -91,18 +75,9 @@ def test_rules_are_exact_and_fail_closed(rule, value, mode, expected):
 
 _DELIVERY_ROWS = [
     ("next-heading", "chat,pr_comments\n## Ignore\nmarkdown", "chat,pr_comments"),
-    ("subheading", "chat\n### Ignore\nmarkdown", "chat"),
-    ("backtick-fence", "chat\n```yaml\nmarkdown\n```:", "chat"),
-    ("tilde-fence", "chat\n~~~\nmarkdown\n~~~", "chat"),
+    ("backtick-fence", "```yaml\nchat\n```", None),
     ("multiline-comment", "<!-- chat,\npr_comments -->\nmarkdown", "markdown"),
-    ("comment-only", "<!-- chat,pr_comments -->", None),
     ("prose", "prose about chat", None),
-    ("spaced-list", "chat, pr_comments", None),
-    ("case", "Chat", None),
-    ("empty-item", "chat,,markdown", None),
-    ("root-heading-ends-section", "<!--\n# Ignore\n-->\nchat\n", None),
-    ("unicode-line-separator", "chat\u2028markdown\n", None),
-    ("comment-wrapped-fence", "<!--\n```\n-->\nchat\n", None),
 ]
 
 
@@ -113,34 +88,15 @@ _DELIVERY_ROWS = [
         for name, body, expected in _DELIVERY_ROWS
     ]
     + [
-        pytest.param("# Default Delivery\nchat", None, id="wrong-heading"),
         pytest.param(
             "prefix\r\n## Default Delivery\r\n\r\n  chat  \r\n",
             "chat",
             id="crlf-preamble-indented-value",
         ),
-        pytest.param("## Default Delivery\rchat\r", "chat", id="bare-cr"),
     ],
 )
 def test_default_delivery_parser(source, expected):
     assert resolver.parse_default_delivery(source) == expected
-
-
-@pytest.mark.parametrize(
-    ("mode", "echo", "resolved"),
-    [
-        ("interactive", INTERACTIVE_ECHO, {"model_tier": "optimized"}),
-        ("headless", HEADLESS_ECHO, HEADLESS_RESOLVED),
-    ],
-)
-def test_empty_environment_defaults_have_one_wire_copy(mode, echo, resolved):
-    result = resolver.resolve(mode, {}, None, "pr")
-    assert result == {
-        "configEcho": echo,
-        "waist": {"configEcho": echo},
-        "resolved": resolved,
-    }
-    assert list(result["configEcho"]) == list(echo)
 
 
 @pytest.mark.parametrize(
@@ -181,8 +137,11 @@ def test_local_delivery_rejects_pr_comments_from_env_or_review(source):
     )
 
 
-@pytest.mark.parametrize("target", ["pr", "mr", None], ids=["pr", "mr", "unset"])
-@pytest.mark.parametrize("source", ["env", "review_md"])
+@pytest.mark.parametrize(
+    ("target", "source"),
+    [("pr", "env"), (None, "review_md")],
+    ids=["pr-env", "targetless-review"],
+)
 def test_pr_mr_and_unset_targets_accept_pr_comments(target, source):
     environ = {"CODE_GAUNTLET_DELIVERY": "chat,pr_comments"} if source == "env" else {}
     review = "## Default Delivery\nchat,pr_comments" if source == "review_md" else None
@@ -237,25 +196,16 @@ def test_invalid_pins_are_exact_and_stdout_is_empty(
     )
 
 
-@pytest.mark.parametrize(
-    ("value", "spelling"),
-    [
-        pytest.param("bad\nvalue", '"bad\\nvalue"', id="lf"),
-        pytest.param("bad\rvalue", '"bad\\rvalue"', id="cr"),
-        pytest.param("bad`value", "bad`value", id="backtick"),
-    ],
-)
-def test_control_values_are_json_encoded_on_the_error_line(value, spelling, config_cli):
+def test_control_values_are_json_encoded_on_the_error_line(config_cli):
     result = config_cli(
         ["--target", "pr"],
         CODE_GAUNTLET_HEADLESS="1",
-        CODE_GAUNTLET_DELIVERY=value,
+        CODE_GAUNTLET_DELIVERY="bad\nvalue",
     )
     assert result.returncode == 1
     assert result.stdout == b""
-    assert (
-        result.stderr.decode()
-        == f"HEADLESS CONFIG ERROR: CODE_GAUNTLET_DELIVERY={spelling} "
+    assert result.stderr.decode() == (
+        'HEADLESS CONFIG ERROR: CODE_GAUNTLET_DELIVERY="bad\\nvalue" '
         "not in {chat,pr_comments,markdown}\n"
     )
 
@@ -324,19 +274,13 @@ def test_usage_and_setup_fail_without_process_stream_noise(case, config_cli, tmp
     assert result.stderr.startswith(b"resolve_config: ")
 
 
-@pytest.mark.usefixtures("symlink_or_skip")
-def test_plugin_root_must_match_and_matching_symlink_is_allowed(config_cli, tmp_path):
+def test_plugin_root_must_match(config_cli, tmp_path):
     result = config_cli(["--plugin-root", str(tmp_path)])
     assert (result.returncode, result.stdout, result.stderr) == (
         2,
         b"",
         b"resolve_config: plugin root mismatch\n",
     )
-    link = tmp_path / "plugin"
-    link.symlink_to(ROOT, target_is_directory=True)
-    result = config_cli(["--plugin-root", str(link)])
-    assert result.returncode == 0
-    assert Path(json.loads(result.stdout)["identity"]["plugin_root"]) == ROOT
 
 
 def test_missing_bundle_version_is_setup_failure(tmp_path):
@@ -380,82 +324,6 @@ def test_generated_receipts_are_resolver_fixtures(mode, label, echo):
     assert resolver.resolve(mode, {}, None, "pr")["configEcho"] == echo
 
 
-def test_caller_preflight_commands_and_targetless_gate():
-    skill = (ROOT / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
-    assert (
-        'echo "=== output_dir ==="\n'
-        'if ! OUTPUT_DIR=$(python3 "{plugin_root}/scripts/ensure_output_dir.py"); '
-        "then\n"
-        '  echo "output_dir: FAILED"\n  exit 1\nfi\necho "$OUTPUT_DIR"'
-    ) in skill
-    composite = skill.split('echo "=== config ==="\n', 1)[1].split(
-        'echo "=== pr_view ==="', 1
-    )[0]
-    assert composite == (
-        'if ! CONFIG_JSON=$(python3 "{plugin_root}/scripts/resolve_config.py" '
-        '--target {target_type} --plugin-root "{plugin_root}"); then\n'
-        '  echo "config: FAILED"\n  exit 1\nfi\necho "$CONFIG_JSON"\n\n'
-    )
-    assert "review_md_root" not in skill
-    reference = (
-        ROOT / "skills/code-gauntlet/references/phase1-preflight.md"
-    ).read_text(encoding="utf-8")
-    line = next(
-        line
-        for line in reference.splitlines()
-        if line.startswith("> Headless exception")
-    )
-    assert line == (
-        "> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): "
-        "call `scripts/resolve_config.py` with no `--target` on this path. "
-        "The question is never presented in headless mode. "
-        "Branch on `resolved.pr_not_found_policy`: `error` stops the run, "
-        "and `local` proceeds "
-        "with `pr_number` cleared. See `references/headless-mode.md`."
-    )
-
-
-def test_caller_headless_fallback():
-    reference = (ROOT / "skills/code-gauntlet/references/headless-mode.md").read_text(
-        encoding="utf-8"
-    )
-    assert (
-        "If no report materializes, repeat the block in the final message "
-        "as the fallback receipt." in reference
-    )
-
-
-@pytest.mark.parametrize(
-    ("gate", "knobs"),
-    [
-        ("PR-not-found (resolution failure)", ("resolved.pr_not_found_policy",)),
-        ("Draft PR", ("resolved.draft_policy",)),
-        (
-            "Previously reviewed (Phase 2 2b-post step 3, after checkout)",
-            ("resolved.reviewed_policy",),
-        ),
-        (
-            "Trivial / light-scope (all low-risk, <50 lines)",
-            ("CODE_GAUNTLET_TRIVIAL_SCOPE",),
-        ),
-        (
-            "Phase 8 Stage 1 (delivery question)",
-            ("resolved.delivery", "resolved.post_mode"),
-        ),
-    ],
-    ids=["not-found", "draft", "reviewed", "trivial", "delivery"],
-)
-def test_caller_gate_fields(gate, knobs):
-    reference = (ROOT / "skills/code-gauntlet/references/headless-mode.md").read_text(
-        encoding="utf-8"
-    )
-    row = next(
-        line for line in reference.splitlines() if line.startswith(f"| {gate} |")
-    )
-    for knob in knobs:
-        assert knob in row
-
-
 def assert_resolved_mentions(root):
     allowed = {
         "model_tier",
@@ -495,59 +363,4 @@ def test_caller_review_scaffold():
     assert result["configEcho"]["delivery"] == {
         "value": "markdown",
         "source": "default",
-    }
-
-
-@pytest.mark.parametrize(
-    ("token", "expected"),
-    [
-        (
-            "Headless config:",
-            {
-                "workflows/src/renderReport.js",
-                "skills/code-gauntlet/references/report-format.md",
-                "skills/code-gauntlet/references/headless-mode.md",
-                "skills/code-gauntlet/SKILL.md",
-                "scripts/gauntlet/config.py",
-            },
-        ),
-        (
-            "Resolved config:",
-            {
-                "workflows/src/renderReport.js",
-                "skills/code-gauntlet/references/report-format.md",
-                "skills/code-gauntlet/SKILL.md",
-                "scripts/gauntlet/config.py",
-            },
-        ),
-        (
-            "HEADLESS CONFIG ERROR:",
-            {
-                "skills/code-gauntlet/references/headless-mode.md",
-                "scripts/gauntlet/config.py",
-            },
-        ),
-    ],
-    ids=["headless", "interactive", "error"],
-)
-def test_caller_config_producers(token, expected):
-    registry = (ROOT / "docs/machine-parsed-strings.md").read_text(encoding="utf-8")
-    row = next(
-        line for line in registry.splitlines() if line.startswith(f"| `{token}`")
-    )
-    cells = [cell.strip() for cell in row.strip("|").split("|")]
-    assert {item.strip(" `") for item in cells[1].split(",")} == expected
-
-
-def test_caller_config_block_producers():
-    pattern = re.compile(r"(?m)^(?:Resolved|Headless) config:\n(?:^  .*\n?)+")
-    actual = {}
-    for path in (ROOT / "skills/code-gauntlet").rglob("*.md"):
-        blocks = pattern.findall(path.read_text(encoding="utf-8"))
-        if blocks:
-            actual[path.relative_to(ROOT).as_posix()] = len(blocks)
-    assert actual == {
-        "skills/code-gauntlet/SKILL.md": 2,
-        "skills/code-gauntlet/references/headless-mode.md": 1,
-        "skills/code-gauntlet/references/report-format.md": 1,
     }

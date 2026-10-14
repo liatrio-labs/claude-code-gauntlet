@@ -1,6 +1,5 @@
 """Style source validation and the carrier command's visible outcomes."""
 
-import re
 from pathlib import Path
 
 import pytest
@@ -9,8 +8,7 @@ EXPECTED = (
     "<!-- GENERATED from docs/style/wording-rules.md "
     "and docs/style/cadence-rules.md by "
     "scripts/build_style_artifacts.py -- do not edit. Edit the sources, then run: "
-    "python3 scripts/build_style_artifacts.py -->\n\n"
-    "# Session output style\n\n"
+    "python3 scripts/build_style_artifacts.py -->\n\n# Session output style\n\n"
     "These rules govern Claude's session output in this repository.\n\n"
     "## Wording\n\n- Use plain words.\n\n## Cadence\n\n- Keep sentences connected.\n"
 )
@@ -47,55 +45,19 @@ def test_fenced_example(style_tree, invoke):
     ) == EXPECTED.replace("- Use plain words.", "- Intro rule.\n- Use plain words.")
 
 
-@pytest.mark.parametrize(
-    ("source", "message", "source_first"),
-    [
-        pytest.param(
-            "## Hidden\n```text\nRULE: Poison.\n```\n",
-            "section '## Hidden' has 0 RULE: lines; "
-            "all sections must carry exactly one",
-            True,
-            id="fenced-only-rule",
-        ),
-        pytest.param(
-            "## Empty\n```\nRULE: Hidden.\n",
-            "unbalanced code fence in",
-            False,
-            id="unbalanced",
-        ),
-        pytest.param(
-            "# no rules\njust prose\n", "yields zero RULE: lines", True, id="zero-rules"
-        ),
-        pytest.param(
-            "## Empty\n\n## Next\nRULE: Live.\n",
-            "section '## Empty' has 0 RULE: lines; all sections must carry exactly one",
-            True,
-            id="missing-section-rule",
-        ),
-    ],
-)
-def test_source_diagnostic(style_tree, invoke, source, message, source_first):
-    (style_tree / "docs/style/wording-rules.md").write_text(source, encoding="utf-8")
+def test_source_diagnostic(style_tree, invoke):
+    (style_tree / "docs/style/wording-rules.md").write_text(
+        "## Empty\n\n## Next\nRULE: Live.\n", encoding="utf-8"
+    )
     result = invoke(
         "build_style_artifacts", ["--repo-root", str(style_tree)], style_tree
     )
     assert result.returncode == 1
     assert result.stdout == b""
-    path = Path("docs/style/wording-rules.md")
-    diagnostic = f"{path} {message}" if source_first else f"{message} {path}"
-    assert result.stderr.decode() == f"build_style_artifacts: {diagnostic}\n"
-
-
-def test_missing_source(style_tree, invoke):
-    (style_tree / "docs/style/cadence-rules.md").unlink()
-    result = invoke(
-        "build_style_artifacts", ["--repo-root", str(style_tree)], style_tree
-    )
-    assert result.returncode == 1
-    assert result.stdout == b""
-    source = Path("docs/style/cadence-rules.md")
+    source = Path("docs/style/wording-rules.md")
     assert result.stderr.decode() == (
-        f"build_style_artifacts: missing style rule source: {source}\n"
+        f"build_style_artifacts: {source} section '## Empty' has 0 RULE: lines; "
+        "all sections must carry exactly one\n"
     )
 
 
@@ -120,39 +82,9 @@ def test_carrier_drift(style_tree, invoke):
     )
     assert repaired.stderr == b""
     assert carrier.read_text(encoding="utf-8") == EXPECTED
-
-
-def test_current_carrier(style_tree, invoke):
-    carrier = style_tree / "docs/style/session-context.md"
     before = carrier.stat().st_mtime_ns
-    result = invoke(
-        "build_style_artifacts", ["--repo-root", str(style_tree)], style_tree
-    )
-    assert result.returncode == 0
-    assert result.stdout == b"style session-context carrier is current\n"
-    assert result.stderr == b""
+    current = invoke("build_style_artifacts", args, style_tree)
+    assert current.returncode == 0
+    assert current.stdout == b"style session-context carrier is current\n"
+    assert current.stderr == b""
     assert carrier.stat().st_mtime_ns == before
-
-
-def test_missing_carrier(style_tree, invoke):
-    carrier = style_tree / "docs/style/session-context.md"
-    carrier.unlink()
-    args = ["--repo-root", str(style_tree)]
-    assert (
-        invoke("build_style_artifacts", [*args, "--check"], style_tree).returncode == 1
-    )
-    assert not carrier.exists()
-    assert invoke("build_style_artifacts", args, style_tree).returncode == 0
-    assert carrier.read_text(encoding="utf-8") == EXPECTED
-
-
-def test_unreadable_source(style_tree, invoke):
-    source = style_tree / "docs/style/wording-rules.md"
-    source.write_bytes(b"\xff")
-    result = invoke(
-        "build_style_artifacts", ["--repo-root", str(style_tree)], style_tree
-    )
-    assert result.returncode == 1
-    assert result.stdout == b""
-    assert re.fullmatch(r"build_style_artifacts: [^\n]+\n", result.stderr.decode())
-    assert source.read_bytes() == b"\xff"

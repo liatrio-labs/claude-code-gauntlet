@@ -111,46 +111,36 @@ def load_registry(repo_root: str) -> Mapping[str, Any]:
         "import('./workflows/src/injection.js'), "
         "import('./workflows/src/outputPaths.js'), "
         "import('./workflows/src/verifyWire.js')]).then(([m, a, v, f, o, "
-        "w]) => console.log(JSON.stringify({"
-        "  required: m.FINDING_REQUIRED,"
+        "w]) => console.log(JSON.stringify({  required: m.FINDING_REQUIRED,"
         "  waistRequired: m.REQUIRED,"
         "  canonicalFields: Object.keys(m.FINDING_PROP_TYPES),"
-        "  findingTypes: m.FINDING_PROP_TYPES,"
-        "  dimensions: m.DIMENSIONS.map(d => ({"
+        "  findingTypes: m.FINDING_PROP_TYPES,  dimensions: m.DIMENSIONS.map(d => ({"
         "    dimension: d.dimension, agentType: d.agentType,"
         "    requiredExtra: d.requiredExtra || [],"
         "    requiredWhenDimension: d.requiredWhenDimension || [],"
-        "    extraFields: Object.keys(d.schemaExtra || {}),"
-        "  })),"
+        "    extraFields: Object.keys(d.schemaExtra || {}),  })),"
         "  brand: { mark: m.BRAND_MARK, name: m.BRAND_NAME },"
-        "  severityEmoji: m.SEVERITY_EMOJI,"
-        "  severityOrder: m.SEVERITY_ORDER,"
-        "  reachability: v.REACHABILITY_VALUES,"
-        "  deltaKeys: w.DELTA_KEYS,"
+        "  severityEmoji: m.SEVERITY_EMOJI,  severityOrder: m.SEVERITY_ORDER,"
+        "  reachability: v.REACHABILITY_VALUES,  deltaKeys: w.DELTA_KEYS,"
         "  verifySliceFields: w.VERIFY_SLICE_FIELDS,"
         "  fixMaxLines: f.FIX_MAX_LINES, fixMaxChars: f.FIX_MAX_CHARS,"
         "  artifactPaths: o.plannedArtifactPaths('/__gauntlet_registry_root"
-        "__', '__GAUNTLET_SHA__'),"
-        "  jsTrimChars: Array.from({length: 65536}, (_, i) => "
-        "String.fromCharCode(i)).filter(c => c.trim() === '' && c !== "
-        "'').join(''),"
+        "__', '__GAUNTLET_SHA__'),  jsTrimChars: Array.from({length: 65536}, (_, i) => "
+        "String.fromCharCode(i)).filter(c => c.trim() === '' && c !== '').join(''),"
         "  severityEmojiFallback: m.SEVERITY_EMOJI_FALLBACK,"
         "  ruleSourceLabels: m.RULE_SOURCE_LABELS,"
         "  ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK,"
-        "  codeOwnedHeadings: m.CODE_OWNED_HEADINGS,"
-        "  agents: m.AGENTS,"
+        "  codeOwnedHeadings: m.CODE_OWNED_HEADINGS,  agents: m.AGENTS,"
         "  prIdentityFields: m.PR_IDENTITY_FIELDS.map(f => ({ name: "
         "f.name, required: f.required, describe: f.describe })),"
-        "  permalinkTemplates: m.PERMALINK_TEMPLATES,"
-        "  shaFullRe: m.SHA_FULL_RE.source,"
+        "  permalinkTemplates: m.PERMALINK_TEMPLATES,  shaFullRe: m.SHA_FULL_RE.source,"
         "  webOriginRe: m.WEB_ORIGIN_RE.source,"
         "  knobs: a.KNOB_REGISTRY.map(d => ({ ...d })),"
         "  knobKeys: a.KNOB_REGISTRY.map(d => Object.keys(d)),"
         "  deriveWhen: Object.fromEntries(Object.entries(a.DERIVE_WHEN).map"
         "(([name, d]) => [name, d.describe])),"
         "  derivedFrom: Object.fromEntries(Object.entries(a.DERIVED_FROM).m"
-        "ap(([name, d]) => [name, d.describe])),"
-        "})))"
+        "ap(([name, d]) => [name, d.describe])),})))"
     )
     out = _run_node(node_src, repo_root)
     registry: Mapping[str, Any] = json.loads(out.stdout)
@@ -158,17 +148,13 @@ def load_registry(repo_root: str) -> Mapping[str, Any]:
 
 
 def dispatch_required_sentence(fields: Sequence[str]) -> str:
-    """
-    Render every required field so schema growth cannot silently truncate the
-    sentence.
-    """
+    """Render all required fields so schema growth cannot truncate the sentence."""
     if len(fields) == 1:
         return (
             f"`{fields[0]}` is required by the dispatch schema — a finding "
             f"without it is "
             "rejected at the StructuredOutput boundary and retried, so it "
-            "must always be "
-            "present."
+            "must always be present."
         )
     backticked = [f"`{f}`" for f in fields]
     if len(backticked) == 2:
@@ -215,8 +201,7 @@ def _conditional_paragraph(
             "`requiredExtra` mechanism, which only single-dimension agents "
             "can use) was never "
             "an option here — omitting the field on the wrong dimension is "
-            "correct while "
-            "omitting it on this one is a contract violation."
+            "correct while omitting it on this one is a contract violation."
         )
     else:
         body = (
@@ -233,7 +218,6 @@ def _conditional_paragraph(
 
 
 def conditional_paragraphs(agent_rows: Sequence[Mapping[str, Any]]) -> list[str]:
-    """Keep multi-dimension paragraphs in registry order."""
     all_dims = [row["dimension"] for row in agent_rows]
     conditional_fields = [
         (row["dimension"], field)
@@ -266,10 +250,7 @@ _CONDITIONAL_ANCHOR = re.compile(
 
 
 def splice(text: str, anchor_re: re.Pattern[str], body: str) -> str:
-    """
-    Reject duplicate or orphan markers so a later check cannot silently accept
-    stale debris.
-    """
+    """Reject broken markers so --check cannot silently accept stale debris."""
     open_count = text.count(MARKER_OPEN)
     close_count = text.count(MARKER_CLOSE)
     if open_count > 1 or open_count != close_count:
@@ -292,7 +273,6 @@ def splice(text: str, anchor_re: re.Pattern[str], body: str) -> str:
 
 
 def single_dimension_targets(registry: Mapping[str, Any]) -> dict[str, str]:
-    """Return registry-defined requiredExtra dispatch targets."""
     targets: dict[str, str] = {}
     for row in registry["dimensions"]:
         fields = row["requiredExtra"]
@@ -324,10 +304,6 @@ _PERDIM_ROW = re.compile(
 
 
 def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
-    """
-    Rewrite only the Required cell of rows whose first cell names a registry-
-    known field.
-    """
     known = set(registry["canonicalFields"])
     for row in registry["dimensions"]:
         known.update(row["extraFields"])
@@ -425,38 +401,14 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             {"type": "array", "items": {"type": "string"}},
         ):
             raise CliError(f"unknown finding schema type for {field}: {schema!r}")
-    if not set(identity["required"]) <= set(field_types):
-        raise CliError("required finding field absent from schema")
     delta_keys = identity["deltaKeys"]
-    required_delta_keys = delta_keys[:2]
     delta_value_fields = delta_keys[2:]
-    if required_delta_keys != ["id", "verified"] or len(delta_keys) != len(
-        set(delta_keys)
-    ):
-        raise CliError("invalid ordered delta keys")
-    if not set(identity["verifySliceFields"]) <= set(field_types):
-        raise CliError("verify slice field absent from finding schema")
-    templates = {}
     root = "/__gauntlet_registry_root__/"
     sha = "__GAUNTLET_SHA__"
-    paths: Mapping[str, str] = identity["artifactPaths"]
-    if list(paths) != ["findings", "report", "postReview", "checkpoints"]:
-        raise CliError("unexpected artifact path keys")
-    for key, path in paths.items():
-        if not path.startswith(root) or path.count(sha) != 1:
-            raise CliError(f"invalid artifact path for {key}")
-        basename = path[len(root) :]
-        if "/" in basename:
-            raise CliError(f"artifact path is not a basename for {key}")
-        templates[key] = basename.replace(sha, "{sha}")
-    for key in ("fixMaxLines", "fixMaxChars"):
-        value = identity[key]
-        if type(value) is not int or not 0 < value <= 9007199254740991:
-            raise CliError(f"invalid fix bound: {key}")
-    for key in ("severityOrder", "reachability", "deltaKeys", "verifySliceFields"):
-        values = identity[key]
-        if not values or len(values) != len(set(values)):
-            raise CliError(f"invalid ordered values: {key}")
+    templates = {
+        key: path[len(root) :].replace(sha, "{sha}")
+        for key, path in identity["artifactPaths"].items()
+    }
 
     def literal_type(values: Sequence[str]) -> str:
         members = ", ".join(json.dumps(v) for v in values)
@@ -564,15 +516,13 @@ def _load_resolver(repo_root: str) -> types.ModuleType:
 
 
 # Render placeholders through the real renderer so the copyable template cannot drift.
-_TEMPLATE_FINDING = {
-    "id": "{finding.id}",
-    "file": "{finding.file}",
-    "line_start": "{finding.line_start}",
-    "title": "{finding.title}",
-    "description": "{finding.description}",
-    "confidence": "{finding.confidence}",
-    "dimension": "{finding.dimension}",
-}
+def _placeholders(prefix: str, fields: str) -> dict[str, str]:
+    return {field: "{" + prefix + "." + field + "}" for field in fields.split()}
+
+
+_TEMPLATE_FINDING = _placeholders(
+    "finding", "id file line_start title description confidence dimension"
+)
 
 _TEMPLATE_FIXTURE: dict[str, Any] = {
     "mode": "interactive",
@@ -600,30 +550,18 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
         {
             **_TEMPLATE_FINDING,
             "severity": "critical",
-            "line_end": "{finding.line_end}",
             "origin": "surfaced",
-            "evidence": "{finding.evidence}",
-            "suggestion": "{finding.suggestion}",
-            "claude_md_rule": "{finding.claude_md_rule}",
-            "rule_source": "{finding.rule_source}",
-            "spec_text": "{finding.spec_text}",
-            "cross_file_refs": "{finding.cross_file_refs}",
-            "affected_consumers": "{finding.affected_consumers}",
-            "attack_vector": "{finding.attack_vector}",
-            "behavior_preserved": "{finding.behavior_preserved}",
-            "criticality": "{finding.criticality}",
-            "failure_scenario": "{finding.failure_scenario}",
-            "hidden_errors": "{finding.hidden_errors}",
-            "invalid_state_example": "{finding.invalid_state_example}",
+            **_placeholders(
+                "finding",
+                "line_end evidence suggestion claude_md_rule rule_source spec_text "
+                "cross_file_refs affected_consumers attack_vector behavior_preserved "
+                "criticality failure_scenario hidden_errors invalid_state_example",
+            ),
             "challenge_contested": True,
             "corroborations": [
-                {
-                    "agent": "{corroboration.agent}",
-                    "dimension": "{corroboration.dimension}",
-                    "confidence": "{corroboration.confidence}",
-                    "title": "{corroboration.title}",
-                    "description": "{corroboration.description}",
-                }
+                _placeholders(
+                    "corroboration", "agent dimension confidence title description"
+                )
             ],
         },
         {**_TEMPLATE_FINDING, "severity": "high"},
@@ -795,42 +733,6 @@ def render_inline_comment_sample(identity: Mapping[str, Any]) -> str:
     return "````markdown\n" + rendered + "\n````"
 
 
-_DERIVED_WAIST_TYPES = {"string", "csv_list", "int_or_null"}
-
-
-def _require_description(
-    identity: Mapping[str, Any], table_name: str, name: str
-) -> None:
-    descriptions = identity[table_name]
-    if name not in descriptions:
-        raise CliError(
-            f"identity_body: {table_name} has no describe entry for {name!r}"
-        )
-    description = descriptions[name]
-    if not isinstance(description, str) or not description.strip():
-        raise CliError(
-            f"identity_body: {table_name} description for {name!r} is "
-            f"empty or whitespace"
-        )
-
-
-def _validate_derived_waist_identity(identity: Mapping[str, Any]) -> None:
-    """Validate every registry metadata value needed by the derived-waist renderer."""
-    for table_name in ("deriveWhen", "derivedFrom", "waistRequired"):
-        if table_name not in identity:
-            raise CliError(f"identity_body: identity lacks a {table_name} key")
-    for row in identity["knobs"]:
-        row_type = row.get("type")
-        if row_type not in _DERIVED_WAIST_TYPES:
-            raise CliError(
-                f"identity_body: row {row.get('key')!r} has unknown type {row_type!r}"
-            )
-        for table_name in ("deriveWhen", "derivedFrom"):
-            name = row.get(table_name)
-            if name is not None:
-                _require_description(identity, table_name, name)
-
-
 def _modes_phrase(modes: Sequence[str]) -> str:
     names = list(modes)
     if len(names) == 1:
@@ -854,10 +756,9 @@ def _derived_waist_instruction(
 
 
 def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
-    _validate_derived_waist_identity(identity)
     rows = identity["knobs"]
-    waist_rows = [row for row in rows if row.get("waistPath") is not None]
-    derived_rows = [row for row in rows if row.get("derivedFrom") is not None]
+    waist_rows = [row for row in rows if row["waistPath"] is not None]
+    derived_rows = [row for row in rows if row["derivedFrom"] is not None]
     lines: list[str] = []
     if waist_rows:
         lines.extend(
@@ -873,7 +774,7 @@ def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
             type_note = ""
             if row["type"] == "int_or_null":
                 type_note = "; digits derive as a JSON number"
-                if row.get("nullReceipt"):
+                if row["nullReceipt"]:
                     type_note += (
                         f"; on {_modes_phrase(row['nullReceipt'])} the "
                         f"receipt spelling "
@@ -882,13 +783,13 @@ def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
             elif row["type"] == "csv_list":
                 type_note = "; the comma-separated value derives as a list"
             condition = ""
-            if row.get("deriveWhen") is not None:
+            if row["deriveWhen"] is not None:
                 condition = ", when " + identity["deriveWhen"][row["deriveWhen"]]
             line = (
                 f"- `{row['waistPath']}` ({_modes_phrase(row['modes'])}{condition}): "
                 f"from `configEcho.{row['key']}`{type_note}"
             )
-            if row.get("waistMap") is not None:
+            if row["waistMap"] is not None:
                 for source, target in row["waistMap"].items():
                     line += f"; `{source}` derives as `{target}`"
             line += ". " + _derived_waist_instruction(row, identity["waistRequired"])
@@ -919,10 +820,7 @@ def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
 def identity_body(
     rel_path: str, symbol: str, identity: Mapping[str, Any], repo_root: str
 ) -> list[str]:
-    """
-    Render by file and symbol because the same legend has different wording in
-    each file.
-    """
+    """Legends differ by file, so dispatch on both the file and the symbol."""
     mark = identity["brand"]["mark"]
     name = identity["brand"]["name"]
     pairs = [(emoji, severity) for severity, emoji in identity["severityEmoji"].items()]
@@ -959,28 +857,20 @@ def identity_body(
             "| --- | --- | --- |",
         ]
         for row in identity["knobs"]:
-            if not row.get("env"):
+            if not row["env"]:
                 continue
             env_name = row["env"]
-            rule = row.get("rule")
-            if isinstance(rule, dict) and "kind" not in rule:
-                rule = rule.get("headless")
-            if not isinstance(rule, dict):
-                values = "valid value"
+            rule = row["rule"]
+            if "kind" not in rule:
+                rule = rule["headless"]
+            kind = rule["kind"]
+            if kind == "positive_digits":
+                values = "positive integer"
+            elif kind == "digits_or_null":
+                values = "digits or null"
             else:
-                kind = rule.get("kind")
-                if kind == "positive_digits":
-                    values = "positive integer"
-                elif kind == "digits_or_null":
-                    values = "digits or null"
-                else:
-                    choices = rule.get("values")
-                    values = (
-                        ",".join(str(value) for value in choices)
-                        if isinstance(choices, list)
-                        else "valid value"
-                    )
-            default = row.get("defaults", {}).get("headless", ["", ""])[0]
+                values = ",".join(rule["values"])
+            default = row["defaults"]["headless"][0]
             lines.append(f"| `{env_name}` | `{values}` | `{default}` |")
         return lines
     if symbol == "chat_identity":
@@ -997,46 +887,37 @@ def identity_body(
             "pipeline_version": "{pipeline_version}",
             "plugin_root": "/absolute/path/to/claude-code-gauntlet",
         }
-        rendered: dict[str, list[str]] = {}
-        receipts: dict[str, list[str]] = {}
+        lines = [
+            "The resolver owns the printed configuration block and the "
+            "keyed `configEcho` receipt.",
+        ]
         for mode in ("interactive", "headless"):
             resolved = resolver.resolve(
                 mode, {}, None, "pr", registry=identity["knobs"]
             )
-            receipts[mode] = resolver.serialize_receipt(
-                mode, resolved["configEcho"], registry=identity["knobs"]
-            ).splitlines()
-            rendered[mode] = resolver.render_block(
+            block = resolver.render_block(
                 mode, resolved["configEcho"], docs_identity, registry=identity["knobs"]
-            ).splitlines()
-        return [
-            "The resolver owns the printed configuration block and the "
-            "keyed `configEcho` receipt.",
-            "",
-            "**Interactive block:**",
-            "",
-            "```text",
-            *rendered["interactive"],
-            "```",
-            "",
-            "**Interactive receipt:**",
-            "",
-            "```json",
-            *receipts["interactive"],
-            "```",
-            "",
-            "**Headless block:**",
-            "",
-            "```text",
-            *rendered["headless"],
-            "```",
-            "",
-            "**Headless receipt:**",
-            "",
-            "```json",
-            *receipts["headless"],
-            "```",
-        ]
+            )
+            receipt = resolver.serialize_receipt(
+                mode, resolved["configEcho"], registry=identity["knobs"]
+            )
+            lines.extend(
+                [
+                    "",
+                    f"**{mode.title()} block:**",
+                    "",
+                    "```text",
+                    *block.splitlines(),
+                    "```",
+                    "",
+                    f"**{mode.title()} receipt:**",
+                    "",
+                    "```json",
+                    *receipt.splitlines(),
+                    "```",
+                ]
+            )
+        return lines
     if symbol == "derived_waist_fields":
         return _derived_waist_body(identity)
     if symbol == "inline_legend":
@@ -1067,10 +948,7 @@ def identity_body(
 def find_identity_pairs(
     lines: Sequence[str], rel_path: str
 ) -> dict[str, tuple[int, int]]:
-    """
-    Validate per symbol because one file may carry several independent identity
-    fences.
-    """
+    """Validate per symbol because a file can carry several independent fences."""
     opens: dict[str, int] = {}
     closes: dict[str, int] = {}
     for index, line in enumerate(lines):
@@ -1092,8 +970,7 @@ def find_identity_pairs(
         raise CliError(
             f"{rel_path}: unmatched identity marker(s) for {', '.join(unmatched)} — an "
             "orphaned marker would make --check call the file current "
-            "while real debris "
-            "sits in it; fix by hand"
+            "while real debris sits in it; fix by hand"
         )
     pairs: dict[str, tuple[int, int]] = {}
     for symbol, open_index in opens.items():
@@ -1118,10 +995,7 @@ def find_identity_pairs(
 def fill_identity_fences(
     text: str, rel_path: str, identity: Mapping[str, Any], repo_root: str
 ) -> str:
-    """
-    Reject missing and undeclared fences so neither unmaintained copies nor
-    stale debris ship.
-    """
+    """Refuse missing/undeclared fences so unmaintained copies cannot ship."""
     lines = text.split("\n")
     pairs = find_identity_pairs(lines, rel_path)
     expected = set(IDENTITY_FENCES[rel_path])

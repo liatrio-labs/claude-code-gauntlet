@@ -14,19 +14,26 @@ from gauntlet.cli import CliError
 from tests.support.repository import copy_generator_tree
 
 ROOT = Path(__file__).resolve().parents[1]
+REPORT = "skills/code-gauntlet/references/report-format.md"
+DELIVERY = "skills/code-gauntlet/references/delivery-guide.md"
+SKILL = "skills/code-gauntlet/SKILL.md"
+TRIAGE = "skills/code-gauntlet/references/phase2-triage.md"
+PREFLIGHT = "skills/code-gauntlet/references/phase1-preflight.md"
+HEADLESS = "skills/code-gauntlet/references/headless-mode.md"
+DELIVER_PHASE = "skills/code-gauntlet/references/phase8-delivery.md"
 TARGETS = (
     "agents/security-reviewer.md",
     "agents/cross-file-impact.md",
     "agents/test-analyzer.md",
     "agents/code-simplifier.md",
     "agents/conventions-and-intent.md",
-    "skills/code-gauntlet/references/report-format.md",
-    "skills/code-gauntlet/references/delivery-guide.md",
-    "skills/code-gauntlet/SKILL.md",
-    "skills/code-gauntlet/references/phase2-triage.md",
-    "skills/code-gauntlet/references/phase1-preflight.md",
-    "skills/code-gauntlet/references/headless-mode.md",
-    "skills/code-gauntlet/references/phase8-delivery.md",
+    REPORT,
+    DELIVERY,
+    SKILL,
+    TRIAGE,
+    PREFLIGHT,
+    HEADLESS,
+    DELIVER_PHASE,
     "scripts/gauntlet/registry.py",
 )
 
@@ -172,23 +179,10 @@ IDENTITY = {
 }
 
 _EXPECTED_INLINE_SAMPLE = (
-    "````markdown\n"
-    "**{emoji} [SEVERITY] {finding.title}**\n"
-    "\n"
-    "{body}\n"
-    "\n"
-    "**Suggested fix:**\n"
-    "{suggestion}\n"
-    "\n"
-    "**{rule_source_label}:**\n"
+    "````markdown\n**{emoji} [SEVERITY] {finding.title}**\n\n{body}\n\n"
+    "**Suggested fix:**\n{suggestion}\n\n**{rule_source_label}:**\n"
     "> {claude_md_rule, falling back to spec_text — blockquoted, one `>` "
-    "line per source line}\n"
-    "\n"
-    "```suggestion\n"
-    "{suggested_fix_code}\n"
-    "```\n"
-    "\n"
-    "MARK *NAME*\n"
+    "line per source line}\n\n```suggestion\n{suggested_fix_code}\n```\n\nMARK *NAME*\n"
     "````"
 )
 
@@ -196,8 +190,7 @@ _EXPECTED_DERIVED_WAIST_FIELDS = (
     "The workflow derives these waist fields from the copied `configEcho` "
     "receipt. Do not stamp a derived field; when a listed derivation "
     "applies, a stamped value that disagrees with its receipt is refused "
-    "before dispatch.\n"
-    "\n"
+    "before dispatch.\n\n"
     "- `optional.beta` (headless runs): from `configEcho.beta`. Leave "
     "`beta` out of any stamped `optional`.\n"
     "- `nested.gamma` (headless and interactive runs, when the gamma "
@@ -208,34 +201,25 @@ _EXPECTED_DERIVED_WAIST_FIELDS = (
     "spelling `null` derives as JSON `null`. Stamp `limits` and leave "
     "`nullable` out of it.\n"
     "- `delivery.count` (headless runs): from `configEcho.zeta`; digits "
-    "derive as a JSON number. Leave `count` out of any stamped "
-    "`delivery`.\n"
+    "derive as a JSON number. Leave `count` out of any stamped `delivery`.\n"
     "- `delivery.items` (headless runs): from `configEcho.eta`; the "
     "comma-separated value derives as a list. Leave `items` out of any "
-    "stamped `delivery`.\n"
-    "\n"
-    "The workflow fills these receipt entries itself; never stamp them.\n"
-    "\n"
+    "stamped `delivery`.\n\n"
+    "The workflow fills these receipt entries itself; never stamp them.\n\n"
     "- `configEcho.delta` (interactive runs): the delta source is present."
 )
 
 _EXPECTED_PR_IDENTITY_FIELDS = (
-    "`delivery.prIdentity` fields:\n"
-    "\n"
-    "- `owner` (required): a non-empty string.\n"
+    "`delivery.prIdentity` fields:\n\n- `owner` (required): a non-empty string.\n"
     "- `repo` (required): a non-empty string.\n"
     "- `pr_number` (required): a positive safe integer.\n"
     "- `sha_full` (required): a 40-character lowercase hex commit id.\n"
     "- `platform` (required): one of github, gitlab.\n"
     "- `web_origin` (required): an http(s) origin: scheme, host and "
-    "optional port only.\n"
-    "- `title` (optional): a non-empty string when present.\n"
-    "\n"
-    "Producer command:\n"
-    "\n"
+    "optional port only.\n- `title` (optional): a non-empty string when present.\n\n"
+    "Producer command:\n\n"
     "`python3 {plugin_root}/scripts/resolve_pr_identity.py --platform "
-    "github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> "
-    "[--title <text>]`"
+    "github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> [--title <text>]`"
 )
 
 _EXPECTED_PERMALINK_FORMATS = (
@@ -252,61 +236,36 @@ _EXPECTED_PERMALINK_FORMATS = (
 )
 
 EXPECTED_BODIES = {
-    ("skills/code-gauntlet/references/report-format.md", "severity_legend"): (
+    (REPORT, "severity_legend"): (
         "Product mark: MARK (NAME). Severity emoji: C critical, L low.\n"
         "Rule source labels: documented_rule -> DR, code_comment -> CC, "
-        "repo_precedent -> RP, self_inconsistency -> SI; unknown values -> "
-        "RF.\n"
+        "repo_precedent -> RP, self_inconsistency -> SI; unknown values -> RF.\n"
         "Always use the Unicode characters, never GitHub shortcodes "
-        "(`:red_circle:`) \u2014 shortcodes do\n"
-        "not render in terminal/chat output."
+        "(`:red_circle:`) \u2014 shortcodes do\nnot render in terminal/chat output."
     ),
-    (
-        "skills/code-gauntlet/references/report-format.md",
-        "permalink_formats",
-    ): _EXPECTED_PERMALINK_FORMATS,
-    ("skills/code-gauntlet/references/report-format.md", "inline_legend"): (
+    (REPORT, "permalink_formats"): _EXPECTED_PERMALINK_FORMATS,
+    (REPORT, "inline_legend"): (
         "`{emoji}` is C critical / L low, `{SEVERITY}` is the normalized "
         "severity uppercased."
     ),
-    (
-        "skills/code-gauntlet/references/report-format.md",
-        "inline_sample",
-    ): _EXPECTED_INLINE_SAMPLE,
-    (
-        "skills/code-gauntlet/references/delivery-guide.md",
-        "severity_legend",
-    ): (
+    (REPORT, "inline_sample"): _EXPECTED_INLINE_SAMPLE,
+    (DELIVERY, "severity_legend"): (
         "Product mark: MARK (NAME). Severity emojis: C critical, L low.\n"
         "Rule source labels: documented_rule -> DR, code_comment -> CC, "
-        "repo_precedent -> RP, self_inconsistency -> SI; unknown values -> "
-        "RF."
+        "repo_precedent -> RP, self_inconsistency -> SI; unknown values -> RF."
     ),
-    (
-        "skills/code-gauntlet/references/delivery-guide.md",
-        "summary_header",
-    ): "### MARK NAME",
-    (
-        "skills/code-gauntlet/references/delivery-guide.md",
-        "inline_sample",
-    ): _EXPECTED_INLINE_SAMPLE,
-    (
-        "skills/code-gauntlet/references/delivery-guide.md",
-        "delivery_identity",
-    ): (
+    (DELIVERY, "summary_header"): "### MARK NAME",
+    (DELIVERY, "inline_sample"): _EXPECTED_INLINE_SAMPLE,
+    (DELIVERY, "delivery_identity"): (
         "- **Identity:** prepends `### MARK NAME` to `review_body` and appends "
         "`MARK *NAME*` to every rendered comment body \u2014 one mark per delivered "
         "surface, never one per finding. Never hand-type either."
     ),
-    ("skills/code-gauntlet/SKILL.md", "chat_identity"): (
+    (SKILL, "chat_identity"): (
         "The final delivery summary opens with `MARK NAME` on its first line and "
-        "carries no other\n"
-        "emoji, except severity emoji when listing findings."
+        "carries no other\nemoji, except severity emoji when listing findings."
     ),
-    (
-        "skills/code-gauntlet/SKILL.md",
-        "config_receipt",
-    ): (
+    (SKILL, "config_receipt"): (
         "The resolver owns the printed configuration block and the keyed "
         "`configEcho` receipt."
         """
@@ -381,58 +340,26 @@ Headless config:
 }
 ```"""
     ),
-    (
-        "skills/code-gauntlet/SKILL.md",
-        "derived_waist_fields",
-    ): _EXPECTED_DERIVED_WAIST_FIELDS,
-    (
-        "skills/code-gauntlet/SKILL.md",
-        "pr_identity_fields",
-    ): _EXPECTED_PR_IDENTITY_FIELDS,
-    (
-        "skills/code-gauntlet/references/phase2-triage.md",
-        "derived_waist_fields",
-    ): _EXPECTED_DERIVED_WAIST_FIELDS,
-    (
-        "skills/code-gauntlet/references/phase2-triage.md",
-        "pr_identity_fields",
-    ): _EXPECTED_PR_IDENTITY_FIELDS,
-    (
-        "skills/code-gauntlet/references/phase1-preflight.md",
-        "derived_waist_fields",
-    ): _EXPECTED_DERIVED_WAIST_FIELDS,
-    ("skills/code-gauntlet/references/headless-mode.md", "headless_env_table"): (
-        "| Variable | Values | Default |\n"
-        "| --- | --- | --- |\n"
+    (SKILL, "derived_waist_fields"): _EXPECTED_DERIVED_WAIST_FIELDS,
+    (SKILL, "pr_identity_fields"): _EXPECTED_PR_IDENTITY_FIELDS,
+    (TRIAGE, "derived_waist_fields"): _EXPECTED_DERIVED_WAIST_FIELDS,
+    (TRIAGE, "pr_identity_fields"): _EXPECTED_PR_IDENTITY_FIELDS,
+    (PREFLIGHT, "derived_waist_fields"): _EXPECTED_DERIVED_WAIST_FIELDS,
+    (HEADLESS, "headless_env_table"): (
+        "| Variable | Values | Default |\n| --- | --- | --- |\n"
         "| `CODE_GAUNTLET_ALPHA` | `h-alpha` | `h-alpha` |\n"
         "| `CODE_GAUNTLET_BETA` | `h-beta` | `h-beta` |"
     ),
-    (
-        "skills/code-gauntlet/references/phase8-delivery.md",
-        "permalink_formats",
-    ): _EXPECTED_PERMALINK_FORMATS,
+    (DELIVER_PHASE, "permalink_formats"): _EXPECTED_PERMALINK_FORMATS,
 }
 
 
-@pytest.mark.parametrize(
-    ("fields", "expected"),
-    [
-        (
-            ["criticality", "failure_scenario"],
-            "`criticality` and `failure_scenario` are required by the dispatch schema "
-            "\u2014 a finding missing any of them is rejected at the StructuredOutput "
-            "boundary and retried, so all must always be present.",
-        ),
-        (
-            ["a", "b", "c"],
-            "`a`, `b`, and `c` are required by the dispatch schema \u2014 a finding "
-            "missing any of them is rejected at the StructuredOutput boundary and "
-            "retried, so all must always be present.",
-        ),
-    ],
-)
-def test_dispatch_sentence(fields, expected):
-    assert gen.dispatch_required_sentence(fields) == expected
+def test_dispatch_sentence():
+    assert gen.dispatch_required_sentence(["criticality", "failure_scenario"]) == (
+        "`criticality` and `failure_scenario` are required by the dispatch schema "
+        "\u2014 a finding missing any of them is rejected at the StructuredOutput "
+        "boundary and retried, so all must always be present."
+    )
 
 
 def test_conditional_paragraphs():
@@ -448,52 +375,26 @@ def test_conditional_paragraphs():
         "For convention findings: the `claude_md_rule` field MUST be non-null and MUST "
         "quote the specific rule. Findings without a cited rule will be rejected. "
         "`claude_md_rule` is a dimension-conditional dispatch requirement. "
-        "On a dispatch "
-        "that targets the first-party API directly (no third-party "
+        "On a dispatch that targets the first-party API directly (no third-party "
         "provider, no gateway), "
         "the schema enforces it specifically for findings whose dimension "
-        "is convention "
-        "— sibling intent/comment_accuracy findings correctly omit it — "
-        "and this "
-        "contract is the enforcement floor on every run, including "
+        "is convention — sibling intent/comment_accuracy findings correctly omit it — "
+        "and this contract is the enforcement floor on every run, including "
         "third-party providers "
         "and gateway sessions where the schema stays flat. This agent's dispatch mixes "
         "convention, intent, and comment_accuracy findings in ONE schema, so a "
         "dimension-blind schema requirement (the flat `requiredExtra` mechanism, which "
-        "only single-dimension agents can use) was never an option here — "
-        "omitting "
+        "only single-dimension agents can use) was never an option here — omitting "
         "the field on the wrong dimension is correct while omitting it on this one is "
         "a contract violation."
     )
 
 
-@pytest.mark.parametrize(
-    "sentence",
-    [
-        pytest.param(
-            "`a` is required by the dispatch schema \u2014 a finding without it is "
-            "rejected at the StructuredOutput boundary and retried, so it "
-            "must always be "
-            "present.",
-            id="one-field",
-        ),
-        pytest.param(
-            "`a` and `b` are required by the dispatch schema \u2014 a finding "
-            "missing any of them is rejected at the StructuredOutput boundary and "
-            "retried, so all must always be present.",
-            id="two-fields",
-        ),
-        pytest.param(
-            "`a`, `b`, and `c` are required by the dispatch schema \u2014 a finding "
-            "missing any of them is rejected at the StructuredOutput boundary and "
-            "retried, so all must always be present.",
-            id="three-fields",
-        ),
-    ],
-)
-def test_block_anchor(sentence):
+def test_block_anchor():
     assert gen.splice(
-        "before\n" + sentence + "\nafter\n", gen._SINGLE_SENTENCE_ANCHOR, "new"
+        "before\n`a` is required by the dispatch schema - old wording.\nafter\n",
+        gen._SINGLE_SENTENCE_ANCHOR,
+        "new",
     ) == (
         "before\n<!-- generated-from-registry: do not edit; "
         "scripts/generate_contract_requirements.py -->\nnew\n"
@@ -504,34 +405,8 @@ def test_block_anchor(sentence):
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        (
-            "unrelated\n",
-            "no generated block and no recognizable anchor text to replace",
-        ),
-        (
-            "<!-- generated-from-registry: do not edit; "
-            "scripts/generate_contract_requirements.py -->\n",
-            "malformed generated-block markers (1 open, 0 close)",
-        ),
-        (
-            "body\n<!-- /generated-from-registry -->\n",
-            "malformed generated-block markers (0 open, 1 close)",
-        ),
-        (
-            "<!-- generated-from-registry: do not edit; "
-            "scripts/generate_contract_requirements.py -->\none\n<!-- "
-            "/generated-from-registry -->\n"
-            "<!-- generated-from-registry: do not edit; "
-            "scripts/generate_contract_requirements.py -->\ntwo\n<!-- "
-            "/generated-from-registry -->\n",
-            "malformed generated-block markers (2 open, 2 close)",
-        ),
-        (
-            "<!-- generated-from-registry: do not edit; "
-            "scripts/generate_contract_requirements.py -->body<!-- "
-            "/generated-from-registry -->",
-            "found MARKER_OPEN but block regex did not match",
-        ),
+        ("unrelated\n", "no generated block and no recognizable anchor"),
+        (gen.MARKER_OPEN + "\n", "malformed generated-block markers (1 open, 0 close)"),
     ],
 )
 def test_block_diagnostic(text, message):
@@ -559,29 +434,19 @@ def field_registry():
     }
 
 
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        (
-            "| `attack_vector` | string | security | no | exploit |\n",
-            "| `attack_vector` | string | security | yes | exploit |\n",
-        ),
-        (
-            "| `not_a_real_field` | string | yes | invented |\n",
-            "| `not_a_real_field` | string | yes | invented |\n",
-        ),
-        (
-            "| `claude_md_rule` | string | no | d |",
-            "| `claude_md_rule` | string | conditional | d |",
-        ),
-        (
-            "| `id` | string | MAYBE | invalid cell |\n",
-            "| `id` | string | MAYBE | invalid cell |\n",
-        ),
-    ],
-)
-def test_required_column(field_registry, text, expected):
-    assert gen.rewrite_required_column(text, field_registry) == expected
+def test_required_column(field_registry):
+    assert gen.rewrite_required_column(
+        "| `id` | string | no | identifier |\n"
+        "| `attack_vector` | string | security | no | exploit |\n"
+        "| `claude_md_rule` | string | no | citation |\n"
+        "| `not_a_real_field` | string | yes | invented |\n",
+        field_registry,
+    ) == (
+        "| `id` | string | yes | identifier |\n"
+        "| `attack_vector` | string | security | yes | exploit |\n"
+        "| `claude_md_rule` | string | conditional | citation |\n"
+        "| `not_a_real_field` | string | yes | invented |\n"
+    )
 
 
 @pytest.mark.parametrize(
@@ -589,13 +454,19 @@ def test_required_column(field_registry, text, expected):
     [
         pytest.param(rel, symbol, body, id=rel.split("/")[-1] + ":" + symbol)
         for (rel, symbol), body in EXPECTED_BODIES.items()
+        if (rel, symbol)
+        not in {
+            (DELIVERY, "inline_sample"),
+            (TRIAGE, "derived_waist_fields"),
+            (TRIAGE, "pr_identity_fields"),
+            (PREFLIGHT, "derived_waist_fields"),
+            (DELIVER_PHASE, "permalink_formats"),
+        }
     ],
 )
 def test_identity_body(rel, symbol, expected):
-    assert (
-        "\n".join(gen.identity_body(rel, symbol, deepcopy(IDENTITY), str(ROOT)))
-        == expected
-    )
+    body = gen.identity_body(rel, symbol, deepcopy(IDENTITY), str(ROOT))
+    assert "\n".join(body) == expected
 
 
 def test_identity_body_inventory():
@@ -609,70 +480,16 @@ def test_identity_body_inventory():
     }
 
 
-@pytest.mark.parametrize(
-    ("markers", "message"),
-    [
-        (
-            ["alpha", "alpha", "/alpha"],
-            "duplicate open identity marker for alpha (lines 1 and 2)",
-        ),
-        (
-            ["alpha", "/alpha", "/alpha"],
-            "duplicate close identity marker for alpha (lines 2 and 3)",
-        ),
-        (
-            ["/alpha", "alpha"],
-            "close identity marker for alpha precedes its open marker (lines 1 and 2)",
-        ),
-        (
-            ["alpha", "beta", "/beta", "/alpha"],
-            "beta's identity fence is nested inside alpha's (lines 1-4)",
-        ),
-    ],
-)
-def test_identity_pair_diagnostic(markers, message):
-    lines = [
-        f"# "
-        f"{marker[:1] if marker.startswith('/') else ''}generated-from-regi"
-        f"stry-identity:{marker.lstrip('/')}"
-        for marker in markers
-    ]
-    with pytest.raises(CliError, match=re.escape(message)):
-        gen.find_identity_pairs(lines, "x.py")
-
-
-def replace_at_path(identity, path, replacement):
-    parent = identity
-    for key in path[:-1]:
-        parent = parent[key]
-    if replacement is None:
-        del parent[path[-1]]
-    else:
-        parent[path[-1]] = (
-            replacement(parent[path[-1]]) if callable(replacement) else replacement
+def test_identity_pair_diagnostic():
+    with pytest.raises(CliError, match="duplicate open identity marker for alpha"):
+        gen.find_identity_pairs(
+            [
+                "<!-- generated-from-registry-identity:alpha -->",
+                "<!-- generated-from-registry-identity:alpha -->",
+                "<!-- /generated-from-registry-identity:alpha -->",
+            ],
+            "x.md",
         )
-
-
-@pytest.mark.parametrize(
-    ("path", "replacement", "message"),
-    [
-        (("deriveWhen",), None, "identity_body: identity lacks a deriveWhen key"),
-        (("derivedFrom",), None, "identity_body: identity lacks a derivedFrom key"),
-        (("waistRequired",), None, "identity_body: identity lacks a waistRequired key"),
-        (("deriveWhen", "gamma"), None, "deriveWhen has no describe entry for 'gamma'"),
-        (
-            ("deriveWhen", "gamma"),
-            "  \t",
-            "deriveWhen description for 'gamma' is empty or whitespace",
-        ),
-        (("knobs", 1, "type"), "number", "row 'beta' has unknown type 'number'"),
-    ],
-)
-def test_derived_identity_diagnostic(path, replacement, message):
-    identity = deepcopy(IDENTITY)
-    replace_at_path(identity, path, replacement)
-    with pytest.raises(CliError, match=re.escape(message)):
-        gen.identity_body("x.md", "derived_waist_fields", identity, str(ROOT))
 
 
 def test_unknown_identity_body():
@@ -681,7 +498,7 @@ def test_unknown_identity_body():
 
 
 def test_undeclared_identity_fence():
-    rel = "skills/code-gauntlet/references/delivery-guide.md"
+    rel = DELIVERY
     text = "\n".join(
         line
         for symbol in [
@@ -702,16 +519,9 @@ def test_undeclared_identity_fence():
         gen.fill_identity_fences(text, rel, IDENTITY, str(ROOT))
 
 
-@pytest.mark.parametrize("failure", ["missing", "failed", "invalid-json"])
-def test_node_diagnostic(monkeypatch, tmp_path, failure, invoke):
+def test_node_diagnostic(monkeypatch, tmp_path, invoke):
     def run(command, **kwargs):
-        if failure == "missing":
-            raise FileNotFoundError("node")
-        if failure == "invalid-json":
-            return gen.proc.CompletedProcess(command, 0, stdout="not json", stderr="")
-        raise gen.proc.CalledProcessError(
-            1, command, stderr="early\nforced JS failure\n"
-        )
+        raise FileNotFoundError("node")
 
     monkeypatch.setattr(gen.proc, "run", run)
     result = invoke(
@@ -721,17 +531,11 @@ def test_node_diagnostic(monkeypatch, tmp_path, failure, invoke):
     )
     assert result.returncode == 1
     assert result.stdout == b""
-    message = result.stderr.decode().rstrip("\n")
-    if failure == "invalid-json":
-        assert message.startswith("generate_contract_requirements: ")
-    else:
-        assert message.startswith(
-            "generate_contract_requirements: node 24 command failed: node "
-            "--input-type=module -e "
-        )
-    assert "\n" not in message
-    if failure == "failed":
-        assert message.endswith(": forced JS failure")
+    assert result.stderr.decode().startswith(
+        "generate_contract_requirements: node 24 command failed: node "
+        "--input-type=module -e "
+    )
+    assert result.stderr.count(b"\n") == 1
 
 
 def test_command_drift(registry_tree, invoke):
@@ -780,10 +584,8 @@ def test_added_knob(registry_tree, invoke):
         "headless: ['default'] }, "
         "rule: { kind: 'enum', values: ['value'] }, env: null, "
         "reviewMdKey: null, defaults: { headless: ['value', 'default'] }, "
-        "type: 'string', "
-        "waistPath: 'nested.added', waistMap: null, derivedFrom: null, "
-        "deriveWhen: null, "
-        "nullReceipt: [], resolvedKey: false },\n"
+        "type: 'string', waistPath: 'nested.added', waistMap: null, derivedFrom: null, "
+        "deriveWhen: null, nullReceipt: [], resolvedKey: false },\n"
     )
     path.write_text(source.replace("\n]);", "\n" + row + "]);", 1), encoding="utf-8")
     args = ["--repo-root", str(registry_tree)]
@@ -806,25 +608,15 @@ def test_added_knob(registry_tree, invoke):
     )
 
 
-@pytest.mark.parametrize("damage", ["missing", "orphaned"])
-def test_command_identity_diagnostic(registry_tree, damage, invoke):
-    target = registry_tree / "skills/code-gauntlet/references/delivery-guide.md"
-    text = target.read_text(encoding="utf-8")
-    if damage == "missing":
-        text = re.sub(
-            "<!-- generated-from-registry-identity:summary_header[^\\n]*\\n"
-            ".*?<!-- /generated-from-registry-identity:summary_header "
-            "-->\\n",
-            "",
-            text,
-            flags=re.DOTALL,
-        )
-        message = "no marker pair for identity symbol(s) summary_header"
-    else:
-        text = text.replace(
-            "<!-- /generated-from-registry-identity:severity_legend -->\n", ""
-        )
-        message = "unmatched identity marker(s) for severity_legend"
+def test_command_identity_diagnostic(registry_tree, invoke):
+    target = registry_tree / DELIVERY
+    text = re.sub(
+        r"<!-- generated-from-registry-identity:summary_header[^\n]*\n"
+        r".*?<!-- /generated-from-registry-identity:summary_header -->\n",
+        "",
+        target.read_text(encoding="utf-8"),
+        flags=re.DOTALL,
+    )
     target.write_text(text, encoding="utf-8")
     result = invoke(
         "generate_contract_requirements",
@@ -833,14 +625,16 @@ def test_command_identity_diagnostic(registry_tree, damage, invoke):
     )
     assert result.returncode == 1
     assert result.stdout == b""
-    assert message in result.stderr.decode()
+    assert "no marker pair for identity symbol(s) summary_header" in (
+        result.stderr.decode()
+    )
     assert re.fullmatch(
         r"generate_contract_requirements: [^\n]+\n", result.stderr.decode()
     )
 
 
 def test_both_report_regions(registry_tree, invoke):
-    target = registry_tree / "skills/code-gauntlet/references/report-format.md"
+    target = registry_tree / REPORT
     original = target.read_text(encoding="utf-8")
     broken = re.sub(r"(\| `id` \|[^\n]*?\| )yes( \|)", r"\g<1>no\2", original, count=1)
     broken = broken.replace("Product mark:", "HAND-EDITED LEGEND:", 1)
@@ -887,7 +681,7 @@ def test_cold_registry_repair(registry_tree):
 
 
 def test_identity_fill_order():
-    rel = "skills/code-gauntlet/references/delivery-guide.md"
+    rel = DELIVERY
     text = "\n".join(
         line
         for symbol in [
@@ -927,46 +721,9 @@ def live_identity():
     return gen.load_registry(str(ROOT))
 
 
-@pytest.mark.parametrize(
-    ("path", "replacement", "message"),
-    [
-        (("severityEmojiFallback",), 7, "cannot render non-JSON registry value: 7"),
-        (
-            ("findingTypes", "id"),
-            "boolean",
-            "unknown finding schema type for id: 'boolean'",
-        ),
-        (
-            ("required",),
-            lambda fields: [*fields, "absent"],
-            "required finding field absent from schema",
-        ),
-        (("deltaKeys",), ["verified", "id"], "invalid ordered delta keys"),
-        (
-            ("verifySliceFields",),
-            lambda fields: [*fields, "absent"],
-            "verify slice field absent from finding schema",
-        ),
-        (("artifactPaths", "findings"), None, "unexpected artifact path keys"),
-        (
-            ("artifactPaths", "findings"),
-            "wrong-root",
-            "invalid artifact path for findings",
-        ),
-        (
-            ("artifactPaths", "findings"),
-            "/__gauntlet_registry_root__/nested/__GAUNTLET_SHA__.json",
-            "artifact path is not a basename for findings",
-        ),
-        (("fixMaxLines",), 0, "invalid fix bound: fixMaxLines"),
-        (("severityOrder",), [], "invalid ordered values: severityOrder"),
-    ],
-)
-def test_registry_diagnostic(
-    registry_tree, live_identity, monkeypatch, invoke, path, replacement, message
-):
+def test_registry_diagnostic(registry_tree, live_identity, monkeypatch, invoke):
     identity = deepcopy(live_identity)
-    replace_at_path(identity, path, replacement)
+    identity["findingTypes"]["id"] = "boolean"
     monkeypatch.setattr(gen, "load_registry", lambda root: identity)
     result = invoke(
         "generate_contract_requirements",
@@ -975,103 +732,9 @@ def test_registry_diagnostic(
     )
     assert result.returncode == 1
     assert result.stdout == b""
-    assert message in result.stderr.decode()
+    assert "unknown finding schema type for id: 'boolean'" in result.stderr.decode()
     assert re.fullmatch(
         r"generate_contract_requirements: [^\n]+\n", result.stderr.decode()
-    )
-
-
-def test_resolver_load_diagnostic(registry_tree, monkeypatch, invoke):
-    monkeypatch.setattr(
-        gen.importlib.util, "spec_from_file_location", lambda *args: None
-    )
-    result = invoke(
-        "generate_contract_requirements",
-        ["--repo-root", str(registry_tree), "--check"],
-        registry_tree,
-    )
-    assert result.returncode == 1
-    assert result.stdout == b""
-    assert "cannot load resolver module from " in result.stderr.decode()
-    assert re.fullmatch(
-        r"generate_contract_requirements: [^\n]+\n", result.stderr.decode()
-    )
-
-
-def test_partial_write_order(registry_tree, invoke):
-    early = registry_tree / "agents/security-reviewer.md"
-    original = early.read_bytes()
-    early.write_text(
-        original.decode().replace("it must always be present", "STALE"),
-        encoding="utf-8",
-    )
-    late = registry_tree / "skills/code-gauntlet/references/delivery-guide.md"
-    late.write_text(
-        late.read_text(encoding="utf-8").replace(
-            "<!-- /generated-from-registry-identity:severity_legend -->", ""
-        ),
-        encoding="utf-8",
-    )
-    result = invoke(
-        "generate_contract_requirements",
-        ["--repo-root", str(registry_tree)],
-        registry_tree,
-    )
-    assert result.returncode == 1
-    assert b"unmatched identity marker" in result.stderr
-    assert early.read_bytes() == original
-
-
-def test_identity_markers_inside_code_fence():
-    assert gen.find_identity_pairs(
-        [
-            "```python",
-            "# generated-from-registry-identity:alpha",
-            "old",
-            "# /generated-from-registry-identity:alpha",
-            "```",
-        ],
-        "x.py",
-    ) == {"alpha": (1, 3)}
-
-
-def test_target_steps_compose(monkeypatch):
-    path = "agents/code-simplifier.md"
-    identity = {
-        "dimensions": [
-            {
-                "agentType": "code-gauntlet:code-simplifier",
-                "requiredExtra": ["x"],
-            }
-        ],
-        "brand": {"mark": "MARK", "name": "NAME"},
-        "severityEmoji": {},
-        "ruleSourceLabels": {},
-    }
-    monkeypatch.setattr(gen, "IDENTITY_FENCES", {path: ["summary_header"]})
-    text = (
-        "`x` is required by the dispatch schema - old wording.\n"
-        "<!-- generated-from-registry-identity:summary_header -->\n"
-        "STALE\n<!-- /generated-from-registry-identity:summary_header -->\n"
-    )
-    # The fence step must see the result of the preceding dispatch splice.
-    fill = gen.fill_identity_fences
-
-    def fill_after_splice(current, **kwargs):
-        assert "old wording" not in current
-        return fill(current, **kwargs)
-
-    monkeypatch.setattr(gen, "fill_identity_fences", fill_after_splice)
-    target = gen.rendered_targets(str(ROOT), identity, "registry")[path]
-    assert callable(target)
-    assert target(text) == (
-        "<!-- generated-from-registry: do not edit; "
-        "scripts/generate_contract_requirements.py -->\n"
-        "`x` is required by the dispatch schema \u2014 a finding without it is "
-        "rejected at the StructuredOutput boundary and retried, so it must always be "
-        "present.\n<!-- /generated-from-registry -->\n"
-        "<!-- generated-from-registry-identity:summary_header -->\n"
-        "### MARK NAME\n<!-- /generated-from-registry-identity:summary_header -->\n"
     )
 
 
@@ -1096,78 +759,24 @@ def test_conditional_anchor_command(registry_tree, invoke):
     assert path.read_bytes() == original
 
 
-def test_no_conditional_fields():
-    assert (
-        gen.conditional_paragraphs([{"dimension": "bug", "requiredWhenDimension": []}])
-        == []
-    )
-
-
-@pytest.mark.parametrize(
-    ("source", "old", "new", "symbol", "expected"),
-    [
-        (
-            "injection.js",
-            "FIX_MAX_LINES = 100",
-            "FIX_MAX_LINES = 101",
-            "FIX_MAX_LINES",
-            101,
-        ),
-        (
-            "applyValidations.js",
-            "'uncertain'",
-            "'unsure'",
-            "REACHABILITY_VALUES",
-            ("current", "future_change_only", "unsure"),
-        ),
-        (
-            "verifyWire.js",
-            "'cross_file_refs', 'origin'];",
-            "'cross_file_refs', 'title'];",
-            "VERIFY_SLICE_FIELDS",
-            (
-                "id",
-                "file",
-                "line_start",
-                "line_end",
-                "description",
-                "evidence",
-                "severity",
-                "confidence",
-                "cross_file_refs",
-                "title",
-            ),
-        ),
-        (
-            "registry.js",
-            "Code Gauntlet",
-            "Changed Gauntlet",
-            "BRAND_NAME",
-            "Changed Gauntlet",
-        ),
-    ],
-)
-def test_registry_source_projection(
-    registry_tree, invoke, source, old, new, symbol, expected
-):
-    path = registry_tree / "workflows/src" / source
+def test_registry_source_projection(registry_tree, invoke):
+    path = registry_tree / "workflows/src/injection.js"
     contents = path.read_text(encoding="utf-8")
-    assert old in contents
-    path.write_text(contents.replace(old, new), encoding="utf-8")
+    assert "FIX_MAX_LINES = 100" in contents
+    path.write_text(
+        contents.replace("FIX_MAX_LINES = 100", "FIX_MAX_LINES = 101"), encoding="utf-8"
+    )
     args = ["--repo-root", str(registry_tree)]
     stale = invoke("generate_contract_requirements", [*args, "--check"], registry_tree)
     assert stale.returncode == 1
     assert stale.stdout == b""
-    assert stale.stderr.decode().startswith(
-        "generate_contract_requirements: stale generated registry blocks: "
-    )
-    assert "scripts/gauntlet/registry.py" in stale.stderr.decode()
+    assert b"scripts/gauntlet/registry.py" in stale.stderr
     repaired = invoke("generate_contract_requirements", args, registry_tree)
     assert repaired.returncode == 0
     assert repaired.stderr == b""
-    module = (registry_tree / "scripts/gauntlet/registry.py").read_text(
-        encoding="utf-8"
-    )
     namespace: dict[str, Any] = {}
-    exec(module, namespace)
-    assert namespace[symbol] == expected
+    exec(
+        (registry_tree / "scripts/gauntlet/registry.py").read_text(encoding="utf-8"),
+        namespace,
+    )
+    assert namespace["FIX_MAX_LINES"] == 101

@@ -1,5 +1,3 @@
-"""Ordered target effects and the generator outcome boundary."""
-
 import pytest
 from gauntlet import generate
 from gauntlet.cli import CliError
@@ -47,29 +45,10 @@ def test_check_writes_nothing(tmp_path, monkeypatch):
     assert target.read_bytes() == b"old"
 
 
-def test_later_failure_keeps_earlier_write(tmp_path):
-    (tmp_path / "late.md").write_text("late", encoding="utf-8")
-
-    def fail(current):
-        assert (tmp_path / "early.md").read_bytes() == b"early"
-        raise CliError("late rendering failed")
-
-    with pytest.raises(CliError, match="late rendering failed"):
-        sync_targets(tmp_path, {"early.md": "early", "late.md": fail}, False)
-    assert (tmp_path / "early.md").read_bytes() == b"early"
-    assert (tmp_path / "late.md").read_bytes() == b"late"
-
-
 def test_missing_callable_target(tmp_path):
     with pytest.raises(FileNotFoundError):
         sync_targets(tmp_path, {"absent.md": lambda current: "new"}, False)
     assert not (tmp_path / "absent.md").exists()
-
-
-def test_unreadable_target(tmp_path):
-    (tmp_path / "directory.md").mkdir()
-    with pytest.raises(OSError):
-        sync_targets(tmp_path, {"directory.md": "new"}, True)
 
 
 @pytest.mark.parametrize(

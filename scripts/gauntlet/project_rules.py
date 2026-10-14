@@ -12,7 +12,7 @@ import stat
 import sys
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, cast
 
 from gauntlet.cli import Command, Parser
 from gauntlet.fs import confined, read_json, read_text, write_atomic
@@ -67,8 +67,6 @@ DEFAULT_MAX_FILE_BYTES = 65536
 DEFAULT_MAX_TOTAL_BYTES = 131072
 
 # Empty files do not consume bytes, so the walk needs a separate bound.
-# Measured repositories have 8-10 rule files; 512 leaves room for monorepos.
-# This is a runaway guard: raise it if it binds on a real repository.
 DEFAULT_MAX_FILES = 512
 
 # A mid-word at-sign is an email address or annotation, not an import.
@@ -120,15 +118,10 @@ def _find_imports(text: str) -> list[str]:
     return found
 
 
-def _normalise_relative(path: str) -> str:
-    """Changed paths use forward slashes on every host."""
-    return str(path).replace("\\", "/")
-
-
 def _changed_path_sets(repo_root: str, changed_files: Sequence[str]) -> set[str]:
     root = os.path.realpath(repo_root)
     realpaths = set()
-    for normalised in changed_files or []:
+    for normalised in changed_files:
         candidate = os.path.join(root, normalised)
         real = os.path.realpath(candidate)
         if confined(real, root):
@@ -207,7 +200,6 @@ class RuleCollector:
         return real, None
 
     def _read(self, real: str) -> tuple[str | None, SkipReason | None]:
-        """Check read-attempt and per-file caps before opening content."""
         if self.walked >= self.max_files:
             self.truncated = True
             return None, "file_cap_reached"
@@ -329,11 +321,7 @@ class RuleCollector:
             if target not in counts:
                 unfollowed: set[str] = set()
                 for raw in _find_imports(self.review_realpaths[target]):
-                    try:
-                        real, _ = self._resolve_pointer(raw, os.path.dirname(target))
-                    except ValueError:
-                        # A NUL byte in a pointer names no file.
-                        continue
+                    real, _ = self._resolve_pointer(raw, os.path.dirname(target))
                     if (
                         real is not None
                         and real not in self.included
@@ -360,15 +348,12 @@ def _search_dirs(repo_root: str, changed_files: Sequence[str]) -> list[str]:
     dirs = [root]
     seen = {root}
     extra = set()
-    for rel in changed_files or []:
+    for rel in changed_files:
         current = os.path.realpath(os.path.join(root, os.path.dirname(rel)))
         while confined(current, root) and current not in seen:
             extra.add(current)
             seen.add(current)
-            parent = os.path.dirname(current)
-            if parent == current:
-                break
-            current = parent
+            current = os.path.dirname(current)
     dirs.extend(sorted(extra))
     return dirs
 
@@ -376,18 +361,9 @@ def _search_dirs(repo_root: str, changed_files: Sequence[str]) -> list[str]:
 def _load_changed_files(path: str | None) -> list[str]:
     if not path:
         return []
-    data = read_json(path, errors="replace")
-    if not isinstance(data, list):
-        return []
-    out = []
-    for item in data:
-        if isinstance(item, str):
-            out.append(_normalise_relative(item))
-        elif isinstance(item, dict):
-            value = item.get("path") or item.get("file")
-            if isinstance(value, str):
-                out.append(_normalise_relative(value))
-    return out
+    # The skill serializes git's name-only output as a string array.
+    data = cast(list[str], read_json(path))
+    return [item.replace("\\", "/") for item in data]
 
 
 def collect_sources(collector: RuleCollector, changed: Sequence[str]) -> None:
@@ -465,35 +441,31 @@ def _gaps(collector: RuleCollector) -> list[str]:
             "refused",
             ("outside_repo", "absolute_path", "not_markdown"),
             "pointer refused; it is not a markdown file inside the repository",
-            False,
         ),
         (
             "truncated",
             ("too_large", "total_cap_reached", "file_cap_reached", "depth_exceeded"),
             "its rules are NOT in the review context",
-            False,
         ),
         (
             "unresolved",
             ("missing", "cycle", "not_regular"),
             "this pointer did not resolve to rule content",
-            False,
         ),
         (
             "unfollowed",
             ("review_rules_source",),
             "their rules are not in the review context",
-            True,
         ),
     )
     gaps = []
-    for family, reasons, message, requires_detail in families:
+    for family, reasons, message in families:
         seen: set[str] = set()
         for entry in collector.skipped:
             if entry["reason"] not in reasons:
                 continue
             detail = ""
-            if requires_detail:
+            if family == "unfollowed":
                 if not entry.get("detail") or entry["path"] in seen:
                     continue
                 seen.add(entry["path"])
@@ -513,7 +485,6 @@ def _gaps(collector: RuleCollector) -> list[str]:
 def _sources_without_text(
     sources: Sequence[Mapping[str, object]],
 ) -> list[dict[str, object]]:
-    """Rule text lives in --out; both receipts use the same inventory projection."""
     return [{k: v for k, v in s.items() if k != "text"} for s in sources]
 
 
@@ -540,18 +511,7 @@ def _receipt(
 
 
 def _emit(receipt: ProjectRulesReceipt) -> None:
-    try:
-        line = json.dumps(receipt)
-    except (TypeError, ValueError):
-        out = receipt.get("out")
-        line = json.dumps(
-            _receipt(
-                ok=False,
-                out=out,
-                gaps=["project_rules_receipt_unserializable"],
-            )
-        )
-    sys.stdout.write(line + "\n")
+    sys.stdout.write(json.dumps(receipt) + "\n")
     sys.stdout.flush()
 
 
@@ -602,17 +562,7 @@ def _handle(args: argparse.Namespace) -> int:
             )
         write_atomic(args.out, output, create_parents=True)
 
-        _emit(
-            _receipt(
-                ok=True,
-                out=args.out,
-                collector=collector,
-                total_bytes=collector.total_bytes,
-                truncated=collector.truncated,
-                gaps=_gaps(collector),
-            )
-        )
-        return 0
+        ok, gaps = True, _gaps(collector)
     except Exception as exc:  # noqa: BLE001 - callers require a receipt on every path
         sys.stderr.write(f"collect_project_rules: {exc}\n")
         with suppress(Exception):
@@ -623,15 +573,18 @@ def _handle(args: argparse.Namespace) -> int:
                 else "",
                 create_parents=True,
             )
-        _emit(
-            _receipt(
-                ok=False,
-                out=args.out,
-                collector=collector,
-                gaps=[f"project_rules_failed: {exc}"],
-            )
+        ok, gaps = False, [f"project_rules_failed: {exc}"]
+    _emit(
+        _receipt(
+            ok=ok,
+            out=args.out,
+            collector=collector,
+            total_bytes=collector.total_bytes if ok and collector else 0,
+            truncated=collector.truncated if ok and collector else False,
+            gaps=gaps,
         )
-        return 1
+    )
+    return 0 if ok else 1
 
 
 CLI = Command(parser=build_parser(), main=_handle)

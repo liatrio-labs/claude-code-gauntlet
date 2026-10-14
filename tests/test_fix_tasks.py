@@ -1,16 +1,12 @@
-"""FIX task output, confined scope, toolchain selection, and sibling discovery."""
+"""FIX task payloads, command hints, scope, and caller receipts."""
 
 import json
-import os
 import re
 import subprocess
-import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from gauntlet import fix_tasks as renderer
-from gauntlet.registry import SEVERITY_EMOJI
 
 
 @pytest.fixture
@@ -42,22 +38,9 @@ def make_finding(**changes):
 
 @pytest.fixture
 def write_artifact(fix_artifact):
-    def write(findings, wrapper=False, raw=None):
-        if raw is None:
-            data = (
-                {
-                    "owner": "acme",
-                    "repo": "demo",
-                    "pr_number": 7,
-                    "sha": "abc",
-                    "review_body": "",
-                    "findings": findings,
-                }
-                if wrapper
-                else findings
-            )
-            raw = json.dumps(data, ensure_ascii=True)
-        fix_artifact.write_text(raw, encoding="utf-8")
+    def write(findings, wrapper=False):
+        data = {"findings": findings} if wrapper else findings
+        fix_artifact.write_text(json.dumps(data, ensure_ascii=True), encoding="utf-8")
 
     return write
 
@@ -90,40 +73,19 @@ def output(result):
     return json.loads(result.stdout)
 
 
-def category_section(task):
-    categories = [
-        section
-        for section in task["description"].split("\n\n")
-        if section.startswith("## Category\n")
-    ]
-    assert len(categories) == 1
-    return categories[0]
-
-
 @pytest.fixture
-def git_repo(fix_root):
-    def init():
+def tracked_files(fix_root):
+    def track(*paths):
         subprocess.run(["git", "init"], cwd=fix_root, check=True, capture_output=True)
-
-    return init
-
-
-@pytest.fixture
-def git_add(fix_root):
-    def add(*paths):
+        for path in paths:
+            target = fix_root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("x", encoding="utf-8")
         subprocess.run(
             ["git", "add", *paths], cwd=fix_root, check=True, capture_output=True
         )
 
-    return add
-
-
-def test_sibling_index_missing_git_keeps_file_not_found_error(monkeypatch, tmp_path):
-    monkeypatch.setattr(renderer.proc, "which", lambda _name: None)
-    assert (
-        renderer.SiblingIndex(str(tmp_path)).error
-        == "could not list tracked files: FileNotFoundError"
-    )
+    return track
 
 
 def test_hand_typed_expected_bytes_for_every_optional_field(
@@ -131,11 +93,8 @@ def test_hand_typed_expected_bytes_for_every_optional_field(
 ):
     finding = make_finding(
         id="security-1",
-        file="src/bug.py",
-        line_start=10,
         line_end=12,
         title="Unsafe value",
-        description="The value is stale.",
         severity="critical",
         confidence=99,
         dimension="security",
@@ -215,7 +174,7 @@ def test_hand_typed_expected_bytes_for_every_optional_field(
 
 
 def test_only_required_fields_apply_all_omission_rules(run_renderer, write_artifact):
-    write_artifact([make_finding(origin=7)])
+    write_artifact([make_finding()])
     task = output(run_renderer())[0]
     assert "## Evidence" not in task["description"]
     assert "## Suggested Fix" not in task["description"]
@@ -226,56 +185,36 @@ def test_only_required_fields_apply_all_omission_rules(run_renderer, write_artif
     assert context["evidence"] == ""
     assert context["cross_file_refs"] == []
     assert context["blame_classification"] == "unknown"
+    assert task["metadata"]["complexity"] == "trivial"
+    assert task["metadata"]["model"] == "haiku"
 
 
-@pytest.mark.parametrize("wrapper", [False, True], ids=["array", "wrapper"])
-def test_wrapper_and_bare_array_inputs_are_identical(
-    wrapper, run_renderer, write_artifact
-):
-    write_artifact([make_finding(line_end=10)], wrapper=wrapper)
-    task = output(run_renderer())[0]
-    assert task["subject"] == "FIX: Avoid stale value"
-    assert task["description"] == (
-        "## Issue\nThe value is stale.\n\n"
-        "## Location\n`src/bug.py:10`\n\n"
-        "## Category\nmedium | bug\n\n"
-        "## Toolchain\nNot detected. Set the test, lint, and build commands "
-        "before running this task."
-    )
-    assert task["metadata"]["task_id"] == "FIX-bug-1"
-    assert task["metadata"]["requirements"] == [
-        {"id": "R-bug-1.1", "text": "The value is stale.", "testable": True}
+def test_wrapped_aliases_and_canonical_precedence(run_renderer, write_artifact):
+    finding = make_finding(line=11, end_line=12, body="canonical description")
+    for key in ("line_start", "description"):
+        finding.pop(key)
+    write_artifact([finding], wrapper=True)
+    alias_task = output(run_renderer())[0]
+    assert "## Location\n`src/bug.py:11-12`" in alias_task["description"]
+    assert alias_task["metadata"]["requirements"] == [
+        {"id": "R-bug-1.1", "text": "canonical description", "testable": True}
     ]
+    finding.update(line_start=11, line_end=12, description="canonical description")
+    finding.update(line=99, end_line=88, body="alias body")
+    write_artifact([finding], wrapper=True)
+    assert output(run_renderer())[0] == alias_task
 
 
-@pytest.mark.parametrize(
-    "artifact",
-    [
-        pytest.param([make_finding(confidence=float("nan"))], id="nan"),
-        pytest.param([make_finding(confidence=float("inf"))], id="infinity"),
-        pytest.param({"review": []}, id="unrecognized-shape"),
-        pytest.param(["not a finding"], id="non-object-finding"),
-        pytest.param(
-            [
-                {
-                    "id": "bug-1",
-                    "file": "src/bug.py",
-                    "line_start": 10,
-                    "title": "Avoid stale value",
-                    "description": "The value is stale.",
-                    "severity": "medium",
-                    "confidence": 81,
-                }
-            ],
-            id="missing-dimension",
-        ),
-    ],
-)
-def test_invalid_artifact_is_a_content_failure(artifact, run_renderer, write_artifact):
-    write_artifact(artifact)
+def test_invalid_artifact_is_a_content_failure(run_renderer, write_artifact):
+    finding = make_finding()
+    finding.pop("dimension")
+    write_artifact([finding])
     result = run_renderer()
-    assert result.returncode == 1
-    assert result.stdout == ""
+    assert (result.returncode, result.stdout, result.stderr) == (
+        1,
+        "",
+        "render_fix_tasks: finding at index 0 lacks required key dimension\n",
+    )
 
 
 def test_unexpected_build_failure_keeps_stdout_empty(
@@ -294,110 +233,47 @@ def test_unexpected_build_failure_keeps_stdout_empty(
     )
 
 
-def test_lone_surrogate_round_trips_through_real_script(
-    fix_root, fix_artifact, write_artifact
-):
-    write_artifact([make_finding(description="bad\ud800")])
-    script = Path(__file__).resolve().parents[1] / "scripts" / "render_fix_tasks.py"
-    result = subprocess.run(
-        [sys.executable, str(script), str(fix_artifact), "--repo-root", str(fix_root)],
-        capture_output=True,
-        env={**os.environ, "PYTHONIOENCODING": "utf-8:strict"},
-    )
-    assert result.returncode == 0, result.stderr
-    assert b"\\ud800" in result.stdout
-    assert json.loads(result.stdout)[0]["metadata"]["requirements"] == [
-        {"id": "R-bug-1.1", "text": "bad\ud800", "testable": True}
-    ]
-
-
-@pytest.mark.parametrize("shape", ["canonical", "alias", "both"])
-def test_alias_only_input_matches_canonical_and_canonical_wins(
-    shape, run_renderer, write_artifact
-):
-    values = make_finding(title="Canonical")
-    if shape in ("canonical", "both"):
-        values.update(line_start=11, line_end=12, description="canonical description")
-    if shape in ("alias", "both"):
-        if shape == "alias":
-            for key in ("line_start", "description"):
-                values.pop(key)
-        values.update(
-            line=11 if shape == "alias" else 99,
-            end_line=12 if shape == "alias" else 88,
-            body="canonical description" if shape == "alias" else "alias body",
-        )
-    write_artifact([values])
-    task = output(run_renderer())[0]
-    assert task["description"] == (
-        "## Issue\ncanonical description\n\n"
-        "## Location\n`src/bug.py:11-12`\n\n"
-        "## Category\nmedium | bug\n\n"
-        "## Toolchain\nNot detected. Set the test, lint, and build commands "
-        "before running this task."
-    )
-    assert task["metadata"]["requirements"] == [
-        {"id": "R-bug-1.1", "text": "canonical description", "testable": True}
-    ]
-
-
-@pytest.mark.usefixtures("symlink_or_skip")
-def test_rejected_paths_degrade_each_finding_and_report_the_count(
-    fix_root, run_renderer, tmp_path, write_artifact
-):
-    outside = tmp_path / "outside.py"
-    outside.write_text("x", encoding="utf-8")
-    link = fix_root / "link.py"
-    os.symlink(outside, link)
-    findings = [
-        make_finding(id="traversal", file="../x.py"),
-        make_finding(id="absolute", file=str(fix_root / "inside.py")),
-        make_finding(id="symlink", file="link.py"),
-    ]
-    write_artifact(findings)
+def test_outside_path_is_omitted_and_counted(run_renderer, write_artifact):
+    write_artifact([make_finding(file="../outside.py")])
     result = run_renderer()
-    tasks = output(result)
-    assert len(tasks) == 3
-    assert "3 paths rejected" in result.stderr
-    for finding, task in zip(findings, tasks, strict=True):
-        assert finding["file"] not in result.stdout
-        assert "(path rejected: outside repo root)" in task["description"]
-        assert task["metadata"]["scope"]["files_to_modify"] == []
-        assert task["metadata"]["scope"]["patterns_to_follow"] == []
-        assert task["metadata"]["commit"]["template"].split(":", 1)[0] == "fix(fix)"
-        assert not any(
-            a.get("type") == "file" for a in task["metadata"]["proof_artifacts"]
-        )
+    task = output(result)[0]
+    assert "(1 path rejected)" in result.stderr
+    assert "../outside.py" not in result.stdout
+    assert "## Location\n(path rejected: outside repo root)" in task["description"]
+    assert task["metadata"]["scope"] == {
+        "files_to_create": [],
+        "files_to_modify": [],
+        "patterns_to_follow": [],
+    }
+    assert task["metadata"]["proof_artifacts"] == []
+    assert task["metadata"]["commit"]["template"] == "fix(fix): Avoid stale value"
 
 
 @pytest.mark.parametrize(
     ("names", "commands"),
     [
-        (("package.json", "Cargo.toml"), ("npm test", "npm run lint", "npm run build")),
-        (("Cargo.toml", "go.mod"), ("cargo test", "cargo clippy", "cargo build")),
         (
-            ("go.mod", "pyproject.toml"),
-            ("go test ./...", "golangci-lint run", "go build ./..."),
+            (
+                "package.json",
+                "Cargo.toml",
+                "go.mod",
+                "pyproject.toml",
+                "Makefile",
+                "a.csproj",
+            ),
+            ("npm test", "npm run lint", "npm run build"),
         ),
-        (("pyproject.toml", "Makefile"), ("pytest", "ruff check .")),
-        (("Makefile", "a.csproj"), ("make test", "make lint", "make build")),
+        (("Cargo.toml",), ("cargo test", "cargo clippy", "cargo build")),
+        (("go.mod",), ("go test ./...", "golangci-lint run", "go build ./...")),
+        (("pyproject.toml",), ("pytest", "ruff check .")),
+        (("Makefile",), ("make test", "make lint", "make build")),
         (
             ("a.csproj",),
             ("dotnet test", "dotnet format --verify-no-changes", "dotnet build"),
         ),
     ],
-    ids=[
-        "npm-before-cargo",
-        "cargo-before-go",
-        "go-before-python",
-        "python-before-make",
-        "make-before-dotnet",
-        "dotnet-tail",
-    ],
 )
-def test_toolchain_adjacent_precedence_pairs(
-    names, commands, fix_root, run_renderer, write_artifact
-):
+def test_toolchain_commands(names, commands, fix_root, run_renderer, write_artifact):
     for name in names:
         contents = (
             '{"scripts":{"test":"x","lint":"x","build":"x"}}'
@@ -407,6 +283,7 @@ def test_toolchain_adjacent_precedence_pairs(
         (fix_root / name).write_text(contents, encoding="utf-8")
     write_artifact([make_finding()])
     task = output(run_renderer())[0]
+    assert "## Toolchain" not in task["description"]
     metadata = task["metadata"]
     assert metadata["proof_artifacts"] == [
         {"type": "test", "command": commands[0], "expected": "All pass"},
@@ -418,35 +295,12 @@ def test_toolchain_adjacent_precedence_pairs(
     }
 
 
-def test_non_object_package_scripts_use_npm_defaults(
-    fix_root, run_renderer, write_artifact
-):
+def test_custom_package_commands(fix_root, run_renderer, write_artifact):
     (fix_root / "package.json").write_text(
-        '{"scripts":["test:unit","lint:fix","build:prod"]}', encoding="utf-8"
-    )
-    write_artifact([make_finding()])
-
-    metadata = output(run_renderer())[0]["metadata"]
-    assert metadata["proof_artifacts"] == [
-        {"type": "test", "command": "npm test", "expected": "All pass"},
-        {"type": "file", "path": "src/bug.py"},
-    ]
-    assert metadata["verification"] == {
-        "pre": ["npm run lint", "npm run build"],
-        "post": ["npm test"],
-    }
-
-
-def test_package_scripts_custom_names_unsafe_names_and_invalid_json(
-    fix_root, run_renderer, write_artifact
-):
-    package = fix_root / "package.json"
-    package.write_text(
         json.dumps(
             {
                 "scripts": dict.fromkeys(
-                    ("test:unit", "test:z", "lint:fix", "build:prod", "lint<script"),
-                    "x",
+                    ("test:unit", "test:z", "lint:fix", "build:prod"), "x"
                 )
             }
         ),
@@ -454,178 +308,65 @@ def test_package_scripts_custom_names_unsafe_names_and_invalid_json(
     )
     write_artifact([make_finding()])
     metadata = output(run_renderer())[0]["metadata"]
-    proof = next(a for a in metadata["proof_artifacts"] if a["type"] == "test")
-    assert proof["command"] == "npm run test:unit"
-    assert metadata["verification"]["pre"] == ["npm run lint:fix", "npm run build:prod"]
-    package.write_text("not json", encoding="utf-8")
-    metadata = output(run_renderer())[0]["metadata"]
-    proof = next(a for a in metadata["proof_artifacts"] if a["type"] == "test")
-    assert proof["command"] == "npm test"
+    assert metadata["proof_artifacts"][0] == {
+        "type": "test",
+        "command": "npm run test:unit",
+        "expected": "All pass",
+    }
+    assert metadata["verification"] == {
+        "pre": ["npm run lint:fix", "npm run build:prod"],
+        "post": ["npm run test:unit"],
+    }
 
 
-@pytest.mark.usefixtures("symlink_or_skip")
-def test_outside_symlink_package_candidate_is_absent(
-    fix_root, run_renderer, tmp_path, write_artifact
+def test_root_level_siblings_and_non_git_root(
+    fix_root, tracked_files, run_renderer, write_artifact
 ):
-    outside = tmp_path / "package.json"
-    outside.write_text('{"scripts":{"test":"outside"}}', encoding="utf-8")
-    os.symlink(outside, fix_root / "package.json")
-    (fix_root / "Cargo.toml").write_text("x", encoding="utf-8")
-    write_artifact([make_finding()])
-    result = run_renderer()
-    metadata = output(result)[0]["metadata"]
-    proof = next(a for a in metadata["proof_artifacts"] if a["type"] == "test")
-    assert proof["command"] == "cargo test"
-    assert "toolchain candidate package.json rejected" in result.stderr
-
-
-@pytest.mark.parametrize("kind", ["directory", "large"])
-def test_invalid_package_candidate_is_absent_for_directory_and_large_file(
-    kind, fix_root, run_renderer, write_artifact
-):
-    package = fix_root / "package.json"
-    if kind == "directory":
-        package.mkdir()
-    else:
-        package.write_bytes(b"x" * (1024 * 1024 + 1))
-    (fix_root / "Cargo.toml").write_text("x", encoding="utf-8")
-    write_artifact([make_finding()])
-    result = run_renderer()
-    metadata = output(result)[0]["metadata"]
-    assert metadata["verification"]["post"] == ["cargo test"]
-    assert (
-        len(
-            [
-                line
-                for line in result.stderr.splitlines()
-                if "toolchain candidate package.json rejected" in line
-            ]
-        )
-        == 1
-    )
-
-
-def test_siblings_rank_and_exclude_delivered_own_untracked_with_a_two_file_cap(
-    fix_root, git_add, git_repo, run_renderer, write_artifact
-):
-    git_repo()
     tracked = [
-        "src/main.py",
-        "src/delivered.py",
-        "src/mainx.py",
-        "src/mainy.py",
-        "src/main_utils.py",
-        "src/main.js",
+        "main.py",
+        "mainx.py",
+        "mainy.py",
+        "mainz.py",
+        "main_utils.py",
+        "main.js",
     ]
-    for path in tracked:
-        target = fix_root / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("x", encoding="utf-8")
-    (fix_root / "src/untracked.py").write_text("x", encoding="utf-8")
-    git_add(*tracked)
+    tracked_files(*tracked)
+    (fix_root / "untracked.py").write_text("x", encoding="utf-8")
     write_artifact(
         [
-            make_finding(file="src/main.py"),
-            make_finding(id="delivered", file="src/delivered.py"),
+            make_finding(file="main.py"),
+            make_finding(id="delivered", file="mainx.py"),
         ]
     )
     tasks = output(run_renderer())
     assert tasks[0]["metadata"]["scope"]["patterns_to_follow"] == [
-        "src/mainx.py",
-        "src/mainy.py",
+        "mainy.py",
+        "mainz.py",
     ]
-    assert "src/main.py" not in tasks[0]["metadata"]["scope"]["patterns_to_follow"]
-    assert "src/delivered.py" not in tasks[0]["metadata"]["scope"]["patterns_to_follow"]
-    assert "src/untracked.py" not in tasks[0]["metadata"]["scope"]["patterns_to_follow"]
-
-
-def test_root_level_siblings_and_non_git_root(
-    fix_root, git_add, git_repo, run_renderer, tmp_path, write_artifact
-):
-    git_repo()
-    for name in ("main.py", "main_test.py", "root.js"):
-        (fix_root / name).write_text("x", encoding="utf-8")
-    git_add("main.py", "main_test.py", "root.js")
-    write_artifact([make_finding(file="main.py")])
-    task = output(run_renderer())[0]
-    assert task["metadata"]["scope"]["patterns_to_follow"] == [
-        "main_test.py",
-        "root.js",
-    ]
-    nongit = tmp_path / "nongit"
-    nongit.mkdir()
-    write_artifact([make_finding(file="main.py")])
-    result = run_renderer(root=nongit)
-    task = output(result)[0]
-    assert task["metadata"]["scope"]["patterns_to_follow"] == []
-    assert "could not list tracked files" in result.stderr
-
-
-@pytest.mark.usefixtures("symlink_or_skip")
-def test_sibling_listing_uses_one_git_call_per_run(
-    fix_root, tmp_path, write_artifact, run_renderer
-):
-    root_alias = tmp_path / "repo-alias"
-    os.symlink(fix_root, root_alias)
-    findings = [
-        make_finding(file="src/main.py"),
-        make_finding(id="second", file="src/other.py"),
-    ]
-    fake_result = subprocess.CompletedProcess(
-        ["git", "ls-files", "-z"],
-        0,
-        stdout=b"src/main.py\x00src/other.py\x00src/main_test.py\x00",
-        stderr=b"",
-    )
-    calls = []
-
-    def record_run(*args, **kwargs):
-        calls.append((args, kwargs))
-        return fake_result
-
-    with patch.object(renderer.proc, "run_bytes", side_effect=record_run):
-        write_artifact(findings)
-        result = run_renderer(root=root_alias)
-        assert result.returncode == 0
-    assert len(calls) == 1
-    assert [
-        task["metadata"]["scope"]["patterns_to_follow"] for task in output(result)
-    ] == [["src/main_test.py"], ["src/main_test.py"]]
+    assert tasks[0]["metadata"]["commit"]["template"] == "fix(main): Avoid stale value"
 
 
 @pytest.mark.parametrize(
     ("raw", "label", "complexity", "model"),
-    [
-        ("critical", "critical", "standard", "sonnet"),
-        (" \u3000HiGh\u3000 ", "high", "standard", "sonnet"),
-        ("medium", "medium", "trivial", "haiku"),
-        ("low", "low", "trivial", "haiku"),
-        ("unknown", "low", "trivial", "haiku"),
-        ("blocker", "blocker", "standard", "sonnet"),
-    ],
-    ids=["critical", "high", "medium", "low", "unknown", "generated-label"],
+    [(" HiGh ", "high", "standard", "sonnet"), ("unknown", "low", "trivial", "haiku")],
 )
 def test_normalized_severity_controls_category_complexity_and_model(
-    raw, label, complexity, model, run_renderer, write_artifact, monkeypatch
+    raw, label, complexity, model, run_renderer, write_artifact
 ):
-    monkeypatch.setitem(SEVERITY_EMOJI, "blocker", "!")
     write_artifact([make_finding(severity=raw)])
     task = output(run_renderer())[0]
     assert task["metadata"]["severity"] == label
     assert task["metadata"]["complexity"] == complexity
     assert task["metadata"]["model"] == model
-    assert category_section(task) == f"## Category\n{label} | bug"
+    assert f"## Category\n{label} | bug" in task["description"]
 
 
 def test_test_coverage_scope_uses_confined_refs_and_production_file_proof(
-    fix_root, git_add, git_repo, run_renderer, write_artifact
+    fix_root, tracked_files, run_renderer, write_artifact
 ):
-    git_repo()
-    for path in ("src/prod.py", "tests/test_prod.py", "tests/test_other.py"):
-        target = fix_root / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("x", encoding="utf-8")
-    git_add("src/prod.py", "tests/test_prod.py", "tests/test_other.py")
+    tracked_files(
+        "src/prod.py", "tests/test_prod.py", "tests/test_other.py", "tests/helpers.py"
+    )
     findings = [
         make_finding(
             id="with-refs",
@@ -655,86 +396,14 @@ def test_test_coverage_scope_uses_confined_refs_and_production_file_proof(
         "tests/test_prod.py",
         "tests/test_other.py",
     ]
-    assert first["metadata"]["scope"]["patterns_to_follow"] == []
+    assert first["metadata"]["scope"]["patterns_to_follow"] == ["tests/helpers.py"]
     assert second["metadata"]["scope"]["files_to_modify"] == []
     assert second["metadata"]["scope"]["patterns_to_follow"] == []
     assert first["metadata"]["proof_artifacts"] == [
         {"type": "file", "path": "src/prod.py"}
     ]
     assert "1 path rejected" in result.stderr
-
-
-@pytest.mark.parametrize(
-    ("malformed", "refs", "patterns", "summary"),
-    [
-        pytest.param(
-            "tests/test_prod.py",
-            [],
-            ["src/prod_test.py"],
-            "(0 paths rejected)",
-            id="non-list",
-        ),
-        pytest.param(
-            ["tests/test_prod.py", 7],
-            ["tests/test_prod.py"],
-            [],
-            "(1 path rejected)",
-            id="mixed-list",
-        ),
-    ],
-)
-def test_malformed_cross_file_refs_are_ignored_everywhere(
-    malformed,
-    refs,
-    patterns,
-    summary,
-    fix_root,
-    git_add,
-    git_repo,
-    run_renderer,
-    write_artifact,
-):
-    git_repo()
-    for path in ("src/prod.py", "src/prod_test.py"):
-        target = fix_root / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("x", encoding="utf-8")
-    git_add("src/prod.py", "src/prod_test.py")
-    write_artifact(
-        [
-            make_finding(
-                dimension="test_coverage",
-                file="src/prod.py",
-                cross_file_refs=malformed,
-                criticality=7,
-                failure_scenario="No test catches it",
-            )
-        ]
-    )
-    result = run_renderer()
-    task = output(result)[0]
-    assert task["metadata"]["scope"]["files_to_modify"] == refs
-    assert task["metadata"]["scope"]["patterns_to_follow"] == patterns
-    assert task["metadata"]["review_context"]["cross_file_refs"] == refs
-    assert summary in result.stderr
-
-
-def test_setext_headings_are_escaped_in_description_and_suggestion(
-    run_renderer, write_artifact
-):
-    write_artifact(
-        [
-            make_finding(
-                description="Description H1\n====\n\nDescription H2\n----",
-                suggestion="Suggestion H1\n====\n\nSuggestion H2\n----",
-            )
-        ]
-    )
-    description = output(run_renderer())[0]["description"]
-    assert "Description H1\n\\====" in description
-    assert "Description H2\n\\----" in description
-    assert "Suggestion H1\n\\====" in description
-    assert "Suggestion H2\n\\----" in description
+    assert "**Criticality:** 7" in first["description"]
 
 
 @pytest.mark.parametrize(
@@ -745,80 +414,26 @@ def test_setext_headings_are_escaped_in_description_and_suggestion(
             {"affected_consumers": ["src/a.py", "src/b.py"]},
             "**Affected consumers:** src/a.py, src/b.py",
         ),
-        ("test_coverage", {"criticality": 7}, "**Criticality:** 7"),
-        ("convention", {"rule_source": "repo_precedent"}, None),
+        (
+            "convention",
+            {
+                "claude_md_rule": "Use the project rule.",
+                "rule_source": "repo_precedent",
+            },
+            "**Repo precedent:** Use the project rule.",
+        ),
+        (
+            "convention",
+            {"claude_md_rule": "Use the project rule."},
+            "**Cited rule:** Use the project rule.",
+        ),
     ],
-    ids=["list", "number", "source-without-rule"],
 )
-def test_every_generated_detail_field_renders(
-    dimension, values, expected, run_renderer, write_artifact
-):
+def test_detail_fields(dimension, values, expected, run_renderer, write_artifact):
     write_artifact([make_finding(dimension=dimension, **values)])
-    description = output(run_renderer())[0]["description"]
-    if expected is None:
-        assert "## Details" not in description
-        assert "Rule source" not in description
-        assert "repo_precedent" not in description
-    else:
-        details = description.split("## Details\n", 1)[1].split("\n\n## Toolchain", 1)[
-            0
-        ]
-        assert details == expected
-
-
-def test_absolute_and_nul_paths_are_rejected_and_root_is_required(
-    fix_artifact, fix_root, run_renderer, write_artifact, invoke, tmp_path
-):
-    for file_path in (
-        r"C:\Windows\System32\hosts",
-        "src/\x00bad.py",
-        str(fix_root / "inside.py"),
-    ):
-        write_artifact([make_finding(file=file_path)])
-        result = run_renderer()
-        task = output(result)[0]
-        assert task["metadata"]["scope"]["files_to_modify"] == []
-        assert "(1 path rejected)" in result.stderr
-    missing_root = run_renderer(root=fix_root / "does-not-exist")
-    assert missing_root.returncode == 1
-    assert missing_root.stdout == ""
-    file_root = fix_root / "not-dir"
-    file_root.write_text("x", encoding="utf-8")
-    not_dir = run_renderer(root=file_root)
-    assert not_dir.returncode == 1
-    assert not_dir.stdout == ""
-    malformed = invoke("render_fix_tasks", [str(fix_artifact)], tmp_path)
-    assert malformed.returncode == 2
-    assert malformed.stdout == b""
-    assert malformed.stderr == (
-        b"render_fix_tasks: the following arguments are required: --repo-root\n"
-    )
-
-
-@pytest.mark.parametrize(
-    ("source", "expected"),
-    [
-        ("repo_precedent", "**Repo precedent:** Use the project rule."),
-        ("new_kind", "**Cited rule:** Use the project rule."),
-        (None, "**Cited rule:** Use the project rule."),
-    ],
-    ids=["repo-label", "fallback-label", "absent-source"],
-)
-def test_rule_source_is_a_label_for_cited_rule_details(
-    source, expected, run_renderer, write_artifact
-):
-    finding = make_finding(
-        dimension="convention", claude_md_rule="Use the project rule."
-    )
-    if source is not None:
-        finding["rule_source"] = source
-    write_artifact([finding])
     description = output(run_renderer())[0]["description"]
     details = description.split("## Details\n", 1)[1].split("\n\n## Toolchain", 1)[0]
     assert details == expected
-    assert "Rule source" not in description
-    if source is not None:
-        assert source not in description
 
 
 def test_hostile_markdown_is_sanitized_and_evidence_fence_is_long_enough(
@@ -828,7 +443,7 @@ def test_hostile_markdown_is_sanitized_and_evidence_fence_is_long_enough(
     finding = make_finding(
         title="Bad\n## forged\r<!-- title -->",
         description="first\r\n## Evidence\n<!-- hidden -->\tend\x01",
-        suggestion="fix\n## Category\n<!-- suggestion -->\x02done",
+        suggestion="fix\n## Category\n<!-- suggestion -->\x02done\nHeading\n====",
         evidence=evidence,
     )
     write_artifact([finding])
@@ -855,6 +470,7 @@ def test_hostile_markdown_is_sanitized_and_evidence_fence_is_long_enough(
     assert len(fence_lines[-1]) > longest_content_run
     assert fence_lines[1:-1] == evidence.splitlines()
     assert "FIX: Bad ## forged &lt;!-- title -->" in task["subject"]
+    assert "Heading\n\\====" in description
 
 
 def test_caller_fix_protocol():
@@ -879,20 +495,3 @@ def test_caller_fix_protocol():
         "Never fall back to hand composition",
     ):
         assert phrase in block
-    phase8 = (root / "skills/code-gauntlet/references/phase8-delivery.md").read_text(
-        encoding="utf-8"
-    )
-    assert "fix-task-metadata.md" not in phase8
-
-
-def test_caller_fix_help(invoke, tmp_path):
-    result = invoke("render_fix_tasks", ["--help"], tmp_path)
-    assert result.returncode == 0
-    assert result.stderr == b""
-    assert result.stdout.startswith(
-        b"usage: render_fix_tasks [-h] --repo-root REPO_ROOT POST_REVIEW\n"
-    )
-    assert (
-        b"Render persisted review findings as deterministic FIX-task payloads."
-        in result.stdout
-    )

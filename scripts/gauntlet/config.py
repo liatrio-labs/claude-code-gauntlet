@@ -211,8 +211,7 @@ def resolve(
             env_value = environ[env_name]
             if not matches_rule(row.get("rule"), env_value, mode):
                 raise ResolverError(_invalid_message(row, env_value, mode))
-            # An interactive model pin is a validation-only pin.  Its source remains
-            # fixed because the row does not allow env as an interactive source.
+            # Interactive model pins validate without changing the fixed source.
             if "env" in row.get("allowedSources", {}).get(mode, []):
                 value, source = env_value, "env"
         elif (
