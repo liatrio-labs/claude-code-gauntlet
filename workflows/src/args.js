@@ -305,6 +305,11 @@ export function normalizeArgs(raw, descriptors = KNOB_REGISTRY) {
   return normalizeArgsReport(raw, descriptors).args;
 }
 
+function extraKeys(value, allowed, sorted = false) {
+  const keys = Object.keys(value).filter((key) => !allowed.includes(key));
+  return sorted ? keys.sort() : keys;
+}
+
 export function validateArgs(args, descriptors = KNOB_REGISTRY) {
   const errors = [];
   if (!args || typeof args !== 'object') return { ok: false, errors: ['args is not an object'] };
@@ -366,8 +371,7 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
           errors.push(`riskTable[${i}] must be an object of the form {path, risk}`);
           continue;
         }
-        const keys = Object.keys(entry).sort();
-        const extra = keys.filter((k) => !ARGS_SHAPES.riskFields.includes(k));
+        const extra = extraKeys(entry, ARGS_SHAPES.riskFields, true);
         if (extra.length > 0) {
           errors.push(`riskTable[${i}] has unexpected key(s): ${extra.join(', ')} (only path and risk are allowed)`);
         }
@@ -452,7 +456,7 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
               errors.push(`${label} must be a plain object`);
               continue;
             }
-            const extra = Object.keys(scope).filter((key) => !ARGS_SHAPES.scopeLayerFields.includes(key)).sort();
+            const extra = extraKeys(scope, ARGS_SHAPES.scopeLayerFields, true);
             if (extra.length > 0) errors.push(`${label} has unexpected key(s): ${extra.join(', ')}`);
             validateLayer(scope, label, true);
             if (typeof scope.dir === 'string' && scope.dir !== '') {
@@ -477,8 +481,7 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
           errors.push(`reviewMd[${i}] must be an object of the form {path, text}`);
           continue;
         }
-        const keys = Object.keys(entry).sort();
-        const extra = keys.filter((k) => !ARGS_SHAPES.reviewMdFields.includes(k));
+        const extra = extraKeys(entry, ARGS_SHAPES.reviewMdFields, true);
         if (extra.length > 0) {
           errors.push(`reviewMd[${i}] has unexpected key(s): ${extra.join(', ')} (only path and text are allowed)`);
         }
@@ -552,9 +555,7 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
     if (!isPlainObject(args.reviewScope)) {
       errors.push('reviewScope must be { requested, kind, since, commits, detector }');
     } else {
-      const scopeKeys = Object.keys(args.reviewScope);
-      const scopeKeysExpected = ARGS_SHAPES.scopeFields;
-      const scopeExtra = scopeKeys.filter((key) => !scopeKeysExpected.includes(key));
+      const scopeExtra = extraKeys(args.reviewScope, ARGS_SHAPES.scopeFields);
       if (scopeExtra.length) errors.push(`reviewScope has unexpected key(s): ${scopeExtra.join(', ')}`);
       const { requested, kind, since, commits, detector } = args.reviewScope;
       if (!ARGS_SHAPES.scopeKinds.includes(requested)) {
@@ -576,7 +577,7 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
           errors.push('reviewScope.detector must be null or an object copied from detect_prior_review.py');
         } else {
           const detectorKeys = ARGS_SHAPES.detectorFields;
-          const detectorExtra = Object.keys(detector).filter((key) => !detectorKeys.includes(key));
+          const detectorExtra = extraKeys(detector, detectorKeys);
           const detectorMissing = detectorKeys.filter((key) => !Object.hasOwn(detector, key));
           if (detectorExtra.length) errors.push(`reviewScope.detector has unexpected key(s): ${detectorExtra.join(', ')}`);
           if (detectorMissing.length) errors.push(`reviewScope.detector is missing key(s): ${detectorMissing.join(', ')}`);

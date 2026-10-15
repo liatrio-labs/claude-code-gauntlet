@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
-"""Run the local twin of CI's ``Run Workflow JS Lint`` gate.
+"""Run CI's pinned Biome lint gate.
 
-CI runs this same file. It reads the version and per-asset SHA-256 values from
-``workflows/biome-pin.json``, stores verified binaries in the user cache, and
-downloads a missing or mismatched asset from the Biome release. ``biome check``
-must run with cwd = <repo>/workflows because ``--config-path`` from the repo
-root trips Biome's nested-root-configuration detection. The Windows and musl
-assets are pinned for users but have no CI runner and are unexercised there.
-
-The final download name is replaced atomically from ``<asset>.part``. On
-Windows, replacing an in-use binary raises ``PermissionError``; close Biome
-before retrying. The runner is Python 3.10-compatible and stdlib-only.
+Run from workflows/: --config-path at the repo root triggers Biome's nested-root
+configuration detection. On Windows, close Biome before replacing an in-use binary.
 """
 
 from __future__ import annotations

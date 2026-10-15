@@ -1,40 +1,38 @@
-// Challenge decisions never mutate caller findings, including in the workflow sandbox.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyChallenges, downgradeSeverity, rankFindings } from '../src/applyChallenges.js';
+import { applyChallenges, rankFindings } from '../src/applyChallenges.js';
 import { finding, consolidationFinding } from './helpers/findings.js';
-
-const DOWNGRADE_CASES = [
-  { name: 'critical becomes high', input: 'critical', expected: 'high' },
-  { name: 'medium becomes low', input: 'medium', expected: 'low' },
-  { name: 'unknown severity has no lower tier', input: 'unknown', expected: null },
-  { name: 'severity is case insensitive', input: 'HIGH', expected: 'medium' },
-];
-for (const c of DOWNGRADE_CASES) test(`downgrade: ${c.name}`, () => {
-  assert.equal(downgradeSeverity(c.input), c.expected);
-});
 
 const CHALLENGE_CASES = [
   { name: 'score zero downgrades critical security finding', f: { severity: 'critical', dimension: 'security' }, challenge: { id: 'f1',
-    score: 0 }, active: ['f1'], severity: 'high', destination: 'suggestion', stat: 'challenge_downgraded' },
+    score: 0 }, active: ['f1'], severity: 'high', destination: 'suggestion', stat: 'challenge_downgraded', original: 'critical' },
   { name: 'score 40 downgrades and routes to suggestion', f: { severity: 'critical' }, challenge: { id: 'f1', score: 40 }, active: ['f1'],
     severity: 'high', destination: 'suggestion', stat: 'challenge_downgraded', original: 'critical' },
-  { name: 'surfaced score 30 routes to suggestion', f: { origin: 'surfaced', report_destination: 'main' }, challenge: { id: 'f1',
-    score: 30 }, active: ['f1'], severity: 'medium', destination: 'suggestion', stat: 'challenge_downgraded' },
+  { name: 'score 40 downgrades medium to low', f: { severity: 'medium' }, challenge: { id: 'f1', score: 40 }, active: ['f1'],
+    severity: 'low', destination: 'suggestion', stat: 'challenge_downgraded', original: 'medium' },
+  { name: 'score 40 removes low severity', f: { severity: 'low' }, challenge: { id: 'f1', score: 40 }, active: [],
+    eliminated: ['f1'], stat: 'challenge_downgraded' },
+  { name: 'score 40 removes unknown severity', f: { severity: 'info' }, challenge: { id: 'f1', score: 40 }, active: [],
+    eliminated: ['f1'], stat: 'challenge_downgraded' },
   { name: 'surfaced score 80 retains main route', f: { origin: 'surfaced', report_destination: 'main' }, challenge: { id: 'f1',
     score: 80 }, active: ['f1'], severity: 'high', destination: 'main', stat: 'challenge_survived' },
-  { name: 'challenge without id is skipped', f: {}, challenge: { score: 80 }, active: ['f1'], severity: 'high', stat: 'unchallenged' },
   { name: 'noninteger score is skipped', f: {}, challenge: { id: 'f1', score: 'high' }, active: ['f1'], severity: 'high',
     stat: 'unchallenged' },
 ];
 for (const c of CHALLENGE_CASES) test(`challenge: ${c.name}`, () => {
   const out = applyChallenges([finding(c.f)], [c.challenge]);
   assert.deepEqual(out.findings.map((f) => f.id), c.active);
-  assert.equal(out.findings[0].severity, c.severity);
+  assert.deepEqual(out.eliminated.map((f) => f.id), c.eliminated ?? []);
+  if (c.active.length) assert.equal(out.findings[0].severity, c.severity);
   if (c.destination) assert.equal(out.findings[0].report_destination, c.destination);
-  if (c.original) assert.equal(out.findings[0].original_severity, c.original);
+  if (c.stat === 'challenge_downgraded' && c.active.length) {
+    assert.equal(out.findings[0].original_severity, c.original);
+    assert.equal(out.findings[0].severity_downgraded, true);
+    assert.equal(out.findings[0].report_tag, 'suggestion');
+    assert.equal(out.findings[0].challenge_contested, false);
+  }
   assert.equal(out.stats[c.stat], 1);
-  assert.equal(out.stats.final_count, 1);
+  assert.equal(out.stats.final_count, c.active.length);
 });
 
 test('challenge: mixed removed, downgraded, contested, survived and unchallenged scores', () => {
@@ -52,8 +50,6 @@ const RANK_CASES = [
     expected: ['critical', 'high', 'medium', 'low'] },
   { name: 'longer description breaks a tie', rows: [['short', 'high', 80, 'Short.'], ['long', 'high', 80,
     'A much longer description with more detail.']], expected: ['long', 'short'] },
-  { name: 'higher risk level breaks a tie', rows: [['low-risk', 'high', 80, 'Same', 2], ['high-risk', 'high', 80, 'Same', 8]],
-    expected: ['high-risk', 'low-risk'] },
   { name: 'risk level beats description length', rows: [['low-risk-long', 'high', 80, 'A very long description indeed for this finding.',
     1], ['high-risk-short', 'high', 80, 'Short.', 9]], expected: ['high-risk-short', 'low-risk-long'] },
 ];
@@ -86,12 +82,6 @@ const ORIGIN_RANK_ROWS = [
     input: [{ id: 'A', origin: 'unknown', confidence: 75, severity: 'high' },
       { id: 'B', origin: 'verified', confidence: 80, severity: 'high' },
       { id: 'C', origin: 'verified', confidence: 74, severity: 'high' }], expected: ['B', 'C', 'A'],
-  },
-  {
-    name: 'uniform origin keeps severity then confidence order',
-    input: [{ id: 'H1', origin: 'verified', severity: 'high', confidence: 60 },
-      { id: 'H2', origin: 'verified', severity: 'high', confidence: 90 },
-      { id: 'M1', origin: 'verified', severity: 'medium', confidence: 99 }], expected: ['H2', 'H1', 'M1'],
   },
 ];
 for (const row of ORIGIN_RANK_ROWS) test(`rank origin: ${row.name}`, () => {

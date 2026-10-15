@@ -34,16 +34,20 @@ function dimensionOwnerMap(dimensions) {
   return owner;
 }
 
+// Replayed values may expose getters; a failed read is an absent field.
+function safeReportField(value, key) {
+  try {
+    return value?.[key];
+  } catch {
+    return undefined;
+  }
+}
+
 // Severity is an open wire string, so display unknown values as low rather than dropping the finding.
 function severityBreakdown(rowFindings) {
   const counts = new Map();
   for (const f of rowFindings) {
-    let raw;
-    try {
-      raw = f ? f.severity : undefined;
-    } catch {
-      continue;
-    }
+    const raw = safeReportField(f, 'severity');
     if (raw === undefined || raw === null || raw === '') continue;
     const severity = normalizeReportSeverity(raw);
     counts.set(severity, (counts.get(severity) || 0) + 1);
@@ -63,12 +67,7 @@ export function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
   const byAgent = new Map(agents.map((agent) => [agent, []]));
   const unverifiedByAgent = new Map(agents.map((agent) => [agent, []]));
   const bucketFinding = (buckets, finding) => {
-    let dimension;
-    try {
-      dimension = finding ? finding.dimension : undefined;
-    } catch {
-      dimension = undefined;
-    }
+    const dimension = safeReportField(finding, 'dimension');
     const agentType = owner[dimension];
     if (agentType && buckets.has(agentType)) buckets.get(agentType).push(finding);
   };
@@ -183,21 +182,10 @@ function reportCorroboration(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const out = {};
   for (const key of ['agent', 'dimension', 'title', 'description']) {
-    let raw;
-    try {
-      raw = value[key];
-    } catch {
-      continue;
-    }
-    const text = reportOptionalText(raw);
+    const text = reportOptionalText(safeReportField(value, key));
     if (text !== undefined) out[key] = text;
   }
-  let confidence;
-  try {
-    confidence = reportAsConfidence(value.confidence);
-  } catch {
-    confidence = undefined;
-  }
+  const confidence = reportAsConfidence(safeReportField(value, 'confidence'));
   if (confidence !== undefined) out.confidence = confidence;
   return out;
 }
@@ -211,12 +199,7 @@ function coerceReportFinding(finding, severities) {
     return out;
   }
   for (const key of keys) {
-    let raw;
-    try {
-      raw = finding[key];
-    } catch {
-      continue;
-    }
+    const raw = safeReportField(finding, key);
     let value;
     if (key === 'severity') {
       value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw, severities);

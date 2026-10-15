@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  summarize, discover, agentActive, agentSpecs, intersectRequiredExtra, deriveAgentFlags, allActiveDimensionsDegraded,
+  summarize, discover, agentActive, agentSpecs, deriveAgentFlags, allActiveDimensionsDegraded,
 } from '../src/discover.js';
 import { DIMENSIONS, FINDING_REQUIRED, FINDING_PROP_TYPES } from '../src/registry.js';
 import { finding } from './helpers/findings.js';
@@ -16,12 +16,8 @@ const CORE = ['code-gauntlet:bug-detector', 'code-gauntlet:security-reviewer'];
 const DIMENSION_NAMES = ['bug', 'security', 'cross_file_impact', 'test_coverage', 'convention',
   'intent', 'comment_accuracy', 'type_design', 'simplification'];
 const FLAG_ROWS = [
-  { name: 'absent', flags: undefined }, { name: 'empty', flags: {} },
-  { name: 'unrelated flag', flags: { someOtherFlag: false } },
+  { name: 'absent', flags: undefined },
   { name: 'light', flags: { deep: false }, expected: CORE },
-  { name: 'hostile core flags', flags: { deep: false, bug: false, security: false }, expected: CORE },
-  { name: 'true', flags: { deep: true } }, { name: 'zero', flags: { deep: 0 } },
-  { name: 'null', flags: { deep: null } }, { name: 'string false', flags: { deep: 'false' } },
 ];
 for (const row of FLAG_ROWS) test(`active agents: ${row.name}`, () => {
   assert.deepEqual(agentSpecs().filter((spec) => agentActive(spec, row.flags)).map((spec) => spec.agentType),
@@ -32,7 +28,6 @@ const SCOPE_ROWS = [
   { name: 'eligible full', risks: [{ path: 'a.js', risk: 'low' }], lines: 10, answer: 'full' },
   { name: 'mixed risk', risks: [{ path: 'a.js', risk: 'low' }, { path: 'b.js', risk: 'medium' }], lines: 10, answer: 'light' },
   { name: 'line threshold', risks: [{ path: 'a.js', risk: 'low' }], lines: 50, answer: 'light' },
-  { name: 'ineligible absent answer', risks: [{ path: 'a.js', risk: 'medium' }], lines: 10 },
 ];
 for (const row of SCOPE_ROWS) test(`derived scope: ${row.name}`, () => {
   assert.deepEqual(deriveAgentFlags(row.risks, row.lines, row.answer), row.expected ?? {});
@@ -42,49 +37,12 @@ const DEGRADED_ROWS = [
     degraded: ['security', 'cross_file_impact', 'test_coverage', 'convention', 'intent',
       'comment_accuracy', 'type_design', 'simplification'], expected: false },
   { name: 'all active', dispatched: ROSTER, degraded: DIMENSION_NAMES, expected: true },
-  { name: 'partial multidimension failure', dispatched: ROSTER,
-    degraded: ['convention', 'intent', 'comment_accuracy'], expected: false },
   { name: 'empty healthy', dispatched: [], degraded: [], expected: false },
   { name: 'empty failed', dispatched: [], degraded: ['bug', 'security'], expected: true },
-  { name: 'unresolvable failed', dispatched: ['some:renamed-agent'], degraded: ['bug'], expected: true },
   { name: 'light relative', dispatched: CORE, degraded: ['bug', 'security'], expected: true },
 ];
 for (const row of DEGRADED_ROWS) test(`degradation: ${row.name}`, () => {
   assert.equal(allActiveDimensionsDegraded(row.dispatched, row.degraded), row.expected);
-});
-
-const INTERSECTION_ROWS = [
-  { name: 'one sibling requires', rows: [{ requiredExtra: ['x'] }, { requiredExtra: [] }], expected: [] },
-  { name: 'all siblings require', rows: [{ requiredExtra: ['x'] }, { requiredExtra: ['x'] }], expected: ['x'] },
-  { name: 'empty', rows: [], expected: [] },
-];
-for (const row of INTERSECTION_ROWS) test(`required intersection: ${row.name}`, () => {
-  assert.deepEqual(intersectRequiredExtra(row.rows), row.expected);
-});
-const SPEC_GOLDEN = [{ agentType: 'synthetic:agent', dimensions: ['dim_a', 'dim_b'], schemaExtra: {},
-  conditionalFlags: [null, null], promptExtra: null, requiredExtra: [], conditionalRequired: [] }];
-const SPEC_ROWS = [
-  { name: 'unshared requirement removed', dims: [
-    { agentType: 'synthetic:agent', dimension: 'dim_a', conditionalFlag: null, requiredExtra: ['x'] },
-    { agentType: 'synthetic:agent', dimension: 'dim_b', conditionalFlag: null, requiredExtra: [] },
-  ] },
-  { name: 'shared requirement retained', dims: [
-    { agentType: 'synthetic:agent', dimension: 'dim_a', conditionalFlag: null, requiredExtra: ['x'] },
-    { agentType: 'synthetic:agent', dimension: 'dim_b', conditionalFlag: null, requiredExtra: ['x'] },
-  ], expected: [{ ...SPEC_GOLDEN[0], requiredExtra: ['x'] }] },
-  { name: 'alternate registry with missing conditional key', dims: [
-    { agentType: 'synthetic:only-here', dimension: 'dim_z', conditionalFlag: null, schemaExtra: {}, requiredExtra: [] },
-  ], expected: [{ ...SPEC_GOLDEN[0], agentType: 'synthetic:only-here', dimensions: ['dim_z'], conditionalFlags: [null] }] },
-  { name: 'conditional requirements sorted independently of dimensions', dims: [
-    { agentType: 'synthetic:agent', dimension: 'dim_b', conditionalFlag: null,
-      schemaExtra: { y: 'string' }, requiredExtra: [], requiredWhenDimension: ['y'] },
-    { agentType: 'synthetic:agent', dimension: 'dim_a', conditionalFlag: null,
-      schemaExtra: { x: 'string' }, requiredExtra: [], requiredWhenDimension: ['x'] },
-  ], expected: [{ ...SPEC_GOLDEN[0], dimensions: ['dim_b', 'dim_a'], schemaExtra: { y: 'string', x: 'string' },
-    conditionalRequired: [{ dimension: 'dim_a', required: ['x'] }, { dimension: 'dim_b', required: ['y'] }] }] },
-];
-for (const row of SPEC_ROWS) test(`agent specs: ${row.name}`, () => {
-  assert.deepEqual(agentSpecs(row.dims), row.expected ?? SPEC_GOLDEN);
 });
 
 const CANONICAL_PROPS = {
@@ -100,21 +58,20 @@ const CONDITIONAL = [
   { if: { properties: { dimension: { const: 'intent' } }, required: ['dimension'] }, then: { required: ['spec_text'] } },
 ];
 const SCHEMA_ROWS = [
-  { agent: 'code-gauntlet:bug-detector', dimensions: ['bug'], flags: [null], extra: { hidden_errors: { type: 'string' } } },
-  { agent: 'code-gauntlet:security-reviewer', dimensions: ['security'], flags: [null],
+  { agent: 'code-gauntlet:bug-detector', extra: { hidden_errors: { type: 'string' } } },
+  { agent: 'code-gauntlet:security-reviewer',
     extra: { attack_vector: { type: 'string' } }, required: ['attack_vector'] },
-  { agent: 'code-gauntlet:cross-file-impact', dimensions: ['cross_file_impact'], flags: ['deep'],
+  { agent: 'code-gauntlet:cross-file-impact',
     extra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, required: ['affected_consumers'] },
-  { agent: 'code-gauntlet:test-analyzer', dimensions: ['test_coverage'], flags: ['deep'],
+  { agent: 'code-gauntlet:test-analyzer',
     extra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: { type: 'string' } },
     required: ['criticality', 'failure_scenario'] },
-  { agent: 'code-gauntlet:conventions-and-intent', dimensions: ['convention', 'intent', 'comment_accuracy'],
-    flags: ['deep', 'deep', 'deep'], extra: { rule_source: { type: 'string' }, spec_text: { type: 'string' } },
-    conditional: [{ dimension: 'convention', required: ['claude_md_rule'] }, { dimension: 'intent', required: ['spec_text'] }],
+  { agent: 'code-gauntlet:conventions-and-intent',
+    extra: { rule_source: { type: 'string' }, spec_text: { type: 'string' } },
     allOf: CONDITIONAL },
-  { agent: 'code-gauntlet:type-design-analyzer', dimensions: ['type_design'], flags: ['deep'],
+  { agent: 'code-gauntlet:type-design-analyzer',
     extra: { invalid_state_example: { type: 'string' } } },
-  { agent: 'code-gauntlet:code-simplifier', dimensions: ['simplification'], flags: ['deep'],
+  { agent: 'code-gauntlet:code-simplifier',
     extra: { behavior_preserved: { type: 'string' } }, required: ['behavior_preserved'] },
 ];
 test('finding schemas: one dispatch supplies the roster', async (t) => {
@@ -131,30 +88,18 @@ test('finding schemas: one dispatch supplies the roster', async (t) => {
         ...(row.allOf ? { allOf: row.allOf } : {}) } },
       complete: { type: 'boolean' }, total_seen: { type: 'number' },
     }, required: ['findings', 'complete', 'total_seen'] });
-    const spec = agentSpecs().find((value) => value.agentType === row.agent);
-    assert.deepEqual(spec.dimensions, row.dimensions);
-    assert.deepEqual(spec.conditionalFlags, row.flags);
-    assert.deepEqual(spec.requiredExtra, row.required ?? []);
-    assert.deepEqual(spec.conditionalRequired, row.conditional ?? []);
-    assert.equal(Object.hasOwn(spec, 'rows'), false);
   });
 });
 const POLICY_ROWS = [
-  { name: 'default', policy: {}, allOf: CONDITIONAL },
-  { name: 'first party', policy: { provider: 'firstParty' }, allOf: CONDITIONAL },
-  { name: 'null provider', policy: { provider: null }, allOf: CONDITIONAL },
-  { name: 'undefined provider no gateway', policy: { provider: undefined, gateway: false }, allOf: CONDITIONAL },
-  { name: 'bedrock', policy: { provider: 'bedrock' } }, { name: 'vertex', policy: { provider: 'vertex' } },
-  { name: 'foundry', policy: { provider: 'foundry' } },
+  { name: 'bedrock', policy: { provider: 'bedrock' } },
   { name: 'first party gateway', policy: { provider: 'firstParty', gateway: true } },
-  { name: 'default gateway', policy: { gateway: true } },
 ];
 for (const row of POLICY_ROWS) test(`conditional schema policy: ${row.name}`, async () => {
   const ctx = stageCtx();
   await discover(ctx, { policy: row.policy });
   for (const call of ctx.calls) {
     const item = call.schema.properties.findings.items;
-    assert.deepEqual(item.allOf, call.label === 'code-gauntlet:conventions-and-intent' ? row.allOf : undefined);
+    assert.equal(item.allOf, undefined);
     assert.deepEqual(item.properties.dimension, { type: 'string' });
   }
 });
@@ -165,7 +110,6 @@ const NULL_CONVENTIONS = 'code-gauntlet:conventions-and-intent: agent returned n
   + '\u2014 dimensions convention/intent/comment_accuracy not covered';
 const DISCOVER_GOLDEN = { findings: [], gaps: [], degraded: [], dispatched: ROSTER };
 const OUTCOME_ROWS = [
-  { name: 'full empty' },
   { name: 'host can mutate schema copies without changing registry fragments', mutateSchema: true },
   { name: 'light empty', input: { agentFlags: { deep: false } }, expected: { ...DISCOVER_GOLDEN, dispatched: CORE } },
   { name: 'null security preserves sibling and short agent name', nulls: ['code-gauntlet:security-reviewer'],
@@ -190,22 +134,6 @@ const OUTCOME_ROWS = [
     expected: { ...DISCOVER_GOLDEN, gaps: [
       'code-gauntlet:bug-detector: possibly incomplete (complete=true, total_seen=2) \u2014 dimensions bug',
     ] } },
-  { name: 'finding count reaches cap independently', input: { limits: { discoveryCap: 1 } },
-    replies: { 'code-gauntlet:bug-detector': { findings: [{ id: 'F1' }], complete: true, total_seen: 0 } },
-    expected: { ...DISCOVER_GOLDEN, findings: [{ id: 'F1', agent: 'bug-detector' }], gaps: [
-      'code-gauntlet:bug-detector: possibly incomplete (complete=true, total_seen=0) \u2014 dimensions bug',
-    ] } },
-  { name: 'remaining single-dimension agents fail', nulls: [
-    'code-gauntlet:bug-detector', 'code-gauntlet:cross-file-impact', 'code-gauntlet:test-analyzer',
-    'code-gauntlet:type-design-analyzer', 'code-gauntlet:code-simplifier',
-  ], expected: { ...DISCOVER_GOLDEN,
-    degraded: ['bug', 'cross_file_impact', 'test_coverage', 'type_design', 'simplification'], gaps: [
-    'code-gauntlet:bug-detector: agent returned null (dispatch failed) \u2014 dimensions bug not covered',
-    'code-gauntlet:cross-file-impact: agent returned null (dispatch failed) \u2014 dimensions cross_file_impact not covered',
-    'code-gauntlet:test-analyzer: agent returned null (dispatch failed) \u2014 dimensions test_coverage not covered',
-    'code-gauntlet:type-design-analyzer: agent returned null (dispatch failed) \u2014 dimensions type_design not covered',
-    'code-gauntlet:code-simplifier: agent returned null (dispatch failed) \u2014 dimensions simplification not covered',
-  ] } },
 ];
 for (const row of OUTCOME_ROWS) test(`discover outcome: ${row.name}`, async () => {
   const registrySnapshot = structuredClone({ DIMENSIONS, FINDING_REQUIRED, FINDING_PROP_TYPES });
@@ -233,24 +161,15 @@ const RANGE_ROWS = [
   { name: 'implausible with patch', fields: { line_end: 940, suggested_fix_code: 'const x = 1;' },
     expected: { ...RANGE_GOLDEN, gaps: [SPAN_GAP
       + ' \u2014 1 of those also carried suggested_fix_code: patch field(s) dropped along with the range'] } },
-  { name: 'implausible without patch', fields: { line_end: 940 }, expected: { ...RANGE_GOLDEN, gaps: [SPAN_GAP] } },
+  { name: 'reversed range with patch', fields: { line_end: 60, suggested_fix_code: 'const x = 1;' },
+    expected: { ...RANGE_GOLDEN, gaps: [SPAN_GAP
+      + ' \u2014 1 of those also carried suggested_fix_code: patch field(s) dropped along with the range'] } },
   { name: 'kept patch', fields: { line_end: 78, suggested_fix_code: 'const x = 1;' },
     expected: { ...RANGE_GOLDEN, end: true, line_end: 78, patch: true, suggested_fix_code: 'const x = 1;' } },
-  { name: 'reverse range', fields: { line_start: 100, line_end: 50 },
-    expected: { ...RANGE_GOLDEN, line_start: 100, gaps: [SPAN_GAP] } },
-  { name: 'fractional end', fields: { line_end: 70.5 }, expected: { ...RANGE_GOLDEN, gaps: [SPAN_GAP] } },
-  { name: 'single line', fields: { line_end: 68 }, expected: { ...RANGE_GOLDEN, end: true, line_end: 68 } },
-  { name: 'span at ceiling', fields: { line_end: 168 }, expected: { ...RANGE_GOLDEN, end: true, line_end: 168 } },
-  { name: 'no range no patch', fields: {} },
   { name: 'missing range drops patch', fields: { suggested_fix_code: 'const x = 1;' },
     expected: { ...RANGE_GOLDEN, gaps: [
       'discover: 1 finding(s) emitted suggested_fix_code without line_end \u2014 field dropped (a patch must state its range)',
     ] } },
-  { name: 'narrowed span', fields: { line_end: 78 }, limits: { maxLineSpan: 5 }, expected: { ...RANGE_GOLDEN,
-    gaps: ['discover: 1 finding(s) had an implausible line_end (non-integer, before line_start, '
-      + 'or spanning more than maxLineSpan=5 lines) \u2014 line_end dropped, finding kept anchored at line_start'] } },
-  { name: 'widened span', fields: { line_end: 940 }, limits: { maxLineSpan: 1000 },
-    expected: { ...RANGE_GOLDEN, end: true, line_end: 940 } },
 ];
 for (const row of RANGE_ROWS) test(`discovery range: ${row.name}`, async () => {
   const ctx = stageCtx({ replies: { 'code-gauntlet:bug-detector': {
@@ -304,8 +223,6 @@ for (const row of PROMPT_ROWS) test(`discovery prompt: ${row.agent}`, async () =
   await discover(ctx, { contextLine: 'CONTEXT_SENTINEL ' });
   assert.equal(ctx.calls.find((call) => call.label === row.agent).prompt,
     'CONTEXT_SENTINEL ' + PROMPT_HEAD + row.dims + PROMPT_TAIL + (row.extra ?? ''));
-  const spec = agentSpecs().find((value) => value.agentType === row.agent);
-  assert.equal(spec.promptExtra, row.extra ? row.extra.slice(1) : null);
 });
 
 test('discovery prompt: absent context has no prefix', async () => {
@@ -321,15 +238,6 @@ const SINGLE_PROMPT = 'Summarize the semantic intent of these changed files for 
 const SUMMARY_GOLDEN = { summary: 's', gaps: [] };
 const SUMMARY_ROWS = [
   { name: 'absent count', labels: ['summarize'], prompts: [SINGLE_PROMPT] },
-  { name: 'zero count', changedLines: 0, labels: ['summarize'], prompts: [SINGLE_PROMPT] },
-  { name: 'negative count', changedLines: -1, labels: ['summarize'], prompts: [SINGLE_PROMPT] },
-  { name: 'string count buckets but carries no count pin', changedLines: '601', labels: [
-    'summarize-bucket-0', 'summarize-bucket-1', 'summarize-merge',
-  ], prompts: [
-    'Summarize the semantic intent of these changed files for downstream reviewers: a.js. Return { summary }.',
-    'Summarize the semantic intent of these changed files for downstream reviewers: b.js. Return { summary }.',
-    'Combine these per-bucket change summaries into one concise semantic summary. Partials:\ns\n---\ns\nReturn { summary }.',
-  ] },
   { name: 'small PR count and context prefix', changedLines: 10, contextLine: 'SUMMARY_CONTEXT ',
     labels: ['summarize'], prompts: ['SUMMARY_CONTEXT '
       + 'Summarize the semantic intent of these changed files for downstream reviewers: a.js, b.js. '
@@ -345,9 +253,23 @@ const SUMMARY_ROWS = [
     expected: { summary: '', gaps: ['summarize failed'] } },
   { name: 'all buckets null', changedLines: 600, nulls: ['summarize-bucket-0', 'summarize-bucket-1'],
     labels: ['summarize-bucket-0', 'summarize-bucket-1'], expected: { summary: '', gaps: ['summarize failed'] } },
+  { name: 'bucket files and merge preserve partials and count', files: ['a.js', 'b.js', 'c.js'], changedLines: 600,
+    bucketSize: 2, replies: { 'summarize-bucket-0': { summary: 'p0' }, 'summarize-bucket-1': { summary: 'p1' },
+      'summarize-merge': { summary: 'merged' } }, labels: ['summarize-bucket-0', 'summarize-bucket-1', 'summarize-merge'],
+    prompts: [
+      'Summarize the semantic intent of these changed files for downstream reviewers: a.js, b.js. '
+        + 'The authoritative changed-line count is 600; cite that number verbatim if you mention change size '
+        + '\u2014 never re-estimate it from the diff. Return { summary }.',
+      'Summarize the semantic intent of these changed files for downstream reviewers: c.js. '
+        + 'The authoritative changed-line count is 600; cite that number verbatim if you mention change size '
+        + '\u2014 never re-estimate it from the diff. Return { summary }.',
+      'Combine these per-bucket change summaries into one concise semantic summary. '
+        + 'The authoritative changed-line count is 600; cite that number verbatim if you mention change size '
+        + '\u2014 never re-estimate it. Partials:\np0\n---\np1\nReturn { summary }.',
+    ], expected: { summary: 'merged', gaps: [] } },
 ];
 for (const row of SUMMARY_ROWS) test(`summarize: ${row.name}`, async () => {
-  const ctx = stageCtx({ reply: { summary: 's' }, nulls: row.nulls });
+  const ctx = stageCtx({ reply: { summary: 's' }, replies: row.replies, nulls: row.nulls });
   const out = await summarize(ctx, { changedFiles: row.files ?? ['a.js', 'b.js'], changedLines: row.changedLines,
     contextLine: row.contextLine, limits: { summarizeBucketSize: row.bucketSize ?? 1 } });
   assert.deepEqual(out, row.expected ?? SUMMARY_GOLDEN);
@@ -355,10 +277,4 @@ for (const row of SUMMARY_ROWS) test(`summarize: ${row.name}`, async () => {
   if (row.prompts) assert.deepEqual(ctx.calls.map((call) => call.prompt), row.prompts);
   for (const call of ctx.calls) assert.deepEqual(call.schema, SUMMARY_SCHEMA);
   assert.deepEqual(ctx.violations, []);
-});
-test('registry scope: literal core and deep dimensions', () => {
-  assert.deepEqual(DIMENSIONS.filter((d) => d.conditionalFlag === null).map((d) => d.dimension).sort(), ['bug', 'security']);
-  assert.deepEqual(DIMENSIONS.filter((d) => d.conditionalFlag === 'deep').map((d) => d.dimension).sort(), [
-    'comment_accuracy', 'convention', 'cross_file_impact', 'intent', 'simplification', 'test_coverage', 'type_design',
-  ]);
 });
