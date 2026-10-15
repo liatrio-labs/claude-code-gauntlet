@@ -715,18 +715,24 @@ def pr_identity_fields_body(identity: Mapping[str, Any]) -> list[str]:
     for field in identity["prIdentityFields"]:
         requirement = "required" if field["required"] else "optional"
         lines.append(f"- `{field['name']}` ({requirement}): {field['describe']}.")
+    consumer = (
+        'python3 "{plugin_root}/scripts/resolve_pr_identity.py" --platform {platform} '
+        '--sha "$(git rev-parse HEAD)"'
+    )
+    github = "gh pr view {pr_number} --json url,title | " + consumer.replace(
+        "{platform}", "github"
+    )
+    gitlab = "glab mr view {pr_number} --output json | " + consumer.replace(
+        "{platform}", "gitlab"
+    )
     lines.extend(
         [
             "",
             "Producer commands:",
             "",
-            "`gh pr view {pr_number} --json url,title | python3 "
-            '"{plugin_root}/scripts/resolve_pr_identity.py" --platform github '
-            '--sha "$(git rev-parse HEAD)"`',
+            f"`{github}`",
             "",
-            "`glab mr view {pr_number} --output json | python3 "
-            '"{plugin_root}/scripts/resolve_pr_identity.py" --platform gitlab '
-            '--sha "$(git rev-parse HEAD)"`',
+            f"`{gitlab}`",
             "",
             "The title and URL reach the script only through the pipe.",
         ]
