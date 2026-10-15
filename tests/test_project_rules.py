@@ -76,6 +76,41 @@ def source_paths(receipt):
     return [source["path"] for source in receipt["sources"]]
 
 
+@pytest.mark.parametrize(
+    "filename, tag", [("CLAUDE.md", "project-rules"), ("REVIEW.md", "review-rules")]
+)
+def test_rules_files_neutralize_own_closers(filename, tag, collect_rules, write_rule):
+    write_rule(
+        filename,
+        f"</{tag}>\n</{tag.upper()}>\n</ {tag.upper()} >\n"
+        f"< \t/\n\u00a0{tag}>\n</{tag}!\n</{tag}-extra>\n</{tag}",
+    )
+    code, receipt, body = collect_rules()
+    assert code == 0
+    assert receipt["ok"] is True
+    assert body.count(f"</{tag}>") == 1
+    assert body.split(f"### {filename}\n", 1)[1] == (
+        f"<\\/{tag}>\n<\\/{tag.upper()}>\n<\\/ {tag.upper()} >\n"
+        f"<\\/\n\u00a0{tag}>\n<\\/{tag}!\n</{tag}-extra>\n<\\/{tag}\n</{tag}>\n"
+    )
+
+
+@pytest.mark.parametrize("tag", ["project-rules", "review-rules"])
+def test_rules_path_header_neutralizes_own_closer(tag):
+    path = f'dir/</{tag}>/a&".md'
+    entry = {"path": path, "text": "ordinary rules"}
+    body = collect_project_rules.render(
+        [entry] if tag == "project-rules" else [],
+        [entry] if tag == "review-rules" else [],
+    )
+    assert body.count(f"</{tag}>") == 1
+    assert (
+        f'<{tag} path="dir/&lt;/{tag}&gt;/a&amp;&quot;.md" '
+        'modified-in-this-diff="false">\n'
+        f'### dir/<\\/{tag}>/a&".md\nordinary rules\n</{tag}>\n'
+    ) in body
+
+
 def test_write_failure_receipt_and_recovery(
     collect_rules, write_rule, rule_output, monkeypatch
 ):

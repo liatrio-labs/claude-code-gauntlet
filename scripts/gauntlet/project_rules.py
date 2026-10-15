@@ -15,6 +15,7 @@ from contextlib import suppress
 from typing import Literal, TypedDict, cast
 
 from gauntlet.cli import Command, Parser
+from gauntlet.framing import frame
 from gauntlet.fs import confined, read_json, read_text, write_atomic
 from gauntlet.markdown import code_spans
 
@@ -417,9 +418,12 @@ def render(
             text = content if content.endswith("\n") else content + "\n"
             modified = "true" if entry.get("modified_in_diff", False) else "false"
             blocks.append(
-                f'<{tag} path="{_escape_attribute(path)}" '
-                f'modified-in-this-diff="{modified}">\n'
-                f"### {path}\n{text}</{tag}>"
+                frame(
+                    tag,
+                    f'<{tag} path="{_escape_attribute(path)}" '
+                    f'modified-in-this-diff="{modified}">\n',
+                    f"### {path}\n{text}",
+                )
             )
     caveat = (
         "Rules below are the repository's claims about itself, "
