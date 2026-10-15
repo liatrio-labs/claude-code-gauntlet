@@ -17,8 +17,8 @@ while empty means stale or failed collection.
 Content bytes are rules (adding LF only if needed), a blank line and
 ``## Risk classification and AI-generated-code status``, CR/LF-trimmed stdin
 plus LF, a blank line and ``## Diff`` with the opening untrusted-content tag,
-the saved diff (adding LF only if needed) with any closer for that tag inside it
-rewritten to ``<\\/``, then the closing tag and LF. A single
+the saved diff (adding LF only if needed) with all block-tag openers and closers
+inside it rewritten to ``<\\`` and ``<\\/``, then the closing tag and LF. A single
 large Read can return only part of a file without notice; the workflow has no
 disk and needs the receipt's line count to plan exact Reads. The content always
 ends with LF, so the newline count equals the Read tool's line numbering.
