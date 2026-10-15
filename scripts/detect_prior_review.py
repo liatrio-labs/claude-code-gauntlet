@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Detect prior review command entry."""
-
 import os
 import sys
 

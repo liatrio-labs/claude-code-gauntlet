@@ -1,9 +1,12 @@
 """One offline freshness gate for the repository's local generators."""
 
-import ast
+import importlib
 import subprocess
 import sys
 from pathlib import Path
+
+from tests.conftest import ENTRY_IMPORT
+from tests.support.repository import tracked_paths
 
 REPO = Path(__file__).resolve().parents[1]
 PARITY_RECORDER = "workflows/test/tools/record_parity.py"
@@ -14,57 +17,18 @@ COMMANDS = (
 )
 
 
-def _parses_check(path):
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    return any(
-        (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "add_argument"
-            and any(
-                isinstance(arg, ast.Constant) and arg.value == "--check"
-                for arg in node.args
-            )
-        )
-        or (
-            isinstance(node, ast.Compare)
-            and any(
-                isinstance(part, ast.Constant) and part.value == "--check"
-                for part in (node.left, *node.comparators)
-            )
-        )
-        for node in ast.walk(tree)
-    )
-
-
 def _check_generators():
-    tracked = subprocess.run(
-        ("git", "ls-files", "scripts/*.py", PARITY_RECORDER),
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        check=True,
-        encoding="utf-8",
-    ).stdout.splitlines()
-    entries = set()
-    for relative in tracked:
-        if relative == PARITY_RECORDER:
-            if _parses_check(REPO / relative):
-                entries.add(relative)
+    entries = {PARITY_RECORDER}
+    for relative in tracked_paths(REPO, ("scripts/*.py",)):
+        if Path(relative).parent != Path("scripts"):
             continue
-        tree = ast.parse((REPO / relative).read_text(encoding="utf-8"))
-        modules = [
-            node.module
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-            and node.module
-            and node.module.startswith("gauntlet.")
-            and any(alias.name == "CLI" for alias in node.names)
-        ]
-        for module in modules:
-            source = REPO / "scripts" / Path(*module.split(".")).with_suffix(".py")
-            if source.is_file() and _parses_check(source):
-                entries.add(relative)
+        match = ENTRY_IMPORT.search((REPO / relative).read_text(encoding="utf-8"))
+        assert match
+        command = importlib.import_module(f"gauntlet.{match[1]}").CLI
+        if any(
+            "--check" in action.option_strings for action in command.parser._actions
+        ):
+            entries.add(relative)
     return entries
 
 

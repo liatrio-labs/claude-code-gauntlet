@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Write shared context command entry."""
-
 import os
 import sys
 

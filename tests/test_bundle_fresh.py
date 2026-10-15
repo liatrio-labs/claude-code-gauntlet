@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.repository import workflow_header
+
 REPO = Path(__file__).resolve().parents[1]
 BUNDLE = REPO / "workflows" / "pipeline.js"
 
@@ -15,12 +17,15 @@ def bundle_text() -> str:
 
 
 def test_bundle_is_byte_identical_to_fresh_build() -> None:
+    build_script = (
+        "import { build } from './workflows/build.js'; process.stdout.write(build());"
+    )
     result = subprocess.run(
         [
             "node",
             "--input-type=module",
             "-e",
-            "import { build } from './workflows/build.js'; process.stdout.write(build());",
+            build_script,
         ],
         check=True,
         capture_output=True,
@@ -55,22 +60,7 @@ def test_bundle_runtime_shape(bundle_text: str) -> None:
     # return.
     assert len([line for line in lines if re.match(r"^\s*export\b", line)]) == 1
     assert lines[-1].strip().startswith("return await run(")
-    script = (
-        "import { readFileSync } from 'node:fs';"
-        "const { meta } = await import('data:text/javascript,' + "
-        "encodeURIComponent(readFileSync(0, 'utf8')));"
-        "process.stdout.write(JSON.stringify(meta.description));"
-    )
-    result = subprocess.run(
-        ["node", "--input-type=module", "-e", script],
-        input=lines[0],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
-        cwd=REPO,
-    )
-    description: object = json.loads(result.stdout)
+    description = workflow_header(REPO)["description"]
     assert isinstance(description, str) and description.strip()
 
 

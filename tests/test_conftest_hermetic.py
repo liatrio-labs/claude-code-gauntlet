@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import copy
 import glob
 import os
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -25,15 +23,16 @@ def test_temp_root_name_carries_a_glob_guard():
     assert glob.glob(temp_root) == []
 
 
-@pytest.mark.parametrize("prior_roots", [None, "/sentinel/prior/task-roots"])
-@pytest.mark.parametrize("prior_tasks_dir", [None, "/sentinel/prior/tasks-dir"])
+@pytest.mark.parametrize("present", [False, True])
 def test_configure_then_unconfigure_restores_exact_prior_state(
-    prior_roots, prior_tasks_dir
+    present, monkeypatch, tmp_path
 ):
-    saved_environ = dict(os.environ)
-    saved_tempdir = tempfile.tempdir
-    saved_state = copy.deepcopy(root_conftest._STATE.__dict__)
-    prior_tempdir = tempfile.mkdtemp(prefix="cg-prior-sentinel-")
+    prior_roots = "/sentinel/prior/task-roots" if present else None
+    prior_tasks_dir = "/sentinel/prior/tasks-dir" if present else None
+    prior_tempdir = str(tmp_path)
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    monkeypatch.setattr(tempfile, "tempdir", prior_tempdir)
+    monkeypatch.setattr(root_conftest, "_STATE", root_conftest._SessionState())
     try:
         os.environ["TMPDIR"] = "/sentinel/prior/tmpdir"
         os.environ["GIT_DIR"] = "/sentinel/prior/git-dir"
@@ -46,10 +45,6 @@ def test_configure_then_unconfigure_restores_exact_prior_state(
             os.environ.pop("CODE_GAUNTLET_TASKS_DIR", None)
         else:
             os.environ["CODE_GAUNTLET_TASKS_DIR"] = prior_tasks_dir
-        # mkdtemp needs a real prior directory even though TMPDIR is a literal sentinel.
-        tempfile.tempdir = prior_tempdir
-        root_conftest._STATE.__dict__.clear()
-        root_conftest._STATE.__dict__.update(root_conftest._SessionState().__dict__)
         root_conftest.pytest_configure(None)
         created_root = root_conftest._STATE.root
         assert created_root is not None
@@ -72,10 +67,5 @@ def test_configure_then_unconfigure_restores_exact_prior_state(
         assert tempfile.tempdir == prior_tempdir
         assert not os.path.exists(created_root)
     finally:
-        # Calls to these hooks must not disturb the session running this test.
-        os.environ.clear()
-        os.environ.update(saved_environ)
-        tempfile.tempdir = saved_tempdir
-        root_conftest._STATE.__dict__.clear()
-        root_conftest._STATE.__dict__.update(saved_state)
-        shutil.rmtree(prior_tempdir, ignore_errors=True)
+        # Cleanup also runs when a configure assertion fails.
+        root_conftest.pytest_unconfigure(None)

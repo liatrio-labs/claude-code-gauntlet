@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Emit style context command entry."""
-
 import os
 import sys
 

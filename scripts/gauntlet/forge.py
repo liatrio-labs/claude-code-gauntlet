@@ -115,7 +115,8 @@ def _remote_hostname(authority: str) -> str | None:
             return None
         _validated_host(host_port, hostname, port)
         if host_port.startswith("["):
-            # urlsplit on Python 3.10 accepts any bracketed text, so the literal is checked here.
+            # Python 3.10 urlsplit accepts arbitrary bracketed text;
+            # validate the IPv6 literal ourselves.
             IPv6Address(hostname)
     except ValueError:
         return None
@@ -314,7 +315,7 @@ def origin_remote(
     if remote is None:
         return None
     # Extract the slug from the stripped URL to preserve its bytes. For the host,
-    # remove only Git's trailing newline so stray whitespace or controls make it unknown.
+    # remove only Git's newline so stray whitespace or controls make the host unknown.
     original = parse_remote(stdout.removesuffix("\n").removesuffix("\r"))
     return replace(remote, hostname=original.hostname if original else None)
 
@@ -331,6 +332,7 @@ def _parse_pages(text: str) -> list[object] | None:
         if index >= len(text):
             break
         try:
+            doc: object
             doc, index = decoder.raw_decode(text, index)
         except (ValueError, RecursionError):
             return items if items else None
@@ -391,8 +393,7 @@ def _submit(tool: str, header_flag: str, request: PostRequest) -> PostResult:
                 f"Could not parse API response as JSON: {stdout[:200]}",
             )
     finally:
-        if os.path.exists(path):
-            os.unlink(path)
+        os.unlink(path)
 
 
 class _ForgeAdapter:

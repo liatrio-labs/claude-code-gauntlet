@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Diff numstat command entry."""
-
 import os
 import sys
 

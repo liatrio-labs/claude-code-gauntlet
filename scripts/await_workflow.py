@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Await workflow command entry."""
-
 import os
 import sys
 

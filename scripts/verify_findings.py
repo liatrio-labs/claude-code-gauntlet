@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Verify findings command entry."""
-
 import os
 import sys
 

@@ -14,29 +14,17 @@ def _extract_doc_defaults(text: str) -> dict[str, int | str]:
         text,
         re.DOTALL,
     )
-    if not m:
-        raise AssertionError(
-            "review-md-spec.md is missing the <!-- code-gauntlet-defaults --> "
-            "marker block."
-        )
+    assert m, "missing defaults marker block"
     block = m.group(1)
 
     def _num(label: str) -> int:
         pattern = r"`" + re.escape(label) + r"`\D*?\*\*(\d+)\*\*"
         found = re.search(pattern, block)
-        if not found:
-            raise AssertionError(
-                f"Could not find a bolded number for `{label}` inside the "
-                "code-gauntlet-defaults marker block."
-            )
+        assert found, f"missing default for {label}"
         return int(found.group(1))
 
     severity = re.search(r"`severity_threshold`\s*\n?\s*\*\*(\w+)\*\*", block)
-    if not severity:
-        raise AssertionError(
-            "Could not find a bolded value for `severity_threshold` inside the "
-            "code-gauntlet-defaults marker block."
-        )
+    assert severity, "missing severity default"
 
     return {
         "confidence_threshold_nonsecurity": _num("confidence_threshold"),

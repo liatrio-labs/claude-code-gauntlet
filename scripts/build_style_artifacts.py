@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Build style artifacts command entry."""
-
 import os
 import sys
 

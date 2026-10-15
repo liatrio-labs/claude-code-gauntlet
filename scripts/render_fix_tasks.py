@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Render fix tasks command entry."""
-
 import os
 import sys
 
