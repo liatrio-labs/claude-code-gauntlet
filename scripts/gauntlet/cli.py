@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -51,6 +52,25 @@ class CliError(Exception):
 
 class UsageError(CliError):
     pass
+
+
+def read_stdin_bytes() -> bytes:
+    if sys.stdin is None:
+        raise UsageError("cannot read stdin", 2)
+    try:
+        return sys.stdin.buffer.read()
+    except OSError:
+        raise UsageError("cannot read stdin", 2) from None
+
+
+def read_stdin_json_object() -> dict[str, object]:
+    try:
+        payload = json.loads(read_stdin_bytes().decode("utf-8"))
+    except (ValueError, UnicodeError, RecursionError):
+        raise CliError("stdin must contain a JSON object", 2) from None
+    if not isinstance(payload, dict):
+        raise CliError("stdin must contain a JSON object", 2)
+    return payload
 
 
 class Parser(argparse.ArgumentParser):

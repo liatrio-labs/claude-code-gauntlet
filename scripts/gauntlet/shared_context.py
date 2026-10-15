@@ -2,9 +2,8 @@
 
 import argparse
 import os
-import sys
 
-from gauntlet.cli import Command, Parser, UsageError, require_head_sha
+from gauntlet.cli import Command, Parser, UsageError, read_stdin_bytes, require_head_sha
 
 DESCRIPTION = (
     "Write the shared agent context from paths and triage text supplied as data.\n"
@@ -55,12 +54,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     rules = _read_input(rules_path, "project rules file")
     diff = _read_input(diff_path, "diff file")
 
-    if sys.stdin is None:
-        raise UsageError("cannot read stdin", 2)
-    try:
-        triage = sys.stdin.buffer.read()
-    except OSError:
-        raise UsageError("cannot read stdin", 2) from None
+    triage = read_stdin_bytes()
     if not triage.strip():
         raise UsageError(
             "stdin must contain risk classification and AI-generated-code status",

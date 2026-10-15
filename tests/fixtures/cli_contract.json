@@ -60,6 +60,7 @@
   "resolve_config/usage": [2, ""],
   "resolve_pr_identity/bad_input": [2, ""],
   "resolve_pr_identity/failure": [2, ""],
+  "resolve_pr_identity/help": [0, "usage: resolve_pr_identity [-h] --platform {github,gitlab} --sha SHA\n\noptions:\n  -h, --help            show this help message and exit\n  --platform {github,gitlab}\n  --sha SHA\n"],
   "resolve_pr_identity/success": [0, "{\"owner\": \"o\", \"repo\": \"r\", \"pr_number\": 5, \"sha_full\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"platform\": \"github\", \"web_origin\": \"https://github.com\"}\n"],
   "resolve_pr_identity/usage": [2, ""],
   "stale_truncate/bad_input": [2, ""],

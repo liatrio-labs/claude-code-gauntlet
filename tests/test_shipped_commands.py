@@ -207,6 +207,72 @@ def _run_shipped(
     )
 
 
+@pytest.mark.parametrize(
+    "platform,url_key,url",
+    [
+        ("github", "url", "https://github.com/o/r/pull/5"),
+        ("gitlab", "web_url", "https://gitlab.com/group/sub/r/-/merge_requests/5"),
+    ],
+)
+def test_shipped_pr_identity_keeps_author_text_on_stdin(
+    platform: str, url_key: str, url: str, tmp_path: Path, monkeypatch
+) -> None:
+    skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+    start = skill.index("<!-- generated-from-registry-identity:pr_identity_fields")
+    end = skill.index(
+        "<!-- /generated-from-registry-identity:pr_identity_fields", start
+    )
+    command = next(
+        line[1:-1]
+        for line in skill[start:end].splitlines()
+        if line.startswith("`")
+        and "resolve_pr_identity.py" in line
+        and f"--platform {platform}" in line
+    )
+    assert "--title" not in command
+    assert "--url" not in command
+    assert set(re.findall(r"\{[^}]+\}", command)) == {"{pr_number}", "{plugin_root}"}
+    producer, consumer = command.split(" | ")
+    assert producer == (
+        "gh pr view {pr_number} --json url,title"
+        if platform == "github"
+        else "glab mr view {pr_number} --output json"
+    )
+    sha = "a" * 40
+    parts = shlex.split(
+        consumer.replace("{plugin_root}", REPO.as_posix()).replace(
+            '"$(git rev-parse HEAD)"', sha
+        )
+    )
+    assert parts == [
+        "python3",
+        (REPO / "scripts/resolve_pr_identity.py").as_posix(),
+        "--platform",
+        platform,
+        "--sha",
+        sha,
+    ]
+    parts[0] = sys.executable
+    title = "$(touch MARKER) `touch MARKER` both \" and '\ncaf\u00e9\r\nend"
+    payload = {url_key: url, "title": title}
+    monkeypatch.setenv("PYTHONIOENCODING", "latin-1")
+    result = subprocess.run(
+        parts,
+        input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        cwd=tmp_path,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert not (tmp_path / "MARKER").exists()
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == b""
+    identity = json.loads(result.stdout)
+    assert identity["title"].encode("utf-8") == title.encode("utf-8")
+    assert identity["platform"] == platform
+    assert identity["pr_number"] == 5
+
+
 def test_stale_truncate_shipped_command_handles_quoted_output_path(
     tmp_path: Path,
 ) -> None:

@@ -1,13 +1,11 @@
-"""Resolve a PR/MR URL into the registry-owned delivery.prIdentity wire shape.
-Field order and consumer checks are defined by PR_IDENTITY_FIELDS in registry.js.
-"""
+"""Keep author-controlled PR/MR fields out of shell arguments."""
 
 import argparse
 import re
 import sys
 from typing import TypedDict
 
-from gauntlet.cli import CliError, Command, Parser
+from gauntlet.cli import CliError, Command, Parser, read_stdin_json_object
 from gauntlet.forge import Platform, parse_pr_url
 
 SHA_FULL_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -51,14 +49,20 @@ def resolve(
 def _parser() -> Parser:
     parser = Parser(prog="resolve_pr_identity")
     parser.add_argument("--platform", choices=("github", "gitlab"), required=True)
-    parser.add_argument("--url", required=True)
     parser.add_argument("--sha", required=True)
-    parser.add_argument("--title")
     return parser
 
 
 def _handle(args: argparse.Namespace) -> tuple[PrIdentityWire, int]:
-    return resolve(args.platform, args.url, args.sha, args.title), 0
+    payload = read_stdin_json_object()
+    url_key = "url" if args.platform == "github" else "web_url"
+    url = payload.get(url_key)
+    if not isinstance(url, str):
+        raise CliError(f"stdin {url_key} must be a string", 2)
+    title = payload.get("title", "")
+    if not isinstance(title, str):
+        raise CliError("stdin title must be a string", 2)
+    return resolve(args.platform, url, args.sha, title), 0
 
 
 def main(argv: list[str] | None = None) -> int:

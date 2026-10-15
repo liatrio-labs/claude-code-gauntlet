@@ -311,9 +311,13 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 - `web_origin` (required): an http(s) origin: scheme, host and optional port only.
 - `title` (optional): a non-empty string when present.
 
-Producer command:
+Producer commands:
 
-`python3 {plugin_root}/scripts/resolve_pr_identity.py --platform github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> [--title <text>]`
+`gh pr view {pr_number} --json url,title | python3 "{plugin_root}/scripts/resolve_pr_identity.py" --platform github --sha "$(git rev-parse HEAD)"`
+
+`glab mr view {pr_number} --output json | python3 "{plugin_root}/scripts/resolve_pr_identity.py" --platform gitlab --sha "$(git rev-parse HEAD)"`
+
+The title and URL reach the script only through the pipe.
 <!-- /generated-from-registry-identity:pr_identity_fields -->
 
 **Omit optional fields you have no value for; never stamp an explicit `null`.**
