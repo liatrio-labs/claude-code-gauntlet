@@ -394,15 +394,6 @@ def collect_sources(collector: RuleCollector, changed: Sequence[str]) -> None:
     collector.count_unfollowed_review_imports()
 
 
-def _escape_attribute(value: str) -> str:
-    return (
-        value.replace("&", "&amp;")
-        .replace('"', "&quot;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
-
-
 def render(
     sources: Sequence[Mapping[str, object]],
     review_sources: Sequence[Mapping[str, object]] = (),
@@ -421,8 +412,7 @@ def render(
                 frame(
                     tag,
                     f"### {path}\n{text}",
-                    f' path="{_escape_attribute(path)}" '
-                    f'modified-in-this-diff="{modified}"',
+                    {"path": path, "modified-in-this-diff": modified},
                 )
             )
     caveat = (

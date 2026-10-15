@@ -4,6 +4,7 @@ import re
 import secrets
 import sys
 import unicodedata
+from collections.abc import Mapping
 from typing import AnyStr
 
 # Models read past whitespace and default-ignorable characters, so neutralize
@@ -30,9 +31,20 @@ _GAP = rf"[\s{_FORMAT}]*"
 _NAME_GAP = rf"[{_FORMAT}]*"
 
 
-def frame(tag: str, body: AnyStr, attrs: str = "") -> AnyStr:
+def _escape_attribute(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def frame(tag: str, body: AnyStr, attrs: Mapping[str, str] | None = None) -> AnyStr:
     nonce = secrets.token_hex(16)
-    opening = f'<{tag}{attrs} id="{nonce}">\n'
+    pairs = {**(attrs or {}), "id": nonce}
+    rendered = "".join(f' {k}="{_escape_attribute(v)}"' for k, v in pairs.items())
+    opening = f"<{tag}{rendered}>\n"
     closing = f'</{tag} id="{nonce}">'
     name = _NAME_GAP.join(re.escape(ch) for ch in tag)
     closer = re.compile(rf"<{_GAP}/(?={_GAP}{name}(?![\w.:-]))", re.IGNORECASE)
