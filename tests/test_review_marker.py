@@ -315,16 +315,22 @@ def test_finding_marker__more_than_scan_limit_finding_markers_are_all_returned()
 
 
 def test_finding_marker__hostile_candidates_preserve_valid_tail():
+    import_line = (
+        "from gauntlet.marker import (build_finding_marker, "
+        "find_finding_marker, find_finding_markers)"
+    )
+    invalid_key_line = (
+        'invalid_key = (\'<!-- code-gauntlet-finding-key: {\\"sha\\":\\"\''
+        ' + sha + \'\\",\\"key\\":[]} -->\\n\') * 5000'
+    )
     child = "\n".join(
         [
-            "from gauntlet.marker import (build_finding_marker, "
-            "find_finding_marker, find_finding_markers)",
+            import_line,
             "n = 40  # a literal: the finding reader has no scan cap to derive from",
             "sha = 'a' * 40",
             "keys = [f'{i:016x}' for i in range(n)]",
             "invalid_json = '<!-- code-gauntlet-finding-key: {not json} -->\\n' * 5000",
-            'invalid_key = (\'<!-- code-gauntlet-finding-key: {\\"sha\\":\\"\''
-            ' + sha + \'\\",\\"key\\":[]} -->\\n\') * 5000',
+            invalid_key_line,
             "unclosed = '<!-- code-gauntlet-finding-key: {' * 5000",
             "malformed = invalid_json + invalid_key + unclosed",
             "if (find_finding_markers(malformed) != [] "

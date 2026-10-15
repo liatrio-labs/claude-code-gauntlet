@@ -3,7 +3,6 @@
 import ast
 import importlib
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -11,9 +10,10 @@ from pathlib import Path
 import pytest
 from gauntlet.cli import Command
 
+from tests.conftest import ENTRY_IMPORT
+
 ROOT = Path(__file__).resolve().parents[1]
 ENTRIES = sorted((ROOT / "scripts").glob("*.py"))
-IMPORT = re.compile(r"^from gauntlet\.([\w.]+) import CLI$", re.MULTILINE)
 
 
 def _entry_template(module):
@@ -30,7 +30,7 @@ def _entry_template(module):
 @pytest.mark.parametrize("path", ENTRIES, ids=lambda path: path.stem)
 def test_entry_is_the_template_over_a_command(path: Path) -> None:
     source = path.read_text(encoding="utf-8")
-    match = IMPORT.search(source)
+    match = ENTRY_IMPORT.search(source)
     assert match
     module = match[1]
     assert source == _entry_template(module)

@@ -11,17 +11,13 @@ from pathlib import Path
 import pytest
 from gauntlet import contract_gen as contract_gen
 
-from tests.support import generator_inputs
-from tests.support.repository import copy_generator_tree
+from tests.support.repository import copy_generator_tree, tracked_paths
 
 REPO = Path(__file__).resolve().parents[1]
 
-
 FORMS = REPO / ".github" / "ISSUE_TEMPLATE"
 
-
 LABELS_DIFF = REPO / ".github" / "labels_diff.py"
-
 
 LABEL_CATEGORIES = {"type", "state", "resolution", "outreach", "topic", "area"}
 
@@ -242,6 +238,27 @@ def test_labels_refused_input(tmp_path: Path) -> None:
     assert b"expected a JSON array of labels" in result.stderr
     assert b"Traceback" not in result.stderr
 
+    manifest = tmp_path / "unemittable-labels.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "labels": [
+                    {
+                        "name": "ok",
+                        "color": "fff; echo pwned",
+                        "description": "not hex",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    refused = _run_labels("--manifest", str(manifest), "--commands")
+    assert refused.returncode == 2
+    assert refused.stdout == ""
+    assert "not 6-digit lowercase hex" in refused.stderr
+    assert "Traceback" not in refused.stderr
+
 
 @pytest.mark.parametrize("form", _form_files(), ids=_form_id)
 def test_every_auto_applied_label_exists_in_the_taxonomy(form: Path) -> None:
@@ -269,7 +286,6 @@ REQUIRED_PR_CHECK_CONTEXTS = (
     "lint-pr-title",
 )
 
-
 LOCAL_COMMAND_FOR_REQUIRED_CHECK = {
     "Run Linting": "pre-commit run --all-files",
     "Run Tests (3.10)": "python -m pytest tests/ -q",
@@ -284,7 +300,6 @@ LOCAL_COMMAND_FOR_REQUIRED_CHECK = {
     "Validate plugin.json": "claude plugin validate .",
     "lint-pr-title": None,  # Needs the PR title; nothing local to run.
 }
-
 
 REQUIRED_PR_CHECK_WORKFLOWS = (
     ".github/workflows/ci.yml",
@@ -422,7 +437,7 @@ def test_contract_fence_hook_is_scoped_and_covers_derived_inputs() -> None:
     scope = re.compile(_pre_commit_hook_value(block, "files"))
     registry = contract_gen.load_registry(str(REPO))
     paths = set(contract_gen.rendered_targets(str(REPO), registry, ""))
-    paths.update(generator_inputs.declared_inputs(str(REPO)))
+    paths.update(tracked_paths(REPO, ("scripts/", "workflows/src/")))
     assert paths
     assert all(scope.match(path) for path in paths)
 

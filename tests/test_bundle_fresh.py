@@ -17,13 +17,15 @@ def bundle_text() -> str:
 
 
 def test_bundle_is_byte_identical_to_fresh_build() -> None:
+    build_script = (
+        "import { build } from './workflows/build.js'; process.stdout.write(build());"
+    )
     result = subprocess.run(
         [
             "node",
             "--input-type=module",
             "-e",
-            "import { build } from './workflows/build.js'; process.stdout"
-            ".write(build());",
+            build_script,
         ],
         check=True,
         capture_output=True,

@@ -53,21 +53,25 @@ WRITE_ARGVS = (
         PR_BODY,
     ),
 )
-RELEASE_ARGV = tuple(
-    ["gh", "release", "view", "--repo", "owner/repo", "--json", "tagName"]
+RELEASE_ARGV = (
+    "gh",
+    "release",
+    "view",
+    "--repo",
+    "owner/repo",
+    "--json",
+    "tagName",
 )
 ISSUE_LIST_ARGV = (
-    *[
-        "gh",
-        "issue",
-        "list",
-        "--repo",
-        "owner/repo",
-        "--state",
-        "all",
-        "--author",
-        "app/github-actions",
-    ],
+    "gh",
+    "issue",
+    "list",
+    "--repo",
+    "owner/repo",
+    "--state",
+    "all",
+    "--author",
+    "app/github-actions",
     "--search",
     'in:title "Marketplace bump due" sort:created-desc',
     "--limit",
@@ -131,13 +135,10 @@ def release_responses(manifest_document=None, sha=SHA):
 
 
 class FakeRunner:
-    def __init__(
-        self, responses=None, clone_bytes=None, persistent_root=None, create_clone=True
-    ):
+    def __init__(self, responses=None, clone_bytes=None, persistent_root=None):
         self.responses = dict(responses or {})
         self.clone_bytes = clone_bytes
         self.persistent_root = persistent_root
-        self.create_clone = create_clone
         self.calls = []
         self.clone_path = None
 
@@ -149,8 +150,6 @@ class FakeRunner:
         if isinstance(response, BaseException):
             raise response
         if key == CLONE_ARGV:
-            if not self.create_clone:
-                return ""
             clone_name = argv[3].split("/", 1)[1]
             if self.persistent_root is None:
                 self.clone_path = Path(cwd) / clone_name

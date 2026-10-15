@@ -140,16 +140,16 @@ def _reject_constant(name: str) -> NoReturn:
     raise ValueError(f"non-standard JSON constant: {name}")
 
 
-def _scan_json_at(text: str, start: int) -> tuple[object, int]:
+def _decode_json_at(text: str, start: int) -> object:
     """Decode JSON without treating braces or comment closers in strings as ends."""
     try:
         parsed: object
-        parsed, end = json.JSONDecoder(parse_constant=_reject_constant).raw_decode(
+        parsed, _ = json.JSONDecoder(parse_constant=_reject_constant).raw_decode(
             text, start
         )
     except (ValueError, RecursionError):
-        return None, len(text)
-    return (None if _has_non_finite(parsed) else parsed), end
+        return None
+    return None if _has_non_finite(parsed) else parsed
 
 
 def find_marker(text: object) -> dict[str, object] | None:
@@ -168,7 +168,7 @@ def find_marker(text: object) -> dict[str, object] | None:
             start = match.end()
             if start >= len(text) or text[start] != "{":
                 continue
-            payload, _ = _scan_json_at(text, start)
+            payload = _decode_json_at(text, start)
             if isinstance(payload, dict):
                 found = dict(cast(dict[str, object], payload))
                 found["_token"] = match.group(1)

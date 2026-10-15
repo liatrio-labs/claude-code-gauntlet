@@ -122,8 +122,8 @@ def test_poster_mode_stdout(
             (
                 "Review captured (dry-run).\n  1 inline comment(s) captured.\n"
                 if platform == "github"
-                else "MR summary note captured (dry-run).\n  1 inline discussi"
-                "on(s) captured.\n"
+                else "MR summary note captured (dry-run).\n  1 inline "
+                "discussion(s) captured.\n"
             )
             + "Dry run \u2014 no comments posted. Payload written to: "
             + str(artifact)
@@ -267,8 +267,8 @@ def test_identity_unicode_receipt(tmp_path, invoke):
     assert result.stdout == (
         b'{"owner": "OpenAI", "repo": "codex", "pr_number": 278, "sha_full": "'
         + FULL.encode()
-        + b'", "platform": "github", "web_origin": "https://github.com", "t'
-        b'itle": "A caf\\u00e9 fix"}\n'
+        + b'", "platform": "github", "web_origin": "https://github.com", '
+        b'"title": "A caf\\u00e9 fix"}\n'
     )
 
 
@@ -448,8 +448,8 @@ SUCCESS = {
     ),
     "verify_findings": (
         {"diff.patch": PATCH},
-        '--input {dir}/slice.json --input-inline {{"findings":[],"base_br'
-        'anch":"main"}} '
+        '--input {dir}/slice.json --input-inline {{"findings":[],'
+        '"base_branch":"main"}} '
         "--diff-file {dir}/diff.patch --head-sha abcd --nonce cli",
     ),
     "write_shared_context": (
@@ -1042,11 +1042,11 @@ def test_patch_serialization_fallback(
             '[{"file":"x.py","line":1,"end_line":1,"suggested_fix_code":"changed"}]',
             "abc1234",
             0,
-            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md'
-            '", "oracle": "missing", "candidates": 1, "kept": 0, "downgra'
-            'ded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier'
-            '": 0, "findings": 1, "warnings": ["report-patch downgraded: '
-            'x.py:1 (no_diff_oracle)"], "errors": []}\n',
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", '
+            '"oracle": "missing", "candidates": 1, "kept": 0, '
+            '"downgraded": 1, "reasons": {"no_diff_oracle": 1}, '
+            '"filtered_earlier": 0, "findings": 1, "warnings": '
+            '["report-patch downgraded: x.py:1 (no_diff_oracle)"], "errors": []}\n',
             "report_patches: report-patch downgraded: x.py:1 (no_diff_oracle)\n",
         ),
         _scenario_param(
@@ -1063,20 +1063,20 @@ def test_patch_serialization_fallback(
             "abc1234",
             2,
             "",
-            "report_patches: the following arguments are required: --outp"
-            "ut-dir, --head-sha\n",
+            "report_patches: the following arguments are required: "
+            "--output-dir, --head-sha\n",
         ),
         pytest.param(
             "failure",
             "{}",
             "abc1234",
             1,
-            '{"ok": false, "path": "<TMP>/code-gauntlet-patches-abc1234.m'
-            'd", "oracle": "unattempted", "candidates": 0, "kept": 0, "do'
-            'wngraded": 0, "reasons": {}, "filtered_earlier": 0, "finding'
-            's": 0, "warnings": [], "errors": ["findings file <TMP>/code-'
-            "gauntlet-findings-abc1234.json must be a JSON array of findi"
-            'ngs, got dict"]}\n',
+            '{"ok": false, "path": "<TMP>/code-gauntlet-patches-abc1234.md", '
+            '"oracle": "unattempted", "candidates": 0, "kept": 0, '
+            '"downgraded": 0, "reasons": {}, "filtered_earlier": 0, '
+            '"findings": 0, "warnings": [], "errors": ["findings file <TMP>/'
+            "code-gauntlet-findings-abc1234.json must be a JSON array of findings, "
+            'got dict"]}\n',
             "",
             id="pre-oracle-failure",
         ),
@@ -1085,10 +1085,10 @@ def test_patch_serialization_fallback(
             "[]",
             "abc1234",
             1,
-            '{"ok": false, "path": "<TMP>/code-gauntlet-patches-abc1234.m'
-            'd", "oracle": "ok", "candidates": 0, "kept": 0, "downgraded"'
-            ': 0, "reasons": {}, "filtered_earlier": 0, "findings": 0, "w'
-            'arnings": [], "errors": ["ValueError: oversized hunk"]}\n',
+            '{"ok": false, "path": "<TMP>/code-gauntlet-patches-abc1234.md", '
+            '"oracle": "ok", "candidates": 0, "kept": 0, "downgraded": '
+            '0, "reasons": {}, "filtered_earlier": 0, "findings": 0, '
+            '"warnings": [], "errors": ["ValueError: oversized hunk"]}\n',
             "",
             id="outside-receipt-boundary",
         ),
@@ -1098,10 +1098,10 @@ def test_patch_serialization_fallback(
             'changed"},{"suggested_fix_code_removed_by":"filter"},null]',
             "abc1234",
             1,
-            '{"ok": false, "path": "<TMP>/code-gauntlet-patches-abc1234.m'
-            'd", "oracle": "ok", "candidates": 0, "kept": 0, "downgraded"'
-            ': 0, "reasons": {}, "filtered_earlier": 0, "findings": 3, "w'
-            'arnings": [], "errors": ["ValueError: oversized hunk"]}\n',
+            '{"ok": false, "path": "<TMP>/code-gauntlet-patches-abc1234.md", '
+            '"oracle": "ok", "candidates": 0, "kept": 0, "downgraded": '
+            '0, "reasons": {}, "filtered_earlier": 0, "findings": 3, '
+            '"warnings": [], "errors": ["ValueError: oversized hunk"]}\n',
             "",
         ),
         pytest.param(
@@ -1109,24 +1109,25 @@ def test_patch_serialization_fallback(
             "[]",
             "abc1234",
             1,
-            '{"ok": false, "path": null, "oracle": "unattempted", "candid'
-            'ates": 0, "kept": 0, "downgraded": 0, "reasons": {}, "filter'
-            'ed_earlier": 0, "findings": 0, "warnings": [], "errors": ["u'
-            'nexpected RuntimeError: injected\\r\\nload"]}\n',
+            '{"ok": false, "path": null, "oracle": "unattempted", '
+            '"candidates": 0, "kept": 0, "downgraded": 0, "reasons": {}, '
+            '"filtered_earlier": 0, "findings": 0, "warnings": [], '
+            '"errors": ["unexpected RuntimeError: injected\\r\\nload"]}\n',
             "",
             id="preload-unexpected",
         ),
         _scenario_param(
             "warning-breaks",
-            '[{"file":"x.py\\r\\nspoof","line":1,"end_line":1,"suggested_'
-            'fix_code":"changed"}]',
+            '[{"file":"x.py\\r\\nspoof","line":1,"end_line":1,'
+            '"suggested_fix_code":"changed"}]',
             "abc1234",
             0,
-            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md'
-            '", "oracle": "missing", "candidates": 1, "kept": 0, "downgra'
-            'ded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier'
-            '": 0, "findings": 1, "warnings": ["report-patch downgraded: '
-            'x.py\\r\\nspoof:1 (no_diff_oracle)"], "errors": []}\n',
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", '
+            '"oracle": "missing", "candidates": 1, "kept": 0, '
+            '"downgraded": 1, "reasons": {"no_diff_oracle": 1}, '
+            '"filtered_earlier": 0, "findings": 1, "warnings": '
+            '["report-patch downgraded: x.py\\r\\nspoof:1 (no_diff_oracle)"], '
+            '"errors": []}\n',
             "report_patches: report-patch downgraded: x.py spoof:1 (no_diff_oracle)\n",
         ),
     ],
@@ -1188,9 +1189,9 @@ def test_patch_command_boundaries(
         ),
         _scenario_param(
             "submit",
-            "API call failed (exit 1).\nCommand: glab api --method POST p"
-            "rojects/o%2Fr/merge_requests/5/notes --input payload.json\ns"
-            "tderr: denied",
+            "API call failed (exit 1).\nCommand: glab api --method POST "
+            "projects/o%2Fr/merge_requests/5/notes --input payload.json\n"
+            "stderr: denied",
             "submit-command",
         ),
     ],
@@ -1245,11 +1246,12 @@ def test_poster_report_shape_boundary(
             "src/unié.py",
             2,
             "Non-ASCII path",
-            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md'
-            '", "oracle": "missing", "candidates": 1, "kept": 0, "downgra'
-            'ded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier'
-            '": 0, "findings": 1, "warnings": ["report-patch downgraded: '
-            'src/uni\\u00e9.py:2 (no_diff_oracle)"], "errors": []}\n',
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", '
+            '"oracle": "missing", "candidates": 1, "kept": 0, '
+            '"downgraded": 1, "reasons": {"no_diff_oracle": 1}, '
+            '"filtered_earlier": 0, "findings": 1, "warnings": '
+            '["report-patch downgraded: src/uni\\u00e9.py:2 (no_diff_oracle)"], '
+            '"errors": []}\n',
             "report_patches: report-patch downgraded: src/unié.py:2 (no_diff_oracle)\n",
             id="foreign-encoding",
         ),
@@ -1257,26 +1259,28 @@ def test_poster_report_shape_boundary(
             "mo\ud800d.py",
             2,
             None,
-            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md'
-            '", "oracle": "missing", "candidates": 1, "kept": 0, "downgra'
-            'ded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier'
-            '": 0, "findings": 1, "warnings": ["report-patch downgraded: '
-            'mo\\ud800d.py:2 (no_diff_oracle)"], "errors": []}\n',
-            "report_patches: report-patch downgraded: mo\\ud800d.py:2 (no"
-            "_diff_oracle)\n",
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", '
+            '"oracle": "missing", "candidates": 1, "kept": 0, '
+            '"downgraded": 1, "reasons": {"no_diff_oracle": 1}, '
+            '"filtered_earlier": 0, "findings": 1, "warnings": '
+            '["report-patch downgraded: mo\\ud800d.py:2 (no_diff_oracle)"], '
+            '"errors": []}\n',
+            "report_patches: report-patch downgraded: mo\\ud800d.py:2 "
+            "(no_diff_oracle)\n",
             id="surrogate-path",
         ),
         pytest.param(
             "mo\ud800d.py",
             1,
             "Surrogate Path",
-            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md'
-            '", "oracle": "missing", "candidates": 1, "kept": 0, "downgra'
-            'ded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier'
-            '": 0, "findings": 1, "warnings": ["report-patch downgraded: '
-            'mo\\ud800d.py:1 (no_diff_oracle)"], "errors": []}\n',
-            "report_patches: report-patch downgraded: mo\\ud800d.py:1 (no"
-            "_diff_oracle)\n",
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", '
+            '"oracle": "missing", "candidates": 1, "kept": 0, '
+            '"downgraded": 1, "reasons": {"no_diff_oracle": 1}, '
+            '"filtered_earlier": 0, "findings": 1, "warnings": '
+            '["report-patch downgraded: mo\\ud800d.py:1 (no_diff_oracle)"], '
+            '"errors": []}\n',
+            "report_patches: report-patch downgraded: mo\\ud800d.py:1 "
+            "(no_diff_oracle)\n",
             id="surrogate-path-original-line",
         ),
     ],
@@ -1317,15 +1321,15 @@ def test_patch_stdio(path, line, title, stdout, stderr, tmp_path):
 
 POSTING_STATUS_STDOUT = {
     "partial-rejection": "MR summary note posted.\n  1 inline discussion(s) posted."
-    "\n  1 inline discussion(s) not delivered (see warnings ab"
-    "ove).\n",
+    "\n  1 inline discussion(s) not delivered (see warnings "
+    "above).\n",
     "all-rejected": "MR summary note posted.\n  0 inline discussion(s) posted.\n  2"
     " inline discussion(s) not delivered (see warnings above).\n",
-    "standing-rejected": "MR summary note for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    "aaa already on the MR \u2014 skipping.\n  0 inline discus"
-    "sion(s) posted.\n  2 inline discussion(s) already on the "
-    "MR from an earlier run \u2014 left alone.\n  1 inline dis"
-    "cussion(s) not delivered (see warnings above).\n",
+    "standing-rejected": "MR summary note for "
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa already on the MR \u2014 skipping.\n"
+    "  0 inline discussion(s) posted.\n  2 inline discussion(s) already on the "
+    "MR from an earlier run \u2014 left alone.\n  1 inline discussion(s) not "
+    "delivered (see warnings above).\n",
 }
 
 
@@ -1362,12 +1366,12 @@ def test_posting_live_status(case, tmp_path, monkeypatch, capsys, forge_factory)
     assert run.raw is None
     if case == "all-rejected":
         assert run.err == (
-            "WARNING: Skipping finding 'Context-line finding' at src/edit"
-            "ed.py:61 \u2014 GitLab rejected the inline discussion.\ndeni"
-            "ed\n"
-            "WARNING: Skipping finding 'Added-line finding' at src/edited"
-            ".py:62 \u2014 GitLab rejected the inline discussion.\ndenied"
-            "\n" + pc.ERRORS[case]
+            "WARNING: Skipping finding 'Context-line finding' at "
+            "src/edited.py:61 \u2014 GitLab rejected the inline discussion.\n"
+            "denied\n"
+            "WARNING: Skipping finding 'Added-line finding' at "
+            "src/edited.py:62 \u2014 GitLab rejected the inline discussion.\n"
+            "denied\n" + pc.ERRORS[case]
         )
     elif case != "partial-rejection":
         assert run.err.endswith(pc.ERRORS[case])

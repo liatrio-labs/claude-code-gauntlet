@@ -200,13 +200,7 @@ def test_prior_state(
     )
 
 
-@pytest.mark.parametrize(
-    "forge_factory",
-    [
-        detect_prior_review,
-    ],
-    indirect=True,
-)
+@pytest.mark.parametrize("forge_factory", [detect_prior_review], indirect=True)
 @pytest.mark.parametrize(
     "outcome",
     [
@@ -239,20 +233,17 @@ def test_detector_origin_receipt(
             raise FileNotFoundError("missing git")
         if outcome == "timeout":
             raise proc.TimeoutExpired(command, timeout or 0.0)
-        if outcome.startswith("nonutf8"):
-            child = (
-                r"import sys; sys.stdout.buffer.write("
-                r'b"https://github.com/o/r\xff.git\n")'
-                if outcome == "nonutf8-slug"
-                else r'import sys; sys.stdout.buffer.write(b"\xff\xfe not a remote")'
-            )
-            return real_run(
-                [sys.executable, "-c", child],
-                cwd=cwd,
-                timeout=timeout,
-                errors=errors,
-            )
-        return _result(rc=1)
+        assert outcome == "nonutf8-slug"
+        child = (
+            r"import sys; sys.stdout.buffer.write("
+            r"b'https://github.com/o/r\xff.git\n')"
+        )
+        return real_run(
+            [sys.executable, "-c", child],
+            cwd=cwd,
+            timeout=timeout,
+            errors=errors,
+        )
 
     monkeypatch.setattr(proc, "run", run)
     out, code = _run_main(["--platform", "github", "--number", "5"])

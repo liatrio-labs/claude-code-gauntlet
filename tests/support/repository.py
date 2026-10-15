@@ -4,8 +4,6 @@ from collections.abc import Iterable, Sequence
 from functools import cache
 from pathlib import Path
 
-from tests.support.generator_inputs import declared_inputs
-
 
 def tracked_paths(root: Path, pathspecs: Sequence[str] = ()) -> list[str]:
     result = subprocess.run(
@@ -18,7 +16,7 @@ def tracked_paths(root: Path, pathspecs: Sequence[str] = ()) -> list[str]:
 
 
 def copy_generator_tree(root: Path, destination: Path, targets: Iterable[str]) -> None:
-    paths = set(targets) | declared_inputs(str(root))
+    paths = set(targets) | set(tracked_paths(root, ("scripts/", "workflows/src/")))
     for relative in sorted(paths):
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
