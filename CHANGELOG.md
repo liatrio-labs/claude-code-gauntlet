@@ -2,6 +2,91 @@
 
 <!-- version list -->
 
+## v3.42.30 (2026-10-15)
+
+### Bug Fixes
+
+- Keep PR titles and changed-file paths out of model-typed shell text
+  ([#505](https://github.com/liatrio-labs/claude-code-gauntlet/pull/505),
+  [`4f19fa8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4f19fa8358f77997122537f120f3de6e735ca0fe))
+
+### Chores
+
+- **deps**: Bump the actions group with 5 updates
+  ([#491](https://github.com/liatrio-labs/claude-code-gauntlet/pull/491),
+  [`26a5436`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/26a543609948d2020c83b79f6b085e7e9fcf49cf))
+
+### Refactoring
+
+- Address gauntlet findings on slice 21
+  ([#494](https://github.com/liatrio-labs/claude-code-gauntlet/pull/494),
+  [`3a569db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a569db2c78f6278d44255296a073470291a6da1))
+
+- Cut the delivery, outbound text and gate tests to the sizing bar
+  ([#501](https://github.com/liatrio-labs/claude-code-gauntlet/pull/501),
+  [`4d3a760`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4d3a7608ab838f1032c06ee4fa02b32a9df14951))
+
+- Cut the forge, marker, prior-review, CLI-support and dev-tooling tests to the sizing bar
+  ([#503](https://github.com/liatrio-labs/claude-code-gauntlet/pull/503),
+  [`094e835`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/094e835925ec777639b479bb6373fc6a053d199e))
+
+- Cut the generator, config, project-rule and FIX task tests to the sizing bar
+  ([#500](https://github.com/liatrio-labs/claude-code-gauntlet/pull/500),
+  [`9c5cc8f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c5cc8f0ba6121a8aff12f1c8957056a4a549956))
+
+- Cut the persistence, checkpoint, verify, args, report and build tests to the sizing bar
+  ([#504](https://github.com/liatrio-labs/claude-code-gauntlet/pull/504),
+  [`82c301e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/82c301e6e3c80cf9f2960efd051a5df27ab3afcc))
+
+- Cut the verify, diff, artifact and Phase 2 helper tests to the sizing bar
+  ([#502](https://github.com/liatrio-labs/claude-code-gauntlet/pull/502),
+  [`af136be`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/af136be4888a9897435ce82bd4038a186fca6c71))
+
+- Remove Command.legacy and the migration lists, convert the last unittest suites, enforce the
+  design everywhere ([#494](https://github.com/liatrio-labs/claude-code-gauntlet/pull/494),
+  [`3a569db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a569db2c78f6278d44255296a073470291a6da1))
+
+- Slice 21 review fixes ([#494](https://github.com/liatrio-labs/claude-code-gauntlet/pull/494),
+  [`3a569db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a569db2c78f6278d44255296a073470291a6da1))
+
+- Slice 21 stage A1 ([#494](https://github.com/liatrio-labs/claude-code-gauntlet/pull/494),
+  [`3a569db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a569db2c78f6278d44255296a073470291a6da1))
+
+- Slice 21 stage A2 ([#494](https://github.com/liatrio-labs/claude-code-gauntlet/pull/494),
+  [`3a569db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a569db2c78f6278d44255296a073470291a6da1))
+
+- Slice 21 stage A3 ([#494](https://github.com/liatrio-labs/claude-code-gauntlet/pull/494),
+  [`3a569db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a569db2c78f6278d44255296a073470291a6da1))
+
+- Slice 21 stage A4 ([#494](https://github.com/liatrio-labs/claude-code-gauntlet/pull/494),
+  [`3a569db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a569db2c78f6278d44255296a073470291a6da1))
+
+- Slice 21 stage A5 ([#494](https://github.com/liatrio-labs/claude-code-gauntlet/pull/494),
+  [`3a569db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a569db2c78f6278d44255296a073470291a6da1))
+
+- Slice 21 stage B1 ([#494](https://github.com/liatrio-labs/claude-code-gauntlet/pull/494),
+  [`3a569db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a569db2c78f6278d44255296a073470291a6da1))
+
+- Slice 21 stage B2 ([#494](https://github.com/liatrio-labs/claude-code-gauntlet/pull/494),
+  [`3a569db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a569db2c78f6278d44255296a073470291a6da1))
+
+- Slice 21 stage C1 ([#494](https://github.com/liatrio-labs/claude-code-gauntlet/pull/494),
+  [`3a569db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a569db2c78f6278d44255296a073470291a6da1))
+
+- Slice 21 stage C2 ([#494](https://github.com/liatrio-labs/claude-code-gauntlet/pull/494),
+  [`3a569db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a569db2c78f6278d44255296a073470291a6da1))
+
+### Testing
+
+- Consolidate the repository guard tests, split the render-probe recorder, add an opt-in GitHub
+  render canary ([#493](https://github.com/liatrio-labs/claude-code-gauntlet/pull/493),
+  [`4933da0`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4933da025593f50eb60fc8ab5d9412596d465e26))
+
+- Use the imported types directly in casts
+  ([#494](https://github.com/liatrio-labs/claude-code-gauntlet/pull/494),
+  [`3a569db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a569db2c78f6278d44255296a073470291a6da1))
+
+
 ## v3.42.29 (2026-10-13)
 
 ### Bug Fixes
