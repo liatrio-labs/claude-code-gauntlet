@@ -78,6 +78,20 @@ def read_stdin_json_object() -> dict[str, object]:
     return payload
 
 
+def read_stdin_line() -> str:
+    try:
+        value = read_stdin_bytes().decode("utf-8")
+    except UnicodeError:
+        raise CliError("stdin must be UTF-8", 2) from None
+    if value.endswith("\r\n"):
+        value = value[:-2]
+    elif value.endswith("\n"):
+        value = value[:-1]
+    if not value or any(character in value for character in "\r\n\0"):
+        raise CliError("stdin must contain one non-empty line without NUL", 2)
+    return value
+
+
 class Parser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn:
         raise UsageError(message, 2)

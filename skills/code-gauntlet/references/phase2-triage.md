@@ -35,7 +35,16 @@ Before running any diff commands, confirm the local working tree matches the rev
 **1. Resolve the target's head SHA:**
 
 - **PR/MR mode (`pr_number` set):** `gh pr view {pr_number} --json headRefOid --jq '.headRefOid'` (GitHub) / `glab mr view {pr_number} --output json | jq '.sha'` (GitLab)
-- **Branch comparison:** `git rev-parse <branch>`
+- **Branch comparison:** resolve the target branch with this bare quoted heredoc. Branch names are data, never shell words:
+
+```bash
+python3 "{plugin_root}/scripts/resolve_branch.py" <<'CODE_GAUNTLET~BRANCH'
+<branch name exactly as the user gave it>
+CODE_GAUNTLET~BRANCH
+```
+
+Resolve the comparison base (the repository's default branch or the user's chosen base) the same way. The resolver looks the name up as a local branch, then a remote-tracking branch (`origin/main`), and refuses a name that is both; a name that is neither, such as a tag, a SHA or `HEAD~1`, resolves as a git revision. If either call exits non-zero, stop and report its one-line error. Otherwise record the printed SHAs as `{target_sha}` and `{base_sha}` and type those hex values into later commands; shell variables do not survive between Bash calls. Never put the heredoc inside `$( )`: bash 3.2 parses its body for parentheses. `~` cannot appear in a git ref name, so no branch name can end the heredoc early.
+
 - **Local changes:** HEAD — no-op, already on correct state
 
 **2. Compare against current HEAD:**
@@ -51,7 +60,7 @@ If the SHA matches → proceed to 2c.
 | Target type | Command |
 |---|---|
 | PR/MR number or URL | `gh pr checkout <number>` (GitHub) / `glab mr checkout <number>` (GitLab) |
-| Branch name | `git checkout <branch>` |
+| Branch name | step 1's target heredoc with `resolve_branch.py --checkout` |
 | Local changes | no-op |
 
 > Headless exception (`configResult.mode == "headless"`): never run any checkout command from
@@ -98,7 +107,7 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 1. **PR/MR mode** (`pr_number` set) — Use `gh pr view {pr_number}`/`glab mr view {pr_number}` + diff commands. Get full SHA: `git rev-parse HEAD`
    - **GitHub (PR):** Gather the file list with `gh pr diff {pr_number} --name-only`. Gather the full diff with `gh pr diff {pr_number}`.
    - **GitLab (MR):** Gather the file list with `glab mr diff {pr_number} --name-only`. Gather the full diff with `glab mr diff {pr_number}`.
-2. **Branch comparison** — `git diff <base>...HEAD` and `git diff --name-only <base>...HEAD`
+2. **Branch comparison** — `git diff {base_sha}...{target_sha}` and `git diff --name-only {base_sha}...{target_sha}` using 2b's resolved SHAs.
 3. **Local changes** — `git diff HEAD` (or `git diff --cached` if nothing unstaged)
 4. **Incremental** (2b-post step 3's gate resolved "Incremental"; PR/MR mode only) — use branch 1's full server `--name-only` list saved below to bound the diff:
 
@@ -122,7 +131,7 @@ Validate the saved diff before relying on it:
 - Non-empty (file size > 0)
 - Starts with `diff --git` (confirms it is a valid unified diff, not an error message)
 
-If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own git diff chain — but note that fallback runs inside an executor subagent (which has shell), not in the script. For **branch comparison** and **local changes** target types, produce the diff with `git diff <base>...HEAD` / `git diff HEAD` and the file list with `git diff --name-only`.
+If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own git diff chain inside an executor subagent. For branch/local targets, use the diff and file-list commands in steps 2/3 above (add `--name-only` for local files).
 
 Check for `docs/`, `specs/`, and `research/` directories. Use only the collector receipt from 2d for REVIEW.md discovery and its output for CLAUDE.md/AGENTS.md/QODO.md rules.
 

@@ -415,6 +415,110 @@ def test_skills_do_not_interpolate_changed_paths_in_shell_commands() -> None:
     assert offenders == []
 
 
+def test_skills_do_not_interpolate_branch_names_in_git_commands() -> None:
+    offenders = []
+    for path in (REPO / "skills").rglob("*.md"):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if re.search(
+                r"git\s+[^`\n]*(?:<(?:branch|base)>|\{(?:branch|base_branch|baseBranch)\})",
+                line,
+            ):
+                offenders.append(f"{path.relative_to(REPO)}:{number}")
+    assert offenders == []
+
+
+@pytest.mark.parametrize("ending", [b"", b"\n", b"\r\n"])
+def test_shipped_branch_resolver_keeps_names_on_stdin(
+    ending: bytes, tmp_path: Path, monkeypatch
+) -> None:
+    for key, value in {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_AUTHOR_NAME": "test",
+        "GIT_AUTHOR_EMAIL": "test@example.invalid",
+        "GIT_COMMITTER_NAME": "test",
+        "GIT_COMMITTER_EMAIL": "test@example.invalid",
+    }.items():
+        monkeypatch.setenv(key, value)
+    branch = "topic/$(id)`id`'caf\u00e9)("
+    for argv in (
+        ["git", "init", "-q"],
+        ["git", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "tip"],
+        ["git", "check-ref-format", "--branch", branch],
+        ["git", "branch", branch],
+    ):
+        subprocess.run(argv, cwd=tmp_path, capture_output=True, check=True, timeout=10)
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
+        timeout=10,
+    ).stdout
+    reference = (REPO / "skills/code-gauntlet/references/phase2-triage.md").read_text(
+        encoding="utf-8"
+    )
+    block = re.search(
+        r"```bash\n(python3 \S+/resolve_branch\.py.*?)\n```", reference, re.S
+    )
+    assert block is not None
+    lines = block[1].splitlines()
+    assert lines[0].endswith("<<'CODE_GAUNTLET~BRANCH'")
+    assert lines[1:] == [
+        "<branch name exactly as the user gave it>",
+        "CODE_GAUNTLET~BRANCH",
+    ]
+    parts = shlex.split(
+        lines[0].split("<<", 1)[0].replace("{plugin_root}", REPO.as_posix())
+    )
+    assert parts == ["python3", (REPO / "scripts/resolve_branch.py").as_posix()]
+    parts[0] = sys.executable
+    monkeypatch.setenv("PYTHONIOENCODING", "latin-1")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    sentinel = fake_bin / "id"
+    sentinel.write_text("#!/bin/sh\nprintf ran > MARKER\n", encoding="utf-8")
+    sentinel.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake_bin) + os.pathsep + os.environ["PATH"])
+    result = subprocess.run(
+        parts,
+        input=branch.encode("utf-8") + ending,
+        cwd=tmp_path,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == sha
+    assert result.stderr == b""
+    # macOS ships bash 3.2, which re-parses a heredoc body nested in $( ).
+    bash = "/bin/bash" if os.path.exists("/bin/bash") else shutil.which("bash")
+    if bash and sys.platform != "win32":
+        shell_block = (
+            block[1]
+            .replace("<branch name exactly as the user gave it>", branch)
+            .replace("{plugin_root}", REPO.as_posix())
+            .replace("python3 ", shlex.quote(sys.executable) + " ", 1)
+        )
+        shell_result = subprocess.run(
+            [bash, "-c", shell_block], cwd=tmp_path, capture_output=True, timeout=10
+        )
+        assert shell_result.returncode == 0, shell_result.stderr
+        assert shell_result.stdout == sha
+        assert shell_result.stderr == b""
+    assert not (tmp_path / "MARKER").exists()
+
+
+def test_skill_heredocs_are_never_nested_in_command_substitution() -> None:
+    offenders = []
+    for path in [*(REPO / "skills").rglob("*.md"), *(REPO / "agents").rglob("*.md")]:
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"[$<]\([^)\n]*<<", text):
+            offenders.append(
+                f"{path.relative_to(REPO)}:{text.count(chr(10), 0, match.start()) + 1}"
+            )
+    assert offenders == []
+
+
 def test_local_branch_form_uses_the_sha_computed_in_the_same_call() -> None:
     skill = (REPO / "skills" / "code-gauntlet" / "SKILL.md").read_text(encoding="utf-8")
     line = next(

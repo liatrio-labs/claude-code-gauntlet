@@ -390,6 +390,7 @@ MAIN_FAILURE = {
     "post_review": "{missing}",
     "render_fix_tasks": "{missing} --repo-root {missing}",
     "report_patches": "--output-dir {missing} --head-sha abcd",
+    "resolve_branch": "",
     "resolve_config": "--target local --cwd {missing}",
     "resolve_pr_identity": f"--platform github --sha {FULL}",
     "stale_truncate": "--output-dir {missing} --head-sha abcd",
@@ -410,6 +411,7 @@ BAD_INPUT = {
     "post_review": "--platform bitbucket",
     "render_fix_tasks": "{invalid} --repo-root {root}",
     "report_patches": "--output-dir {missing} --head-sha invalid",
+    "resolve_branch": "",
     "resolve_config": "--target bitbucket",
     "resolve_pr_identity": "--platform bitbucket",
     "stale_truncate": "--output-dir {missing} --head-sha invalid",
@@ -445,6 +447,7 @@ SUCCESS = {
         },
         f"--output-dir {{dir}} --head-sha {SHA}",
     ),
+    "resolve_branch": ({}, ""),
     "resolve_config": ({}, "--target local --cwd {root} --plugin-root {root}"),
     "resolve_pr_identity": (
         {},
@@ -588,6 +591,33 @@ def scenario(name, case, tmp_path, *, shell_fixture=False):
     stdin = b"triage\n" if triage else b"{}\n"
     if (name, case) == ("resolve_pr_identity", "success"):
         stdin = b'{"url":"https://github.com/o/r/pull/5"}\n'
+    if name == "resolve_branch":
+        stdin = b"one\ntwo\n" if case == "bad_input" else b"unknown-ref\n"
+        if case == "success":
+            subprocess.run(
+                ["git", "init", "-q", "--object-format=sha1"],
+                cwd=directory,
+                capture_output=True,
+                check=True,
+            )
+            commit = subprocess.run(
+                ["git", "hash-object", "-w", "-t", "commit", "--stdin"],
+                input=(
+                    b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n"
+                    b"author test <test@example.invalid> 0 +0000\n"
+                    b"committer test <test@example.invalid> 0 +0000\n\ntip\n"
+                ),
+                cwd=directory,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(
+                ["git", "update-ref", "refs/heads/tip", commit],
+                cwd=directory,
+                capture_output=True,
+                check=True,
+            )
+            stdin = b"tip\n"
     return directory, argv, stdin, fake_bin
 
 
@@ -721,6 +751,7 @@ def rows():
             "stale_truncate",
             "write_shared_context",
             "report_patches",
+            "resolve_branch",
             "resolve_pr_identity",
         )
     )
