@@ -75,11 +75,13 @@ export function encodeSliceInline(content) {
   return encoded;
 }
 
-// Stay below the measured executor transcription limit, including command overhead.
+// 51,744 chars was the largest payload measured to copy exactly (2/2 sonnet executors);
+// above it is unmeasured. The rest of the command adds about 300 chars.
 export const VERIFY_INLINE_CHAR_BUDGET = 50000;
 
 // Python delta generation and JS checksum/join share this order. Only script-written
-// fields belong here; held findings retain merge-added fields such as agent.
+// fields belong here; held findings retain merge-added fields such as agent. The generator
+// projects this list into Python, but VERIFY_SCHEMA is written beside it by hand.
 export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
 
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');

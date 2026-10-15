@@ -51,12 +51,14 @@ const VERIFY_SCHEMA = {
 // flooring the operator's chosen size.
 const VERIFY_FANOUT_DISCLOSE_THRESHOLD = 5;
 
-// Join against held findings so an untrusted echo cannot replace their content.
+// Slices dispatch one at a time (never parallel()) so each envelope pairs to its slice by
+// order. Join against held findings so an untrusted echo cannot replace their content.
 export async function verifyStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
   const sliceSize = effectiveSliceSize(inp.limits || {}, findings.length);
 
+  // A zero-filled ledger spares consumers telling "no slices" from a missing field.
   if (findings.length === 0) {
     return { findings: [], verified: true, gaps: [], inputProof: emptyInputProof() };
   }
