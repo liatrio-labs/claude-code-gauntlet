@@ -217,9 +217,14 @@ _EXPECTED_PR_IDENTITY_FIELDS = (
     "- `platform` (required): one of github, gitlab.\n"
     "- `web_origin` (required): an http(s) origin: scheme, host and "
     "optional port only.\n- `title` (optional): a non-empty string when present.\n\n"
-    "Producer command:\n\n"
-    "`python3 {plugin_root}/scripts/resolve_pr_identity.py --platform "
-    "github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> [--title <text>]`"
+    "Producer commands:\n\n"
+    "`gh pr view {pr_number} --json url,title | python3 "
+    '"{plugin_root}/scripts/resolve_pr_identity.py" --platform github '
+    '--sha "$(git rev-parse HEAD)"`\n\n'
+    "`glab mr view {pr_number} --output json | python3 "
+    '"{plugin_root}/scripts/resolve_pr_identity.py" --platform gitlab '
+    '--sha "$(git rev-parse HEAD)"`\n\n'
+    "The title and URL reach the script only through the pipe."
 )
 
 _EXPECTED_PERMALINK_FORMATS = (

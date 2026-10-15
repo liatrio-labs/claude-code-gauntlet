@@ -253,14 +253,17 @@ def test_identity_unicode_receipt(tmp_path, invoke):
         [
             "--platform",
             "github",
-            "--url",
-            "https://github.com/OpenAI/codex/pull/278",
             "--sha",
             FULL,
-            "--title",
-            "A caf\u00e9 fix",
         ],
         tmp_path,
+        json.dumps(
+            {
+                "url": "https://github.com/OpenAI/codex/pull/278",
+                "title": "A caf\u00e9 fix",
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
     )
     assert result.returncode == 0
     assert result.stderr == b""
@@ -292,8 +295,9 @@ def test_identity_unicode_receipt(tmp_path, invoke):
 def test_identity_data_error(url, sha, error, tmp_path, invoke):
     result = invoke(
         "resolve_pr_identity",
-        ["--platform", "github", "--url", url, "--sha", sha],
+        ["--platform", "github", "--sha", sha],
         tmp_path,
+        json.dumps({"url": url}).encode(),
     )
     assert result.returncode == 2
     assert result.stdout == b""
@@ -309,8 +313,6 @@ def test_identity_data_error(url, sha, error, tmp_path, invoke):
             [
                 "--platform",
                 "github",
-                "--url",
-                "https://github.com/o/r/pull/5",
                 "--sha",
                 FULL,
             ],
@@ -322,7 +324,7 @@ def test_converted_serialization_fallback(
     name: str,
     argv: list[str],
     tmp_path: Path,
-    invoke: Callable[[str, list[str], Path], Invocation],
+    invoke: Callable[[str, list[str], Path, bytes], Invocation],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fail(*args: object, **kwargs: object) -> str:
@@ -330,7 +332,7 @@ def test_converted_serialization_fallback(
 
     monkeypatch.setattr(proc, "run", _git_result)
     monkeypatch.setattr(cli, "dumps", fail)
-    result = invoke(name, argv, tmp_path)
+    result = invoke(name, argv, tmp_path, b'{"url":"https://github.com/o/r/pull/5"}')
     assert result.returncode == 1
     assert (
         result.stdout == b'{"ok": false, "errors": ["receipt serialization failed"]}\n'
@@ -383,12 +385,13 @@ MAIN_FAILURE = {
     "emit_style_context": "",
     "ensure_output_dir": "--cwd {missing}",
     "generate_contract_requirements": "--repo-root {missing} --check",
+    "incremental_diff": f"--files {{missing}} --since {FULL}",
     "materialize_artifacts": "--output-dir {missing} --task {missing}",
     "post_review": "{missing}",
     "render_fix_tasks": "{missing} --repo-root {missing}",
     "report_patches": "--output-dir {missing} --head-sha abcd",
     "resolve_config": "--target local --cwd {missing}",
-    "resolve_pr_identity": f"--platform github --url {{missing}} --sha {FULL}",
+    "resolve_pr_identity": f"--platform github --sha {FULL}",
     "stale_truncate": "--output-dir {missing} --head-sha abcd",
     "verify_findings": "--input {missing} --output {missing}",
     "write_shared_context": "--output-dir {missing} --head-sha abcd",
@@ -402,6 +405,7 @@ BAD_INPUT = {
     "collect_project_rules": "--repo-root {invalid} --out {missing}",
     "detect_prior_review": "--platform bitbucket",
     "generate_contract_requirements": "--repo-root {invalid} --check",
+    "incremental_diff": f"--files {{invalid}} --since {FULL}",
     "materialize_artifacts": "--output-dir {missing}",
     "post_review": "--platform bitbucket",
     "render_fix_tasks": "{invalid} --repo-root {root}",
@@ -425,6 +429,10 @@ SUCCESS = {
     "emit_style_context": ({}, ""),
     "ensure_output_dir": ({}, "--cwd {root}"),
     "generate_contract_requirements": ({}, "--repo-root {root} --check"),
+    "incremental_diff": (
+        {"files.json": "[]"},
+        f"--files {{dir}}/files.json --since {FULL}",
+    ),
     "post_review": (
         {"post.json": json.dumps({**POST, "findings": []})},
         "{dir}/post.json --dry-run",
@@ -440,7 +448,7 @@ SUCCESS = {
     "resolve_config": ({}, "--target local --cwd {root} --plugin-root {root}"),
     "resolve_pr_identity": (
         {},
-        f"--platform github --url https://github.com/o/r/pull/5 --sha {FULL}",
+        f"--platform github --sha {FULL}",
     ),
     "stale_truncate": (
         {f"code-gauntlet-report-{SHA}.md": "stale"},
@@ -577,7 +585,10 @@ def scenario(name, case, tmp_path, *, shell_fixture=False):
             arg.format(**places) for arg in _command_line(name, case, directory).split()
         ]
     triage = (name, case) == ("write_shared_context", "success")
-    return directory, argv, b"triage\n" if triage else b"{}\n", fake_bin
+    stdin = b"triage\n" if triage else b"{}\n"
+    if (name, case) == ("resolve_pr_identity", "success"):
+        stdin = b'{"url":"https://github.com/o/r/pull/5"}\n'
+    return directory, argv, stdin, fake_bin
 
 
 def normalize(data, tmp_path, root=ROOT):
@@ -706,9 +717,11 @@ def rows():
         (name, "help")
         for name in (
             "diff_numstat",
+            "incremental_diff",
             "stale_truncate",
             "write_shared_context",
             "report_patches",
+            "resolve_pr_identity",
         )
     )
     yield "await_workflow", "pending"

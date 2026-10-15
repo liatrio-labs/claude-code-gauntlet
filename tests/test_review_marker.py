@@ -543,15 +543,16 @@ def test_doc_contract__phase1_preflight_covers_the_required_output_fields():
 
 def test_doc_contract__phase2_triage_prescribes_the_bounded_incremental_diff():
     text = _read(PHASE2_REL)
-    assert "git diff {last_reviewed_sha}..HEAD --" in text
-    for match in re.finditer(
-        "git diff (?:--name-only )?\\{last_reviewed_sha\\}\\.\\.\\.HEAD", text
-    ):
-        context = text[max(0, match.start() - 200) : match.start()]
-        assert (
-            re.search("[Dd]o \\*\\*not\\*\\* use|never use|do not use", context)
-            is not None
-        ), "three-dot diff must be prohibited"
+    command = next(
+        line for line in _read(SKILL_REL).splitlines() if "incremental_diff.py" in line
+    )
+    assert command in text
+    assert '--files "{output_dir}/code-gauntlet-files-{head_sha_short}.json"' in command
+    assert "--since {last_reviewed_sha}" in command
+    assert "git diff {last_reviewed_sha}" not in text
+    assert "git diff --name-only {last_reviewed_sha}" not in text
+    assert "## 2i." not in text
+    assert "**2i**" not in text
 
 
 @pytest.mark.parametrize(

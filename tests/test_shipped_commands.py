@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shlex
 import shutil
@@ -207,6 +208,72 @@ def _run_shipped(
     )
 
 
+@pytest.mark.parametrize(
+    "platform,url_key,url",
+    [
+        ("github", "url", "https://github.com/o/r/pull/5"),
+        ("gitlab", "web_url", "https://gitlab.com/group/sub/r/-/merge_requests/5"),
+    ],
+)
+def test_shipped_pr_identity_keeps_author_text_on_stdin(
+    platform: str, url_key: str, url: str, tmp_path: Path, monkeypatch
+) -> None:
+    skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+    start = skill.index("<!-- generated-from-registry-identity:pr_identity_fields")
+    end = skill.index(
+        "<!-- /generated-from-registry-identity:pr_identity_fields", start
+    )
+    command = next(
+        line[1:-1]
+        for line in skill[start:end].splitlines()
+        if line.startswith("`")
+        and "resolve_pr_identity.py" in line
+        and f"--platform {platform}" in line
+    )
+    assert "--title" not in command
+    assert "--url" not in command
+    assert set(re.findall(r"\{[^}]+\}", command)) == {"{pr_number}", "{plugin_root}"}
+    producer, consumer = command.split(" | ")
+    assert producer == (
+        "gh pr view {pr_number} --json url,title"
+        if platform == "github"
+        else "glab mr view {pr_number} --output json"
+    )
+    sha = "a" * 40
+    parts = shlex.split(
+        consumer.replace("{plugin_root}", REPO.as_posix()).replace(
+            '"$(git rev-parse HEAD)"', sha
+        )
+    )
+    assert parts == [
+        "python3",
+        (REPO / "scripts/resolve_pr_identity.py").as_posix(),
+        "--platform",
+        platform,
+        "--sha",
+        sha,
+    ]
+    parts[0] = sys.executable
+    title = "$(touch MARKER) `touch MARKER` both \" and '\ncaf\u00e9\r\nend"
+    payload = {url_key: url, "title": title}
+    monkeypatch.setenv("PYTHONIOENCODING", "latin-1")
+    result = subprocess.run(
+        parts,
+        input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        cwd=tmp_path,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert not (tmp_path / "MARKER").exists()
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == b""
+    identity = json.loads(result.stdout)
+    assert identity["title"].encode("utf-8") == title.encode("utf-8")
+    assert identity["platform"] == platform
+    assert identity["pr_number"] == 5
+
+
 def test_stale_truncate_shipped_command_handles_quoted_output_path(
     tmp_path: Path,
 ) -> None:
@@ -245,6 +312,107 @@ def test_diff_numstat_shipped_command_handles_quoted_output_path(
     result = _run_shipped(output_dir, command)
     assert result.returncode == 0, result.stderr
     assert result.stdout == "changed_lines=2\nbinary_files=0\n"
+
+
+@pytest.mark.parametrize(
+    "quoted_name",
+    [
+        "y`touch MARKER`'portable",
+        pytest.param(
+            "y`touch MARKER`\"both'",
+            marks=pytest.mark.skipif(
+                sys.platform == "win32",
+                reason="Windows filenames cannot contain quotes",
+            ),
+        ),
+    ],
+)
+def test_shipped_incremental_diff_keeps_paths_as_data(
+    quoted_name: str, tmp_path: Path, monkeypatch
+) -> None:
+    for key, value in {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_AUTHOR_NAME": "test",
+        "GIT_AUTHOR_EMAIL": "test@example.invalid",
+        "GIT_COMMITTER_NAME": "test",
+        "GIT_COMMITTER_EMAIL": "test@example.invalid",
+    }.items():
+        monkeypatch.setenv(key, value)
+    listed = ["x$(touch MARKER)", quoted_name, "literal[1]"]
+    all_files = [*listed, "literal1", "unrelated"]
+    for argv in (["git", "init", "-q"], ["git", "config", "commit.gpgsign", "false"]):
+        subprocess.run(argv, cwd=tmp_path, capture_output=True, check=True, timeout=10)
+    since = ""
+    for contents in (b"before\n", b"after\xff\n"):
+        for name in all_files:
+            (tmp_path / name).write_bytes(contents)
+        for argv in (["git", "add", "--all"], ["git", "commit", "-qm", "change"]):
+            subprocess.run(
+                argv, cwd=tmp_path, capture_output=True, check=True, timeout=10
+            )
+        if not since:
+            since = (
+                subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=tmp_path,
+                    capture_output=True,
+                    check=True,
+                    timeout=10,
+                )
+                .stdout.decode()
+                .strip()
+            )
+    skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+    command = next(line for line in skill.splitlines() if "incremental_diff.py" in line)
+    output_dir = tmp_path / "out [1]"
+    output_dir.mkdir()
+    (output_dir / f"code-gauntlet-files-{SHA}.json").write_text(
+        json.dumps(listed), encoding="utf-8"
+    )
+    for placeholder, value in {
+        "{plugin_root}": REPO.as_posix(),
+        "{output_dir}": output_dir.as_posix(),
+        "{head_sha_short}": SHA,
+        "{last_reviewed_sha}": since,
+    }.items():
+        command = command.replace(placeholder, value)
+    parts = shlex.split(command)
+    assert parts[0] == "python3"
+    parts[0] = sys.executable
+    assert parts[-2] == ">"
+    patch = Path(parts[-1])
+    with patch.open("wb") as destination:
+        result = subprocess.run(
+            parts[:-2],
+            cwd=tmp_path,
+            stdout=destination,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == b""
+    assert not (tmp_path / "MARKER").exists()
+    assert patch.read_bytes().count(b"+after\xff\n") == len(listed)
+    numstat = subprocess.run(
+        ["git", "apply", "--numstat", "-z", str(patch)],
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
+        timeout=10,
+    ).stdout
+    assert sorted(
+        row.split(b"\t", 2)[2].decode() for row in numstat.split(b"\0") if row
+    ) == sorted(listed)
+
+
+def test_skills_do_not_interpolate_changed_paths_in_shell_commands() -> None:
+    offenders = []
+    for path in (REPO / "skills").rglob("*.md"):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if re.search(r"git (?:diff|log)\b[^`\n]*-- <", line):
+                offenders.append(f"{path.relative_to(REPO)}:{number}")
+    assert offenders == []
 
 
 def test_local_branch_form_uses_the_sha_computed_in_the_same_call() -> None:

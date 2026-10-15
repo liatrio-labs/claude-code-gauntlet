@@ -516,12 +516,15 @@ def test_identity_payload_crosses_args_waist() -> None:
             str(REPO / "scripts/resolve_pr_identity.py"),
             "--platform",
             "gitlab",
-            "--url",
-            "http://gitlab.example:8080/group/sub/repo/-/merge_requests/281",
             "--sha",
             "0123456789abcdef0123456789abcdef01234567",
         ],
         cwd=REPO,
+        input=json.dumps(
+            {
+                "web_url": "http://gitlab.example:8080/group/sub/repo/-/merge_requests/281"
+            }
+        ),
         capture_output=True,
         text=True,
         timeout=10,

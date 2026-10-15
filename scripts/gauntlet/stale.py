@@ -1,11 +1,15 @@
 """Truncate stale artifacts for a SHA without embedding paths in code."""
 
 import argparse
-import json
 import os
-import sys
 
-from gauntlet.cli import CliError, Command, Parser, require_head_sha
+from gauntlet.cli import (
+    CliError,
+    Command,
+    Parser,
+    read_stdin_json_object,
+    require_head_sha,
+)
 from gauntlet.fs import glob_under
 
 DESCRIPTION = """Truncate stale artifacts for a SHA without embedding paths in code.
@@ -49,12 +53,7 @@ def _execute(args: argparse.Namespace) -> int:
     if args.unconditional:
         return _truncate(args.output_dir, args.head_sha)
 
-    try:
-        detector = json.load(sys.stdin)
-    except (json.JSONDecodeError, OSError, UnicodeError):
-        raise CliError("stdin must contain a JSON object", 2) from None
-    if not isinstance(detector, dict):
-        raise CliError("stdin must contain a JSON object", 2)
+    detector = read_stdin_json_object()
 
     reviewed_at_current_head = (
         detector.get("previously_reviewed")
