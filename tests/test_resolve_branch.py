@@ -44,6 +44,8 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     _git(tmp_path, "update-ref", "refs/remotes/origin/feat", shas["remote"])
     _git(tmp_path, "branch", "dup", shas["branch"])
     _git(tmp_path, "update-ref", "refs/remotes/dup", shas["remote"])
+    _git(tmp_path, "branch", "held", shas["branch"])
+    _git(tmp_path, "worktree", "add", "-q", str(tmp_path / "other"), "held")
     _git(tmp_path, "checkout", "-q", "--detach", shas["tag"])
     return shas
 
@@ -73,7 +75,8 @@ def test_resolve_branch_reads_only_branch_refs(
 
 
 @pytest.mark.parametrize(
-    "name,head", [("topic", "refs/heads/topic"), ("origin/feat", None)]
+    "name,head",
+    [("topic", "refs/heads/topic"), ("origin/feat", None), ("held", None)],
 )
 def test_resolve_branch_checks_out_local_by_name_and_remote_detached(
     name, head, repo, tmp_path, invoke

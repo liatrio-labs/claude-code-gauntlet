@@ -38,15 +38,16 @@ def _execute(args: argparse.Namespace) -> int:
     ref, sha = _resolve(name)
     require_full_sha(sha, "resolved branch")
     if args.checkout:
-        # A local branch is checked out by name so new commits stay on it.
-        argv = (
-            ["checkout", "--quiet", "--end-of-options", name, "--"]
-            if ref.startswith("refs/heads/")
-            else ["checkout", "--quiet", "--detach", sha]
-        )
-        result = _git(*argv)
+        # A local branch is checked out by name so new commits stay on it; one held
+        # by another worktree cannot be, so it falls back to a detached HEAD.
+        result = None
+        if ref.startswith("refs/heads/"):
+            result = _git("checkout", "--quiet", "--end-of-options", name, "--")
+        if result is None or result.returncode:
+            result = _git("checkout", "--quiet", "--detach", sha)
         if result.returncode:
-            raise CliError(f"git checkout failed (exit {result.returncode})")
+            reason = (result.stderr.strip().splitlines() or [""])[0]
+            raise CliError(f"git checkout failed (exit {result.returncode}): {reason}")
     sys.stdout.write(sha + "\n")
     return 0
 
