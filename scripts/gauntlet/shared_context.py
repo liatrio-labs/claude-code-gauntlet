@@ -4,6 +4,7 @@ import argparse
 import os
 
 from gauntlet.cli import Command, Parser, UsageError, read_stdin_bytes, require_head_sha
+from gauntlet.framing import frame
 
 DESCRIPTION = (
     "Write the shared agent context from paths and triage text supplied as data.\n"
@@ -70,9 +71,9 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         rules
         + b"\n## Risk classification and AI-generated-code status\n\n"
         + triage
-        + b"\n\n## Diff\n\n<untrusted-code-content>\n"
-        + diff
-        + b"</untrusted-code-content>\n"
+        + b"\n\n## Diff\n\n"
+        + frame("untrusted-code-content", b"<untrusted-code-content>\n", diff)
+        + b"\n"
     )
 
     try:
