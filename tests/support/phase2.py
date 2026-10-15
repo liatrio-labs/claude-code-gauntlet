@@ -1,4 +1,6 @@
+import re
 from pathlib import Path
+from typing import AnyStr
 
 SHA = "a1b2c3d4"
 ARTIFACTS = {
@@ -11,6 +13,12 @@ TRUNCATED = {
     f"code-gauntlet-findings-{SHA}.json",
     f"code-gauntlet-report-{SHA}.md",
 }
+
+
+def normalize_frame_ids(body: AnyStr) -> AnyStr:
+    if isinstance(body, bytes):
+        return re.sub(rb' id="[0-9a-f]{32}"', b' id="ID"', body)
+    return re.sub(r' id="[0-9a-f]{32}"', ' id="ID"', body)
 
 
 def seed_artifacts(output_dir: Path) -> None:

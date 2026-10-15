@@ -1,12 +1,14 @@
 """Keep reviewed content from closing its own prompt block."""
 
 import re
+import secrets
 import sys
 import unicodedata
+from collections.abc import Mapping
 from typing import AnyStr
 
-# Models read past whitespace and default-ignorable characters, so a closer
-# spelled with either inside it must still count as the block's closer.
+# Models read past whitespace and default-ignorable characters, so neutralize
+# closers containing either as a second layer.
 # unicodedata has no Default_Ignorable_Code_Point, so its non-Cf members are listed.
 _IGNORABLE_NON_CF = (
     0x034F,
@@ -29,11 +31,25 @@ _GAP = rf"[\s{_FORMAT}]*"
 _NAME_GAP = rf"[{_FORMAT}]*"
 
 
-def frame(tag: str, opening: AnyStr, body: AnyStr) -> AnyStr:
+def _escape_attribute(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def frame(tag: str, body: AnyStr, attrs: Mapping[str, str] | None = None) -> AnyStr:
+    nonce = secrets.token_hex(16)
+    pairs = {**(attrs or {}), "id": nonce}
+    rendered = "".join(f' {k}="{_escape_attribute(v)}"' for k, v in pairs.items())
+    opening = f"<{tag}{rendered}>\n"
+    closing = f'</{tag} id="{nonce}">'
     name = _NAME_GAP.join(re.escape(ch) for ch in tag)
     closer = re.compile(rf"<{_GAP}/(?={_GAP}{name}(?![\w.:-]))", re.IGNORECASE)
     if isinstance(body, bytes):
         text = body.decode("utf-8", "surrogateescape")
         framed = closer.sub(r"<\\/", text).encode("utf-8", "surrogateescape")
-        return opening + framed + f"</{tag}>".encode()
-    return opening + closer.sub(r"<\\/", body) + f"</{tag}>"
+        return opening.encode() + framed + closing.encode()
+    return opening + closer.sub(r"<\\/", body) + closing

@@ -73,7 +73,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         + b"\n## Risk classification and AI-generated-code status\n\n"
         + triage
         + b"\n\n## Diff\n\n"
-        + frame("untrusted-code-content", b"<untrusted-code-content>\n", diff)
+        + frame("untrusted-code-content", diff)
         + b"\n"
     )
 

@@ -52,7 +52,7 @@ Reachability is reported separately from confidence; score confidence on the mer
 
 Each dispatch gives you:
 
-- An instruction to read the shared context file first, when one was prepared. It holds the diff (wrapped in `<untrusted-code-content>` tags), the project rules, and the risk classification — and it is mandatory reading in full, per the section below.
+- An instruction to read the shared context file first, when one was prepared. It holds the diff (wrapped in `<untrusted-code-content>` tags with a closer repeating the opener's id), the project rules, and the risk classification — and it is mandatory reading in full, per the section below.
 - A batch of 3-5 findings, one line each: `- <id> [<dimension>/<severity>] <file>:<line-range> — <description>`, plus `| evidence: <excerpt>` when the finding carries evidence.
 
 **That line is the whole claim.** No blame classification, no author or date, no PR description reaches you — so open the code at the cited range and judge it there rather than expecting more context in the prompt.
