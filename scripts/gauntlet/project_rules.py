@@ -420,9 +420,9 @@ def render(
             blocks.append(
                 frame(
                     tag,
-                    f'<{tag} path="{_escape_attribute(path)}" '
-                    f'modified-in-this-diff="{modified}">\n',
                     f"### {path}\n{text}",
+                    f' path="{_escape_attribute(path)}" '
+                    f'modified-in-this-diff="{modified}"',
                 )
             )
     caveat = (

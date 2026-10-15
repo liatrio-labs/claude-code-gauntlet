@@ -13,6 +13,7 @@ from tests.support.phase2 import (
     ARTIFACTS,
     SHA,
     TRUNCATED,
+    normalize_frame_ids,
     seed_artifacts,
     write_context_inputs,
 )
@@ -114,13 +115,18 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
     expected = (
         b"rules\n\n## Risk classification and AI-generated-code status\n\n"
         b"Risk: low\nAI-generated-code status: none\n\n"
-        b"## Diff\n\n<untrusted-code-content>\ndiff\n"
-        b"</untrusted-code-content>\n"
+        b'## Diff\n\n<untrusted-code-content id="ID">\ndiff\n'
+        b'</untrusted-code-content id="ID">\n'
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout == b'{"contextLines": 12, "contextChars": 167}\n'
+    assert result.stdout == b'{"contextLines": 12, "contextChars": 243}\n'
     assert result.stderr == b""
-    assert (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes() == expected
+    assert (
+        normalize_frame_ids(
+            (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
+        )
+        == expected
+    )
 
 
 @pytest.mark.skipif(

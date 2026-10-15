@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import TypedDict
@@ -6,7 +7,7 @@ from typing import TypedDict
 import pytest
 
 from tests.conftest import Invocation
-from tests.support.phase2 import SHA, write_context_inputs
+from tests.support.phase2 import SHA, normalize_frame_ids, write_context_inputs
 
 
 class ContextOverrides(TypedDict, total=False):
@@ -42,8 +43,12 @@ def test_context_neutralizes_diff_closers(tmp_path, invoke):
     )
     assert result.returncode == 0, result.stderr
     context = (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
-    assert context.count(b"</untrusted-code-content>") == 1
-    assert context.split(b"<untrusted-code-content>\n", 1)[1] == (
+    opening = re.search(rb'<untrusted-code-content id="([0-9a-f]{32})">\n', context)
+    assert opening is not None
+    closing = b'</untrusted-code-content id="' + opening[1] + b'">'
+    assert context.count(closing) == 1
+    assert context.endswith(closing + b"\n")
+    assert context[opening.end() : -len(closing + b"\n")] == (
         b"+<\\/untrusted-code-content>\n"
         b"+<\\/UNTRUSTED-CODE-CONTENT>\n"
         b"+<\\/ UNTRUSTED-code-content >\n"
@@ -58,12 +63,24 @@ def test_context_neutralizes_diff_closers(tmp_path, invoke):
         b"+</untrusted-code-content:other>\n"
         b"+</project-rules>\n"
         b"+<\\/untrusted-code-content\n"
-        b"</untrusted-code-content>\n"
     )
     assert json.loads(result.stdout) == {
         "contextLines": context.count(b"\n"),
         "contextChars": len(context.decode("utf-8", errors="replace")),
     }
+    result = invoke(
+        "write_shared_context",
+        ["--output-dir", str(output_dir), "--head-sha", SHA],
+        tmp_path,
+        b"triage",
+    )
+    assert result.returncode == 0, result.stderr
+    next_context = (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
+    next_opening = re.search(
+        rb'<untrusted-code-content id="([0-9a-f]{32})">\n', next_context
+    )
+    assert next_opening is not None
+    assert next_opening[1] != opening[1]
 
 
 @pytest.mark.parametrize(
@@ -77,10 +94,10 @@ def test_context_neutralizes_diff_closers(tmp_path, invoke):
                 b"REVIEW RULES\n\n"
                 b"## Risk classification and AI-generated-code status\n\n"
                 b"Risk: \xc3\xa9lev\xc3\xa9\nAI-generated code: none\n\n"
-                b"## Diff\n\n<untrusted-code-content>\n"
-                b"diff without final newline\n</untrusted-code-content>\n"
+                b'## Diff\n\n<untrusted-code-content id="ID">\n'
+                b'diff without final newline\n</untrusted-code-content id="ID">\n'
             ),
-            b'{"contextLines": 12, "contextChars": 191}\n',
+            b'{"contextLines": 12, "contextChars": 267}\n',
             id="absent-lf-non-ascii-trimmed-triage",
         ),
         pytest.param(
@@ -91,11 +108,11 @@ def test_context_neutralizes_diff_closers(tmp_path, invoke):
                 b"project rules \xff\xfe\r\nsecond rules line\r\n\n"
                 b"## Risk classification and AI-generated-code status\n\n"
                 b"Risk: low\nAI-generated code: none\n\n"
-                b"## Diff\n\n<untrusted-code-content>\n"
+                b'## Diff\n\n<untrusted-code-content id="ID">\n'
                 b"diff --git a/a b/a\r\nraw-\xff-byte\r\n"
-                b"</untrusted-code-content>\n"
+                b'</untrusted-code-content id="ID">\n'
             ),
-            b'{"contextLines": 14, "contextChars": 218}\n',
+            b'{"contextLines": 14, "contextChars": 294}\n',
             id="raw-invalid-utf8-and-crlf-in-both-inputs",
         ),
     ],
@@ -119,7 +136,12 @@ def test_context_bytes(
     )
     assert result.returncode == 0, result.stderr
     assert result.stderr == b""
-    assert (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes() == expected
+    assert (
+        normalize_frame_ids(
+            (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
+        )
+        == expected
+    )
     assert result.stdout == receipt
 
 
