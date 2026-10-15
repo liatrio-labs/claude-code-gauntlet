@@ -41,6 +41,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         shas[name] = _git(tmp_path, "rev-parse", "HEAD")
     _git(tmp_path, "branch", "topic", shas["branch"])
     _git(tmp_path, "tag", "topic", shas["tag"])
+    _git(tmp_path, "tag", "tag-only", shas["tag"])
     _git(tmp_path, "update-ref", "refs/remotes/origin/feat", shas["remote"])
     _git(tmp_path, "branch", "dup", shas["branch"])
     _git(tmp_path, "update-ref", "refs/remotes/dup", shas["remote"])
@@ -56,8 +57,9 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         (b"topic\n", 0, "branch"),
         (b"origin/feat\n", 0, "remote"),
         (b"one\ntwo\n", 2, "stdin must contain one non-empty line without NUL"),
-        (b"unknown\n", 1, "no local or remote-tracking branch has that name"),
-        (b"topic@{1}\n", 1, "not a valid branch name"),
+        (b"tag-only\n", 0, "tag"),
+        (b"origin/feat~2\n", 0, "branch"),
+        (b"unknown\n", 1, "name does not resolve to a commit"),
         (b"dup\n", 1, "name matches both a local and a remote-tracking branch"),
     ],
 )
@@ -76,7 +78,12 @@ def test_resolve_branch_reads_only_branch_refs(
 
 @pytest.mark.parametrize(
     "name,head",
-    [("topic", "refs/heads/topic"), ("origin/feat", None), ("held", None)],
+    [
+        ("topic", "refs/heads/topic"),
+        ("origin/feat", None),
+        ("held", None),
+        ("tag-only", None),
+    ],
 )
 def test_resolve_branch_checks_out_local_by_name_and_remote_detached(
     name, head, repo, tmp_path, invoke

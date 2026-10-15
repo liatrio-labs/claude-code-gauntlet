@@ -43,7 +43,7 @@ python3 "{plugin_root}/scripts/resolve_branch.py" <<'CODE_GAUNTLET~BRANCH'
 CODE_GAUNTLET~BRANCH
 ```
 
-Resolve the comparison base (the repository's default branch or the user's chosen base) the same way. The resolver looks the name up only as a local branch, then a remote-tracking branch (`origin/main`), and refuses a name that is both. If either call exits non-zero, stop and report its one-line error. Otherwise record the printed SHAs as `{target_sha}` and `{base_sha}` and type those hex values into later commands; shell variables do not survive between Bash calls. Never put the heredoc inside `$( )`: bash 3.2 parses its body for parentheses. `~` cannot appear in a git ref name, so no branch name can end the heredoc early.
+Resolve the comparison base (the repository's default branch or the user's chosen base) the same way. The resolver looks the name up as a local branch, then a remote-tracking branch (`origin/main`), and refuses a name that is both; a name that is neither, such as a tag, a SHA or `HEAD~1`, resolves as a git revision. If either call exits non-zero, stop and report its one-line error. Otherwise record the printed SHAs as `{target_sha}` and `{base_sha}` and type those hex values into later commands; shell variables do not survive between Bash calls. Never put the heredoc inside `$( )`: bash 3.2 parses its body for parentheses. `~` cannot appear in a git ref name, so no branch name can end the heredoc early.
 
 - **Local changes:** HEAD — no-op, already on correct state
 

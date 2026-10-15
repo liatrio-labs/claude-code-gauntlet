@@ -1,4 +1,4 @@
-"""Resolve a branch read from stdin to a commit SHA, optionally checking it out."""
+"""Resolve a branch or revision read from stdin to a commit SHA, optionally checking it out."""
 
 import argparse
 import sys
@@ -14,23 +14,32 @@ def _git(*argv: str) -> proc.CompletedProcess[str]:
         raise CliError(f"cannot run git: {exc.strerror or exc}") from exc
 
 
+def _rev_parse(rev: str) -> str | None:
+    result = _git("rev-parse", "--verify", "--quiet", "--end-of-options", rev)
+    if result.returncode == 0:
+        return result.stdout.rstrip("\n")
+    if result.returncode != 1:
+        raise CliError(f"git rev-parse failed (exit {result.returncode})")
+    return None
+
+
 def _resolve(name: str) -> tuple[str, str]:
-    # Full ref names after check-ref-format refuses revision syntax, so a same-named
-    # tag or a reflog suffix cannot redirect the lookup.
-    if _git("check-ref-format", f"refs/heads/{name}").returncode:
-        raise CliError("not a valid branch name")
+    # Branches are looked up by full ref first so a same-named tag cannot shadow one;
+    # any other revision (a tag, a SHA, HEAD~1) goes through git's own lookup.
     found = []
-    for ref in (f"refs/heads/{name}", f"refs/remotes/{name}"):
-        result = _git("rev-parse", "--verify", "--quiet", "--end-of-options", ref)
-        if result.returncode == 0:
-            found.append((ref, result.stdout.rstrip("\n")))
-        elif result.returncode != 1:
-            raise CliError(f"git rev-parse failed (exit {result.returncode})")
-    if not found:
-        raise CliError("no local or remote-tracking branch has that name")
+    if not _git("check-ref-format", f"refs/heads/{name}").returncode:
+        for ref in (f"refs/heads/{name}", f"refs/remotes/{name}"):
+            sha = _rev_parse(ref)
+            if sha is not None:
+                found.append((ref, sha))
     if len(found) > 1:
         raise CliError("name matches both a local and a remote-tracking branch")
-    return found[0]
+    if found:
+        return found[0]
+    sha = _rev_parse(f"{name}^{{commit}}")
+    if sha is None:
+        raise CliError("name does not resolve to a commit")
+    return "", sha
 
 
 def _execute(args: argparse.Namespace) -> int:
