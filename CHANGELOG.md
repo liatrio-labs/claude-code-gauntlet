@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.42.33 (2026-10-15)
+
+### Bug Fixes
+
+- Close untrusted and rules blocks with a per-block id the reviewed text cannot predict
+  ([#510](https://github.com/liatrio-labs/claude-code-gauntlet/pull/510),
+  [`fe63771`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fe63771cb85c904c3cee7a05ba8b56bfa314a2fd))
+
+
 ## v3.42.32 (2026-10-15)
 
 ### Bug Fixes
