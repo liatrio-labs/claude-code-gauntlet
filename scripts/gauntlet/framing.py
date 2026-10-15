@@ -33,13 +33,16 @@ _NAMES = "|".join(
     _NAME_GAP.join(re.escape(ch) for ch in tag) for tag in get_args(BlockTag)
 )
 # Models can read past gaps, and forged blocks can impersonate other trust levels.
+# The second gap only follows a literal slash, which keeps matching linear in gap length.
 _BOUNDARY = re.compile(
-    rf"<{_GAP}(?P<slash>/)?(?={_GAP}(?:{_NAMES})(?![\w.:-]))", re.IGNORECASE
+    rf"<{_GAP}(?:/(?P<after>{_GAP}))?(?P<name>{_NAMES})(?![\w.:-])", re.IGNORECASE
 )
 
 
 def _neutralize(match: re.Match[str]) -> str:
-    return r"<\/" if match["slash"] else "<\\" + match[0][1:]
+    if match["after"] is not None:
+        return rf"<\/{match['after']}{match['name']}"
+    return "<\\" + match[0][1:]
 
 
 def _escape_attribute(value: str) -> str:

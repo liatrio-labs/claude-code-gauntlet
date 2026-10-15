@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TypedDict
@@ -90,6 +91,21 @@ def test_context_neutralizes_block_tags_in_diff(tmp_path, invoke):
     )
     assert next_opening is not None
     assert next_opening[1] != opening[1]
+
+
+def test_context_frames_long_gaps_in_linear_time(tmp_path, invoke):
+    gap = b" " * 200_000
+    output_dir = tmp_path / "out"
+    write_context_inputs(output_dir, b"rules", b"+<" + gap + b"/" + gap + b"x\n")
+    started = time.perf_counter()
+    result = invoke(
+        "write_shared_context",
+        ["--output-dir", str(output_dir), "--head-sha", SHA],
+        tmp_path,
+        b"triage",
+    )
+    assert result.returncode == 0, result.stderr
+    assert time.perf_counter() - started < 5
 
 
 @pytest.mark.parametrize(
