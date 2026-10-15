@@ -226,7 +226,13 @@ python3 -c "import secrets; print(secrets.token_hex(8))"
 - **`misc`** gives `repoRoot`, a `generatedAt` candidate (re-stamp at args-assembly time if Phase 3 dispatch isn't immediate — `generatedAt` must reflect the actual assembly moment), and a `nonce` candidate matching `^[A-Za-z0-9._-]+$`.
 - **Risk classification (2e)** and **AI-generated-code detection (2k)** — classify changed files by risk as in `references/phase2-triage.md`; this feeds the context file. Neither runs here.
 
-**Incremental path** (Composite A's prior-review gate resolved Incremental): because `files` now runs first, its list is already on disk (`{output_dir}/code-gauntlet-files-{head_sha_short}.json`) by the time the `diff` section runs — replace the `diff` section's `gh pr diff {pr_number}` with the bounded form `git diff {last_reviewed_sha}..HEAD -- <the paths read back from that just-written JSON file>` (`phase2-triage.md` 2c branch 4) — the file list itself still comes from the unbounded `gh pr diff {pr_number} --name-only` written by the `files` section, never narrowed to incremental-only files; only the diff *content* is bounded. `changedLines` is then counted from this bounded diff, never the full-PR diff.
+**Incremental path** (Composite A's prior-review gate resolved Incremental): replace the `diff` section with:
+
+```bash
+python3 "{plugin_root}/scripts/incremental_diff.py" --files "{output_dir}/code-gauntlet-files-{head_sha_short}.json" --since {last_reviewed_sha} > "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"
+```
+
+Keep the `files` section's full server `--name-only` list unchanged. The script reads that JSON to bound the diff; `changedLines` counts the saved patch. If the command fails or produces an empty patch, save the full server diff instead and disclose the fallback (see `phase2-triage.md` 2c branch 4).
 
 **GitLab MR mode:** swap `gh pr diff {pr_number}` for `glab mr diff {pr_number}` in both the `files` and `diff` sections.
 

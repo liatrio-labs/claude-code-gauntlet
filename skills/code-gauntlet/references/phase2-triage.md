@@ -6,7 +6,7 @@ Sub-steps, detection logic, and **args preparation** for Phase 2: Target, Triage
 
 - **2a** VCS platform detection — **2b** Working tree checkout — **2b-post** SHA + previously-reviewed gate + stale cleanup — **2c** Review target + diff/changed-files save
 - **2d** Project context (CLAUDE.md, REVIEW.md parse) — **2e** Risk classification
-- **2g** Test discovery — **2h** Docs/specs — **2i** History context
+- **2g** Test discovery — **2h** Docs/specs
 - **2k** AI-generated code detection — **2l** Review dimensions
 - **Shared agent context file** — **Args preparation** (the args waist the workflow consumes)
 - **Triage announcement**
@@ -100,12 +100,18 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
    - **GitLab (MR):** Gather the file list with `glab mr diff {pr_number} --name-only`. Gather the full diff with `glab mr diff {pr_number}`.
 2. **Branch comparison** — `git diff <base>...HEAD` and `git diff --name-only <base>...HEAD`
 3. **Local changes** — `git diff HEAD` (or `git diff --cached` if nothing unstaged)
-4. **Incremental** (2b-post step 3's gate resolved "Incremental" and stored `last_reviewed_sha`; PR/MR mode only) — reuses branch 1's server-computed `--name-only` file list (never branch 1's diff content) and diffs only those files: `git diff {last_reviewed_sha}..HEAD -- <that file list>`. Do **not** use the unbounded `git diff {last_reviewed_sha}...HEAD` / `git diff --name-only {last_reviewed_sha}...HEAD` form: `incremental_safe` guarantees `{last_reviewed_sha}` is an ancestor of HEAD, so the three-dot form collapses to two-dot, and unbounded it would include every commit since the last review — including an unrelated base-branch merge (e.g. `git merge main`) that pulls in files the PR never touched. Same validation rules as below (non-empty, starts with `diff --git`); note the residual limitation: a base merge that also touches a PR file still shows up. If the diff fails or is empty, fall back to branch 1's full server diff and disclose the fallback. Record the incremental scope (`last_reviewed_sha`) in the triage announcement and the Phase 8 methodology.
+4. **Incremental** (2b-post step 3's gate resolved "Incremental"; PR/MR mode only) — use branch 1's full server `--name-only` list saved below to bound the diff:
+
+   ```bash
+   python3 "{plugin_root}/scripts/incremental_diff.py" --files "{output_dir}/code-gauntlet-files-{head_sha_short}.json" --since {last_reviewed_sha} > "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"
+   ```
+
+   An unbounded diff would include unrelated files from a base-branch merge. A base merge that touches a PR file still appears. Validate the saved patch as below. If the command fails or the patch is empty, save branch 1's full server diff instead and disclose the fallback. Record `last_reviewed_sha` in the triage announcement and Phase 8 methodology.
 
 **Save the diff and the changed-file list (the workflow has no git access):** Persist both git-derived inputs to disk so the workflow can consume them.
 
 1. **Changed files** → `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file. On the incremental path, this stays branch 1's full server `--name-only` list unchanged — the same list branch 4 uses to bound the diff, never a narrower incremental-only set. Saved **first**, so branch 4's incremental diff (below) has a file list already on disk to bound against.
-2. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when 2b-post step 3 resolved incremental, branch 4's file-bounded `{last_reviewed_sha}..HEAD -- <file list>` diff, read back from the JSON just written above); for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
+2. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when 2b-post step 3 resolved incremental, branch 4's `incremental_diff.py` command); for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
 
 **These saves run as SKILL.md's "Phase 2 Composite B — independent-gather"** — one Bash call whose `files`/`diff`/`numstat`/`misc` sections are mutually independent on the default path (`files` runs first specifically so the incremental path's bounded diff has a file list to read). See SKILL.md for the exact script.
 
@@ -227,17 +233,6 @@ Glob(pattern: "research/**/*.md")
 ```
 
 Then use **Read** to load relevant files for each changed file's directory. Never use `find` from Bash for locating docs/specs.
-
----
-
-## 2i. History Context Preprocessing
-
-**Deterministic preprocessing, not an LLM agent.** For each changed file:
-
-1. `git log --oneline --max-count=50 -- <file>` for recent change history
-2. `git blame` on changed line ranges (used by the Verify stage's `verify_findings.py` executor for new/surfaced classification)
-
-Distribute: bug-detector gets history context; conventions-and-intent gets pattern drift context.
 
 ---
 

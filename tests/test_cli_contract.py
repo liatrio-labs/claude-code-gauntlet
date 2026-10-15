@@ -385,6 +385,7 @@ MAIN_FAILURE = {
     "emit_style_context": "",
     "ensure_output_dir": "--cwd {missing}",
     "generate_contract_requirements": "--repo-root {missing} --check",
+    "incremental_diff": f"--files {{missing}} --since {FULL}",
     "materialize_artifacts": "--output-dir {missing} --task {missing}",
     "post_review": "{missing}",
     "render_fix_tasks": "{missing} --repo-root {missing}",
@@ -404,6 +405,7 @@ BAD_INPUT = {
     "collect_project_rules": "--repo-root {invalid} --out {missing}",
     "detect_prior_review": "--platform bitbucket",
     "generate_contract_requirements": "--repo-root {invalid} --check",
+    "incremental_diff": f"--files {{invalid}} --since {FULL}",
     "materialize_artifacts": "--output-dir {missing}",
     "post_review": "--platform bitbucket",
     "render_fix_tasks": "{invalid} --repo-root {root}",
@@ -427,6 +429,10 @@ SUCCESS = {
     "emit_style_context": ({}, ""),
     "ensure_output_dir": ({}, "--cwd {root}"),
     "generate_contract_requirements": ({}, "--repo-root {root} --check"),
+    "incremental_diff": (
+        {"files.json": "[]"},
+        f"--files {{dir}}/files.json --since {FULL}",
+    ),
     "post_review": (
         {"post.json": json.dumps({**POST, "findings": []})},
         "{dir}/post.json --dry-run",
@@ -711,6 +717,7 @@ def rows():
         (name, "help")
         for name in (
             "diff_numstat",
+            "incremental_diff",
             "stale_truncate",
             "write_shared_context",
             "report_patches",

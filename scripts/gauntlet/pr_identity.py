@@ -1,14 +1,17 @@
 """Keep author-controlled PR/MR fields out of shell arguments."""
 
 import argparse
-import re
 import sys
 from typing import TypedDict
 
-from gauntlet.cli import CliError, Command, Parser, read_stdin_json_object
+from gauntlet.cli import (
+    CliError,
+    Command,
+    Parser,
+    read_stdin_json_object,
+    require_full_sha,
+)
 from gauntlet.forge import Platform, parse_pr_url
-
-SHA_FULL_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 class _PrIdentityRequired(TypedDict):
@@ -27,8 +30,7 @@ class PrIdentityWire(_PrIdentityRequired, total=False):
 def resolve(
     platform: Platform, url: str, sha: str, title: str | None = None
 ) -> PrIdentityWire:
-    if not SHA_FULL_RE.fullmatch(sha):
-        raise CliError("sha must be a 40-character lowercase hex commit id", 2)
+    require_full_sha(sha, "sha")
     try:
         parsed = parse_pr_url(platform, url)
     except ValueError as exc:

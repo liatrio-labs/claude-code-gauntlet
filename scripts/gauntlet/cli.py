@@ -26,6 +26,11 @@ def require_head_sha(value: str) -> None:
         )
 
 
+def require_full_sha(value: str, name: str) -> None:
+    if re.fullmatch(r"[0-9a-f]{40}", value) is None:
+        raise CliError(f"{name} must be a 40-character lowercase hex commit id", 2)
+
+
 def utf8_stdio() -> None:
     """Use Python UTF-8 mode stream encodings and LF output at CLI boundaries."""
     if isinstance(sys.stdout, io.TextIOWrapper):
