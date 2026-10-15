@@ -2175,50 +2175,28 @@ function applyChallenges(findings, challenges) {
     if (justification) finding.challenge_justification = justification;
     const isSurfaced = ('origin' in finding ? finding.origin : '').toLowerCase() === 'surfaced';
     const isSecurity = ('dimension' in finding ? finding.dimension : '').toLowerCase() === 'security';
-    if (score < 25) {
-      if (isSecurity) {
-        const currentSev = ('severity' in finding ? finding.severity : 'low').toLowerCase();
-        const newSev = downgradeSeverity(currentSev);
-        finding.challenge_contested = false;
-        if (newSev === null) {
-          eliminated.push({
-            ...finding,
-            eliminated_by: 'challenge:removed',
-            elimination_reason:
-              `challenge score ${score} < 25; security finding severity already ` +
-              `'${currentSev}' (lowest) — finding removed`,
-          });
-          stats.challenge_removed += 1;
-        } else {
-          finding.severity = newSev;
-          finding.severity_downgraded = true;
-          finding.original_severity = currentSev;
-          finding.report_destination = 'suggestion';
-          finding.report_tag = 'suggestion';
-          active.push(finding);
-          stats.challenge_downgraded += 1;
-        }
-      } else {
-        eliminated.push({
-          ...finding,
-          eliminated_by: 'challenge:removed',
-          elimination_reason: `challenge score ${score} < 25; finding does not survive blind challenge`,
-        });
-        stats.challenge_removed += 1;
-      }
+    if (score < 25 && !isSecurity) {
+      eliminated.push({
+        ...finding,
+        eliminated_by: 'challenge:removed',
+        elimination_reason: `challenge score ${score} < 25; finding does not survive blind challenge`,
+      });
+      stats.challenge_removed += 1;
     } else if (score < 50) {
       const currentSev = ('severity' in finding ? finding.severity : 'low').toLowerCase();
       const newSev = downgradeSeverity(currentSev);
       finding.challenge_contested = false;
+      const removed = score < 25 && newSev === null;
       if (newSev === null) {
         eliminated.push({
           ...finding,
-          eliminated_by: 'challenge:downgraded',
-          elimination_reason:
-            `challenge score ${score} in 25-49 range; severity already ` +
-            `'${currentSev}' (lowest) — finding removed`,
+          eliminated_by: removed ? 'challenge:removed' : 'challenge:downgraded',
+          elimination_reason: score < 25
+            ? `challenge score ${score} < 25; security finding severity already ` +
+              `'${currentSev}' (lowest) — finding removed`
+            : `challenge score ${score} in 25-49 range; severity already ` +
+              `'${currentSev}' (lowest) — finding removed`,
         });
-        stats.challenge_downgraded += 1;
       } else {
         finding.severity = newSev;
         finding.severity_downgraded = true;
@@ -2226,8 +2204,8 @@ function applyChallenges(findings, challenges) {
         finding.report_destination = 'suggestion';
         finding.report_tag = 'suggestion';
         active.push(finding);
-        stats.challenge_downgraded += 1;
       }
+      stats[removed ? 'challenge_removed' : 'challenge_downgraded'] += 1;
     } else if (score < 75) {
       finding.challenge_contested = true;
       if (isSurfaced) {
@@ -2701,15 +2679,17 @@ function dimensionOwnerMap(dimensions) {
   for (const d of dimensions) owner[d.dimension] = d.agentType;
   return owner;
 }
+function safeReportField(value, key) {
+  try {
+    return value?.[key];
+  } catch {
+    return undefined;
+  }
+}
 function severityBreakdown(rowFindings) {
   const counts = new Map();
   for (const f of rowFindings) {
-    let raw;
-    try {
-      raw = f ? f.severity : undefined;
-    } catch {
-      continue;
-    }
+    const raw = safeReportField(f, 'severity');
     if (raw === undefined || raw === null || raw === '') continue;
     const severity = normalizeReportSeverity(raw);
     counts.set(severity, (counts.get(severity) || 0) + 1);
@@ -2727,12 +2707,7 @@ function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
   const byAgent = new Map(agents.map((agent) => [agent, []]));
   const unverifiedByAgent = new Map(agents.map((agent) => [agent, []]));
   const bucketFinding = (buckets, finding) => {
-    let dimension;
-    try {
-      dimension = finding ? finding.dimension : undefined;
-    } catch {
-      dimension = undefined;
-    }
+    const dimension = safeReportField(finding, 'dimension');
     const agentType = owner[dimension];
     if (agentType && buckets.has(agentType)) buckets.get(agentType).push(finding);
   };
@@ -2834,21 +2809,10 @@ function reportCorroboration(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const out = {};
   for (const key of ['agent', 'dimension', 'title', 'description']) {
-    let raw;
-    try {
-      raw = value[key];
-    } catch {
-      continue;
-    }
-    const text = reportOptionalText(raw);
+    const text = reportOptionalText(safeReportField(value, key));
     if (text !== undefined) out[key] = text;
   }
-  let confidence;
-  try {
-    confidence = reportAsConfidence(value.confidence);
-  } catch {
-    confidence = undefined;
-  }
+  const confidence = reportAsConfidence(safeReportField(value, 'confidence'));
   if (confidence !== undefined) out.confidence = confidence;
   return out;
 }
@@ -2861,12 +2825,7 @@ function coerceReportFinding(finding, severities) {
     return out;
   }
   for (const key of keys) {
-    let raw;
-    try {
-      raw = finding[key];
-    } catch {
-      continue;
-    }
+    const raw = safeReportField(finding, key);
     let value;
     if (key === 'severity') {
       value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw, severities);
@@ -4622,6 +4581,10 @@ function normalizeArgsReport(raw, descriptors = KNOB_REGISTRY) {
 function normalizeArgs(raw, descriptors = KNOB_REGISTRY) {
   return normalizeArgsReport(raw, descriptors).args;
 }
+function extraKeys(value, allowed, sorted = false) {
+  const keys = Object.keys(value).filter((key) => !allowed.includes(key));
+  return sorted ? keys.sort() : keys;
+}
 function validateArgs(args, descriptors = KNOB_REGISTRY) {
   const errors = [];
   if (!args || typeof args !== 'object') return { ok: false, errors: ['args is not an object'] };
@@ -4678,8 +4641,7 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
           errors.push(`riskTable[${i}] must be an object of the form {path, risk}`);
           continue;
         }
-        const keys = Object.keys(entry).sort();
-        const extra = keys.filter((k) => !ARGS_SHAPES.riskFields.includes(k));
+        const extra = extraKeys(entry, ARGS_SHAPES.riskFields, true);
         if (extra.length > 0) {
           errors.push(`riskTable[${i}] has unexpected key(s): ${extra.join(', ')} (only path and risk are allowed)`);
         }
@@ -4758,7 +4720,7 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
               errors.push(`${label} must be a plain object`);
               continue;
             }
-            const extra = Object.keys(scope).filter((key) => !ARGS_SHAPES.scopeLayerFields.includes(key)).sort();
+            const extra = extraKeys(scope, ARGS_SHAPES.scopeLayerFields, true);
             if (extra.length > 0) errors.push(`${label} has unexpected key(s): ${extra.join(', ')}`);
             validateLayer(scope, label, true);
             if (typeof scope.dir === 'string' && scope.dir !== '') {
@@ -4781,8 +4743,7 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
           errors.push(`reviewMd[${i}] must be an object of the form {path, text}`);
           continue;
         }
-        const keys = Object.keys(entry).sort();
-        const extra = keys.filter((k) => !ARGS_SHAPES.reviewMdFields.includes(k));
+        const extra = extraKeys(entry, ARGS_SHAPES.reviewMdFields, true);
         if (extra.length > 0) {
           errors.push(`reviewMd[${i}] has unexpected key(s): ${extra.join(', ')} (only path and text are allowed)`);
         }
@@ -4846,9 +4807,7 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
     if (!isPlainObject(args.reviewScope)) {
       errors.push('reviewScope must be { requested, kind, since, commits, detector }');
     } else {
-      const scopeKeys = Object.keys(args.reviewScope);
-      const scopeKeysExpected = ARGS_SHAPES.scopeFields;
-      const scopeExtra = scopeKeys.filter((key) => !scopeKeysExpected.includes(key));
+      const scopeExtra = extraKeys(args.reviewScope, ARGS_SHAPES.scopeFields);
       if (scopeExtra.length) errors.push(`reviewScope has unexpected key(s): ${scopeExtra.join(', ')}`);
       const { requested, kind, since, commits, detector } = args.reviewScope;
       if (!ARGS_SHAPES.scopeKinds.includes(requested)) {
@@ -4870,7 +4829,7 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
           errors.push('reviewScope.detector must be null or an object copied from detect_prior_review.py');
         } else {
           const detectorKeys = ARGS_SHAPES.detectorFields;
-          const detectorExtra = Object.keys(detector).filter((key) => !detectorKeys.includes(key));
+          const detectorExtra = extraKeys(detector, detectorKeys);
           const detectorMissing = detectorKeys.filter((key) => !Object.hasOwn(detector, key));
           if (detectorExtra.length) errors.push(`reviewScope.detector has unexpected key(s): ${detectorExtra.join(', ')}`);
           if (detectorMissing.length) errors.push(`reviewScope.detector is missing key(s): ${detectorMissing.join(', ')}`);

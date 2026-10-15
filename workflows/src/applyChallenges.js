@@ -75,50 +75,28 @@ export function applyChallenges(findings, challenges) {
     const isSurfaced = ('origin' in finding ? finding.origin : '').toLowerCase() === 'surfaced';
     const isSecurity = ('dimension' in finding ? finding.dimension : '').toLowerCase() === 'security';
 
-    if (score < 25) {
-      if (isSecurity) {
-        const currentSev = ('severity' in finding ? finding.severity : 'low').toLowerCase();
-        const newSev = downgradeSeverity(currentSev);
-        finding.challenge_contested = false;
-        if (newSev === null) {
-          eliminated.push({
-            ...finding,
-            eliminated_by: 'challenge:removed',
-            elimination_reason:
-              `challenge score ${score} < 25; security finding severity already ` +
-              `'${currentSev}' (lowest) — finding removed`,
-          });
-          stats.challenge_removed += 1;
-        } else {
-          finding.severity = newSev;
-          finding.severity_downgraded = true;
-          finding.original_severity = currentSev;
-          finding.report_destination = 'suggestion';
-          finding.report_tag = 'suggestion';
-          active.push(finding);
-          stats.challenge_downgraded += 1;
-        }
-      } else {
-        eliminated.push({
-          ...finding,
-          eliminated_by: 'challenge:removed',
-          elimination_reason: `challenge score ${score} < 25; finding does not survive blind challenge`,
-        });
-        stats.challenge_removed += 1;
-      }
+    if (score < 25 && !isSecurity) {
+      eliminated.push({
+        ...finding,
+        eliminated_by: 'challenge:removed',
+        elimination_reason: `challenge score ${score} < 25; finding does not survive blind challenge`,
+      });
+      stats.challenge_removed += 1;
     } else if (score < 50) {
       const currentSev = ('severity' in finding ? finding.severity : 'low').toLowerCase();
       const newSev = downgradeSeverity(currentSev);
       finding.challenge_contested = false;
+      const removed = score < 25 && newSev === null;
       if (newSev === null) {
         eliminated.push({
           ...finding,
-          eliminated_by: 'challenge:downgraded',
-          elimination_reason:
-            `challenge score ${score} in 25-49 range; severity already ` +
-            `'${currentSev}' (lowest) — finding removed`,
+          eliminated_by: removed ? 'challenge:removed' : 'challenge:downgraded',
+          elimination_reason: score < 25
+            ? `challenge score ${score} < 25; security finding severity already ` +
+              `'${currentSev}' (lowest) — finding removed`
+            : `challenge score ${score} in 25-49 range; severity already ` +
+              `'${currentSev}' (lowest) — finding removed`,
         });
-        stats.challenge_downgraded += 1;
       } else {
         finding.severity = newSev;
         finding.severity_downgraded = true;
@@ -126,8 +104,8 @@ export function applyChallenges(findings, challenges) {
         finding.report_destination = 'suggestion';
         finding.report_tag = 'suggestion';
         active.push(finding);
-        stats.challenge_downgraded += 1;
       }
+      stats[removed ? 'challenge_removed' : 'challenge_downgraded'] += 1;
     } else if (score < 75) {
       finding.challenge_contested = true;
       if (isSurfaced) {
