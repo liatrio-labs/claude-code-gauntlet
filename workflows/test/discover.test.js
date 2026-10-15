@@ -161,6 +161,9 @@ const RANGE_ROWS = [
   { name: 'implausible with patch', fields: { line_end: 940, suggested_fix_code: 'const x = 1;' },
     expected: { ...RANGE_GOLDEN, gaps: [SPAN_GAP
       + ' \u2014 1 of those also carried suggested_fix_code: patch field(s) dropped along with the range'] } },
+  { name: 'reversed range with patch', fields: { line_end: 60, suggested_fix_code: 'const x = 1;' },
+    expected: { ...RANGE_GOLDEN, gaps: [SPAN_GAP
+      + ' \u2014 1 of those also carried suggested_fix_code: patch field(s) dropped along with the range'] } },
   { name: 'kept patch', fields: { line_end: 78, suggested_fix_code: 'const x = 1;' },
     expected: { ...RANGE_GOLDEN, end: true, line_end: 78, patch: true, suggested_fix_code: 'const x = 1;' } },
   { name: 'missing range drops patch', fields: { suggested_fix_code: 'const x = 1;' },
