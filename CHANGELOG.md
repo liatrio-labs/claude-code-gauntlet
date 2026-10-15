@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.42.34 (2026-10-15)
+
+### Bug Fixes
+
+- Neutralize every block tag inside wrapped reviewed text, not only the block's own closer
+  ([#512](https://github.com/liatrio-labs/claude-code-gauntlet/pull/512),
+  [`242ecfc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/242ecfced40c6a740de7e3e36fd4c76fcc3ac710))
+
+
 ## v3.42.33 (2026-10-15)
 
 ### Bug Fixes
