@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.42.31 (2026-10-15)
+
+### Bug Fixes
+
+- Neutralize a block's own closing tag inside the reviewed text it wraps
+  ([#506](https://github.com/liatrio-labs/claude-code-gauntlet/pull/506),
+  [`9d35111`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9d351110c1b82d957ae19e86ceeb984329f7a383))
+
+
 ## v3.42.30 (2026-10-15)
 
 ### Bug Fixes
