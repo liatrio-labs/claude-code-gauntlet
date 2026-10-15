@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 from tests.tools.probe_fixtures import (
     input_text,
@@ -21,8 +21,8 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     keys = ("0123456789abcdef", "fedcba9876543210")
     discussion_marker = post_review._delivery_marker_suffix(sha, [keys[0]])
 
-    def finding(body: str, **values: Any) -> dict[str, Any]:
-        return {
+    def finding(body: str, **values: Any) -> Finding:
+        values_dict: dict[str, Any] = {
             "file": "src/probe.py",
             "line": 1,
             "end_line": 1,
@@ -31,6 +31,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
             "body": body,
             **values,
         }
+        return cast(Finding, values_dict)
 
     def inline_body(
         body_finding: Mapping[str, object],
@@ -50,54 +51,42 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
 
     cases: list[dict[str, Any]] = []
 
+    def add(case_id: str, text: str, route: str = "discussion") -> None:
+        cases.append({"id": case_id, "text": text, "route": route})
+
     def add_inline(case_id: str, text: str, **kwargs: Any) -> None:
-        cases.append(
-            {
-                "id": case_id,
-                "text": inline_body(finding(text), **kwargs),
-                "route": kwargs.get("surface", "discussion"),
-            }
+        add(
+            case_id,
+            inline_body(finding(text), **kwargs),
+            kwargs.get("surface", "discussion"),
         )
+
+    def add_summary(case_id: str, text: str) -> None:
+        add(
+            case_id,
+            compose.compose_review_body(
+                text, [], platform="gitlab", findings_count=1, sha=sha
+            ).body,
+            "summary",
+        )
+
+    def add_patch(case_id: str, body: str, code: str) -> None:
+        patch = finding(body, suggested_fix_code=code, end_line=3)
+        site = gate.gitlab_apply_range(1, 3, 1)
+        verdict = gate.evaluate_fix(patch, apply_range=site.apply_range, facts=facts)
+        if site.cap_exceeded or not verdict.keep:
+            raise ValueError("deterministic quick-action patch failed the GitLab gate")
+        add(case_id, inline_body(patch, fence_offsets=site.offsets))
 
     add_inline("mbq_backtick", ">>>\n```\n>>>\n/close\n```")
     add_inline("mbq_tilde", ">>>\n~~~\n>>>\n/close\n~~~")
 
-    patch_finding = finding(
-        ">>>\nSee the patch below.",
-        suggested_fix_code=">>>\n/close\nreturn x",
-        end_line=3,
-    )
     valid_lines = {("src/probe.py", line): None for line in range(1, 4)}
     line_texts = {("src/probe.py", line): f"old line {line}" for line in range(1, 4)}
     facts = diff_facts(valid_lines, line_texts=line_texts)
-    patch_site = gate.gitlab_apply_range(1, 3, 1)
-    patch_verdict = gate.evaluate_fix(
-        patch_finding, apply_range=patch_site.apply_range, facts=facts
-    )
-    if patch_site.cap_exceeded or not patch_verdict.keep:
-        raise ValueError("deterministic quick-action patch case failed the GitLab gate")
-    cases.append(
-        {
-            "id": "suggested_patch",
-            "text": inline_body(patch_finding, fence_offsets=patch_site.offsets),
-            "route": "discussion",
-        }
-    )
-
+    add_patch("suggested_patch", ">>>\nSee the patch below.", ">>>\n/close\nreturn x")
     add_inline("slash_bad_info", "```a`b\n/close")
-    cases.append(
-        {
-            "id": "slash_display_math",
-            "text": compose.compose_review_body(
-                "$$\n/close\n$$",
-                [],
-                platform="gitlab",
-                findings_count=1,
-                sha=sha,
-            ).body,
-            "route": "summary",
-        }
-    )
+    add_summary("slash_display_math", "$$\n/close\n$$")
     add_inline("slash_details", "<details>\n/close\n</details>", surface="note")
     add_inline("trusted_backtick", "```text\n/close\n```")
     add_inline("trusted_tilde", "~~~text\n/close\n~~~")
@@ -115,84 +104,34 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     add_inline("mbq_content_text", ">>> x")
     alert_breakout = breakout(">>> [!note]")
     add_inline("mbq_alert_breakout_discussion", alert_breakout)
-    cases.append(
-        {
-            "id": "mbq_alert_breakout_summary",
-            "text": compose.compose_review_body(
-                alert_breakout,
-                [],
-                platform="gitlab",
-                findings_count=1,
-                sha=sha,
-            ).body,
-            "route": "summary",
-        }
-    )
-    alert_patch_finding = finding(
+    add_summary("mbq_alert_breakout_summary", alert_breakout)
+    add_patch(
+        "suggestion_alert_payload",
         ">>> [!note]\nSee the patch below.",
-        suggested_fix_code=">>>\n/label ~zz377nolabel\nreturn x\n",
-        end_line=3,
-    )
-    alert_patch_site = gate.gitlab_apply_range(1, 3, 1)
-    alert_patch_verdict = gate.evaluate_fix(
-        alert_patch_finding, apply_range=alert_patch_site.apply_range, facts=facts
-    )
-    if alert_patch_site.cap_exceeded or not alert_patch_verdict.keep:
-        raise ValueError("deterministic alert patch case failed the GitLab gate")
-    cases.append(
-        {
-            "id": "suggestion_alert_payload",
-            "text": inline_body(
-                alert_patch_finding, fence_offsets=alert_patch_site.offsets
-            ),
-            "route": "discussion",
-        }
+        ">>>\n/label ~zz377nolabel\nreturn x\n",
     )
     add_inline("slash_body_line", "/close")
-    cases.append(
-        {
-            "id": "slash_suggestion_line",
-            "text": inline_body(
-                finding("Safe body", suggestion="Fix context.\n/close")
-            ),
-            "route": "discussion",
-        }
+    add(
+        "slash_suggestion_line",
+        inline_body(finding("Safe body", suggestion="Fix context.\n/close")),
     )
-
-    primary: Finding = {
-        "file": "src/probe.py",
-        "line": 1,
-        "end_line": 1,
-        "severity": "medium",
-        "title": "Probe finding",
-        "body": "Grouped primary",
-        "consolidation_key": "probe",
-        "consolidation_primary": True,
-    }
-    corroborator: Finding = {
-        "file": "src/probe.py",
-        "line": 1,
-        "end_line": 1,
-        "severity": "medium",
-        "title": "Probe finding",
-        "body": "<details>\n/close\n</details>",
-        "agent": "probe-agent",
-        "dimension": "correctness",
-        "confidence": "high",
-        "consolidation_key": "probe",
-    }
+    primary = finding(
+        "Grouped primary", consolidation_key="probe", consolidation_primary=True
+    )
+    corroborator = finding(
+        "<details>\n/close\n</details>",
+        agent="probe-agent",
+        dimension="correctness",
+        confidence="high",
+        consolidation_key="probe",
+    )
     group = compose.consolidate_delivery([primary, corroborator])[0]
     group_marker = post_review._delivery_marker_suffix(sha, list(keys))
-    cases.append(
-        {
-            "id": "grouped_corroborator",
-            "text": inline_body(
-                group.primary,
-                corroborators=group.corroborators,
-                marker=group_marker,
-            ),
-            "route": "discussion",
-        }
+    add(
+        "grouped_corroborator",
+        inline_body(
+            group.primary, corroborators=group.corroborators, marker=group_marker
+        ),
     )
     return cases
 

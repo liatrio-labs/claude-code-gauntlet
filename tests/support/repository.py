@@ -18,11 +18,7 @@ def tracked_paths(root: Path, pathspecs: Sequence[str] = ()) -> list[str]:
 
 
 def copy_generator_tree(root: Path, destination: Path, targets: Iterable[str]) -> None:
-    paths = (
-        set(targets)
-        | declared_inputs(str(root))
-        | {"scripts/generate_contract_requirements.py"}
-    )
+    paths = set(targets) | declared_inputs(str(root))
     for relative in sorted(paths):
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)

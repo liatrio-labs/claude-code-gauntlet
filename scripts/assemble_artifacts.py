@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Assemble artifacts command entry."""
-
 import os
 import sys
 

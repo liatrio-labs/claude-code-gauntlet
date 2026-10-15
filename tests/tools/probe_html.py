@@ -44,50 +44,30 @@ _RENDERER_CLASS_VALUES = {
 }
 
 
+_COMMON_ELEMENTS = frozenset(
+    {
+        "a",
+        "blockquote",
+        "code",
+        "h1",
+        "h2",
+        "li",
+        "ol",
+        "p",
+        "pre",
+        "strong",
+        "table",
+        "tbody",
+        "td",
+        "th",
+        "thead",
+        "tr",
+        "ul",
+    }
+)
 ELEMENT_VOCABULARIES = {
-    "gitlab": frozenset(
-        {
-            "a",
-            "blockquote",
-            "code",
-            "h1",
-            "h2",
-            "li",
-            "ol",
-            "p",
-            "pre",
-            "strong",
-            "table",
-            "tbody",
-            "td",
-            "th",
-            "thead",
-            "tr",
-            "ul",
-        }
-    ),
-    "github": frozenset(
-        {
-            "a",
-            "blockquote",
-            "br",
-            "code",
-            "h1",
-            "h2",
-            "li",
-            "ol",
-            "p",
-            "pre",
-            "strong",
-            "table",
-            "tbody",
-            "td",
-            "th",
-            "thead",
-            "tr",
-            "ul",
-        }
-    ),
+    "gitlab": _COMMON_ELEMENTS,
+    "github": _COMMON_ELEMENTS | {"br"},
 }
 
 

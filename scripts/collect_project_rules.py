@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Collect project rules command entry."""
-
 import os
 import sys
 

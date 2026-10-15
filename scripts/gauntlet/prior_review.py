@@ -66,8 +66,7 @@ _NO_GIT_FACTS = GitFacts(None, None, None, False, False, None)
 
 GIT_TIMEOUT_SECONDS = 10
 
-# The surfaces each platform exposes, in scan order. Used to seed "scanned" so the
-# key set is stable even when a fetch fails or returns nothing.
+# Keep receipt keys stable when a fetch fails or returns nothing.
 PLATFORM_SOURCES: dict[Platform, tuple[str, ...]] = {
     "github": ("review",),
     "gitlab": ("note",),
@@ -132,9 +131,9 @@ def gitlab_prior_delivery_state(
 
 
 def _entries_from(
-    payload: object, source: str, timestamp_key: str
+    payload: object, source: str | None, timestamp_key: str
 ) -> list[ReviewEntryWire]:
-    """Map an API array into the entry shape gauntlet.marker.select_latest consumes."""
+    """Network sources are fixed; offline unknown sources pass through."""
     entries: list[ReviewEntryWire] = []
     if not isinstance(payload, list):
         return entries
@@ -145,11 +144,14 @@ def _entries_from(
         if not isinstance(body, str):
             continue
         timestamp = item.get(timestamp_key)
+        item_source = source if source is not None else item.get("source")
         entries.append(
             {
                 "body": body,
                 "timestamp": timestamp if isinstance(timestamp, str) else None,
-                "source": source,
+                "source": item_source
+                if isinstance(item_source, str)
+                else "bodies_file",
                 "id": item.get("id"),
             }
         )
@@ -162,36 +164,15 @@ def collect_entries_github(payload_reviews: object) -> list[ReviewEntryWire]:
 
 
 def collect_entries_gitlab(payload_notes: object) -> list[ReviewEntryWire]:
-    """MR notes (``created_at``)."""
     return _entries_from(payload_notes, "note", "created_at")
 
 
 def collect_entries_file(payload: object) -> list[ReviewEntryWire]:
-    """Map a ``--bodies-file`` array into the entry shape. Unknown sources pass through."""
-    entries: list[ReviewEntryWire] = []
-    if not isinstance(payload, list):
-        return entries
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
-        body = item.get("body")
-        if not isinstance(body, str):
-            continue
-        timestamp = item.get("timestamp")
-        source = item.get("source")
-        entries.append(
-            {
-                "body": body,
-                "timestamp": timestamp if isinstance(timestamp, str) else None,
-                "source": source if isinstance(source, str) else "bodies_file",
-                "id": item.get("id"),
-            }
-        )
-    return entries
+    return _entries_from(payload, None, "timestamp")
 
 
-# A consolidation group's body renders one of these per corroborator, verbatim from
-# gauntlet.delivery.compose._render_corroboration — the only place this string is emitted.
+# Each corroborator renders this header in delivery.compose._render_corroboration;
+# its count lets old groups suppress delivery without all member markers.
 _CORROBORATION_HEADER = "Corroborating finding — "
 
 
@@ -238,7 +219,6 @@ def prior_delivery_from_entries(
 
 
 def count_by_source(entries: Iterable[ReviewEntryWire]) -> dict[str, int]:
-    """Return ``{source: count}`` over *entries*."""
     counts: dict[str, int] = {}
     for entry in entries:
         source = entry.get("source")
@@ -260,16 +240,10 @@ def load_bodies_file(path: str) -> tuple[list[ReviewEntryWire], list[str]]:
 def resolve_git_facts(
     sha: object, head_sha: str | None = None, errors: list[str] | None = None
 ) -> GitFacts:
-    """Return the git-derived facts about *sha* relative to the head. Never raises.
+    """Resolve reviewed/head commits, preserving unavailable objects in the receipt.
 
-    ``sha_resolvable`` is False when the recorded object is not present in this
-    clone (force-push, shallow clone, unfetched object); the raw value is kept and
-    ``new_commit_count`` stays None.
-
-    An explicit *head_sha* is expanded through ``git rev-parse`` so an abbreviated
-    value is never compared against a full one (which would read as "advanced"
-    every time), and the commit count is taken against that same head rather than
-    whatever HEAD happens to be.
+    Expand explicit head abbreviations so they compare against the same full SHA
+    and commit range as HEAD. Force-pushed or shallow history may be unavailable.
     """
     errors = errors if errors is not None else []
     if head_sha:
@@ -330,12 +304,8 @@ def resolve_git_facts(
     )
 
 
-#: Keys echoed back from a parsed marker. The payload is attacker-controllable —
-#: anyone with read access can post a comment carrying a marker — and the
-#: orchestrator is told to consume the `marker` object, so an unbounded verbatim
-#: echo would pipe arbitrary text straight into a model's context. Forward
-#: compatibility is preserved by `unknown_keys` (names only, capped), which lets a
-#: future producer's fields be noticed without their values being replayed.
+# Markers are public input to the skill: echo bounded known fields and unknown
+# names, never arbitrary unknown values that could inject model instructions.
 _MARKER_ECHO_KEYS = (
     "version",
     "findings_count",
@@ -347,7 +317,6 @@ _MARKER_ECHO_MAX_CHARS = 4096
 
 
 def _bounded(value: object, limit: int = 512) -> object:
-    """Return *value* with any string/collection clipped to a printable bound."""
     if isinstance(value, str):
         return value if len(value) <= limit else value[:limit] + "...[truncated]"
     if isinstance(value, bool) or value is None:
@@ -357,21 +326,14 @@ def _bounded(value: object, limit: int = 512) -> object:
         # that only inspects strings.
         text = repr(value)
         return value if len(text) <= 64 else f"[number truncated, {len(text)} digits]"
-    try:
-        encoded = json.dumps(value)
-    except (TypeError, ValueError):
-        return "[unrepresentable]"
+    encoded = json.dumps(value)
     if len(encoded) <= limit:
         return value
     return f"[{type(value).__name__} truncated, {len(encoded)} chars]"
 
 
 def sanitize_marker(marker: object) -> dict[str, object] | None:
-    """Return a size-bounded, allow-listed view of a parsed marker payload.
-
-    Allow-listed values are attacker-controlled too; bound them before the
-    orchestrator consumes the receipt.
-    """
+    """Bound attacker-controlled values before the skill consumes the receipt."""
     if not isinstance(marker, dict):
         return None
     out: dict[str, object] = {
@@ -380,16 +342,13 @@ def sanitize_marker(marker: object) -> dict[str, object] | None:
     # Key NAMES are attacker-authored strings too — capping their count alone
     # still let kilobytes of free text through the "names only" guarantee.
     extra = sorted(
-        (k if isinstance(k, str) and len(k) <= 64 else str(k)[:64] + "...")
+        (k if len(k) <= 64 else k[:64] + "...")
         for k in marker
         if k not in _MARKER_ECHO_KEYS
     )
     if extra:
         out["unknown_keys"] = extra[:32]
-    try:
-        encoded = json.dumps(out)
-    except (TypeError, ValueError):
-        return {"sha": marker.get("sha"), "unrepresentable": True}
+    encoded = json.dumps(out)
     if len(encoded) > _MARKER_ECHO_MAX_CHARS:
         return {
             "version": _bounded(out.get("version"), 64),
@@ -410,14 +369,7 @@ def build_result(
     scanned: Mapping[str, int] | None = None,
     errors: Iterable[str] | None = None,
 ) -> PriorReviewWire:
-    """Assemble the output object. Pure — no subprocess, no I/O.
-
-    ``incremental_safe`` is exactly ``sha_resolvable and head_advanced``, and
-    ``head_advanced`` additionally requires the reviewed commit to be an ancestor
-    of the head — so a backwards force-push degrades to a full review instead of
-    promising an incremental diff that would be empty. It is the one boolean the
-    orchestrator gates the incremental path on.
-    """
+    """Assemble the receipt; rewritten history must never offer incremental review."""
     git_facts = git_facts if git_facts is not None else _NO_GIT_FACTS
     scanned = dict(scanned or {})
     errors = list(errors or [])
@@ -478,7 +430,6 @@ def build_result(
 def gather_entries(
     args: argparse.Namespace, *, forge: Forge
 ) -> tuple[list[ReviewEntryWire], list[str], dict[str, int]]:
-    """Return ``(entries, errors, scanned)`` for the requested source of bodies."""
     if args.bodies_file:
         entries, errors = load_bodies_file(args.bodies_file)
         return entries, errors, count_by_source(entries)
@@ -550,11 +501,7 @@ def _handle(args: argparse.Namespace) -> tuple[PriorReviewWire, int]:
     forge = make_forge(args.platform)
     entries, errors, scanned = gather_entries(args, forge=forge)
 
-    try:
-        signal = select_latest(entries)
-    except Exception as exc:  # noqa: BLE001  # pragma: no cover - detection never blocks
-        signal = None
-        errors = [*errors, f"detection failed: {exc}"]
+    signal = select_latest(entries)
 
     git_facts = resolve_git_facts(
         signal.get("sha") if signal else None, args.head_sha, errors
@@ -567,5 +514,5 @@ def main() -> int:
     return CLI.invoke(sys.argv[1:])
 
 
-# ASCII escaping keeps marker names and remote errors printable under any terminal encoding.
+# ASCII escaping keeps public marker names printable under any terminal encoding.
 CLI = Command(parser=_parser(), main=_handle, indent=2)

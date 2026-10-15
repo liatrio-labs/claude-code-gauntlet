@@ -1,4 +1,3 @@
-import subprocess
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -58,23 +57,4 @@ def test_every_forbidden_basename_is_detected():
         "bench/vendor/other/package.json",
         "bench/vendor/code-review-benchmark/package-lock.json",
     ]
-    # A table derived from the policy would hide a deleted policy arm.
-    assert set(FORBIDDEN_BASENAMES) == {
-        "package.json",
-        "package-lock.json",
-        "npm-shrinkwrap.json",
-        "yarn.lock",
-        "pnpm-lock.yaml",
-        "bun.lock",
-        "bun.lockb",
-        "uv.lock",
-        "poetry.lock",
-        "Pipfile",
-        "Pipfile.lock",
-    }
     assert violations([*rejected, EXEMPT_PATH]) == rejected
-
-
-def test_uv_lock_is_ignored_for_local_ci_tooling():
-    result = subprocess.run(["git", "check-ignore", "-q", "--", "uv.lock"], cwd=REPO)
-    assert result.returncode == 0

@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Stale truncate command entry."""
-
 import os
 import sys
 

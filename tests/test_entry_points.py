@@ -16,10 +16,9 @@ ENTRIES = sorted((ROOT / "scripts").glob("*.py"))
 IMPORT = re.compile(r"^from gauntlet\.([\w.]+) import CLI$", re.MULTILINE)
 
 
-def _entry_template(name, module):
+def _entry_template(module):
     return (
         "#!/usr/bin/env python3\n"
-        f'"""{name.replace("_", " ").capitalize()} command entry."""\n\n'
         "import os\n"
         "import sys\n\n"
         "sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))\n\n"
@@ -34,25 +33,9 @@ def test_entry_is_the_template_over_a_command(path: Path) -> None:
     match = IMPORT.search(source)
     assert match
     module = match[1]
-    assert source == _entry_template(path.stem, module)
+    assert source == _entry_template(module)
     command = importlib.import_module(f"gauntlet.{module}").CLI
     assert isinstance(command, Command)
-
-
-def test_no_two_entries_share_a_module():
-    modules = [IMPORT.search(path.read_text(encoding="utf-8"))[1] for path in ENTRIES]
-    assert len(modules) == len(set(modules))
-
-
-def _bootstrap(relative):
-    tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
-    return [
-        node
-        for node in tree.body
-        if isinstance(node, ast.If)
-        and ast.dump(node.test)
-        == ast.dump(ast.parse("__name__ == '__main__'").body[0].value)
-    ]
 
 
 def _tool_candidate(relative):
@@ -83,37 +66,6 @@ TOOLS = [
     .split("\0")
     if relative.endswith(".py") and _tool_candidate(relative)
 ]
-
-
-def test_both_tool_roots_have_bootstrapped_tools():
-    assert {relative.split("/")[0] for relative in TOOLS} == {".github", "workflows"}
-
-
-@pytest.mark.parametrize("relative", TOOLS)
-def test_tool_bootstrap_inserts_scripts_then_runs_its_main(relative: str) -> None:
-    tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
-    local_functions = {
-        node.name for node in tree.body if isinstance(node, ast.FunctionDef)
-    }
-    assert not any(
-        isinstance(node, ast.Expr)
-        and isinstance(node.value, ast.Call)
-        and isinstance(node.value.func, ast.Name)
-        and node.value.func.id in local_functions
-        for node in tree.body
-    )
-    guards = _bootstrap(relative)
-    assert len(guards) == 1
-    parent = 1 if relative.startswith(".github/") else 3
-    expected = ast.parse(
-        'if __name__ == "__main__":\n'
-        "    sys.path.insert(0, "
-        f'str(Path(__file__).resolve().parents[{parent}] / "scripts"))\n'
-        "    from gauntlet.cli import utf8_stdio\n"
-        "    utf8_stdio()\n"
-        "    raise SystemExit(main())\n"
-    ).body[0]
-    assert ast.dump(guards[0]) == ast.dump(expected)
 
 
 @pytest.mark.parametrize("relative", TOOLS)

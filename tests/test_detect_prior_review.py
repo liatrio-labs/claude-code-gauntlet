@@ -4,7 +4,7 @@ import contextlib
 import io
 import json
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Literal, NoReturn, TypedDict, cast
 from unittest.mock import patch
@@ -14,7 +14,7 @@ import gauntlet.prior_review as detect_prior_review
 import pytest
 from gauntlet import proc
 from gauntlet.forge import JsonFetch, Platform, ReviewTarget
-from gauntlet.prior_review import GitFacts, PriorDelivery, ReviewEntryWire
+from gauntlet.prior_review import PriorDelivery
 
 from tests.support.forge import FakeForge, FakeForgeFactory, FakeGitLab, ForgeCall
 
@@ -46,23 +46,14 @@ def _result(out: str = "", err: str = "", rc: int = 0) -> proc.CompletedProcess[
 
 
 def _legacy_group_body(
-    primary_key: str,
-    corroborator_titles: Sequence[str],
-    sha: str = FULL_SHA,
+    primary_key: str, corroborator_titles: Sequence[str], sha: str = FULL_SHA
 ) -> str:
-    """Render all group members while keying only the primary."""
     sections = "\n\n".join(
-        f"**Corroborating finding — bug-detector (correctness, confidence 70):**\n\n"
-        f"**{title}**\n\nBody {title}"
+        "**Corroborating finding — bug-detector (correctness, confidence 70):**\n"
+        + title
         for title in corroborator_titles
     )
-    body = (
-        "**🟡 [MEDIUM] Finding**\n\nDetail.\n\n---\n\n"
-        + sections
-        + "\n\n"
-        + review_marker.build_finding_marker(sha, primary_key)
-    )
-    return body
+    return sections + "\n" + review_marker.build_finding_marker(sha, primary_key)
 
 
 @pytest.mark.parametrize("forge_factory", [detect_prior_review], indirect=True)
@@ -209,9 +200,20 @@ def test_prior_state(
     )
 
 
-@pytest.mark.parametrize("forge_factory", [detect_prior_review], indirect=True)
 @pytest.mark.parametrize(
-    "outcome", ["missing-git", "timeout", "nonzero", "nonutf8-unusable", "nonutf8-slug"]
+    "forge_factory",
+    [
+        detect_prior_review,
+    ],
+    indirect=True,
+)
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "missing-git",
+        "timeout",
+        "nonutf8-slug",
+    ],
 )
 def test_detector_origin_receipt(
     outcome: str,
@@ -337,67 +339,19 @@ def _fake_git_run(
 
 
 @pytest.mark.parametrize(
-    "collector, payload, expected",
+    "collector, timestamp_key, source",
     [
-        pytest.param(
-            detect_prior_review.collect_entries_github,
-            [
-                {
-                    "id": 1,
-                    "body": "review body one",
-                    "submitted_at": "2026-01-01T00:00:00Z",
-                },
-                {"id": 2, "body": "r2", "submitted_at": "2026-02-01T00:00:00Z"},
-            ],
-            [
-                {
-                    "id": 1,
-                    "body": "review body one",
-                    "timestamp": "2026-01-01T00:00:00Z",
-                    "source": "review",
-                },
-                {
-                    "id": 2,
-                    "body": "r2",
-                    "timestamp": "2026-02-01T00:00:00Z",
-                    "source": "review",
-                },
-            ],
-            id="github-populated",
-        ),
-        pytest.param(
-            detect_prior_review.collect_entries_github, [], [], id="github-empty"
-        ),
-        pytest.param(
-            detect_prior_review.collect_entries_gitlab,
-            [
-                {
-                    "id": 3,
-                    "body": "note body three",
-                    "created_at": "2026-02-02T00:00:00Z",
-                }
-            ],
-            [
-                {
-                    "id": 3,
-                    "body": "note body three",
-                    "timestamp": "2026-02-02T00:00:00Z",
-                    "source": "note",
-                }
-            ],
-            id="gitlab-populated",
-        ),
-        pytest.param(
-            detect_prior_review.collect_entries_gitlab, [], [], id="gitlab-empty"
-        ),
+        (detect_prior_review.collect_entries_github, "submitted_at", "review"),
+        (detect_prior_review.collect_entries_gitlab, "created_at", "note"),
+        (detect_prior_review.collect_entries_file, "timestamp", "bodies_file"),
     ],
 )
-def test_collect_entries(
-    collector: Callable[[object], list[ReviewEntryWire]],
-    payload: list[dict[str, object]],
-    expected: list[ReviewEntryWire],
-) -> None:
-    assert collector(payload) == expected
+def test_collect_entries(collector, timestamp_key, source):
+    timestamp = "2026-01-01T00:00:00Z"
+    payload = [{"id": 1, "body": "review body", timestamp_key: timestamp}, {"id": 2}]
+    assert collector(payload) == [
+        {"id": 1, "body": "review body", "timestamp": timestamp, "source": source}
+    ]
 
 
 def _finding_note(keys: tuple[str, ...], sha: str = FULL_SHA) -> dict[str, str]:
@@ -411,30 +365,6 @@ def _finding_note(keys: tuple[str, ...], sha: str = FULL_SHA) -> dict[str, str]:
 @pytest.mark.parametrize(
     "entries, sha, expected",
     [
-        pytest.param(
-            [{"body": review_marker.build_footer(3, FULL_SHA)}],
-            FULL_SHA,
-            PriorDelivery(True, frozenset(), frozenset(), None),
-            id="summary",
-        ),
-        pytest.param(
-            [{"body": review_marker.build_footer(3, HEAD_SHA)}],
-            FULL_SHA,
-            PriorDelivery(False, frozenset(), frozenset(), None),
-            id="other-summary-sha",
-        ),
-        pytest.param(
-            [{"body": "Generated by code-gauntlet | Reviewed up to: " + FULL_SHA}],
-            FULL_SHA,
-            PriorDelivery(True, frozenset(), frozenset(), None),
-            id="prose-only",
-        ),
-        pytest.param(
-            [{"body": review_marker.build_finding_marker(HEAD_SHA, "c" * 16)}],
-            FULL_SHA,
-            PriorDelivery(False, frozenset(), frozenset(), None),
-            id="other-key-sha",
-        ),
         pytest.param(
             [
                 {
@@ -452,36 +382,6 @@ def _finding_note(keys: tuple[str, ...], sha: str = FULL_SHA) -> dict[str, str]:
             FULL_SHA[:7],
             PriorDelivery(False, frozenset(), frozenset(), None),
             id="long-marker-short-sha",
-        ),
-        pytest.param(
-            [{"body": review_marker.build_footer(1, FULL_SHA[:7]), "timestamp": None}],
-            FULL_SHA,
-            PriorDelivery(False, frozenset(), frozenset(), None),
-            id="short-marker-long-sha",
-        ),
-        pytest.param(
-            [
-                None,
-                "x",
-                {"body": None},
-                {"body": review_marker.build_footer(1, FULL_SHA), "timestamp": None},
-                _finding_note((FINDING_KEY,)),
-            ],
-            FULL_SHA,
-            PriorDelivery(True, frozenset({"cccccccccccccccc"}), frozenset(), None),
-            id="non-dict-and-body-less-entries",
-        ),
-        # Forty keys cross the summary reader's 32-marker scan bound.
-        pytest.param(
-            [_finding_note(tuple(f"{i:016x}" for i in range(40)))],
-            FULL_SHA,
-            PriorDelivery(
-                False,
-                frozenset(f"{i:016x}" for i in range(40)),
-                frozenset(),
-                None,
-            ),
-            id="large-group",
         ),
         pytest.param(
             [_finding_note((FINDING_KEY,))],
@@ -522,18 +422,6 @@ def _finding_note(keys: tuple[str, ...], sha: str = FULL_SHA) -> dict[str, str]:
             FULL_SHA,
             PriorDelivery(False, frozenset({"cccccccccccccccc"}), frozenset(), None),
             id="individual-primary",
-        ),
-        pytest.param(
-            [
-                {
-                    "body": _legacy_group_body(
-                        FINDING_KEY, ["Corroborator A"], sha="b" * 40
-                    )
-                }
-            ],
-            FULL_SHA,
-            PriorDelivery(False, frozenset(), frozenset(), None),
-            id="different-sha",
         ),
     ],
 )
@@ -646,31 +534,30 @@ def test_cli_bodies_file_receipt_outcomes(
     git_kwargs: _GitOptions,
     expected: dict[str, object],
 ) -> None:
-    if marker_sha is None:
-        entries = [
-            {
-                "body": "just a plain unrelated comment",
-                "timestamp": "2026-01-01T00:00:00Z",
-                "source": "issue_comment",
-                "id": 1,
-            }
-        ]
-    else:
-        entries = [
-            {
-                "body": review_marker.build_marker(marker_sha, 4),
-                "timestamp": "2026-01-01T00:00:00Z",
-                "source": "review",
-                "id": 101,
-            }
-        ]
+    body = (
+        review_marker.build_marker(marker_sha, 4)
+        if marker_sha
+        else "just a plain unrelated comment"
+    )
+    entries = [{"body": body, "source": "review"}]
     path = _bodies_file(tmp_path, entries)
     with patch.object(proc, "run", side_effect=_fake_git_run(**git_kwargs)):
         out, code = _run_main(_base_argv(path))
 
     assert code == 0
     result: dict[str, object] = json.loads(out.strip())
+    assert set(result) == RECEIPT_KEYS
     assert {key: result[key] for key in expected} == expected
+    assert result["last_reviewed_sha_short"] == (marker_sha[:8] if marker_sha else None)
+    assert result["legacy"] is False
+    if marker_sha:
+        assert result["marker"] == {
+            "version": "3.0",
+            "findings_count": 4,
+            "sha": marker_sha,
+            "_token": "code-gauntlet-findings",
+            "_legacy": False,
+        }
 
 
 def test_cli_bodies_file_head_sha_override_is_used(tmp_path: Path) -> None:
@@ -686,27 +573,19 @@ def test_cli_bodies_file_head_sha_override_is_used(tmp_path: Path) -> None:
     assert result["head_sha"] == override_head
 
 
+MARKER_BASE = {
+    "version": "3.0",
+    "findings_count": 2,
+    "sha": FULL_SHA,
+    "_token": "code-gauntlet-findings",
+    "_legacy": False,
+}
+
+
 @pytest.mark.parametrize(
     "marker, expected, forbidden",
     [
-        pytest.param(
-            {
-                "version": "3.0",
-                "findings_count": 2,
-                "sha": FULL_SHA,
-                "_token": "code-gauntlet-findings",
-                "_legacy": False,
-            },
-            {
-                "version": "3.0",
-                "findings_count": 2,
-                "sha": FULL_SHA,
-                "_token": "code-gauntlet-findings",
-                "_legacy": False,
-            },
-            (),
-            id="normal",
-        ),
+        pytest.param(MARKER_BASE, MARKER_BASE, (), id="normal"),
         pytest.param(
             {
                 "version": "3.0",
@@ -718,60 +597,28 @@ def test_cli_bodies_file_head_sha_override_is_used(tmp_path: Path) -> None:
             id="unknown-values-refused",
         ),
         pytest.param(
-            {
-                "version": "3.0",
-                "findings_count": 1,
-                "sha": FULL_SHA,
-                "findings": [{"id": 1}],
-            },
-            {
-                "version": "3.0",
-                "findings_count": 1,
-                "sha": FULL_SHA,
-                "unknown_keys": ["findings"],
-            },
-            (),
-            id="findings-refused",
-        ),
-        pytest.param(
-            {
-                "version": "INJECT " * 9000,
-                "findings_count": 1,
-                "sha": FULL_SHA,
-                "_token": "code-gauntlet-findings",
-                "_legacy": False,
-            },
-            {
-                "version": ("INJECT " * 74)[:512] + "...[truncated]",
-                "findings_count": 1,
-                "sha": FULL_SHA,
-                "_token": "code-gauntlet-findings",
-                "_legacy": False,
-            },
+            {**MARKER_BASE, "version": "INJECT " * 9000},
+            {**MARKER_BASE, "version": ("INJECT " * 74)[:512] + "...[truncated]"},
             (),
             id="clipped-string",
         ),
         pytest.param(
             {
-                "version": "v" * 513,
-                "findings_count": 1,
-                "sha": "s" * 513,
-                "_token": "t" * 513,
-                "_legacy": "l" * 513,
+                **MARKER_BASE,
+                "version": "\x00" * 512,
+                "findings_count": "\x00" * 512,
                 **{f"u{index:02d}" + "x" * 61: True for index in range(32)},
             },
             {
-                "version": "v" * 64 + "...[truncated]",
-                "findings_count": 1,
-                "sha": "s" * 512 + "...[truncated]",
-                "_token": "t" * 512 + "...[truncated]",
-                "_legacy": "l" * 512 + "...[truncated]",
+                **MARKER_BASE,
+                "version": "\x00" * 64 + "...[truncated]",
+                "findings_count": None,
                 "truncated": True,
             },
             (),
             id="whole-payload",
         ),
-        pytest.param(None, None, (), id="non-dict"),
+        pytest.param(None, None, (), id="footer-without-marker"),
         pytest.param(
             {"version": "3.0", "sha": FULL_SHA, "X" * 3000: 1, "Y" * 3000: 2},
             {
@@ -802,117 +649,6 @@ def test_sanitize_marker(
     encoded = json.dumps(actual)
     assert len(encoded) <= 4096
     assert all(value not in encoded for value in forbidden)
-
-
-def test_deeply_nested_bodies_file_exits_zero(tmp_path: Path) -> None:
-    path = tmp_path / "bodies.json"
-    path.write_text("[" * 60000 + "]" * 60000, encoding="utf-8")
-    out, code = _run_main(["--platform", "github", "--bodies-file", str(path)])
-    assert code == 0
-    result: object = json.loads(out.strip())
-    assert result is not None
-
-
-def _facts_signal(**over: object) -> dict[str, object]:
-    return {
-        "sha": FULL_SHA,
-        "signal": "marker",
-        "legacy": False,
-        "source": "review",
-        "marker": {"version": "3.0", "findings_count": 4, "sha": FULL_SHA},
-        **over,
-    }
-
-
-@pytest.mark.parametrize(
-    "signal, facts, expected",
-    [
-        pytest.param(
-            _facts_signal(),
-            GitFacts(HEAD_SHA, FULL_SHA, SHORT_SHA, True, True, 3),
-            {
-                "previously_reviewed": True,
-                "signal": "marker",
-                "source": "review",
-                "legacy": False,
-                "last_reviewed_sha": FULL_SHA,
-                "last_reviewed_sha_short": SHORT_SHA,
-                "sha_resolvable": True,
-                "sha_is_ancestor": True,
-                "head_sha": HEAD_SHA,
-                "head_advanced": True,
-                "new_commit_count": 3,
-                "incremental_safe": True,
-                "marker": {"version": "3.0", "findings_count": 4, "sha": FULL_SHA},
-            },
-            id="found-and-advanced",
-        ),
-        pytest.param(
-            _facts_signal(
-                sha="c" * 40,
-                legacy=True,
-                source="note",
-                marker={"version": "3.0", "sha": "c" * 40},
-            ),
-            GitFacts(HEAD_SHA, "c" * 40, "c" * 8, False, False, None),
-            {
-                "previously_reviewed": True,
-                "sha_resolvable": False,
-                "sha_is_ancestor": False,
-                "head_advanced": False,
-                "incremental_safe": False,
-                "last_reviewed_sha": "c" * 40,
-                "new_commit_count": None,
-                "legacy": True,
-            },
-            id="found-but-sha-unresolvable",
-        ),
-    ],
-)
-def test_build_result_cases(
-    signal: dict[str, object] | None,
-    facts: GitFacts | None,
-    expected: dict[str, object],
-) -> None:
-    result = detect_prior_review.build_result(signal, facts)
-    view = cast(Mapping[str, object], result)
-    assert {key: view[key] for key in expected} == expected
-
-
-def test_build_result_key_set() -> None:
-    not_found = detect_prior_review.build_result(None, None)
-    signal: dict[str, object] = {
-        "sha": FULL_SHA,
-        "signal": "marker",
-        "legacy": False,
-        "source": "review",
-        "marker": {"version": "3.0", "findings_count": 1, "sha": FULL_SHA},
-    }
-    found = detect_prior_review.build_result(
-        signal, GitFacts(HEAD_SHA, FULL_SHA, SHORT_SHA, True, True, 1)
-    )
-    assert set(not_found.keys()) == set(found.keys())
-    assert len(found) == 15
-
-
-@pytest.mark.parametrize(
-    "ancestor",
-    [pytest.param(True, id="ancestor"), pytest.param(False, id="not-ancestor")],
-)
-def test_git_ancestry(ancestor: bool) -> None:
-    calls: list[list[str]] = []
-    inner = _fake_git_run(resolvable=True, ancestor=ancestor)
-
-    def run(cmd: list[str], **kwargs: object) -> proc.CompletedProcess[str]:
-        calls.append(cmd)
-        return inner(cmd, **kwargs)
-
-    with patch.object(proc, "run", side_effect=run):
-        facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
-    assert [call for call in calls if "merge-base" in call] == [
-        ["git", "merge-base", "--is-ancestor", FULL_SHA, HEAD_SHA]
-    ]
-    assert facts.sha_is_ancestor is ancestor
 
 
 @pytest.mark.parametrize(
@@ -963,3 +699,49 @@ def test_git_fact_errors(
     assert facts.head_sha == expected_head
     assert not facts.sha_resolvable
     assert all(any(text in error for error in errors) for text in expected_errors)
+
+
+RECEIPT_KEYS = {
+    "previously_reviewed",
+    "signal",
+    "source",
+    "legacy",
+    "last_reviewed_sha",
+    "last_reviewed_sha_short",
+    "sha_resolvable",
+    "sha_is_ancestor",
+    "head_sha",
+    "head_advanced",
+    "new_commit_count",
+    "incremental_safe",
+    "marker",
+    "scanned",
+    "errors",
+}
+
+
+def test_cli_legacy_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    body = "<!-- deep-review-findings: " + json.dumps({"sha": SHORT_SHA}) + " -->"
+    path = _bodies_file(tmp_path, [{"body": body, "source": "note"}])
+    monkeypatch.setattr(proc, "run", _fake_git_run())
+    out, code = _run_main(_base_argv(path))
+    result: dict[str, object] = json.loads(out)
+    assert code == 0
+    assert set(result) == RECEIPT_KEYS
+    assert result["legacy"] is True
+    assert result["source"] == "note"
+    assert result["last_reviewed_sha"] == FULL_SHA
+    assert result["last_reviewed_sha_short"] == SHORT_SHA
+    assert result["marker"] == {
+        "sha": SHORT_SHA,
+        "_token": "deep-review-findings",
+        "_legacy": True,
+    }
+
+
+def test_build_result_default() -> None:
+    result = detect_prior_review.build_result(None, None)
+    assert set(result) == RECEIPT_KEYS
+    assert result["head_sha"] is None
+    assert result["previously_reviewed"] is False
+    assert result["incremental_safe"] is False

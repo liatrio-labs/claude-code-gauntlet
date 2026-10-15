@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Generate contract requirements command entry."""
-
 import os
 import sys
 

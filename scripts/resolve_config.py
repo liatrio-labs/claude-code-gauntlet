@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Resolve config command entry."""
-
 import os
 import sys
 

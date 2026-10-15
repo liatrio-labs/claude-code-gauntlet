@@ -40,14 +40,9 @@ def test_run_resolves_executable_and_preserves_original_arguments(monkeypatch):
     ]
 
 
-def test_missing_executable_raises_file_not_found_before_child_runs(
-    monkeypatch, tmp_path
-):
+def test_missing_executable_raises_file_not_found_before_child_runs(monkeypatch):
     monkeypatch.setattr(proc.sys, "platform", "win32")
     monkeypatch.setattr(proc, "which", lambda _name: None)
-    (tmp_path / "unavailable.EXE").write_text("", encoding="utf-8")
-    monkeypatch.setenv("PATH", str(tmp_path))
-    monkeypatch.setenv("PATHEXT", ".EXE")
     monkeypatch.setattr(
         proc.subprocess,
         "run",
@@ -74,10 +69,9 @@ def test_run_binary_output_and_text_replacement(monkeypatch):
     assert decoded == ("\ufffd", "", 0)
 
 
-def test_child_oserror_names_requested_executable(monkeypatch, tmp_path):
+def test_child_oserror_names_requested_executable(monkeypatch):
     monkeypatch.setattr(proc.sys, "platform", "win32")
     monkeypatch.setattr(proc, "which", lambda _name: TOOL)
-    monkeypatch.setenv("PATH", str(tmp_path))
 
     def denied(*_args, **_options):
         raise PermissionError(13, "denied", TOOL)
@@ -158,10 +152,9 @@ def test_relative_path_resolution_is_anchored_before_child_cwd(monkeypatch, tmp_
 
 
 @pytest.mark.parametrize("failure", ["timeout", "checked_exit"])
-def test_run_preserves_subprocess_failure_types(monkeypatch, tmp_path, failure):
+def test_run_preserves_subprocess_failure_types(monkeypatch, failure):
     monkeypatch.setattr(proc.sys, "platform", "win32")
     monkeypatch.setattr(proc, "which", lambda _name: TOOL)
-    monkeypatch.setenv("PATH", str(tmp_path))
 
     def child(argv, **_options):
         if failure == "timeout":

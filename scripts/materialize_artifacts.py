@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Materialize artifacts command entry."""
-
 import os
 import sys
 
