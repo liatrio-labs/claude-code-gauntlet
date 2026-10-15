@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.42.32 (2026-10-15)
+
+### Bug Fixes
+
+- Keep branch names out of shell text in branch-comparison reviews
+  ([#508](https://github.com/liatrio-labs/claude-code-gauntlet/pull/508),
+  [`fe5edeb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fe5edeb757ccdef3b48519a74c020d21fcb6b6b8))
+
+
 ## v3.42.31 (2026-10-15)
 
 ### Bug Fixes
