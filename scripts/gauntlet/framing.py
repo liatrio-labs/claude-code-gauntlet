@@ -1,14 +1,14 @@
-"""Keep reviewed content from closing its own prompt block."""
+"""Keep reviewed content from impersonating prompt block boundaries."""
 
 import re
 import secrets
 import sys
 import unicodedata
 from collections.abc import Mapping
-from typing import AnyStr
+from typing import AnyStr, Literal, get_args
 
-# Models read past whitespace and default-ignorable characters, so neutralize
-# closers containing either as a second layer.
+BlockTag = Literal["untrusted-code-content", "project-rules", "review-rules"]
+
 # unicodedata has no Default_Ignorable_Code_Point, so its non-Cf members are listed.
 _IGNORABLE_NON_CF = (
     0x034F,
@@ -29,6 +29,20 @@ _FORMAT = "".join(
 )
 _GAP = rf"[\s{_FORMAT}]*"
 _NAME_GAP = rf"[{_FORMAT}]*"
+_NAMES = "|".join(
+    _NAME_GAP.join(re.escape(ch) for ch in tag) for tag in get_args(BlockTag)
+)
+# Models can read past gaps, and forged blocks can impersonate other trust levels.
+# The second gap only follows a literal slash, which keeps matching linear in gap length.
+_BOUNDARY = re.compile(
+    rf"<{_GAP}(?:/(?P<after>{_GAP}))?(?P<name>{_NAMES})(?![\w.:-])", re.IGNORECASE
+)
+
+
+def _neutralize(match: re.Match[str]) -> str:
+    if match["after"] is not None:
+        return rf"<\/{match['after']}{match['name']}"
+    return "<\\" + match[0][1:]
 
 
 def _escape_attribute(value: str) -> str:
@@ -40,16 +54,16 @@ def _escape_attribute(value: str) -> str:
     )
 
 
-def frame(tag: str, body: AnyStr, attrs: Mapping[str, str] | None = None) -> AnyStr:
+def frame(
+    tag: BlockTag, body: AnyStr, attrs: Mapping[str, str] | None = None
+) -> AnyStr:
     nonce = secrets.token_hex(16)
     pairs = {**(attrs or {}), "id": nonce}
     rendered = "".join(f' {k}="{_escape_attribute(v)}"' for k, v in pairs.items())
     opening = f"<{tag}{rendered}>\n"
     closing = f'</{tag} id="{nonce}">'
-    name = _NAME_GAP.join(re.escape(ch) for ch in tag)
-    closer = re.compile(rf"<{_GAP}/(?={_GAP}{name}(?![\w.:-]))", re.IGNORECASE)
     if isinstance(body, bytes):
         text = body.decode("utf-8", "surrogateescape")
-        framed = closer.sub(r"<\\/", text).encode("utf-8", "surrogateescape")
+        framed = _BOUNDARY.sub(_neutralize, text).encode("utf-8", "surrogateescape")
         return opening.encode() + framed + closing.encode()
-    return opening + closer.sub(r"<\\/", body) + closing
+    return opening + _BOUNDARY.sub(_neutralize, body) + closing

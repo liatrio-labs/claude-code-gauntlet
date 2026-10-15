@@ -15,7 +15,7 @@ from contextlib import suppress
 from typing import Literal, TypedDict, cast
 
 from gauntlet.cli import Command, Parser
-from gauntlet.framing import frame
+from gauntlet.framing import BlockTag, frame
 from gauntlet.fs import confined, read_json, read_text, write_atomic
 from gauntlet.markdown import code_spans
 
@@ -401,7 +401,11 @@ def render(
     if not sources and not review_sources:
         return ""
     blocks = []
-    for tag, entries in (("review-rules", review_sources), ("project-rules", sources)):
+    groups: Mapping[BlockTag, Sequence[Mapping[str, object]]] = {
+        "review-rules": review_sources,
+        "project-rules": sources,
+    }
+    for tag, entries in groups.items():
         for entry in entries:
             path = entry["path"]
             content = entry["text"]
