@@ -76,7 +76,7 @@ echo "=== changed_files ==="
 gh pr diff {pr_number} --name-only
 ```
 
-(GitLab: swap `pr_view` for `glab mr view {pr_number} --output json`, and `changed_files` for `glab mr diff {pr_number} --name-only`. Local/branch targets skip `pr_view` and `changed_files` entirely — use `git diff --name-only <base>...HEAD` / `git diff --name-only HEAD` for the trivial-check list instead.)
+(GitLab: swap `pr_view` for `glab mr view {pr_number} --output json`, and `changed_files` for `glab mr diff {pr_number} --name-only`. Local/branch targets skip `pr_view` and `changed_files` entirely — resolve the branch and base with 2b's quoted heredocs before using `git diff --name-only "$BASE_SHA...$TARGET_SHA"` for branch comparison, or use `git diff --name-only HEAD` for local changes.)
 
 **Output-dir hard stops** (same severity class — stop before any agent dispatch; script stderr already flowed into this Bash result with disclosures/remedy lines):
 
@@ -171,7 +171,7 @@ printf '%s\n' "$PRIOR_JSON" | python3 "{plugin_root}/scripts/stale_truncate.py" 
 
 Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `checkout` section above already handles this branch inline — the `elif` fires before any `gh pr checkout` is attempted and `exit 1`s the whole composite call immediately, so `sha`/`owner_repo`/`prior_review`/`stale_truncate` never run against the wrong commit. `CODE_GAUNTLET_HEADLESS` is read directly by the script (not pre-resolved by the model), so this is self-contained regardless of who assembles the call. See `references/headless-mode.md`.
 
-**`status`/`checkout` duplicate `references/phase2-triage.md` 2b — 2b is the owner.** 2b's target-type table (PR/MR, branch, local) and its checkout-failure STOP are canonical; this composite is one concrete instantiation of that table (the PR/MR row) plus the headless row. For **branch/local targets**, apply 2b's table directly: in `status`, replace `TARGET_SHA=$(gh pr view ...)` with `TARGET_SHA=$(git rev-parse <branch>)` (branch comparison) or drop the `status`/`checkout` sections entirely and set `TARGET_SHA=$CURRENT_SHA` (local changes — always a no-op, per 2b step 1); in `checkout`, replace `gh pr checkout {pr_number}` with `git checkout <branch>` (branch comparison) or nothing (local changes). **Checkout failure** (2b step 4): the `checkout` section's `||` clause already exits non-zero on a failed `gh pr checkout`/`git checkout` — on that exit, stop and print 2b step 4's message (`Unable to checkout [branch/PR]. The review requires the target code to be accessible locally. You can checkout the branch manually and re-run the review.`); no fallback.
+**`status`/`checkout` are owned by `references/phase2-triage.md` 2b.** For branch targets, use 2b's quoted-heredoc resolver form in `status` and its detached SHA checkout in `checkout`. For local changes, drop both sections. Stop on resolution or checkout failure; use 2b step 4's checkout-failure message with no fallback.
 
 GitLab MR mode: swap `gh pr view`/`gh pr checkout` for `glab mr view`/`glab mr checkout` in the `status`/`checkout` sections; for `owner_repo`, use `glab mr view {pr_number} --output json | jq -r '.web_url'` and take the path segments before `/-/merge_requests/` instead of splitting a GitHub API URL.
 
@@ -236,7 +236,7 @@ Keep the `files` section's full server `--name-only` list unchanged. The script 
 
 **GitLab MR mode:** swap `gh pr diff {pr_number}` for `glab mr diff {pr_number}` in both the `files` and `diff` sections.
 
-**Branch/local targets:** replace `diff` with `git diff <base>...HEAD` / `git diff HEAD` and `files` with `git diff --name-only`. If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own `git diff` chain inside an executor subagent (which has shell) — not in this composite.
+**Branch/local targets:** for branch comparison use 2b's resolved SHAs: `git diff "$BASE_SHA...$TARGET_SHA"` for `diff` and `git diff --name-only "$BASE_SHA...$TARGET_SHA"` for `files`. For local changes use `git diff HEAD` and `git diff --name-only HEAD`. If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own `git diff` chain inside an executor subagent (which has shell) — not in this composite.
 
 **Composites A/B do not subsume 2d, 2g, or 2k.** Run 2d's collector as a separate script call after the changed-file list is saved; its receipt is the only REVIEW.md discovery source. Keep test discovery (2g) and AI-marker scanning (2k) as separate Glob/Grep tool calls under `references/phase2-triage.md`; never use `find` or `grep` from Bash for those searches.
 
