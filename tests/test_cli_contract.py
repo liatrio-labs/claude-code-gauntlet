@@ -600,7 +600,7 @@ def scenario(name, case, tmp_path, *, shell_fixture=False):
                 capture_output=True,
                 check=True,
             )
-            stdin = subprocess.run(
+            commit = subprocess.run(
                 ["git", "hash-object", "-w", "-t", "commit", "--stdin"],
                 input=(
                     b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n"
@@ -610,7 +610,14 @@ def scenario(name, case, tmp_path, *, shell_fixture=False):
                 cwd=directory,
                 capture_output=True,
                 check=True,
-            ).stdout
+            ).stdout.strip()
+            subprocess.run(
+                ["git", "update-ref", "refs/heads/tip", commit],
+                cwd=directory,
+                capture_output=True,
+                check=True,
+            )
+            stdin = b"tip\n"
     return directory, argv, stdin, fake_bin
 
 

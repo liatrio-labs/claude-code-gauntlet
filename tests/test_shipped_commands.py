@@ -440,7 +440,7 @@ def test_shipped_branch_resolver_keeps_names_on_stdin(
         "GIT_COMMITTER_EMAIL": "test@example.invalid",
     }.items():
         monkeypatch.setenv(key, value)
-    branch = "topic/$(id)`id`'caf\u00e9"
+    branch = "topic/$(id)`id`'caf\u00e9)("
     for argv in (
         ["git", "init", "-q"],
         ["git", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "tip"],
@@ -458,17 +458,19 @@ def test_shipped_branch_resolver_keeps_names_on_stdin(
     reference = (REPO / "skills/code-gauntlet/references/phase2-triage.md").read_text(
         encoding="utf-8"
     )
-    block = re.search(r"```bash\n(TARGET_SHA=.*?)\n```", reference, re.S)
+    block = re.search(
+        r"```bash\n(python3 \S+/resolve_branch\.py.*?)\n```", reference, re.S
+    )
     assert block is not None
     lines = block[1].splitlines()
-    assert lines[0].endswith("<<'CODE_GAUNTLET_BRANCH'")
+    assert lines[0].endswith("<<'CODE_GAUNTLET~BRANCH'")
     assert lines[1:] == [
         "<branch name exactly as the user gave it>",
-        "CODE_GAUNTLET_BRANCH",
-        ")",
+        "CODE_GAUNTLET~BRANCH",
     ]
-    command = lines[0].removeprefix("TARGET_SHA=$(").split("<<", 1)[0].strip()
-    parts = shlex.split(command.replace("{plugin_root}", REPO.as_posix()))
+    parts = shlex.split(
+        lines[0].split("<<", 1)[0].replace("{plugin_root}", REPO.as_posix())
+    )
     assert parts == ["python3", str(REPO / "scripts/resolve_branch.py")]
     parts[0] = sys.executable
     monkeypatch.setenv("PYTHONIOENCODING", "latin-1")
@@ -488,23 +490,33 @@ def test_shipped_branch_resolver_keeps_names_on_stdin(
     assert result.returncode == 0, result.stderr
     assert result.stdout == sha
     assert result.stderr == b""
-    if shutil.which("bash") and sys.platform != "win32":
+    # macOS ships bash 3.2, which re-parses a heredoc body nested in $( ).
+    bash = "/bin/bash" if os.path.exists("/bin/bash") else shutil.which("bash")
+    if bash and sys.platform != "win32":
         shell_block = (
             block[1]
             .replace("<branch name exactly as the user gave it>", branch)
             .replace("{plugin_root}", REPO.as_posix())
+            .replace("python3 ", shlex.quote(sys.executable) + " ", 1)
         )
-        shell_block = shell_block.replace("python3 ", shlex.quote(sys.executable) + " ")
         shell_result = subprocess.run(
-            ["bash", "-c", shell_block + '\nprintf "%s\\n" "$TARGET_SHA"'],
-            cwd=tmp_path,
-            capture_output=True,
-            timeout=10,
+            [bash, "-c", shell_block], cwd=tmp_path, capture_output=True, timeout=10
         )
         assert shell_result.returncode == 0, shell_result.stderr
         assert shell_result.stdout == sha
         assert shell_result.stderr == b""
     assert not (tmp_path / "MARKER").exists()
+
+
+def test_skill_heredocs_are_never_nested_in_command_substitution() -> None:
+    offenders = []
+    for path in [*(REPO / "skills").rglob("*.md"), *(REPO / "agents").rglob("*.md")]:
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"[$<]\([^)\n]*<<", text):
+            offenders.append(
+                f"{path.relative_to(REPO)}:{text.count(chr(10), 0, match.start()) + 1}"
+            )
+    assert offenders == []
 
 
 def test_local_branch_form_uses_the_sha_computed_in_the_same_call() -> None:

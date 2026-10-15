@@ -76,7 +76,7 @@ echo "=== changed_files ==="
 gh pr diff {pr_number} --name-only
 ```
 
-(GitLab: swap `pr_view` for `glab mr view {pr_number} --output json`, and `changed_files` for `glab mr diff {pr_number} --name-only`. Local/branch targets skip `pr_view` and `changed_files` entirely — resolve the branch and base with 2b's quoted heredocs before using `git diff --name-only "$BASE_SHA...$TARGET_SHA"` for branch comparison, or use `git diff --name-only HEAD` for local changes.)
+(GitLab: swap `pr_view` for `glab mr view {pr_number} --output json`, and `changed_files` for `glab mr diff {pr_number} --name-only`. Local/branch targets skip `pr_view` and `changed_files` entirely — resolve the branch and base with 2b's resolver heredocs before using `git diff --name-only {base_sha}...{target_sha}` for branch comparison, or use `git diff --name-only HEAD` for local changes.)
 
 **Output-dir hard stops** (same severity class — stop before any agent dispatch; script stderr already flowed into this Bash result with disclosures/remedy lines):
 
@@ -236,7 +236,7 @@ Keep the `files` section's full server `--name-only` list unchanged. The script 
 
 **GitLab MR mode:** swap `gh pr diff {pr_number}` for `glab mr diff {pr_number}` in both the `files` and `diff` sections.
 
-**Branch/local targets:** for branch comparison use 2b's resolved SHAs: `git diff "$BASE_SHA...$TARGET_SHA"` for `diff` and `git diff --name-only "$BASE_SHA...$TARGET_SHA"` for `files`. For local changes use `git diff HEAD` and `git diff --name-only HEAD`. If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own `git diff` chain inside an executor subagent (which has shell) — not in this composite.
+**Branch/local targets:** for branch comparison use 2b's resolved SHAs: `git diff {base_sha}...{target_sha}` for `diff` and `git diff --name-only {base_sha}...{target_sha}` for `files`. For local changes use `git diff HEAD` and `git diff --name-only HEAD`. If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own `git diff` chain inside an executor subagent (which has shell) — not in this composite.
 
 **Composites A/B do not subsume 2d, 2g, or 2k.** Run 2d's collector as a separate script call after the changed-file list is saved; its receipt is the only REVIEW.md discovery source. Keep test discovery (2g) and AI-marker scanning (2k) as separate Glob/Grep tool calls under `references/phase2-triage.md`; never use `find` or `grep` from Bash for those searches.
 

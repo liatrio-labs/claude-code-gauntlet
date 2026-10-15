@@ -35,25 +35,15 @@ Before running any diff commands, confirm the local working tree matches the rev
 **1. Resolve the target's head SHA:**
 
 - **PR/MR mode (`pr_number` set):** `gh pr view {pr_number} --json headRefOid --jq '.headRefOid'` (GitHub) / `glab mr view {pr_number} --output json | jq '.sha'` (GitLab)
-- **Branch comparison:** resolve `TARGET_SHA` with the quoted heredoc below. Branch names are data, never shell words:
+- **Branch comparison:** resolve the target branch with this bare quoted heredoc. Branch names are data, never shell words:
 
 ```bash
-TARGET_SHA=$(python3 "{plugin_root}/scripts/resolve_branch.py" <<'CODE_GAUNTLET_BRANCH'
+python3 "{plugin_root}/scripts/resolve_branch.py" <<'CODE_GAUNTLET~BRANCH'
 <branch name exactly as the user gave it>
-CODE_GAUNTLET_BRANCH
-)
+CODE_GAUNTLET~BRANCH
 ```
 
-Resolve the comparison base (the repository's default branch or the user's chosen base) the same way:
-
-```bash
-BASE_SHA=$(python3 "{plugin_root}/scripts/resolve_branch.py" <<'CODE_GAUNTLET_BRANCH'
-<base branch name exactly as selected>
-CODE_GAUNTLET_BRANCH
-)
-```
-
-Stop if either resolver fails. Use these forms before the Phase 1 branch file list too. Carry only the resolved SHA values into later Bash calls. The quoted delimiter prevents expansion; a branch name cannot contain a newline, so it cannot end the heredoc early.
+Resolve the comparison base (the repository's default branch or the user's chosen base) the same way. The resolver looks the name up only as a local branch, then a remote-tracking branch (`origin/main`), and refuses a name that is both. If either call exits non-zero, stop and report its one-line error. Otherwise record the printed SHAs as `{target_sha}` and `{base_sha}` and type those hex values into later commands; shell variables do not survive between Bash calls. Never put the heredoc inside `$( )`: bash 3.2 parses its body for parentheses. `~` cannot appear in a git ref name, so no branch name can end the heredoc early.
 
 - **Local changes:** HEAD — no-op, already on correct state
 
@@ -70,7 +60,7 @@ If the SHA matches → proceed to 2c.
 | Target type | Command |
 |---|---|
 | PR/MR number or URL | `gh pr checkout <number>` (GitHub) / `glab mr checkout <number>` (GitLab) |
-| Branch name | `git checkout --detach "$TARGET_SHA"` |
+| Branch name | step 1's target heredoc with `resolve_branch.py --checkout` |
 | Local changes | no-op |
 
 > Headless exception (`configResult.mode == "headless"`): never run any checkout command from
@@ -117,7 +107,7 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 1. **PR/MR mode** (`pr_number` set) — Use `gh pr view {pr_number}`/`glab mr view {pr_number}` + diff commands. Get full SHA: `git rev-parse HEAD`
    - **GitHub (PR):** Gather the file list with `gh pr diff {pr_number} --name-only`. Gather the full diff with `gh pr diff {pr_number}`.
    - **GitLab (MR):** Gather the file list with `glab mr diff {pr_number} --name-only`. Gather the full diff with `glab mr diff {pr_number}`.
-2. **Branch comparison** — `git diff "$BASE_SHA...$TARGET_SHA"` and `git diff --name-only "$BASE_SHA...$TARGET_SHA"` using 2b's resolved SHAs.
+2. **Branch comparison** — `git diff {base_sha}...{target_sha}` and `git diff --name-only {base_sha}...{target_sha}` using 2b's resolved SHAs.
 3. **Local changes** — `git diff HEAD` (or `git diff --cached` if nothing unstaged)
 4. **Incremental** (2b-post step 3's gate resolved "Incremental"; PR/MR mode only) — use branch 1's full server `--name-only` list saved below to bound the diff:
 

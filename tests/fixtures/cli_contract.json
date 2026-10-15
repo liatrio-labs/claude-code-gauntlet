@@ -61,7 +61,7 @@
   "report_patches/usage": [2, ""],
   "resolve_branch/bad_input": [2, ""],
   "resolve_branch/failure": [1, ""],
-  "resolve_branch/help": [0, "usage: resolve_branch [-h]\n\nResolve a branch from stdin without interpreting it as shell text.\n\noptions:\n  -h, --help  show this help message and exit\n"],
+  "resolve_branch/help": [0, "usage: resolve_branch [-h] [--checkout]\n\nResolve a branch read from stdin to a commit SHA, optionally checking it out.\n\noptions:\n  -h, --help  show this help message and exit\n  --checkout  also check the branch out\n"],
   "resolve_branch/success": [0, "11c35f004f96a828426caaa32c7d46f32e96bc08\n"],
   "resolve_branch/usage": [2, ""],
   "resolve_config/bad_input": [2, ""],
