@@ -323,6 +323,10 @@ def test_finding_marker__hostile_candidates_preserve_valid_tail():
         'invalid_key = (\'<!-- code-gauntlet-finding-key: {\\"sha\\":\\"\''
         ' + sha + \'\\",\\"key\\":[]} -->\\n\') * 5000'
     )
+    malformed_check_line = (
+        "if (find_finding_markers(malformed) != [] "
+        "or find_finding_marker(malformed) is not None):"
+    )
     child = "\n".join(
         [
             import_line,
@@ -333,8 +337,7 @@ def test_finding_marker__hostile_candidates_preserve_valid_tail():
             invalid_key_line,
             "unclosed = '<!-- code-gauntlet-finding-key: {' * 5000",
             "malformed = invalid_json + invalid_key + unclosed",
-            "if (find_finding_markers(malformed) != [] "
-            "or find_finding_marker(malformed) is not None):",
+            malformed_check_line,
             "    raise AssertionError('malformed-only body produced a marker')",
             "valid = '\\n'.join(build_finding_marker(sha, key) for key in keys)",
             "expected = [{'sha': sha, 'key': key} for key in reversed(keys)]",
