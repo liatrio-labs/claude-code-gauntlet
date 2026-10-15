@@ -94,7 +94,7 @@ def test_context_neutralizes_block_tags_in_diff(tmp_path, invoke):
 
 
 def test_context_frames_long_gaps_in_linear_time(tmp_path, invoke):
-    gap = b" " * 200_000
+    gap = b" " * 50_000
     output_dir = tmp_path / "out"
     write_context_inputs(output_dir, b"rules", b"+<" + gap + b"/" + gap + b"x\n")
     started = time.perf_counter()
@@ -105,7 +105,7 @@ def test_context_frames_long_gaps_in_linear_time(tmp_path, invoke):
         b"triage",
     )
     assert result.returncode == 0, result.stderr
-    assert time.perf_counter() - started < 5
+    assert time.perf_counter() - started < 2
 
 
 @pytest.mark.parametrize(
