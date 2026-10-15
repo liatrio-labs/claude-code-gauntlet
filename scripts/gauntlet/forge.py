@@ -315,7 +315,7 @@ def origin_remote(
     if remote is None:
         return None
     # Extract the slug from the stripped URL to preserve its bytes. For the host,
-    # remove only Git's newline so stray whitespace makes the host unknown.
+    # remove only Git's newline so stray whitespace or controls make the host unknown.
     original = parse_remote(stdout.removesuffix("\n").removesuffix("\r"))
     return replace(remote, hostname=original.hostname if original else None)
 
