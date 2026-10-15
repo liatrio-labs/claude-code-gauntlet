@@ -171,7 +171,7 @@ printf '%s\n' "$PRIOR_JSON" | python3 "{plugin_root}/scripts/stale_truncate.py" 
 
 Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `checkout` section above already handles this branch inline — the `elif` fires before any `gh pr checkout` is attempted and `exit 1`s the whole composite call immediately, so `sha`/`owner_repo`/`prior_review`/`stale_truncate` never run against the wrong commit. `CODE_GAUNTLET_HEADLESS` is read directly by the script (not pre-resolved by the model), so this is self-contained regardless of who assembles the call. See `references/headless-mode.md`.
 
-**`status`/`checkout` are owned by `references/phase2-triage.md` 2b.** For branch targets, use 2b's quoted-heredoc resolver form in `status` and its detached SHA checkout in `checkout`. For local changes, drop both sections. Stop on resolution or checkout failure; use 2b step 4's checkout-failure message with no fallback.
+**`status`/`checkout` are owned by `references/phase2-triage.md` 2b.** For branch targets, use 2b's resolver heredoc in `status` and the same heredoc with `resolve_branch.py --checkout` in `checkout`. For local changes, drop both sections. Stop on resolution or checkout failure; use 2b step 4's checkout-failure message with no fallback.
 
 GitLab MR mode: swap `gh pr view`/`gh pr checkout` for `glab mr view`/`glab mr checkout` in the `status`/`checkout` sections; for `owner_repo`, use `glab mr view {pr_number} --output json | jq -r '.web_url'` and take the path segments before `/-/merge_requests/` instead of splitting a GitHub API URL.
 

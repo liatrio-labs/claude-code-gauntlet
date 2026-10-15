@@ -471,7 +471,7 @@ def test_shipped_branch_resolver_keeps_names_on_stdin(
     parts = shlex.split(
         lines[0].split("<<", 1)[0].replace("{plugin_root}", REPO.as_posix())
     )
-    assert parts == ["python3", str(REPO / "scripts/resolve_branch.py")]
+    assert parts == ["python3", (REPO / "scripts/resolve_branch.py").as_posix()]
     parts[0] = sys.executable
     monkeypatch.setenv("PYTHONIOENCODING", "latin-1")
     fake_bin = tmp_path / "bin"
