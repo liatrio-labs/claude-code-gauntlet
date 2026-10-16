@@ -150,10 +150,12 @@ syntax is broken: `#`, `!` and `&` before an ASCII digit become U+FF03, U+FF01 a
 a word-initial `GH-` before a digit takes U+2011 as its hyphen, and `~` or `%` before an
 ASCII letter, digit, underscore or `"` becomes U+FF5E or U+FF05. Tilde runs stay, and a
 rewritten sigil loses one preceding backslash when its backslash run is odd.
-URLs and link destinations preserve reference sigils, except URLs whose paths contain
-`/(issues|pull|discussions|merge_requests|work_items|epics|milestones|snippets)/` followed
-by an ASCII digit (including scheme-less `github.com/`) become inline code, with a
-destination's opening `(` changed to U+FF08 so its bracket text stays readable.
+URLs and inline link destinations keep their reference sigils.
+A URL with a repository path shaped like `/<owner>/<repo>/(issues|pull|discussions)/<digit>`
+(outside the reserved `/organizations/` prefix) or containing
+`/-/(issues|merge_requests|work_items|epics|milestones|snippets)/<digit>`
+(host, query and fragment aside, including scheme-less `github.com/`) becomes inline
+code, and as a link destination its opening `(` becomes U+FF08.
 Numeric references and `&commat;`, `&excl;`, `&num;`, `&percnt;`, `&lbrack;`, `&lsqb;`,
 `&rsqb;`, `&rbrack;`, `&Hat;`, `&colon;`, `&lpar;`, `&rpar;`, `&bsol;`, `&nbsp;` and
 `&NonBreakingSpace;` decode as each replacement

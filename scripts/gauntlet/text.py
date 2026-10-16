@@ -264,12 +264,15 @@ def _break_marker_openers(text: str) -> str:
 
 
 _PROSE_LINK_RE = re.compile(
-    r"\]\((?P<destination>[^\s)]+)|"
-    r"(?:https?://|ftp://|www\.)[A-Za-z0-9][^\s<>]*|"
-    r"(?<![A-Za-z0-9.-])github\.com/[^\s<>]+"
+    r"\]\((?P<destination>[^\s)]+)(?:[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'))?\)|"
+    r"(?:https?://|ftp://|www\.)[A-Za-z0-9](?:(?!\]\()[^\s<>])*|"
+    r"(?<![A-Za-z0-9.-])github\.com/(?:(?!\]\()[^\s<>])+"
 )
-_REFERENCE_PATH_RE = re.compile(
-    r"/(?:issues|pull|discussions|merge_requests|work_items|epics|milestones|snippets)/[0-9]"
+_GITHUB_REFERENCE_PATH_RE = re.compile(
+    r"/[^/]+/[^/]+/(?:issues|pull|discussions)/[0-9]"
+)
+_GITLAB_REFERENCE_PATH_RE = re.compile(
+    r"/-/(?:issues|merge_requests|work_items|epics|milestones|snippets)/[0-9]"
 )
 _REFERENCE_RE = re.compile(
     r"(?<!\\)(\\*)(#(?=[0-9])|!(?=[0-9])|"
@@ -286,10 +289,30 @@ class _ProseLink:
     reference: bool
 
 
-def _prose_links(text: str) -> list[_ProseLink]:
+def _prose_links(text: str, *, line_start: bool = True) -> list[_ProseLink]:
+    label_ends = set()
+    label_open = False
+    escaped = False
+    # Scan surviving brackets so character escaping cannot invalidate an exemption.
+    for position, character in enumerate(_escape_characters(text, code=True)):
+        if character in "\r\n":
+            label_open = False
+        elif not escaped:
+            if character == "[":
+                label_open = True
+            elif character == "]":
+                if label_open:
+                    label_ends.add(position)
+                label_open = False
+        escaped = character == "\\" and not escaped
     links = []
-    for match in _PROSE_LINK_RE.finditer(text):
+    position = 0
+    while match := _PROSE_LINK_RE.search(text, position):
+        position = match.end()
         destination = match.group("destination") is not None
+        if destination and match.start() not in label_ends:
+            position = match.start() + 2
+            continue
         value = match.group("destination") if destination else match.group()
         if not destination:
             balance = value.count("(") - value.count(")")
@@ -302,16 +325,47 @@ def _prose_links(text: str) -> list[_ProseLink]:
                     balance += 1
                 end -= 1
             value = value[:end]
-        url = re.match(r"(?:https?://|ftp://|www\.)[A-Za-z0-9]|github\.com/", value)
+        url = (
+            not destination
+            or re.match(r"(?:https?://|ftp://|www\.)[A-Za-z0-9]|github\.com/", value)
+            is not None
+        )
         path = value.split("?", 1)[0].split("#", 1)[0]
-        authority_end = path.find("/", path.find("://") + 3 if "://" in path else 0)
+        host_start = path.find("://") + 3 if "://" in path else 0
+        authority_end = path.find("/", host_start)
+        host = path[host_start:authority_end].lower() if authority_end >= 0 else ""
         path = path[authority_end:] if authority_end >= 0 else ""
+        # Other trackers such as Sentry share GitHub's owner/repo/issues shape.
+        reference = url and (
+            _GITLAB_REFERENCE_PATH_RE.search(path) is not None
+            or (
+                host in ("github.com", "www.github.com")
+                and _GITHUB_REFERENCE_PATH_RE.match(path) is not None
+            )
+        )
+        start = match.start()
+        if not destination:
+            slash_start = start
+            while slash_start and text[slash_start - 1] == "\\":
+                slash_start -= 1
+            boundary = slash_start if reference else start
+            at_boundary = (boundary == 0 and line_start) or (
+                boundary > 0
+                and (
+                    text[boundary - 1].isspace()
+                    or text[boundary - 1] in "*_~(<"
+                    or (reference and text[boundary - 1] == "[")
+                    or text.endswith("&lt;", 0, boundary)
+                )
+            )
+            if not at_boundary:
+                continue
         links.append(
             _ProseLink(
                 match.start(),
                 match.start() + (2 if destination else 0) + len(value),
                 destination,
-                url is not None and _REFERENCE_PATH_RE.search(path) is not None,
+                reference,
             )
         )
     return links
@@ -336,22 +390,24 @@ def _escape_references(text: str) -> str:
     return _REFERENCE_RE.sub(replace, text)
 
 
-def _escape_visible(text: str, *, code: bool = False) -> str:
+def _escape_visible(text: str, *, code: bool = False, line_start: bool = True) -> str:
     if not code:
         parts = []
         cursor = 0
-        for link in _prose_links(text):
+        for link in _prose_links(text, line_start=line_start):
+            before = text[cursor : link.start]
+            if link.reference and not link.destination:
+                slashes = len(before) - len(before.rstrip("\\"))
+                before = before[: len(before) - slashes % 2]
             # Keep the URL's first character as lookahead for a preceding '<'.
             parts.append(
-                _escape_characters(
-                    _escape_references(text[cursor : link.start]) + text[link.start]
-                )[:-1]
+                _escape_characters(_escape_references(before) + text[link.start])[:-1]
             )
             value = text[link.start : link.end]
             if link.reference:
                 prefix = "]\uff08" if link.destination else ""
                 value = prefix + code_span(
-                    _escape_visible(
+                    _escape_characters(
                         value[2:] if link.destination else value, code=True
                     ),
                     pad_space_edges=True,
@@ -441,12 +497,12 @@ def _escape_tilde_runs(line: str) -> str:
 def _containment_code_spans(
     line: str,
     index: TickRunIndex | None = None,
-    opaque: tuple[tuple[int, int], ...] = (),
+    skip_openers: frozenset[int] = frozenset(),
 ) -> list[tuple[int, int, int]]:
     return paired_code_spans(
         index if index is not None else tick_run_index(line),
         suffix_retry=True,
-        opaque=opaque,
+        skip_openers=skip_openers,
     )
 
 
@@ -457,20 +513,25 @@ def _contain_line(line: str) -> str:
     opaque = tuple(
         (link.start, link.end) for link in _prose_links(line) if link.reference
     )
-    spans = _containment_code_spans(line, index, opaque)
+    skip_openers = set()
     opaque_index = 0
+    for run_index, run in enumerate(index.runs):
+        while opaque_index < len(opaque) and opaque[opaque_index][1] <= run.start:
+            opaque_index += 1
+        if opaque_index < len(opaque) and opaque[opaque_index][0] <= run.start:
+            skip_openers.add(run_index)
+    # Opaque runs remain in the index because they can still close earlier spans.
+    spans = _containment_code_spans(line, index, frozenset(skip_openers))
     span_index = 0
     out: list[str] = []
     cursor = 0
     run_index = 0
     while run_index < len(index.runs):
         run = index.runs[run_index]
-        while opaque_index < len(opaque) and opaque[opaque_index][1] <= run.start:
-            opaque_index += 1
-        if opaque_index < len(opaque) and opaque[opaque_index][0] <= run.start:
+        if run_index in skip_openers:
             run_index += 1
             continue
-        out.append(_escape_visible(line[cursor : run.start]))
+        out.append(_escape_visible(line[cursor : run.start], line_start=cursor == 0))
         opener = run.start
         if run.escaped:
             out.append("`")
@@ -491,7 +552,7 @@ def _contain_line(line: str) -> str:
             out.append("\\`" * (run.width - int(run.escaped)))
             cursor = run.end
             run_index += 1
-    out.append(_escape_visible(line[cursor:]))
+    out.append(_escape_visible(line[cursor:], line_start=cursor == 0))
     return "".join(out)
 
 

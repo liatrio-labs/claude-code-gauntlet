@@ -155,17 +155,14 @@ def paired_code_spans(
     index: TickRunIndex,
     *,
     suffix_retry: bool = False,
-    opaque: tuple[tuple[int, int], ...] = (),
+    skip_openers: frozenset[int] = frozenset(),
 ) -> list[tuple[int, int, int]]:
     """Select paired spans with the requested unmatched-run policy."""
     spans: list[tuple[int, int, int]] = []
     run_index = 0
-    opaque_index = 0
     while run_index < len(index.runs):
         run = index.runs[run_index]
-        while opaque_index < len(opaque) and opaque[opaque_index][1] <= run.start:
-            opaque_index += 1
-        if opaque_index < len(opaque) and opaque[opaque_index][0] <= run.start:
+        if run_index in skip_openers:
             run_index += 1
             continue
         found = _first_close(index, run, suffix_retry)

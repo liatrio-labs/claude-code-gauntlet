@@ -2064,23 +2064,23 @@
     },
     {
       "id": "reference_issue",
-      "input": "#1 owner/repo#1 project#1 \\#1 &amp;#64;x #01 #1x ##1 #\u0661 `#1 !1 ~bug %v1`",
-      "expected": "\uff031 owner/repo\uff031 project\uff031 \uff031 &amp;\uff0364;x \uff0301 \uff031x #\uff031 #\u0661 `#1 !1 ~bug %v1`"
+      "input": "#1 owner/repo#1 project#1 \\#1 &amp;#64;x #01 #1x ##1 #\u0661 `#1 !1 ~bug %v1` x](#1 [a]b](#1) [a](#1 extra) [a](#1",
+      "expected": "\uff031 owner/repo\uff031 project\uff031 \uff031 &amp;\uff0364;x \uff0301 \uff031x #\uff031 #\u0661 `#1 !1 ~bug %v1` x](\uff031 [a]b](\uff031) [a](\uff031 extra) [a](\uff031"
     },
     {
       "id": "reference_merge_request",
-      "input": "!1 probe!1 !1x /!1 \\!1 !\u0661 ![image](url) `!1`",
-      "expected": "\uff011 probe\uff011 \uff011x /\uff011 \uff011 !\u0661 !\uff3bimage](url) `!1`"
+      "input": "!1 probe!1 !1x /!1 \\!1 !\u0661 ![image](url) `!1` and y](!1)",
+      "expected": "\uff011 probe\uff011 \uff011x /\uff011 \uff011 !\u0661 !\uff3bimage](url) `!1` and y](\uff011)"
     },
     {
       "id": "reference_gh",
-      "input": "GH-1 gh-01 gH-2 x/GH-1 (Gh-3) xGH-1 _GH-1 1GH-1 GH-x GH-\u0661 `GH-1`",
-      "expected": "GH\u20111 gh\u201101 gH\u20112 x/GH\u20111 (Gh\u20113) xGH-1 _GH-1 1GH-1 GH-x GH-\u0661 `GH-1`"
+      "input": "GH-1 gh-01 gH-2 x/GH-1 (Gh-3) xGH-1 _GH-1 1GH-1 GH-x GH-\u0661 `GH-1` a](GH-1",
+      "expected": "GH\u20111 gh\u201101 gH\u20112 x/GH\u20111 (Gh\u20113) xGH-1 _GH-1 1GH-1 GH-x GH-\u0661 `GH-1` a](GH\u20111"
     },
     {
       "id": "reference_label",
-      "input": "~bug ~\"bug\" ~1 ~_ probe~bug ~~s~~ ~~~old~~~ x~ ~- ~/ ~\u00e9 `~bug`",
-      "expected": "\uff5ebug \uff5e\"bug\" \uff5e1 \uff5e_ probe\uff5ebug ~~s~~ ~~~old~~~ x~ ~- ~/ ~\u00e9 `~bug`"
+      "input": "~bug ~\"bug\" ~1 ~_ probe~bug ~~s~~ ~~~old~~~ x~ ~- ~/ ~\u00e9 `~bug` z](~bug",
+      "expected": "\uff5ebug \uff5e\"bug\" \uff5e1 \uff5e_ probe\uff5ebug ~~s~~ ~~~old~~~ x~ ~- ~/ ~\u00e9 `~bug` z](\uff5ebug"
     },
     {
       "id": "reference_milestone",
@@ -2089,13 +2089,13 @@
     },
     {
       "id": "reference_url_protection",
-      "input": "https://example.com/readme#1-install https://example.com/~alice/notes https://x.test/a%20b [setup](docs/a%20b.md#1-install) ftp://files.test/~alice/#1!2/GH-3/%v1/&4 www.x.test/p#1 [all](docs/~bug/%v1/!1/GH-2/&3)",
-      "expected": "https://example.com/readme#1-install https://example.com/~alice/notes https://x.test/a%20b [setup](docs/a%20b.md#1-install) ftp://files.test/~alice/#1!2/GH-3/%v1/&4 www.x.test/p#1 [all](docs/~bug/%v1/!1/GH-2/&3)"
+      "input": "https://example.com/readme#1-install https://example.com/~alice/notes https://x.test/a%20b [setup](docs/a%20b.md#1-install) ftp://files.test/~alice/#1!2/GH-3/%v1/&4 www.x.test/p#1 [all](docs/~bug/%v1/!1/GH-2/&3) xhttps://a.b/#1 xftp://a.b/#1 xwww.a.b/#1 /github.com/o/r/commit/1#1 `code`https://a.b/#1 )https://a.b/#1 *https://a.b/#1 _https://a.b/#1 ~https://a.b/#1 (https://a.b/#1) <https://a.b/#1> [title](docs/#1 \"title\") [title](docs/~bug 'title') [a\\]b](docs/#1) \\[a](#1)",
+      "expected": "https://example.com/readme#1-install https://example.com/~alice/notes https://x.test/a%20b [setup](docs/a%20b.md#1-install) ftp://files.test/~alice/#1!2/GH-3/%v1/&4 www.x.test/p#1 [all](docs/~bug/%v1/!1/GH-2/&3) xhttps://a.b/\uff031 xftp://a.b/\uff031 xwww.a.b/\uff031 /github.com/o/r/commit/1\uff031 `code`https://a.b/\uff031 )https://a.b/\uff031 *https://a.b/#1 _https://a.b/#1 ~https://a.b/#1 (https://a.b/#1) &lt;https://a.b/#1> [title](docs/#1 \"title\") [title](docs/~bug 'title') [a\\]b](docs/#1) \\[a](\uff031)"
     },
     {
       "id": "reference_urls",
-      "input": "https://github.com/o/r/issues/1 github.com/o/r/issues/1 http://host/group/proj/-/merge_requests/1 [x](http://host/group/proj/-/issues/1) https://github.com/o/r/pull/1#frag https://github.com/o/r/discussions/1?q https://github.com/o/r/issues/1/ <https://github.com/o/r/issues/1> https://host/g/p/-/work_items/1 https://host/g/p/-/epics/1 https://host/g/p/-/milestones/1 https://host/g/p/-/snippets/1 (https://github.com/o/r/issues/1). https://host/issues/1(a) https://host/issues/1.,:;!?'\"*_~ https://host/issues/1/a`b``c [ticks](https://host/issues/1/a`b) https://host/issues/1/@who/![[x www.github.com/o/r/issues/1 http://github.com/o/r/issues/1 `https://github.com/o/r/issues/1` https://github.com/o/r/commit/123 https://host/other/1#1 https://host/p?next=/issues/1 https://host/p#issues/1 https://host/issues/x https://host/issues/\u0661 host:8080/g/p/-/issues/1 xgithub.com/o/r/issues/1 a.github.com/o/r/issues/1 -github.com/o/r/issues/1 [relative](docs/issues/1#anchor)",
-      "expected": "`https://github.com/o/r/issues/1` `github.com/o/r/issues/1` `http://host/group/proj/-/merge_requests/1` [x]\uff08`http://host/group/proj/-/issues/1`) `https://github.com/o/r/pull/1#frag` `https://github.com/o/r/discussions/1?q` `https://github.com/o/r/issues/1/` &lt;`https://github.com/o/r/issues/1`> `https://host/g/p/-/work_items/1` `https://host/g/p/-/epics/1` `https://host/g/p/-/milestones/1` `https://host/g/p/-/snippets/1` (`https://github.com/o/r/issues/1`). `https://host/issues/1(a)` `https://host/issues/1`.,:;!?'\"*_~ ```https://host/issues/1/a`b``c``` [ticks]\uff08``https://host/issues/1/a`b``) `https://host/issues/1/\uff20who/!\uff3b\uff3bx` `www.github.com/o/r/issues/1` `http://github.com/o/r/issues/1` `https://github.com/o/r/issues/1` https://github.com/o/r/commit/123 https://host/other/1#1 https://host/p?next=/issues/1 https://host/p#issues/1 https://host/issues/x https://host/issues/\u0661 host:8080/g/p/-/issues/1 xgithub.com/o/r/issues/1 a.github.com/o/r/issues/1 -github.com/o/r/issues/1 [relative](docs/issues/1#anchor)"
+      "input": "https://github.com/o/r/issues/1 github.com/o/r/issues/1 http://host/group/proj/-/merge_requests/1 [x](http://host/group/proj/-/issues/1) https://github.com/o/r/pull/1#frag https://github.com/o/r/discussions/1?q https://github.com/o/r/issues/1/ <https://github.com/o/r/issues/1> https://host/g/p/-/work_items/1 https://host/g/p/-/epics/1 https://host/g/p/-/milestones/1 https://host/g/p/-/snippets/1 (https://github.com/o/r/issues/1). https://github.com/o/r/issues/1(a) https://github.com/o/r/issues/1.,:;!?'\"*_~ https://github.com/o/r/issues/1/a`b``c [ticks](https://github.com/o/r/issues/1/a`b) https://github.com/o/r/issues/1/@who/![[x www.github.com/o/r/issues/1 http://github.com/o/r/issues/1 `https://github.com/o/r/issues/1` https://github.com/o/r/commit/123 https://host/other/1#1 https://host/p?next=/issues/1 https://host/p#issues/1 https://host/o/r/issues/x https://host/o/r/issues/\u0661 host:8080/g/p/-/issues/1 xgithub.com/o/r/issues/1 a.github.com/o/r/issues/1 -github.com/o/r/issues/1 [relative](docs/issues/1#anchor) [the Sentry event](https://sentry.io/organizations/acme/issues/123/) https://sentry.io/organizations/acme/issues/123/#1 [issue](<http://host/g/p/-/issues/1>) https://host/issues/1#1 https://host/a/b/c/issues/1#1 https://#1 ]( #1 https://enterprise.test/o/r/issues/1 https://host/a/b/c/-/issues/1 [https://github.com/o/r/issues/1](https://github.com/o/r/issues/1) [github.com/o/r/issues/1](github.com/o/r/issues/1) [see https://github.com/o/r/issues/7](https://github.com/o/r/issues/7) \\https://github.com/o/r/issues/1 \\\\https://github.com/o/r/issues/1 \\\\\\https://github.com/o/r/issues/1 \\\\\\\\https://github.com/o/r/issues/1",
+      "expected": "`https://github.com/o/r/issues/1` `github.com/o/r/issues/1` `http://host/group/proj/-/merge_requests/1` [x]\uff08`http://host/group/proj/-/issues/1`) `https://github.com/o/r/pull/1#frag` `https://github.com/o/r/discussions/1?q` `https://github.com/o/r/issues/1/` &lt;`https://github.com/o/r/issues/1`> `https://host/g/p/-/work_items/1` `https://host/g/p/-/epics/1` `https://host/g/p/-/milestones/1` `https://host/g/p/-/snippets/1` (`https://github.com/o/r/issues/1`). `https://github.com/o/r/issues/1(a)` `https://github.com/o/r/issues/1`.,:;!?'\"*_~ ```https://github.com/o/r/issues/1/a`b``c``` [ticks]\uff08``https://github.com/o/r/issues/1/a`b``) `https://github.com/o/r/issues/1/\uff20who/!\uff3b\uff3bx` `www.github.com/o/r/issues/1` `http://github.com/o/r/issues/1` `https://github.com/o/r/issues/1` https://github.com/o/r/commit/123 https://host/other/1#1 https://host/p?next=/issues/1 https://host/p#issues/1 https://host/o/r/issues/x https://host/o/r/issues/\u0661 host:8080/g/p/-/issues/1 xgithub.com/o/r/issues/1 a.github.com/o/r/issues/1 -github.com/o/r/issues/1 [relative](docs/issues/1#anchor) [the Sentry event](https://sentry.io/organizations/acme/issues/123/) https://sentry.io/organizations/acme/issues/123/#1 [issue](&lt;http://host/g/p/-/issues/1>) https://host/issues/1#1 https://host/a/b/c/issues/1#1 https://\uff031 ]( \uff031 https://enterprise.test/o/r/issues/1 `https://host/a/b/c/-/issues/1` [`https://github.com/o/r/issues/1`]\uff08`https://github.com/o/r/issues/1`) [`github.com/o/r/issues/1`]\uff08`github.com/o/r/issues/1`) [see `https://github.com/o/r/issues/7`]\uff08`https://github.com/o/r/issues/7`) `https://github.com/o/r/issues/1` \\\\`https://github.com/o/r/issues/1` \\\\`https://github.com/o/r/issues/1` \\\\\\\\`https://github.com/o/r/issues/1`"
     },
     {
       "id": "reference_named_entities",
@@ -2114,8 +2114,8 @@
     },
     {
       "id": "reference_backslash",
-      "input": "\\#1 \\\\#1 \\\\\\#1 \\\\\\\\#1 \\!1 \\\\!1 \\\\\\!1 \\\\\\\\!1 \\~bug \\\\~bug \\\\\\~bug \\\\\\\\~bug \\%v1 \\\\%v1 \\\\\\%v1 \\\\\\\\%v1 \\&1 \\\\&1 \\\\\\&1 \\\\\\\\&1 \\GH-1 \\\\GH-1 \\\\\\GH-1 \\\\\\\\GH-1 \\#x \\!x \\~\u00e9 \\%\u00e9 \\&x \\GH-x `\\#1 \\!1 \\~bug \\%v1 \\&1 \\GH-1`",
-      "expected": "\uff031 \\\\\uff031 \\\\\uff031 \\\\\\\\\uff031 \uff011 \\\\\uff011 \\\\\uff011 \\\\\\\\\uff011 \uff5ebug \\\\\uff5ebug \\\\\uff5ebug \\\\\\\\\uff5ebug \uff05v1 \\\\\uff05v1 \\\\\uff05v1 \\\\\\\\\uff05v1 \uff061 \\\\\uff061 \\\\\uff061 \\\\\\\\\uff061 GH\u20111 \\\\GH\u20111 \\\\GH\u20111 \\\\\\\\GH\u20111 \\#x \\!x \\~\u00e9 \\%\u00e9 \\&x \\GH-x `\\#1 \\!1 \\~bug \\%v1 \\&1 \\GH-1`"
+      "input": "\\#1 \\\\#1 \\\\\\#1 \\\\\\\\#1 \\~bug \\\\~bug \\GH-1 \\\\GH-1 \\#x",
+      "expected": "\uff031 \\\\\uff031 \\\\\uff031 \\\\\\\\\uff031 \uff5ebug \\\\\uff5ebug GH\u20111 \\\\GH\u20111 \\#x"
     }
   ],
   "summary_cases": [

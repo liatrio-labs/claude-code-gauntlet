@@ -2489,13 +2489,37 @@ function outboundBase(value, entities = OUTBOUND_NAMED_ENTITIES) {
     .replace(/(?:glpat-|glrt-)[A-Za-z0-9_-]{20,}/g, '[REDACTED]')
     .replace(/[\r\n]+/g, ' ');
 }
-const OUTBOUND_PROSE_LINK = /\]\(([^\s)]+)|(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9][^\s<>]*|(?<![A-Za-z0-9.-])github\.com\/[^\s<>]+/g;
-const OUTBOUND_REFERENCE_PATH = /\/(?:issues|pull|discussions|merge_requests|work_items|epics|milestones|snippets)\/[0-9]/;
+const OUTBOUND_PROSE_LINK = /\]\(([^\s)]+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)|(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9](?:(?!\]\()[^\s<>])*|(?<![A-Za-z0-9.-])github\.com\/(?:(?!\]\()[^\s<>])+/g;
+const OUTBOUND_GITHUB_REFERENCE_PATH = /^\/[^/]+\/[^/]+\/(?:issues|pull|discussions)\/[0-9]/;
+const OUTBOUND_GITLAB_REFERENCE_PATH = /\/-\/(?:issues|merge_requests|work_items|epics|milestones|snippets)\/[0-9]/;
 const OUTBOUND_REFERENCE = /(?<!\\)(\\*)(#(?=[0-9])|!(?=[0-9])|(?<![A-Za-z0-9_])[Gg][Hh]-(?=[0-9])|(?<!~)(?<!~\\)~(?=[A-Za-z0-9_"])|%(?=[A-Za-z0-9_"])|&(?=[0-9]))/g;
-function outboundProseLinks(text) {
+function outboundProseLinks(text, lineStart = true) {
+  const labelEnds = new Set();
+  let labelOpen = false;
+  let escaped = false;
+  const labelText = outboundCharacters(text, true);
+  for (let position = 0; position < labelText.length; position += 1) {
+    const character = labelText[position];
+    if ('\r\n'.includes(character)) {
+      labelOpen = false;
+    } else if (!escaped) {
+      if (character === '[') labelOpen = true;
+      else if (character === ']') {
+        if (labelOpen) labelEnds.add(position);
+        labelOpen = false;
+      }
+    }
+    escaped = character === '\\' && !escaped;
+  }
   const links = [];
-  for (const match of text.matchAll(OUTBOUND_PROSE_LINK)) {
+  const scanner = new RegExp(OUTBOUND_PROSE_LINK);
+  let match;
+  while ((match = scanner.exec(text)) !== null) {
     const destination = match[1] !== undefined;
+    if (destination && !labelEnds.has(match.index)) {
+      scanner.lastIndex = match.index + 2;
+      continue;
+    }
     let value = destination ? match[1] : match[0];
     if (!destination) {
       let balance = 0;
@@ -2512,15 +2536,33 @@ function outboundProseLinks(text) {
       }
       value = value.slice(0, end);
     }
-    const url = /^(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9]|^github\.com\//.test(value);
+    const url = !destination || /^(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9]|^github\.com\//.test(value);
     let path = value.split('?', 1)[0].split('#', 1)[0];
-    const authorityEnd = path.indexOf('/', path.includes('://') ? path.indexOf('://') + 3 : 0);
+    const hostStart = path.includes('://') ? path.indexOf('://') + 3 : 0;
+    const authorityEnd = path.indexOf('/', hostStart);
+    const host = authorityEnd >= 0 ? path.slice(hostStart, authorityEnd).toLowerCase() : '';
     path = authorityEnd >= 0 ? path.slice(authorityEnd) : '';
+    const reference = url && (
+      OUTBOUND_GITLAB_REFERENCE_PATH.test(path)
+      || (['github.com', 'www.github.com'].includes(host) && OUTBOUND_GITHUB_REFERENCE_PATH.test(path))
+    );
+    const start = match.index;
+    if (!destination) {
+      let slashStart = start;
+      while (slashStart && text[slashStart - 1] === '\\') slashStart -= 1;
+      const boundary = reference ? slashStart : start;
+      const atBoundary = (boundary === 0 && lineStart) || (boundary > 0 && (
+        /\s/.test(text[boundary - 1]) || '*_~(<'.includes(text[boundary - 1]) ||
+        (reference && text[boundary - 1] === '[') ||
+        text.slice(Math.max(0, boundary - 4), boundary) === '&lt;'
+      ));
+      if (!atBoundary) continue;
+    }
     links.push({
       start: match.index,
       end: match.index + (destination ? 2 : 0) + value.length,
       destination,
-      reference: url && OUTBOUND_REFERENCE_PATH.test(path),
+      reference,
     });
   }
   return links;
@@ -2533,16 +2575,21 @@ function outboundReferences(text) {
     return slashes.slice(0, slashes.length - slashes.length % 2) + replacement;
   });
 }
-function outboundVisible(text, code = false) {
+function outboundVisible(text, code = false, lineStart = true) {
   if (!code) {
     const parts = [];
     let cursor = 0;
-    for (const link of outboundProseLinks(text)) {
-      parts.push(outboundCharacters(outboundReferences(text.slice(cursor, link.start)) + text[link.start]).slice(0, -1));
+    for (const link of outboundProseLinks(text, lineStart)) {
+      let before = text.slice(cursor, link.start);
+      if (link.reference && !link.destination) {
+        const slashes = before.length - before.replace(/\\+$/, '').length;
+        before = before.slice(0, before.length - slashes % 2);
+      }
+      parts.push(outboundCharacters(outboundReferences(before) + text[link.start]).slice(0, -1));
       let value = text.slice(link.start, link.end);
       if (link.reference) {
         const prefix = link.destination ? ']\uFF08' : '';
-        value = prefix + codeSpan(outboundVisible(link.destination ? value.slice(2) : value, true));
+        value = prefix + codeSpan(outboundCharacters(link.destination ? value.slice(2) : value, true));
       } else {
         value = outboundCharacters(value);
       }
@@ -2596,14 +2643,12 @@ function outboundSpanClose(index, after, width) {
   }
   return low < starts.length ? starts[low] : -1;
 }
-function outboundCodeSpans(line, index = outboundTickRunIndex(line), opaque = []) {
+function outboundCodeSpans(line, index = outboundTickRunIndex(line), skipOpeners = new Set()) {
   const spans = [];
   let runIndex = 0;
-  let opaqueIndex = 0;
   while (runIndex < index.runs.length) {
     const run = index.runs[runIndex];
-    while (opaqueIndex < opaque.length && opaque[opaqueIndex].end <= run.start) opaqueIndex += 1;
-    if (opaqueIndex < opaque.length && opaque[opaqueIndex].start <= run.start) {
+    if (skipOpeners.has(runIndex)) {
       runIndex += 1;
       continue;
     }
@@ -2645,20 +2690,25 @@ function outboundContain(line, forceColon = false) {
   line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
   const index = outboundTickRunIndex(line);
   const opaque = outboundProseLinks(line).filter((link) => link.reference);
-  const spans = outboundCodeSpans(line, index, opaque);
+  const skipOpeners = new Set();
   let opaqueIndex = 0;
+  for (let runIndex = 0; runIndex < index.runs.length; runIndex += 1) {
+    const run = index.runs[runIndex];
+    while (opaqueIndex < opaque.length && opaque[opaqueIndex].end <= run.start) opaqueIndex += 1;
+    if (opaqueIndex < opaque.length && opaque[opaqueIndex].start <= run.start) skipOpeners.add(runIndex);
+  }
+  const spans = outboundCodeSpans(line, index, skipOpeners);
   let spanIndex = 0;
   const output = [];
   let cursor = 0;
   let runIndex = 0;
   while (runIndex < index.runs.length) {
     const run = index.runs[runIndex];
-    while (opaqueIndex < opaque.length && opaque[opaqueIndex].end <= run.start) opaqueIndex += 1;
-    if (opaqueIndex < opaque.length && opaque[opaqueIndex].start <= run.start) {
+    if (skipOpeners.has(runIndex)) {
       runIndex += 1;
       continue;
     }
-    output.push(outboundVisible(line.slice(cursor, run.start)));
+    output.push(outboundVisible(line.slice(cursor, run.start), false, cursor === 0));
     let opener = run.start;
     if (run.escaped) {
       output.push('`');
@@ -2681,7 +2731,7 @@ function outboundContain(line, forceColon = false) {
       runIndex += 1;
     }
   }
-  output.push(outboundVisible(line.slice(cursor)));
+  output.push(outboundVisible(line.slice(cursor), false, cursor === 0));
   return outboundDefinitions(output.join(''), forceColon);
 }
 function prepareLine(value, forceColon = false, entities = OUTBOUND_NAMED_ENTITIES) {
