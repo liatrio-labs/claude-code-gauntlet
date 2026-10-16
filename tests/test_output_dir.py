@@ -128,7 +128,16 @@ def test_rejected_output_override(value, output_cli, output_repo):
 
 @pytest.mark.parametrize(
     "characters",
-    ["$", "`", '"', "\\", "".join(map(chr, range(32))), "\x7f"],
+    [
+        "$",
+        "`",
+        '"',
+        pytest.param(
+            "\\", marks=pytest.mark.skipif(os.sep == "\\", reason="separator")
+        ),
+        "".join(map(chr, range(32))),
+        "\x7f",
+    ],
     ids=["dollar", "backtick", "double-quote", "backslash", "c0-controls", "del"],
 )
 def test_output_dir_refuses_shell_characters_before_side_effects(

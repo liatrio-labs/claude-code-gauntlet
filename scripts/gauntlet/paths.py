@@ -2,7 +2,10 @@
 
 import os
 
-SHELL_PATH_UNSAFE = frozenset('$`"\\' + "".join(map(chr, range(32))) + "\x7f")
+# Backslash is Windows' path separator; elsewhere it can escape inside double quotes.
+SHELL_PATH_UNSAFE = frozenset(
+    '$`"' + ("" if os.sep == "\\" else "\\") + "".join(map(chr, range(32))) + "\x7f"
+)
 
 PLUGIN_ROOT = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ENTRY_ROOT = os.path.dirname(
