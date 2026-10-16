@@ -1,13 +1,9 @@
-"""Posted marker format, reader behavior and skill contracts."""
+"""Posted signals, trust positions and skill contracts."""
 
 import json
-import os
 import re
-import subprocess
-import sys
 from pathlib import Path
 
-import gauntlet.marker as review_marker
 import pytest
 from gauntlet.marker import (
     FINDING_MARKER_TOKEN,
@@ -21,11 +17,7 @@ from gauntlet.marker import (
     build_marker,
     build_prose_footer,
     detect_signal,
-    find_finding_marker,
     find_finding_markers,
-    find_marker,
-    has_prose_footer,
-    parse_prose_footer,
     select_latest,
 )
 
@@ -33,11 +25,8 @@ REPO = Path(__file__).resolve().parents[1]
 SHA_40 = "a" * 40
 SHA_8 = "a" * 8
 HEAD_SHA_40 = "b" * 40
-# Repeated-character keys avoid entropy-based credential lint on fixtures.
 KEY_16 = "a" * 16
 OTHER_KEY_16 = "b" * 16
-
-
 _QUOTE_RE = re.compile("`([^`\\n]+)`")
 
 
@@ -45,405 +34,126 @@ def _read(rel_path):
     return (REPO / rel_path).read_text(encoding="utf-8")
 
 
-COMPACT_MARKER = json.dumps({"version": "3.0", "sha": SHA_40}, separators=(",", ":"))
-
-
-@pytest.mark.parametrize(
-    "pre_existing, sha",
-    [
-        pytest.param("", SHA_8, id="empty-body-short-sha"),
-        pytest.param(
-            "## Summary\nSome pre-existing narrative text.\n",
-            SHA_40,
-            id="authored-body-full-sha",
-        ),
-    ],
-)
-def test_round_trip__realistic_github_review_body_round_trip(pre_existing, sha):
-    findings = [{"title": "x"}, {"title": "y"}, {"title": "z"}]
-    review_body = pre_existing
-    review_body += build_footer(len(findings), sha, body=review_body)
-    signal = detect_signal(review_body)
-    assert signal is not None
-    assert signal["signal"] == "marker"
-    assert signal["sha"] == sha
-    assert not signal["legacy"]
-    assert build_marker(sha, 3) == (
-        "<!-- code-gauntlet-findings: "
-        '{"version":"3.0","findings_count":3,"sha":"' + sha + '"} -->'
+@pytest.mark.parametrize("legacy", [False, True])
+def test_summary_tail_round_trip_and_hostile_body(legacy: bool) -> None:
+    token = LEGACY_MARKER_TOKEN if legacy else MARKER_TOKEN
+    payload = {"sha": SHA_40, "future": {"nested": ["literal --> and <!--", 1]}}
+    marker = f"<!--\n{token}: {json.dumps(payload)}\n-->"
+    body = build_marker(HEAD_SHA_40, 5) + "\nquoted example\n" + marker
+    signal = detect_signal(body + " \n")
+    assert signal is not None and signal["marker"] is not None
+    assert (signal["sha"], signal["legacy"], signal["signal"]) == (
+        SHA_40,
+        legacy,
+        "marker",
     )
-
-
-def test_tolerance__legacy_token():
-    payload = json.dumps({"version": "3.0", "findings_count": 2, "sha": SHA_40})
-    text = f"<!-- {LEGACY_MARKER_TOKEN}: {payload} -->"
-    signal = detect_signal(text)
-    assert signal is not None
-    assert signal["sha"] == SHA_40
-    assert signal["legacy"]
-
-
-def test_tolerance__unknown_future_keys_preserved_in_marker():
-    payload = json.dumps(
-        {"version": "3.0", "sha": SHA_40, "future_field": "xyz", "nested": {"a": 1}}
-    )
-    text = f"<!-- {MARKER_TOKEN}: {payload} -->"
-    signal = detect_signal(text)
-    assert signal is not None
-    assert signal["marker"]["future_field"] == "xyz"
-    assert signal["marker"]["nested"] == {"a": 1}
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        pytest.param(
-            f"<!--\n{MARKER_TOKEN}: {COMPACT_MARKER}\n-->", id="token-newline"
-        ),
-    ],
-)
-def test_tolerance__whitespace_free_and_newline_broken_forms_both_parse(text):
-    signal = detect_signal(text)
-    assert signal is not None
-    assert signal["sha"] == SHA_40
-
-
-def test_tolerance__findings_array_containing_literal_close_comment_inside_a_string():
-    payload = json.dumps(
-        {
-            "version": "3.0",
-            "sha": SHA_40,
-            "findings": ["this string literally contains --> inside it"],
-        }
-    )
-    text = f"<!-- {MARKER_TOKEN}: {payload} -->"
-    signal = detect_signal(text)
-    assert signal is not None
-    assert signal["sha"] == SHA_40
-    assert signal["marker"]["findings"] == [
-        "this string literally contains --> inside it"
-    ]
-
-
-@pytest.mark.parametrize(
-    "present, version",
-    [
-        pytest.param(True, "99", id="future-version"),
-        pytest.param(False, None, id="absent-version"),
-    ],
-)
-def test_version_does_not_select_signal_reader(present, version):
-    payload = {"findings_count": 5, "sha": SHA_40}
-    if present:
-        payload["version"] = version
-    text = f"<!-- {MARKER_TOKEN}: {json.dumps(payload)} -->"
-    signal = detect_signal(text)
-    assert signal is not None
-    assert (signal["sha"], signal["signal"]) == (SHA_40, "marker")
-
-
-def test_prose_footer__current_product_prose_detected():
-    text = build_prose_footer(SHA_40)
-    assert has_prose_footer(text)
-    signal = detect_signal(text)
-    assert signal is not None
-    assert signal["signal"] == "footer"
-    assert not signal["legacy"]
-    assert signal["marker"] is None
-    assert signal["sha"] == SHA_40
-
-
-def test_prose_footer__legacy_product_prose_detected():
-    text = f"Generated by {LEGACY_PRODUCT} | Reviewed up to: {SHA_40}"
-    assert has_prose_footer(text)
-    signal = detect_signal(text)
-    assert signal is not None
-    assert signal["signal"] == "footer"
-    assert signal["legacy"]
-    assert signal["sha"] == SHA_40
-
-
-def test_prose_footer__sha_parsed_from_reviewed_up_to_label():
-    assert parse_prose_footer(f"Reviewed up to: {SHA_40}") == SHA_40
-    assert parse_prose_footer(f"Reviewed up to: `{SHA_8}` |") == SHA_8
-
-
-def test_prose_footer__marker_wins_when_both_prose_and_marker_present():
-    prose = build_prose_footer(HEAD_SHA_40)
-    marker = build_marker(SHA_40, 4)
-    text = f"{prose}\n\n{marker}"
-    signal = detect_signal(text)
-    assert signal is not None
-    assert signal["signal"] == "marker"
-    assert signal["sha"] == SHA_40
-
-
-@pytest.mark.parametrize("attributed", [True, False])
-def test_signal_fallback_requires_attribution(attributed):
-    body = f"Reviewed up to: {SHA_40}"
-    if attributed:
-        body = f"Generated by {PRODUCT} | " + body
-    text = f'<!-- {MARKER_TOKEN}: {{"sha":"invalid"}} -->\n' + body
-    signal = detect_signal(text)
-    if attributed:
-        assert signal is not None
-        assert (signal["sha"], signal["signal"]) == (SHA_40, "footer")
-    else:
-        assert signal is None
-
-
-def test_malformed__marker_with_broken_json():
-    text = f"<!-- {MARKER_TOKEN}: {{not valid json at all -->"
-    assert find_marker(text) is None
-    assert detect_signal(text) is None
-
-
-def test_malformed__marker_sha_not_hex():
-    payload = json.dumps({"version": "3.0", "sha": "not-a-real-sha!!"})
-    text = f"<!-- {MARKER_TOKEN}: {payload} -->"
-    assert detect_signal(text) is None
-
-
-def test_malformed__one_broken_one_valid_marker_returns_the_valid_one():
-    broken = f"<!-- {MARKER_TOKEN}: {{broken json -->"
-    valid = build_marker(SHA_40, 1)
-    text = f"{broken}\n\n{valid}"
-    signal = detect_signal(text)
-    assert signal is not None
-    assert signal["sha"] == SHA_40
-
-
-@pytest.mark.parametrize(
-    "const",
-    [
-        pytest.param("NaN", id="nan"),
-    ],
-)
-def test_malformed__nan_infinity_constants_reject_the_marker_as_malformed(const):
-    text = (
-        f'<!-- {MARKER_TOKEN}: {{"version":"3.0","sha":"{SHA_40}","weird":{const}}} -->'
-    )
-    assert find_marker(text) is None
-    assert detect_signal(text) is None
-
-
-def test_max_marker_scans__valid_marker_within_the_scan_window_is_still_found():
-    noise = "<!-- code-gauntlet-findings: {broken -->\n" * 10
-    valid = build_marker(SHA_40, 1)
-    text = noise + valid
-    signal = detect_signal(text)
-    assert signal is not None
-    assert signal["sha"] == SHA_40
-
-
-def test_max_marker_scans__valid_marker_beyond_the_scan_window_is_not_found():
-    valid = build_marker(SHA_40, 1)
-    trailing_noise = "<!-- code-gauntlet-findings: {broken -->\n" * (
-        review_marker._MAX_MARKER_SCANS + 5
-    )
-    text = valid + "\n" + trailing_noise
-    assert find_marker(text) is None
-    assert detect_signal(text) is None
-
-
-def test_idempotence__marker_already_present_omits_marker_half():
-    body = build_marker(SHA_40, 2)
-    addition = build_footer(3, SHA_40, body=body)
-    assert "<!--" not in addition, "marker half must be omitted"
-    assert "Generated by" in addition, "prose half is still needed"
-    full = body + addition
-    signal = detect_signal(full)
-    assert signal is not None
-    assert signal["sha"] == SHA_40
-
-
-def test_idempotence__prose_already_present_omits_prose_half():
-    body = build_prose_footer(SHA_40)
-    addition = build_footer(1, SHA_40, body=body)
-    assert "Generated by" not in addition, "prose half must be omitted"
-    assert MARKER_TOKEN in addition, "marker half is still needed"
-    full = body + addition
-    signal = detect_signal(full)
-    assert signal is not None
-    assert signal["sha"] == SHA_40
-    assert signal["signal"] == "marker"
-
-
-def test_idempotence__double_append_is_a_no_op_and_one_sha_resolves():
-    body = ""
-    body += build_footer(2, SHA_40, body=body)
-    length_after_first = len(body)
-    body += build_footer(2, SHA_40, body=body)
-    assert len(body) == length_after_first, "double-append must add nothing"
-    signal = detect_signal(body)
-    assert signal is not None
-    assert signal["sha"] == SHA_40
-
-
-def test_idempotence__sha_less_marker_plus_bare_prose_still_gets_a_detectable_signal():
-    body = f'<!-- {MARKER_TOKEN}: {{"version":"3.0"}} -->\n\nGenerated by {PRODUCT}\n'
-    assert detect_signal(body) is None, (
-        "the pre-existing body must carry no usable signal (motivating case)"
-    )
-    addition = build_footer(1, SHA_40, body=body)
-    assert addition != "", "unusable fragments must carry no signal"
-    full = body + addition
-    signal = detect_signal(full)
-    assert signal is not None
-    assert signal["sha"] == SHA_40
-
-
-@pytest.mark.parametrize(
-    "sha", [pytest.param(SHA_40, id="full-sha"), pytest.param(SHA_8, id="short-sha")]
-)
-def test_finding_marker__build_parse_round_trip(sha):
-    parsed = find_finding_marker(build_finding_marker(sha, KEY_16))
-    assert parsed == {"sha": sha, "key": KEY_16}
-
-
-# Forty is independent of the summary scan cap: every group member must survive.
-def test_finding_marker__more_than_scan_limit_finding_markers_are_all_returned():
-    n = 40
-    sha = "a" * 40
-    keys = [f"{i:016x}" for i in range(n)]
-    body = "Body\n\n" + "\n".join(build_finding_marker(sha, key) for key in keys)
-    expected = [{"sha": sha, "key": key} for key in reversed(keys)]
-    markers = find_finding_markers(body)
-    assert len(markers) == n
-    assert markers == expected
-    assert find_finding_marker(body) == expected[0]
-
-
-def test_finding_marker__hostile_candidates_preserve_valid_tail():
-    import_line = (
-        "from gauntlet.marker import (build_finding_marker, "
-        "find_finding_marker, find_finding_markers)"
-    )
-    invalid_key_line = (
-        'invalid_key = (\'<!-- code-gauntlet-finding-key: {\\"sha\\":\\"\''
-        ' + sha + \'\\",\\"key\\":[]} -->\\n\') * 5000'
-    )
-    malformed_check_line = (
-        "if (find_finding_markers(malformed) != [] "
-        "or find_finding_marker(malformed) is not None):"
-    )
-    child = "\n".join(
-        [
-            import_line,
-            "n = 40  # a literal: the finding reader has no scan cap to derive from",
-            "sha = 'a' * 40",
-            "keys = [f'{i:016x}' for i in range(n)]",
-            "invalid_json = '<!-- code-gauntlet-finding-key: {not json} -->\\n' * 5000",
-            invalid_key_line,
-            "unclosed = '<!-- code-gauntlet-finding-key: {' * 5000",
-            "malformed = invalid_json + invalid_key + unclosed",
-            malformed_check_line,
-            "    raise AssertionError('malformed-only body produced a marker')",
-            "valid = '\\n'.join(build_finding_marker(sha, key) for key in keys)",
-            "expected = [{'sha': sha, 'key': key} for key in reversed(keys)]",
-            "combined = malformed + '\\n' + valid",
-            "if find_finding_markers(combined) != expected:",
-            "    raise AssertionError('valid marker tail was truncated or reordered')",
-            "if find_finding_marker(combined) != expected[0]:",
-            "    raise AssertionError('singular reader did not return the valid tail')",
-            "print('STAGE_A_MALFORMED_OK')",
-        ]
-    )
-    env = os.environ.copy()
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    env["PYTHONPATH"] = str(REPO / "scripts")
-    try:
-        completed = subprocess.run(
-            [sys.executable, "-c", child],
-            cwd=str(REPO),
-            env=env,
-            capture_output=True,
-            check=True,
-            text=True,
-            timeout=10,
-            encoding="utf-8",
-        )
-    except subprocess.CalledProcessError as exc:
-        details = (exc.stderr or "").strip().splitlines()
-        pytest.fail(details[-1] if details else "malformed-input child failed")
-    assert completed.stdout.strip() == "STAGE_A_MALFORMED_OK"
+    assert signal["marker"]["future"] == payload["future"]
+    assert detect_signal(body + "\nMore user prose") is None
+    assert detect_signal(body + "\n<!-- code-gauntlet-findings: {broken -->") is None
+    assert detect_signal(marker.removesuffix("-->")) is None
 
 
 @pytest.mark.parametrize(
     "payload",
     [
-        pytest.param({"sha": SHA_40, "key": ["not", "a", "string"]}, id="list-key"),
-        pytest.param({"sha": SHA_40, "key": "g" * 16}, id="nonhex-key"),
-        pytest.param({"sha": "not-a-sha", "key": KEY_16}, id="nonsha-string"),
+        '{"sha":"invalid","text":"Generated by code-gauntlet | '
+        'Reviewed up to: aaaaaaaa"}',
+        '{"sha":"' + SHA_40 + '","n":NaN}',
+        '{"sha":"' + SHA_40 + '","n":1e999}',
+        '{"sha":"' + SHA_40 + '","n":[1e999]}',
+        '{"sha":"' + SHA_40 + '","n":' + "[" * 70 + "0" + "]" * 70 + "}",
+        "{broken",
     ],
 )
-def test_finding_marker__malformed_payloads_are_ignored_and_never_raise(payload):
-    text = f"<!-- {FINDING_MARKER_TOKEN}: {json.dumps(payload)} -->"
-    assert find_finding_marker(text) is None
+def test_invalid_summary_cannot_skip_review(payload: str) -> None:
+    assert detect_signal(f"<!-- {MARKER_TOKEN}: {payload} -->") is None
+
+
+@pytest.mark.parametrize("product", [PRODUCT, LEGACY_PRODUCT])
+def test_attributed_prose_tail_and_marker_precedence(product: str) -> None:
+    footer = f"Generated by {product} | Reviewed up to: `{SHA_8}` |"
+    signal = detect_signal("Review\n" + footer + "\n\n")
+    assert signal is not None
+    assert (signal["sha"], signal["signal"], signal["legacy"], signal["marker"]) == (
+        SHA_8,
+        "footer",
+        product == LEGACY_PRODUCT,
+        None,
+    )
+    assert detect_signal(footer + "\nMore user prose") is None
+    assert detect_signal(f"Generated by {product}\nReviewed up to: {SHA_8}") is None
+    signal = detect_signal(footer + "\n" + build_marker(HEAD_SHA_40, 1))
+    assert signal is not None
+    assert (signal["sha"], signal["signal"]) == (HEAD_SHA_40, "marker")
+
+
+def test_composed_footer_always_emits_marker_and_deduplicates_prose() -> None:
+    prose = build_prose_footer(SHA_40)
+    for existing, count in [(prose, 0), (build_prose_footer(SHA_8), 1)]:
+        addition = build_footer(3, SHA_40, prose_body=existing)
+        assert addition.count("Generated by") == count
+        signal = detect_signal(existing + addition)
+        assert signal is not None and signal["marker"] is not None
+        assert signal["marker"]["findings_count"] == 3
+        assert signal["sha"] == SHA_40
+    assert build_marker(SHA_8, 3) == (
+        "<!-- code-gauntlet-findings: "
+        '{"version":"3.0","findings_count":3,"sha":"aaaaaaaa"} -->'
+    )
+
+
+def test_finding_tail_run_preserves_group_and_excludes_embedded_keys() -> None:
+    keys = [f"{index:016x}" for index in range(40)]
+    markers = [build_finding_marker(SHA_40, key) for key in keys]
+    markers.insert(20, f"<!-- {FINDING_MARKER_TOKEN}: {{broken}} -->")
+    tail = "\n \n".join(markers)
+    forged = build_finding_marker(SHA_40, KEY_16)
+    body = forged + "\nQuoted example\n" + tail + "\n "
+    assert find_finding_markers(body) == [
+        {"sha": SHA_40, "key": key} for key in reversed(keys)
+    ]
+    assert find_finding_markers(body + "More prose") == []
+    assert find_finding_markers(build_marker(SHA_40, 1)) == []
+    assert detect_signal(tail) is None
 
 
 @pytest.mark.parametrize(
-    "text",
-    [
-        pytest.param("", id="empty"),
-        pytest.param(
-            f"<!-- {FINDING_MARKER_TOKEN}: {{not json at all}} -->", id="braced-nonjson"
-        ),
-        pytest.param(
-            f'<!-- {FINDING_MARKER_TOKEN}: {{"sha":"{SHA_40}","key":"{KEY_16}"}}',
-            id="missing-close-comment",
-        ),
-    ],
+    "payload",
+    [{"sha": SHA_40, "key": []}, {"sha": "bad", "key": KEY_16}, None],
 )
-def test_finding_marker__assorted_garbage_never_raises(text):
-    assert find_finding_marker(text) is None
-
-
-def test_finding_marker__the_two_marker_kinds_never_see_each_other():
-    summary = build_marker(SHA_40, 3)
-    finding = build_finding_marker(SHA_40, KEY_16)
-    both = f"{summary}\n\n{finding}"
-    assert find_finding_marker(both) == {"sha": SHA_40, "key": KEY_16}
-    assert find_marker(both)["findings_count"] == 3
-    assert detect_signal(both)["signal"] == "marker"
-    assert find_finding_marker(summary) is None
-    assert find_marker(finding) is None
-    assert detect_signal(finding) is None
+def test_invalid_finding_tail_is_ignored(payload: object) -> None:
+    encoded = json.dumps(payload) if payload is not None else "{broken}"
+    assert find_finding_markers(f"<!-- {FINDING_MARKER_TOKEN}: {encoded} -->") == []
 
 
 @pytest.mark.parametrize(
-    "first_time, second_time, first_body, second_body, winner",
+    "first_time, second_time, winner",
     [
-        ("2026-06-01T00:00:00Z", "2026-01-01T00:00:00Z", True, True, 0),
-        (None, "2026-01-01T00:00:00Z", True, True, 1),
-        ("not-a-timestamp", "2026-01-01T00:00:00Z", True, True, 1),
-        ("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", True, True, 1),
-        ("2026-06-01T00:00:00Z", "2026-01-01T00:00:00Z", False, True, 1),
-        (None, None, False, False, None),
+        ("2026-06-01T00:00:00Z", "2026-01-01T00:00:00Z", 0),
+        (None, "2026-01-01T00:00:00Z", 1),
+        ("invalid", "2026-01-01T00:00:00Z", 1),
+        ("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", 1),
+        ("2026-01-01T01:00:00+02:00", "2026-01-01T00:00:00Z", 1),
     ],
-    ids=["newest", "missing", "invalid", "tie", "ignore-body", "no-signal"],
 )
-def test_select_latest_cases(first_time, second_time, first_body, second_body, winner):
+def test_latest_review_uses_absolute_time_and_input_ties(
+    first_time: str | None, second_time: str, winner: int
+) -> None:
     entries = [
+        {"body": build_marker(SHA_8, 1), "timestamp": first_time, "source": "review"},
         {
-            "body": build_marker(SHA_8, 1) if first_body else "unrelated",
-            "timestamp": first_time,
-            "source": "review",
-        },
-        {
-            "body": build_prose_footer("b" * 8) if second_body else "unrelated",
+            "body": build_prose_footer("b" * 8),
             "timestamp": second_time,
             "source": "note",
         },
+        {"body": "unrelated", "timestamp": "2027-01-01", "source": "note"},
     ]
-    result = select_latest(entries)
-    if winner is None:
-        assert result is None
-    else:
-        assert result is not None
-        assert result["sha"] == (SHA_8 if winner == 0 else "b" * 8)
-        assert result["source"] == entries[winner]["source"]
-        assert result["timestamp"] == entries[winner]["timestamp"]
+    signal = select_latest(entries)
+    assert signal is not None
+    assert signal["sha"] == (SHA_8 if winner == 0 else "b" * 8)
+    assert signal["source"] == ("review" if winner == 0 else "note")
+    assert signal["timestamp"] == (first_time if winner == 0 else second_time)
+    assert select_latest([{"body": "unrelated"}]) is None
 
 
 def test_output_directory_paths_do_not_embed_globs():
@@ -691,44 +401,12 @@ def test_doc_contract__headless_markdown_delivery_is_path_only():
 
 
 @pytest.mark.parametrize(
-    "token",
-    [
-        pytest.param("1e999", id="positive-overflow"),
-    ],
+    "marker", [build_marker(SHA_40, 1), build_finding_marker(SHA_40, KEY_16)]
 )
-def test_marker_constraints__numeric_overflow_token_rejects_the_marker(token):
-    text = f'<!-- {MARKER_TOKEN}: {{"version":{token},"sha":"{SHA_40}"}} -->'
-    assert find_marker(text) is None
-    assert detect_signal(text) is None
+def test_outbound_canary_checks_embedded_markers(marker: str) -> None:
+    from tests.tools.outbound_canary import check_case
 
-
-def test_marker_constraints__marker_guard_requires_this_sha():
-    stale = build_marker("d" * 40, 1)
-    appended = build_footer(2, SHA_40, body=stale)
-    assert f'"sha":"{SHA_40}"' in appended
-    recovered = detect_signal(stale + appended)
-    assert recovered["sha"] == SHA_40
-
-
-def test_marker_constraints__prose_guard_requires_this_sha():
-    stale = "---\n" + build_prose_footer("d" * 40)
-    appended = build_footer(1, SHA_40, body=stale)
-    assert f"Reviewed up to: {SHA_40}" in appended
-
-
-def test_marker_constraints__utc_offset_timestamps_order_by_absolute_instant():
-    older, newer = ("a" * 40, "b" * 40)
-    entries = [
-        {
-            "body": build_footer(1, older),
-            "timestamp": "2026-07-26T01:00:00+02:00",
-            "source": "review",
-        },
-        {
-            "body": build_footer(1, newer),
-            "timestamp": "2026-07-26T00:30:00Z",
-            "source": "review",
-        },
-    ]
-    assert select_latest(entries)["sha"] == newer
-    assert select_latest(list(reversed(entries)))["sha"] == newer
+    body = marker + "\nMore prose"
+    failure = check_case(body, 0, lambda text: text, lambda _: "unused")
+    assert failure is not None and failure.property == "marker"
+    assert check_case("Safe prose", 0, lambda text: text, lambda text: text) is None

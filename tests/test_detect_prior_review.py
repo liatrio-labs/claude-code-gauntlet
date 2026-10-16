@@ -6,14 +6,14 @@ import json
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Literal, NoReturn, TypedDict, cast
+from typing import Literal, TypedDict, cast
 from unittest.mock import patch
 
 import gauntlet.marker as review_marker
 import gauntlet.prior_review as detect_prior_review
 import pytest
 from gauntlet import proc
-from gauntlet.forge import JsonFetch, Platform, ReviewTarget
+from gauntlet.forge import JsonFetch, Platform, Poster, ReviewTarget
 from gauntlet.prior_review import PriorDelivery
 
 from tests.support.forge import FakeForge, FakeForgeFactory, FakeGitLab, ForgeCall
@@ -103,7 +103,13 @@ def test_network_scan(
 ) -> None:
     timestamp_key = "submitted_at" if platform == "github" else "created_at"
     payload = [
-        {"id": index, "body": body, timestamp_key: f"2026-0{index + 1}-01T00:00:00Z"}
+        {
+            "id": index,
+            "body": body,
+            timestamp_key: f"2026-0{index + 1}-01T00:00:00Z",
+            "user": {"login": "poster"},
+            "author": {"username": "poster"},
+        }
         for index, body in enumerate(bodies)
     ]
     fake = forge_factory.configure(
@@ -124,7 +130,10 @@ def test_network_scan(
     assert result["errors"] == ([error] if error else [])
     assert result["incremental_safe"] is (expected_sha is not None)
     assert forge_factory.calls == [platform]
-    assert fake.calls == [ForgeCall("review_entries", ReviewTarget("o", "r", "5"))]
+    assert fake.calls == [
+        ForgeCall("review_entries", ReviewTarget("o", "r", "5")),
+        ForgeCall("poster"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -173,6 +182,7 @@ def test_prior_state(
     expected: PriorDelivery,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    notes = [{**note, "author": {"username": "poster"}} for note in notes]
     parsed: list[str] = []
     real = review_marker.find_finding_markers
 
@@ -188,7 +198,10 @@ def test_prior_state(
         )
         == expected
     )
-    assert fake.calls == [ForgeCall("review_entries", ReviewTarget("o", "r", 5))]
+    assert fake.calls == [
+        ForgeCall("review_entries", ReviewTarget("o", "r", 5)),
+        ForgeCall("poster"),
+    ]
     assert parsed == (
         []
         if error
@@ -261,34 +274,13 @@ def test_detector_origin_receipt(
         assert result["errors"] == []
         assert result["scanned"] == {"review": 0}
         assert fake.calls == [
-            ForgeCall("review_entries", ReviewTarget("o", "r\ufffd", "5"))
+            ForgeCall("review_entries", ReviewTarget("o", "r\ufffd", "5")),
+            ForgeCall("poster"),
         ]
     else:
         receipt_errors = cast("list[str]", result["errors"])
         assert receipt_errors[0].startswith("could not determine owner/repo:")
         assert fake.calls == []
-
-
-@pytest.mark.parametrize(
-    ("failure", "expected"),
-    [
-        (
-            proc.TimeoutExpired(["git"], 3),
-            ("", "timed out after 3s", -1),
-        ),
-        (OSError("denied"), ("", "denied", -1)),
-    ],
-)
-def test_run_maps_process_failures_to_exact_sentinels(
-    monkeypatch: pytest.MonkeyPatch,
-    failure: Exception,
-    expected: tuple[str, str, int],
-) -> None:
-    def fail(*_args: object, **_kwargs: object) -> NoReturn:
-        raise failure
-
-    monkeypatch.setattr(proc, "output", fail)
-    assert detect_prior_review.run(["git", "status"], timeout=3) == expected
 
 
 def _fake_git_run(
@@ -327,22 +319,6 @@ def _fake_git_run(
         raise AssertionError(f"Unexpected Git call: {cmd}")
 
     return run
-
-
-@pytest.mark.parametrize(
-    "collector, timestamp_key, source",
-    [
-        (detect_prior_review.collect_entries_github, "submitted_at", "review"),
-        (detect_prior_review.collect_entries_gitlab, "created_at", "note"),
-        (detect_prior_review.collect_entries_file, "timestamp", "bodies_file"),
-    ],
-)
-def test_collect_entries(collector, timestamp_key, source):
-    timestamp = "2026-01-01T00:00:00Z"
-    payload = [{"id": 1, "body": "review body", timestamp_key: timestamp}, {"id": 2}]
-    assert collector(payload) == [
-        {"id": 1, "body": "review body", "timestamp": timestamp, "source": source}
-    ]
 
 
 def _finding_note(keys: tuple[str, ...], sha: str = FULL_SHA) -> dict[str, str]:
@@ -459,7 +435,7 @@ def _base_argv(bodies_path: Path, platform: str = "github", **extra: str) -> lis
                 "last_reviewed_sha": FULL_SHA,
                 "sha_resolvable": True,
                 "sha_is_ancestor": True,
-                "head_sha": HEAD_SHA,
+                "head_sha": "e" * 40,
                 "head_advanced": True,
                 "new_commit_count": 3,
                 "incremental_safe": True,
@@ -505,6 +481,12 @@ def _base_argv(bodies_path: Path, platform: str = "github", **extra: str) -> lis
             id="found-but-not-ancestor",
         ),
         pytest.param(
+            "footer",
+            {},
+            {"previously_reviewed": True, "signal": "footer", "marker": None},
+            id="legacy-prose-footer",
+        ),
+        pytest.param(
             None,
             {},
             {
@@ -525,15 +507,23 @@ def test_cli_bodies_file_receipt_outcomes(
     git_kwargs: _GitOptions,
     expected: dict[str, object],
 ) -> None:
+    footer = marker_sha == "footer"
+    if footer:
+        marker_sha = FULL_SHA
     body = (
-        review_marker.build_marker(marker_sha, 4)
+        review_marker.build_prose_footer(marker_sha)
+        if footer
+        else review_marker.build_marker(marker_sha, 4)
         if marker_sha
         else "just a plain unrelated comment"
     )
     entries = [{"body": body, "source": "review"}]
     path = _bodies_file(tmp_path, entries)
     with patch.object(proc, "run", side_effect=_fake_git_run(**git_kwargs)):
-        out, code = _run_main(_base_argv(path))
+        extra = (
+            {"head_sha": str(expected["head_sha"])} if "head_sha" in expected else {}
+        )
+        out, code = _run_main(_base_argv(path, **extra))
 
     assert code == 0
     result: dict[str, object] = json.loads(out.strip())
@@ -541,7 +531,7 @@ def test_cli_bodies_file_receipt_outcomes(
     assert {key: result[key] for key in expected} == expected
     assert result["last_reviewed_sha_short"] == (marker_sha[:8] if marker_sha else None)
     assert result["legacy"] is False
-    if marker_sha:
+    if marker_sha and not footer:
         assert result["marker"] == {
             "version": "3.0",
             "findings_count": 4,
@@ -551,95 +541,39 @@ def test_cli_bodies_file_receipt_outcomes(
         }
 
 
-def test_cli_bodies_file_head_sha_override_is_used(tmp_path: Path) -> None:
-    override_head = "d" * 40
-    path = _bodies_file(
-        tmp_path,
-        [{"body": review_marker.build_marker(FULL_SHA, 1), "source": "review"}],
-    )
-    with patch.object(proc, "run", side_effect=_fake_git_run(resolvable=True)):
-        out, code = _run_main(_base_argv(path, head_sha=override_head))
-    assert code == 0
-    result: dict[str, object] = json.loads(out.strip())
-    assert result["head_sha"] == override_head
-
-
-MARKER_BASE = {
-    "version": "3.0",
-    "findings_count": 2,
-    "sha": FULL_SHA,
-    "_token": "code-gauntlet-findings",
-    "_legacy": False,
-}
-
-
-@pytest.mark.parametrize(
-    "marker, expected, forbidden",
-    [
-        pytest.param(MARKER_BASE, MARKER_BASE, (), id="normal"),
-        pytest.param(
-            {
-                "version": "3.0",
-                "sha": FULL_SHA,
-                "attacker_field": "SECRET_PAYLOAD_VALUE_SHOULD_NOT_APPEAR",
-            },
-            {"version": "3.0", "sha": FULL_SHA, "unknown_keys": ["attacker_field"]},
-            ("SECRET_PAYLOAD_VALUE_SHOULD_NOT_APPEAR",),
-            id="unknown-values-refused",
-        ),
-        pytest.param(
-            {**MARKER_BASE, "version": "INJECT " * 9000},
-            {**MARKER_BASE, "version": ("INJECT " * 74)[:512] + "...[truncated]"},
-            (),
-            id="clipped-string",
-        ),
-        pytest.param(
-            {
-                **MARKER_BASE,
-                "version": "\x00" * 512,
-                "findings_count": "\x00" * 512,
-                **{f"u{index:02d}" + "x" * 61: True for index in range(32)},
-            },
-            {
-                **MARKER_BASE,
-                "version": "\x00" * 64 + "...[truncated]",
-                "findings_count": None,
-                "truncated": True,
-            },
-            (),
-            id="whole-payload",
-        ),
-        pytest.param(None, None, (), id="footer-without-marker"),
-        pytest.param(
-            {"version": "3.0", "sha": FULL_SHA, "X" * 3000: 1, "Y" * 3000: 2},
-            {
-                "version": "3.0",
-                "sha": FULL_SHA,
-                "unknown_keys": ["X" * 64 + "...", "Y" * 64 + "..."],
-            },
-            (),
-            id="long-names",
-        ),
-        pytest.param(
-            {"version": "3.0", "findings_count": int("9" * 4200), "sha": FULL_SHA},
-            {
-                "version": "3.0",
-                "findings_count": "[number truncated, 4200 digits]",
-                "sha": FULL_SHA,
-            },
-            (),
-            id="big-number",
-        ),
-    ],
-)
-def test_sanitize_marker(
-    marker: object, expected: dict[str, object] | None, forbidden: tuple[str, ...]
+@pytest.mark.parametrize("overflow", [False, True])
+def test_cli_bounds_hostile_marker_echo(
+    overflow: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    actual = detect_prior_review.sanitize_marker(marker)
-    assert actual == expected
+    marker = {
+        "sha": FULL_SHA,
+        "version": "\x00" * 512 if overflow else "INJECT " * 9000,
+        "findings_count": "\x00" * 512 if overflow else int("9" * 4200),
+        "X" * 3000: "SECRET_PAYLOAD_VALUE_SHOULD_NOT_APPEAR",
+        **{f"u{index:02d}" + "x" * 61: True for index in range(32)},
+    }
+    body = f"<!-- code-gauntlet-findings: {json.dumps(marker)} -->"
+    path = _bodies_file(tmp_path, [{"body": body}])
+    monkeypatch.setattr(proc, "run", _fake_git_run())
+    out, code = _run_main(_base_argv(path))
+    result: dict[str, object] = json.loads(out)
+    actual = result["marker"]
+    assert code == 0 and isinstance(actual, dict)
+    assert actual["sha"] == FULL_SHA
+    assert actual["_token"] == "code-gauntlet-findings"
+    assert actual["_legacy"] is False
+    if overflow:
+        assert actual["version"] == "\x00" * 64 + "...[truncated]"
+        assert actual["findings_count"] is None
+        assert actual["truncated"] is True
+    else:
+        assert actual["version"] == ("INJECT " * 74)[:512] + "...[truncated]"
+        assert actual["findings_count"] == "[number truncated, 4200 digits]"
+        assert actual["unknown_keys"][0] == "X" * 64 + "..."
+        assert len(actual["unknown_keys"]) == 32
     encoded = json.dumps(actual)
     assert len(encoded) <= 4096
-    assert all(value not in encoded for value in forbidden)
+    assert "SECRET_PAYLOAD_VALUE_SHOULD_NOT_APPEAR" not in encoded
 
 
 @pytest.mark.parametrize(
@@ -708,6 +642,7 @@ RECEIPT_KEYS = {
     "marker",
     "scanned",
     "errors",
+    "ignored_foreign",
 }
 
 
@@ -730,9 +665,105 @@ def test_cli_legacy_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     }
 
 
-def test_build_result_default() -> None:
-    result = detect_prior_review.build_result(None, None)
-    assert set(result) == RECEIPT_KEYS
-    assert result["head_sha"] is None
-    assert result["previously_reviewed"] is False
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+@pytest.mark.parametrize(
+    "case", ["own", "foreign", "missing", "null", "system", "case", "identity-failure"]
+)
+def test_network_identity_boundary(
+    platform: Platform, case: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    author: object = {"login": "poster", "username": "poster", "type": "Bot"}
+    if case == "foreign":
+        author = {"login": "other[bot]", "username": "other", "type": "Bot"}
+    elif case == "null":
+        author = None
+    elif case == "case":
+        author = {"login": "POSTER", "username": "POSTER"}
+    entry: dict[str, object] = {
+        "body": review_marker.build_marker(FULL_SHA, 1),
+        "system": case == "system",
+    }
+    if case != "missing":
+        entry["user" if platform == "github" else "author"] = author
+    failure = "identity denied; set CODE_GAUNTLET_POSTER"
+    fake = FakeForge(
+        platform,
+        entries=[JsonFetch([entry], None)],
+        posters=[
+            Poster(None, failure)
+            if case == "identity-failure"
+            else Poster("poster", None)
+        ],
+    )
+    monkeypatch.setattr(detect_prior_review, "make_forge", lambda _: fake)
+    monkeypatch.setattr(proc, "run", _fake_git_run())
+    out, code = _run_main(
+        ["--platform", platform, "--owner", "o", "--repo", "r", "--number", "5"]
+    )
+    result: dict[str, object] = json.loads(out)
+    accepted = case == "own" or (platform == "github" and case in {"case", "system"})
+    assert code == 0
+    assert result["previously_reviewed"] is accepted
+    assert result["incremental_safe"] is accepted
+    assert result["ignored_foreign"] == (0 if accepted else 1)
+    assert result["scanned"] == {
+        "review" if platform == "github" else "note": 1 if accepted else 0
+    }
+    assert result["errors"] == ([failure] if case == "identity-failure" else [])
+
+
+def test_gitlab_dedup_shares_identity_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    own_key, foreign_key = FINDING_KEY, OTHER_FINDING_KEY
+    notes = [
+        {
+            "body": review_marker.build_marker(FULL_SHA, 1),
+            "author": {"username": "foreign"},
+        },
+        {**_finding_note((foreign_key,)), "author": {"username": "foreign"}},
+        {**_finding_note((own_key,)), "author": {"username": "poster"}},
+    ]
+    state = detect_prior_review.gitlab_prior_delivery_state(
+        "o", "r", 5, FULL_SHA, forge=FakeGitLab(entries=[JsonFetch(notes, None)])
+    )
+    assert state == PriorDelivery(False, frozenset({own_key}), frozenset(), None)
+    failure = "identity denied; set CODE_GAUNTLET_POSTER"
+    state = detect_prior_review.gitlab_prior_delivery_state(
+        "o",
+        "r",
+        5,
+        FULL_SHA,
+        forge=FakeGitLab(
+            entries=[JsonFetch(notes, None)], posters=[Poster(None, failure)]
+        ),
+    )
+    assert state == PriorDelivery(False, frozenset(), frozenset(), failure)
+
+
+@pytest.mark.parametrize("timeout", [False, True])
+def test_offline_detector_without_git_degrades_with_receipt(
+    timeout: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _bodies_file(
+        tmp_path, [None, {}, {"body": review_marker.build_footer(0, FULL_SHA)}]
+    )
+
+    def unavailable(
+        command: Sequence[str], **_kwargs: object
+    ) -> proc.CompletedProcess[str]:
+        if timeout:
+            raise proc.TimeoutExpired(command, 10)
+        raise FileNotFoundError("missing git")
+
+    monkeypatch.setattr(proc, "run", unavailable)
+    out, code = _run_main(_base_argv(path))
+    result: dict[str, object] = json.loads(out)
+    assert code == 0
+    assert result["previously_reviewed"] is True
+    assert result["head_sha"] == "unknown"
     assert result["incremental_safe"] is False
+    assert result["sha_resolvable"] is False
+    assert result["ignored_foreign"] == 0
+    assert result["scanned"] == {"bodies_file": 1}
+    errors = cast("list[str]", result["errors"])
+    assert "could not resolve the head commit" in errors[0]
+    assert ("timed out after 10s" if timeout else "missing git") in errors[1]

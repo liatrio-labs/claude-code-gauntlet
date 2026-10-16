@@ -859,3 +859,58 @@ def test_executable_argv_ownership():
 )
 def test_ownership_guard_distinguishes_executable_text(source, invalid):
     assert bool(_forge_ownership_violations(source, consumer=True)) == invalid
+
+
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+@pytest.mark.parametrize("pin", [None, "", "pinned[bot]"])
+def test_poster_pin_and_user_lookup(
+    platform: forge.Platform, pin: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if pin is None:
+        monkeypatch.delenv("CODE_GAUNTLET_POSTER", raising=False)
+    else:
+        monkeypatch.setenv("CODE_GAUNTLET_POSTER", pin)
+    calls: list[list[str]] = []
+
+    def output(command: list[str], **_kwargs: object) -> tuple[str, str, int]:
+        calls.append(command)
+        return '{"login":"github-user","username":"gitlab-user"}', "", 0
+
+    monkeypatch.setattr(proc, "output", output)
+    adapter = forge.make_forge(platform)
+    expected = pin or f"{platform}-user"
+    assert adapter.poster() == forge.Poster(expected, None)
+    assert calls == (
+        [] if pin else [["gh" if platform == "github" else "glab", "api", "user"]]
+    )
+
+
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+@pytest.mark.parametrize("outcome", ["denied", "invalid", "missing", "timeout"])
+def test_poster_failure_names_pin_and_trusts_nothing(
+    platform: forge.Platform, outcome: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CODE_GAUNTLET_POSTER", raising=False)
+
+    def output(command: list[str], **_kwargs: object) -> tuple[str, str, int]:
+        if outcome == "timeout":
+            raise proc.TimeoutExpired(command, 30)
+        if outcome == "denied":
+            return "", "403 denied", 1
+        return (
+            (
+                '{"login":"poster","username":"poster"} broken'
+                if outcome == "invalid"
+                else "{}"
+            ),
+            "",
+            0,
+        )
+
+    monkeypatch.setattr(proc, "output", output)
+    poster = forge.make_forge(platform).poster()
+    assert poster.login is None and poster.error is not None
+    assert "CODE_GAUNTLET_POSTER" in poster.error
+    assert f"{platform} /user" in poster.error
+    if outcome == "denied":
+        assert "403 denied" in poster.error

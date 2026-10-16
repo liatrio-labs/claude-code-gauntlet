@@ -10,12 +10,15 @@ from gauntlet.forge import (
     GitLab,
     JsonFetch,
     Platform,
+    Poster,
     PostRequest,
     PostResult,
     ReviewTarget,
 )
 
-Method = Literal["ensure_available", "diff", "review_entries", "diff_refs", "submit"]
+Method = Literal[
+    "ensure_available", "diff", "review_entries", "diff_refs", "submit", "poster"
+]
 Reply = TypeVar("Reply")
 Submissions = (
     Iterable[PostResult | Exception] | Mapping[str, Iterable[PostResult | Exception]]
@@ -43,12 +46,14 @@ class FakeForge:
         self,
         platform: Platform = "github",
         *,
+        posters: Iterable[Poster | Exception] | None = None,
         availability: Iterable[Exception | None] | None = None,
         diffs: Iterable[tuple[str, str, int] | Exception] = (),
         entries: Iterable[JsonFetch | Exception] | None = None,
         submissions: Submissions | None = None,
     ) -> None:
         self.platform = platform
+        self._posters = list(posters) if posters is not None else None
         self.calls: list[ForgeCall] = []
         self._availability = list(availability) if availability is not None else None
         self._diffs = list(diffs)
@@ -66,6 +71,14 @@ class FakeForge:
             self._submissions = list(submissions)
         else:
             self._submissions = None
+
+    def poster(self) -> Poster:
+        self.calls.append(ForgeCall("poster"))
+        return (
+            _reply(self._posters, "poster")
+            if self._posters is not None
+            else Poster("poster", None)
+        )
 
     def ensure_available(self) -> None:
         self.calls.append(ForgeCall("ensure_available"))
@@ -108,6 +121,7 @@ class FakeGitLab(FakeForge, GitLab):
         self,
         *,
         refs: Iterable[JsonFetch | Exception] = (),
+        posters: Iterable[Poster | Exception] | None = None,
         availability: Iterable[Exception | None] | None = None,
         diffs: Iterable[tuple[str, str, int] | Exception] = (),
         entries: Iterable[JsonFetch | Exception] | None = None,
@@ -115,6 +129,7 @@ class FakeGitLab(FakeForge, GitLab):
     ) -> None:
         super().__init__(
             "gitlab",
+            posters=posters,
             availability=availability,
             diffs=diffs,
             entries=entries,

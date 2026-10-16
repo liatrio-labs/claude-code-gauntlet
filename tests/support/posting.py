@@ -119,6 +119,7 @@ def prior(*keys, summary=True, legacy=(), sha=SHA):
     if summary:
         bodies.append(
             {
+                "author": {"username": "poster"},
                 "body": HEADER
                 + "Summary"
                 + FOOTER.replace("{count}", "0").replace(SHA, sha)
@@ -127,6 +128,7 @@ def prior(*keys, summary=True, legacy=(), sha=SHA):
     for key in keys:
         bodies.append(
             {
+                "author": {"username": "poster"},
                 "body": (
                     "Corroborating finding \u2014 member\n" if key in legacy else ""
                 )

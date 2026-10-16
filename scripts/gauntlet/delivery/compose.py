@@ -414,14 +414,13 @@ def compose_review_body(
     footer = build_footer(
         findings_count,
         sha,
-        body="",
         prose_body=_standalone_footer_lines(review_body),
     )
     body = _compose_fragments(review_body, section, footer)
     if utf8_len(body) <= limits.bytes:
         return ComposedBody(body, n, 0, 0, ())
 
-    footer = build_footer(findings_count, sha, body="")
+    footer = build_footer(findings_count, sha)
     fixed = utf8_len(BRAND_SUMMARY_HEADER) + utf8_len(footer)
     if review_body:
         fixed += utf8_len("\n\n")

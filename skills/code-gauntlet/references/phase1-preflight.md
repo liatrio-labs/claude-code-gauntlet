@@ -118,11 +118,33 @@ It always exits 0 and prints exactly one JSON object on stdout (detection degrad
   "incremental_safe": true,
   "marker": { "...": "allow-listed keys, bounded; unknown keys named under unknown_keys" },
   "scanned": { "review": 4 },
+  "ignored_foreign": 2,
   "errors": []
 }
 ```
 
-`marker` is not a verbatim echo of the parsed payload — `sanitize_marker` allow-lists which keys it returns (`version`, `findings_count`, `sha`, `_token`, `_legacy`), bounds every value, and reports any other key by NAME only under `unknown_keys` (values never echoed). The parsed marker is attacker-controllable — anyone with read access can post a comment carrying one — and the orchestrator is told to consume `marker` directly, so an unbounded verbatim echo would pipe arbitrary text into a model's context.
+`marker` is not a verbatim echo of the parsed payload. `sanitize_marker`
+allow-lists its keys (`version`, `findings_count`, `sha`, `_token`, `_legacy`),
+bounds every value, and reports other keys by NAME only under `unknown_keys`.
+Values of unknown keys are never echoed. The poster's body can contain untrusted
+text, so an unbounded echo could pipe arbitrary text into the orchestrator's
+context.
+
+Prior-review detection and GitLab delivery deduplication trust only entries written by
+this run's posting account. GitHub logins compare without case; GitLab usernames
+compare exactly. Missing authors and GitLab system notes are ignored. Summary
+markers must end the body; legacy attributed prose must be the last non-blank
+line, and finding markers must form the trailing block. `ignored_foreign` counts
+entries rejected by the author filter; `scanned` counts accepted bodies by source.
+
+Set `CODE_GAUNTLET_POSTER` to the account used to post reviews when `/user` cannot
+resolve it, including Actions' `GITHUB_TOKEN`, GitHub App tokens and GitLab
+fine-grained tokens without User:Read. Without a pin or a successful lookup,
+detection trusts no entries and reports the identity failure in `errors`; GitLab
+posting warns and continues without deduplication. Rotating a GitLab project
+access token creates a new bot user, making its earlier notes foreign: expect
+one full review and possible duplicate notes. Users with write access who edit
+the poster's own body are trusted. Offline `--bodies-file` entries remain trusted.
 
 When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`marker`/`last_reviewed_sha` `null` and `incremental_safe` `false`.
 

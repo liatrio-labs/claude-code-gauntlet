@@ -95,6 +95,22 @@ Every interactive gate in the pipeline maps to a deterministic headless outcome.
 
 ---
 
+Prior-review detection and GitLab delivery deduplication trust only entries written by
+this run's posting account. GitHub logins compare without case; GitLab usernames
+compare exactly. Missing authors and GitLab system notes are ignored. Summary
+markers must end the body; legacy attributed prose must be the last non-blank
+line, and finding markers must form the trailing block. `ignored_foreign` counts
+entries rejected by the author filter; `scanned` counts accepted bodies by source.
+
+Set `CODE_GAUNTLET_POSTER` to the account used to post reviews when `/user` cannot
+resolve it, including Actions' `GITHUB_TOKEN`, GitHub App tokens and GitLab
+fine-grained tokens without User:Read. Without a pin or a successful lookup,
+detection trusts no entries and reports the identity failure in `errors`; GitLab
+posting warns and continues without deduplication. Rotating a GitLab project
+access token creates a new bot user, making its earlier notes foreign: expect
+one full review and possible duplicate notes. Users with write access who edit
+the poster's own body are trusted. Offline `--bodies-file` entries remain trusted.
+
 ## `Headless config:` echo block
 
 Immediately after resolving all knobs in Phase 1, the resolver renders the block into the Phase 1 Bash result. It has one line per knob, `key=value (source)` where `source ∈ env|review_md|default`.

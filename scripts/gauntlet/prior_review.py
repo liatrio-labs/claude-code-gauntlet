@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Detect prior summary reviews; marker.version never selects a reader.
-Scan only poster-written reviews/flat notes to bound forged-signal exposure.
-Recoverable fetch/Git errors stay in one ASCII receipt with exit zero.
+Network entries must belong to the posting identity; offline files are trusted.
+Recoverable identity/fetch/Git errors stay in one ASCII receipt with exit zero.
 """
 
 import argparse
@@ -42,6 +42,7 @@ class PriorReviewWire(TypedDict):
     marker: Mapping[str, object] | None
     scanned: dict[str, int]
     errors: list[str]
+    ignored_foreign: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,19 +102,42 @@ def remote_slug() -> tuple[str | None, str | None]:
     return (slug.owner, slug.repo) if slug else (None, None)
 
 
-# Both surfaces stay user-writable: a forged signal can narrow a rerun to
-# incremental scope; headless CODE_GAUNTLET_REVIEWED_POLICY=skip hides it from humans.
 def fetch_entries(
     owner: str, repo: str, number: int | str, *, forge: Forge
-) -> tuple[list[ReviewEntryWire], list[str]]:
-    """Scan poster-written surfaces. GitHub issue comments are excluded because
-    nothing writes the signal there and any reader can post a forged signal.
-    """
+) -> tuple[list[ReviewEntryWire], list[str], int]:
+    """Trust only the posting account on the surfaces the tool writes."""
     fetched = forge.review_entries(ReviewTarget(owner, repo, number))
+    errors = [fetched.error] if fetched.error else []
+    poster = forge.poster()
+    if poster.error:
+        errors.append(poster.error)
+    payload = fetched.payload if isinstance(fetched.payload, list) else []
+    own: list[object] = []
+    ignored = 0
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        author = item.get("user" if forge.platform == "github" else "author")
+        login = (
+            author.get("login" if forge.platform == "github" else "username")
+            if isinstance(author, dict)
+            else None
+        )
+        trusted = False
+        if isinstance(login, str) and poster.login is not None:
+            trusted = (
+                login.casefold() == poster.login.casefold()
+                if forge.platform == "github"
+                else login == poster.login
+            )
+        if not trusted or (forge.platform == "gitlab" and item.get("system") is True):
+            ignored += 1
+            continue
+        own.append(item)
     collector = (
         collect_entries_github if forge.platform == "github" else collect_entries_gitlab
     )
-    return collector(fetched.payload), [fetched.error] if fetched.error else []
+    return collector(own), errors, ignored
 
 
 def gitlab_prior_delivery_state(
@@ -124,9 +148,9 @@ def gitlab_prior_delivery_state(
     A second fetch can see a different MR. Nested discussion objects have no
     top-level body. Fetch failure must remain distinct from an empty success.
     """
-    entries, errors = fetch_entries(owner, repo, number, forge=forge)
+    entries, errors, _ = fetch_entries(owner, repo, number, forge=forge)
     if errors:
-        return PriorDelivery(False, frozenset(), frozenset(), errors[0])
+        return PriorDelivery(False, frozenset(), frozenset(), "; ".join(errors))
     return prior_delivery_from_entries(entries, sha)
 
 
@@ -193,8 +217,7 @@ def prior_delivery_from_entries(
 ) -> PriorDelivery:
     """Extract state with exact SHA equality; a prefix could suppress another commit.
 
-    Any MR participant can forge finding keys on the notes surface. This accepted
-    exposure adds no capability beyond forging a summary that suppresses all findings.
+    Network callers filter authors before passing bodies here.
 
     Marker counts include duplicates; unique keys alone would misclassify a
     fully marked group as legacy and suppress an undelivered member.
@@ -339,8 +362,7 @@ def sanitize_marker(marker: object) -> dict[str, object] | None:
     out: dict[str, object] = {
         k: _bounded(marker[k]) for k in _MARKER_ECHO_KEYS if k in marker
     }
-    # Key NAMES are attacker-authored strings too — capping their count alone
-    # still let kilobytes of free text through the "names only" guarantee.
+    # Key names also carry public text, so bound their length as well as count.
     extra = sorted(
         (k if len(k) <= 64 else k[:64] + "...")
         for k in marker
@@ -368,6 +390,7 @@ def build_result(
     git_facts: GitFacts | None,
     scanned: Mapping[str, int] | None = None,
     errors: Iterable[str] | None = None,
+    ignored_foreign: int = 0,
 ) -> PriorReviewWire:
     """Assemble the receipt; rewritten history must never offer incremental review."""
     git_facts = git_facts if git_facts is not None else _NO_GIT_FACTS
@@ -375,7 +398,6 @@ def build_result(
     errors = list(errors or [])
     head_sha = git_facts.head_sha
 
-    # One default receipt keeps found and absent outcomes on the same wire shape.
     result: PriorReviewWire = {
         "previously_reviewed": False,
         "signal": None,
@@ -392,6 +414,7 @@ def build_result(
         "marker": None,
         "scanned": scanned,
         "errors": errors,
+        "ignored_foreign": ignored_foreign,
     }
     if not signal:
         return result
@@ -429,17 +452,17 @@ def build_result(
 
 def gather_entries(
     args: argparse.Namespace, *, forge: Forge
-) -> tuple[list[ReviewEntryWire], list[str], dict[str, int]]:
+) -> tuple[list[ReviewEntryWire], list[str], dict[str, int], int]:
     if args.bodies_file:
         entries, errors = load_bodies_file(args.bodies_file)
-        return entries, errors, count_by_source(entries)
+        return entries, errors, count_by_source(entries), 0
 
     # Anything recoverable past this point is reported as an `errors[]` entry on a
     # normal exit-0 result, never as an argparse exit-2 with empty stdout: the
     # caller parses our stdout to decide how to degrade, and a run that prints no
     # JSON gives it nothing to read.
     if not args.number:
-        return [], ["usage: --number is required unless --bodies-file is given"], {}
+        return [], ["usage: --number is required unless --bodies-file is given"], {}, 0
 
     owner, repo = args.owner, args.repo
     if not owner or not repo:
@@ -454,13 +477,14 @@ def gather_entries(
                 "its URL is not in a recognized form — pass --owner and --repo"
             ],
             {},
+            0,
         )
 
-    entries, errors = fetch_entries(owner, repo, args.number, forge=forge)
+    entries, errors, ignored = fetch_entries(owner, repo, args.number, forge=forge)
 
     scanned = {source: 0 for source in PLATFORM_SOURCES[args.platform]}
     scanned.update(count_by_source(entries))
-    return entries, errors, scanned
+    return entries, errors, scanned, ignored
 
 
 def _parser() -> Parser:
@@ -499,14 +523,14 @@ def _parser() -> Parser:
 
 def _handle(args: argparse.Namespace) -> tuple[PriorReviewWire, int]:
     forge = make_forge(args.platform)
-    entries, errors, scanned = gather_entries(args, forge=forge)
+    entries, errors, scanned, ignored = gather_entries(args, forge=forge)
 
     signal = select_latest(entries)
 
     git_facts = resolve_git_facts(
         signal.get("sha") if signal else None, args.head_sha, errors
     )
-    result = build_result(signal, git_facts, scanned, errors)
+    result = build_result(signal, git_facts, scanned, errors, ignored)
     return result, 0
 
 
