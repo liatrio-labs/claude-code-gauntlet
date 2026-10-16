@@ -57,7 +57,7 @@ if ! OUTPUT_DIR=$(python3 "{plugin_root}/scripts/ensure_output_dir.py"); then
   echo "output_dir: FAILED"
   exit 1
 fi
-echo "$OUTPUT_DIR"
+printf '%s\n' "$OUTPUT_DIR"
 
 echo "=== plugin_dirs ==="
 command ls "{plugin_root}/scripts" "{plugin_root}/agents" "{plugin_root}/workflows"
@@ -67,7 +67,7 @@ if ! CONFIG_JSON=$(python3 "{plugin_root}/scripts/resolve_config.py" --target {t
   echo "config: FAILED"
   exit 1
 fi
-echo "$CONFIG_JSON"
+printf '%s\n' "$CONFIG_JSON"
 
 echo "=== pr_view ==="
 gh pr view {pr_number} --json state,isDraft,title,url
@@ -83,7 +83,7 @@ gh pr diff {pr_number} --name-only
 | Marker | Script exit | Meaning |
 | --- | --- | --- |
 | `output_dir: FAILED` | **1** | Cannot establish ignore for an in-repo dir (`info/exclude` unwritable/unresolvable and not otherwise ignored), or `mkdir` failed. Empty stdout — do not stamp `args.outputDir`. Remedy (ignore case): set `$CODE_GAUNTLET_OUTPUT_DIR` outside the repo and re-run. |
-| `output_dir: FAILED` | **2** | Usage: not a git repo, empty/whitespace `$CODE_GAUNTLET_OUTPUT_DIR`, output dir equals repo root, or `git check-ignore` error (exit 128). Empty stdout — do not stamp. |
+| `output_dir: FAILED` | **2** | Usage: not a git repo, empty/whitespace `$CODE_GAUNTLET_OUTPUT_DIR`, output dir equals repo root, resolved path contains shell-active/control characters, or `git check-ignore` error (exit 128). Empty stdout — do not stamp. |
 
 On success, stdout is one absolute path line — store it as `{output_dir}` / `args.outputDir`. Ignore establishment (including `.git/info/exclude` append when needed) is owned by `ensure_output_dir.py` in this call; Phase 2 does not re-run it.
 
@@ -157,13 +157,13 @@ echo "head_sha_full=$HEAD_SHA_FULL"
 
 echo "=== owner_repo ==="
 OWNER_REPO=$(gh pr view {pr_number} --json url --jq '.url | split("/") | .[3] + "/" + .[4]')
-echo "$OWNER_REPO"
+printf '%s\n' "$OWNER_REPO"
 
 echo "=== prior_review ==="
 OWNER="${OWNER_REPO%%/*}"
 REPO="${OWNER_REPO##*/}"
 PRIOR_JSON=$(python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --owner "$OWNER" --repo "$REPO" --number {pr_number} --head-sha "$HEAD_SHA_FULL")
-echo "$PRIOR_JSON"
+printf '%s\n' "$PRIOR_JSON"
 
 echo "=== stale_truncate ==="
 printf '%s\n' "$PRIOR_JSON" | python3 "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha "$HEAD_SHA_SHORT"
@@ -533,7 +533,7 @@ The `Workflow` call hands back a **Task ID**, not the compact return: `Workflow 
   ```
   Bash(
     command: python3 "{plugin_root}/scripts/await_workflow.py" --attempt 1
-             --artifacts-dir "{output_dir}" --head-sha {head_sha_short} -- <task-id>,
+             --artifacts-dir "{output_dir}" --head-sha {head_sha_short} -- "<task-id>",
     timeout: 600000
   )
   ```
@@ -571,7 +571,7 @@ On the RETURN persist channel the workflow returns its primaries instead of dict
 ```
 Bash(command: python3 "{plugin_root}/scripts/materialize_artifacts.py"
               --output-dir "{output_dir}"
-              --task <persistReturn.resolvedPath, or the Phase 3 Task ID>
+              --task "<persistReturn.resolvedPath, or the Phase 3 Task ID>"
               --nonce {nonce})
 ```
 

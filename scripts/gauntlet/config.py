@@ -15,7 +15,7 @@ from gauntlet import proc
 from gauntlet.cli import CliError, Command, Parser
 from gauntlet.fs import read_text
 from gauntlet.jsjson import JS_MAX_SAFE_INTEGER
-from gauntlet.paths import PLUGIN_ROOT
+from gauntlet.paths import PLUGIN_ROOT, is_shell_safe_path
 from gauntlet.registry import JS_TRIM_CHARS, KNOB_REGISTRY
 
 
@@ -407,6 +407,11 @@ def _handle(args: argparse.Namespace) -> int:
     try:
         cwd = os.path.realpath(args.cwd or os.getcwd())
         plugin_root = os.path.realpath(args.plugin_root or PLUGIN_ROOT)
+        if not is_shell_safe_path(plugin_root):
+            raise ResolverSetupError(
+                "resolved plugin root contains shell-active or control characters; "
+                "install the plugin at a shell-safe path"
+            )
         if args.plugin_root is not None and plugin_root != PLUGIN_ROOT:
             raise ResolverSetupError("plugin root mismatch")
         repo_root = _git_repo_root(cwd)

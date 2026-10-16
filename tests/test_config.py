@@ -283,6 +283,29 @@ def test_plugin_root_must_match(config_cli, tmp_path):
     )
 
 
+@pytest.mark.parametrize("name, expected", [("plugin$cache", 2), ("o'brien plugin", 0)])
+def test_resolver_checks_resolved_plugin_root(
+    name, expected, config_cli, tmp_path, monkeypatch, symlink_or_skip
+):
+    root = tmp_path / name
+    bundle = root / "workflows/pipeline.js"
+    bundle.parent.mkdir(parents=True)
+    bundle.write_text("const PIPELINE_VERSION = 'test';\n", encoding="utf-8")
+    alias = tmp_path / "plugin"
+    alias.symlink_to(root, target_is_directory=True)
+    monkeypatch.setattr(resolver, "PLUGIN_ROOT", str(alias))
+    result = config_cli()
+    assert result.returncode == expected, result.stderr
+    if expected == 2:
+        assert result.stdout == b""
+        assert result.stderr == (
+            b"resolve_config: resolved plugin root contains shell-active or control "
+            b"characters; install the plugin at a shell-safe path\n"
+        )
+    else:
+        assert json.loads(result.stdout)["identity"]["plugin_root"] == str(root)
+
+
 def test_missing_bundle_version_is_setup_failure(tmp_path):
     bundle = tmp_path / "workflows" / "pipeline.js"
     bundle.parent.mkdir()

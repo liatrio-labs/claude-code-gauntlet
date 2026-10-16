@@ -32,7 +32,7 @@ The kill is real but narrower than it used to be written here. It is a `claude -
 
    ```
    python3 "{plugin_root}/scripts/await_workflow.py" --attempt 1
-           --artifacts-dir "{output_dir}" --head-sha {head_sha_short} -- <task-id>
+           --artifacts-dir "{output_dir}" --head-sha {head_sha_short} -- "<task-id>"
    ```
 
 4. **Branch on the exit code:** `0` → stdout is the terminal `{ ok, phaseReached, ... }` return, carry it into Phase 8. `3` → run stdout's `next_command` verbatim, unedited. `5` → the persisted artifacts are present but the return was never observed; declare a `workflow-timeout` gap and deliver from the marker's `artifactPaths`. `4` → exhausted; declare a `workflow-timeout` gap and deliver partial artifacts per the Phase 8 degradation rules. Never fabricate a result.

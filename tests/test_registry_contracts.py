@@ -149,14 +149,6 @@ def table_named(tables, keyword):
     return tables[hits[0]]
 
 
-def delivery_guide_json_object(text: str) -> dict:
-    blocks = _JSON_BLOCK.findall(text)
-    assert len(blocks) == 1
-    obj = json.loads(blocks[0])
-    assert isinstance(obj, dict)
-    return obj
-
-
 _ROW = re.compile(
     "^\\|\\s*`([^`]+)`\\s*\\|\\s*([^|]+)\\|\\s*([^|]+)\\|\\s*([^|]*)\\|\\s*$"
 )
@@ -380,15 +372,16 @@ def test_handwritten_field_tables():
         assert cells[2].lower() == expected
 
 
-@pytest.mark.parametrize("surface", ["delivery-json", "delivery-bash"])
+@pytest.mark.parametrize("surface", ["wrapper", "example"])
 def test_delivery_vocabulary(surface):
     assert js_values()["FIELD_RENAMES"]["body"] == "description"
     text = read("skills/code-gauntlet/references/delivery-guide.md")
-    if surface == "delivery-json":
-        obj = delivery_guide_json_object(text)
-        assert obj["findings"]
-        assert "body" in obj["findings"][0]
-        assert "description" not in obj["findings"][0]
+    blocks = _JSON_BLOCK.findall(text)
+    assert len(blocks) == 2
+    if surface == "wrapper":
+        obj = json.loads(blocks[0])
+        assert isinstance(obj, dict)
+        findings = obj["findings"]
     else:
         match = re.search(
             r"\*\*Example workflow:\*\*(.*?)(?=^\*\*Script behavior:\*\*)",
@@ -396,8 +389,13 @@ def test_delivery_vocabulary(surface):
             re.MULTILINE | re.DOTALL,
         )
         assert match is not None
-        assert re.search(r"(?<![a-zA-Z_])['\"]body['\"]\s*:", match.group(1))
-        assert not re.search(r"['\"]description['\"]\s*:", match.group(1))
+        example_blocks = _JSON_BLOCK.findall(match.group(1))
+        assert example_blocks == [blocks[1]]
+        findings = json.loads(example_blocks[0])
+    assert isinstance(findings, list) and findings
+    for finding in findings:
+        assert "body" in finding
+        assert "description" not in finding
 
 
 def test_identity_owner() -> None:

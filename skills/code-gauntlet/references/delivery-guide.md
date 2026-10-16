@@ -84,7 +84,7 @@ Rule source labels: documented_rule -> Cited rule, code_comment -> Cited comment
 **Usage:**
 
 ```bash
-python3 {plugin_root}/scripts/post_review.py <findings_json_path> [--report PATH]
+python3 "{plugin_root}/scripts/post_review.py" "<findings_json_path>" [--report "PATH"]
 ```
 
 For a legacy bare findings array, pass `--report PATH` together with `--owner`, `--repo`,
@@ -288,32 +288,30 @@ A wrong type on the fields below is refused before any forge access; other field
 
 **Example workflow:**
 
-```bash
-# 1. Build findings JSON using Python (handles all escaping; no heredoc/Write tool issues)
-# 2. Post review comments to PR
-Bash(
-  description="Posting {N} review comments to PR #{pr_number}",
-  command="""python3 -c "
-import json, sys
-findings = [
-    {
-        'file': 'app.js',
-        'line': 42,
-        'severity': 'critical',
-        'title': 'SQL injection in query builder',
-        'body': 'User input concatenated into SQL without parameterization.',
-        'suggested_fix_code': 'const query = db.prepare(\'SELECT * FROM users WHERE id = ?\').get(id);'
-    }
-]
-with open(sys.argv[1], 'w') as f:
-    json.dump(findings, f, ensure_ascii=False, indent=2)
-" "{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json"
+Use the Write tool to save the input JSON at
+`{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json`. Finding text stays
+in the JSON file rather than becoming Python or shell source:
 
-python3 {plugin_root}/scripts/post_review.py \
+```json
+[
+  {
+    "file": "app.js",
+    "line": 42,
+    "severity": "critical",
+    "title": "SQL injection in query builder",
+    "body": "User input concatenated into SQL without parameterization.",
+    "suggested_fix_code": "const query = db.prepare('SELECT * FROM users WHERE id = ?').get(id);"
+  }
+]
+```
+
+Then post the file:
+
+```bash
+python3 "{plugin_root}/scripts/post_review.py" \
   "{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json" \
   --report "{output_dir}/code-gauntlet-report-{head_sha_short}.md" \
   --owner "myorg" --repo "myapp" --pr-number 42 --platform github --sha "FULL_HEAD_SHA"
-""")
 ```
 
 **Script behavior:**
