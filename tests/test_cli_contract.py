@@ -862,6 +862,8 @@ def test_recording_covers_all_entry_files():
 def test_entry_runs_from_foreign_cwd(name, tmp_path):
     if reason := _windows_skip(name, "success"):
         pytest.skip(reason)
+    if os.name == "nt" and name in ("check_eligibility", "list_pr_files"):
+        pytest.skip("the fake forge CLIs on PATH are shebang scripts")
     directory, argv, stdin, fake_bin = scenario(
         name, "success", tmp_path, shell_fixture=True
     )

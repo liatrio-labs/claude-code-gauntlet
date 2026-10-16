@@ -140,13 +140,13 @@ def test_listing_failure_is_fatal(monkeypatch, tmp_path, invoke):
 
 
 def test_github_filename_framing_and_enterprise_origin(monkeypatch, tmp_path, invoke):
-    paths = ["nested/line\nbreak", "caf\u00e9\tfile", 'quote"file']
+    paths = ["nested/line\nbreak", "caf\u00e9\tfile", 'quote"file', "sep\u2028file"]
     view = json.loads(github_view()[0])
     view["url"] = "https://git.example.com:8443/upstream/project/pull/7"
     fake_files_forge(
         monkeypatch,
         (json.dumps(view), "", 0),
-        ("\n".join(json.dumps(path) for path in paths), "", 0),
+        ("\n".join(json.dumps(path, ensure_ascii=False) for path in paths), "", 0),
         hostname="git.example.com:8443",
     )
     result = _invoke(invoke, tmp_path, "github")

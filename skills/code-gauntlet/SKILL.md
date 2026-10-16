@@ -256,6 +256,7 @@ if ! python3 "{plugin_root}/scripts/list_pr_files.py" --platform gitlab --pr {pr
   echo "files: FAILED"
   exit 1
 fi
+command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
 ```
 
 **Branch/local targets:** for branch comparison use 2b's resolved SHAs: `git diff {base_sha}...{target_sha}` for `diff` and `git diff --name-only {base_sha}...{target_sha}` for `files`. For local changes use `git diff HEAD` and `git diff --name-only HEAD`. If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own `git diff` chain inside an executor subagent (which has shell) — not in this composite.

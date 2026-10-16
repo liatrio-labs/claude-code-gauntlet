@@ -665,6 +665,13 @@ def test_placeholder_scan_flags_program_text_and_spares_argv(
     assert _placeholder_program_lines(text) == expected
 
 
+POSIX_FAKES = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the fake python3 and forge CLIs are shebang scripts",
+)
+
+
+@POSIX_FAKES
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
 @pytest.mark.parametrize("exit_code", [0, 1])
 def test_eligibility_shipped_producer_passes_config_as_stdin(
@@ -735,6 +742,7 @@ def test_eligibility_shipped_producer_passes_config_as_stdin(
     )
 
 
+@POSIX_FAKES
 @pytest.mark.parametrize(
     "platform,outcome",
     [

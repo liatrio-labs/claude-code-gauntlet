@@ -38,6 +38,11 @@ def fetch_pr_view(platform: Platform, number: int) -> dict[str, object]:
         raise CliError(f"FAILED: {exc}") from exc
 
 
+def _records(stdout: str) -> list[str]:
+    # Both CLIs leave U+2028 raw inside a JSON string; splitlines() would cut there.
+    return [line for line in stdout.split("\n") if line.strip()]
+
+
 def list_pr_files(platform: Platform, view: Mapping[str, object]) -> FileListing:
     paths: list[str] = []
     try:
@@ -53,7 +58,7 @@ def list_pr_files(platform: Platform, view: Mapping[str, object]) -> FileListing
         if status:
             raise ValueError(stderr.strip() or f"forge exited {status}")
         if platform == "github":
-            for line in stdout.splitlines():
+            for line in _records(stdout):
                 path = json.loads(line)
                 if not isinstance(path, str) or not path:
                     raise ValueError("filename must be a non-empty string")
@@ -63,7 +68,7 @@ def list_pr_files(platform: Platform, view: Mapping[str, object]) -> FileListing
                     tuple(paths), "file listing reached the 3000-file cap"
                 )
         else:
-            for line in stdout.splitlines():
+            for line in _records(stdout):
                 entry = json.loads(line)
                 if not isinstance(entry, dict):
                     raise ValueError("diff entry must be an object")

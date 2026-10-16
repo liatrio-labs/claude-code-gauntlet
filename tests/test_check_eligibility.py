@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from gauntlet import eligibility
+from gauntlet import eligibility, proc
 
 from tests.support.pr_files import FIXTURES, fake_files_forge, github_view, gitlab_view
 
@@ -11,6 +11,15 @@ CASES = [
     ("interactive", "CLOSED", True, "review", "", "stop", "closed"),
     ("headless", "MERGED", False, "review", "src/code", "proceed", None),
     ("interactive", "OPEN", True, "review", "src/code", "ask_draft", None),
+    (
+        "headless",
+        "OPEN",
+        False,
+        "review",
+        "timeout",
+        "proceed",
+        "file listing failed: Command 'gh' timed out after 180 seconds",
+    ),
     ("headless", "OPEN", True, "review", "src/code", "proceed", None),
     ("headless", "OPEN", True, "skip", None, "stop", "draft_policy=skip"),
     (
@@ -60,7 +69,9 @@ def test_verdict_matrix(
     mode, state, draft, policy, paths, verdict, reason, monkeypatch, tmp_path, invoke
 ):
     listing = (
-        ("\n".join(json.dumps(path) for path in paths.splitlines()), "", 0)
+        proc.TimeoutExpired("gh", 180)
+        if paths == "timeout"
+        else ("\n".join(json.dumps(path) for path in paths.splitlines()), "", 0)
         if paths is not None
         else ("", "unavailable", 1)
     )
