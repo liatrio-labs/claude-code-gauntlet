@@ -10,7 +10,14 @@ from urllib.parse import urlsplit
 
 from gauntlet import proc
 from gauntlet.cli import CliError, Command, Parser
-from gauntlet.forge import GitHub, GitLab, Platform, ReviewTarget, parse_pr_url
+from gauntlet.forge import (
+    GitHub,
+    GitLab,
+    Platform,
+    ReviewTarget,
+    make_forge,
+    parse_pr_url,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,8 +33,7 @@ class FileListing:
 
 def fetch_pr_view(platform: Platform, number: int) -> dict[str, object]:
     try:
-        adapter = GitHub() if platform == "github" else GitLab()
-        stdout, stderr, status = adapter.pr_view(number)
+        stdout, stderr, status = make_forge(platform).pr_view(number)
         if status:
             raise ValueError(stderr.strip() or f"forge exited {status}")
         payload = json.loads(stdout)
