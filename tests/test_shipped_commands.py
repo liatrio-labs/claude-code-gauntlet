@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import re
@@ -34,6 +35,22 @@ _HEREDOC_PYTHON = re.compile(
     re.DOTALL | re.MULTILINE,
 )
 _FENCED_PYTHON = re.compile(r"```(?:python3?|py)\b[^\n]*\n(.*?)```", re.DOTALL)
+_FENCE = re.compile(r"^([ \t]*)```([^\n]*)\n(.*?)^\1```", re.MULTILINE | re.DOTALL)
+
+
+def _has_data_literals(body: str) -> bool:
+    try:
+        program = ast.parse(body)
+    except SyntaxError:
+        return False
+    return any(
+        isinstance(node, (ast.Dict, ast.List, ast.Set, ast.Tuple))
+        and any(
+            isinstance(child, ast.Constant) and isinstance(child.value, str)
+            for child in ast.walk(node)
+        )
+        for node in ast.walk(program)
+    )
 
 
 def _placeholder_program_lines(text: str) -> list[int]:
@@ -55,8 +72,48 @@ def _placeholder_program_lines(text: str) -> list[int]:
             or "{plugin_root}" in body
             or "..." in body
             or "…" in body
+            or _has_data_literals(body)
         )
     ]
+
+
+def _shell_fences(text: str) -> list[tuple[int, str]]:
+    return [
+        (text.count("\n", 0, match.start(3)) + 1, match[3])
+        for match in _FENCE.finditer(text)
+        if match[2].strip() in {"bash", "sh", "shell", "zsh"}
+        or (
+            not match[2].strip()
+            and re.search(r"^\s*(?:python3?\b|Bash\s*\()", match[3], re.MULTILINE)
+        )
+    ]
+
+
+def _markdown_sources() -> list[tuple[Path, str]]:
+    return [
+        (path.relative_to(REPO), path.read_text(encoding="utf-8"))
+        for root in ("skills", "agents")
+        for path in (REPO / root).rglob("*.md")
+    ]
+
+
+def _unquoted_path_lines(body: str) -> list[int]:
+    quote = None
+    escaped = False
+    offenders = []
+    for index, character in enumerate(body):
+        if body.startswith(("{output_dir}", "{plugin_root}"), index) and quote != '"':
+            offenders.append(body.count("\n", 0, index) + 1)
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\" and quote != "'":
+            escaped = True
+        elif character == quote:
+            quote = None
+        elif character in {"'", '"'} and quote is None:
+            quote = character
+    return offenders
 
 
 def _context_block() -> str:
@@ -538,14 +595,31 @@ def test_local_branch_form_uses_the_sha_computed_in_the_same_call() -> None:
 
 def test_python_programs_in_skills_and_agents_do_not_embed_path_placeholders() -> None:
     offender_paths: list[str] = []
-    for root_name in ("skills", "agents"):
-        for path in (REPO / root_name).rglob("*.md"):
-            text = path.read_text(encoding="utf-8")
-            offender_paths.extend(
-                f"{path.relative_to(REPO)}:{line_number}"
-                for line_number in _placeholder_program_lines(text)
-            )
+    for path, text in _markdown_sources():
+        offender_paths.extend(
+            f"{path}:{line_number}" for line_number in _placeholder_program_lines(text)
+        )
     assert offender_paths == []
+
+
+def test_shell_fences_in_skills_and_agents_do_not_echo_variables() -> None:
+    offenders: list[str] = []
+    for path, text in _markdown_sources():
+        for start, body in _shell_fences(text):
+            for number, line in enumerate(body.splitlines(), start):
+                if re.search(r'\becho\s+(?:-[A-Za-z]+\s+)*"\$(?:\w|\{)', line):
+                    offenders.append(f"{path}:{number}")
+    assert offenders == []
+
+
+def test_shell_fences_in_skills_and_agents_double_quote_paths() -> None:
+    offenders: list[str] = []
+    for path, text in _markdown_sources():
+        for start, body in _shell_fences(text):
+            offenders.extend(
+                f"{path}:{start + number - 1}" for number in _unquoted_path_lines(body)
+            )
+    assert offenders == []
 
 
 @pytest.mark.parametrize(
@@ -573,6 +647,16 @@ def test_python_programs_in_skills_and_agents_do_not_embed_path_placeholders() -
         ),
         pytest.param("```python\nprint('data')\n```\n", [], id="fence-safe"),
         pytest.param("```python\n...\n```\n", [2], id="fence-elision"),
+        pytest.param(
+            '''python3 -c "findings = [{'body': 'User input in SQL'}]"''',
+            [1],
+            id="quoted-finding-data",
+        ),
+        pytest.param(
+            "python3 - <<'EOF'\nfindings = [{'body': 'User input in SQL'}]\nEOF\n",
+            [2],
+            id="heredoc-finding-data",
+        ),
     ],
 )
 def test_placeholder_scan_flags_program_text_and_spares_argv(

@@ -1,5 +1,6 @@
 """Output directories are returned only after their ignore gate succeeds."""
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -123,6 +124,72 @@ def test_rejected_output_override(value, output_cli, output_repo):
         assert b"output directory must not be the repo root" in result.stderr
     else:
         assert b"CODE_GAUNTLET_OUTPUT_DIR is empty or whitespace" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "characters",
+    [
+        "$",
+        "`",
+        '"',
+        pytest.param(
+            "\\", marks=pytest.mark.skipif(os.sep == "\\", reason="separator")
+        ),
+        "".join(map(chr, range(32))),
+        "\x7f",
+    ],
+    ids=["dollar", "backtick", "double-quote", "backslash", "c0-controls", "del"],
+)
+def test_output_dir_refuses_shell_characters_before_side_effects(
+    characters, invoke, monkeypatch, output_repo
+):
+    exclude = output_repo / ".git/info/exclude"
+    before = exclude.read_bytes()
+    entries = set(output_repo.iterdir())
+    for character in characters:
+        target = output_repo / f"unsafe{character}path" / "out"
+        # NUL cannot enter a process environment, but the command boundary can see it.
+        monkeypatch.setattr(
+            eod.os,
+            "environ",
+            {**os.environ, "CODE_GAUNTLET_OUTPUT_DIR": str(target)},
+        )
+        result = invoke("ensure_output_dir", ["--cwd", str(output_repo)], output_repo)
+        assert result.returncode == 2, (repr(character), result.stderr)
+        assert result.stdout == b""
+        assert b"$CODE_GAUNTLET_OUTPUT_DIR" in result.stderr
+        assert exclude.read_bytes() == before
+        assert set(output_repo.iterdir()) == entries
+
+
+@pytest.mark.parametrize("source", ["repo-root", "symlink-target"])
+def test_output_dir_checks_resolved_ancestors(
+    source, output_cli, output_repo, tmp_path, symlink_or_skip
+):
+    unsafe = tmp_path / "unsafe$root"
+    if source == "repo-root":
+        # The output dir sits outside the repo, so only the repo-root check refuses.
+        output_repo.rename(unsafe)
+        repo, raw = unsafe, str(tmp_path / "out")
+        target = tmp_path / "out"
+    else:
+        unsafe.mkdir()
+        alias = output_repo / "alias"
+        alias.symlink_to(unsafe, target_is_directory=True)
+        repo, raw = output_repo, "alias/out"
+        target = unsafe / "out"
+    exclude = repo / ".git/info/exclude"
+    before = exclude.read_bytes()
+    result = output_cli(raw, cwd=repo)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert not target.exists()
+    assert exclude.read_bytes() == before
+
+
+def test_output_dir_allows_apostrophes_and_spaces(output_cli, output_repo):
+    target = output_repo / "o'brien out[1]"
+    assert_created_ignored(output_cli(target), output_repo, target)
 
 
 def test_check_ignore_128_is_usage_error(output_cli, output_repo, monkeypatch):
