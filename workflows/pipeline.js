@@ -2534,8 +2534,8 @@ function outboundProseLinks(text, lineStart = true, labelEnds = new Set(), offse
       let slashStart = start;
       while (slashStart && text[slashStart - 1] === '\\') slashStart -= 1;
       const boundary = reference ? slashStart : start;
-      const atBoundary = (boundary === 0 && lineStart) || (boundary > 0 && (
-        /\s/.test(text[boundary - 1]) || '*_~(<'.includes(text[boundary - 1]) ||
+      const atBoundary = (boundary === 0 && (lineStart || reference)) || (boundary > 0 && (
+        (reference && text[boundary - 1] !== '`') || /\s/.test(text[boundary - 1]) || '*_~(<'.includes(text[boundary - 1]) ||
         (text[boundary - 1] === '[' && labelEnds.has(offset + start + value.length)) ||
         text.slice(Math.max(0, boundary - 4), boundary) === '&lt;'
       ));
@@ -2571,7 +2571,8 @@ function outboundVisible(text, code = false, lineStart = true, labelEnds = new S
       parts.push(outboundCharacters(outboundReferences(before) + text[link.start]).slice(0, -1));
       let value = text.slice(link.start, link.end);
       if (link.reference) {
-        const prefix = link.destination ? ']\uFF08' : '';
+        let prefix = link.destination ? ']\uFF08' : '';
+        if (!(link.destination || lineStart || cursor || before)) prefix = ' ';
         value = prefix + codeSpan(outboundCharacters(link.destination ? value.slice(2) : value, true));
       } else {
         value = outboundCharacters(value);
@@ -2684,7 +2685,10 @@ function outboundLinkLabelEnds(line, spans) {
       if (character === '[') depth += 1;
       else if (character === ']' && depth) {
         depth -= 1;
-        if (line.startsWith('](', position)) labelEnds.add(position);
+        if (line.startsWith('](', position)) {
+          labelEnds.add(position);
+          depth = 0;
+        }
       }
     }
     escaped = !inCode && character === '\\' && !escaped;

@@ -342,10 +342,12 @@ def _prose_links(
             while slash_start and text[slash_start - 1] == "\\":
                 slash_start -= 1
             boundary = slash_start if reference else start
-            at_boundary = (boundary == 0 and line_start) or (
+            at_boundary = (boundary == 0 and (line_start or reference)) or (
                 boundary > 0
                 and (
-                    text[boundary - 1].isspace()
+                    # Wrapping a reference URL is safe anywhere outside a code span.
+                    (reference and text[boundary - 1] != "`")
+                    or text[boundary - 1].isspace()
                     or text[boundary - 1] in "*_~(<"
                     or (
                         text[boundary - 1] == "["
@@ -411,6 +413,9 @@ def _escape_visible(
             value = text[link.start : link.end]
             if link.reference:
                 prefix = "]\uff08" if link.destination else ""
+                if not (link.destination or line_start or cursor or before):
+                    # A space keeps the new span from merging with the one just closed.
+                    prefix = " "
                 value = prefix + code_span(
                     _escape_characters(
                         value[2:] if link.destination else value, code=True
@@ -531,6 +536,8 @@ def _link_label_ends(line: str, spans: list[tuple[int, int, int]]) -> frozenset[
                 depth -= 1
                 if line.startswith("](", position):
                     label_ends.add(position)
+                    # A formed link deactivates every earlier opener, as in CommonMark.
+                    depth = 0
         escaped = not in_code and character == "\\" and not escaped
     return frozenset(label_ends)
 
