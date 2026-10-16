@@ -122,7 +122,7 @@ def prior(*keys, summary=True, legacy=(), sha=SHA):
                 "author": {"username": "poster"},
                 "body": HEADER
                 + "Summary"
-                + FOOTER.replace("{count}", "0").replace(SHA, sha)
+                + FOOTER.replace("{count}", "0").replace(SHA, sha),
             }
         )
     for key in keys:
@@ -138,7 +138,7 @@ def prior(*keys, summary=True, legacy=(), sha=SHA):
                     + '","key":"'
                     + key
                     + '"} -->'
-                )
+                ),
             }
         )
     return JsonFetch(bodies, None)
