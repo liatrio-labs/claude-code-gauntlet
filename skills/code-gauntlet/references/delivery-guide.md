@@ -146,12 +146,15 @@ including inside inline code, quoted locations and a URL segment such as `/@name
 `<` before an ASCII letter, `/`, `!` or `?` becomes `&lt;` in prose and U+FF1C
 FULLWIDTH LESS-THAN SIGN inside a paired inline span or quoted location. Email address
 syntax stays intact. Outside inline code, display locations and trusted fences, reference
-syntax is broken: `#` and `!` before a digit become U+FF03 and U+FF01, a word-initial `GH-`
-before a digit takes U+2011 as its hyphen, and `~` or `%` before a word character or `"`
-becomes U+FF5E or U+FF05. Tilde runs and URL percent-encoding (`%` plus two hex digits after
-a non-space) stay. Full issue URLs, commit SHAs and GitLab `&epic` and `$snippet` stay: a URL
-is a visible link, a commit link adds no timeline event, and the last two did not link on CE.
-Numeric references and `&commat;`, `&excl;`, `&lbrack;`, `&lsqb;`,
+syntax is broken: `#`, `!` and `&` before an ASCII digit become U+FF03, U+FF01 and U+FF06,
+a word-initial `GH-` before a digit takes U+2011 as its hyphen, and `~` or `%` before an
+ASCII letter, digit, underscore or `"` becomes U+FF5E or U+FF05. Tilde runs stay, and a
+rewritten sigil loses one preceding backslash when its backslash run is odd.
+URLs and link destinations preserve reference sigils, except URLs whose paths contain
+`/(issues|pull|discussions|merge_requests|work_items|epics|milestones|snippets)/` followed
+by an ASCII digit (including scheme-less `github.com/`) become inline code, with a
+destination's opening `(` changed to U+FF08 so its bracket text stays readable.
+Numeric references and `&commat;`, `&excl;`, `&num;`, `&percnt;`, `&lbrack;`, `&lsqb;`,
 `&rsqb;`, `&rbrack;`, `&Hat;`, `&colon;`, `&lpar;`, `&rpar;`, `&bsol;`, `&nbsp;` and
 `&NonBreakingSpace;` decode as each replacement
 is consumed before the next input character. Decimal and hexadecimal accumulation saturates

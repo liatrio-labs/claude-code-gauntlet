@@ -1055,12 +1055,6 @@
       "operation": "prose",
       "input": "#1 !1 ~bug %v1\n~~~\n#1 !1 ~bug %v1\n~~~\n#1 !1 ~bug %v1",
       "expected": "\uff031 \uff011 \uff5ebug \uff05v1\n~~~\n#1 !1 ~bug %v1\n~~~\n\uff031 \uff011 \uff5ebug \uff05v1"
-    },
-    {
-      "id": "reference_wiki",
-      "operation": "prose",
-      "input": "See [[wiki]]",
-      "expected": "See [\uff3bwiki]]"
     }
   ]
 }

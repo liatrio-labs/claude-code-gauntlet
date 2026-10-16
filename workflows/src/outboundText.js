@@ -4,6 +4,8 @@ import { longestBacktickRun, deepFreeze } from './wire.js';
 const OUTBOUND_NAMED_ENTITIES = deepFreeze({
   commat: '@',
   excl: '!',
+  num: '#',
+  percnt: '%',
   lbrack: '[',
   lsqb: '[',
   rsqb: ']',
@@ -275,19 +277,81 @@ export function outboundBase(value, entities = OUTBOUND_NAMED_ENTITIES) {
     .replace(/[\r\n]+/g, ' ');
 }
 
+const OUTBOUND_PROSE_LINK = /\]\(([^\s)]+)|(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9][^\s<>]*|(?<![A-Za-z0-9.-])github\.com\/[^\s<>]+/g;
+const OUTBOUND_REFERENCE_PATH = /\/(?:issues|pull|discussions|merge_requests|work_items|epics|milestones|snippets)\/[0-9]/;
+const OUTBOUND_REFERENCE = /(?<!\\)(\\*)(#(?=[0-9])|!(?=[0-9])|(?<![A-Za-z0-9_])[Gg][Hh]-(?=[0-9])|(?<!~)(?<!~\\)~(?=[A-Za-z0-9_"])|%(?=[A-Za-z0-9_"])|&(?=[0-9]))/g;
+
+function outboundProseLinks(text) {
+  const links = [];
+  for (const match of text.matchAll(OUTBOUND_PROSE_LINK)) {
+    const destination = match[1] !== undefined;
+    let value = destination ? match[1] : match[0];
+    if (!destination) {
+      let balance = 0;
+      for (const character of value) {
+        if (character === '(') balance += 1;
+        if (character === ')') balance -= 1;
+      }
+      let end = value.length;
+      while (end && (
+        '.,:;!?\'"*_~'.includes(value[end - 1]) || (value[end - 1] === ')' && balance < 0)
+      )) {
+        if (value[end - 1] === ')') balance += 1;
+        end -= 1;
+      }
+      value = value.slice(0, end);
+    }
+    const url = /^(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9]|^github\.com\//.test(value);
+    let path = value.split('?', 1)[0].split('#', 1)[0];
+    const authorityEnd = path.indexOf('/', path.includes('://') ? path.indexOf('://') + 3 : 0);
+    path = authorityEnd >= 0 ? path.slice(authorityEnd) : '';
+    links.push({
+      start: match.index,
+      end: match.index + (destination ? 2 : 0) + value.length,
+      destination,
+      reference: url && OUTBOUND_REFERENCE_PATH.test(path),
+    });
+  }
+  return links;
+}
+
+function outboundReferences(text) {
+  return text.replace(OUTBOUND_REFERENCE, (_match, slashes, sigil) => {
+    const replacement = sigil.length === 3
+      ? `${sigil.slice(0, -1)}\u2011`
+      : { '#': '\uFF03', '!': '\uFF01', '~': '\uFF5E', '%': '\uFF05', '&': '\uFF06' }[sigil];
+    return slashes.slice(0, slashes.length - slashes.length % 2) + replacement;
+  });
+}
+
 function outboundVisible(text, code = false) {
+  if (!code) {
+    const parts = [];
+    let cursor = 0;
+    for (const link of outboundProseLinks(text)) {
+      // Keep the URL's first character as lookahead for a preceding '<'.
+      parts.push(outboundCharacters(outboundReferences(text.slice(cursor, link.start)) + text[link.start]).slice(0, -1));
+      let value = text.slice(link.start, link.end);
+      if (link.reference) {
+        const prefix = link.destination ? ']\uFF08' : '';
+        value = prefix + codeSpan(outboundVisible(link.destination ? value.slice(2) : value, true));
+      } else {
+        value = outboundCharacters(value);
+      }
+      parts.push(value);
+      cursor = link.end;
+    }
+    parts.push(outboundCharacters(outboundReferences(text.slice(cursor))));
+    return parts.join('');
+  }
+  return outboundCharacters(text, code);
+}
+
+function outboundCharacters(text, code = false) {
   // Fullwidth brackets survive reparsing and keep footnote text visible.
   text = text.replace(/(?<=[!\[])\\*\[|\[(?=\\*\^)/g, (match) => `${match.slice(0, -1)}\uFF3B`);
   text = text.replace(/<(?=[A-Za-z/!?])/g, code ? '\uFF1C' : '&lt;');
-  text = text.replace(/(?<![A-Za-z0-9])@/g, '\uFF20');
-  if (code) return text;
-  text = text.replace(/#(?=[0-9])/g, '\uFF03');
-  text = text.replace(/!(?=[0-9])/g, '\uFF01');
-  text = text.replace(/(?<![A-Za-z0-9_])([Gg][Hh])-(?=[0-9])/g, '$1\u2011');
-  // Preserve both literal tilde runs and their escaped fixed points.
-  text = text.replace(/(?<!~)(?<!~\\)~(?=[A-Za-z0-9_"])/g, '\uFF5E');
-  // Percent-encoded URL bytes do not create milestone links.
-  return text.replace(/(?!(?<=\S)%[A-Fa-f0-9]{2})%(?=[A-Za-z0-9_"])/g, '\uFF05');
+  return text.replace(/(?<![A-Za-z0-9])@/g, '\uFF20');
 }
 
 function outboundTickRunIndex(line) {
@@ -329,11 +393,17 @@ function outboundSpanClose(index, after, width) {
   return low < starts.length ? starts[low] : -1;
 }
 
-function outboundCodeSpans(line, index = outboundTickRunIndex(line)) {
+function outboundCodeSpans(line, index = outboundTickRunIndex(line), opaque = []) {
   const spans = [];
   let runIndex = 0;
+  let opaqueIndex = 0;
   while (runIndex < index.runs.length) {
     const run = index.runs[runIndex];
+    while (opaqueIndex < opaque.length && opaque[opaqueIndex].end <= run.start) opaqueIndex += 1;
+    if (opaqueIndex < opaque.length && opaque[opaqueIndex].start <= run.start) {
+      runIndex += 1;
+      continue;
+    }
     let opener = run.start + Number(run.escaped);
     let width = run.width - Number(run.escaped);
     if (width <= 0) {
@@ -374,13 +444,21 @@ function outboundContain(line, forceColon = false) {
   line = outboundDefinitions(line, forceColon);
   line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
   const index = outboundTickRunIndex(line);
-  const spans = outboundCodeSpans(line, index);
+  // URL backticks belong to the generated span, not to Markdown's input delimiters.
+  const opaque = outboundProseLinks(line).filter((link) => link.reference);
+  const spans = outboundCodeSpans(line, index, opaque);
+  let opaqueIndex = 0;
   let spanIndex = 0;
   const output = [];
   let cursor = 0;
   let runIndex = 0;
   while (runIndex < index.runs.length) {
     const run = index.runs[runIndex];
+    while (opaqueIndex < opaque.length && opaque[opaqueIndex].end <= run.start) opaqueIndex += 1;
+    if (opaqueIndex < opaque.length && opaque[opaqueIndex].start <= run.start) {
+      runIndex += 1;
+      continue;
+    }
     output.push(outboundVisible(line.slice(cursor, run.start)));
     let opener = run.start;
     if (run.escaped) {

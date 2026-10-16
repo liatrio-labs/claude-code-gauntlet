@@ -38,7 +38,6 @@ PREPARERS: dict[TextOperation, Callable[[object], str | None]] = {
 }
 VECTOR_IDS = {
     "reference_fence_payload",
-    "reference_wiki",
     "tilde_fixed",
     "closed_comment_removed",
     "open_comment_contained",
@@ -99,6 +98,12 @@ VECTORS: list[TextVector] = [
         "outbound_line_reference_gh",
         "outbound_line_reference_label",
         "outbound_line_reference_milestone",
+        "outbound_line_reference_url_protection",
+        "outbound_line_reference_urls",
+        "outbound_line_reference_named_entities",
+        "outbound_line_reference_epic",
+        "outbound_line_reference_percent_parenthesized",
+        "outbound_line_reference_backslash",
         "outbound_line_email",
         "outbound_line_inline_code",
         "outbound_line_unclosed_code",
@@ -125,6 +130,8 @@ def test_redaction_tokens(prefix: str) -> None:
 def test_text_vector(case: TextVector) -> None:
     actual = PREPARERS[case["operation"]](case["input"])
     assert actual == case["expected"]
+    if case["operation"] == "line":
+        assert text.prepare_line(actual) == actual
     if case["operation"] != "redact":
         assert_outbound_string_invariant(
             actual or "", check_prose_rules=case["operation"] in ("prose", "rule")

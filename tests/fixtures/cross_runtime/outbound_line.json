@@ -2065,12 +2065,12 @@
     {
       "id": "reference_issue",
       "input": "#1 owner/repo#1 project#1 \\#1 &amp;#64;x #01 #1x ##1 #\u0661 `#1 !1 ~bug %v1`",
-      "expected": "\uff031 owner/repo\uff031 project\uff031 \\\uff031 &amp;\uff0364;x \uff0301 \uff031x #\uff031 #\u0661 `#1 !1 ~bug %v1`"
+      "expected": "\uff031 owner/repo\uff031 project\uff031 \uff031 &amp;\uff0364;x \uff0301 \uff031x #\uff031 #\u0661 `#1 !1 ~bug %v1`"
     },
     {
       "id": "reference_merge_request",
       "input": "!1 probe!1 !1x /!1 \\!1 !\u0661 ![image](url) `!1`",
-      "expected": "\uff011 probe\uff011 \uff011x /\uff011 \\\uff011 !\u0661 !\uff3bimage](url) `!1`"
+      "expected": "\uff011 probe\uff011 \uff011x /\uff011 \uff011 !\u0661 !\uff3bimage](url) `!1`"
     },
     {
       "id": "reference_gh",
@@ -2085,7 +2085,37 @@
     {
       "id": "reference_milestone",
       "input": "%v1 %\"v1\" %1 %_ probe%v1 %ab %AB %20 x%ab x%AB x%20 https://x.test/a%20b https://x.test/a%2Fb 50% %! %\u00e9 `%v1`",
-      "expected": "\uff05v1 \uff05\"v1\" \uff051 \uff05_ probe\uff05v1 \uff05ab \uff05AB \uff0520 x%ab x%AB x%20 https://x.test/a%20b https://x.test/a%2Fb 50% %! %\u00e9 `%v1`"
+      "expected": "\uff05v1 \uff05\"v1\" \uff051 \uff05_ probe\uff05v1 \uff05ab \uff05AB \uff0520 x\uff05ab x\uff05AB x\uff0520 https://x.test/a%20b https://x.test/a%2Fb 50% %! %\u00e9 `%v1`"
+    },
+    {
+      "id": "reference_url_protection",
+      "input": "https://example.com/readme#1-install https://example.com/~alice/notes https://x.test/a%20b [setup](docs/a%20b.md#1-install) ftp://files.test/~alice/#1!2/GH-3/%v1/&4 www.x.test/p#1 [all](docs/~bug/%v1/!1/GH-2/&3)",
+      "expected": "https://example.com/readme#1-install https://example.com/~alice/notes https://x.test/a%20b [setup](docs/a%20b.md#1-install) ftp://files.test/~alice/#1!2/GH-3/%v1/&4 www.x.test/p#1 [all](docs/~bug/%v1/!1/GH-2/&3)"
+    },
+    {
+      "id": "reference_urls",
+      "input": "https://github.com/o/r/issues/1 github.com/o/r/issues/1 http://host/group/proj/-/merge_requests/1 [x](http://host/group/proj/-/issues/1) https://github.com/o/r/pull/1#frag https://github.com/o/r/discussions/1?q https://github.com/o/r/issues/1/ <https://github.com/o/r/issues/1> https://host/g/p/-/work_items/1 https://host/g/p/-/epics/1 https://host/g/p/-/milestones/1 https://host/g/p/-/snippets/1 (https://github.com/o/r/issues/1). https://host/issues/1(a) https://host/issues/1.,:;!?'\"*_~ https://host/issues/1/a`b``c [ticks](https://host/issues/1/a`b) https://host/issues/1/@who/![[x www.github.com/o/r/issues/1 http://github.com/o/r/issues/1 `https://github.com/o/r/issues/1` https://github.com/o/r/commit/123 https://host/other/1#1 https://host/p?next=/issues/1 https://host/p#issues/1 https://host/issues/x https://host/issues/\u0661 host:8080/g/p/-/issues/1 xgithub.com/o/r/issues/1 a.github.com/o/r/issues/1 -github.com/o/r/issues/1 [relative](docs/issues/1#anchor)",
+      "expected": "`https://github.com/o/r/issues/1` `github.com/o/r/issues/1` `http://host/group/proj/-/merge_requests/1` [x]\uff08`http://host/group/proj/-/issues/1`) `https://github.com/o/r/pull/1#frag` `https://github.com/o/r/discussions/1?q` `https://github.com/o/r/issues/1/` &lt;`https://github.com/o/r/issues/1`> `https://host/g/p/-/work_items/1` `https://host/g/p/-/epics/1` `https://host/g/p/-/milestones/1` `https://host/g/p/-/snippets/1` (`https://github.com/o/r/issues/1`). `https://host/issues/1(a)` `https://host/issues/1`.,:;!?'\"*_~ ```https://host/issues/1/a`b``c``` [ticks]\uff08``https://host/issues/1/a`b``) `https://host/issues/1/\uff20who/!\uff3b\uff3bx` `www.github.com/o/r/issues/1` `http://github.com/o/r/issues/1` `https://github.com/o/r/issues/1` https://github.com/o/r/commit/123 https://host/other/1#1 https://host/p?next=/issues/1 https://host/p#issues/1 https://host/issues/x https://host/issues/\u0661 host:8080/g/p/-/issues/1 xgithub.com/o/r/issues/1 a.github.com/o/r/issues/1 -github.com/o/r/issues/1 [relative](docs/issues/1#anchor)"
+    },
+    {
+      "id": "reference_named_entities",
+      "input": "&num;1 &percnt;v1 &percnt;20 &Num;1 &percent;v1 `&num;1 &percnt;v1`",
+      "expected": "\uff031 \uff05v1 \uff0520 &Num;1 &percent;v1 `#1 %v1`"
+    },
+    {
+      "id": "reference_epic",
+      "input": "&1 project&01 &1x &\u0661 &x `&1` https://x.test/p?x=&1 [x](docs/&1)",
+      "expected": "\uff061 project\uff0601 \uff061x &\u0661 &x `&1` https://x.test/p?x=&1 [x](docs/&1)"
+    },
+    {
+      "id": "reference_percent_parenthesized",
+      "input": "(%1) x%ab x%AB x%20 %a1 %\u0661 %\u00e9 %! `(%1)`",
+      "expected": "(\uff051) x\uff05ab x\uff05AB x\uff0520 \uff05a1 %\u0661 %\u00e9 %! `(%1)`"
+    },
+    {
+      "id": "reference_backslash",
+      "input": "\\#1 \\\\#1 \\\\\\#1 \\\\\\\\#1 \\!1 \\\\!1 \\\\\\!1 \\\\\\\\!1 \\~bug \\\\~bug \\\\\\~bug \\\\\\\\~bug \\%v1 \\\\%v1 \\\\\\%v1 \\\\\\\\%v1 \\&1 \\\\&1 \\\\\\&1 \\\\\\\\&1 \\GH-1 \\\\GH-1 \\\\\\GH-1 \\\\\\\\GH-1 \\#x \\!x \\~\u00e9 \\%\u00e9 \\&x \\GH-x `\\#1 \\!1 \\~bug \\%v1 \\&1 \\GH-1`",
+      "expected": "\uff031 \\\\\uff031 \\\\\uff031 \\\\\\\\\uff031 \uff011 \\\\\uff011 \\\\\uff011 \\\\\\\\\uff011 \uff5ebug \\\\\uff5ebug \\\\\uff5ebug \\\\\\\\\uff5ebug \uff05v1 \\\\\uff05v1 \\\\\uff05v1 \\\\\\\\\uff05v1 \uff061 \\\\\uff061 \\\\\uff061 \\\\\\\\\uff061 GH\u20111 \\\\GH\u20111 \\\\GH\u20111 \\\\\\\\GH\u20111 \\#x \\!x \\~\u00e9 \\%\u00e9 \\&x \\GH-x `\\#1 \\!1 \\~bug \\%v1 \\&1 \\GH-1`"
     }
   ],
   "summary_cases": [

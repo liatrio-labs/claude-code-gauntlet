@@ -50,6 +50,8 @@ _BACKTICK_RUN_RE = re.compile(r"`{3,}")
 _EntityName = Literal[
     "commat",
     "excl",
+    "num",
+    "percnt",
     "lbrack",
     "lsqb",
     "rsqb",
@@ -65,6 +67,8 @@ _EntityName = Literal[
 _NAMED_ENTITIES: dict[_EntityName, str] = {
     "commat": "@",
     "excl": "!",
+    "num": "#",
+    "percnt": "%",
     "lbrack": "[",
     "lsqb": "[",
     "rsqb": "]",
@@ -259,7 +263,109 @@ def _break_marker_openers(text: str) -> str:
     return _MARKER_OPEN_RE.sub(lambda match: "&lt;" + match.group()[1:], text)
 
 
+_PROSE_LINK_RE = re.compile(
+    r"\]\((?P<destination>[^\s)]+)|"
+    r"(?:https?://|ftp://|www\.)[A-Za-z0-9][^\s<>]*|"
+    r"(?<![A-Za-z0-9.-])github\.com/[^\s<>]+"
+)
+_REFERENCE_PATH_RE = re.compile(
+    r"/(?:issues|pull|discussions|merge_requests|work_items|epics|milestones|snippets)/[0-9]"
+)
+_REFERENCE_RE = re.compile(
+    r"(?<!\\)(\\*)(#(?=[0-9])|!(?=[0-9])|"
+    r"(?<![A-Za-z0-9_])[Gg][Hh]-(?=[0-9])|"
+    r'(?<!~)(?<!~\\)~(?=[A-Za-z0-9_"])|%(?=[A-Za-z0-9_"])|&(?=[0-9]))'
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _ProseLink:
+    start: int
+    end: int
+    destination: bool
+    reference: bool
+
+
+def _prose_links(text: str) -> list[_ProseLink]:
+    links = []
+    for match in _PROSE_LINK_RE.finditer(text):
+        destination = match.group("destination") is not None
+        value = match.group("destination") if destination else match.group()
+        if not destination:
+            balance = value.count("(") - value.count(")")
+            end = len(value)
+            while end and (
+                value[end - 1] in ".,:;!?'\"*_~"
+                or (value[end - 1] == ")" and balance < 0)
+            ):
+                if value[end - 1] == ")":
+                    balance += 1
+                end -= 1
+            value = value[:end]
+        url = re.match(r"(?:https?://|ftp://|www\.)[A-Za-z0-9]|github\.com/", value)
+        path = value.split("?", 1)[0].split("#", 1)[0]
+        authority_end = path.find("/", path.find("://") + 3 if "://" in path else 0)
+        path = path[authority_end:] if authority_end >= 0 else ""
+        links.append(
+            _ProseLink(
+                match.start(),
+                match.start() + (2 if destination else 0) + len(value),
+                destination,
+                url is not None and _REFERENCE_PATH_RE.search(path) is not None,
+            )
+        )
+    return links
+
+
+def _escape_references(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        slashes, sigil = match.groups()
+        replacement = (
+            sigil[:-1] + "\u2011"
+            if len(sigil) == 3
+            else {
+                "#": "\uff03",
+                "!": "\uff01",
+                "~": "\uff5e",
+                "%": "\uff05",
+                "&": "\uff06",
+            }[sigil]
+        )
+        return slashes[: len(slashes) - len(slashes) % 2] + replacement
+
+    return _REFERENCE_RE.sub(replace, text)
+
+
 def _escape_visible(text: str, *, code: bool = False) -> str:
+    if not code:
+        parts = []
+        cursor = 0
+        for link in _prose_links(text):
+            # Keep the URL's first character as lookahead for a preceding '<'.
+            parts.append(
+                _escape_characters(
+                    _escape_references(text[cursor : link.start]) + text[link.start]
+                )[:-1]
+            )
+            value = text[link.start : link.end]
+            if link.reference:
+                prefix = "]\uff08" if link.destination else ""
+                value = prefix + code_span(
+                    _escape_visible(
+                        value[2:] if link.destination else value, code=True
+                    ),
+                    pad_space_edges=True,
+                )
+            else:
+                value = _escape_characters(value)
+            parts.append(value)
+            cursor = link.end
+        parts.append(_escape_characters(_escape_references(text[cursor:])))
+        return "".join(parts)
+    return _escape_characters(text, code=code)
+
+
+def _escape_characters(text: str, *, code: bool = False) -> str:
     # Fullwidth brackets survive reparsing and keep footnote text visible.
     text = re.sub(
         r"(?<=[!\[])\\*\[|\[(?=\\*\^)",
@@ -267,16 +373,7 @@ def _escape_visible(text: str, *, code: bool = False) -> str:
         text,
     )
     text = _DANGEROUS_LT_RE.sub("\uff1c" if code else "&lt;", text)
-    text = re.sub(r"(?<![A-Za-z0-9])@", "\uff20", text)
-    if code:
-        return text
-    text = re.sub(r"#(?=[0-9])", "\uff03", text)
-    text = re.sub(r"!(?=[0-9])", "\uff01", text)
-    text = re.sub(r"(?<![A-Za-z0-9_])([Gg][Hh])-(?=[0-9])", r"\1" + "\u2011", text)
-    # Preserve both literal tilde runs and their escaped fixed points.
-    text = re.sub(r'(?<!~)(?<!~\\)~(?=[A-Za-z0-9_"])', "\uff5e", text)
-    # Percent-encoded URL bytes do not create milestone links.
-    return re.sub(r'(?!(?<=\S)%[A-Fa-f0-9]{2})%(?=[A-Za-z0-9_"])', "\uff05", text)
+    return re.sub(r"(?<![A-Za-z0-9])@", "\uff20", text)
 
 
 _DEFINITION_RE = re.compile(
@@ -342,23 +439,37 @@ def _escape_tilde_runs(line: str) -> str:
 
 
 def _containment_code_spans(
-    line: str, index: TickRunIndex | None = None
+    line: str,
+    index: TickRunIndex | None = None,
+    opaque: tuple[tuple[int, int], ...] = (),
 ) -> list[tuple[int, int, int]]:
     return paired_code_spans(
-        index if index is not None else tick_run_index(line), suffix_retry=True
+        index if index is not None else tick_run_index(line),
+        suffix_retry=True,
+        opaque=opaque,
     )
 
 
 def _contain_line(line: str) -> str:
     line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
     index = tick_run_index(line)
-    spans = _containment_code_spans(line, index)
+    # URL backticks belong to the generated span, not to Markdown's input delimiters.
+    opaque = tuple(
+        (link.start, link.end) for link in _prose_links(line) if link.reference
+    )
+    spans = _containment_code_spans(line, index, opaque)
+    opaque_index = 0
     span_index = 0
     out: list[str] = []
     cursor = 0
     run_index = 0
     while run_index < len(index.runs):
         run = index.runs[run_index]
+        while opaque_index < len(opaque) and opaque[opaque_index][1] <= run.start:
+            opaque_index += 1
+        if opaque_index < len(opaque) and opaque[opaque_index][0] <= run.start:
+            run_index += 1
+            continue
         out.append(_escape_visible(line[cursor : run.start]))
         opener = run.start
         if run.escaped:

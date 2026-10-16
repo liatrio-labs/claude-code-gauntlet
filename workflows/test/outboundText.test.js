@@ -12,6 +12,8 @@ const lineCases = [
 ];
 const LINE_IDS = new Set([
   "reference_issue", "reference_merge_request", "reference_gh", "reference_label", "reference_milestone",
+  "reference_url_protection", "reference_urls", "reference_named_entities", "reference_epic",
+  "reference_percent_parenthesized", "reference_backslash",
   "A-aliases", "A-bsol", "A-slashes", "A-trigger-control-close", "D-overflow-dec", "D-overlap2", "D-zero-dec", "N1",
   "comment_removal_before_decode", "email", "entity_comment_fixpoint", "footnote_opener_backslash_run",
   "footnote_opener_hat_entity", "footnote_opener_two_line", "image_inline", "image_named_excl", "image_named_lsqb",
