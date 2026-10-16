@@ -2,6 +2,23 @@
 
 <!-- version list -->
 
+## v3.42.37 (2026-10-16)
+
+### Bug Fixes
+
+- Allow the Windows path separator in the shell-safety check
+  ([#515](https://github.com/liatrio-labs/claude-code-gauntlet/pull/515),
+  [`f346077`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f346077f70c7864e23ea6790fe63a1e659c0945f))
+
+- Keep skill paths and JSON out of shell re-parsing
+  ([#515](https://github.com/liatrio-labs/claude-code-gauntlet/pull/515),
+  [`f346077`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f346077f70c7864e23ea6790fe63a1e659c0945f))
+
+- Refuse a shell-active repository path in ensure_output_dir
+  ([#515](https://github.com/liatrio-labs/claude-code-gauntlet/pull/515),
+  [`f346077`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f346077f70c7864e23ea6790fe63a1e659c0945f))
+
+
 ## v3.42.36 (2026-10-16)
 
 ### Bug Fixes
