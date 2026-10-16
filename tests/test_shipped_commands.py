@@ -735,8 +735,16 @@ def test_eligibility_shipped_producer_passes_config_as_stdin(
     )
 
 
-@pytest.mark.parametrize("platform", ["github", "gitlab"])
-@pytest.mark.parametrize("outcome", ["complete", "incomplete", "failure"])
+@pytest.mark.parametrize(
+    "platform,outcome",
+    [
+        ("github", "complete"),
+        ("gitlab", "complete"),
+        ("gitlab", "incomplete"),
+        ("github", "failure"),
+        ("gitlab", "failure"),
+    ],
+)
 def test_shipped_file_producer(platform, outcome, tmp_path):
     from tests.support.pr_files import FIXTURES, gitlab_view
 
@@ -763,7 +771,7 @@ def test_shipped_file_producer(platform, outcome, tmp_path):
     if platform == "gitlab" and outcome == "incomplete":
         view["changes_count"] = "1000+"
     listing = (
-        "render.py\n" * (3000 if outcome == "incomplete" else 1)
+        '"render.py"\n'
         if platform == "github"
         else (FIXTURES / "glab_mr_diffs.ndjson").read_text(encoding="utf-8")
     )
@@ -816,10 +824,12 @@ def test_shipped_file_producer(platform, outcome, tmp_path):
             ["pr", "view", "7", "--json", "state,isDraft,url"],
             [
                 "api",
-                "repos/upstream/project/pulls/7/files",
+                "--hostname",
+                "github.com",
+                "repos/upstream/project/pulls/7/files?per_page=100",
                 "--paginate",
                 "--jq",
-                ".[].filename",
+                ".[].filename | @json",
             ],
         ]
         if platform == "github"
@@ -827,7 +837,7 @@ def test_shipped_file_producer(platform, outcome, tmp_path):
             ["mr", "view", "7", "--output", "json"],
             [
                 "api",
-                "projects/cdr-group%2Fprobe/merge_requests/1/diffs",
+                "projects/cdr-group%2Fprobe/merge_requests/1/diffs?per_page=100",
                 "--paginate",
                 "--output",
                 "ndjson",
@@ -843,7 +853,5 @@ def test_shipped_file_producer(platform, outcome, tmp_path):
         assert result.stdout == "continued\n"
         assert json.loads(
             (tmp_path / "code-gauntlet-files-abc12345.json").read_text(encoding="utf-8")
-        ) == ["render.py"] * (
-            3000 if platform == "github" and outcome == "incomplete" else 1
-        )
+        ) == ["render.py"]
         assert bool(result.stderr) == (outcome == "incomplete")

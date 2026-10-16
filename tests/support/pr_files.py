@@ -15,7 +15,12 @@ def gitlab_view(**fields):
 
 
 def fake_files_forge(
-    monkeypatch, facts, listing=("src/code\n", "", 0), platform="github", endpoint=None
+    monkeypatch,
+    facts,
+    listing=('"src/code"\n', "", 0),
+    platform="github",
+    endpoint=None,
+    hostname="github.com",
 ):
     calls = []
     view = (
@@ -27,16 +32,19 @@ def fake_files_forge(
         [
             "gh",
             "api",
-            "repos/upstream/project/pulls/7/files",
+            "--hostname",
+            hostname,
+            "repos/upstream/project/pulls/7/files?per_page=100",
             "--paginate",
             "--jq",
-            ".[].filename",
+            ".[].filename | @json",
         ]
         if platform == "github"
         else [
             "glab",
             "api",
-            endpoint or "projects/cdr-group%2Fprobe/merge_requests/1/diffs",
+            (endpoint or "projects/cdr-group%2Fprobe/merge_requests/1/diffs")
+            + "?per_page=100",
             "--paginate",
             "--output",
             "ndjson",
@@ -46,6 +54,7 @@ def fake_files_forge(
     def output(argv, **kwargs):
         expected = view if not calls else files
         assert argv == expected
+        assert kwargs["timeout"] == (30 if not calls else 180)
         calls.append(argv)
         response = facts if len(calls) == 1 else listing
         if isinstance(response, Exception):

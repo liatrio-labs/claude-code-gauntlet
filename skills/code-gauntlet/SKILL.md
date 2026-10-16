@@ -112,7 +112,7 @@ For PR/MR targets, branch on the composite's eligibility receipt:
 
 - `proceed`: continue and disclose any non-null `reason`.
 - `stop`: print `reason` and end the run.
-- `ask_draft`: use the draft template in `references/phase1-preflight.md`; continue only if the user chooses review. This verdict is interactive only.
+- `ask_draft`: disclose any non-null `reason` before asking; use the draft template in `references/phase1-preflight.md`; continue only if the user chooses review. This verdict is interactive only.
 
 Local and branch targets continue directly to Phase 2.
 The previously-reviewed gate runs after checkout in Phase 2, section 2b-post step 3.
@@ -139,7 +139,7 @@ Identify the review target, gather the git artifacts the workflow consumes, and 
 
 ### Phase 2 Composite A — pre-gather (status → checkout → SHA → prior-review gate → stale truncation)
 
-One Bash call, but its sections form the **genuine dependency chain** — status → checkout → SHA → prior-review gate → stale truncation — each depends on the previous section's output, so unlike Composite B below they cannot be reordered or run separately. `{owner}`/`{repo}` resolve *inside the call itself*, parsed from the PR's own URL — never the `origin` remote, which is the fork in a fork clone. `{platform}` is a different kind of thing entirely: a template placeholder, substituted before dispatch (like `{pr_number}` and `{plugin_root}`) from what Phase 1 already determined (PR vs. MR), not a value the shell computes from anything fetched inside this composite.
+One Bash call, but its sections form the **genuine dependency chain** — status → checkout → SHA → prior-review gate → stale truncation — each depends on the previous section's output, so they cannot be reordered or run separately. `{owner}`/`{repo}` resolve *inside the call itself*, parsed from the PR's own URL — never the `origin` remote, which is the fork in a fork clone. `{platform}` is a different kind of thing entirely: a template placeholder, substituted before dispatch (like `{pr_number}` and `{plugin_root}`) from what Phase 1 already determined (PR vs. MR), not a value the shell computes from anything fetched inside this composite.
 
 > **Shell hygiene:** user shells commonly alias `ls`/`cp`/`grep` to incompatible replacements (an `ls`→`eza --icons` alias broke a live run's directory listing). In every Bash call, prefer `git ls-files` / `find` for file enumeration, and prefix coreutils with `command` (`command ls`, `command cp`) when you must use them. (Same reminder as Phase 1 — see the duplication rationale there.)
 
@@ -208,9 +208,9 @@ The renderer derives the fallback explanation from retained detector facts.
 
 All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (REVIEW.md provenance and CLAUDE.md/AGENTS.md/QODO.md import resolution from `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` by `scripts/write_shared_context.py` before measurement and writing). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see "Assemble the args object" below). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. `scripts/stale_truncate.py` covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
 
-### Phase 2 Composite B — independent-gather (diff, changed-files, line count, misc)
+### Phase 2 Composite B — gather (diff, changed-files, line count, misc)
 
-Once Composite A resolves (and, for PR/MR targets, any previously-reviewed question is answered), one Bash call gathers everything the args waist needs from disk — these four sections are mutually independent of each other on the default (full-diff) path. **`files` runs before `diff`** so that the incremental path below — which must bound the diff to the files list — reads a list that already exists in this same call, rather than one the literal script hasn't produced yet:
+Once Composite A resolves (and, for PR/MR targets, any previously-reviewed question is answered), one Bash call gathers everything the args waist needs from disk — `files` gates the remaining sections, and `numstat` reads the patch saved by `diff`. **`files` runs before `diff`** so that the incremental path below — which must bound the diff to the files list — reads a list that already exists in this same call, rather than one the literal script hasn't produced yet:
 
 ```bash
 echo "=== files ==="
@@ -218,7 +218,7 @@ if ! python3 "{plugin_root}/scripts/list_pr_files.py" --platform github --pr {pr
   echo "files: FAILED"
   exit 1
 fi
-cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
 
 echo "=== diff ==="
 gh pr diff {pr_number} > "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"
@@ -232,6 +232,8 @@ git rev-parse --show-toplevel
 python3 -c "import datetime; print(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'))"
 python3 -c "import secrets; print(secrets.token_hex(8))"
 ```
+
+On `files: FAILED`, stop and report the stderr reason (headless: non-zero outcome).
 
 - **Files** → this path becomes `args.changedFilesPath`; keep the same array inline for `args.changedFiles` (the Summarize stage reads it by value — the workflow cannot open the file).
 - **Diff** → this path becomes `args.diffPath`, passed to the verify executor as `--diff-file`.

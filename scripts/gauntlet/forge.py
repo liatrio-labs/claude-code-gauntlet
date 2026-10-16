@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from ipaddress import IPv6Address
 from typing import ClassVar, Literal, Protocol
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 from gauntlet import proc
 from gauntlet.jsjson import JS_MAX_SAFE_INTEGER
@@ -101,6 +101,7 @@ _SCP_REMOTE_RE = re.compile(
     r"(?P<path>[A-Za-z0-9._~+/-]*)"
 )
 _FETCH_TIMEOUT_SECONDS = 30
+_LIST_TIMEOUT_SECONDS = 180
 _SCP_PATH_RE = re.compile(r"[^@/]+@[^:/]+:(.+)$")
 _URL_PATH_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^@/]+@)?[^/]+/(.+)$")
 _PR_PATHS = {
@@ -256,7 +257,7 @@ def parse_pr_url(platform: Platform, url: str) -> ParsedPrUrl:
 
 
 def gitlab_project_id(owner: str, repo: str) -> str:
-    return quote(f"{owner}/{repo}", safe="")
+    return f"{owner}/{repo}".replace("/", "%2F")
 
 
 def github_review_request(
@@ -458,21 +459,30 @@ class GitHub(_ForgeAdapter):
 
     def pr_view(self, number: int) -> tuple[str, str, int]:
         return proc.output(
-            [self._tool, "pr", "view", str(number), "--json", "state,isDraft,url"],
+            [
+                self._tool,
+                "pr",
+                "view",
+                str(number),
+                "--json",
+                "state,isDraft,url",
+            ],
             timeout=_FETCH_TIMEOUT_SECONDS,
         )
 
-    def file_names(self, target: ReviewTarget) -> tuple[str, str, int]:
+    def file_names(self, target: ReviewTarget, host: str) -> tuple[str, str, int]:
         return proc.output(
             [
                 self._tool,
                 "api",
-                f"repos/{target.owner}/{target.repo}/pulls/{target.number}/files",
+                "--hostname",
+                host,
+                f"repos/{target.owner}/{target.repo}/pulls/{target.number}/files?per_page=100",
                 "--paginate",
                 "--jq",
-                ".[].filename",
+                ".[].filename | @json",
             ],
-            timeout=_FETCH_TIMEOUT_SECONDS,
+            timeout=_LIST_TIMEOUT_SECONDS,
         )
 
     def diff(self, target: ReviewTarget) -> tuple[str, str, int]:
@@ -515,12 +525,12 @@ class GitLab(_ForgeAdapter):
             [
                 self._tool,
                 "api",
-                f"projects/{gitlab_project_id(target.owner, target.repo)}/merge_requests/{target.number}/diffs",
+                f"projects/{gitlab_project_id(target.owner, target.repo)}/merge_requests/{target.number}/diffs?per_page=100",
                 "--paginate",
                 "--output",
                 "ndjson",
             ],
-            timeout=_FETCH_TIMEOUT_SECONDS,
+            timeout=_LIST_TIMEOUT_SECONDS,
         )
 
     def diff(self, target: ReviewTarget) -> tuple[str, str, int]:

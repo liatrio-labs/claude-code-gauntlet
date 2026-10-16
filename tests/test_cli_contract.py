@@ -616,7 +616,7 @@ def scenario(name, case, tmp_path, *, shell_fixture=False):
                 'if [ "$1" = pr ]; then\n'
                 '  printf \'%s\\n\' \'{"state":"OPEN","isDraft":false,'
                 '"url":"https://github.com/upstream/project/pull/7"}\'\n'
-                "else\n  printf 'src/code\\n'\nfi\n",
+                "else\n  printf '\"src/code\"\\n'\nfi\n",
                 encoding="utf-8",
             )
             (fake_bin / "gh").chmod(0o755)
@@ -831,12 +831,14 @@ def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch, forge_factory):
             assert command == [
                 "gh",
                 "api",
-                "repos/upstream/project/pulls/7/files",
+                "--hostname",
+                "github.com",
+                "repos/upstream/project/pulls/7/files?per_page=100",
                 "--paginate",
                 "--jq",
-                ".[].filename",
+                ".[].filename | @json",
             ]
-            return "src/code\n", "", 0
+            return '"src/code"\n', "", 0
 
         monkeypatch.setattr(proc, "output", eligibility_output)
     result = invoke(name, argv, directory, stdin)

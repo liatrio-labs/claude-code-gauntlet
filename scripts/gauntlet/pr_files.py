@@ -6,6 +6,7 @@ import re
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from gauntlet import proc
 from gauntlet.cli import CliError, Command, Parser
@@ -42,14 +43,21 @@ def list_pr_files(platform: Platform, view: Mapping[str, object]) -> FileListing
     try:
         url = view.get("url" if platform == "github" else "web_url")
         parsed = parse_pr_url(platform, url if isinstance(url, str) else "")
-        adapter = GitHub() if platform == "github" else GitLab()
-        stdout, stderr, status = adapter.file_names(
-            ReviewTarget(parsed.owner, parsed.repo, parsed.number)
-        )
+        target = ReviewTarget(parsed.owner, parsed.repo, parsed.number)
+        if platform == "github":
+            stdout, stderr, status = GitHub().file_names(
+                target, urlsplit(parsed.web_origin).netloc
+            )
+        else:
+            stdout, stderr, status = GitLab().file_names(target)
         if status:
             raise ValueError(stderr.strip() or f"forge exited {status}")
         if platform == "github":
-            paths = stdout.splitlines()
+            for line in stdout.splitlines():
+                path = json.loads(line)
+                if not isinstance(path, str) or not path:
+                    raise ValueError("filename must be a non-empty string")
+                paths.append(path)
             if len(paths) >= 3000:
                 return FileListing(
                     tuple(paths), "file listing reached the 3000-file cap"

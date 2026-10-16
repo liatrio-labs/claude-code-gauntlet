@@ -1,7 +1,6 @@
 """Resolve PR/MR eligibility before checkout or interactive questions."""
 
 import argparse
-import sys
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Literal, TypedDict, cast
@@ -90,7 +89,7 @@ def _verdict(
             return "stop", "lockfile-only"
     if facts.draft:
         if mode == "interactive":
-            return "ask_draft", None
+            return "ask_draft", files.reason
         if policy == "skip":
             return "stop", "draft_policy=skip"
     return "proceed", files.reason
@@ -127,10 +126,6 @@ def _handle(args: argparse.Namespace) -> tuple[EligibilityWire, int]:
         "state": facts.state,
         "draft": facts.draft,
     }, 0
-
-
-def main(argv: list[str] | None = None) -> int:
-    return CLI.invoke(sys.argv[1:] if argv is None else argv)
 
 
 CLI = Command(parser=_parser(), main=_handle)
