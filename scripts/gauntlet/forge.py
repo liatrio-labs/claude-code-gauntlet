@@ -511,6 +511,9 @@ class GitHub(_ForgeAdapter):
         )
 
     def diff(self, target: ReviewTarget) -> tuple[str, str, int]:
+        repo = f"{target.owner}/{target.repo}"
+        if self.host:
+            repo = f"{self.host}/{repo}"
         return proc.output(
             [
                 self._tool,
@@ -518,7 +521,7 @@ class GitHub(_ForgeAdapter):
                 "diff",
                 str(target.number),
                 "--repo",
-                f"{self.host + '/' if self.host else ''}{target.owner}/{target.repo}",
+                repo,
             ]
         )
 
