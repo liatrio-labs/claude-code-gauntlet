@@ -364,9 +364,11 @@ def test_detector_real_child_degradation(tmp_path, invoke, monkeypatch):
     assert obj["previously_reviewed"] is False
     assert obj["errors"] == [
         "github reviews: response was not JSON: \ufffd\ufffdnot json",
-        "could not resolve posting identity (github /user: response was not JSON: "
-        "\ufffd\ufffdnot json); set CODE_GAUNTLET_POSTER "
-        "to the account used to post reviews",
+        (
+            "could not resolve posting identity (github /user: response was not JSON: "
+            "\ufffd\ufffdnot json); set CODE_GAUNTLET_POSTER "
+            "to the account used to post reviews"
+        ),
     ]
     assert calls == [
         (
