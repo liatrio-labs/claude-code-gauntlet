@@ -914,3 +914,56 @@ def test_poster_failure_names_pin_and_trusts_nothing(
     assert f"{platform} /user" in poster.error
     if outcome == "denied":
         assert "403 denied" in poster.error
+
+
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+def test_file_listing_argv_and_timeouts(platform, monkeypatch):
+    calls = []
+
+    def output(command, **kwargs):
+        calls.append((command, kwargs))
+        return "", "", 0
+
+    monkeypatch.setattr(proc, "output", output)
+    target = forge.ReviewTarget("upstream", "project", 7)
+    if platform == "github":
+        adapter = forge.GitHub()
+        adapter.pr_view(7)
+        adapter.file_names(target, "git.example.com:8443")
+        assert calls == [
+            (
+                ["gh", "pr", "view", "7", "--json", "state,isDraft,url"],
+                {"timeout": 30},
+            ),
+            (
+                [
+                    "gh",
+                    "api",
+                    "--hostname",
+                    "git.example.com:8443",
+                    "repos/upstream/project/pulls/7/files?per_page=100",
+                    "--paginate",
+                    "--jq",
+                    ".[].filename | @json",
+                ],
+                {"timeout": 180},
+            ),
+        ]
+    else:
+        adapter = forge.GitLab()
+        adapter.pr_view(7)
+        adapter.file_names(target)
+        assert calls == [
+            (["glab", "mr", "view", "7", "--output", "json"], {"timeout": 30}),
+            (
+                [
+                    "glab",
+                    "api",
+                    "projects/upstream%2Fproject/merge_requests/7/diffs?per_page=100",
+                    "--paginate",
+                    "--output",
+                    "ndjson",
+                ],
+                {"timeout": 180},
+            ),
+        ]

@@ -385,6 +385,8 @@ def test_detector_real_child_degradation(tmp_path, invoke, monkeypatch):
 PATCH = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
 # argv strings split on spaces before placeholders expand, so paths may hold spaces.
 MAIN_FAILURE = {
+    "check_eligibility": "--platform github --pr 7",
+    "list_pr_files": "--platform github --pr 7",
     "assemble_artifacts": "--plan {missing}",
     "await_workflow": "{missing} --timeout-seconds 0 --since-epoch 0 --max-attempts 1",
     "build_style_artifacts": "--repo-root {missing} --check",
@@ -409,6 +411,8 @@ MAIN_FAILURE = {
 # diff_numstat, emit_style_context and ensure_output_dir have no malformed-input
 # branch beyond the failure row.
 BAD_INPUT = {
+    "check_eligibility": "--platform github --pr 7",
+    "list_pr_files": "--platform github --pr 0",
     "assemble_artifacts": "--plan {invalid}",
     "await_workflow": "{missing} --attempt invalid",
     "build_style_artifacts": "--repo-root {invalid} --check",
@@ -430,6 +434,8 @@ BAD_INPUT = {
 POST = {"platform": "github", "owner": "o", "repo": "r", "pr_number": 5, "sha": FULL}
 # Each success row is (files written under the case directory, argv).
 SUCCESS = {
+    "check_eligibility": ({}, "--platform github --pr 7"),
+    "list_pr_files": ({}, "--platform github --pr 7"),
     "build_style_artifacts": ({}, "--repo-root {root} --check"),
     "collect_project_rules": ({}, "--repo-root {dir} --out {dir}/rules.md"),
     "detect_prior_review": (
@@ -600,6 +606,20 @@ def scenario(name, case, tmp_path, *, shell_fixture=False):
     stdin = b"triage\n" if triage else b"{}\n"
     if (name, case) == ("resolve_pr_identity", "success"):
         stdin = b'{"url":"https://github.com/o/r/pull/5"}\n'
+    if name in ("check_eligibility", "list_pr_files"):
+        stdin = b'{"mode":"interactive","resolved":{}}\n'
+        if case == "bad_input":
+            stdin = b"[]\n"
+        if shell_fixture:
+            (fake_bin / "gh").write_text(
+                "#!/bin/sh\n"
+                'if [ "$1" = pr ]; then\n'
+                '  printf \'%s\\n\' \'{"state":"OPEN","isDraft":false,'
+                '"url":"https://github.com/upstream/project/pull/7"}\'\n'
+                "else\n  printf '\"src/code\"\\n'\nfi\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "gh").chmod(0o755)
     if name == "resolve_branch":
         stdin = b"one\ntwo\n" if case == "bad_input" else b"unknown-ref\n"
         if case == "success":
@@ -762,6 +782,8 @@ def rows():
             "report_patches",
             "resolve_branch",
             "resolve_pr_identity",
+            "check_eligibility",
+            "list_pr_files",
         )
     )
     yield "await_workflow", "pending"
@@ -789,6 +811,36 @@ def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch, forge_factory):
         carrier.chmod(0)
         module = importlib.import_module("gauntlet.style_hook")
         monkeypatch.setattr(module, "CARRIER", str(carrier))
+    if name in ("check_eligibility", "list_pr_files"):
+
+        def eligibility_output(command, **kwargs):
+            if command == ["gh", "pr", "view", "7", "--json", "state,isDraft,url"]:
+                if case == "failure":
+                    return "", "forbidden", 1
+                return (
+                    json.dumps(
+                        {
+                            "state": "OPEN",
+                            "isDraft": False,
+                            "url": "https://github.com/upstream/project/pull/7",
+                        }
+                    ),
+                    "",
+                    0,
+                )
+            assert command == [
+                "gh",
+                "api",
+                "--hostname",
+                "github.com",
+                "repos/upstream/project/pulls/7/files?per_page=100",
+                "--paginate",
+                "--jq",
+                ".[].filename | @json",
+            ]
+            return '"src/code"\n', "", 0
+
+        monkeypatch.setattr(proc, "output", eligibility_output)
     result = invoke(name, argv, directory, stdin)
     _assert_recorded(name, case, result.returncode, result.stdout, tmp_path)
     if (name, case) == ("post_review", "failure"):
@@ -810,6 +862,8 @@ def test_recording_covers_all_entry_files():
 def test_entry_runs_from_foreign_cwd(name, tmp_path):
     if reason := _windows_skip(name, "success"):
         pytest.skip(reason)
+    if os.name == "nt" and name in ("check_eligibility", "list_pr_files"):
+        pytest.skip("the fake forge CLIs on PATH are shebang scripts")
     directory, argv, stdin, fake_bin = scenario(
         name, "success", tmp_path, shell_fixture=True
     )

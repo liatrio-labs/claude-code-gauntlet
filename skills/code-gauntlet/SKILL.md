@@ -47,9 +47,9 @@ Resolve `plugin_root` from this SKILL.md's path — go up two directories from `
 
 Parse the user's input to determine the review target before eligibility checks — the target type affects every subsequent step. Store `target_type` (`pr`, `mr`, or `local`) and `pr_number` (if applicable). The ARGUMENTS value is the user's explicit input — a bare number (e.g., `1`, `42`) is always a PR/MR number. Resolve it via `gh pr view` before considering any other target type. Do not compare it against the branch name or second-guess it; the branch may track a different upstream PR. See `references/phase1-preflight.md` for resolution logic, validation, and the PR-not-found template. (One case needs its own round trip before the composite below: "review" with no number/URL, resolved via `gh pr view --json number --jq '.number'` for the current branch — the composite needs `pr_number` as an input, so this must run first.)
 
-### Phase 1 composite: output dir, plugin confirmation, config, PR state, trivial-check file list
+### Phase 1 composite: output dir, plugin confirmation, config, eligibility
 
-One Bash call gathers every independent Phase-1 input at once: output-directory setup, plugin confirmation, config resolution, PR state, and the changed-file list. None of these depend on each other.
+One Bash call sets up the output directory, confirms the plugin, resolves config, and checks PR/MR eligibility. Eligibility consumes the resolved config on stdin.
 
 ```bash
 echo "=== output_dir ==="
@@ -69,14 +69,25 @@ if ! CONFIG_JSON=$(python3 "{plugin_root}/scripts/resolve_config.py" --target {t
 fi
 printf '%s\n' "$CONFIG_JSON"
 
-echo "=== pr_view ==="
-gh pr view {pr_number} --json state,isDraft,title,url
-
-echo "=== changed_files ==="
-gh pr diff {pr_number} --name-only
+echo "=== eligibility ==="
+if ! ELIGIBILITY_JSON=$(printf '%s' "$CONFIG_JSON" | python3 "{plugin_root}/scripts/check_eligibility.py" --platform github --pr {pr_number}); then
+  echo "eligibility: FAILED"
+  exit 1
+fi
+printf '%s\n' "$ELIGIBILITY_JSON"
 ```
 
-(GitLab: swap `pr_view` for `glab mr view {pr_number} --output json`, and `changed_files` for `glab mr diff {pr_number} --name-only`. Local/branch targets skip `pr_view` and `changed_files` entirely — resolve the branch and base with 2b's resolver heredocs before using `git diff --name-only {base_sha}...{target_sha}` for branch comparison, or use `git diff --name-only HEAD` for local changes.)
+For GitLab, replace the eligibility section with:
+
+```bash
+if ! ELIGIBILITY_JSON=$(printf '%s' "$CONFIG_JSON" | python3 "{plugin_root}/scripts/check_eligibility.py" --platform gitlab --pr {pr_number}); then
+  echo "eligibility: FAILED"
+  exit 1
+fi
+printf '%s\n' "$ELIGIBILITY_JSON"
+```
+
+Local and branch targets omit the eligibility section. Their changed files are resolved in Phase 2.
 
 **Output-dir hard stops** (same severity class — stop before any agent dispatch; script stderr already flowed into this Bash result with disclosures/remedy lines):
 
@@ -90,22 +101,21 @@ On success, stdout is one absolute path line — store it as `{output_dir}` / `a
 Store: `output_dir` from section 1.
 Store the plugin-dir confirmation from section 2. If a directory is missing, stop because `plugin_root` was resolved wrong.
 Store the resolver JSON and stderr block from section 3. Retain them as `configResult`; its stderr block is the Phase 2 gate.
-Store the PR state from section 4. It feeds eligibility checks 1 and 2.
-Store the changed-file list from section 5. It feeds eligibility check 4; the worked command is in `references/phase1-preflight.md`.
+Store the eligibility receipt from section 4 for PR/MR targets.
 The resolver owns its configuration inputs.
 
 **Do not resolve the head SHA yet** — it is computed after PR checkout in Phase 2 so the SHA reflects the actual PR HEAD, not whatever branch was checked out when the session started.
 
 ### Eligibility checks
 
-Reads from the composite above — no new Bash calls here.
+For PR/MR targets, branch on the composite's eligibility receipt:
 
-1. **Closed/merged?** (`pr_view.state`) → Stop.
+- `proceed`: continue and disclose any non-null `reason`.
+- `stop`: print `reason` and end the run.
+- `ask_draft`: disclose any non-null `reason` before asking; use the draft template in `references/phase1-preflight.md`; continue only if the user chooses review. This verdict is interactive only.
 
-   > Headless exception (`configResult.mode == "headless"`): do **not** stop — headless reviews closed/merged PRs, proceeding against the pinned head exactly as resolved. Posting safety uses `configResult.resolved.post_mode`, and delivery uses `configResult.resolved.delivery`, not PR state. See `references/headless-mode.md`.
-2. **Draft?** (`pr_view.isDraft`) → Ask user (template in `references/phase1-preflight.md`).
-3. **Previously reviewed?** → Deferred to Phase 2 (after checkout, `phase2-triage.md` 2b-post step 3) — the gate needs the PR's tree to compare commits. Runs `detect_prior_review.py`; gates incremental vs full vs skip on `incremental_safe` (templates and degradations in `references/phase1-preflight.md` → "Previously-Reviewed Gate").
-4. **Trivially simple?** (`changed_files` from the composite above) → If ONLY lockfile/generated/auto-formatted changes, stop.
+Local and branch targets continue directly to Phase 2.
+The previously-reviewed gate runs after checkout in Phase 2, section 2b-post step 3.
 
 ### Resolve configuration
 
@@ -129,7 +139,7 @@ Identify the review target, gather the git artifacts the workflow consumes, and 
 
 ### Phase 2 Composite A — pre-gather (status → checkout → SHA → prior-review gate → stale truncation)
 
-One Bash call, but its sections form the **genuine dependency chain** — status → checkout → SHA → prior-review gate → stale truncation — each depends on the previous section's output, so unlike Composite B below they cannot be reordered or run separately. `{owner}`/`{repo}` resolve *inside the call itself*, parsed from the PR's own URL — never the `origin` remote, which is the fork in a fork clone. `{platform}` is a different kind of thing entirely: a template placeholder, substituted before dispatch (like `{pr_number}` and `{plugin_root}`) from what Phase 1 already determined (PR vs. MR), not a value the shell computes from anything fetched inside this composite.
+One Bash call, but its sections form the **genuine dependency chain** — status → checkout → SHA → prior-review gate → stale truncation — each depends on the previous section's output, so they cannot be reordered or run separately. `{owner}`/`{repo}` resolve *inside the call itself*, parsed from the PR's own URL — never the `origin` remote, which is the fork in a fork clone. `{platform}` is a different kind of thing entirely: a template placeholder, substituted before dispatch (like `{pr_number}` and `{plugin_root}`) from what Phase 1 already determined (PR vs. MR), not a value the shell computes from anything fetched inside this composite.
 
 > **Shell hygiene:** user shells commonly alias `ls`/`cp`/`grep` to incompatible replacements (an `ls`→`eza --icons` alias broke a live run's directory listing). In every Bash call, prefer `git ls-files` / `find` for file enumeration, and prefix coreutils with `command` (`command ls`, `command cp`) when you must use them. (Same reminder as Phase 1 — see the duplication rationale there.)
 
@@ -198,14 +208,17 @@ The renderer derives the fallback explanation from retained detector facts.
 
 All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (REVIEW.md provenance and CLAUDE.md/AGENTS.md/QODO.md import resolution from `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` by `scripts/write_shared_context.py` before measurement and writing). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see "Assemble the args object" below). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. `scripts/stale_truncate.py` covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
 
-### Phase 2 Composite B — independent-gather (diff, changed-files, line count, misc)
+### Phase 2 Composite B — gather (diff, changed-files, line count, misc)
 
-Once Composite A resolves (and, for PR/MR targets, any previously-reviewed question is answered), one Bash call gathers everything the args waist needs from disk — these four sections are mutually independent of each other on the default (full-diff) path. **`files` runs before `diff`** so that the incremental path below — which must bound the diff to the files list — reads a list that already exists in this same call, rather than one the literal script hasn't produced yet:
+Once Composite A resolves (and, for PR/MR targets, any previously-reviewed question is answered), one Bash call gathers everything the args waist needs from disk — `files` gates the remaining sections, and `numstat` reads the patch saved by `diff`. **`files` runs before `diff`** so that the incremental path below — which must bound the diff to the files list — reads a list that already exists in this same call, rather than one the literal script hasn't produced yet:
 
 ```bash
 echo "=== files ==="
-gh pr diff {pr_number} --name-only | python3 -c "import json, sys; print(json.dumps([l.rstrip(chr(10)) for l in sys.stdin if l.strip()]))" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
-cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+if ! python3 "{plugin_root}/scripts/list_pr_files.py" --platform github --pr {pr_number} > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
+  echo "files: FAILED"
+  exit 1
+fi
+command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
 
 echo "=== diff ==="
 gh pr diff {pr_number} > "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"
@@ -220,6 +233,8 @@ python3 -c "import datetime; print(datetime.datetime.utcnow().strftime('%Y-%m-%d
 python3 -c "import secrets; print(secrets.token_hex(8))"
 ```
 
+On `files: FAILED`, stop and report the stderr reason (headless: non-zero outcome).
+
 - **Files** → this path becomes `args.changedFilesPath`; keep the same array inline for `args.changedFiles` (the Summarize stage reads it by value — the workflow cannot open the file).
 - **Diff** → this path becomes `args.diffPath`, passed to the verify executor as `--diff-file`.
 - **`numstat` counts the patch saved by the `diff` section with `scripts/diff_numstat.py`; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules.** Check `binary_files > 0` before treating a low count as no diff. This feeds `changedLines`, and the 2k scan reads the same saved patch, never a fresh diff fetch. Never run a second `gh pr diff` to re-fetch it.
@@ -232,9 +247,17 @@ python3 -c "import secrets; print(secrets.token_hex(8))"
 python3 "{plugin_root}/scripts/incremental_diff.py" --files "{output_dir}/code-gauntlet-files-{head_sha_short}.json" --since {last_reviewed_sha} > "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"
 ```
 
-Keep the `files` section's full server `--name-only` list unchanged. The script reads that JSON to bound the diff; `changedLines` counts the saved patch. If the command fails or produces an empty patch, save the full server diff instead and disclose the fallback (see `phase2-triage.md` 2c branch 4).
+Keep the `files` section's full server file list unchanged. The script reads that JSON to bound the diff; `changedLines` counts the saved patch. If the command fails or produces an empty patch, save the full server diff instead and disclose the fallback (see `phase2-triage.md` 2c branch 4).
 
-**GitLab MR mode:** swap `gh pr diff {pr_number}` for `glab mr diff {pr_number}` in both the `files` and `diff` sections.
+**GitLab MR mode:** use `glab mr diff {pr_number}` in the `diff` section. Replace the `files` producer with:
+
+```bash
+if ! python3 "{plugin_root}/scripts/list_pr_files.py" --platform gitlab --pr {pr_number} > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
+  echo "files: FAILED"
+  exit 1
+fi
+command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+```
 
 **Branch/local targets:** for branch comparison use 2b's resolved SHAs: `git diff {base_sha}...{target_sha}` for `diff` and `git diff --name-only {base_sha}...{target_sha}` for `files`. For local changes use `git diff HEAD` and `git diff --name-only HEAD`. If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own `git diff` chain inside an executor subagent (which has shell) — not in this composite.
 

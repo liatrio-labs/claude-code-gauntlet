@@ -101,6 +101,7 @@ _SCP_REMOTE_RE = re.compile(
     r"(?P<path>[A-Za-z0-9._~+/-]*)"
 )
 _FETCH_TIMEOUT_SECONDS = 30
+_LIST_TIMEOUT_SECONDS = 180
 _SCP_PATH_RE = re.compile(r"[^@/]+@[^:/]+:(.+)$")
 _URL_PATH_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^@/]+@)?[^/]+/(.+)$")
 _PR_PATHS = {
@@ -456,6 +457,34 @@ class GitHub(_ForgeAdapter):
     _tool: ClassVar[str] = "gh"
     _header_flag: ClassVar[str] = "-H"
 
+    def pr_view(self, number: int) -> tuple[str, str, int]:
+        return proc.output(
+            [
+                self._tool,
+                "pr",
+                "view",
+                str(number),
+                "--json",
+                "state,isDraft,url",
+            ],
+            timeout=_FETCH_TIMEOUT_SECONDS,
+        )
+
+    def file_names(self, target: ReviewTarget, host: str) -> tuple[str, str, int]:
+        return proc.output(
+            [
+                self._tool,
+                "api",
+                "--hostname",
+                host,
+                f"repos/{target.owner}/{target.repo}/pulls/{target.number}/files?per_page=100",
+                "--paginate",
+                "--jq",
+                ".[].filename | @json",
+            ],
+            timeout=_LIST_TIMEOUT_SECONDS,
+        )
+
     def diff(self, target: ReviewTarget) -> tuple[str, str, int]:
         return proc.output(
             [
@@ -484,6 +513,25 @@ class GitLab(_ForgeAdapter):
     platform: Platform = "gitlab"
     _tool: ClassVar[str] = "glab"
     _header_flag: ClassVar[str] = "--header"
+
+    def pr_view(self, number: int) -> tuple[str, str, int]:
+        return proc.output(
+            [self._tool, "mr", "view", str(number), "--output", "json"],
+            timeout=_FETCH_TIMEOUT_SECONDS,
+        )
+
+    def file_names(self, target: ReviewTarget) -> tuple[str, str, int]:
+        return proc.output(
+            [
+                self._tool,
+                "api",
+                f"projects/{gitlab_project_id(target.owner, target.repo)}/merge_requests/{target.number}/diffs?per_page=100",
+                "--paginate",
+                "--output",
+                "ndjson",
+            ],
+            timeout=_LIST_TIMEOUT_SECONDS,
+        )
 
     def diff(self, target: ReviewTarget) -> tuple[str, str, int]:
         # Plain glab mr diff, never --raw or --repo: tests/fixtures/glab_diff/
