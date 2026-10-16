@@ -2,6 +2,39 @@
 
 <!-- version list -->
 
+## v3.42.38 (2026-10-16)
+
+### Bug Fixes
+
+- Decide PR/MR eligibility in a script and list changed files through one source
+  ([#517](https://github.com/liatrio-labs/claude-code-gauntlet/pull/517),
+  [`4429d57`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4429d576d18951d80c78cb0bf3dea7a700559e56))
+
+- Decide PR/MR eligibility in a script instead of skill prose
+  ([#517](https://github.com/liatrio-labs/claude-code-gauntlet/pull/517),
+  [`4429d57`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4429d576d18951d80c78cb0bf3dea7a700559e56))
+
+- Harden PR file listing and trim eligibility tests
+  ([#517](https://github.com/liatrio-labs/claude-code-gauntlet/pull/517),
+  [`4429d57`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4429d576d18951d80c78cb0bf3dea7a700559e56))
+
+- Split listing records on newline only and print the GitLab file list
+  ([#517](https://github.com/liatrio-labs/claude-code-gauntlet/pull/517),
+  [`4429d57`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4429d576d18951d80c78cb0bf3dea7a700559e56))
+
+### Refactoring
+
+- Select the forge adapter through make_forge in fetch_pr_view
+  ([#517](https://github.com/liatrio-labs/claude-code-gauntlet/pull/517),
+  [`4429d57`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4429d576d18951d80c78cb0bf3dea7a700559e56))
+
+### Testing
+
+- Drop the in-suite mutant test; the kill matrix runs out of tree
+  ([#517](https://github.com/liatrio-labs/claude-code-gauntlet/pull/517),
+  [`4429d57`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4429d576d18951d80c78cb0bf3dea7a700559e56))
+
+
 ## v3.42.37 (2026-10-16)
 
 ### Bug Fixes
