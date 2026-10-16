@@ -1,8 +1,8 @@
 # Phase 1 Pre-Flight Reference
 
-Workflow-tool availability check, review target resolution, eligibility logic, the error-path AskUserQuestion templates, and question-free configuration resolution for Phase 1.
+Workflow-tool availability check, review target resolution, the error-path AskUserQuestion templates, and question-free configuration resolution for Phase 1.
 
-> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) happens in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Output-directory resolve/ignore/mkdir is owned by `scripts/ensure_output_dir.py` in Phase 1's composite (SKILL.md) — not Phase 2. Phase 1's own Bash work is that composite (ensure_output_dir, plugin confirmation, config resolution, PR state, and changed-file list) — no checkout-dependent state.
+> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) happens in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Output-directory resolve/ignore/mkdir is owned by `scripts/ensure_output_dir.py` in Phase 1's composite (SKILL.md) — not Phase 2. Phase 1's own Bash work is that composite (ensure_output_dir, plugin confirmation, config resolution, and eligibility) — no checkout-dependent state.
 
 ---
 
@@ -56,31 +56,23 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 
 ---
 
-## Eligibility Checks
+## Draft Review Template
 
-> Headless mode presents none of the `AskUserQuestion` gates here. The draft gate branches on `configResult.resolved.draft_policy` (`review` proceeds, `skip` stops); the previously-reviewed gate, which runs in Phase 2 after checkout, branches on `configResult.resolved.reviewed_policy` (`incremental`, `full`, or `skip`). Closed/merged does not stop the run headless — it proceeds against the pinned head exactly as resolved, with posting and delivery governed by the resolver result. Trivial-only changes still stop deterministically. See `references/headless-mode.md`.
+Use this template only for the `ask_draft` verdict from Phase 1's eligibility receipt.
 
-1. **Closed/merged?** — Stop: "This PR is already closed/merged. No review needed."
-
-2. **Draft?** — Warn and ask:
-
-   ```
-   AskUserQuestion(
-     questions: [{
-       question: "This PR is marked as draft. Do you still want a full review?",
-       header: "Draft PR",
-       multiSelect: false,
-       options: [
-         { label: "Yes — review it", description: "Run the full review on this draft" },
-         { label: "No — skip", description: "Don't review until it's ready" }
-       ]
-     }]
-   )
-   ```
-
-3. **Previously reviewed?** — **Deferred to Phase 2**, immediately after checkout. See "Previously-Reviewed Gate" below for the full gate; `phase2-triage.md` section 2b-post step 3 is where it runs. The reason is the same one that moves head-SHA resolution out of Phase 1 (see the note at the top of this file): the gate compares the last-reviewed commit against the PR head and counts the commits between them, and before `gh pr checkout` the working tree is on whatever branch the session started on — often with the PR's objects not even fetched. Running it here would compare against the wrong tree and silently mis-gate the incremental path.
-
-4. **Trivially simple?** — If ONLY lockfile/generated/auto-formatted changes with no logic modifications, stop. The file list to check comes from the Phase 1 composite call in SKILL.md (`changed_files` section) — for PR/MR mode that's `gh pr diff {pr_number} --name-only` (there is no `gh pr diff --stat`; that flag does not exist and the command fails). For branch comparison, first resolve target and base using 2b's resolver heredocs in `phase2-triage.md`, then use `git diff --name-only {base_sha}...{target_sha}`. For local changes use `git diff --name-only HEAD`. Never issue a second call to re-fetch this list — it is already on hand from the composite.
+```
+AskUserQuestion(
+  questions: [{
+    question: "This PR is marked as draft. Do you still want a full review?",
+    header: "Draft PR",
+    multiSelect: false,
+    options: [
+      { label: "Yes - review it", description: "Run the full review on this draft" },
+      { label: "No - skip", description: "Don't review until it's ready" }
+    ]
+  }]
+)
+```
 
 ---
 
@@ -198,11 +190,9 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
 
 ## Configuration Resolution (no questions)
 
-> Phase 1 presents **no** `AskUserQuestion`. The questions this section used to hold — delivery
-> preference, PR-comment tier, REVIEW.md setup, and the confirmation-only prompt — were removed under
-> issue #35. Delivery is decided once, at the end of the run, in Phase 8. The error-path questions above
-> (PR not found, draft PR, previously reviewed) are unaffected: they fire on anomalies, not on the happy
-> path.
+Configuration resolution asks no questions. The eligibility receipt selects the interactive draft question.
+PR-not-found handling and the previously-reviewed gate keep their own templates.
+Headless runs resolve every gate without `AskUserQuestion`.
 
 The resolver owns configuration values. The generated block below names the waist fields the workflow derives from its receipt.
 
@@ -230,11 +220,11 @@ Discovery emits the canonical REVIEW.md notice (see `references/review-md-spec.m
 
 ---
 
-## Light Review Template (Phase 2d)
+## Light Review Template (Phase 2e)
 
-> **Note:** This template is triggered during Phase 2d (risk classification). It lives here because it is a pre-flight UX decision — the user's answer affects what review dimensions run, so it is collected alongside the other pre-flight gates.
+> **Note:** This template is triggered during Phase 2e (risk classification). It lives here because it is a pre-flight UX decision — the user's answer affects what review dimensions run, so it is collected alongside the other pre-flight gates.
 
-> The answer is stamped verbatim into `args.scopeAnswer` (`"light"` or `"full"`) — the workflow computes the dimension flags itself from `scopeAnswer` plus the Phase 2e `riskTable`/`changedLines` (`deriveAgentFlags`, `workflows/src/discover.js`): `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven. Announce the actual dimensions that will run.
+> The answer is stamped verbatim into `args.scopeAnswer` (`"light"` or `"full"`) — the workflow computes the dimension flags itself from `scopeAnswer` plus the Phase 2e `riskTable`/`changedLines` (`deriveAgentFlags`, `workflows/src/discover.js`): `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven discovery agents covering nine dimensions. Announce the actual dimensions that will run.
 
 Used when ALL files are low-risk AND total lines <50:
 
@@ -248,7 +238,7 @@ AskUserQuestion(
     multiSelect: false,
     options: [
       { label: "Light review (Recommended)", description: "Bugs + security only (faster, 2 agents)" },
-      { label: "Full review", description: "All dimensions (5-7 agents)" }
+      { label: "Full review", description: "All nine dimensions (7 agents)" }
     ]
   }]
 )

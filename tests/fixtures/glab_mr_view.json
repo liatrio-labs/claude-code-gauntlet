@@ -1,0 +1,10 @@
+{
+ "iid": 1,
+ "state": "opened",
+ "draft": false,
+ "work_in_progress": false,
+ "changes_count": "1",
+ "web_url": "http://localhost:8929/cdr-group/probe/-/merge_requests/1",
+ "title": "render probe MR",
+ "sha": "ab2fd788b840d70a2f1793d487f1e0a9f0360b15"
+}

@@ -105,11 +105,11 @@ If the gate resolves to **Incremental**, store `last_reviewed_sha` — section 2
 Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. Do not re-derive the PR number here.
 
 1. **PR/MR mode** (`pr_number` set) — Use `gh pr view {pr_number}`/`glab mr view {pr_number}` + diff commands. Get full SHA: `git rev-parse HEAD`
-   - **GitHub (PR):** Gather the file list with `gh pr diff {pr_number} --name-only`. Gather the full diff with `gh pr diff {pr_number}`.
-   - **GitLab (MR):** Gather the file list with `glab mr diff {pr_number} --name-only`. Gather the full diff with `glab mr diff {pr_number}`.
+   - **GitHub (PR):** Gather the file list with `python3 "{plugin_root}/scripts/list_pr_files.py" --platform github --pr {pr_number}`. Gather the full diff with `gh pr diff {pr_number}`.
+   - **GitLab (MR):** Gather the file list with `python3 "{plugin_root}/scripts/list_pr_files.py" --platform gitlab --pr {pr_number}` (the Composite B `files` producer in SKILL.md). Gather the full diff with `glab mr diff {pr_number}`.
 2. **Branch comparison** — `git diff {base_sha}...{target_sha}` and `git diff --name-only {base_sha}...{target_sha}` using 2b's resolved SHAs.
 3. **Local changes** — `git diff HEAD` (or `git diff --cached` if nothing unstaged)
-4. **Incremental** (2b-post step 3's gate resolved "Incremental"; PR/MR mode only) — use branch 1's full server `--name-only` list saved below to bound the diff:
+4. **Incremental** (2b-post step 3's gate resolved "Incremental"; PR/MR mode only) — use branch 1's full server file list saved below to bound the diff:
 
    ```bash
    python3 "{plugin_root}/scripts/incremental_diff.py" --files "{output_dir}/code-gauntlet-files-{head_sha_short}.json" --since {last_reviewed_sha} > "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"
@@ -119,7 +119,7 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 
 **Save the diff and the changed-file list (the workflow has no git access):** Persist both git-derived inputs to disk so the workflow can consume them.
 
-1. **Changed files** → `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file. On the incremental path, this stays branch 1's full server `--name-only` list unchanged — the same list branch 4 uses to bound the diff, never a narrower incremental-only set. Saved **first**, so branch 4's incremental diff (below) has a file list already on disk to bound against.
+1. **Changed files** → `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file. On the incremental path, this stays branch 1's full server file list unchanged — the same list branch 4 uses to bound the diff, never a narrower incremental-only set. Saved **first**, so branch 4's incremental diff (below) has a file list already on disk to bound against.
 2. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when 2b-post step 3 resolved incremental, branch 4's `incremental_diff.py` command); for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
 
 **These saves run as SKILL.md's "Phase 2 Composite B — independent-gather"** — one Bash call whose `files`/`diff`/`numstat`/`misc` sections are mutually independent on the default path (`files` runs first specifically so the incremental path's bounded diff has a file list to read). See SKILL.md for the exact script.
@@ -184,7 +184,7 @@ Stay LOW: lock files, whitespace-only changes, generated code updates, tag case 
 
 ### Light Review for Trivial PRs
 
-If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). There is no REVIEW.md key that skips this question — dimension selection is not REVIEW.md-configurable (`references/review-md-spec.md` → "Rules and other prose"). Stamp the answer verbatim into `args.scopeAnswer` (`"light"` or `"full"`) — the workflow itself computes the dimension flags from `scopeAnswer` together with the `riskTable`/`changedLines` you are already stamping (`deriveAgentFlags`, `workflows/src/discover.js`): a `light` answer runs only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven. Announce the actual dimension set — `bugs, security` for light, the full list for full. `args.riskTable` is REQUIRED on every run regardless of the answer (or of whether this question was even asked) — see Args Preparation below.
+If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). There is no REVIEW.md key that skips this question — dimension selection is not REVIEW.md-configurable (`references/review-md-spec.md` → "Rules and other prose"). Stamp the answer verbatim into `args.scopeAnswer` (`"light"` or `"full"`) — the workflow itself computes the dimension flags from `scopeAnswer` together with the `riskTable`/`changedLines` you are already stamping (`deriveAgentFlags`, `workflows/src/discover.js`): a `light` answer runs only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven discovery agents covering nine dimensions. Announce the actual dimension set — `bugs, security` for light, the full list for full. `args.riskTable` is REQUIRED on every run regardless of the answer (or of whether this question was even asked) — see Args Preparation below.
 
 > Headless exception: do not ask, and leave `scopeAnswer` out; interactive runs stamp the question answer.
 

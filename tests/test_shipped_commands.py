@@ -663,3 +663,187 @@ def test_placeholder_scan_flags_program_text_and_spares_argv(
     text: str, expected: list[int]
 ) -> None:
     assert _placeholder_program_lines(text) == expected
+
+
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_eligibility_shipped_producer_passes_config_as_stdin(
+    platform, exit_code, tmp_path
+):
+    text = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+    pattern = (
+        r'if ! ELIGIBILITY_JSON=\$\(printf [^\n]*check_eligibility\.py" --platform '
+        + platform
+        + r" --pr \{pr_number\}\); then\n.*?\nfi\nprintf [^\n]+"
+    )
+    matches = re.findall(pattern, text, re.DOTALL)
+    assert len(matches) == 1
+    plugin = tmp_path / "plugin with spaces"
+    plugin.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    python = fake_bin / "python3"
+    python.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['CAPTURE']).write_text(json.dumps([sys.argv[1:], sys.stdin.read()]), encoding='utf-8')\n"
+        f'print(\'{{"verdict":"proceed"}}\')\nsys.exit({exit_code})\n',
+        encoding="utf-8",
+    )
+    python.chmod(0o755)
+    payload = json.dumps(
+        {
+            "mode": "headless",
+            "resolved": {"draft_policy": "skip"},
+            "title": "'\n$(touch sentinel) `touch sentinel`",
+        }
+    )
+    capture = tmp_path / "capture.json"
+    env = dict(
+        os.environ,
+        CONFIG_JSON=payload,
+        CAPTURE=str(capture),
+        PATH=str(fake_bin) + os.pathsep + os.environ["PATH"],
+    )
+    command = (
+        matches[0].replace("{plugin_root}", str(plugin)).replace("{pr_number}", "7")
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert json.loads(capture.read_text(encoding="utf-8")) == [
+        [
+            str(plugin / "scripts/check_eligibility.py"),
+            "--platform",
+            platform,
+            "--pr",
+            "7",
+        ],
+        payload,
+    ]
+    assert not (tmp_path / "sentinel").exists()
+    assert result.returncode == exit_code
+    assert result.stdout == (
+        '{"verdict":"proceed"}\n' if not exit_code else "eligibility: FAILED\n"
+    )
+
+
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+@pytest.mark.parametrize("outcome", ["complete", "incomplete", "failure"])
+def test_shipped_file_producer(platform, outcome, tmp_path):
+    from tests.support.pr_files import FIXTURES, gitlab_view
+
+    text = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+    commands = re.findall(
+        r'if ! python3 "[^\n]+/scripts/list_pr_files\.py" --platform '
+        + platform
+        + r" --pr [^\n]+; then\n.*?\nfi",
+        text,
+        re.DOTALL,
+    )
+    assert len(commands) == 1
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    view = (
+        {
+            "state": "OPEN",
+            "isDraft": False,
+            "url": "https://github.com/upstream/project/pull/7",
+        }
+        if platform == "github"
+        else gitlab_view()
+    )
+    if platform == "gitlab" and outcome == "incomplete":
+        view["changes_count"] = "1000+"
+    listing = (
+        "render.py\n" * (3000 if outcome == "incomplete" else 1)
+        if platform == "github"
+        else (FIXTURES / "glab_mr_diffs.ndjson").read_text(encoding="utf-8")
+    )
+    fake = fake_bin / ("gh" if platform == "github" else "glab")
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "with open(os.environ['CAPTURE'], 'a', encoding='utf-8') as capture:\n"
+        "    capture.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "if sys.argv[1] in ('pr', 'mr'):\n"
+        "    print(os.environ['VIEW'])\n"
+        "elif os.environ['OUTCOME'] == 'failure':\n"
+        "    print('forbidden', file=sys.stderr)\n"
+        "    sys.exit(1)\n"
+        "else:\n"
+        "    sys.stdout.write(os.environ['LISTING'])\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    command = (
+        commands[0]
+        .replace("{plugin_root}", str(REPO))
+        .replace("{pr_number}", "7")
+        .replace("{output_dir}", str(tmp_path))
+        .replace("{head_sha_short}", "abc12345")
+    )
+    capture = tmp_path / "capture.jsonl"
+    env = dict(
+        os.environ,
+        PATH=str(fake_bin) + os.pathsep + os.environ["PATH"],
+        CAPTURE=str(capture),
+        VIEW=json.dumps(view),
+        LISTING=listing,
+        OUTCOME=outcome,
+    )
+    result = subprocess.run(
+        ["bash", "-c", command + "\nprintf 'continued\\n'"],
+        env=env,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    calls = [
+        json.loads(line) for line in capture.read_text(encoding="utf-8").splitlines()
+    ]
+    assert calls == (
+        [
+            ["pr", "view", "7", "--json", "state,isDraft,url"],
+            [
+                "api",
+                "repos/upstream/project/pulls/7/files",
+                "--paginate",
+                "--jq",
+                ".[].filename",
+            ],
+        ]
+        if platform == "github"
+        else [
+            ["mr", "view", "7", "--output", "json"],
+            [
+                "api",
+                "projects/cdr-group%2Fprobe/merge_requests/1/diffs",
+                "--paginate",
+                "--output",
+                "ndjson",
+            ],
+        ]
+    )
+    if outcome == "failure":
+        assert result.returncode == 1
+        assert result.stdout == "files: FAILED\n"
+        assert "list_pr_files: FAILED:" in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "continued\n"
+        assert json.loads(
+            (tmp_path / "code-gauntlet-files-abc12345.json").read_text(encoding="utf-8")
+        ) == ["render.py"] * (
+            3000 if platform == "github" and outcome == "incomplete" else 1
+        )
+        assert bool(result.stderr) == (outcome == "incomplete")

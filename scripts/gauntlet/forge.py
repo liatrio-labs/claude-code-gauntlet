@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from ipaddress import IPv6Address
 from typing import ClassVar, Literal, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from gauntlet import proc
 from gauntlet.jsjson import JS_MAX_SAFE_INTEGER
@@ -256,7 +256,7 @@ def parse_pr_url(platform: Platform, url: str) -> ParsedPrUrl:
 
 
 def gitlab_project_id(owner: str, repo: str) -> str:
-    return f"{owner}/{repo}".replace("/", "%2F")
+    return quote(f"{owner}/{repo}", safe="")
 
 
 def github_review_request(
@@ -456,6 +456,25 @@ class GitHub(_ForgeAdapter):
     _tool: ClassVar[str] = "gh"
     _header_flag: ClassVar[str] = "-H"
 
+    def pr_view(self, number: int) -> tuple[str, str, int]:
+        return proc.output(
+            [self._tool, "pr", "view", str(number), "--json", "state,isDraft,url"],
+            timeout=_FETCH_TIMEOUT_SECONDS,
+        )
+
+    def file_names(self, target: ReviewTarget) -> tuple[str, str, int]:
+        return proc.output(
+            [
+                self._tool,
+                "api",
+                f"repos/{target.owner}/{target.repo}/pulls/{target.number}/files",
+                "--paginate",
+                "--jq",
+                ".[].filename",
+            ],
+            timeout=_FETCH_TIMEOUT_SECONDS,
+        )
+
     def diff(self, target: ReviewTarget) -> tuple[str, str, int]:
         return proc.output(
             [
@@ -484,6 +503,25 @@ class GitLab(_ForgeAdapter):
     platform: Platform = "gitlab"
     _tool: ClassVar[str] = "glab"
     _header_flag: ClassVar[str] = "--header"
+
+    def pr_view(self, number: int) -> tuple[str, str, int]:
+        return proc.output(
+            [self._tool, "mr", "view", str(number), "--output", "json"],
+            timeout=_FETCH_TIMEOUT_SECONDS,
+        )
+
+    def file_names(self, target: ReviewTarget) -> tuple[str, str, int]:
+        return proc.output(
+            [
+                self._tool,
+                "api",
+                f"projects/{gitlab_project_id(target.owner, target.repo)}/merge_requests/{target.number}/diffs",
+                "--paginate",
+                "--output",
+                "ndjson",
+            ],
+            timeout=_FETCH_TIMEOUT_SECONDS,
+        )
 
     def diff(self, target: ReviewTarget) -> tuple[str, str, int]:
         # Plain glab mr diff, never --raw or --repo: tests/fixtures/glab_diff/
