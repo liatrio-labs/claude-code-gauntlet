@@ -278,11 +278,16 @@ export function outboundBase(value, entities = OUTBOUND_NAMED_ENTITIES) {
 function outboundVisible(text, code = false) {
   // Fullwidth brackets survive reparsing and keep footnote text visible.
   text = text.replace(/(?<=[!\[])\\*\[|\[(?=\\*\^)/g, (match) => `${match.slice(0, -1)}\uFF3B`);
-  const escaped = text.replace(/<(?=[A-Za-z/!?])/g, code ? '\uFF1C' : '&lt;');
-  return escaped.replace(/@/g, (match, index) => (
-    index === 0 || !/[A-Za-z0-9]/.test(escaped[index - 1])
-      ? '\uFF20' : match
-  ));
+  text = text.replace(/<(?=[A-Za-z/!?])/g, code ? '\uFF1C' : '&lt;');
+  text = text.replace(/(?<![A-Za-z0-9])@/g, '\uFF20');
+  if (code) return text;
+  text = text.replace(/#(?=[0-9])/g, '\uFF03');
+  text = text.replace(/!(?=[0-9])/g, '\uFF01');
+  text = text.replace(/(?<![A-Za-z0-9_])([Gg][Hh])-(?=[0-9])/g, '$1\u2011');
+  // Preserve both literal tilde runs and their escaped fixed points.
+  text = text.replace(/(?<!~)(?<!~\\)~(?=[A-Za-z0-9_"])/g, '\uFF5E');
+  // Percent-encoded URL bytes do not create milestone links.
+  return text.replace(/(?!(?<=\S)%[A-Fa-f0-9]{2})%(?=[A-Za-z0-9_"])/g, '\uFF05');
 }
 
 function outboundTickRunIndex(line) {

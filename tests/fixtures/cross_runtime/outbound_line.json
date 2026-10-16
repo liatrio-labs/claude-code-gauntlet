@@ -2061,6 +2061,31 @@
         "prose.footnote_opener"
       ],
       "kind": "control"
+    },
+    {
+      "id": "reference_issue",
+      "input": "#1 owner/repo#1 project#1 \\#1 &amp;#64;x #01 #1x ##1 #\u0661 `#1 !1 ~bug %v1`",
+      "expected": "\uff031 owner/repo\uff031 project\uff031 \\\uff031 &amp;\uff0364;x \uff0301 \uff031x #\uff031 #\u0661 `#1 !1 ~bug %v1`"
+    },
+    {
+      "id": "reference_merge_request",
+      "input": "!1 probe!1 !1x /!1 \\!1 !\u0661 ![image](url) `!1`",
+      "expected": "\uff011 probe\uff011 \uff011x /\uff011 \\\uff011 !\u0661 !\uff3bimage](url) `!1`"
+    },
+    {
+      "id": "reference_gh",
+      "input": "GH-1 gh-01 gH-2 x/GH-1 (Gh-3) xGH-1 _GH-1 1GH-1 GH-x GH-\u0661 `GH-1`",
+      "expected": "GH\u20111 gh\u201101 gH\u20112 x/GH\u20111 (Gh\u20113) xGH-1 _GH-1 1GH-1 GH-x GH-\u0661 `GH-1`"
+    },
+    {
+      "id": "reference_label",
+      "input": "~bug ~\"bug\" ~1 ~_ probe~bug ~~s~~ ~~~old~~~ x~ ~- ~/ ~\u00e9 `~bug`",
+      "expected": "\uff5ebug \uff5e\"bug\" \uff5e1 \uff5e_ probe\uff5ebug ~~s~~ ~~~old~~~ x~ ~- ~/ ~\u00e9 `~bug`"
+    },
+    {
+      "id": "reference_milestone",
+      "input": "%v1 %\"v1\" %1 %_ probe%v1 %ab %AB %20 x%ab x%AB x%20 https://x.test/a%20b https://x.test/a%2Fb 50% %! %\u00e9 `%v1`",
+      "expected": "\uff05v1 \uff05\"v1\" \uff051 \uff05_ probe\uff05v1 \uff05ab \uff05AB \uff0520 x%ab x%AB x%20 https://x.test/a%20b https://x.test/a%2Fb 50% %! %\u00e9 `%v1`"
     }
   ],
   "summary_cases": [

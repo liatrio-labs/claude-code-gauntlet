@@ -138,6 +138,10 @@ def is_github_mention(node: _Node) -> bool:
     )
 
 
+def is_github_reference(node: _Node) -> bool:
+    return node.tag == "a" and "issue-link" in (_attrs(node).get("class") or "").split()
+
+
 def _is_renderer_attribute(
     platform: str, tag: str, name: str, value: str | None
 ) -> bool:

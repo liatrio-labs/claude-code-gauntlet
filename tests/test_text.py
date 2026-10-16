@@ -37,6 +37,9 @@ PREPARERS: dict[TextOperation, Callable[[object], str | None]] = {
     "location": text.prepare_location,
 }
 VECTOR_IDS = {
+    "reference_fence_payload",
+    "reference_wiki",
+    "tilde_fixed",
     "closed_comment_removed",
     "open_comment_contained",
     "hex_comment_removed",
@@ -91,6 +94,11 @@ VECTORS: list[TextVector] = [
     if case["operation"] == "line"
     and case["id"]
     in {
+        "outbound_line_reference_issue",
+        "outbound_line_reference_merge_request",
+        "outbound_line_reference_gh",
+        "outbound_line_reference_label",
+        "outbound_line_reference_milestone",
         "outbound_line_email",
         "outbound_line_inline_code",
         "outbound_line_unclosed_code",

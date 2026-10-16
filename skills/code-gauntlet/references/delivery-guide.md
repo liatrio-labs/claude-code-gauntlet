@@ -145,7 +145,13 @@ ASCII `@` at text start or after a non-alphanumeric character becomes U+FF20 FUL
 including inside inline code, quoted locations and a URL segment such as `/@name`.
 `<` before an ASCII letter, `/`, `!` or `?` becomes `&lt;` in prose and U+FF1C
 FULLWIDTH LESS-THAN SIGN inside a paired inline span or quoted location. Email address
-syntax stays intact. Numeric references and `&commat;`, `&excl;`, `&lbrack;`, `&lsqb;`,
+syntax stays intact. Outside inline code, display locations and trusted fences, reference
+syntax is broken: `#` and `!` before a digit become U+FF03 and U+FF01, a word-initial `GH-`
+before a digit takes U+2011 as its hyphen, and `~` or `%` before a word character or `"`
+becomes U+FF5E or U+FF05. Tilde runs and URL percent-encoding (`%` plus two hex digits after
+a non-space) stay. Full issue URLs, commit SHAs and GitLab `&epic` and `$snippet` stay: a URL
+is a visible link, a commit link adds no timeline event, and the last two did not link on CE.
+Numeric references and `&commat;`, `&excl;`, `&lbrack;`, `&lsqb;`,
 `&rsqb;`, `&rbrack;`, `&Hat;`, `&colon;`, `&lpar;`, `&rpar;`, `&bsol;`, `&nbsp;` and
 `&NonBreakingSpace;` decode as each replacement
 is consumed before the next input character. Decimal and hexadecimal accumulation saturates

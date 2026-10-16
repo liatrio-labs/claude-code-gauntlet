@@ -267,16 +267,16 @@ def _escape_visible(text: str, *, code: bool = False) -> str:
         text,
     )
     text = _DANGEROUS_LT_RE.sub("\uff1c" if code else "&lt;", text)
-    return re.sub(
-        r"@",
-        lambda match: (
-            "\uff20"
-            if not match.start()
-            or not re.match(r"[A-Za-z0-9]", text[match.start() - 1])
-            else "@"
-        ),
-        text,
-    )
+    text = re.sub(r"(?<![A-Za-z0-9])@", "\uff20", text)
+    if code:
+        return text
+    text = re.sub(r"#(?=[0-9])", "\uff03", text)
+    text = re.sub(r"!(?=[0-9])", "\uff01", text)
+    text = re.sub(r"(?<![A-Za-z0-9_])([Gg][Hh])-(?=[0-9])", r"\1" + "\u2011", text)
+    # Preserve both literal tilde runs and their escaped fixed points.
+    text = re.sub(r'(?<!~)(?<!~\\)~(?=[A-Za-z0-9_"])', "\uff5e", text)
+    # Percent-encoded URL bytes do not create milestone links.
+    return re.sub(r'(?!(?<=\S)%[A-Fa-f0-9]{2})%(?=[A-Za-z0-9_"])', "\uff05", text)
 
 
 _DEFINITION_RE = re.compile(
