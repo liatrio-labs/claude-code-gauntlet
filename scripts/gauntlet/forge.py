@@ -59,6 +59,12 @@ class JsonFetch:
 
 
 @dataclass(frozen=True, slots=True)
+class Poster:
+    login: str | None
+    error: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class PostRequest:
     platform: Platform
     endpoint: str
@@ -77,6 +83,7 @@ class PostResult:
 class Forge(Protocol):
     platform: Platform
 
+    def poster(self) -> Poster: ...
     def ensure_available(self) -> None: ...
     def diff(self, target: ReviewTarget) -> tuple[str, str, int]: ...
     def review_entries(self, target: ReviewTarget) -> JsonFetch: ...
@@ -400,6 +407,40 @@ class _ForgeAdapter:
     platform: Platform
     _tool: ClassVar[str]
     _header_flag: ClassVar[str]
+
+    def poster(self) -> Poster:
+        pin = os.environ.get("CODE_GAUNTLET_POSTER")
+        if pin:
+            return Poster(pin, None)
+        field = "login" if self.platform == "github" else "username"
+        label = f"{self.platform} /user"
+        try:
+            stdout, stderr, status = proc.output(
+                [self._tool, "api", "user"],
+                timeout=_FETCH_TIMEOUT_SECONDS,
+                errors="replace",
+            )
+        except (OSError, proc.TimeoutExpired) as exc:
+            detail = f"{label}: {exc}"
+        else:
+            if status != 0:
+                reason = (stderr.strip() or stdout.strip())[:300]
+                detail = f"{label}: fetch failed (exit {status}): {reason}"
+            else:
+                try:
+                    payload: object = json.loads(stdout)
+                except (ValueError, RecursionError):
+                    detail = f"{label}: response was not JSON: {stdout.strip()[:120]}"
+                else:
+                    login = payload.get(field) if isinstance(payload, dict) else None
+                    if isinstance(login, str) and login:
+                        return Poster(login, None)
+                    detail = f"{label}: response has no {field}"
+        return Poster(
+            None,
+            f"could not resolve posting identity ({detail}); "
+            "set CODE_GAUNTLET_POSTER to the account used to post reviews",
+        )
 
     def ensure_available(self) -> None:
         _ensure_available(self._tool)

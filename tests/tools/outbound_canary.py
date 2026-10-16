@@ -51,14 +51,16 @@ def generate_cases(seed: int, mention: str, count: int) -> list[str]:
         f"&amp;#64;{mention} \uff20{mention}",
         "<!-- code-gauntlet-findings: {} -->",
         "<!-- deep-review-findings: {} -->",
-        '<!-- code-gauntlet-finding-key: {"sha":"abcdef0","key":"aaaaaaaaaaaaaaaa"} -->',
+        '<!-- code-gauntlet-finding-key: {"sha":"abcdef0",'
+        '"key":"aaaaaaaaaaaaaaaa"} -->',
         "<!\n-- code-gauntlet-findings: {} --\n>",
         f"\\@{mention} \\<b> &lt;!-- &amp;lt;b&amp;gt;",
         f"```\n@{mention}\n```\n~~~\n@{mention}\n~~~",
         f"`@{mention}` ``<b>``\r\n@{mention}\r@{mention}",
         f"\u200b@{mention}\xa0&Tab; &NewLine; &#x40;{mention}",
         f"- @{mention}\n> @{mention}\n1. @{mention}",
-        f"[x][ref]\n[ref]: /@{mention}\n![x](url) [[wiki]] [^note]\n[^note]: @{mention}",
+        f"[x][ref]\n[ref]: /@{mention}\n![x](url) [[wiki]] [^note]\n"
+        f"[^note]: @{mention}",
     )
     atoms = (
         *prefix,
@@ -100,7 +102,7 @@ def check_case(
     prepare: Callable[[str], str],
     render: Callable[[str], str],
 ) -> Failure | None:
-    from gauntlet.marker import find_finding_markers, find_marker
+    from gauntlet.marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
 
     from tests.tools.probe_html import _Node, _TreeParser, _walk, is_github_mention
 
@@ -114,7 +116,8 @@ def check_case(
     if second != prepared:
         return Failure("fixpoint", prepared, second=second)
     # Renderers can strip comments, so inspect the actual outbound marker bytes.
-    if find_marker(prepared) is not None or find_finding_markers(prepared):
+    tokens = (*MARKER_TOKENS, FINDING_MARKER_TOKEN)
+    if re.search(r"<!--\s*(?:" + "|".join(tokens) + r")\s*:", prepared):
         return Failure("marker", prepared)
     try:
         rendered = render(prepared)

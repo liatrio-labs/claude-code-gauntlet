@@ -11,7 +11,7 @@ from gauntlet.forge import (
     ReviewTarget,
     parse_remote,
 )
-from gauntlet.marker import find_finding_marker, find_finding_markers, find_marker
+from gauntlet.marker import find_finding_markers, find_marker
 
 from tests.support.delivery import finding
 from tests.support.posting import (
@@ -28,9 +28,9 @@ from tests.support.posting import (
     SHA,
     UNKNOWN_WARNING,
     invoke_posting,
-    prior,
     review,
 )
+from tests.support.prior import prior
 
 TARGET_ARGS = ("--owner", "o", "--repo", "r", "--pr-number", "5")
 
@@ -270,13 +270,13 @@ def check(row, posting, monkeypatch):
                 dict(request.payload)
                 for request in run.requests
                 if request.endpoint.endswith("/discussions")
-                or find_finding_marker(request.payload["body"])
+                or find_finding_markers(request.payload["body"])
             ]
             notes = [
                 request.payload
                 for request in run.requests
                 if request.endpoint.endswith("/notes")
-                and not find_finding_marker(request.payload["body"])
+                and not find_finding_markers(request.payload["body"])
             ]
             summary = notes[0]["body"] if notes else ""
         else:
@@ -1683,7 +1683,7 @@ def test_marker_delivery(kind, posting):
             request.endpoint.rsplit("/", 1)[-1] for request in run.requests
         ) == ("notes", "discussions")
         body = run.requests[0].payload["body"]
-        assert find_finding_marker(body) is None
+        assert find_finding_markers(body) == []
         assert "<!-- code-gauntlet-finding-key:" not in body
         assert find_marker(body) == {
             "version": "3.0",
@@ -1838,3 +1838,28 @@ def test_detected_platform(posting, monkeypatch):
     assert (run.code, run.err) == (0, "")
     assert run.out.startswith("Detected platform: github (from git remote: github.com)")
     assert run.payload["platform"] == "github"
+
+
+def test_gitlab_identity_failure_warns_and_posts_without_dedup(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from gauntlet.forge import Poster
+    from gauntlet.prior_review import PriorDelivery
+
+    from tests.support.forge import FakeGitLab
+
+    failure = (
+        "could not resolve posting identity: /user denied; set CODE_GAUNTLET_POSTER"
+    )
+    fake = FakeGitLab(
+        entries=[JsonFetch([], "gitlab notes denied")],
+        posters=[Poster(None, failure)],
+    )
+    state = post.gitlab_prior_delivery(
+        "o", "r", 5, SHA, forge=fake, session=post.DeliverySession(dry_run=False)
+    )
+    assert state == PriorDelivery(
+        False, frozenset(), frozenset(), f"gitlab notes denied; {failure}"
+    )
+    warning = capsys.readouterr().err
+    assert failure in warning and "posting them" in warning

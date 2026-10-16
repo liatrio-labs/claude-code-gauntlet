@@ -377,8 +377,8 @@ def test_delivery_title_keys() -> None:
     assert calls[0].endpoint.endswith("/discussions")
     body = calls[0].payload["body"]
     assert isinstance(body, str)
-    marker = review_marker.find_finding_marker(body)
-    assert marker is not None and marker["key"] == "07961d7c0f9dd168"
+    markers = review_marker.find_finding_markers(body)
+    assert markers and markers[0]["key"] == "07961d7c0f9dd168"
     assert "**\U0001f7e0 [HIGH] Finding**\n\nBody one" in body
 
 
@@ -466,8 +466,8 @@ def test_markup_rekeys_once() -> None:
         assert isinstance(calls, list) and len(calls) == expected_posts
         if calls:
             assert calls[0].endpoint.endswith("/discussions")
-            marker = review_marker.find_finding_marker(calls[0].payload["body"])
-            assert marker is not None and marker["key"] == new_key
+            markers = review_marker.find_finding_markers(calls[0].payload["body"])
+            assert markers and markers[0]["key"] == new_key
 
 
 @pytest.mark.parametrize(

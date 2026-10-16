@@ -95,6 +95,12 @@ Every interactive gate in the pipeline maps to a deterministic headless outcome.
 
 ---
 
+Prior-review detection and GitLab deduplication read only entries the posting account
+wrote. In CI, set `CODE_GAUNTLET_POSTER` to that account (for example
+`github-actions[bot]` under Actions' `GITHUB_TOKEN`); without it, a token that cannot
+read `/user` gets a full review every run. The trust rules are in
+`references/phase1-preflight.md` under the detector's receipt.
+
 ## `Headless config:` echo block
 
 Immediately after resolving all knobs in Phase 1, the resolver renders the block into the Phase 1 Bash result. It has one line per knob, `key=value (source)` where `source ∈ env|review_md|default`.

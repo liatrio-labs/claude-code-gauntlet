@@ -29,7 +29,6 @@ class SelectedSignalWire(SignalWire, total=False):
 
 
 MARKER_TOKEN: Final = "code-gauntlet-findings"
-# Existing review bodies remain readable.
 LEGACY_MARKER_TOKEN: Final = "deep-review-findings"
 MARKER_TOKENS = (MARKER_TOKEN, LEGACY_MARKER_TOKEN)
 # The required colon keeps finding and summary tokens disjoint.
@@ -39,13 +38,11 @@ LEGACY_PRODUCT = "deep-review"
 MARKER_VERSION = "3.0"  # informational; never dispatched on
 SHA_RE = re.compile(r"\b([0-9a-f]{7,40})\b")  # git object ids are lowercase hex
 
-# Decode JSON separately: a payload string can legitimately contain "-->".
-_MARKER_RE = re.compile(
-    r"<!--\s*(" + "|".join(re.escape(t) for t in MARKER_TOKENS) + r")\s*:\s*"
+# Matching only openers avoids rescanning payloads from every hostile candidate.
+_MARKER_OPENER_RE = re.compile(
+    r"<!--\s*(" + "|".join(re.escape(t) for t in MARKER_TOKENS) + r")\s*:\s*(?=\{)"
 )
 
-# Finding payloads have two hex strings and disjoint brace spans, so scanning
-# every candidate is linear and needs no summary-style cap.
 _FINDING_MARKER_RE = re.compile(
     r"<!--\s*" + re.escape(FINDING_MARKER_TOKEN) + r"\s*:\s*(\{[^{}]*\})\s*-->"
 )
@@ -54,9 +51,6 @@ _FINDING_KEY_RE = re.compile(r"[0-9a-f]{16}")
 _PROSE_LABEL_RE = re.compile(r"Reviewed\s+up\s+to\s*:", re.IGNORECASE)
 
 _ISO8601_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
-
-# Bound rescans of hostile unclosed public markers; no signal means full review.
-_MAX_MARKER_SCANS = 32
 
 
 def is_sha_shaped(value: object) -> TypeGuard[str]:
@@ -88,38 +82,13 @@ def build_prose_footer(sha: object) -> str:
 
 
 def build_footer(
-    findings_count: object, sha: object, body: object = "", *, prose_body: object = None
+    findings_count: object, sha: object, *, prose_body: object = None
 ) -> str:
-    """Append each footer half only when it does not already record this SHA."""
-    text = body if isinstance(body, str) else ""
-    prose_text = (
-        text
-        if prose_body is None
-        else prose_body
-        if isinstance(prose_body, str)
-        else ""
-    )
-    # Each half must be readable and record this SHA: stale or model-composed
-    # fragments must not suppress the mechanical signal for the reviewed commit.
-    existing = detect_signal(text)
-    want_marker = not (
-        existing and existing.get("signal") == "marker" and existing.get("sha") == sha
-    )
-    want_prose = not (
-        has_prose_footer(prose_text) and parse_prose_footer(prose_text) == sha
-    )
-
-    if not want_marker and not want_prose:
-        return ""
-
-    marker = build_marker(sha, findings_count) if want_marker else ""
-    if not want_prose:
+    """Always append the mechanical marker; avoid repeating same-SHA prose."""
+    marker = build_marker(sha, findings_count)
+    if has_prose_footer(prose_body) and parse_prose_footer(prose_body) == sha:
         return "\n\n" + marker
-
-    footer = "\n\n---\n" + build_prose_footer(sha)
-    if want_marker:
-        footer += "\n\n" + marker
-    return footer
+    return "\n\n---\n" + build_prose_footer(sha) + "\n\n" + marker
 
 
 def _has_non_finite(value: object, depth: int = 0) -> bool:
@@ -140,47 +109,38 @@ def _reject_constant(name: str) -> NoReturn:
     raise ValueError(f"non-standard JSON constant: {name}")
 
 
-def _decode_json_at(text: str, start: int) -> object:
-    """Decode JSON without treating braces or comment closers in strings as ends."""
+def find_marker(text: object) -> dict[str, object] | None:
+    """Read only a complete summary marker at the end of the body."""
+    if not isinstance(text, str) or not text:
+        return None
+    tail = text.rstrip()
+    if not tail.endswith("-->"):
+        return None
+    match = None
+    for candidate in _MARKER_OPENER_RE.finditer(tail):
+        match = candidate
+    if match is None:
+        return None
     try:
-        parsed: object
-        parsed, _ = json.JSONDecoder(parse_constant=_reject_constant).raw_decode(
-            text, start
+        payload, end = json.JSONDecoder(parse_constant=_reject_constant).raw_decode(
+            tail, match.end()
         )
     except (ValueError, RecursionError):
         return None
-    return None if _has_non_finite(parsed) else parsed
-
-
-def find_marker(text: object) -> dict[str, object] | None:
-    """Read the last valid payload, preserving unknown keys and token metadata.
-
-    Posting appends a mechanical marker after any model-composed forgery.
-    Malformed candidates cannot shadow a valid earlier marker.
-    """
-    if not isinstance(text, str) or not text:
+    if (
+        tail[end:].lstrip() != "-->"
+        or not isinstance(payload, dict)
+        or _has_non_finite(payload)
+    ):
         return None
-    try:
-        # Last-valid ordering usually needs one scan of the appended marker.
-        # The cap bounds O(tokens x length) work on hostile unclosed candidates.
-        matches = list(_MARKER_RE.finditer(text))
-        for match in reversed(matches[-_MAX_MARKER_SCANS:]):
-            start = match.end()
-            if start >= len(text) or text[start] != "{":
-                continue
-            payload = _decode_json_at(text, start)
-            if isinstance(payload, dict):
-                found = dict(cast(dict[str, object], payload))
-                found["_token"] = match.group(1)
-                found["_legacy"] = match.group(1) == LEGACY_MARKER_TOKEN
-                return found
-        return None
-    except Exception:  # noqa: BLE001  # pragma: no cover - a reader never raises
-        return None
+    found = dict(cast(dict[str, object], payload))
+    found["_token"] = match.group(1)
+    found["_legacy"] = match.group(1) == LEGACY_MARKER_TOKEN
+    return found
 
 
 def find_finding_markers(text: object) -> list[FindingMarkerWire]:
-    """Read every valid sha/key pair in reverse order.
+    """Read valid sha/key pairs in the trailing run, in reverse order.
 
     A group delivers all its members in one body, so omitting keys would repost
     those members. Validate keys before the caller puts them in a set.
@@ -189,7 +149,16 @@ def find_finding_markers(text: object) -> list[FindingMarkerWire]:
         return []
     found: list[FindingMarkerWire] = []
     try:
-        for candidate in reversed(_FINDING_MARKER_RE.findall(text)):
+        tail = text.rstrip()
+        candidates: list[str] = []
+        for line in reversed(tail.splitlines()):
+            if not line.strip():
+                continue
+            match = _FINDING_MARKER_RE.fullmatch(line.strip())
+            if match is None:
+                break
+            candidates.append(match.group(1))
+        for candidate in candidates:
             try:
                 payload: dict[str, object] = json.loads(candidate)
             except (ValueError, RecursionError):
@@ -206,12 +175,6 @@ def find_finding_markers(text: object) -> list[FindingMarkerWire]:
         return found
     except Exception:  # noqa: BLE001  # pragma: no cover - a reader never raises
         return found
-
-
-def find_finding_marker(text: object) -> FindingMarkerWire | None:
-    """Read the last valid finding marker; posting appends after forged prose."""
-    markers = find_finding_markers(text)
-    return markers[0] if markers else None
 
 
 def has_prose_footer(text: object) -> bool:
@@ -254,27 +217,30 @@ def _prose_is_legacy(text: object) -> bool:
 
 
 def detect_signal(text: object) -> SignalWire | None:
-    """Prefer a usable marker SHA, then try attributed prose; ignore version.
+    """Prefer a trailing marker; try attributed prose only without one.
 
     A bare Reviewed-up-to label identifies no tool and must not skip a review.
     """
     if not isinstance(text, str) or not text:
         return None
     marker = find_marker(text)
-    marker_sha = marker.get("sha") if marker is not None else None
-    if marker is not None and is_sha_shaped(marker_sha):
+    if marker is not None:
+        marker_sha = marker.get("sha")
+        if not is_sha_shaped(marker_sha):
+            return None
         return {
             "sha": marker_sha.strip(),
             "signal": "marker",
             "legacy": bool(marker.get("_legacy")),
             "marker": marker,
         }
-    sha = parse_prose_footer(text) if has_prose_footer(text) else None
+    tail = text.rstrip().split("\n")[-1]
+    sha = parse_prose_footer(tail) if has_prose_footer(tail) else None
     if sha:
         return {
             "sha": sha,
             "signal": "footer",
-            "legacy": _prose_is_legacy(text),
+            "legacy": _prose_is_legacy(tail),
             "marker": None,
         }
     return None

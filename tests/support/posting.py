@@ -119,14 +119,16 @@ def prior(*keys, summary=True, legacy=(), sha=SHA):
     if summary:
         bodies.append(
             {
+                "author": {"username": "poster"},
                 "body": HEADER
                 + "Summary"
-                + FOOTER.replace("{count}", "0").replace(SHA, sha)
+                + FOOTER.replace("{count}", "0").replace(SHA, sha),
             }
         )
     for key in keys:
         bodies.append(
             {
+                "author": {"username": "poster"},
                 "body": (
                     "Corroborating finding \u2014 member\n" if key in legacy else ""
                 )
@@ -136,7 +138,7 @@ def prior(*keys, summary=True, legacy=(), sha=SHA):
                     + '","key":"'
                     + key
                     + '"} -->'
-                )
+                ),
             }
         )
     return JsonFetch(bodies, None)
