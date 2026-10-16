@@ -2,6 +2,37 @@
 
 <!-- version list -->
 
+## v3.42.35 (2026-10-16)
+
+### Bug Fixes
+
+- Read review markers only from the poster's own trailing footer
+  ([#513](https://github.com/liatrio-labs/claude-code-gauntlet/pull/513),
+  [`f46cdde`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f46cdde92278193bffc568416faa6b1a03ac42bf))
+
+- Read the trailing summary marker in linear time
+  ([#513](https://github.com/liatrio-labs/claude-code-gauntlet/pull/513),
+  [`f46cdde`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f46cdde92278193bffc568416faa6b1a03ac42bf))
+
+### Code Style
+
+- Format the posting fixture author lines
+  ([#513](https://github.com/liatrio-labs/claude-code-gauntlet/pull/513),
+  [`f46cdde`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f46cdde92278193bffc568416faa6b1a03ac42bf))
+
+### Documentation
+
+- Point headless mode at the prior-review trust rules
+  ([#513](https://github.com/liatrio-labs/claude-code-gauntlet/pull/513),
+  [`f46cdde`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f46cdde92278193bffc568416faa6b1a03ac42bf))
+
+### Testing
+
+- Make two split expected strings explicit
+  ([#513](https://github.com/liatrio-labs/claude-code-gauntlet/pull/513),
+  [`f46cdde`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f46cdde92278193bffc568416faa6b1a03ac42bf))
+
+
 ## v3.42.34 (2026-10-15)
 
 ### Bug Fixes
