@@ -38,13 +38,9 @@ LEGACY_PRODUCT = "deep-review"
 MARKER_VERSION = "3.0"  # informational; never dispatched on
 SHA_RE = re.compile(r"\b([0-9a-f]{7,40})\b")  # git object ids are lowercase hex
 
-# JSON strings may contain comment delimiters; only an opener outside a string
-# starts a new candidate. The end anchor excludes embedded summary examples.
-_MARKER_RE = re.compile(
-    r"<!--\s*("
-    + "|".join(re.escape(t) for t in MARKER_TOKENS)
-    + r')\s*:\s*(\{(?:[^"<]|"(?:[^"\\]|\\.)*"|<(?!\!--))*\})\s*-->\s*\Z',
-    re.DOTALL,
+# Matching only openers avoids rescanning payloads from every hostile candidate.
+_MARKER_OPENER_RE = re.compile(
+    r"<!--\s*(" + "|".join(re.escape(t) for t in MARKER_TOKENS) + r")\s*:\s*(?=\{)"
 )
 
 _FINDING_MARKER_RE = re.compile(
@@ -117,14 +113,25 @@ def find_marker(text: object) -> dict[str, object] | None:
     """Read only a complete summary marker at the end of the body."""
     if not isinstance(text, str) or not text:
         return None
-    match = _MARKER_RE.search(text)
+    tail = text.rstrip()
+    if not tail.endswith("-->"):
+        return None
+    match = None
+    for candidate in _MARKER_OPENER_RE.finditer(tail):
+        match = candidate
     if match is None:
         return None
     try:
-        payload: object = json.loads(match.group(2), parse_constant=_reject_constant)
+        payload, end = json.JSONDecoder(parse_constant=_reject_constant).raw_decode(
+            tail, match.end()
+        )
     except (ValueError, RecursionError):
         return None
-    if not isinstance(payload, dict) or _has_non_finite(payload):
+    if (
+        tail[end:].lstrip() != "-->"
+        or not isinstance(payload, dict)
+        or _has_non_finite(payload)
+    ):
         return None
     found = dict(cast(dict[str, object], payload))
     found["_token"] = match.group(1)

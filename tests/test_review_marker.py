@@ -3,6 +3,7 @@
 import json
 import re
 from pathlib import Path
+from time import perf_counter
 
 import pytest
 from gauntlet.marker import (
@@ -18,6 +19,7 @@ from gauntlet.marker import (
     build_prose_footer,
     detect_signal,
     find_finding_markers,
+    find_marker,
     select_latest,
 )
 
@@ -40,7 +42,7 @@ def test_summary_tail_round_trip_and_hostile_body(legacy: bool) -> None:
     payload = {"sha": SHA_40, "future": {"nested": ["literal --> and <!--", 1]}}
     marker = f"<!--\n{token}: {json.dumps(payload)}\n-->"
     body = build_marker(HEAD_SHA_40, 5) + "\nquoted example\n" + marker
-    signal = detect_signal(body + " \n")
+    signal = detect_signal(body.replace("\n", "\r\n") + " \r\n\t")
     assert signal is not None and signal["marker"] is not None
     assert (signal["sha"], signal["legacy"], signal["signal"]) == (
         SHA_40,
@@ -48,9 +50,26 @@ def test_summary_tail_round_trip_and_hostile_body(legacy: bool) -> None:
         "marker",
     )
     assert signal["marker"]["future"] == payload["future"]
+    assert signal["marker"]["_token"] == token
+    assert signal["marker"]["_legacy"] == legacy
     assert detect_signal(body + "\nMore user prose") is None
     assert detect_signal(body + "\n<!-- code-gauntlet-findings: {broken -->") is None
     assert detect_signal(marker.removesuffix("-->")) is None
+
+
+def test_summary_hostile_openers_are_linear() -> None:
+    body = '<!-- code-gauntlet-findings: {"\\"' * 3000 + " -->"
+    started = perf_counter()
+    result = find_marker(body)
+    elapsed = perf_counter() - started
+    assert result is None
+    assert elapsed < 0.5, f"hostile marker scan took {elapsed:.6f}s"
+
+
+@pytest.mark.parametrize("extra", ["{}", "-->", "prose"])
+def test_summary_rejects_content_between_json_and_closer(extra: str) -> None:
+    marker = build_marker(SHA_40, 1).removesuffix("-->")
+    assert find_marker(marker + extra + " -->") is None
 
 
 @pytest.mark.parametrize(
