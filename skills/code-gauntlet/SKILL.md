@@ -83,7 +83,7 @@ gh pr diff {pr_number} --name-only
 | Marker | Script exit | Meaning |
 | --- | --- | --- |
 | `output_dir: FAILED` | **1** | Cannot establish ignore for an in-repo dir (`info/exclude` unwritable/unresolvable and not otherwise ignored), or `mkdir` failed. Empty stdout — do not stamp `args.outputDir`. Remedy (ignore case): set `$CODE_GAUNTLET_OUTPUT_DIR` outside the repo and re-run. |
-| `output_dir: FAILED` | **2** | Usage: not a git repo, empty/whitespace `$CODE_GAUNTLET_OUTPUT_DIR`, output dir equals repo root, resolved path contains shell-active/control characters, or `git check-ignore` error (exit 128). Empty stdout — do not stamp. |
+| `output_dir: FAILED` | **2** | Usage: not a git repo, empty/whitespace `$CODE_GAUNTLET_OUTPUT_DIR`, output dir equals repo root, repo or resolved output path contains shell-active/control characters, or `git check-ignore` error (exit 128). Empty stdout — do not stamp. |
 
 On success, stdout is one absolute path line — store it as `{output_dir}` / `args.outputDir`. Ignore establishment (including `.git/info/exclude` append when needed) is owned by `ensure_output_dir.py` in this call; Phase 2 does not re-run it.
 

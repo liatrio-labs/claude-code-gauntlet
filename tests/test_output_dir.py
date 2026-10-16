@@ -159,9 +159,10 @@ def test_output_dir_checks_resolved_ancestors(
 ):
     unsafe = tmp_path / "unsafe$root"
     if source == "repo-root":
+        # The output dir sits outside the repo, so only the repo-root check refuses.
         output_repo.rename(unsafe)
-        repo, raw = unsafe, None
-        target = unsafe / ".code-gauntlet"
+        repo, raw = unsafe, str(tmp_path / "out")
+        target = tmp_path / "out"
     else:
         unsafe.mkdir()
         alias = output_repo / "alias"
@@ -173,7 +174,6 @@ def test_output_dir_checks_resolved_ancestors(
     result = output_cli(raw, cwd=repo)
     assert result.returncode == 2
     assert result.stdout == b""
-    assert b"$CODE_GAUNTLET_OUTPUT_DIR" in result.stderr
     assert not target.exists()
     assert exclude.read_bytes() == before
 

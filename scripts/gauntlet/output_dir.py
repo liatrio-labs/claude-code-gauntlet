@@ -169,6 +169,12 @@ def _handle(args: argparse.Namespace) -> int:
         raise CliError(f"cannot run git in {cwd}: {exc}") from exc
     if repo_root is None:
         raise CliError("not a git repository (git rev-parse --show-toplevel failed)", 2)
+    if not is_shell_safe_path(repo_root):
+        raise CliError(
+            "repository path contains shell-active or control characters; "
+            "move the checkout to a shell-safe path",
+            2,
+        )
     try:
         abs_dir = resolve_absolute(repo_root, raw)
     except ValueError as exc:
