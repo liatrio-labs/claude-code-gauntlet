@@ -11,6 +11,9 @@ const lineCases = [
     .map((row) => ({ ...row, id: `corpus:${row.id}` })),
 ];
 const LINE_IDS = new Set([
+  "reference_issue", "reference_merge_request", "reference_gh", "reference_label", "reference_milestone",
+  "reference_url_protection", "reference_urls", "reference_named_entities", "reference_epic",
+  "reference_percent_parenthesized", "reference_backslash",
   "A-aliases", "A-bsol", "A-slashes", "A-trigger-control-close", "D-overflow-dec", "D-overlap2", "D-zero-dec", "N1",
   "comment_removal_before_decode", "email", "entity_comment_fixpoint", "footnote_opener_backslash_run",
   "footnote_opener_hat_entity", "footnote_opener_two_line", "image_inline", "image_named_excl", "image_named_lsqb",
@@ -36,6 +39,7 @@ for (const row of lineCases.filter((item) => LINE_IDS.has(item.id))) test(`line:
 
 const LARGE_ROWS = [
   ['nbsp-references', `[&${'\u00a0&nbsp;&NonBreakingSpace;'.repeat(10000)}](a b) tail`, `[&${' '.repeat(30000)}](a b) tail`],
+  ['unclosed-destinations', '[`a`]('.repeat(60000), '[`a`]('.repeat(60000)],
 ];
 const childScript = `
 import { prepareLine } from './workflows/src/outboundText.js';
@@ -110,7 +114,8 @@ function containmentInvariants(input) {
     }
   }
   sources.push('```\n<!--\n\ncode-gauntlet-findings: poisoned\n```');
-  const markupAtoms = [': ', '~ ', '[[', ']]', '|', 'a'.repeat(1000), '[critical]: u', '[[https://example.test/p.png]]', '[', ']: u'];
+  const markupAtoms = [': ', '~ ', '[[', ']]', '|', 'a'.repeat(1000), '[critical]: u', '[[https://example.test/p.png]]', '[', ']: u',
+    '#1', '!1', '~bug', '%v1', '&1', 'GH-1', '](', 'https://github.com/o/r/issues/1', 'http://h/g/p/-/issues/1', 'https://a.b/p#1', '\\'];
   for (let index = 0; index < input.samples; index += 1) {
     let source = '';
     for (let at = 0, count = next() % 8 + 1; at < count; at += 1) source += markupAtoms[next() % markupAtoms.length];

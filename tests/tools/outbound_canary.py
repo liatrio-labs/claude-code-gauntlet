@@ -15,7 +15,14 @@ Operation = Literal["prose", "line"]
 DiagnosticOperation = Operation | Literal["preflight"]
 OPERATIONS: tuple[Operation, ...] = ("prose", "line")
 Property = Literal[
-    "fixpoint", "marker", "mention", "raw-html", "renderer", "preparer", "preflight"
+    "fixpoint",
+    "marker",
+    "mention",
+    "reference",
+    "raw-html",
+    "renderer",
+    "preparer",
+    "preflight",
 ]
 
 
@@ -61,6 +68,11 @@ def generate_cases(seed: int, mention: str, count: int) -> list[str]:
         f"- @{mention}\n> @{mention}\n1. @{mention}",
         f"[x][ref]\n[ref]: /@{mention}\n![x](url) [[wiki]] [^note]\n"
         f"[^note]: @{mention}",
+        "#1",
+        "GH-1",
+        "owner/repo#1",
+        "\\#1",
+        "&amp;#64;x",
     )
     atoms = (
         *prefix,
@@ -104,7 +116,13 @@ def check_case(
 ) -> Failure | None:
     from gauntlet.marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
 
-    from tests.tools.probe_html import _Node, _TreeParser, _walk, is_github_mention
+    from tests.tools.probe_html import (
+        _Node,
+        _TreeParser,
+        _walk,
+        is_github_mention,
+        is_github_reference,
+    )
 
     prepared = ""
     try:
@@ -136,6 +154,8 @@ def check_case(
     for node, _ in _walk(parser.root):
         if is_github_mention(node):
             return Failure("mention", prepared, html=rendered)
+        if is_github_reference(node):
+            return Failure("reference", prepared, html=rendered)
         if node.tag == "b" and f"OUTBOUND_PROBE_HTML_{index}" in text(node):
             return Failure("raw-html", prepared, html=rendered)
     return None

@@ -1049,6 +1049,12 @@
         "prose.footnote_opener"
       ],
       "kind": "control"
+    },
+    {
+      "id": "reference_fence_payload",
+      "operation": "prose",
+      "input": "#1 !1 ~bug %v1\n~~~\n#1 !1 ~bug %v1\n~~~\n#1 !1 ~bug %v1",
+      "expected": "\uff031 \uff011 \uff5ebug \uff05v1\n~~~\n#1 !1 ~bug %v1\n~~~\n\uff031 \uff011 \uff5ebug \uff05v1"
     }
   ]
 }

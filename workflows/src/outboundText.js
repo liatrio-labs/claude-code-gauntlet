@@ -4,6 +4,8 @@ import { longestBacktickRun, deepFreeze } from './wire.js';
 const OUTBOUND_NAMED_ENTITIES = deepFreeze({
   commat: '@',
   excl: '!',
+  num: '#',
+  percnt: '%',
   lbrack: '[',
   lsqb: '[',
   rsqb: ']',
@@ -275,14 +277,125 @@ export function outboundBase(value, entities = OUTBOUND_NAMED_ENTITIES) {
     .replace(/[\r\n]+/g, ' ');
 }
 
-function outboundVisible(text, code = false) {
+// A destination stops at "(" so each "](" scans only to the next one.
+const OUTBOUND_PROSE_LINK = /\]\(([^\s()\\]+)(?:[ \t]+(?:"[^"\n\\]*"|'[^'\n\\]*'))?\)|(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9](?:(?!\]\(|&lt;)[^\s<>])*|(?<![A-Za-z0-9.-])github\.com\/(?:(?!\]\(|&lt;)[^\s<>])+/g;
+const OUTBOUND_URL_DOMAIN = /^(?:[A-Za-z0-9_-]+\.)*[A-Za-z0-9-]+\.[A-Za-z0-9-]+(?::[0-9]+)?$/;
+const OUTBOUND_GITHUB_REFERENCE_PATH = /^\/[^/]+\/[^/]+\/(?:issues|pull|discussions)\/[0-9]/;
+const OUTBOUND_GITLAB_REFERENCE_PATH = /\/-\/(?:issues|merge_requests|work_items|epics|milestones|snippets)\/[0-9]/;
+const OUTBOUND_REFERENCE = /(?<!\\)(\\*)(#(?=[0-9])|!(?=[0-9])|(?<![A-Za-z0-9_])[Gg][Hh]-(?=[0-9])|(?<!~)(?<!~\\)~(?=[A-Za-z0-9_"])|%(?=[A-Za-z0-9_"])|&(?=[0-9]))/g;
+const OUTBOUND_REFERENCE_SIGILS = deepFreeze({ '#': '\uFF03', '!': '\uFF01', '~': '\uFF5E', '%': '\uFF05', '&': '\uFF06' });
+
+function trimUrlTail(value) {
+  let balance = 0;
+  for (const character of value) {
+    if (character === '(') balance += 1;
+    if (character === ')') balance -= 1;
+  }
+  let end = value.length;
+  while (end && (
+    '.,:;!?\'"*_~'.includes(value[end - 1]) || (value[end - 1] === ')' && balance < 0)
+  )) {
+    if (value[end - 1] === ')') balance += 1;
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
+function isReferenceUrl(value) {
+  if (!/^(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9]|^github\.com\//.test(value)) return false;
+  // A rewritten fragment must not expose a tracker path on the next preparation.
+  let path = value.split(/[?#\uFF03]/, 1)[0];
+  const hostStart = path.includes('://') ? path.indexOf('://') + 3 : 0;
+  const authorityEnd = path.indexOf('/', hostStart);
+  const host = authorityEnd >= 0 ? path.slice(hostStart, authorityEnd).toLowerCase() : '';
+  path = authorityEnd >= 0 ? path.slice(authorityEnd) : '';
+  return OUTBOUND_GITLAB_REFERENCE_PATH.test(path)
+    || (['github.com', 'www.github.com'].includes(host) && OUTBOUND_GITHUB_REFERENCE_PATH.test(path));
+}
+
+function outboundProseLinks(text, lineStart = true, labelEnds = new Set(), offset = 0) {
+  const links = [];
+  const visible = outboundCharacters(text, true);
+  const scanner = new RegExp(OUTBOUND_PROSE_LINK);
+  let match;
+  while ((match = scanner.exec(text)) !== null) {
+    const destination = match[1] !== undefined;
+    let value = destination ? match[1] : match[0];
+    if (!destination) value = trimUrlTail(value);
+    const reference = isReferenceUrl(value);
+    if (!destination && !reference) {
+      const authority = value.slice(value.includes('://') ? value.indexOf('://') + 3 : 0).split(/[/?#]/, 1)[0];
+      if (!OUTBOUND_URL_DOMAIN.test(authority)) continue;
+    }
+    // Even a rejected label must not leave a link to a backtick-wrapped URL.
+    if (destination && !labelEnds.has(offset + match.index) && !reference) {
+      scanner.lastIndex = match.index + 2;
+      continue;
+    }
+    const start = match.index;
+    if (!destination) {
+      let slashStart = start;
+      while (slashStart && text[slashStart - 1] === '\\') slashStart -= 1;
+      const boundary = reference ? slashStart : start;
+      const atBoundary = (boundary === 0 && (lineStart || reference)) || (boundary > 0 && (
+        // Wrapping a reference URL is safe anywhere outside a code span.
+        (reference && text[boundary - 1] !== '`') || /\s/.test(text[boundary - 1]) || '*_~(<'.includes(text[boundary - 1]) ||
+        (visible[boundary - 1] === '[' && labelEnds.has(offset + start + value.length)) ||
+        text.slice(Math.max(0, boundary - 4), boundary) === '&lt;'
+      ));
+      if (!atBoundary) continue;
+    }
+    links.push({
+      start: match.index,
+      end: match.index + (destination ? 2 : 0) + value.length,
+      destination,
+      reference,
+    });
+  }
+  return links;
+}
+
+function outboundReferences(text) {
+  return text.replace(OUTBOUND_REFERENCE, (_match, slashes, sigil) => {
+    const replacement = sigil.endsWith('-')
+      ? `${sigil.slice(0, -1)}\u2011`
+      : OUTBOUND_REFERENCE_SIGILS[sigil];
+    return slashes.slice(0, slashes.length - slashes.length % 2) + replacement;
+  });
+}
+
+function outboundVisible(text, lineStart = true, labelEnds = new Set(), offset = 0) {
+  const parts = [];
+  let cursor = 0;
+  for (const link of outboundProseLinks(text, lineStart, labelEnds, offset)) {
+    let before = text.slice(cursor, link.start);
+    if (link.reference && !link.destination) {
+      const slashes = before.length - before.replace(/\\+$/, '').length;
+      before = before.slice(0, before.length - slashes % 2);
+    }
+    // Keep the URL's first character as lookahead for a preceding '<'.
+    parts.push(outboundCharacters(outboundReferences(before) + text[link.start]).slice(0, -1));
+    let value = text.slice(link.start, link.end);
+    if (link.reference) {
+      let prefix = link.destination ? ']\uFF08' : '';
+      // A space keeps the new span from merging with the one just closed.
+      if (!(link.destination || lineStart || cursor || before)) prefix = ' ';
+      value = prefix + codeSpan(outboundCharacters(link.destination ? value.slice(2) : value, true));
+    } else {
+      value = outboundCharacters(value);
+    }
+    parts.push(value);
+    cursor = link.end;
+  }
+  parts.push(outboundCharacters(outboundReferences(text.slice(cursor))));
+  return parts.join('');
+}
+
+function outboundCharacters(text, code = false) {
   // Fullwidth brackets survive reparsing and keep footnote text visible.
   text = text.replace(/(?<=[!\[])\\*\[|\[(?=\\*\^)/g, (match) => `${match.slice(0, -1)}\uFF3B`);
-  const escaped = text.replace(/<(?=[A-Za-z/!?])/g, code ? '\uFF1C' : '&lt;');
-  return escaped.replace(/@/g, (match, index) => (
-    index === 0 || !/[A-Za-z0-9]/.test(escaped[index - 1])
-      ? '\uFF20' : match
-  ));
+  text = text.replace(/<(?=[A-Za-z/!?])/g, code ? '\uFF1C' : '&lt;');
+  return text.replace(/(?<![A-Za-z0-9])@/g, '\uFF20');
 }
 
 function outboundTickRunIndex(line) {
@@ -324,11 +437,15 @@ function outboundSpanClose(index, after, width) {
   return low < starts.length ? starts[low] : -1;
 }
 
-function outboundCodeSpans(line, index = outboundTickRunIndex(line)) {
+function outboundCodeSpans(line, index = outboundTickRunIndex(line), skipOpeners = new Set()) {
   const spans = [];
   let runIndex = 0;
   while (runIndex < index.runs.length) {
     const run = index.runs[runIndex];
+    if (skipOpeners.has(runIndex)) {
+      runIndex += 1;
+      continue;
+    }
     let opener = run.start + Number(run.escaped);
     let width = run.width - Number(run.escaped);
     if (width <= 0) {
@@ -365,18 +482,73 @@ function outboundDefinitions(line, forceColon = false) {
   ));
 }
 
+function outboundLinkLabelEnds(line, spans) {
+  const labelEnds = new Set();
+  let depth = 0;
+  let escaped = false;
+  let spanIndex = 0;
+  const opaque = outboundProseLinks(line).filter((link) => link.reference && !link.destination);
+  let opaqueIndex = 0;
+  // Substitutions preserve raw offsets and exclude brackets that will not survive.
+  // Labels can cross code spans, whose brackets cannot change the label depth.
+  const labelText = outboundCharacters(line, true);
+  for (let position = 0; position < labelText.length; position += 1) {
+    const character = labelText[position];
+    while (spanIndex < spans.length && spans[spanIndex][2] <= position) spanIndex += 1;
+    while (opaqueIndex < opaque.length && opaque[opaqueIndex].end <= position) opaqueIndex += 1;
+    // Brackets inside a URL will be code after wrapping and cannot form a label.
+    const inCode = (spanIndex < spans.length && spans[spanIndex][0] <= position)
+      || (opaqueIndex < opaque.length && opaque[opaqueIndex].start <= position);
+    if ('\r\n'.includes(character)) {
+      depth = 0;
+    } else if (!inCode && !escaped) {
+      if (character === '[') depth += 1;
+      else if (character === ']' && depth) {
+        depth -= 1;
+        if (line.startsWith('](', position)) {
+          labelEnds.add(position);
+          // A formed link deactivates every earlier opener, as in CommonMark.
+          depth = 0;
+        }
+      }
+    }
+    escaped = !inCode && character === '\\' && !escaped;
+  }
+  return labelEnds;
+}
+
+function opaqueRunIndexes(line, index) {
+  // URL backticks belong to the generated span, not to Markdown's input delimiters.
+  const opaque = outboundProseLinks(line).filter((link) => link.reference);
+  const skipOpeners = new Set();
+  let opaqueIndex = 0;
+  for (let runIndex = 0; runIndex < index.runs.length; runIndex += 1) {
+    const run = index.runs[runIndex];
+    while (opaqueIndex < opaque.length && opaque[opaqueIndex].end <= run.start) opaqueIndex += 1;
+    if (opaqueIndex < opaque.length && opaque[opaqueIndex].start <= run.start) skipOpeners.add(runIndex);
+  }
+  return skipOpeners;
+}
+
 function outboundContain(line, forceColon = false) {
   line = outboundDefinitions(line, forceColon);
   line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
   const index = outboundTickRunIndex(line);
-  const spans = outboundCodeSpans(line, index);
+  const skipOpeners = opaqueRunIndexes(line, index);
+  // Opaque runs remain in the index because they can still close earlier spans.
+  const spans = outboundCodeSpans(line, index, skipOpeners);
+  const labelEnds = outboundLinkLabelEnds(line, spans);
   let spanIndex = 0;
   const output = [];
   let cursor = 0;
   let runIndex = 0;
   while (runIndex < index.runs.length) {
     const run = index.runs[runIndex];
-    output.push(outboundVisible(line.slice(cursor, run.start)));
+    if (skipOpeners.has(runIndex)) {
+      runIndex += 1;
+      continue;
+    }
+    output.push(outboundVisible(line.slice(cursor, run.start), cursor === 0, labelEnds, cursor));
     let opener = run.start;
     if (run.escaped) {
       output.push('`');
@@ -388,7 +560,7 @@ function outboundContain(line, forceColon = false) {
       output.push('\\`'.repeat(selected - opener));
       const openerEnd = selected + closeEnd - close;
       output.push(line.slice(selected, openerEnd));
-      output.push(outboundVisible(line.slice(openerEnd, close), true));
+      output.push(outboundCharacters(line.slice(openerEnd, close), true));
       output.push(line.slice(close, closeEnd));
       cursor = closeEnd;
       runIndex += 1;
@@ -399,7 +571,7 @@ function outboundContain(line, forceColon = false) {
       runIndex += 1;
     }
   }
-  output.push(outboundVisible(line.slice(cursor)));
+  output.push(outboundVisible(line.slice(cursor), cursor === 0, labelEnds, cursor));
   // Bracket replacements can complete definition-shaped labels.
   return outboundDefinitions(output.join(''), forceColon);
 }
@@ -421,7 +593,7 @@ export function preparedCodeSpan(value, substituteVisible = false, entities = OU
 export function codeSpan(display, substituteVisible = false) {
   // Joined Summary parts must not be normalized again because joining can form new comment or token delimiters.
   if (substituteVisible) {
-    display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
+    display = outboundCharacters(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
     display = outboundDefinitions(display, true);
   }
   const delimiter = '`'.repeat(longestBacktickRun(display) + 1);

@@ -50,6 +50,8 @@ _BACKTICK_RUN_RE = re.compile(r"`{3,}")
 _EntityName = Literal[
     "commat",
     "excl",
+    "num",
+    "percnt",
     "lbrack",
     "lsqb",
     "rsqb",
@@ -65,6 +67,8 @@ _EntityName = Literal[
 _NAMED_ENTITIES: dict[_EntityName, str] = {
     "commat": "@",
     "excl": "!",
+    "num": "#",
+    "percnt": "%",
     "lbrack": "[",
     "lsqb": "[",
     "rsqb": "]",
@@ -259,7 +263,178 @@ def _break_marker_openers(text: str) -> str:
     return _MARKER_OPEN_RE.sub(lambda match: "&lt;" + match.group()[1:], text)
 
 
-def _escape_visible(text: str, *, code: bool = False) -> str:
+_PROSE_LINK_RE = re.compile(
+    # A destination stops at "(" so each "](" scans only to the next one.
+    r"\]\((?P<destination>[^\s()\\]+)(?:[ \t]+(?:\"[^\"\n\\]*\"|'[^'\n\\]*'))?\)|"
+    r"(?:https?://|ftp://|www\.)[A-Za-z0-9](?:(?!\]\(|&lt;)[^\s<>])*|"
+    r"(?<![A-Za-z0-9.-])github\.com/(?:(?!\]\(|&lt;)[^\s<>])+"
+)
+_URL_DOMAIN_RE = re.compile(
+    r"(?:[A-Za-z0-9_-]+\.)*[A-Za-z0-9-]+\.[A-Za-z0-9-]+(?::[0-9]+)?"
+)
+_GITHUB_REFERENCE_PATH_RE = re.compile(
+    r"/[^/]+/[^/]+/(?:issues|pull|discussions)/[0-9]"
+)
+_GITLAB_REFERENCE_PATH_RE = re.compile(
+    r"/-/(?:issues|merge_requests|work_items|epics|milestones|snippets)/[0-9]"
+)
+_REFERENCE_RE = re.compile(
+    r"(?<!\\)(\\*)(#(?=[0-9])|!(?=[0-9])|"
+    r"(?<![A-Za-z0-9_])[Gg][Hh]-(?=[0-9])|"
+    r'(?<!~)(?<!~\\)~(?=[A-Za-z0-9_"])|%(?=[A-Za-z0-9_"])|&(?=[0-9]))'
+)
+_REFERENCE_SIGILS = {
+    "#": "\uff03",
+    "!": "\uff01",
+    "~": "\uff5e",
+    "%": "\uff05",
+    "&": "\uff06",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _ProseLink:
+    start: int
+    end: int
+    destination: bool
+    reference: bool
+
+
+def _trim_url_tail(value: str) -> str:
+    balance = value.count("(") - value.count(")")
+    end = len(value)
+    while end and (
+        value[end - 1] in ".,:;!?'\"*_~" or (value[end - 1] == ")" and balance < 0)
+    ):
+        if value[end - 1] == ")":
+            balance += 1
+        end -= 1
+    return value[:end]
+
+
+def _is_reference_url(value: str) -> bool:
+    if re.match(r"(?:https?://|ftp://|www\.)[A-Za-z0-9]|github\.com/", value) is None:
+        return False
+    # A rewritten fragment must not expose a tracker path on the next preparation.
+    path = re.split(r"[?#\uff03]", value, maxsplit=1)[0]
+    host_start = path.find("://") + 3 if "://" in path else 0
+    authority_end = path.find("/", host_start)
+    host = path[host_start:authority_end].lower() if authority_end >= 0 else ""
+    path = path[authority_end:] if authority_end >= 0 else ""
+    return _GITLAB_REFERENCE_PATH_RE.search(path) is not None or (
+        host in ("github.com", "www.github.com")
+        and _GITHUB_REFERENCE_PATH_RE.match(path) is not None
+    )
+
+
+def _prose_links(
+    text: str,
+    *,
+    line_start: bool = True,
+    label_ends: frozenset[int] = frozenset(),
+    offset: int = 0,
+) -> list[_ProseLink]:
+    links = []
+    visible = _escape_characters(text, code=True)
+    position = 0
+    while match := _PROSE_LINK_RE.search(text, position):
+        position = match.end()
+        destination = match.group("destination") is not None
+        value = match.group("destination") if destination else match.group()
+        if not destination:
+            value = _trim_url_tail(value)
+        reference = _is_reference_url(value)
+        if not destination and not reference:
+            authority = re.split(r"[/?#]", value.split("://", 1)[-1], maxsplit=1)[0]
+            if _URL_DOMAIN_RE.fullmatch(authority) is None:
+                continue
+        # Even a rejected label must not leave a link to a backtick-wrapped URL.
+        if destination and offset + match.start() not in label_ends and not reference:
+            position = match.start() + 2
+            continue
+        start = match.start()
+        if not destination:
+            slash_start = start
+            while slash_start and text[slash_start - 1] == "\\":
+                slash_start -= 1
+            boundary = slash_start if reference else start
+            at_boundary = (boundary == 0 and (line_start or reference)) or (
+                boundary > 0
+                and (
+                    # Wrapping a reference URL is safe anywhere outside a code span.
+                    (reference and text[boundary - 1] != "`")
+                    or text[boundary - 1].isspace()
+                    or text[boundary - 1] in "*_~(<"
+                    or (
+                        visible[boundary - 1] == "["
+                        and offset + start + len(value) in label_ends
+                    )
+                    or text.endswith("&lt;", 0, boundary)
+                )
+            )
+            if not at_boundary:
+                continue
+        links.append(
+            _ProseLink(
+                match.start(),
+                match.start() + (2 if destination else 0) + len(value),
+                destination,
+                reference,
+            )
+        )
+    return links
+
+
+def _escape_references(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        slashes, sigil = match.groups()
+        replacement = (
+            sigil[:-1] + "\u2011" if sigil.endswith("-") else _REFERENCE_SIGILS[sigil]
+        )
+        return slashes[: len(slashes) - len(slashes) % 2] + replacement
+
+    return _REFERENCE_RE.sub(replace, text)
+
+
+def _escape_visible(
+    text: str,
+    *,
+    line_start: bool = True,
+    label_ends: frozenset[int] = frozenset(),
+    offset: int = 0,
+) -> str:
+    parts = []
+    cursor = 0
+    for link in _prose_links(
+        text, line_start=line_start, label_ends=label_ends, offset=offset
+    ):
+        before = text[cursor : link.start]
+        if link.reference and not link.destination:
+            slashes = len(before) - len(before.rstrip("\\"))
+            before = before[: len(before) - slashes % 2]
+        # Keep the URL's first character as lookahead for a preceding '<'.
+        parts.append(
+            _escape_characters(_escape_references(before) + text[link.start])[:-1]
+        )
+        value = text[link.start : link.end]
+        if link.reference:
+            prefix = "]\uff08" if link.destination else ""
+            if not (link.destination or line_start or cursor or before):
+                # A space keeps the new span from merging with the one just closed.
+                prefix = " "
+            value = prefix + code_span(
+                _escape_characters(value[2:] if link.destination else value, code=True),
+                pad_space_edges=True,
+            )
+        else:
+            value = _escape_characters(value)
+        parts.append(value)
+        cursor = link.end
+    parts.append(_escape_characters(_escape_references(text[cursor:])))
+    return "".join(parts)
+
+
+def _escape_characters(text: str, *, code: bool = False) -> str:
     # Fullwidth brackets survive reparsing and keep footnote text visible.
     text = re.sub(
         r"(?<=[!\[])\\*\[|\[(?=\\*\^)",
@@ -267,16 +442,7 @@ def _escape_visible(text: str, *, code: bool = False) -> str:
         text,
     )
     text = _DANGEROUS_LT_RE.sub("\uff1c" if code else "&lt;", text)
-    return re.sub(
-        r"@",
-        lambda match: (
-            "\uff20"
-            if not match.start()
-            or not re.match(r"[A-Za-z0-9]", text[match.start() - 1])
-            else "@"
-        ),
-        text,
-    )
+    return re.sub(r"(?<![A-Za-z0-9])@", "\uff20", text)
 
 
 _DEFINITION_RE = re.compile(
@@ -342,24 +508,92 @@ def _escape_tilde_runs(line: str) -> str:
 
 
 def _containment_code_spans(
-    line: str, index: TickRunIndex | None = None
+    line: str,
+    index: TickRunIndex | None = None,
+    skip_openers: frozenset[int] = frozenset(),
 ) -> list[tuple[int, int, int]]:
     return paired_code_spans(
-        index if index is not None else tick_run_index(line), suffix_retry=True
+        index if index is not None else tick_run_index(line),
+        suffix_retry=True,
+        skip_openers=skip_openers,
     )
+
+
+def _link_label_ends(line: str, spans: list[tuple[int, int, int]]) -> frozenset[int]:
+    label_ends = set()
+    depth = 0
+    escaped = False
+    span_index = 0
+    opaque = [
+        link for link in _prose_links(line) if link.reference and not link.destination
+    ]
+    opaque_index = 0
+    # Substitutions preserve raw offsets and exclude brackets that will not survive.
+    # Labels can cross code spans, whose brackets cannot change the label depth.
+    for position, character in enumerate(_escape_characters(line, code=True)):
+        while span_index < len(spans) and spans[span_index][2] <= position:
+            span_index += 1
+        in_code = span_index < len(spans) and spans[span_index][0] <= position
+        while opaque_index < len(opaque) and opaque[opaque_index].end <= position:
+            opaque_index += 1
+        # Brackets inside a URL will be code after wrapping and cannot form a label.
+        in_code = in_code or (
+            opaque_index < len(opaque) and opaque[opaque_index].start <= position
+        )
+        if character in "\r\n":
+            depth = 0
+        elif not in_code and not escaped:
+            if character == "[":
+                depth += 1
+            elif character == "]" and depth:
+                depth -= 1
+                if line.startswith("](", position):
+                    label_ends.add(position)
+                    # A formed link deactivates every earlier opener, as in CommonMark.
+                    depth = 0
+        escaped = not in_code and character == "\\" and not escaped
+    return frozenset(label_ends)
+
+
+def _opaque_run_indexes(line: str, index: TickRunIndex) -> frozenset[int]:
+    # URL backticks belong to the generated span, not to Markdown's input delimiters.
+    opaque = tuple(
+        (link.start, link.end) for link in _prose_links(line) if link.reference
+    )
+    skip_openers = set()
+    opaque_index = 0
+    for run_index, run in enumerate(index.runs):
+        while opaque_index < len(opaque) and opaque[opaque_index][1] <= run.start:
+            opaque_index += 1
+        if opaque_index < len(opaque) and opaque[opaque_index][0] <= run.start:
+            skip_openers.add(run_index)
+    return frozenset(skip_openers)
 
 
 def _contain_line(line: str) -> str:
     line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
     index = tick_run_index(line)
-    spans = _containment_code_spans(line, index)
+    skip_openers = _opaque_run_indexes(line, index)
+    # Opaque runs remain in the index because they can still close earlier spans.
+    spans = _containment_code_spans(line, index, skip_openers)
+    label_ends = _link_label_ends(line, spans)
     span_index = 0
     out: list[str] = []
     cursor = 0
     run_index = 0
     while run_index < len(index.runs):
         run = index.runs[run_index]
-        out.append(_escape_visible(line[cursor : run.start]))
+        if run_index in skip_openers:
+            run_index += 1
+            continue
+        out.append(
+            _escape_visible(
+                line[cursor : run.start],
+                line_start=cursor == 0,
+                label_ends=label_ends,
+                offset=cursor,
+            )
+        )
         opener = run.start
         if run.escaped:
             out.append("`")
@@ -370,7 +604,7 @@ def _contain_line(line: str) -> str:
             out.append("\\`" * (selected - opener))
             opener_end = selected + close_end - close
             out.append(line[selected:opener_end])
-            out.append(_escape_visible(line[opener_end:close], code=True))
+            out.append(_escape_characters(line[opener_end:close], code=True))
             out.append(line[close:close_end])
             cursor = close_end
             run_index += 1
@@ -380,7 +614,14 @@ def _contain_line(line: str) -> str:
             out.append("\\`" * (run.width - int(run.escaped)))
             cursor = run.end
             run_index += 1
-    out.append(_escape_visible(line[cursor:]))
+    out.append(
+        _escape_visible(
+            line[cursor:],
+            line_start=cursor == 0,
+            label_ends=label_ends,
+            offset=cursor,
+        )
+    )
     return "".join(out)
 
 
@@ -517,6 +758,6 @@ def prepare_location(value: object) -> str:
     """Display locations must contain mentions and markup without losing space edges."""
     value = redact_secrets(_normalize_outbound(str(value)))
     value = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", value)
-    value = _escape_visible(value, code=True).replace("\r", " ").replace("\n", " ")
+    value = _escape_characters(value, code=True).replace("\r", " ").replace("\n", " ")
     value = _escape_triggered_definition_colons(value, force=True)
     return code_span(value, pad_space_edges=True)

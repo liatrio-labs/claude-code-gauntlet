@@ -37,6 +37,8 @@ PREPARERS: dict[TextOperation, Callable[[object], str | None]] = {
     "location": text.prepare_location,
 }
 VECTOR_IDS = {
+    "reference_fence_payload",
+    "tilde_fixed",
     "closed_comment_removed",
     "open_comment_contained",
     "hex_comment_removed",
@@ -91,6 +93,17 @@ VECTORS: list[TextVector] = [
     if case["operation"] == "line"
     and case["id"]
     in {
+        "outbound_line_reference_issue",
+        "outbound_line_reference_merge_request",
+        "outbound_line_reference_gh",
+        "outbound_line_reference_label",
+        "outbound_line_reference_milestone",
+        "outbound_line_reference_url_protection",
+        "outbound_line_reference_urls",
+        "outbound_line_reference_named_entities",
+        "outbound_line_reference_epic",
+        "outbound_line_reference_percent_parenthesized",
+        "outbound_line_reference_backslash",
         "outbound_line_email",
         "outbound_line_inline_code",
         "outbound_line_unclosed_code",
@@ -117,6 +130,8 @@ def test_redaction_tokens(prefix: str) -> None:
 def test_text_vector(case: TextVector) -> None:
     actual = PREPARERS[case["operation"]](case["input"])
     assert actual == case["expected"]
+    if case["operation"] == "line":
+        assert text.prepare_line(actual) == actual
     if case["operation"] != "redact":
         assert_outbound_string_invariant(
             actual or "", check_prose_rules=case["operation"] in ("prose", "rule")
@@ -248,6 +263,7 @@ def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
             "x " + " ".join("\\`" * width for width in range(1, 601)),
             id="unequal-width-runs",
         ),
+        pytest.param("[`a`](" * 20000, "[`a`](" * 20000, id="unclosed-destinations"),
     ],
 )
 def test_large_outbound_preparation(source: str, expected: str) -> None:
