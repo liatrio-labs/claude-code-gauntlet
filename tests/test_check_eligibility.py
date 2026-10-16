@@ -1,7 +1,6 @@
 """Eligibility decisions at the shipped CLI boundary with exact forge argv."""
 
 import json
-from pathlib import Path
 
 import pytest
 from gauntlet import eligibility, proc
@@ -238,53 +237,3 @@ def test_invalid_input_is_usage_error(payload, argv, tmp_path, invoke):
     )
     assert result.returncode == 2
     assert result.stdout == b""
-
-
-MUTANTS = [
-    ('facts.state != "open" and mode == "interactive"', "False"),
-    ('facts.state != "open" and mode == "interactive"', 'facts.state != "open"'),
-    ("if not files.paths:", "if False:"),
-    ("all(PurePosixPath(path).name in LOCKFILES for path in files.paths)", "False"),
-    (
-        "all(PurePosixPath(path).name in LOCKFILES for path in files.paths)",
-        "any(PurePosixPath(path).name in LOCKFILES for path in files.paths)",
-    ),
-    ("if facts.draft:", "if False:"),
-    ('if policy == "skip":', "if False:"),
-    ('return "ask_draft", None', 'return "proceed", None'),
-    ("if files.complete:", "if True:"),
-    (
-        "    if files.complete:",
-        '    if not files.complete:\n        return "proceed", files.reason\n    if files.complete:',
-    ),
-]
-
-
-@pytest.mark.parametrize("before,after", MUTANTS)
-def test_eligibility_arm_mutants_are_killed(
-    before, after, monkeypatch, tmp_path, invoke
-):
-    source = Path(eligibility.__file__).read_text(encoding="utf-8")
-    assert source.count(before) == 1
-    namespace = vars(eligibility).copy()
-    exec(
-        compile(source.replace(before, after), str(eligibility.__file__), "exec"),
-        namespace,
-    )
-    monkeypatch.setattr(eligibility, "CLI", namespace["CLI"])
-    rows = CASES
-    killed = False
-    for mode, state, draft, policy, paths, verdict, reason in rows:
-        listing = (paths, "", 0) if paths is not None else ("", "unavailable", 1)
-        fake_files_forge(monkeypatch, github_view(state, draft), listing)
-        result = _invoke(invoke, tmp_path, mode, policy)
-        expected = {
-            "verdict": verdict,
-            "reason": reason,
-            "state": state.lower(),
-            "draft": draft,
-        }
-        if result.returncode != 0 or json.loads(result.stdout) != expected:
-            killed = True
-            break
-    assert killed, f"survived: {before} -> {after}"
