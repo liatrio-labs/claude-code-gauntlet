@@ -217,6 +217,10 @@ def test_pipeline_fields_reach_poster(
     assert result.code == 0, result.err
     assert result.payload is not None
     assert result.payload["platform"] == "github"
+    assert (
+        pipeline_payload["postReview"]["web_origin"] == "https://git.example.com:8443"
+    )
+    assert result.forge_factory_calls == (("github", "git.example.com"),)
     comments = result.payload["payload"]["comments"]
     assert len(comments) == 2
     for finding, comment in zip(findings, comments, strict=True):

@@ -135,7 +135,7 @@ identity flags. The script derives the Summary body from the report and forms th
 ```bash
 python3 "{plugin_root}/scripts/post_review.py" "{artifactPaths.postReview}" \
   --report "{artifactPaths.report}" --owner "{owner}" --repo "{repo}" \
-  --pr-number "{pr_number}" --platform "{platform}" --sha "{full_head_sha}"
+  --pr-number "{pr_number}" --platform "{platform}" --web-origin "{web_origin}" --sha "{full_head_sha}"
 ```
 
 > Headless carve-out (`configResult.resolved.post_mode == "dry-run"`): append `--dry-run` to the `post_review.py` invocation so it captures the payload instead of posting. `post_review.py` self-enforces this regardless — it reads `CODE_GAUNTLET_POST_MODE` directly and treats `dry-run` as `--dry-run` even when the flag is omitted (belt-and-braces) — but pass the flag explicitly so the dry-run intent is visible in the command.

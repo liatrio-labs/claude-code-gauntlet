@@ -80,16 +80,16 @@ AskUserQuestion(
 
 > Runs in **Phase 2, section 2b-post step 3** — after checkout, never in Phase 1. Listed here with the other pre-flight templates because it is a pre-flight UX decision.
 
-Skip entirely when `target_type == local` (no PR/MR ⇒ no signal to detect). Otherwise run the detector. `{platform}` is `github` or `gitlab` per the resolved target type. Resolve `{owner}`/`{repo}` first — they are the PR's repository, not necessarily the `origin` remote, which points at the fork in a fork clone:
+Skip entirely when `target_type == local` (no PR/MR signal to detect). Otherwise resolve the PR's own URL so fork clones use the base repository and its host:
 
 ```bash
-gh pr view {pr_number} --json url --jq '.url | split("/") | .[3] + "/" + .[4]'   # owner/repo
+PR_URL=$(gh pr view {pr_number} --json url --jq .url)
 ```
 
-Split the result on the first `/` into `owner`/`repo`. This reads the PR's **own URL**, which always lives on the base repository — `gh repo view` would resolve the *current* clone, which in a fork is the fork, exactly the case the explicit flags exist to fix. (GitLab: `glab mr view {pr_number} --output json | jq -r '.web_url'`, then take the path segments before `/-/merge_requests/`.)
+For GitLab, use `PR_URL=$(glab mr view {pr_number} --output json | jq -r .web_url)`.
 
 ```bash
-python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --owner {owner} --repo {repo} --number {pr_number} --head-sha {head_sha_full}
+python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --pr-url "$PR_URL" --head-sha {head_sha_full}
 ```
 
 It always exits 0 and prints exactly one JSON object on stdout (detection degrades, never blocks the review):

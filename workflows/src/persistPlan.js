@@ -18,6 +18,7 @@ export function postReviewWrapper(id, reviewBody) {
     pr_number: id.pr_number,
     sha: id.sha_full,
     platform: id.platform,
+    web_origin: id.web_origin,
     review_body: typeof reviewBody === 'string' ? reviewBody : '',
   };
 }

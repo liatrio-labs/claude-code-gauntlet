@@ -81,7 +81,8 @@ class PostResult:
 
 
 class Forge(Protocol):
-    platform: Platform
+    @property
+    def platform(self) -> Platform: ...
 
     def poster(self) -> Poster: ...
     def ensure_available(self) -> None: ...
@@ -240,6 +241,23 @@ def _web_origin(url: str) -> tuple[str, str]:
     return f"{parsed.scheme.lower()}://{host}{port_suffix}", parsed.path
 
 
+def parse_web_origin(value: str) -> str:
+    origin, path = _web_origin(value)
+    parsed = urlsplit(value)
+    if path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise ValueError(
+            "web_origin must be an http(s) origin without a path, query or fragment"
+        )
+    return origin
+
+
+def gh_hostname(web_origin: str) -> str:
+    hostname = urlsplit(web_origin).hostname
+    if hostname is None:
+        raise ValueError("web origin must include a host")
+    return hostname.lower()
+
+
 def parse_pr_url(platform: Platform, url: str) -> ParsedPrUrl:
     origin, path = _web_origin(url)
     match = _PR_PATHS[platform].fullmatch(path)
@@ -369,8 +387,10 @@ def _review_entries(command: Sequence[str], label: str) -> JsonFetch:
     return JsonFetch(items, None)
 
 
-def _submit(tool: str, header_flag: str, request: PostRequest) -> PostResult:
-    command = [tool, "api", "--method", request.method]
+def _submit(
+    api_prefix: Sequence[str], header_flag: str, request: PostRequest
+) -> PostResult:
+    command = [*api_prefix, "--method", request.method]
     for header in request.headers:
         command.extend([header_flag, header])
     command.append(request.endpoint)
@@ -405,9 +425,12 @@ def _submit(tool: str, header_flag: str, request: PostRequest) -> PostResult:
 
 
 class _ForgeAdapter:
-    platform: Platform
+    platform: ClassVar[Platform]
     _tool: ClassVar[str]
     _header_flag: ClassVar[str]
+
+    def _api_prefix(self) -> list[str]:
+        return [self._tool, "api"]
 
     def poster(self) -> Poster:
         pin = os.environ.get("CODE_GAUNTLET_POSTER")
@@ -417,7 +440,7 @@ class _ForgeAdapter:
         label = f"{self.platform} /user"
         try:
             stdout, stderr, status = proc.output(
-                [self._tool, "api", "user"],
+                [*self._api_prefix(), "user"],
                 timeout=_FETCH_TIMEOUT_SECONDS,
                 errors="replace",
             )
@@ -449,13 +472,18 @@ class _ForgeAdapter:
     def submit(self, request: PostRequest) -> PostResult:
         if request.platform != self.platform:
             raise ValueError("Request platform does not match forge platform")
-        return _submit(self._tool, self._header_flag, request)
+        return _submit(self._api_prefix(), self._header_flag, request)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GitHub(_ForgeAdapter):
-    platform: Platform = "github"
+    host: str | None = None
+    platform: ClassVar[Platform] = "github"
     _tool: ClassVar[str] = "gh"
     _header_flag: ClassVar[str] = "-H"
+
+    def _api_prefix(self) -> list[str]:
+        return [self._tool, "api", *(["--hostname", self.host] if self.host else [])]
 
     def pr_view(self, number: int) -> tuple[str, str, int]:
         return proc.output(
@@ -470,13 +498,10 @@ class GitHub(_ForgeAdapter):
             timeout=_FETCH_TIMEOUT_SECONDS,
         )
 
-    def file_names(self, target: ReviewTarget, host: str) -> tuple[str, str, int]:
+    def file_names(self, target: ReviewTarget) -> tuple[str, str, int]:
         return proc.output(
             [
-                self._tool,
-                "api",
-                "--hostname",
-                host,
+                *self._api_prefix(),
                 f"repos/{target.owner}/{target.repo}/pulls/{target.number}/files?per_page=100",
                 "--paginate",
                 "--jq",
@@ -493,15 +518,14 @@ class GitHub(_ForgeAdapter):
                 "diff",
                 str(target.number),
                 "--repo",
-                f"{target.owner}/{target.repo}",
+                f"{self.host + '/' if self.host else ''}{target.owner}/{target.repo}",
             ]
         )
 
     def review_entries(self, target: ReviewTarget) -> JsonFetch:
         return _review_entries(
             [
-                self._tool,
-                "api",
+                *self._api_prefix(),
                 "--paginate",
                 f"repos/{target.owner}/{target.repo}/pulls/{target.number}/reviews",
             ],
@@ -510,7 +534,7 @@ class GitHub(_ForgeAdapter):
 
 
 class GitLab(_ForgeAdapter):
-    platform: Platform = "gitlab"
+    platform: ClassVar[Platform] = "gitlab"
     _tool: ClassVar[str] = "glab"
     _header_flag: ClassVar[str] = "--header"
 
@@ -576,5 +600,5 @@ class GitLab(_ForgeAdapter):
         return JsonFetch(payload, None)
 
 
-def make_forge(platform: Platform) -> GitHub | GitLab:
-    return GitHub() if platform == "github" else GitLab()
+def make_forge(platform: Platform, host: str | None = None) -> GitHub | GitLab:
+    return GitHub(host=host) if platform == "github" else GitLab()

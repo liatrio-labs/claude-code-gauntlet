@@ -13,7 +13,7 @@ if (!outPath) {
 const args = validArgs({ delivery: { tier: 'all', prIdentity: {
   owner: 'o', repo: 'r', pr_number: 278,
   sha_full: '0123456789abcdef0123456789abcdef01234567',
-  platform: 'github', web_origin: 'https://github.com',
+  platform: 'github', web_origin: 'https://git.example.com:8443',
 } } });
 let persisted = null;
 const ctx = makeCtx(args, {

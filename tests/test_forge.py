@@ -242,10 +242,9 @@ def test_availability(adapter, tool, available, monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     "adapter, argv",
     [
-        (forge.GitHub, ["gh", "pr", "diff", "9", "--repo", "group/sub/repo"]),
         (forge.GitLab, ["glab", "mr", "diff", "9"]),
     ],
-    ids=["github", "gitlab"],
+    ids=["gitlab"],
 )
 @pytest.mark.parametrize("status", [0, 1], ids=["success", "failure"])
 def test_diff_policy(adapter, argv, status, monkeypatch):
@@ -264,10 +263,6 @@ def test_diff_policy(adapter, argv, status, monkeypatch):
     "adapter, argv",
     [
         (
-            forge.GitHub,
-            ["gh", "api", "--paginate", "repos/group/sub/repo/pulls/9/reviews"],
-        ),
-        (
             forge.GitLab,
             [
                 "glab",
@@ -277,7 +272,7 @@ def test_diff_policy(adapter, argv, status, monkeypatch):
             ],
         ),
     ],
-    ids=["github", "gitlab"],
+    ids=["gitlab"],
 )
 def test_paginated_read_argv(adapter, argv, monkeypatch):
     calls = []
@@ -551,19 +546,6 @@ def tracked_temp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[Path]:
     "adapter, builder, argv",
     [
         (
-            forge.GitHub,
-            forge.github_review_request,
-            [
-                "gh",
-                "api",
-                "--method",
-                "POST",
-                "-H",
-                "Accept: application/vnd.github+json",
-                "repos/group/sub/repo/pulls/9/reviews",
-            ],
-        ),
-        (
             forge.GitLab,
             forge.gitlab_note_request,
             [
@@ -577,7 +559,7 @@ def tracked_temp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[Path]:
             ],
         ),
     ],
-    ids=["github-review", "gitlab-note"],
+    ids=["gitlab-note"],
 )
 def test_submit_transport(adapter, builder, argv, monkeypatch, tracked_temp):
     paths = tracked_temp
@@ -711,7 +693,7 @@ def test_submit_failure_cleans_temp(
     "platform, expected", [("github", forge.GitHub), ("gitlab", forge.GitLab)]
 )
 def test_factory(platform, expected):
-    adapter = forge.make_forge(platform)
+    adapter = forge.make_forge(platform, "git.example.com")
     assert type(adapter) is expected
     assert adapter.platform == platform
 
@@ -880,9 +862,9 @@ def test_poster_pin_and_user_lookup(
     adapter = forge.make_forge(platform)
     expected = pin or f"{platform}-user"
     assert adapter.poster() == forge.Poster(expected, None)
-    assert calls == (
-        [] if pin else [["gh" if platform == "github" else "glab", "api", "user"]]
-    )
+    assert len(calls) == (0 if pin else 1)
+    if platform == "gitlab" and not pin:
+        assert calls == [["glab", "api", "user"]]
 
 
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
@@ -917,7 +899,7 @@ def test_poster_failure_names_pin_and_trusts_nothing(
 
 
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
-def test_file_listing_argv_and_timeouts(platform, monkeypatch):
+def test_pr_view_and_gitlab_listing_timeouts(platform, monkeypatch):
     calls = []
 
     def output(command, **kwargs):
@@ -929,24 +911,10 @@ def test_file_listing_argv_and_timeouts(platform, monkeypatch):
     if platform == "github":
         adapter = forge.GitHub()
         adapter.pr_view(7)
-        adapter.file_names(target, "git.example.com:8443")
         assert calls == [
             (
                 ["gh", "pr", "view", "7", "--json", "state,isDraft,url"],
                 {"timeout": 30},
-            ),
-            (
-                [
-                    "gh",
-                    "api",
-                    "--hostname",
-                    "git.example.com:8443",
-                    "repos/upstream/project/pulls/7/files?per_page=100",
-                    "--paginate",
-                    "--jq",
-                    ".[].filename | @json",
-                ],
-                {"timeout": 180},
             ),
         ]
     else:
@@ -967,3 +935,90 @@ def test_file_listing_argv_and_timeouts(platform, monkeypatch):
                 {"timeout": 180},
             ),
         ]
+
+
+@pytest.mark.parametrize("host", [None, "git.example.com"])
+@pytest.mark.parametrize(
+    "call", ["poster", "review_entries", "file_names", "submit", "diff"]
+)
+def test_github_host_argv(call, host, monkeypatch, tracked_temp):
+    monkeypatch.delenv("CODE_GAUNTLET_POSTER", raising=False)
+    prefix = ["gh", "api", *(["--hostname", host] if host else [])]
+    endpoint = "repos/group/sub/repo/pulls/9"
+    expected = {
+        "poster": [*prefix, "user"],
+        "review_entries": [*prefix, "--paginate", endpoint + "/reviews"],
+        "file_names": [
+            *prefix,
+            endpoint + "/files?per_page=100",
+            "--paginate",
+            "--jq",
+            ".[].filename | @json",
+        ],
+        "submit": [
+            *prefix,
+            "--method",
+            "POST",
+            "-H",
+            "Accept: application/vnd.github+json",
+            endpoint + "/reviews",
+        ],
+        "diff": [
+            "gh",
+            "pr",
+            "diff",
+            "9",
+            "--repo",
+            (host + "/" if host else "") + "group/sub/repo",
+        ],
+    }[call]
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        if call == "submit":
+            assert command == [*expected, "--input", str(tracked_temp[0])]
+            assert (
+                tracked_temp[0].read_bytes()
+                == b'{"body": "caf\xc3\xa9\\nline", "event": "COMMENT", "comments": []}'
+            )
+        else:
+            assert command == expected
+        stdout = {
+            "poster": '{"login":"poster"}',
+            "review_entries": '[{"id":1}]\n[{"id":2}]',
+            "submit": '{"id":7}',
+        }.get(call, "diff\r\n")
+        return proc.CompletedProcess(command, 0, stdout, "")
+
+    monkeypatch.setattr(proc, "run", run)
+    adapter = forge.make_forge("github", host)
+    if call == "submit":
+        result = adapter.submit(
+            forge.github_review_request(
+                TARGET, {"body": "caf\u00e9\nline", "event": "COMMENT", "comments": []}
+            )
+        )
+        assert result == forge.PostResult({"id": 7}, None, None)
+        assert not tracked_temp[0].exists()
+    elif call == "poster":
+        assert adapter.poster() == forge.Poster("poster", None)
+    elif call == "review_entries":
+        assert adapter.review_entries(TARGET) == forge.JsonFetch(
+            [{"id": 1}, {"id": 2}], None
+        )
+    else:
+        assert getattr(adapter, call)(TARGET) == ("diff\r\n", "", 0)
+    assert len(calls) == 1
+    timeout = (
+        180
+        if call == "file_names"
+        else 30
+        if call in {"poster", "review_entries"}
+        else None
+    )
+    assert calls[0][1] == {
+        "cwd": None,
+        "timeout": timeout,
+        "errors": "replace" if call in {"poster", "review_entries"} else "strict",
+    }

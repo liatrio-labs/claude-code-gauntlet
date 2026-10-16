@@ -106,6 +106,7 @@ for (const [name, reviewBody] of [['absent', undefined], ['text', 'Review body']
     const wrapper = {
       owner: "o", repo: "r", pr_number: 7, sha: 'd'.repeat(40),
       platform: 'gitlab',
+      web_origin: 'https://gitlab.com',
       review_body: reviewBody || ''
     };
     const payload = writerPayload(input);

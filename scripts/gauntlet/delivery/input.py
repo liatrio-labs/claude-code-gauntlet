@@ -4,6 +4,7 @@ from typing import TypedDict, cast
 
 from gauntlet.cli import CliError
 from gauntlet.delivery.gate import is_plain_int
+from gauntlet.forge import parse_web_origin
 
 
 class Finding(TypedDict, total=False):
@@ -35,6 +36,7 @@ class _RequiredReviewInput(TypedDict):
 
 class ReviewInput(_RequiredReviewInput, total=False):
     platform: str | None
+    web_origin: str
     sha: object
     review_body: object
 
@@ -56,6 +58,14 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
         raise CliError(
             f"Unsupported platform: '{platform.lower()}'. Use 'github' or 'gitlab'."
         )
+    if "web_origin" in data:
+        origin = data["web_origin"]
+        if not isinstance(origin, str):
+            raise CliError("web_origin must be a string")
+        try:
+            data["web_origin"] = parse_web_origin(origin)
+        except ValueError as exc:
+            raise CliError(f"web_origin: {exc}") from exc
     findings = data.get("findings", [])
     if not isinstance(findings, list):
         raise CliError("findings must be an array")

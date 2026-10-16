@@ -166,13 +166,11 @@ echo "head_sha_short=$HEAD_SHA_SHORT"
 echo "head_sha_full=$HEAD_SHA_FULL"
 
 echo "=== owner_repo ==="
-OWNER_REPO=$(gh pr view {pr_number} --json url --jq '.url | split("/") | .[3] + "/" + .[4]')
-printf '%s\n' "$OWNER_REPO"
+PR_URL=$(gh pr view {pr_number} --json url --jq .url)
+printf '%s\n' "$PR_URL"
 
 echo "=== prior_review ==="
-OWNER="${OWNER_REPO%%/*}"
-REPO="${OWNER_REPO##*/}"
-PRIOR_JSON=$(python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --owner "$OWNER" --repo "$REPO" --number {pr_number} --head-sha "$HEAD_SHA_FULL")
+PRIOR_JSON=$(python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --pr-url "$PR_URL" --head-sha "$HEAD_SHA_FULL")
 printf '%s\n' "$PRIOR_JSON"
 
 echo "=== stale_truncate ==="
@@ -183,7 +181,7 @@ Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `checkout` section above al
 
 **`status`/`checkout` are owned by `references/phase2-triage.md` 2b.** For branch targets, use 2b's resolver heredoc in `status` and the same heredoc with `resolve_branch.py --checkout` in `checkout`. For local changes, drop both sections. Stop on resolution or checkout failure; use 2b step 4's checkout-failure message with no fallback.
 
-GitLab MR mode: swap `gh pr view`/`gh pr checkout` for `glab mr view`/`glab mr checkout` in the `status`/`checkout` sections; for `owner_repo`, use `glab mr view {pr_number} --output json | jq -r '.web_url'` and take the path segments before `/-/merge_requests/` instead of splitting a GitHub API URL.
+GitLab MR mode: swap `gh pr view`/`gh pr checkout` for `glab mr view`/`glab mr checkout` in the `status`/`checkout` sections; for `owner_repo`, use `PR_URL=$(glab mr view {pr_number} --output json | jq -r .web_url)` and pass it unchanged to `--pr-url`.
 
 Local/branch targets: drop the `owner_repo`/`prior_review` sections entirely (no PR/MR ⇒ no previously-reviewed signal), and replace the `stale_truncate` line with `python3 "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha "$HEAD_SHA_SHORT" --unconditional` — there is no prior-review artifact to protect.
 
@@ -660,7 +658,7 @@ including suggestions; `main_only` → main-tagged only), ranked and capped at `
    to `post_review.py` **verbatim** — when `delivery.prIdentity` was stamped, the persisted file already IS
    the post_review-ready wrapper and its `review_body` is the outcome-first Summary body (counts, selected findings index, and any remainder); pass the file unchanged.
    A legacy bare-array artifact uses `post_review.py --report` with `--owner`, `--repo`, `--pr-number`,
-   `--platform`, and `--sha` so the script forms the wrapper. Never re-filter by tag, re-rank, or re-apply
+   `--platform`, `--web-origin`, and `--sha` so the script forms the wrapper. Never re-filter by tag, re-rank, or re-apply
    the cap yourself. Every finding in that
 payload is posted as a PR comment — suggestions are not a separate delivery destination. The `report_tag`
 is rendered as a Routing bullet; reachability-demoted findings are low-severity suggestions and are withheld by `main_only` but included by `all`. Report findings remain grouped by severity

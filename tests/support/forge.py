@@ -144,15 +144,15 @@ class FakeGitLab(FakeForge, GitLab):
 
 class FakeForgeFactory:
     def __init__(self) -> None:
-        self.calls: list[Platform] = []
+        self.calls: list[tuple[Platform, str | None]] = []
         self._forges: dict[Platform, FakeForge] = {}
 
     def configure(self, fake: FakeForge) -> FakeForge:
         self._forges[fake.platform] = fake
         return fake
 
-    def __call__(self, platform: Platform) -> FakeForge:
-        self.calls.append(platform)
+    def __call__(self, platform: Platform, host: str | None = None) -> FakeForge:
+        self.calls.append((platform, host))
         if platform not in self._forges:
             raise AssertionError(f"No fake configured for {platform}")
         return self._forges[platform]

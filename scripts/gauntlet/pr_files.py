@@ -6,15 +6,13 @@ import re
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
-from urllib.parse import urlsplit
 
 from gauntlet import proc
 from gauntlet.cli import CliError, Command, Parser
 from gauntlet.forge import (
-    GitHub,
-    GitLab,
     Platform,
     ReviewTarget,
+    gh_hostname,
     make_forge,
     parse_pr_url,
 )
@@ -55,12 +53,9 @@ def list_pr_files(platform: Platform, view: Mapping[str, object]) -> FileListing
         url = view.get("url" if platform == "github" else "web_url")
         parsed = parse_pr_url(platform, url if isinstance(url, str) else "")
         target = ReviewTarget(parsed.owner, parsed.repo, parsed.number)
-        if platform == "github":
-            stdout, stderr, status = GitHub().file_names(
-                target, urlsplit(parsed.web_origin).netloc
-            )
-        else:
-            stdout, stderr, status = GitLab().file_names(target)
+        stdout, stderr, status = make_forge(
+            platform, gh_hostname(parsed.web_origin)
+        ).file_names(target)
         if status:
             raise ValueError(stderr.strip() or f"forge exited {status}")
         if platform == "github":

@@ -520,7 +520,7 @@ def capture(
     assert run.code == 0
     assert run.requests == ()
     assert run.head_calls == ()
-    assert forge_factory.calls == [platform]
+    assert forge_factory.calls == [(platform, None)]
     assert [call.method for call in run.fake.calls] == (
         ["diff", "ensure_available"]
         if platform == "github"

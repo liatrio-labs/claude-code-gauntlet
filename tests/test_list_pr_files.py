@@ -147,7 +147,7 @@ def test_github_filename_framing_and_enterprise_origin(monkeypatch, tmp_path, in
         monkeypatch,
         (json.dumps(view), "", 0),
         ("\n".join(json.dumps(path, ensure_ascii=False) for path in paths), "", 0),
-        hostname="git.example.com:8443",
+        hostname="git.example.com",
     )
     result = _invoke(invoke, tmp_path, "github")
     assert result.returncode == 0, result.stderr
