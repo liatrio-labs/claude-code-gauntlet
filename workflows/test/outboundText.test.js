@@ -114,7 +114,8 @@ function containmentInvariants(input) {
     }
   }
   sources.push('```\n<!--\n\ncode-gauntlet-findings: poisoned\n```');
-  const markupAtoms = [': ', '~ ', '[[', ']]', '|', 'a'.repeat(1000), '[critical]: u', '[[https://example.test/p.png]]', '[', ']: u'];
+  const markupAtoms = [': ', '~ ', '[[', ']]', '|', 'a'.repeat(1000), '[critical]: u', '[[https://example.test/p.png]]', '[', ']: u',
+    '#1', '!1', '~bug', '%v1', '&1', 'GH-1', '](', 'https://github.com/o/r/issues/1', 'http://h/g/p/-/issues/1', 'https://a.b/p#1', '\\'];
   for (let index = 0; index < input.samples; index += 1) {
     let source = '';
     for (let at = 0, count = next() % 8 + 1; at < count; at += 1) source += markupAtoms[next() % markupAtoms.length];

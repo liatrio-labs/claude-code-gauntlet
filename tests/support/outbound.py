@@ -150,6 +150,22 @@ def fold_vectors(
     return rows
 
 
+_REFERENCE_ATOMS = (
+    "#1",
+    "!1",
+    "~bug",
+    "%v1",
+    "&1",
+    "GH-1",
+    "](",
+    "[",
+    "https://github.com/o/r/issues/1",
+    "http://h/g/p/-/issues/1",
+    "https://a.b/p#1",
+    "\\",
+)
+
+
 def attack_corpus(seed: Literal[1729, 917]) -> list[str]:
     generator = random.Random(seed)
     alphabet = (
@@ -161,6 +177,10 @@ def attack_corpus(seed: Literal[1729, 917]) -> list[str]:
         "".join(generator.choice(alphabet) for _ in range(generator.randint(1, 64)))
         for _ in range(5000)
     ]
+    generated.extend(
+        "".join(generator.choices(_REFERENCE_ATOMS, k=generator.randint(1, 8)))
+        for _ in range(5000)
+    )
     if seed == 1729:
         generated.append("```\n<!--\n\ncode-gauntlet-findings: poisoned\n```")
     return generated
@@ -169,6 +189,7 @@ def attack_corpus(seed: Literal[1729, 917]) -> list[str]:
 def markup_corpus() -> list[str]:
     generator = random.Random(414)
     atoms = (
+        *_REFERENCE_ATOMS,
         "[",
         "]",
         "(",

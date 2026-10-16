@@ -2489,42 +2489,51 @@ function outboundBase(value, entities = OUTBOUND_NAMED_ENTITIES) {
     .replace(/(?:glpat-|glrt-)[A-Za-z0-9_-]{20,}/g, '[REDACTED]')
     .replace(/[\r\n]+/g, ' ');
 }
-const OUTBOUND_PROSE_LINK = /\]\(([^\s()]+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)|(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9](?:(?!\]\()[^\s<>])*|(?<![A-Za-z0-9.-])github\.com\/(?:(?!\]\()[^\s<>])+/g;
+const OUTBOUND_PROSE_LINK = /\]\(([^\s()\\]+)(?:[ \t]+(?:"[^"\n\\]*"|'[^'\n\\]*'))?\)|(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9](?:(?!\]\(|&lt;)[^\s<>])*|(?<![A-Za-z0-9.-])github\.com\/(?:(?!\]\(|&lt;)[^\s<>])+/g;
+const OUTBOUND_URL_DOMAIN = /^(?:[A-Za-z0-9_-]+\.)*[A-Za-z0-9-]+\.[A-Za-z0-9-]+(?::[0-9]+)?$/;
 const OUTBOUND_GITHUB_REFERENCE_PATH = /^\/[^/]+\/[^/]+\/(?:issues|pull|discussions)\/[0-9]/;
 const OUTBOUND_GITLAB_REFERENCE_PATH = /\/-\/(?:issues|merge_requests|work_items|epics|milestones|snippets)\/[0-9]/;
 const OUTBOUND_REFERENCE = /(?<!\\)(\\*)(#(?=[0-9])|!(?=[0-9])|(?<![A-Za-z0-9_])[Gg][Hh]-(?=[0-9])|(?<!~)(?<!~\\)~(?=[A-Za-z0-9_"])|%(?=[A-Za-z0-9_"])|&(?=[0-9]))/g;
+const OUTBOUND_REFERENCE_SIGILS = deepFreeze({ '#': '\uFF03', '!': '\uFF01', '~': '\uFF5E', '%': '\uFF05', '&': '\uFF06' });
+function trimUrlTail(value) {
+  let balance = 0;
+  for (const character of value) {
+    if (character === '(') balance += 1;
+    if (character === ')') balance -= 1;
+  }
+  let end = value.length;
+  while (end && (
+    '.,:;!?\'"*_~'.includes(value[end - 1]) || (value[end - 1] === ')' && balance < 0)
+  )) {
+    if (value[end - 1] === ')') balance += 1;
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+function isReferenceUrl(value) {
+  if (!/^(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9]|^github\.com\//.test(value)) return false;
+  let path = value.split(/[?#\uFF03]/, 1)[0];
+  const hostStart = path.includes('://') ? path.indexOf('://') + 3 : 0;
+  const authorityEnd = path.indexOf('/', hostStart);
+  const host = authorityEnd >= 0 ? path.slice(hostStart, authorityEnd).toLowerCase() : '';
+  path = authorityEnd >= 0 ? path.slice(authorityEnd) : '';
+  return OUTBOUND_GITLAB_REFERENCE_PATH.test(path)
+    || (['github.com', 'www.github.com'].includes(host) && OUTBOUND_GITHUB_REFERENCE_PATH.test(path));
+}
 function outboundProseLinks(text, lineStart = true, labelEnds = new Set(), offset = 0) {
   const links = [];
+  const visible = outboundCharacters(text, true);
   const scanner = new RegExp(OUTBOUND_PROSE_LINK);
   let match;
   while ((match = scanner.exec(text)) !== null) {
     const destination = match[1] !== undefined;
     let value = destination ? match[1] : match[0];
-    if (!destination) {
-      let balance = 0;
-      for (const character of value) {
-        if (character === '(') balance += 1;
-        if (character === ')') balance -= 1;
-      }
-      let end = value.length;
-      while (end && (
-        '.,:;!?\'"*_~'.includes(value[end - 1]) || (value[end - 1] === ')' && balance < 0)
-      )) {
-        if (value[end - 1] === ')') balance += 1;
-        end -= 1;
-      }
-      value = value.slice(0, end);
+    if (!destination) value = trimUrlTail(value);
+    const reference = isReferenceUrl(value);
+    if (!destination && !reference) {
+      const authority = value.slice(value.includes('://') ? value.indexOf('://') + 3 : 0).split(/[/?#]/, 1)[0];
+      if (!OUTBOUND_URL_DOMAIN.test(authority)) continue;
     }
-    const url = !destination || /^(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9]|^github\.com\//.test(value);
-    let path = value.split('?', 1)[0].split('#', 1)[0];
-    const hostStart = path.includes('://') ? path.indexOf('://') + 3 : 0;
-    const authorityEnd = path.indexOf('/', hostStart);
-    const host = authorityEnd >= 0 ? path.slice(hostStart, authorityEnd).toLowerCase() : '';
-    path = authorityEnd >= 0 ? path.slice(authorityEnd) : '';
-    const reference = url && (
-      OUTBOUND_GITLAB_REFERENCE_PATH.test(path)
-      || (['github.com', 'www.github.com'].includes(host) && OUTBOUND_GITHUB_REFERENCE_PATH.test(path))
-    );
     if (destination && !labelEnds.has(offset + match.index) && !reference) {
       scanner.lastIndex = match.index + 2;
       continue;
@@ -2536,7 +2545,7 @@ function outboundProseLinks(text, lineStart = true, labelEnds = new Set(), offse
       const boundary = reference ? slashStart : start;
       const atBoundary = (boundary === 0 && (lineStart || reference)) || (boundary > 0 && (
         (reference && text[boundary - 1] !== '`') || /\s/.test(text[boundary - 1]) || '*_~(<'.includes(text[boundary - 1]) ||
-        (text[boundary - 1] === '[' && labelEnds.has(offset + start + value.length)) ||
+        (visible[boundary - 1] === '[' && labelEnds.has(offset + start + value.length)) ||
         text.slice(Math.max(0, boundary - 4), boundary) === '&lt;'
       ));
       if (!atBoundary) continue;
@@ -2552,38 +2561,35 @@ function outboundProseLinks(text, lineStart = true, labelEnds = new Set(), offse
 }
 function outboundReferences(text) {
   return text.replace(OUTBOUND_REFERENCE, (_match, slashes, sigil) => {
-    const replacement = sigil.length === 3
+    const replacement = sigil.endsWith('-')
       ? `${sigil.slice(0, -1)}\u2011`
-      : { '#': '\uFF03', '!': '\uFF01', '~': '\uFF5E', '%': '\uFF05', '&': '\uFF06' }[sigil];
+      : OUTBOUND_REFERENCE_SIGILS[sigil];
     return slashes.slice(0, slashes.length - slashes.length % 2) + replacement;
   });
 }
-function outboundVisible(text, code = false, lineStart = true, labelEnds = new Set(), offset = 0) {
-  if (!code) {
-    const parts = [];
-    let cursor = 0;
-    for (const link of outboundProseLinks(text, lineStart, labelEnds, offset)) {
-      let before = text.slice(cursor, link.start);
-      if (link.reference && !link.destination) {
-        const slashes = before.length - before.replace(/\\+$/, '').length;
-        before = before.slice(0, before.length - slashes % 2);
-      }
-      parts.push(outboundCharacters(outboundReferences(before) + text[link.start]).slice(0, -1));
-      let value = text.slice(link.start, link.end);
-      if (link.reference) {
-        let prefix = link.destination ? ']\uFF08' : '';
-        if (!(link.destination || lineStart || cursor || before)) prefix = ' ';
-        value = prefix + codeSpan(outboundCharacters(link.destination ? value.slice(2) : value, true));
-      } else {
-        value = outboundCharacters(value);
-      }
-      parts.push(value);
-      cursor = link.end;
+function outboundVisible(text, lineStart = true, labelEnds = new Set(), offset = 0) {
+  const parts = [];
+  let cursor = 0;
+  for (const link of outboundProseLinks(text, lineStart, labelEnds, offset)) {
+    let before = text.slice(cursor, link.start);
+    if (link.reference && !link.destination) {
+      const slashes = before.length - before.replace(/\\+$/, '').length;
+      before = before.slice(0, before.length - slashes % 2);
     }
-    parts.push(outboundCharacters(outboundReferences(text.slice(cursor))));
-    return parts.join('');
+    parts.push(outboundCharacters(outboundReferences(before) + text[link.start]).slice(0, -1));
+    let value = text.slice(link.start, link.end);
+    if (link.reference) {
+      let prefix = link.destination ? ']\uFF08' : '';
+      if (!(link.destination || lineStart || cursor || before)) prefix = ' ';
+      value = prefix + codeSpan(outboundCharacters(link.destination ? value.slice(2) : value, true));
+    } else {
+      value = outboundCharacters(value);
+    }
+    parts.push(value);
+    cursor = link.end;
   }
-  return outboundCharacters(text, code);
+  parts.push(outboundCharacters(outboundReferences(text.slice(cursor))));
+  return parts.join('');
 }
 function outboundCharacters(text, code = false) {
   text = text.replace(/(?<=[!\[])\\*\[|\[(?=\\*\^)/g, (match) => `${match.slice(0, -1)}\uFF3B`);
@@ -2674,11 +2680,15 @@ function outboundLinkLabelEnds(line, spans) {
   let depth = 0;
   let escaped = false;
   let spanIndex = 0;
+  const opaque = outboundProseLinks(line).filter((link) => link.reference && !link.destination);
+  let opaqueIndex = 0;
   const labelText = outboundCharacters(line, true);
   for (let position = 0; position < labelText.length; position += 1) {
     const character = labelText[position];
     while (spanIndex < spans.length && spans[spanIndex][2] <= position) spanIndex += 1;
-    const inCode = spanIndex < spans.length && spans[spanIndex][0] <= position;
+    while (opaqueIndex < opaque.length && opaque[opaqueIndex].end <= position) opaqueIndex += 1;
+    const inCode = (spanIndex < spans.length && spans[spanIndex][0] <= position)
+      || (opaqueIndex < opaque.length && opaque[opaqueIndex].start <= position);
     if ('\r\n'.includes(character)) {
       depth = 0;
     } else if (!inCode && !escaped) {
@@ -2695,10 +2705,7 @@ function outboundLinkLabelEnds(line, spans) {
   }
   return labelEnds;
 }
-function outboundContain(line, forceColon = false) {
-  line = outboundDefinitions(line, forceColon);
-  line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
-  const index = outboundTickRunIndex(line);
+function opaqueRunIndexes(line, index) {
   const opaque = outboundProseLinks(line).filter((link) => link.reference);
   const skipOpeners = new Set();
   let opaqueIndex = 0;
@@ -2707,6 +2714,13 @@ function outboundContain(line, forceColon = false) {
     while (opaqueIndex < opaque.length && opaque[opaqueIndex].end <= run.start) opaqueIndex += 1;
     if (opaqueIndex < opaque.length && opaque[opaqueIndex].start <= run.start) skipOpeners.add(runIndex);
   }
+  return skipOpeners;
+}
+function outboundContain(line, forceColon = false) {
+  line = outboundDefinitions(line, forceColon);
+  line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
+  const index = outboundTickRunIndex(line);
+  const skipOpeners = opaqueRunIndexes(line, index);
   const spans = outboundCodeSpans(line, index, skipOpeners);
   const labelEnds = outboundLinkLabelEnds(line, spans);
   let spanIndex = 0;
@@ -2719,7 +2733,7 @@ function outboundContain(line, forceColon = false) {
       runIndex += 1;
       continue;
     }
-    output.push(outboundVisible(line.slice(cursor, run.start), false, cursor === 0, labelEnds, cursor));
+    output.push(outboundVisible(line.slice(cursor, run.start), cursor === 0, labelEnds, cursor));
     let opener = run.start;
     if (run.escaped) {
       output.push('`');
@@ -2731,7 +2745,7 @@ function outboundContain(line, forceColon = false) {
       output.push('\\`'.repeat(selected - opener));
       const openerEnd = selected + closeEnd - close;
       output.push(line.slice(selected, openerEnd));
-      output.push(outboundVisible(line.slice(openerEnd, close), true));
+      output.push(outboundCharacters(line.slice(openerEnd, close), true));
       output.push(line.slice(close, closeEnd));
       cursor = closeEnd;
       runIndex += 1;
@@ -2742,7 +2756,7 @@ function outboundContain(line, forceColon = false) {
       runIndex += 1;
     }
   }
-  output.push(outboundVisible(line.slice(cursor), false, cursor === 0, labelEnds, cursor));
+  output.push(outboundVisible(line.slice(cursor), cursor === 0, labelEnds, cursor));
   return outboundDefinitions(output.join(''), forceColon);
 }
 function prepareLine(value, forceColon = false, entities = OUTBOUND_NAMED_ENTITIES) {
@@ -2758,7 +2772,7 @@ function preparedCodeSpan(value, substituteVisible = false, entities = OUTBOUND_
 }
 function codeSpan(display, substituteVisible = false) {
   if (substituteVisible) {
-    display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
+    display = outboundCharacters(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
     display = outboundDefinitions(display, true);
   }
   const delimiter = '`'.repeat(longestBacktickRun(display) + 1);
