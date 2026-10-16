@@ -150,12 +150,12 @@ syntax is broken: `#`, `!` and `&` before an ASCII digit become U+FF03, U+FF01 a
 a word-initial `GH-` before a digit takes U+2011 as its hyphen, and `~` or `%` before an
 ASCII letter, digit, underscore or `"` becomes U+FF5E or U+FF05. Tilde runs stay, and a
 rewritten sigil loses one preceding backslash when its backslash run is odd.
-URLs and inline link destinations keep their reference sigils.
-A URL with a repository path shaped like `/<owner>/<repo>/(issues|pull|discussions)/<digit>`
-(outside the reserved `/organizations/` prefix) or containing
-`/-/(issues|merge_requests|work_items|epics|milestones|snippets)/<digit>`
-(host, query and fragment aside, including scheme-less `github.com/`) becomes inline
-code, and as a link destination its opening `(` becomes U+FF08.
+A URL that starts at line start, after whitespace, or after `*`, `_`, `~`, `(`, `<`
+or a link label's `[`, and every inline link destination, keeps its sigils.
+A github.com or www.github.com URL shaped `/<owner>/<repo>/(issues|pull|discussions)/<digit>`,
+or a URL on any host containing `/-/(issues|merge_requests|work_items|epics|milestones|snippets)/<digit>`,
+becomes inline code, and as a link destination its `(` becomes U+FF08.
+GitHub Enterprise issue URLs are not wrapped.
 Numeric references and `&commat;`, `&excl;`, `&num;`, `&percnt;`, `&lbrack;`, `&lsqb;`,
 `&rsqb;`, `&rbrack;`, `&Hat;`, `&colon;`, `&lpar;`, `&rpar;`, `&bsol;`, `&nbsp;` and
 `&NonBreakingSpace;` decode as each replacement

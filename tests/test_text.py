@@ -263,6 +263,7 @@ def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
             "x " + " ".join("\\`" * width for width in range(1, 601)),
             id="unequal-width-runs",
         ),
+        pytest.param("[`a`](" * 20000, "[`a`](" * 20000, id="unclosed-destinations"),
     ],
 )
 def test_large_outbound_preparation(source: str, expected: str) -> None:

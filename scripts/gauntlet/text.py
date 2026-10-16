@@ -264,7 +264,8 @@ def _break_marker_openers(text: str) -> str:
 
 
 _PROSE_LINK_RE = re.compile(
-    r"\]\((?P<destination>[^\s)]+)(?:[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'))?\)|"
+    # A destination stops at "(" so each "](" scans only to the next one.
+    r"\]\((?P<destination>[^\s()]+)(?:[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'))?\)|"
     r"(?:https?://|ftp://|www\.)[A-Za-z0-9](?:(?!\]\()[^\s<>])*|"
     r"(?<![A-Za-z0-9.-])github\.com/(?:(?!\]\()[^\s<>])+"
 )
@@ -289,30 +290,18 @@ class _ProseLink:
     reference: bool
 
 
-def _prose_links(text: str, *, line_start: bool = True) -> list[_ProseLink]:
-    label_ends = set()
-    label_open = False
-    escaped = False
-    # Scan surviving brackets so character escaping cannot invalidate an exemption.
-    for position, character in enumerate(_escape_characters(text, code=True)):
-        if character in "\r\n":
-            label_open = False
-        elif not escaped:
-            if character == "[":
-                label_open = True
-            elif character == "]":
-                if label_open:
-                    label_ends.add(position)
-                label_open = False
-        escaped = character == "\\" and not escaped
+def _prose_links(
+    text: str,
+    *,
+    line_start: bool = True,
+    label_ends: frozenset[int] = frozenset(),
+    offset: int = 0,
+) -> list[_ProseLink]:
     links = []
     position = 0
     while match := _PROSE_LINK_RE.search(text, position):
         position = match.end()
         destination = match.group("destination") is not None
-        if destination and match.start() not in label_ends:
-            position = match.start() + 2
-            continue
         value = match.group("destination") if destination else match.group()
         if not destination:
             balance = value.count("(") - value.count(")")
@@ -343,6 +332,10 @@ def _prose_links(text: str, *, line_start: bool = True) -> list[_ProseLink]:
                 and _GITHUB_REFERENCE_PATH_RE.match(path) is not None
             )
         )
+        # Even a rejected label must not leave a link to a backtick-wrapped URL.
+        if destination and offset + match.start() not in label_ends and not reference:
+            position = match.start() + 2
+            continue
         start = match.start()
         if not destination:
             slash_start = start
@@ -354,7 +347,10 @@ def _prose_links(text: str, *, line_start: bool = True) -> list[_ProseLink]:
                 and (
                     text[boundary - 1].isspace()
                     or text[boundary - 1] in "*_~(<"
-                    or (reference and text[boundary - 1] == "[")
+                    or (
+                        text[boundary - 1] == "["
+                        and offset + start + len(value) in label_ends
+                    )
                     or text.endswith("&lt;", 0, boundary)
                 )
             )
@@ -390,11 +386,20 @@ def _escape_references(text: str) -> str:
     return _REFERENCE_RE.sub(replace, text)
 
 
-def _escape_visible(text: str, *, code: bool = False, line_start: bool = True) -> str:
+def _escape_visible(
+    text: str,
+    *,
+    code: bool = False,
+    line_start: bool = True,
+    label_ends: frozenset[int] = frozenset(),
+    offset: int = 0,
+) -> str:
     if not code:
         parts = []
         cursor = 0
-        for link in _prose_links(text, line_start=line_start):
+        for link in _prose_links(
+            text, line_start=line_start, label_ends=label_ends, offset=offset
+        ):
             before = text[cursor : link.start]
             if link.reference and not link.destination:
                 slashes = len(before) - len(before.rstrip("\\"))
@@ -506,6 +511,30 @@ def _containment_code_spans(
     )
 
 
+def _link_label_ends(line: str, spans: list[tuple[int, int, int]]) -> frozenset[int]:
+    label_ends = set()
+    depth = 0
+    escaped = False
+    span_index = 0
+    # Substitutions preserve raw offsets and exclude brackets that will not survive.
+    # Labels can cross code spans, whose brackets cannot change the label depth.
+    for position, character in enumerate(_escape_characters(line, code=True)):
+        while span_index < len(spans) and spans[span_index][2] <= position:
+            span_index += 1
+        in_code = span_index < len(spans) and spans[span_index][0] <= position
+        if character in "\r\n":
+            depth = 0
+        elif not in_code and not escaped:
+            if character == "[":
+                depth += 1
+            elif character == "]" and depth:
+                depth -= 1
+                if line.startswith("](", position):
+                    label_ends.add(position)
+        escaped = not in_code and character == "\\" and not escaped
+    return frozenset(label_ends)
+
+
 def _contain_line(line: str) -> str:
     line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
     index = tick_run_index(line)
@@ -522,6 +551,7 @@ def _contain_line(line: str) -> str:
             skip_openers.add(run_index)
     # Opaque runs remain in the index because they can still close earlier spans.
     spans = _containment_code_spans(line, index, frozenset(skip_openers))
+    label_ends = _link_label_ends(line, spans)
     span_index = 0
     out: list[str] = []
     cursor = 0
@@ -531,7 +561,14 @@ def _contain_line(line: str) -> str:
         if run_index in skip_openers:
             run_index += 1
             continue
-        out.append(_escape_visible(line[cursor : run.start], line_start=cursor == 0))
+        out.append(
+            _escape_visible(
+                line[cursor : run.start],
+                line_start=cursor == 0,
+                label_ends=label_ends,
+                offset=cursor,
+            )
+        )
         opener = run.start
         if run.escaped:
             out.append("`")
@@ -552,7 +589,14 @@ def _contain_line(line: str) -> str:
             out.append("\\`" * (run.width - int(run.escaped)))
             cursor = run.end
             run_index += 1
-    out.append(_escape_visible(line[cursor:], line_start=cursor == 0))
+    out.append(
+        _escape_visible(
+            line[cursor:],
+            line_start=cursor == 0,
+            label_ends=label_ends,
+            offset=cursor,
+        )
+    )
     return "".join(out)
 
 

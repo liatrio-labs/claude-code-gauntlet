@@ -39,6 +39,7 @@ for (const row of lineCases.filter((item) => LINE_IDS.has(item.id))) test(`line:
 
 const LARGE_ROWS = [
   ['nbsp-references', `[&${'\u00a0&nbsp;&NonBreakingSpace;'.repeat(10000)}](a b) tail`, `[&${' '.repeat(30000)}](a b) tail`],
+  ['unclosed-destinations', '[`a`]('.repeat(60000), '[`a`]('.repeat(60000)],
 ];
 const childScript = `
 import { prepareLine } from './workflows/src/outboundText.js';

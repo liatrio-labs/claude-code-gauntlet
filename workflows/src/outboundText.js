@@ -277,39 +277,18 @@ export function outboundBase(value, entities = OUTBOUND_NAMED_ENTITIES) {
     .replace(/[\r\n]+/g, ' ');
 }
 
-const OUTBOUND_PROSE_LINK = /\]\(([^\s)]+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)|(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9](?:(?!\]\()[^\s<>])*|(?<![A-Za-z0-9.-])github\.com\/(?:(?!\]\()[^\s<>])+/g;
+// A destination stops at "(" so each "](" scans only to the next one.
+const OUTBOUND_PROSE_LINK = /\]\(([^\s()]+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)|(?:https?:\/\/|ftp:\/\/|www\.)[A-Za-z0-9](?:(?!\]\()[^\s<>])*|(?<![A-Za-z0-9.-])github\.com\/(?:(?!\]\()[^\s<>])+/g;
 const OUTBOUND_GITHUB_REFERENCE_PATH = /^\/[^/]+\/[^/]+\/(?:issues|pull|discussions)\/[0-9]/;
 const OUTBOUND_GITLAB_REFERENCE_PATH = /\/-\/(?:issues|merge_requests|work_items|epics|milestones|snippets)\/[0-9]/;
 const OUTBOUND_REFERENCE = /(?<!\\)(\\*)(#(?=[0-9])|!(?=[0-9])|(?<![A-Za-z0-9_])[Gg][Hh]-(?=[0-9])|(?<!~)(?<!~\\)~(?=[A-Za-z0-9_"])|%(?=[A-Za-z0-9_"])|&(?=[0-9]))/g;
 
-function outboundProseLinks(text, lineStart = true) {
-  const labelEnds = new Set();
-  let labelOpen = false;
-  let escaped = false;
-  // Scan surviving brackets so character escaping cannot invalidate an exemption.
-  const labelText = outboundCharacters(text, true);
-  for (let position = 0; position < labelText.length; position += 1) {
-    const character = labelText[position];
-    if ('\r\n'.includes(character)) {
-      labelOpen = false;
-    } else if (!escaped) {
-      if (character === '[') labelOpen = true;
-      else if (character === ']') {
-        if (labelOpen) labelEnds.add(position);
-        labelOpen = false;
-      }
-    }
-    escaped = character === '\\' && !escaped;
-  }
+function outboundProseLinks(text, lineStart = true, labelEnds = new Set(), offset = 0) {
   const links = [];
   const scanner = new RegExp(OUTBOUND_PROSE_LINK);
   let match;
   while ((match = scanner.exec(text)) !== null) {
     const destination = match[1] !== undefined;
-    if (destination && !labelEnds.has(match.index)) {
-      scanner.lastIndex = match.index + 2;
-      continue;
-    }
     let value = destination ? match[1] : match[0];
     if (!destination) {
       let balance = 0;
@@ -337,6 +316,11 @@ function outboundProseLinks(text, lineStart = true) {
       OUTBOUND_GITLAB_REFERENCE_PATH.test(path)
       || (['github.com', 'www.github.com'].includes(host) && OUTBOUND_GITHUB_REFERENCE_PATH.test(path))
     );
+    // Even a rejected label must not leave a link to a backtick-wrapped URL.
+    if (destination && !labelEnds.has(offset + match.index) && !reference) {
+      scanner.lastIndex = match.index + 2;
+      continue;
+    }
     const start = match.index;
     if (!destination) {
       let slashStart = start;
@@ -344,7 +328,7 @@ function outboundProseLinks(text, lineStart = true) {
       const boundary = reference ? slashStart : start;
       const atBoundary = (boundary === 0 && lineStart) || (boundary > 0 && (
         /\s/.test(text[boundary - 1]) || '*_~(<'.includes(text[boundary - 1]) ||
-        (reference && text[boundary - 1] === '[') ||
+        (text[boundary - 1] === '[' && labelEnds.has(offset + start + value.length)) ||
         text.slice(Math.max(0, boundary - 4), boundary) === '&lt;'
       ));
       if (!atBoundary) continue;
@@ -368,11 +352,11 @@ function outboundReferences(text) {
   });
 }
 
-function outboundVisible(text, code = false, lineStart = true) {
+function outboundVisible(text, code = false, lineStart = true, labelEnds = new Set(), offset = 0) {
   if (!code) {
     const parts = [];
     let cursor = 0;
-    for (const link of outboundProseLinks(text, lineStart)) {
+    for (const link of outboundProseLinks(text, lineStart, labelEnds, offset)) {
       let before = text.slice(cursor, link.start);
       if (link.reference && !link.destination) {
         const slashes = before.length - before.replace(/\\+$/, '').length;
@@ -487,6 +471,32 @@ function outboundDefinitions(line, forceColon = false) {
   ));
 }
 
+function outboundLinkLabelEnds(line, spans) {
+  const labelEnds = new Set();
+  let depth = 0;
+  let escaped = false;
+  let spanIndex = 0;
+  // Substitutions preserve raw offsets and exclude brackets that will not survive.
+  // Labels can cross code spans, whose brackets cannot change the label depth.
+  const labelText = outboundCharacters(line, true);
+  for (let position = 0; position < labelText.length; position += 1) {
+    const character = labelText[position];
+    while (spanIndex < spans.length && spans[spanIndex][2] <= position) spanIndex += 1;
+    const inCode = spanIndex < spans.length && spans[spanIndex][0] <= position;
+    if ('\r\n'.includes(character)) {
+      depth = 0;
+    } else if (!inCode && !escaped) {
+      if (character === '[') depth += 1;
+      else if (character === ']' && depth) {
+        depth -= 1;
+        if (line.startsWith('](', position)) labelEnds.add(position);
+      }
+    }
+    escaped = !inCode && character === '\\' && !escaped;
+  }
+  return labelEnds;
+}
+
 function outboundContain(line, forceColon = false) {
   line = outboundDefinitions(line, forceColon);
   line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
@@ -502,6 +512,7 @@ function outboundContain(line, forceColon = false) {
   }
   // Opaque runs remain in the index because they can still close earlier spans.
   const spans = outboundCodeSpans(line, index, skipOpeners);
+  const labelEnds = outboundLinkLabelEnds(line, spans);
   let spanIndex = 0;
   const output = [];
   let cursor = 0;
@@ -512,7 +523,7 @@ function outboundContain(line, forceColon = false) {
       runIndex += 1;
       continue;
     }
-    output.push(outboundVisible(line.slice(cursor, run.start), false, cursor === 0));
+    output.push(outboundVisible(line.slice(cursor, run.start), false, cursor === 0, labelEnds, cursor));
     let opener = run.start;
     if (run.escaped) {
       output.push('`');
@@ -535,7 +546,7 @@ function outboundContain(line, forceColon = false) {
       runIndex += 1;
     }
   }
-  output.push(outboundVisible(line.slice(cursor), false, cursor === 0));
+  output.push(outboundVisible(line.slice(cursor), false, cursor === 0, labelEnds, cursor));
   // Bracket replacements can complete definition-shaped labels.
   return outboundDefinitions(output.join(''), forceColon);
 }
