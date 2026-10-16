@@ -88,7 +88,7 @@ Now that the working tree reflects the review target, compute the short SHA and 
 
 **2. Output-dir ignore** — owned by `scripts/ensure_output_dir.py`, invoked in Phase 1. Phase 2 does not re-establish ignore and has no `gitignore` composite section. Never append to the repo's tracked `.gitignore`.
 
-**3. Previously-reviewed gate** (`owner_repo` + `prior_review` sections; PR/MR targets only — skip for `local`):
+**3. Previously-reviewed gate** (`pr_url` + `prior_review` sections; PR/MR targets only — skip for `local`):
 
 Runs the gate documented in `phase1-preflight.md` → "Previously-Reviewed Gate", which resolves whether this PR/MR was already reviewed and whether the incremental path is safe. Pass the PR's **own URL** to `--pr-url` so the detector uses the base repository and its host. GitLab: `PR_URL=$(glab mr view {pr_number} --output json | jq -r .web_url)`.
 

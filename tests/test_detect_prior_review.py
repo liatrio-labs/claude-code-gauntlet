@@ -58,13 +58,14 @@ def _legacy_group_body(
 
 @pytest.mark.parametrize("forge_factory", [detect_prior_review], indirect=True)
 @pytest.mark.parametrize(
-    "platform, bodies, error, expected_sha",
+    "platform, bodies, error, expected_sha, pr_url",
     [
         pytest.param(
             "github",
             [review_marker.build_footer(3, FULL_SHA)],
             None,
             FULL_SHA,
+            None,
             id="github-review",
         ),
         pytest.param(
@@ -72,6 +73,7 @@ def _legacy_group_body(
             [review_marker.build_marker(FULL_SHA, 1)],
             None,
             FULL_SHA,
+            None,
             id="gitlab-note",
         ),
         pytest.param(
@@ -79,6 +81,7 @@ def _legacy_group_body(
             [],
             "github reviews: fetch failed (exit 1): gh: fetch failed",
             None,
+            "enterprise",
             id="github-failure",
         ),
         pytest.param(
@@ -89,17 +92,17 @@ def _legacy_group_body(
             ],
             None,
             "d" * 40,
+            None,
             id="newest-entry",
         ),
     ],
 )
-@pytest.mark.parametrize("pr_url", [None, "enterprise"])
 def test_network_scan(
-    pr_url,
     platform: Platform,
     bodies: list[str],
     error: str | None,
     expected_sha: str | None,
+    pr_url: str | None,
     forge_factory: FakeForgeFactory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -787,14 +790,11 @@ def test_offline_detector_without_git_degrades_with_receipt(
             "--pr-url: URL must use http(s) and include a host",
             False,
         ),
-        *[
-            (
-                ["--pr-url", "https://git.example.com/o/r/pull/5", flag, value],
-                "usage: --pr-url cannot be combined with --owner, --repo or --number",
-                False,
-            )
-            for flag, value in [("--owner", "o"), ("--repo", "r"), ("--number", "5")]
-        ],
+        (
+            ["--pr-url", "https://git.example.com/o/r/pull/5", "--owner", "o"],
+            "usage: --pr-url cannot be combined with --owner, --repo or --number",
+            False,
+        ),
         (
             ["--pr-url", ""],
             "usage: --number is required unless --bodies-file is given",

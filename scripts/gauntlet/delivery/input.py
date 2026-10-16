@@ -63,7 +63,7 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
         if not isinstance(origin, str):
             raise CliError("web_origin must be a string")
         try:
-            data["web_origin"] = parse_web_origin(origin)
+            parse_web_origin(origin)
         except ValueError as exc:
             raise CliError(f"web_origin: {exc}") from exc
     findings = data.get("findings", [])

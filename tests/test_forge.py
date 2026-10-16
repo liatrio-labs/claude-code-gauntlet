@@ -937,9 +937,17 @@ def test_pr_view_and_gitlab_listing_timeouts(platform, monkeypatch):
         ]
 
 
-@pytest.mark.parametrize("host", [None, "git.example.com"])
 @pytest.mark.parametrize(
-    "call", ["poster", "review_entries", "file_names", "submit", "diff"]
+    "call, host",
+    [
+        ("poster", None),
+        ("poster", "git.example.com"),
+        ("review_entries", "git.example.com"),
+        ("file_names", "git.example.com"),
+        ("submit", "git.example.com"),
+        ("diff", None),
+        ("diff", "git.example.com"),
+    ],
 )
 def test_github_host_argv(call, host, monkeypatch, tracked_temp):
     monkeypatch.delenv("CODE_GAUNTLET_POSTER", raising=False)

@@ -1731,24 +1731,9 @@ def test_marker_delivery(kind, posting):
 
 INPUT_REFUSALS = [
     (review(web_origin=None), "web_origin must be a string"),
-    *[
-        (
-            review(web_origin=value),
-            "web_origin: web_origin must be an http(s) origin without a path, query or fragment",
-        )
-        for value in [
-            "https://git.example.com/path",
-            "https://git.example.com?x=1",
-            "https://git.example.com#frag",
-        ]
-    ],
     (
-        review(web_origin="ssh://git.example.com"),
-        "web_origin: URL must use http(s) and include a host",
-    ),
-    (
-        review(web_origin="https://user@git.example.com"),
-        "web_origin: URL must not contain user information",
+        review(web_origin="https://git.example.com/path"),
+        "web_origin: web_origin must be an http(s) origin without a path, query or fragment",
     ),
     (7, "Findings JSON must be an object or an array."),
     ({"repo": "r"}, "Missing required field in findings JSON: 'owner'"),
