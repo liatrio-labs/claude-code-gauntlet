@@ -2,6 +2,20 @@
 
 <!-- version list -->
 
+## v3.42.36 (2026-10-16)
+
+### Bug Fixes
+
+- Break issue, merge request, label and milestone references in posted prose
+  ([#514](https://github.com/liatrio-labs/claude-code-gauntlet/pull/514),
+  [`1f02fec`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1f02fec5aac1616738a8f47476bac030214730cc))
+
+- Posted prose no longer creates issue, merge request, label, milestone, epic or wiki references on
+  GitHub or GitLab; reference-shaped issue and merge request URLs become inline code
+  ([#514](https://github.com/liatrio-labs/claude-code-gauntlet/pull/514),
+  [`1f02fec`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1f02fec5aac1616738a8f47476bac030214730cc))
+
+
 ## v3.42.35 (2026-10-16)
 
 ### Bug Fixes
