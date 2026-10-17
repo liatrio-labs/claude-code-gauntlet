@@ -186,7 +186,12 @@ def build_next_command(
         parts += ["--head-sha", shlex.quote(args.head_sha)]
     if args.artifacts_dir or args.head_sha:
         parts += ["--artifacts-grace-seconds", str(args.artifacts_grace_seconds)]
-    parts += ["--", shlex.quote(resolved_path or args.target)]
+    # A resolved task path is a host path like every other one the retry emits, so it
+    # uses the same forward-slash form; a UNC temp root keeps its native spelling.
+    target = resolved_path or args.target
+    if resolved_path and not resolved_path.startswith(("\\\\", "//")):
+        target = wire_path(resolved_path)
+    parts += ["--", shlex.quote(target)]
     return " ".join(parts)
 
 

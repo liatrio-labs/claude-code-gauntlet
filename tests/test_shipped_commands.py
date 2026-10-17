@@ -610,7 +610,11 @@ def test_shipped_branch_resolver_keeps_names_on_stdin(
     assert result.stdout == sha
     assert result.stderr == b""
     # macOS ships bash 3.2, which re-parses a heredoc body nested in $( ).
-    bash = shutil.which(bash_executable())
+    bash = (
+        "/bin/bash"
+        if sys.platform != "win32" and os.path.exists("/bin/bash")
+        else shutil.which(bash_executable())
+    )
     if bash:
         shell_block = (
             block[1]
@@ -1034,9 +1038,12 @@ console.log(JSON.stringify({verify, assemble: persist.calls[1].prompt.split('\n'
     commands = json.loads(generated.stdout)
     assert 28000 < len(commands["verify"]) < 32767 - 1800
     (tmp_path / "source.py").write_text("answer = 42\n", encoding="utf-8")
+    # A script file keeps Windows command-line quoting out of what Bash parses.
     for name in ("verify", "assemble"):
+        script = tmp_path / f"{name}.sh"
+        script.write_text(commands[name] + "\n", encoding="utf-8", newline="\n")
         result = subprocess.run(
-            [bash_executable(), "-c", commands[name]],
+            [bash_executable(), script.name],
             cwd=tmp_path,
             capture_output=True,
             text=True,
@@ -1061,8 +1068,9 @@ console.log(JSON.stringify({verify, assemble: persist.calls[1].prompt.split('\n'
     )
     retry = awaiting.build_next_command(args, None, 0)
     target.write_text('{"ok":true,"phaseReached":"report"}', encoding="utf-8")
+    (tmp_path / "retry.sh").write_text(retry + "\n", encoding="utf-8", newline="\n")
     result = subprocess.run(
-        [bash_executable(), "-c", retry],
+        [bash_executable(), "retry.sh"],
         cwd=tmp_path,
         capture_output=True,
         text=True,
