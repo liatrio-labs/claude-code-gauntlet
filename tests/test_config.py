@@ -1,6 +1,7 @@
 """Registry interpretation and the configuration receipt consumed by callers."""
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -223,7 +224,12 @@ def test_cli_shape_identity_and_stderr_block(config_cli, mode):
         (ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     # The manifest is independent of the bundle the resolver reads.
-    identity = {"pipeline_version": manifest["version"], "plugin_root": str(ROOT)}
+    identity = {
+        "pipeline_version": manifest["version"],
+        "plugin_root": ROOT.as_posix(),
+        "repo_root": ROOT.as_posix(),
+        "host_platform": "windows" if os.name == "nt" else "posix",
+    }
     echo = HEADLESS_ECHO if mode == "headless" else INTERACTIVE_ECHO
     resolved = HEADLESS_RESOLVED if mode == "headless" else {"model_tier": "optimized"}
     prefix = (
@@ -245,7 +251,7 @@ def test_cli_shape_identity_and_stderr_block(config_cli, mode):
     )
     block = (
         prefix + f"  pipeline_version={manifest['version']} (bundle)\n"
-        f"  plugin_root={ROOT} (resolved)"
+        f"  plugin_root={ROOT.as_posix()} (resolved)"
     )
     expected = {
         "mode": mode,
@@ -303,7 +309,7 @@ def test_resolver_checks_resolved_plugin_root(
             b"characters; install the plugin at a shell-safe path\n"
         )
     else:
-        assert json.loads(result.stdout)["identity"]["plugin_root"] == str(root)
+        assert json.loads(result.stdout)["identity"]["plugin_root"] == root.as_posix()
 
 
 def test_missing_bundle_version_is_setup_failure(tmp_path):

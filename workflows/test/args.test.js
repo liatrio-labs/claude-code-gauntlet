@@ -5,6 +5,9 @@ import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, resolveRev
 import { interactiveArgs, headlessArgs, priorReviewDetector, prIdentity, reviewMdArgs } from './helpers/argsFixtures.js';
 
 const REJECTION_ROWS = [
+  ...[['python', 'python3;id', 'python3, python, py -3']].map(([key, value, allowed]) => ({
+    name: `${key} allowlist ${value}`, input: (a) => { a[key] = value; }, expected: [`${key} must be one of ${allowed}`],
+  })),
   ...[undefined, 1].map((checksum) => ({
     name: `review checksum ${JSON.stringify(checksum)}`,
     input: (a) => { Object.assign(a, reviewMdArgs([{ path: 'api/REVIEW.md', text: '' }]));
@@ -55,10 +58,10 @@ const REJECTION_ROWS = [
   ] },
   { name: 'blank path', input: (a) => { a.diffPath = "   "; }, expected: [ "diffPath must be a non-empty string when present" ] },
   { name: 'relative output',
-    input: (a) => { a.outputDir = "relative"; }, expected: [ "outputDir must be an absolute path (POSIX /-prefix)" ] },
-  { name: 'relative plugin root cannot bypass script path pin', input: (a) => {
+    input: (a) => { a.outputDir = "relative"; }, expected: [ "outputDir must be an absolute confined root without .. segments or backslashes" ] },
+  { name: 'relative plugin root', input: (a) => {
     a.pluginRoot = 'plugin'; a.verify = { scriptPath: '/untrusted/verify_findings.py' };
-  }, expected: ['pluginRoot must be an absolute path (POSIX /-prefix)'] },
+  }, expected: ['pluginRoot must be an absolute confined root without .. segments or backslashes'] },
   { name: 'root traversal',
     input: (a) => { a.repoRoot = "/r/../other"; }, expected: [ "repoRoot must be an absolute path without .. segments or backslashes" ] },
   { name: 'plugin backtick', input: (a) => { a.pluginRoot = "/plugin`root"; }, expected: [ "pluginRoot must not contain a backtick" ] },
@@ -142,15 +145,10 @@ const REJECTION_ROWS = [
     a.delivery = { prIdentity: prIdentity() };
     delete a.delivery.prIdentity.platform;
   }, expected: [ "delivery.prIdentity.platform must be one of github, gitlab" ] },
-  { name: 'persist script', input: (a) => { a.persist = { assembleScriptPath: "" }; }, expected: [
-    "persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py",
-    "persist.assembleScriptPath must equal /plugin/scripts/assemble_artifacts.py",
-  ] },
   { name: 'persist returns',
     input: (a) => { a.persist = { returnPrimaries: "false" }; }, expected: [ "persist.returnPrimaries must be a boolean when present" ] },
-  { name: 'verify identity',
-    input: (a) => { a.verify = { scriptPath: "/plugin/scripts/../verify_findings.py" }; },
-    expected: [ "verify.scriptPath must equal /plugin/scripts/verify_findings.py" ] },
+  { name: 'persist shape', input: (a) => { a.persist = []; },
+    expected: ['persist must be an object of the form { returnPrimaries } when present'] },
   { name: 'limits unknown', input: (a) => { a.limits.verifySclieSize = 50; }, expected: [
     "unknown limits key: verifySclieSize (expected one of summarizeBucketSize, validateBatch, challengeCap, " +
       "verifySliceSize, deliveryCap, discoveryCap, maxLineSpan)",
@@ -248,6 +246,9 @@ for (const { name, input, expected } of NON_OBJECT_ROWS) {
 }
 
 const ACCEPTANCE_ROWS = [
+  { name: 'drive roots and host selections', input: () => interactiveArgs({
+    repoRoot: 'D:/repo', outputDir: 'D:/repo/.code-gauntlet', pluginRoot: 'C:/plug in', python: 'py -3',
+  }), expected: { ok: true, errors: [] } },
   ...['fnv1a32:0x811c9dc5', null].map((checksum) => ({ name: `review checksum accepted ${checksum}`,
     input: () => interactiveArgs({ ...reviewMdArgs([{ path: 'api/REVIEW.md', text: '', checksum }]),
       configEcho: { ...interactiveArgs().configEcho, review_md: { value: 'present', source: 'discovery' } } }),

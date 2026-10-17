@@ -135,7 +135,7 @@ When the artifact is the legacy bare findings array, invoke `post_review.py` wit
 identity flags. The script derives the Summary body from the report and forms the wrapper in code:
 
 ```bash
-python3 "{plugin_root}/scripts/post_review.py" "{artifactPaths.postReview}" \
+{python} "{plugin_root}/scripts/post_review.py" "{artifactPaths.postReview}" \
   --report "{artifactPaths.report}" --owner "{owner}" --repo "{repo}" \
   --pr-number "{pr_number}" --platform "{platform}" --web-origin "{web_origin}" --sha "{full_head_sha}"
 ```
@@ -163,7 +163,7 @@ null, the delivery set was not persisted, so do not present the task-board offer
 Run this command after a Yes answer:
 
 ```bash
-python3 "{plugin_root}/scripts/render_fix_tasks.py" "<artifactPaths.postReview>" --repo-root "<repoRoot>"
+{python} "{plugin_root}/scripts/render_fix_tasks.py" "<artifactPaths.postReview>" --repo-root "<repoRoot>"
 ```
 
 Parse stdout as a JSON array and assert that its length equals the delivered count. For each object,

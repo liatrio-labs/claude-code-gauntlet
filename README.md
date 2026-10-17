@@ -32,7 +32,10 @@ comprehensive review of my changes    # local uncommitted changes
 ```
 
 The plugin detects GitHub or GitLab from the git remote.
-You need Claude Code 2.1.154 or newer, git, Python 3.10 or newer, and an authenticated `gh` (GitHub) or `glab` (GitLab).
+You need Claude Code 2.1.154 or newer, git, Python 3.10 or newer reachable as `python3`, `python`, or `py -3`, and an authenticated `gh` (GitHub) or `glab` (GitLab).
+Windows also requires Git for Windows and the Bash tool. The manual `windows_live` CI input
+validates local-changes reviews; Windows runtime support is pending a passing live run on this change.
+
 There is nothing to `pip install`.
 
 The pipeline pins the review agents' models, so your own session's model and effort do not change them.

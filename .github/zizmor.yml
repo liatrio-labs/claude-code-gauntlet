@@ -13,3 +13,5 @@ rules:
       - bench-smoke.yml:66
       # The validation job installs the exactly pinned Claude Code CLI.
       - validate.yml:21
+      # The environment-gated runtime probe installs the exactly pinned CLI.
+      - ci.yml:259

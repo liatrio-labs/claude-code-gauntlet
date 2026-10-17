@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runWith } from '../src/run.js';
+import { shellSplit } from './helpers/shellWords.js';
 import { parseWriterPayload } from '../src/persist.js';
 import { PATHS, persistCtx, runAndCapture } from './helpers/persistFixtures.js';
 import { validArgs } from './helpers/argsFixtures.js';
@@ -9,6 +10,10 @@ import { captureRun, withSandboxGlobals } from './helpers/runFixtures.js';
 
 const PHASES = ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'];
 const PERSIST_WIRING_ROWS = [
+  { name: 'Windows runtime waist reaches verify and persist', persist: {},
+    over: { python: 'py -3', pluginRoot: 'D:/plugin', verify: { scriptPath: '/untrusted.py' } },
+    findings: ['F1', 'F2'].map((id) => makeFinding(id, { description: 'x'.repeat(18000) })),
+    labels: ['artifact-writer', 'assemble-artifacts'], windows: true },
   { name: 'derived assembler under sandbox globals', persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' },
     labels: ['artifact-writer', 'assemble-artifacts'], arrayPayload: true, sandbox: true },
   { name: 'absent persist uses writer', persist: undefined, labels: ['artifact-writer'] },
@@ -16,8 +21,8 @@ const PERSIST_WIRING_ROWS = [
     returnPrimaries: true }, labels: [], returnAppended: true },
 ];
 for (const row of PERSIST_WIRING_ROWS) test(`persistence dispatch wiring: ${row.name}`, async () => {
-  const args = validArgs({ persist: row.persist });
-  const ctx = makeCtx(args);
+  const args = validArgs({ persist: row.persist, ...row.over });
+  const ctx = makeCtx(args, row.findings ? { findings: row.findings } : {});
   const agent = ctx.agent;
   const persistence = persistCtx();
   ctx.agent = async (prompt, dispatch) => {
@@ -34,6 +39,14 @@ for (const row of PERSIST_WIRING_ROWS) test(`persistence dispatch wiring: ${row.
   assert.deepEqual(persistence.calls.map((call) => call.label), row.labels);
   assert.equal(out.gaps.some((gap) => gap.includes('partial-artifacts')), false);
   assert.deepEqual(ctx.violations, []);
+  if (row.windows) {
+    const verify = ctx.calls.filter((call) => call.label.startsWith('verify-slice'));
+    assert.equal(out.stats.inputProof.slices, 2);
+    for (const call of verify) assert.deepEqual(shellSplit(call.prompt.split('\n').at(-1)).slice(0, 3),
+      ['py', '-3', 'D:/plugin/scripts/verify_findings.py']);
+    assert.deepEqual(shellSplit(persistence.calls[1].prompt.split('\n').at(-1)).slice(0, 3),
+      ['py', '-3', 'D:/plugin/scripts/assemble_artifacts.py']);
+  }
   if (row.arrayPayload) {
     const entries = parseWriterPayload(persistence.calls[0].prompt);
     assert.ok(Array.isArray(entries));

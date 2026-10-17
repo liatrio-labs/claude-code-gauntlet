@@ -772,8 +772,9 @@ def test_pending_receipt_normalizes_noncanonical_root(
     assert result.returncode == 3
     if os.name == "nt":
         marker = json.loads(result.stdout)
-        assert shlex.split(marker["next_command"])[1] == str(
-            alias / "scripts" / "await_workflow.py"
+        assert (
+            shlex.split(marker["next_command"])[1]
+            == (alias / "scripts" / "await_workflow.py").as_posix()
         )
     else:
         assert (

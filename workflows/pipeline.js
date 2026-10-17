@@ -186,6 +186,11 @@ function longestBacktickRun(text) {
   for (const match of text.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
   return longest;
 }
+const PYTHON_COMMAND_ARGV = deepFreeze({ python3: ['python3'], python: ['python'], 'py -3': ['py', '-3'] });
+function pythonArgv(python = 'python3') {
+  if (!Object.hasOwn(PYTHON_COMMAND_ARGV, python)) throw new Error('invalid python command');
+  return PYTHON_COMMAND_ARGV[python];
+}
 // --- registry.js ---
 const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs ' +
   'reaching http/request/fetch clients without allowlist validation); frame and embedding ' +
@@ -546,25 +551,301 @@ function canonicalDeltas(ids, byId) {
 function deltaContentProof(ids, deltas) {
   return fnv1a32(JSON.stringify(canonicalDeltas(ids || [], deltasById(deltas)), null, 2));
 }
+// --- paths.js ---
+function collapseDotSlash(path) {
+  let out = path;
+  for (;;) {
+    const next = out.replace(/\/\.\//g, '/');
+    if (next === out) return out;
+    out = next;
+  }
+}
+function stripTrailingSlashes(path) {
+  let out = path;
+  while (out.length > 1 && !/^[A-Za-z]:\/$/.test(out) && out.endsWith('/')) out = out.slice(0, -1);
+  return out;
+}
+function normalizePathString(path) {
+  let out = path;
+  for (;;) {
+    let next = stripTrailingSlashes(collapseDotSlash(out.replace(/\/{2,}/g, '/')));
+    if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
+    next = stripTrailingSlashes(next);
+    if (next === out) return next;
+    out = next;
+  }
+}
+function hasBackslash(path) {
+  return path.includes('\\');
+}
+function hasDotDotSegment(path) {
+  return path.split('/').includes('..');
+}
+function isSafeAbsolutePath(path) {
+  return (path.startsWith('/') || /^[A-Za-z]:\//.test(path)) && !hasBackslash(path) && !hasDotDotSegment(path);
+}
+function rootPrefix(root) {
+  return root.endsWith('/') ? root : `${root}/`;
+}
+const LOCATION_SUFFIX_RE = /:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/;
+function splitLocationSuffix(path) {
+  const suffix = path.match(LOCATION_SUFFIX_RE)?.[0] || '';
+  return { path: suffix ? path.slice(0, -suffix.length) : path, suffix };
+}
+function normalizeAbsoluteRoot(root) {
+  if (typeof root !== 'string' || root === '') return null;
+  const normalized = normalizePathString(root);
+  if (!isSafeAbsolutePath(normalized)) return null;
+  return normalized;
+}
+function hostPlatformForRoots(input = {}) {
+  return [input.repoRoot, input.outputDir, input.pluginRoot].some((root) =>
+    typeof root === 'string' && /^[A-Za-z]:\//.test(root)) ? 'windows' : 'posix';
+}
+function pathComparisonKey(path) {
+  return /^[A-Za-z]:\//.test(path) ? path.toLowerCase() : path;
+}
+const HOST_PATH_RIGHT_CONTINUATION_RE = /^[A-Za-z0-9._~+%@-]$/;
+const SAFE_FINDING_LABEL_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+const HOST_PATH_HEX_RE = /^[0-9A-Fa-f]{2}$/;
+const HOST_PATH_HOME_RE = /^\/(?:Users|home)\/([^/]+)\//;
+function hostPathSpellings(root) {
+  const hasPrivatePrefix = root.slice(0, '/private/'.length).toLowerCase() === '/private/';
+  const alias = hasPrivatePrefix
+    ? root.slice('/private'.length)
+    : `/private${root}`;
+  return [root, alias];
+}
+function hostPathPattern(root, caseInsensitive) {
+  const source = root.slice(1).split('/').map(escapeRegExp).join('/(?:/|\\./)*');
+  return new RegExp(`/${source}`, caseInsensitive ? 'iy' : 'y');
+}
+function driveHostPathPatterns(root) {
+  const drive = root[0];
+  const tail = root.slice(3).split('/').map(escapeRegExp);
+  return [
+    new RegExp(`${drive}:/` + tail.join('/(?:/|\\./)*'), 'iy'),
+    new RegExp(`${drive}:\\\\+` + tail.join('\\\\+'), 'iy'),
+    new RegExp(`/${drive}/` + tail.join('/(?:/|\\./)*'), 'iy'),
+  ];
+}
+function prepareHostRootPatterns(roots) {
+  const patterns = [];
+  const derivedHomes = new Set();
+  if (!Array.isArray(roots)) return patterns;
+  for (const root of roots) {
+    const normalized = normalizeAbsoluteRoot(root);
+    if (normalized === null || normalized === '/') continue;
+    if (/^[A-Za-z]:\//.test(normalized)) {
+      patterns.push(...driveHostPathPatterns(normalized));
+      const home = normalized.match(/^([A-Za-z]:\/Users\/[^/]+)\//i);
+      if (home) derivedHomes.add(home[1]);
+      continue;
+    }
+    for (const spelling of hostPathSpellings(normalized)) {
+      const caseInsensitive = spelling.slice(1).split('/').length > 1;
+      patterns.push(hostPathPattern(spelling, caseInsensitive));
+    }
+    const unaliased = normalized.startsWith('/private/') ? normalized.slice('/private'.length) : normalized;
+    const home = unaliased.match(HOST_PATH_HOME_RE);
+    if (home) derivedHomes.add(home[0].slice(0, -1));
+  }
+  for (const home of derivedHomes) {
+    if (/^[A-Za-z]:\//.test(home)) patterns.push(...driveHostPathPatterns(home));
+    else patterns.push(hostPathPattern(home, false));
+  }
+  return patterns;
+}
+function decodeAsciiEscapes(text) {
+  const chars = [];
+  const escaped = [];
+  for (let index = 0; index < text.length;) {
+    const digits = text.slice(index + 1, index + 3);
+    const byte = text[index] === '%' && HOST_PATH_HEX_RE.test(digits) ? parseInt(digits, 16) : -1;
+    if (byte >= 0 && byte < 0x80) {
+      chars.push(String.fromCharCode(byte));
+      escaped.push(true);
+      index += 3;
+    } else {
+      chars.push(text[index]);
+      escaped.push(false);
+      index += 1;
+    }
+  }
+  return { text: chars.join(''), escaped };
+}
+function isPathContinuation(view, index) {
+  const char = view.text[index];
+  return char !== '/' && (view.escaped[index] === true || HOST_PATH_RIGHT_CONTINUATION_RE.test(char));
+}
+function hostPathFileSchemePrefix(view, slashRunEnd) {
+  let prefixEnd = slashRunEnd;
+  while (view.text[prefixEnd - 1] === '/') prefixEnd -= 1;
+  const prefixStart = prefixEnd - 5;
+  if (prefixStart < 0 || view.text.slice(prefixStart, prefixEnd).toLowerCase() !== 'file:') return false;
+  for (let index = prefixStart; index < prefixEnd; index += 1) {
+    if (view.escaped[index] === true) return false;
+  }
+  return prefixStart === 0
+    || (view.escaped[prefixStart - 1] !== true && !/[A-Za-z0-9+.-]/.test(view.text[prefixStart - 1]));
+}
+function hostPathOptionFlag(view, start) {
+  const letter = start - 1;
+  const dash = start - 2;
+  if (view.text[dash] !== '-' || !/[A-Za-z]/.test(view.text[letter])
+    || view.escaped[dash] === true || view.escaped[letter] === true) return false;
+  return dash === 0 || (view.escaped[dash - 1] !== true
+    && view.text[dash - 1] !== '/' && !HOST_PATH_RIGHT_CONTINUATION_RE.test(view.text[dash - 1]));
+}
+function hostPathLeftBoundary(view, start) {
+  const previous = view.text[start - 1];
+  if (isPathContinuation(view, start - 1)) return hostPathOptionFlag(view, start);
+  if (previous !== '/') return true;
+  return hostPathFileSchemePrefix(view, start);
+}
+function hostPathRightBoundary(view, end) {
+  while (view.text[end] === '.' && view.escaped[end] !== true) end += 1;
+  return !isPathContinuation(view, end);
+}
+function mentionsInView(view, patterns) {
+  for (let start = 0; start < view.text.length; start += 1) {
+    if (view.text[start] !== '/' && !(/^[A-Za-z]:[/\\]/.test(view.text.slice(start, start + 3)))) continue;
+    for (const matcher of patterns) {
+      matcher.lastIndex = start;
+      if (matcher.exec(view.text) && hostPathLeftBoundary(view, start)
+        && hostPathRightBoundary(view, matcher.lastIndex)) return true;
+    }
+  }
+  return false;
+}
+function mentionsPreparedHostRoot(text, patterns) {
+  if (typeof text !== 'string') return false;
+  const raw = { text, escaped: [] };
+  if (mentionsInView(raw, patterns)) return true;
+  return text.includes('%') && mentionsInView(decodeAsciiEscapes(text), patterns);
+}
+function safeFindingLabel(value, fallback = null) {
+  if (typeof value !== 'string' || !SAFE_FINDING_LABEL_RE.test(value)) {
+    return fallback;
+  }
+  return value;
+}
+function pathUnderRoot(root, path) {
+  const normalizedRoot = normalizeAbsoluteRoot(root);
+  if (normalizedRoot === null || typeof path !== 'string' || path === '') return false;
+  const normalizedPath = normalizeAbsoluteRoot(path);
+  if (normalizedPath === null) return false;
+  const key = pathComparisonKey(normalizedRoot);
+  const pathKey = pathComparisonKey(normalizedPath);
+  return pathKey === key || pathKey.startsWith(rootPrefix(key));
+}
+function repoRelativeFindingPath(repoRoot, file) {
+  if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
+  const driveRoot = /^[A-Za-z]:\//.test(repoRoot || '');
+  let normalized = file;
+  let driveAbsolute = false;
+  if (driveRoot) {
+    if (/^[A-Za-z]:\//.test(file)) driveAbsolute = true;
+    else if (/^[A-Za-z]:\\/.test(file)) {
+      normalized = file.replace(/\\/g, '/');
+      driveAbsolute = true;
+    } else if (/^\/[A-Za-z]\//.test(file)) {
+      normalized = `${file[1]}:${file.slice(2)}`;
+      driveAbsolute = true;
+    }
+  }
+  let location;
+  for (let remaining = file.length; remaining >= 0; remaining -= 1) {
+    const slashes = normalizePathString(normalized);
+    const split = splitLocationSuffix(slashes);
+    const path = normalizePathString(split.path);
+    const next = `${path}${split.suffix}`;
+    if (next === normalized) {
+      location = { path, suffix: split.suffix };
+      break;
+    }
+    normalized = next;
+  }
+  const { path, suffix } = location;
+  if ((path.startsWith('/') || driveAbsolute) && hasDotDotSegment(path)) return { reason: 'file path contains a .. segment' };
+  let relative;
+  if (!path.startsWith('/') && !driveAbsolute) {
+    relative = normalizePathString(path);
+    while (relative.startsWith('./')) relative = relative.slice(2);
+  } else {
+    const root = normalizeAbsoluteRoot(repoRoot);
+    if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
+    const absolute = normalizePathString(path);
+    if (pathComparisonKey(absolute) === pathComparisonKey(root)) return { reason: 'absolute file path resolves to repoRoot' };
+    const prefix = rootPrefix(root);
+    if (!pathComparisonKey(absolute).startsWith(pathComparisonKey(prefix))) return { reason: 'absolute file path is outside repoRoot' };
+    relative = absolute.slice(prefix.length);
+  }
+  if (relative === '' || relative === '.') return { reason: 'file path does not name a repository file' };
+  if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
+  if (relative.startsWith('\\')) return { reason: 'file path starts with a backslash' };
+  if (relative.split('/')[0] === '~') return { reason: 'file path starts with a home anchor' };
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\//.test(relative) || /(?:^|[/\\])[A-Za-z]:([/\\]|$)/.test(relative)) {
+    return { reason: 'file path starts with a URI scheme or drive letter' };
+  }
+  if (/[\p{Cc}\p{Zl}\p{Zp}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u.test(file)
+    || file.split('/').some((segment) =>
+      /^[\p{Cf}\p{Mn}\p{Me}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u.test(segment))) {
+    return { reason: 'file path contains a disallowed character' };
+  }
+  if (relative !== relative.trim()) return { reason: 'file path has leading or trailing whitespace' };
+  return { file: `${relative}${suffix}` };
+}
+function trustedScriptPath(pluginRoot, basename) {
+  const root = normalizeAbsoluteRoot(pluginRoot);
+  if (root === null) throw new Error('pluginRoot must be an absolute confined root');
+  return `${rootPrefix(root)}scripts/${basename}`;
+}
 // --- capacity.js ---
+function verifyCommand(inp, i, sliceNonce, inlinePayload) {
+  const v = inp.verify || {};
+  const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;
+  const outPath = `${v.outputPathBase || 'phase4-output'}.slice${i}.json`;
+  const parts = [
+    ...pythonArgv(inp.python), inp.pluginRoot ? trustedScriptPath(inp.pluginRoot, TRUSTED_SCRIPT_BASENAMES.verify) : 'scripts/verify_findings.py',
+    '--input', inPath,
+    '--input-inline', inlinePayload,
+    '--output', outPath,
+    '--nonce', sliceNonce,
+    '--head-sha', inp.headShaShort,
+    '--base-branch', effectiveVerifyBaseBranch(v.baseBranch),
+  ];
+  if (v.diffPath) parts.push('--diff-file', v.diffPath);
+  return parts.map(shellWord).join(' ');
+}
+function verifyInlineBudget(input = {}) {
+  if (hostPlatformForRoots(input) !== 'windows') return VERIFY_INLINE_CHAR_BUDGET;
+  const prepared = { ...input, verify: { ...(input.verify || {}),
+    baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
+  const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
+  return Math.max(0, 32767 - overhead - 2048);
+}
 const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
+function verifyInlineCost(token, hostPlatform) {
+  return token.length + (hostPlatform === 'windows' ? (token.match(/["\\]/g) || []).length : 0);
+}
 const verifySliceLengthFromCosts = (envelopeLength, findingCost, findingCount) =>
   envelopeLength + findingCost + Math.max(0, findingCount - 1);
-const projectedVerifyFindingInlineLength = (finding) =>
-  encodeSliceInline(projectVerifySliceFinding(finding)).length;
-function predictVerifySliceInlineLength(slice, baseBranch) {
+const projectedVerifyFindingInlineLength = (finding, hostPlatform) =>
+  verifyInlineCost(encodeSliceInline(projectVerifySliceFinding(finding)), hostPlatform);
+function predictVerifySliceInlineLength(slice, baseBranch, hostPlatform) {
   const branch = effectiveVerifyBaseBranch(baseBranch);
-  const envelopeLength = encodeSliceInline({ findings: [], base_branch: branch }).length;
+  const envelopeLength = verifyInlineCost(encodeSliceInline({ findings: [], base_branch: branch }), hostPlatform);
   let findingCost = 0;
-  for (const finding of slice) findingCost += projectedVerifyFindingInlineLength(finding);
+  for (const finding of slice) findingCost += projectedVerifyFindingInlineLength(finding, hostPlatform);
   return verifySliceLengthFromCosts(envelopeLength, findingCost, slice.length);
 }
-function planVerifySlices(findings, sliceSize, budget, baseBranch) {
+function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPlatform) {
   const source = Array.isArray(findings) ? findings : [];
   const branch = effectiveVerifyBaseBranch(baseBranch);
   const maxFindings = Math.max(1, sliceSize || source.length || 1);
-  const maxChars = Math.max(1, budget || VERIFY_INLINE_CHAR_BUDGET);
-  const envelopeAllowance = encodeSliceInline({ findings: [], base_branch: branch }).length;
+  const maxChars = Math.max(0, budget ?? VERIFY_INLINE_CHAR_BUDGET);
+  const envelopeAllowance = verifyInlineCost(encodeSliceInline({ findings: [], base_branch: branch }), hostPlatform);
   const slices = [];
   const oversize = [];
   const closeReasons = [];
@@ -579,7 +860,7 @@ function planVerifySlices(findings, sliceSize, budget, baseBranch) {
     currentFindingCost = 0;
   };
   for (const finding of source) {
-    const findingCost = projectedVerifyFindingInlineLength(finding);
+    const findingCost = projectedVerifyFindingInlineLength(finding, hostPlatform);
     const singleCost = verifySliceLengthFromCosts(envelopeAllowance, findingCost, 1);
     if (singleCost > maxChars) {
       flush('oversize');
@@ -613,30 +894,30 @@ const effectiveBatchSize = (L, findings) => Math.max(1, L.validateBatch || findi
 function findingCount(findings) {
   return Array.isArray(findings) ? findings.length : Math.max(0, findings || 0);
 }
-function verifyTerm(L, findings, baseBranch = 'main') {
+function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   const count = findingCount(findings);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), VERIFY_INLINE_CHAR_BUDGET, baseBranch).slices.length
+    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudget(input), baseBranch, hostPlatformForRoots(input)).slices.length
       * VERIFY_ATTEMPTS_PER_SLICE;
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
 }
-function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main') {
+function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
   const findings = findingCount(nFindings);
   const summarizeCalls = ceilDiv(files, effectiveBucketSize(L)) + 1;
-  const verifyCalls = verifyTerm(L, nFindings, baseBranch);
+  const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
   const validateCalls = ceilDiv(findings, effectiveBatchSize(L, findings));
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + 2;
 }
-function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main') {
+function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = { ...(limits || {}) };
   const files = Math.max(0, nFiles || 0);
   const findings = findingCount(nFindings);
   const candidates = new Set(['summarize', 'verify', 'validate', 'challenge']);
-  while (worstCaseAgentCount(L, files, nFindings, baseBranch) >= AGENT_COUNT_GUARD && candidates.size > 0) {
+  while (worstCaseAgentCount(L, files, nFindings, baseBranch, input) >= AGENT_COUNT_GUARD && candidates.size > 0) {
     const summarizeTerm = ceilDiv(files, effectiveBucketSize(L)) + 1;
     if (summarizeTerm > SUMMARIZE_TERM_BOUND && candidates.has('summarize')) {
       const before = summarizeTerm;
@@ -644,7 +925,7 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main') {
       if (ceilDiv(files, effectiveBucketSize(L)) + 1 >= before) candidates.delete('summarize');
       continue;
     }
-    const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch);
+    const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch, input);
     const validateTerm = ceilDiv(findings, effectiveBatchSize(L, findings));
     const challengeTerm = Math.min(findings, effectiveChallengeCap(L, findings));
     const choices = [
@@ -660,7 +941,7 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main') {
       if (ceilDiv(findings, effectiveBatchSize(L, findings)) >= validateTerm) candidates.delete('validate');
     } else if (largest[0] === 'verify') {
       L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
-      if (verifyTerm(L, nFindings, baseBranch) >= currentVerifyTerm) candidates.delete('verify');
+      if (verifyTerm(L, nFindings, baseBranch, input) >= currentVerifyTerm) candidates.delete('verify');
     } else {
       L.challengeCap = Math.max(CHALLENGE_CAP_FLOOR, Math.floor(Math.min(effectiveChallengeCap(L, findings), findings) / 2));
       if (Math.min(findings, effectiveChallengeCap(L, findings)) >= challengeTerm) candidates.delete('challenge');
@@ -3868,212 +4149,6 @@ function selectDelivery(survivors, cap, tier) {
   if (cap === undefined || cap === null) return ranked;
   return ranked.slice(0, Math.max(0, cap));
 }
-// --- paths.js ---
-function collapseDotSlash(path) {
-  let out = path;
-  for (;;) {
-    const next = out.replace(/\/\.\//g, '/');
-    if (next === out) return out;
-    out = next;
-  }
-}
-function stripTrailingSlashes(path) {
-  let out = path;
-  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
-  return out;
-}
-function normalizePathString(path) {
-  let out = path;
-  for (;;) {
-    let next = stripTrailingSlashes(collapseDotSlash(out.replace(/\/{2,}/g, '/')));
-    if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
-    next = stripTrailingSlashes(next);
-    if (next === out) return next;
-    out = next;
-  }
-}
-function hasBackslash(path) {
-  return path.includes('\\');
-}
-function hasDotDotSegment(path) {
-  return path.split('/').includes('..');
-}
-function isSafeAbsolutePath(path) {
-  return path.startsWith('/') && !hasBackslash(path) && !hasDotDotSegment(path);
-}
-function rootPrefix(root) {
-  return root === '/' ? '/' : `${root}/`;
-}
-const LOCATION_SUFFIX_RE = /:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/;
-function splitLocationSuffix(path) {
-  const suffix = path.match(LOCATION_SUFFIX_RE)?.[0] || '';
-  return { path: suffix ? path.slice(0, -suffix.length) : path, suffix };
-}
-function normalizeAbsoluteRoot(root) {
-  if (typeof root !== 'string' || root === '') return null;
-  const normalized = normalizePathString(root);
-  if (!isSafeAbsolutePath(normalized)) return null;
-  return normalized;
-}
-const HOST_PATH_RIGHT_CONTINUATION_RE = /^[A-Za-z0-9._~+%@-]$/;
-const SAFE_FINDING_LABEL_RE = /^[A-Za-z0-9_.-]{1,64}$/;
-const HOST_PATH_HEX_RE = /^[0-9A-Fa-f]{2}$/;
-const HOST_PATH_HOME_RE = /^\/(?:Users|home)\/([^/]+)\//;
-function hostPathSpellings(root) {
-  const hasPrivatePrefix = root.slice(0, '/private/'.length).toLowerCase() === '/private/';
-  const alias = hasPrivatePrefix
-    ? root.slice('/private'.length)
-    : `/private${root}`;
-  return [root, alias];
-}
-function hostPathPattern(root, caseInsensitive) {
-  const source = root.slice(1).split('/').map(escapeRegExp).join('/(?:/|\\./)*');
-  return new RegExp(`/${source}`, caseInsensitive ? 'iy' : 'y');
-}
-function prepareHostRootPatterns(roots) {
-  const patterns = [];
-  const derivedHomes = new Set();
-  if (!Array.isArray(roots)) return patterns;
-  for (const root of roots) {
-    const normalized = normalizeAbsoluteRoot(root);
-    if (normalized === null || normalized === '/') continue;
-    for (const spelling of hostPathSpellings(normalized)) {
-      const caseInsensitive = spelling.slice(1).split('/').length > 1;
-      patterns.push(hostPathPattern(spelling, caseInsensitive));
-    }
-    const unaliased = normalized.startsWith('/private/') ? normalized.slice('/private'.length) : normalized;
-    const home = unaliased.match(HOST_PATH_HOME_RE);
-    if (home) derivedHomes.add(home[0].slice(0, -1));
-  }
-  for (const home of derivedHomes) patterns.push(hostPathPattern(home, false));
-  return patterns;
-}
-function decodeAsciiEscapes(text) {
-  const chars = [];
-  const escaped = [];
-  for (let index = 0; index < text.length;) {
-    const digits = text.slice(index + 1, index + 3);
-    const byte = text[index] === '%' && HOST_PATH_HEX_RE.test(digits) ? parseInt(digits, 16) : -1;
-    if (byte >= 0 && byte < 0x80) {
-      chars.push(String.fromCharCode(byte));
-      escaped.push(true);
-      index += 3;
-    } else {
-      chars.push(text[index]);
-      escaped.push(false);
-      index += 1;
-    }
-  }
-  return { text: chars.join(''), escaped };
-}
-function isPathContinuation(view, index) {
-  const char = view.text[index];
-  return char !== '/' && (view.escaped[index] === true || HOST_PATH_RIGHT_CONTINUATION_RE.test(char));
-}
-function hostPathFileSchemePrefix(view, slashRunEnd) {
-  let prefixEnd = slashRunEnd;
-  while (view.text[prefixEnd - 1] === '/') prefixEnd -= 1;
-  const prefixStart = prefixEnd - 5;
-  if (prefixStart < 0 || view.text.slice(prefixStart, prefixEnd).toLowerCase() !== 'file:') return false;
-  for (let index = prefixStart; index < prefixEnd; index += 1) {
-    if (view.escaped[index] === true) return false;
-  }
-  return prefixStart === 0
-    || (view.escaped[prefixStart - 1] !== true && !/[A-Za-z0-9+.-]/.test(view.text[prefixStart - 1]));
-}
-function hostPathOptionFlag(view, start) {
-  const letter = start - 1;
-  const dash = start - 2;
-  if (view.text[dash] !== '-' || !/[A-Za-z]/.test(view.text[letter])
-    || view.escaped[dash] === true || view.escaped[letter] === true) return false;
-  return dash === 0 || (view.escaped[dash - 1] !== true
-    && view.text[dash - 1] !== '/' && !HOST_PATH_RIGHT_CONTINUATION_RE.test(view.text[dash - 1]));
-}
-function hostPathLeftBoundary(view, start) {
-  const previous = view.text[start - 1];
-  if (isPathContinuation(view, start - 1)) return hostPathOptionFlag(view, start);
-  if (previous !== '/') return true;
-  return hostPathFileSchemePrefix(view, start);
-}
-function hostPathRightBoundary(view, end) {
-  while (view.text[end] === '.' && view.escaped[end] !== true) end += 1;
-  return !isPathContinuation(view, end);
-}
-function mentionsInView(view, patterns) {
-  for (let start = view.text.indexOf('/'); start !== -1; start = view.text.indexOf('/', start + 1)) {
-    for (const matcher of patterns) {
-      matcher.lastIndex = start;
-      if (matcher.exec(view.text) && hostPathLeftBoundary(view, start)
-        && hostPathRightBoundary(view, matcher.lastIndex)) return true;
-    }
-  }
-  return false;
-}
-function mentionsPreparedHostRoot(text, patterns) {
-  if (typeof text !== 'string') return false;
-  const raw = { text, escaped: [] };
-  if (mentionsInView(raw, patterns)) return true;
-  return text.includes('%') && mentionsInView(decodeAsciiEscapes(text), patterns);
-}
-function safeFindingLabel(value, fallback = null) {
-  if (typeof value !== 'string' || !SAFE_FINDING_LABEL_RE.test(value)) {
-    return fallback;
-  }
-  return value;
-}
-function pathUnderRoot(root, path) {
-  const normalizedRoot = normalizeAbsoluteRoot(root);
-  if (normalizedRoot === null || typeof path !== 'string' || path === '') return false;
-  const normalizedPath = normalizePathString(path);
-  if (!isSafeAbsolutePath(normalizedPath)) return false;
-  const prefix = rootPrefix(normalizedRoot);
-  return normalizedPath === normalizedRoot || normalizedPath.startsWith(prefix);
-}
-function repoRelativeFindingPath(repoRoot, file) {
-  if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
-  let normalized = file;
-  let location;
-  for (let remaining = file.length; remaining >= 0; remaining -= 1) {
-    const slashes = normalizePathString(normalized);
-    const split = splitLocationSuffix(slashes);
-    const path = normalizePathString(split.path);
-    const next = `${path}${split.suffix}`;
-    if (next === normalized) {
-      location = { path, suffix: split.suffix };
-      break;
-    }
-    normalized = next;
-  }
-  const { path, suffix } = location;
-  if (path.startsWith('/') && hasDotDotSegment(path)) return { reason: 'file path contains a .. segment' };
-  let relative;
-  if (!path.startsWith('/')) {
-    relative = normalizePathString(path);
-    while (relative.startsWith('./')) relative = relative.slice(2);
-  } else {
-    const root = normalizeAbsoluteRoot(repoRoot);
-    if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
-    const absolute = normalizePathString(path);
-    if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
-    const prefix = rootPrefix(root);
-    if (!absolute.startsWith(prefix)) return { reason: 'absolute file path is outside repoRoot' };
-    relative = absolute.slice(prefix.length);
-  }
-  if (relative === '' || relative === '.') return { reason: 'file path does not name a repository file' };
-  if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
-  if (relative.startsWith('\\')) return { reason: 'file path starts with a backslash' };
-  if (relative.split('/')[0] === '~') return { reason: 'file path starts with a home anchor' };
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:\//.test(relative) || /^[A-Za-z]:([/\\]|$)/.test(relative)) {
-    return { reason: 'file path starts with a URI scheme or drive letter' };
-  }
-  if (/[\p{Cc}\p{Zl}\p{Zp}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u.test(file)
-    || file.split('/').some((segment) =>
-      /^[\p{Cf}\p{Mn}\p{Me}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u.test(segment))) {
-    return { reason: 'file path contains a disallowed character' };
-  }
-  if (relative !== relative.trim()) return { reason: 'file path has leading or trailing whitespace' };
-  return { file: `${relative}${suffix}` };
-}
 // --- mergeFindings.js ---
 const KNOWN_DIMENSIONS = new Set(DIMENSIONS.map((d) => d.dimension));
 const REQUIRED_FIELDS = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence'];
@@ -4300,7 +4375,9 @@ async function verifyStage(ctx, input) {
   }
   const model = modelFor('code-gauntlet:executor', inp.policy || {});
   const baseBranch = effectiveVerifyBaseBranch((inp.verify || {}).baseBranch);
-  const plan = planVerifySlices(findings, sliceSize, VERIFY_INLINE_CHAR_BUDGET, baseBranch);
+  const hostPlatform = hostPlatformForRoots(inp);
+  const inlineBudget = verifyInlineBudget(inp);
+  const plan = planVerifySlices(findings, sliceSize, inlineBudget, baseBranch, hostPlatform);
   const slices = plan.slices;
   const gaps = [];
   if (slices.length > VERIFY_FANOUT_DISCLOSE_THRESHOLD) {
@@ -4324,11 +4401,12 @@ async function verifyStage(ctx, input) {
   for (const unit of units) {
     if (unit.kind === 'oversize') {
       const content = { findings: [projectVerifySliceFinding(unit.finding)], base_branch: baseBranch };
-      const encodedLength = encodeSliceInline(content).length;
+      const encodedLength = verifyInlineCost(encodeSliceInline(content), hostPlatform);
+      const lengthKind = hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length';
       inputProof.oversize += 1;
       out.push(...degradedSlice([unit.finding]));
       gaps.push(verifyDegradeGap(
-        `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has encoded length ${encodedLength}, over VERIFY_INLINE_CHAR_BUDGET=${VERIFY_INLINE_CHAR_BUDGET}`,
+        `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has ${lengthKind} ${encodedLength}, over VERIFY_INLINE_CHAR_BUDGET=${inlineBudget}`,
         1,
         findings.length,
       ));
@@ -4343,8 +4421,9 @@ async function verifyStage(ctx, input) {
     const payload = encodeSliceInline(content);
     const expectedInlineChecksum = sliceTokenChecksum(payload);
     const predictedPayloadLength = predictVerifySliceInlineLength(slice, baseBranch);
-    if (payload.length !== predictedPayloadLength || predictedPayloadLength > VERIFY_INLINE_CHAR_BUDGET) {
-      throw new Error(`verify inline planner produced an oversized slice ${i} (${payload.length} > ${VERIFY_INLINE_CHAR_BUDGET})`);
+    const commandCost = predictVerifySliceInlineLength(slice, baseBranch, hostPlatform);
+    if (payload.length !== predictedPayloadLength || commandCost > inlineBudget) {
+      throw new Error(`verify inline planner produced an oversized slice ${i} (${commandCost} > ${inlineBudget})`);
     }
     const degrade = (detail) => {
       out.push(...degradedSlice(slice));
@@ -4489,22 +4568,6 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, e
   }
   return { ok: true };
 }
-function verifyCommand(inp, i, sliceNonce, inlinePayload) {
-  const v = inp.verify || {};
-  const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;
-  const outPath = `${v.outputPathBase || 'phase4-output'}.slice${i}.json`;
-  const parts = [
-    'python3', v.scriptPath || 'scripts/verify_findings.py',
-    '--input', inPath,
-    '--input-inline', inlinePayload,
-    '--output', outPath,
-    '--nonce', sliceNonce,
-    '--head-sha', inp.headShaShort,
-    '--base-branch', effectiveVerifyBaseBranch(v.baseBranch),
-  ];
-  if (v.diffPath) parts.push('--diff-file', v.diffPath);
-  return parts.map(shellWord).join(' ');
-}
 function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
   return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (sha, n_in, nonce, deltas_checksum, inline_checksum, and input_checksum when present — never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token IS the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
 }
@@ -4542,10 +4605,6 @@ const ARGS_SHAPES = deepFreeze({
   scopeFields: ['requested', 'kind', 'since', 'commits', 'detector'],
   scopeKinds: ['full', 'incremental'],
   detectorFields: ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'],
-  scriptFields: [
-    { root: 'persist', key: 'assembleScriptPath', script: 'assemble' },
-    { root: 'verify', key: 'scriptPath', script: 'verify' },
-  ],
 });
 const ARGS_FIELD_CHECKS = deepFreeze({
   policy: [
@@ -4575,8 +4634,6 @@ const ARGS_FIELD_CHECKS = deepFreeze({
     { key: 'exclusionsText', domain: 'string', message: 'exclusionsText must be a string when present' },
   ],
   persist: [
-    { key: 'assembleScriptPath', domain: 'nonEmptyString',
-      message: 'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py' },
     { key: 'returnPrimaries', domain: 'boolean', message: 'persist.returnPrimaries must be a boolean when present' },
   ],
   limits: [
@@ -4598,7 +4655,6 @@ const FIELD_DOMAINS = deepFreeze({
   number: (value) => typeof value === 'number',
   boolean: (value) => typeof value === 'boolean',
   string: (value) => typeof value === 'string',
-  nonEmptyString: (value) => typeof value === 'string' && value !== '',
   integer: Number.isInteger,
   safeInteger: Number.isSafeInteger,
 });
@@ -4642,20 +4698,6 @@ function validatePrIdentity(id, errors) {
       }
     }
   }
-}
-function validateScriptPaths(args) {
-  const errors = [];
-  if (typeof args.pluginRoot !== 'string' || !args.pluginRoot.startsWith('/')) return errors;
-  const root = args.pluginRoot.replace(/\/+$/, '') || '/';
-  const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
-  for (const row of ARGS_SHAPES.scriptFields) {
-    const member = args[row.root];
-    const expected = `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES[row.script]}`;
-    if (isPlainObject(member) && typeof member[row.key] === 'string' && member[row.key] !== expected) {
-      errors.push(`${row.root}.${row.key} must equal ${expected}`);
-    }
-  }
-  return errors;
 }
 function validatePathSegments(value, label, reviewFile = false) {
   const errors = [];
@@ -4788,6 +4830,9 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
   for (const k of REQUIRED) if (args[k] === undefined) errors.push(`missing required field: ${k}`);
   if (args.mode && !KNOB_VOCAB.modes.includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
   validateConfigEcho(args, errors, descriptors);
+  for (const [key, allowed] of [['python', Object.keys(PYTHON_COMMAND_ARGV)]]) {
+    if (args[key] !== undefined && !allowed.includes(args[key])) errors.push(`${key} must be one of ${allowed.join(', ')}`);
+  }
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
   }
@@ -4816,8 +4861,8 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
     if (field === 'repoRoot' && normalizeAbsoluteRoot(v) === null) {
       errors.push('repoRoot must be an absolute path without .. segments or backslashes');
     }
-    if ((field === 'outputDir' || field === 'pluginRoot') && !v.startsWith('/')) {
-      errors.push(`${field} must be an absolute path (POSIX /-prefix)`);
+    if ((field === 'outputDir' || field === 'pluginRoot') && normalizeAbsoluteRoot(v) === null) {
+      errors.push(`${field} must be an absolute confined root without .. segments or backslashes`);
     }
   }
   if (args.agentFlags !== undefined) {
@@ -4989,12 +5034,11 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
   }
   if (args.persist !== undefined) {
     if (!isPlainObject(args.persist)) {
-      errors.push('persist must be an object of the form { assembleScriptPath, returnPrimaries } when present');
+      errors.push('persist must be an object of the form { returnPrimaries } when present');
     } else {
       validateArgsFields(args.persist, 'persist', errors);
     }
   }
-  errors.push(...validateScriptPaths(args));
   if (args.limits !== undefined) {
     if (!isPlainObject(args.limits)) {
       errors.push('limits must be an object when present');
@@ -5270,7 +5314,7 @@ function requireAbsoluteOutputDir(outputDir) {
   const root = normalizeAbsoluteRoot(outputDir);
   if (root === null) {
     throw new Error(
-      `outputDir must be an absolute confined root (POSIX /-prefix, no .. or \\ segments); got ${JSON.stringify(outputDir)}`,
+      `outputDir must be an absolute confined root (no .. or \\ segments); got ${JSON.stringify(outputDir)}`,
     );
   }
   return root;
@@ -5496,9 +5540,8 @@ async function writeArtifacts(ctx, input) {
   const paths = plannedArtifactPaths(outputDir, sha);
   try {
     const persist = inp.persist || {};
-    const scriptPath = typeof persist.assembleScriptPath === 'string' && persist.assembleScriptPath !== ''
-      ? persist.assembleScriptPath
-      : null;
+    const scriptPath = inp.persist && inp.pluginRoot
+      ? trustedScriptPath(inp.pluginRoot, TRUSTED_SCRIPT_BASENAMES.assemble) : null;
     const wantsReturn = persist.returnPrimaries === true;
     if (scriptPath || wantsReturn) {
       const derivable = persistDerivable(inp);
@@ -5585,7 +5628,7 @@ function returnChannelPersist(inp, paths, outputDir, sha) {
 }
 async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath) {
   const { plan, planPath, entries } = persistEntries(inp, paths, outputDir, sha);
-  const attempt = () => attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath);
+  const attempt = () => attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath, inp.python);
   const salvage = (att) => {
     const proven = new Set(att.proven || []);
     return {
@@ -5607,7 +5650,7 @@ async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, part
   }
   return partial(`${second.reason} — retried once after the first attempt failed (${first.reason})`, [], salvage(second));
 }
-async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath) {
+async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath, python) {
   const fail = (reason, retryable) => ({ ok: false, retryable: !!retryable, reason });
   let writerOut;
   try {
@@ -5633,7 +5676,7 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDi
   }
   let receipt;
   try {
-    receipt = await c.agent(assemblePrompt(assembleScriptPath, planPath), {
+    receipt = await c.agent(assemblePrompt(assembleScriptPath, planPath, python), {
       label: 'assemble-artifacts',
       agentType: 'code-gauntlet:executor',
       model: modelFor('code-gauntlet:executor', policy),
@@ -5776,8 +5819,8 @@ const ASSEMBLE_RECEIPT_SCHEMA = {
     errors: { type: 'array', items: { type: 'string' } },
   },
 };
-function assemblePrompt(scriptPath, planPath) {
-  return `Run exactly this command, then return its single line of stdout JSON verbatim via the schema:\npython3 ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
+function assemblePrompt(scriptPath, planPath, python) {
+  return `Run exactly this command, then return its single line of stdout JSON verbatim via the schema:\n${pythonArgv(python).map(shellWord).join(' ')} ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
 }
 // --- checkpoints.js ---
 function unwrapCheckpointMap(cp) {
@@ -6199,7 +6242,7 @@ async function runWith(ctx, rawArgs) {
   }
   const c = { ...defaultCtx(), ...(ctx || {}) };
   const nChangedFiles = (A.changedFiles || []).length;
-  let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch);
+  let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch, A);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
   const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars });
@@ -6260,9 +6303,10 @@ async function runWith(ctx, rawArgs) {
       base_branch: A.baseBranch, head_sha: A.headShaShort,
     }));
     gaps.push(...(mergeOut.gaps || []));
-    limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || [], A.baseBranch);
+    limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || [], A.baseBranch, A);
     const verifyOut = await runPhase('verify', () => verifyStage(c, {
       findings: mergeOut.findings || [], limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
+      python: A.python, repoRoot: A.repoRoot, outputDir: A.outputDir, pluginRoot: A.pluginRoot,
       verify: { ...(A.verify || {}), baseBranch: A.baseBranch, diffPath: A.diffPath },
     }));
     gaps.push(...(verifyOut.gaps || []));
@@ -6355,7 +6399,7 @@ async function runWith(ctx, rawArgs) {
       outputDir: A.outputDir,
       headShaShort: A.headShaShort,
       nonce: A.nonce,
-      persist: A.persist,
+      persist: A.persist, python: A.python, pluginRoot: A.pluginRoot,
       policy,
     });
     gaps.push(...(writeOut.gaps || []));

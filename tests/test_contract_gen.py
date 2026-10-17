@@ -218,10 +218,10 @@ _EXPECTED_PR_IDENTITY_FIELDS = (
     "- `web_origin` (required): an http(s) origin: scheme, host and "
     "optional port only.\n- `title` (optional): a non-empty string when present.\n\n"
     "Producer commands:\n\n"
-    "`gh pr view {pr_number} --json url,title | python3 "
+    "`gh pr view {pr_number} --json url,title | {python} "
     '"{plugin_root}/scripts/resolve_pr_identity.py" --platform github '
     '--sha "$(git rev-parse HEAD)"`\n\n'
-    "`glab mr view {pr_number} --output json | python3 "
+    "`glab mr view {pr_number} --output json | {python} "
     '"{plugin_root}/scripts/resolve_pr_identity.py" --platform gitlab '
     '--sha "$(git rev-parse HEAD)"`\n\n'
     "The title and URL reach the script only through the pipe."

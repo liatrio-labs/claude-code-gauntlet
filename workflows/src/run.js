@@ -121,7 +121,7 @@ export async function runWith(ctx, rawArgs) {
   const c = { ...defaultCtx(), ...(ctx || {}) };
   // Before merge, only the changed-file count is known; later coarsening must also account for findings.
   const nChangedFiles = (A.changedFiles || []).length;
-  let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch);
+  let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch, A);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
   const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars });
@@ -201,10 +201,11 @@ export async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(mergeOut.gaps || []));
 
-    limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || [], A.baseBranch);
+    limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || [], A.baseBranch, A);
 
     const verifyOut = await runPhase('verify', () => verifyStage(c, {
       findings: mergeOut.findings || [], limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
+      python: A.python, repoRoot: A.repoRoot, outputDir: A.outputDir, pluginRoot: A.pluginRoot,
       verify: { ...(A.verify || {}), baseBranch: A.baseBranch, diffPath: A.diffPath },
     }));
     gaps.push(...(verifyOut.gaps || []));
@@ -316,7 +317,7 @@ export async function runWith(ctx, rawArgs) {
       headShaShort: A.headShaShort,
       // Echo the run id so the materializer can locate task output by content without a task id.
       nonce: A.nonce,
-      persist: A.persist,
+      persist: A.persist, python: A.python, pluginRoot: A.pluginRoot,
       policy,
     });
     gaps.push(...(writeOut.gaps || []));

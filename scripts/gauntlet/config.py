@@ -9,13 +9,13 @@ import os
 import re
 import sys
 from collections.abc import Mapping, Sequence
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from gauntlet import proc
 from gauntlet.cli import CliError, Command, Parser
 from gauntlet.fs import read_text
 from gauntlet.jsjson import JS_MAX_SAFE_INTEGER
-from gauntlet.paths import PLUGIN_ROOT, is_shell_safe_path
+from gauntlet.paths import PLUGIN_ROOT, is_shell_safe_path, wire_path
 from gauntlet.registry import JS_TRIM_CHARS, KNOB_REGISTRY
 
 
@@ -30,6 +30,13 @@ _PIPELINE_VERSION_RE = re.compile(
     r"(?m)^[ \t]*const[ \t]+PIPELINE_VERSION[ \t]*=[ \t]*"
     r"(['\"])([^'\"\r\n]+)\1[ \t]*;?[ \t]*(?://[^\r\n]*)?$"
 )
+
+
+class RuntimeIdentity(TypedDict):
+    pipeline_version: str
+    plugin_root: str
+    repo_root: str
+    host_platform: Literal["posix", "windows"]
 
 
 class ResolverError(Exception):
@@ -423,7 +430,15 @@ def _handle(args: argparse.Namespace) -> int:
             else "interactive"
         )
         result = resolve(mode, os.environ, review_text, args.target)
-        identity = {"pipeline_version": version, "plugin_root": plugin_root}
+        try:
+            identity: RuntimeIdentity = {
+                "pipeline_version": version,
+                "plugin_root": wire_path(plugin_root),
+                "repo_root": wire_path(repo_root),
+                "host_platform": "windows" if os.name == "nt" else "posix",
+            }
+        except ValueError as exc:
+            raise ResolverSetupError(str(exc)) from exc
         block = render_block(mode, result["configEcho"], identity)
         payload = {
             "mode": mode,

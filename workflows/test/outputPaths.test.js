@@ -11,6 +11,7 @@ import {
 import { expectedWith } from './helpers/persistFixtures.js';
 
 const ROOT_ROWS = [
+  ['C:/', 'C:/'],
   ['/repo/.code-gauntlet', '/repo/.code-gauntlet'],
   ['/repo//.code-gauntlet/', '/repo/.code-gauntlet'],
   ['/My Repo/.code-gauntlet', '/My Repo/.code-gauntlet'],
@@ -36,7 +37,7 @@ for (const [name, input, spelling] of REFUSED_ROOTS) {
         call,
         {
           name: 'Error',
-          message: `outputDir must be an absolute confined root (POSIX /-prefix, no .. or \\ segments); got ${spelling}`
+          message: `outputDir must be an absolute confined root (no .. or \\ segments); got ${spelling}`
         }
       );
     }

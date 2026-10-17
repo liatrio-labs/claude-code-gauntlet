@@ -45,7 +45,7 @@ export function persistInput(over = {}) {
     findings, postReview: findings, report: '# Code Gauntlet\n\nfindings rendered here',
     checkpoints: persistCheckpoints(findings),
     outputDir: '/repo/.code-gauntlet', headShaShort: 'abc1234', policy: {},
-    persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' }, ...over,
+    pluginRoot: '/plugin', persist: {}, ...over,
   };
 }
 

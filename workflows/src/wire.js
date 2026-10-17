@@ -164,3 +164,11 @@ export function longestBacktickRun(text) {
   for (const match of text.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
   return longest;
 }
+
+
+export const PYTHON_COMMAND_ARGV = deepFreeze({ python3: ['python3'], python: ['python'], 'py -3': ['py', '-3'] });
+
+export function pythonArgv(python = 'python3') {
+  if (!Object.hasOwn(PYTHON_COMMAND_ARGV, python)) throw new Error('invalid python command');
+  return PYTHON_COMMAND_ARGV[python];
+}

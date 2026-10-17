@@ -13,6 +13,7 @@ import pytest
 from gauntlet import awaiting, tasks
 
 from tests.support.artifacts import task_file
+from tests.support.shell import bash_executable
 
 REPO = Path(__file__).resolve().parents[1]
 ARTIFACT_NAMES = (
@@ -123,28 +124,36 @@ def test_wait_loop(mode, expected_code, expected_sleeps, tmp_path, monkeypatch):
         assert receipt["waited_seconds"] == 2.5
 
 
+_PENDING_RETRY_TAIL = (
+    ',"next_command":"python3 ENTRY --attempt 2 --max-attempts '
+    "4 --timeout-seconds 0.0 --poll-interval 2 --since-epoch "
+    '7.0 -- missing"}'
+)
+
+
 @pytest.mark.parametrize(
-    "kind,attempt,expected_tail",
+    "kind,attempt,expected_tail,python",
     [
-        pytest.param(
-            "pending",
-            1,
-            ',"next_command":"python3 ENTRY --attempt 2 --max-attempts '
-            "4 --timeout-seconds 0.0 --poll-interval 2 --since-epoch "
-            '7.0 -- missing"}',
-            id="MARKER-pending-unresolved",
-        ),
+        *[
+            pytest.param(
+                "pending", 1, _PENDING_RETRY_TAIL, python, id=f"MARKER-pending-{python}"
+            )
+            for python in ("python3", "python", "py -3")
+        ],
         pytest.param(
             "timeout",
             5,
             ',"gap":"workflow-timeout","detail":"no terminal workflow '
             "result after 4 attempts; declare the gap and deliver "
             'whatever partial artifacts exist"}',
+            "python3",
             id="MARKER-timeout-detail",
         ),
     ],
 )
-def test_marker_bytes(kind, attempt, expected_tail, tmp_path, monkeypatch, capsys):
+def test_marker_bytes(
+    kind, attempt, expected_tail, python, tmp_path, monkeypatch, capsys
+):
     root = tmp_path / "missing-root"
     monkeypatch.setenv(tasks.TASK_ROOTS_ENV, str(root))
     ticks = iter([10.0, 10.0, 10.26])
@@ -152,6 +161,8 @@ def test_marker_bytes(kind, attempt, expected_tail, tmp_path, monkeypatch, capsy
     assert awaiting.CLI.invoke(
         [
             "missing",
+            "--python",
+            python,
             "--timeout-seconds",
             "0",
             "--since-epoch",
@@ -176,7 +187,12 @@ def test_marker_bytes(kind, attempt, expected_tail, tmp_path, monkeypatch, capsy
         .replace("ATTEMPT", str(attempt))
         .replace("PATTERN", json.dumps(pattern))
     )
-    quoted_entry = shlex.quote(str(REPO / "scripts" / "await_workflow.py"))
+    quoted_entry = shlex.quote((REPO / "scripts" / "await_workflow.py").as_posix())
+    if python != "python3" and kind == "pending":
+        expected_tail = expected_tail.replace("python3 ENTRY", python + " ENTRY")
+        expected_tail = expected_tail.replace(
+            "7.0 -- missing", "7.0 --python " + shlex.quote(python) + " -- missing"
+        )
     expected += expected_tail.replace("ENTRY", json.dumps(quoted_entry)[1:-1])
     assert captured.out.strip() == expected
     assert captured.err == ""
@@ -267,10 +283,12 @@ def test_artifact_fallback(mode, expected_code, kind, tmp_path, monkeypatch, cap
     assert receipt["await"] == kind
     if code == 5:
         assert receipt["artifactPaths"] == {
-            "findings": str(tmp_path / "code-gauntlet-findings-abc.json"),
-            "report": str(tmp_path / "code-gauntlet-report-abc.md"),
-            "checkpoints": str(tmp_path / "code-gauntlet-checkpoint-all-abc.json"),
-            "postReview": str(tmp_path / "code-gauntlet-post-review-abc.json"),
+            "findings": (tmp_path / "code-gauntlet-findings-abc.json").as_posix(),
+            "report": (tmp_path / "code-gauntlet-report-abc.md").as_posix(),
+            "checkpoints": (
+                tmp_path / "code-gauntlet-checkpoint-all-abc.json"
+            ).as_posix(),
+            "postReview": (tmp_path / "code-gauntlet-post-review-abc.json").as_posix(),
         }
         assert (
             receipt["detail"]
@@ -379,7 +397,7 @@ def test_grace_resets_after_completeness_loss(tmp_path, monkeypatch):
 def test_retry_command(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(awaiting.time, "time", lambda: 10)
-    plugin_entry = os.path.join("plugin path's", "scripts", "await_workflow.py")
+    plugin_entry = "plugin path's/scripts/await_workflow.py"
     monkeypatch.setattr(awaiting, "entry", lambda _: plugin_entry)
     root = tmp_path / "root"
     path = task_file(root, "bare-id")
@@ -414,14 +432,14 @@ def test_retry_command(tmp_path, monkeypatch, capsys):
         "--artifacts-dir 'out space'\"'\"'s' --head-sha abc "
         "--artifacts-grace-seconds 11.0 -- "
     )
-    expected += shlex.quote(str(path))
+    expected += shlex.quote(path.as_posix())
     assert json.loads(capsys.readouterr().out)["next_command"] == expected
 
 
 def test_executed_retry_preserves_leading_dash_and_quotes(
     tmp_path, monkeypatch, capsys
 ):
-    shell = shutil.which("bash")
+    shell = shutil.which(bash_executable())
     if shell is None:
         pytest.skip("retry command requires a POSIX shell")
     monkeypatch.chdir(tmp_path)

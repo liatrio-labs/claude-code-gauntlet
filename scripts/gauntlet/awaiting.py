@@ -13,7 +13,8 @@ from typing import Literal, TypedDict
 
 from gauntlet import tasks
 from gauntlet.cli import Command, Parser, UsageError
-from gauntlet.paths import entry
+from gauntlet.interpreters import PYTHON_ARGV
+from gauntlet.paths import entry, wire_path
 from gauntlet.registry import ARTIFACT_PATH_TEMPLATES
 
 # Return before the Bash ceiling kills the process and prevents its receipt.
@@ -153,7 +154,7 @@ def artifacts_state(
 
 def _artifact_paths(artifacts_dir: str, head_sha: str) -> dict[str, str]:
     return {
-        key: os.path.join(artifacts_dir, template.format(sha=head_sha))
+        key: wire_path(os.path.join(artifacts_dir, template.format(sha=head_sha)))
         for key, template in ARTIFACT_PATH_TEMPLATES.items()
     }
 
@@ -164,8 +165,8 @@ def build_next_command(
     args: argparse.Namespace, resolved_path: str | None, since_epoch: float
 ) -> str:
     parts = [
-        "python3",
-        shlex.quote(entry("await_workflow")),
+        *(shlex.quote(word) for word in PYTHON_ARGV[args.python]),
+        shlex.quote(wire_path(entry("await_workflow"))),
         "--attempt",
         str(args.attempt + 1),
         "--max-attempts",
@@ -177,13 +178,20 @@ def build_next_command(
         "--since-epoch",
         repr(float(since_epoch)),
     ]
+    if args.python != "python3":
+        parts += ["--python", shlex.quote(args.python)]
     if args.artifacts_dir:
         parts += ["--artifacts-dir", shlex.quote(args.artifacts_dir)]
     if args.head_sha:
         parts += ["--head-sha", shlex.quote(args.head_sha)]
     if args.artifacts_dir or args.head_sha:
         parts += ["--artifacts-grace-seconds", str(args.artifacts_grace_seconds)]
-    parts += ["--", shlex.quote(resolved_path or args.target)]
+    # A resolved task path is a host path like every other one the retry emits, so it
+    # uses the same forward-slash form; a UNC temp root keeps its native spelling.
+    target = resolved_path or args.target
+    if resolved_path and not resolved_path.startswith(("\\\\", "//")):
+        target = wire_path(resolved_path)
+    parts += ["--", shlex.quote(target)]
     return " ".join(parts)
 
 
@@ -331,6 +339,7 @@ def build_parser() -> Parser:
         prog="await_workflow",
         description="Block until a backgrounded Workflow task has a terminal result.",
     )
+    parser.add_argument("--python", choices=tuple(PYTHON_ARGV), default="python3")
     parser.add_argument(
         "target",
         metavar="TASK_ID_OR_PATH",

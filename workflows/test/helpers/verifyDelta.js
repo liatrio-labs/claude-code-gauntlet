@@ -121,10 +121,9 @@ export function verifyCtx(executorImpl) {
 
 export function verifyInput(findings, over = {}) {
   return {
-    findings, nonce: 'n-1', headShaShort: 'abc123',
+    findings, pluginRoot: '/plugin', nonce: 'n-1', headShaShort: 'abc123',
     limits: { verifySliceSize: 200 }, policy: {},
     verify: {
-      scriptPath: '/plugin/scripts/verify_findings.py',
       inputPathBase: '/out/phase4-input-abc123',
       outputPathBase: '/out/phase4-output-abc123',
       baseBranch: 'main', diffPath: '/out/code-gauntlet-diff-abc123.patch',

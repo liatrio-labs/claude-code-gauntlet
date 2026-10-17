@@ -1,11 +1,11 @@
 import { normalizeAbsoluteRoot } from './paths.js';
 import { REQUIRED, DELIVERY_TIERS, SCOPE_ANSWERS, CONTROL_RE } from './registry.js';
 import { LIMIT_DEFAULTS, LIGHT_SCOPE_MAX_CHANGED_LINES } from './registry.js';
-import { PR_IDENTITY_FIELDS, POLICY_PROVIDERS, MODEL_ALIASES, TRUSTED_SCRIPT_BASENAMES } from './registry.js';
+import { PR_IDENTITY_FIELDS, POLICY_PROVIDERS, MODEL_ALIASES } from './registry.js';
 import { REVIEW_SETTING_KEYS, SEVERITY_ORDER, KNOB_VOCAB } from './registry.js';
 import { KNOB_REGISTRY, computeLightEligible, receiptEntryFor, receiptEntryForKey, mappedReceiptValue, DERIVED_FROM } from './knobs.js';
 import { deriveWhenHolds, deriveConfigWaist, configEchoValue, validateConfigEcho } from './knobs.js';
-import { dottedValue, isPlainObject, deepFreeze, fnv1a32, normalizeReviewText } from './wire.js';
+import { PYTHON_COMMAND_ARGV, dottedValue, isPlainObject, deepFreeze, fnv1a32, normalizeReviewText } from './wire.js';
 import { buildReviewConfig, loadExclusions } from './reviewConfig.js';
 
 export const ARGS_VERSION = 1;
@@ -51,10 +51,7 @@ const ARGS_SHAPES = deepFreeze({
   scopeFields: ['requested', 'kind', 'since', 'commits', 'detector'],
   scopeKinds: ['full', 'incremental'],
   detectorFields: ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'],
-  scriptFields: [
-    { root: 'persist', key: 'assembleScriptPath', script: 'assemble' },
-    { root: 'verify', key: 'scriptPath', script: 'verify' },
-  ],
+
 });
 
 const ARGS_FIELD_CHECKS = deepFreeze({
@@ -85,8 +82,6 @@ const ARGS_FIELD_CHECKS = deepFreeze({
     { key: 'exclusionsText', domain: 'string', message: 'exclusionsText must be a string when present' },
   ],
   persist: [
-    { key: 'assembleScriptPath', domain: 'nonEmptyString',
-      message: 'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py' },
     { key: 'returnPrimaries', domain: 'boolean', message: 'persist.returnPrimaries must be a boolean when present' },
   ],
   // Preserve error order independently of the vocabulary order so focused errors precede cap errors.
@@ -110,7 +105,6 @@ const FIELD_DOMAINS = deepFreeze({
   number: (value) => typeof value === 'number',
   boolean: (value) => typeof value === 'boolean',
   string: (value) => typeof value === 'string',
-  nonEmptyString: (value) => typeof value === 'string' && value !== '',
   integer: Number.isInteger,
   safeInteger: Number.isSafeInteger,
 });
@@ -156,21 +150,6 @@ function validatePrIdentity(id, errors) {
       }
     }
   }
-}
-
-function validateScriptPaths(args) {
-  const errors = [];
-  if (typeof args.pluginRoot !== 'string' || !args.pluginRoot.startsWith('/')) return errors;
-  const root = args.pluginRoot.replace(/\/+$/, '') || '/';
-  const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
-  for (const row of ARGS_SHAPES.scriptFields) {
-    const member = args[row.root];
-    const expected = `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES[row.script]}`;
-    if (isPlainObject(member) && typeof member[row.key] === 'string' && member[row.key] !== expected) {
-      errors.push(`${row.root}.${row.key} must equal ${expected}`);
-    }
-  }
-  return errors;
 }
 
 function validatePathSegments(value, label, reviewFile = false) {
@@ -321,10 +300,13 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
   for (const k of REQUIRED) if (args[k] === undefined) errors.push(`missing required field: ${k}`);
   if (args.mode && !KNOB_VOCAB.modes.includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
   validateConfigEcho(args, errors, descriptors);
+  for (const [key, allowed] of [['python', Object.keys(PYTHON_COMMAND_ARGV)]]) {
+    if (args[key] !== undefined && !allowed.includes(args[key])) errors.push(`${key} must be one of ${allowed.join(', ')}`);
+  }
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
   }
-  // The workflow has no cwd for resolving relative roots and uses POSIX separators.
+  // The workflow has no cwd for resolving relative roots.
   for (const field of ARGS_SHAPES.pathFields) {
     const v = args[field];
     if (v === undefined) continue;
@@ -351,8 +333,8 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
     if (field === 'repoRoot' && normalizeAbsoluteRoot(v) === null) {
       errors.push('repoRoot must be an absolute path without .. segments or backslashes');
     }
-    if ((field === 'outputDir' || field === 'pluginRoot') && !v.startsWith('/')) {
-      errors.push(`${field} must be an absolute path (POSIX /-prefix)`);
+    if ((field === 'outputDir' || field === 'pluginRoot') && normalizeAbsoluteRoot(v) === null) {
+      errors.push(`${field} must be an absolute confined root without .. segments or backslashes`);
     }
   }
   // Reject caller-stamped agentFlags so scope cannot have a second authority alongside riskTable and scopeAnswer.
@@ -539,14 +521,12 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
   // Validate the persist shape before paid stages so malformed writer configuration cannot fail at persistence.
   if (args.persist !== undefined) {
     if (!isPlainObject(args.persist)) {
-      errors.push('persist must be an object of the form { assembleScriptPath, returnPrimaries } when present');
+      errors.push('persist must be an object of the form { returnPrimaries } when present');
     } else {
       validateArgsFields(args.persist, 'persist', errors);
     }
   }
 
-  // pluginRoot binds the receipt to the scripts executed; allowing another root would break that trust boundary.
-  errors.push(...validateScriptPaths(args));
   // Reject unknown limit keys so a typo cannot silently fall back to a different stage size.
   if (args.limits !== undefined) {
     if (!isPlainObject(args.limits)) {
