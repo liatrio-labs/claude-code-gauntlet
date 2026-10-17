@@ -497,6 +497,67 @@ def test_find_imports_normal_prose(text, expected):
     assert _find_imports(text) == expected
 
 
+_IMPORT_PROBE_ROWS = [
+    ("tab-before-fence", "\t```\n@imp.md\n```\n", ["imp.md"]),
+    ("space-tab-before-fence", " \t```\n@imp.md\n```\n", ["imp.md"]),
+    ("prose-punctuation", "Specify the @type. Use @media.", []),
+    ("c1-opener-line", "```\n```python\n@imp.md\n```\n", []),
+    ("c2-closer-trailing-text", "```\n@a.md\n``` trailing\n@b.md\n```\n", []),
+    ("c3-backtick-info", "```a`b\n@imp.md\n", ["imp.md"]),
+    ("c4-equal-width-span", "``@imp.md``\n", []),
+    ("c7-tilde-closer-text", "~~~\n~~~x\n@imp.md\n~~~\n", []),
+    ("c8-four-space-indent", "    ```\n@imp.md\n", ["imp.md"]),
+    ("c9-unclosed-fence", "```\n@imp.md\n", []),
+    ("d3-list-fence", "- item\n  ```\n  @imp.md\n  ```\n", []),
+    ("e1-span-leaves-import-boundary", "a`x`@imp.md", ["imp.md"]),
+    ("e2-span-before-import", "`x`@imp.md", ["imp.md"]),
+    ("e3-midword-import", "word@imp.md", []),
+    ("f1-span-splits-import", "@imp`code`.md", []),
+    ("f2-mask-hidden-import-only", "`see @hidden.md here` and @live.md", ["live.md"]),
+    ("escaped-opener-is-not-a-span", "see \\` @imp.md ` here", ["imp.md"]),
+    ("even-backslashes-open-a-span", "see \\\\` @imp.md ` here", []),
+    ("nested-fence-longer-closer", "````\n@A.md\n```\n@B.md\n````\n@C.md\n", ["C.md"]),
+    ("crlf-fence-lines", "```\r\n@hidden.md\r\n```\r\n@live.md", ["live.md"]),
+    ("cr-only-fence-then-span", "```\rx\r```\rsee ` @skip.md ` here\r", []),
+    ("d1-multiline-span", "`open\n@imp.md`\n", []),
+    ("d1-cr-only-multiline-span", "see `a\r@imp.md` here", []),
+    ("d2-blockquote-fence", "> ```\n> @imp.md\n> ```\n", []),
+    ("d4-html-comment", "<!-- @imp.md -->\n", []),
+    ("d4b-bang-close-keeps-comment-open", "<!--\nx --!>\n@imp.md\n", []),
+    ("d5-indented-code", "paragraph\n\n    @imp.md\n", []),
+    ("p4-lazy-indent", "paragraph\n    @imp.md\n", ["imp.md"]),
+    ("p7-quote-indented", "> para\n>\n>     @imp.md\n", []),
+    ("p8-span-across-blank", "`open\n\n@imp.md`\n", ["imp.md`"]),
+    ("p11-quote-fence-lazy-exit", "> ```\n@imp.md\n", ["imp.md"]),
+    ("q1-quote-without-space", ">@imp.md\n", ["imp.md"]),
+    ("p16-indented-after-heading", "# Title\n    @imp.md\n", []),
+    ("p18-html-block-blank-ends", "<div>\n\n@imp.md\n</div>\n", ["imp.md"]),
+    ("s1-setext-then-indent", "Guide\n===\n    @imp.md\n", []),
+    ("h1-atx-span", "# Guide: ` @imp.md `\n", []),
+    ("r1-quote-then-ordered-two", "> note\n2. step\n\n    @imp.md\n", []),
+    (
+        "r2-empty-item-trailing-spaces",
+        "Details:\n\n-    \n    @imp.md\n",
+        ["imp.md"],
+    ),
+    ("i1-comment-then-span-live", "Text <!-- ` --> @imp.md `\n", ["imp.md"]),
+    ("i2-span-then-comment-live", "Text `<!--` @imp.md `-->`\n", ["imp.md"]),
+    ("t7-custom-tag", "<custom-tag>\n@imp.md\n", []),
+    ("t7-interrupt-para", "para\n<custom-tag>\n@imp.md\n", ["imp.md"]),
+]
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param(source, expected, id=name)
+        for name, source, expected in _IMPORT_PROBE_ROWS
+    ],
+)
+def test_find_imports_matches_measured_parser(source, expected):
+    assert _find_imports(source) == expected
+
+
 def test_changed_files_json_shape(tmp_path, collect_rules):
     changed = tmp_path / "changed.json"
     changed.write_text("{", encoding="utf-8")

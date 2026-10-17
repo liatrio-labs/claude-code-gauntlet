@@ -137,6 +137,10 @@ _MARKER_OPEN_RE = re.compile(
 _BACKTICK_FENCE_SHAPE_RE = re.compile(
     r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*(`{3,})"
 )
+_CONTAINER_CANDIDATE_RE = re.compile(
+    r"^ {0,3}(?:>|[-+*](?=[ \t]|$)|[0-9]{1,9}[.)](?=[ \t]|$)|\[\^)"
+)
+_INERT_INDENT_RE = re.compile(r" {4,}[^ \t]")
 _MULTILINE_QUOTE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})")
 _DEFINITION_LINK_TRIGGER_RE = re.compile(r"\]\\?\(")
 _DEFINITION_CLOSE_COLON_RE = re.compile(r"\](\\*):")
@@ -570,7 +574,7 @@ def _opaque_run_indexes(line: str, index: TickRunIndex) -> frozenset[int]:
     return frozenset(skip_openers)
 
 
-def _contain_line(line: str) -> str:
+def _contain_line(line: str, *, inert: bool = False) -> str:
     line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
     index = tick_run_index(line)
     skip_openers = _opaque_run_indexes(line, index)
@@ -601,7 +605,7 @@ def _contain_line(line: str) -> str:
         if span_index < len(spans) and spans[span_index][0] < run.end:
             selected, close, close_end = spans[span_index]
             span_index += 1
-            out.append("\\`" * (selected - opener))
+            out.append(("`" if inert else "\\`") * (selected - opener))
             opener_end = selected + close_end - close
             out.append(line[selected:opener_end])
             out.append(_escape_characters(line[opener_end:close], code=True))
@@ -611,7 +615,7 @@ def _contain_line(line: str) -> str:
             while run_index < len(index.runs) and index.runs[run_index].start < cursor:
                 run_index += 1
         else:
-            out.append("\\`" * (run.width - int(run.escaped)))
+            out.append(("`" if inert else "\\`") * (run.width - int(run.escaped)))
             cursor = run.end
             run_index += 1
     out.append(
@@ -691,11 +695,12 @@ def _prepare_text(
                 break
             suffix_index += 1
         offset += len(line) + 1
-    lines = _map_blocks(
+
+    mapped = _map_blocks(
         lines, protected_lines, _break_marker_openers, _escape_definitions
     )
     prepared = []
-    for line, protected in zip(lines, protected_lines, strict=True):
+    for line, protected in zip(mapped, protected_lines, strict=True):
         shape = _BACKTICK_FENCE_SHAPE_RE.match(line) if not single_line else None
         if shape and not protected:
             tick = shape.start(1)
@@ -713,6 +718,29 @@ def _prepare_text(
         prepared.append(line)
     # Bracket replacements can complete definition-shaped labels.
     prepared = _map_blocks(prepared, protected_lines, str, _escape_definitions)
+    if not single_line and trust_fences:
+        # No earlier container marker and a blank/code predecessor exclude open
+        # containers and lazy paragraphs; escaped HTML and protected fences stay safe.
+        seen_container = False
+        seen_content = False
+        previous_blank = False
+        previous_inert = False
+        for index, (line, protected) in enumerate(
+            zip(prepared, protected_lines, strict=True)
+        ):
+            inert = (
+                not protected
+                and not seen_container
+                and seen_content
+                and (previous_blank or previous_inert)
+                and _INERT_INDENT_RE.match(line) is not None
+            )
+            if inert:
+                prepared[index] = _contain_line(lines[index], inert=True)
+            seen_container = seen_container or bool(_CONTAINER_CANDIDATE_RE.match(line))
+            seen_content = seen_content or bool(line.strip(" \t"))
+            previous_blank = not line.strip(" \t")
+            previous_inert = inert
     result = "\n".join(prepared)
     if fence is not None:
         result += "\n" + fence[0] * fence[1]

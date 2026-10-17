@@ -93,6 +93,8 @@ VECTORS: list[TextVector] = [
     if case["operation"] == "line"
     and case["id"]
     in {
+        "outbound_line_reference_indented_code",
+        "outbound_line_reference_tab",
         "outbound_line_reference_issue",
         "outbound_line_reference_merge_request",
         "outbound_line_reference_gh",
@@ -316,3 +318,89 @@ def test_large_definition_preparation(source: str, expected: str) -> None:
 )
 def test_neutralize_comment_openers(source: str, expected: str) -> None:
     assert text.neutralize_comment_openers(source) == expected
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("para\n\n    >>> parse(x)", "para\n\n    >>> parse(x)"),
+        (
+            "para\n\n    ```\n    ~~~\n    [a]: b\n    `",
+            "para\n\n    ```\n    ~~~\n    [a]: b\n    `",
+        ),
+        ("    ```", "    \\`\\`\\`"),
+        ("# heading\n    ~~~", "# heading\n    \\~\\~\\~"),
+        ("---\n    ~~~", "---\n    \\~\\~\\~"),
+        ("para\n\n<custom-tag>\n    ~~~", "para\n\n&lt;custom-tag>\n    \\~\\~\\~"),
+        ("para\n    >>> x", "para\n    \\>>> x"),
+        ("para\n\n>>>\n    ~~~", "para\n\n\\>>>\n    \\~\\~\\~"),
+        ("para\n\n> x\n>\n>     ~~~", "para\n\n> x\n>\n>     \\~\\~\\~"),
+        ("- item\n\n    ~~~", "- item\n\n    \\~\\~\\~"),
+        pytest.param(
+            "> The handler swallows the error.\n2. Then the retry loop spins.\n\n"
+            "    [critical]: https://evil.example",
+            "> The handler swallows the error.\n2. Then the retry loop spins.\n\n"
+            "    [critical]\\: https://evil.example",
+            id="earlier-quote-marker-keeps-code-escaped",
+        ),
+        pytest.param(
+            "Details:\n\n-    \n    [critical]: https://evil.example",
+            "Details:\n\n-    \n    [critical]\\: https://evil.example",
+            id="earlier-bullet-marker-keeps-code-escaped",
+        ),
+        pytest.param(
+            "- item\n\ntext\n\n    >>> x",
+            "- item\n\ntext\n\n    \\>>> x",
+            id="earlier-list-keeps-later-code-escaped",
+        ),
+        pytest.param(
+            "para\n\n```\nx\n\n    @user <b> ~~~\n```",
+            "para\n\n```\nx\n\n    @user <b> ~~~\n```",
+            id="trusted-fence-code-stays-verbatim",
+        ),
+        pytest.param(
+            "2. a\n\n    [x]: y",
+            "2. a\n\n    [x]\\: y",
+            id="ordered-list-definition-stays-escaped",
+        ),
+        pytest.param(
+            "3) a\n\n    ~~~",
+            "3) a\n\n    \\~\\~\\~",
+            id="ordered-list-fence-stays-escaped",
+        ),
+        ("> x\n>\n>     ~~~", "> x\n>\n>     \\~\\~\\~"),
+        ("para\n    `lazy\n` paired", "para\n    \\`lazy\n\\` paired"),
+        ("para\n<div>\n\n    ~~~", "para\n&lt;div>\n\n    ~~~"),
+        ("para\n```invalid`\n    ~~~", "para\n\\`\\``invalid`\n    \\~\\~\\~"),
+        pytest.param(
+            "para\n　\n    ~~~",
+            "para\n　\n    \\~\\~\\~",
+            id="unicode-space-is-not-blank-predecessor",
+        ),
+        pytest.param(
+            "para\n\n\t~~~",
+            "para\n\n\t\\~\\~\\~",
+            id="tab-indentation-stays-escaped",
+        ),
+        (
+            "para\n\n    `@user` [x](https://x.test/@user) <!-- open",
+            "para\n\n    `\uff20user` [x](https://x.test/\uff20user) &lt;!-- open",
+        ),
+        ("para\n\n    ghp_" + "A" * 20 + " ~~~", "para\n\n    [REDACTED] ~~~"),
+    ],
+)
+def test_indented_prose_preserves_only_inert_delimiters(source, expected):
+    assert text.prepare_prose(source) == expected
+    assert text.prepare_prose(expected) == expected
+    assert_outbound_string_invariant(expected)
+
+
+def test_prepared_prose_leading_blank_lines_do_not_make_code_inert():
+    assert text.prepared_prose("\n\n    ~~~") == "    \\~\\~\\~"
+
+
+def test_cited_rules_keep_indented_delimiters_contained():
+    assert (
+        text.prepared_prose("para\n\n    ```\n    ~~~\n    [a]: b", cap=True)
+        == "para\n\n    \\`\\`\n    \\~\\~\\~\n    [a]\\: b"
+    )
