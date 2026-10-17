@@ -89,6 +89,11 @@ def test_code_span_index_retries_unmatched_run_suffix():
     assert index.starts_by_width == {2: (0,), 1: (3,)}
 
 
+# CI traces these subprocesses for coverage, which slows them several-fold; a quadratic
+# regression on these inputs still takes minutes.
+_LINEAR_DEADLINE = 30
+
+
 def _large_analysis(source, operation):
     import json
     import subprocess
@@ -111,7 +116,7 @@ else:
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=5,
+        timeout=_LINEAR_DEADLINE,
         check=True,
     )
     return json.loads(result.stdout) if operation == "spans" else result.stdout
@@ -376,7 +381,7 @@ def test_blocks_hostile_inputs(source, expected):
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=5,
+        timeout=_LINEAR_DEADLINE,
         check=True,
     )
     assert json.loads(result.stdout) == expected
@@ -398,7 +403,7 @@ def test_import_inline_scan_does_not_rescan_comment_suffixes(comment, masked):
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=5,
+        timeout=_LINEAR_DEADLINE,
         check=True,
     )
     assert result.stdout == ""
