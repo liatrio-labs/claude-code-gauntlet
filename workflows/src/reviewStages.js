@@ -87,7 +87,7 @@ export async function validateStage(ctx, input) {
     const scored = new Set(entries.filter((e) => coerceInt(e.confidence, INT_POLICY.validation) !== null).map((e) => e.id));
     const unscored = batch.filter((f) => !scored.has(f.id));
     if (unscored.length) {
-      gaps.push(`validate-batch-${idx}: validator omitted scores - ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
+      gaps.push(`validate-batch-${idx}: validator omitted scores — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
       for (const f of unscored) skippedSet.add(f);
     }
   });

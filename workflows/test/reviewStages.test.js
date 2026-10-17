@@ -4,7 +4,7 @@ import { validateStage, filterStage, challengeStage, blindChallengeFields, selec
 import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
 
-const omittedGap = (idx, count) => `validate-batch-${idx}: validator omitted scores - ${count} finding(s) unvalidated (validation=skipped, held back to the report)`;
+const omittedGap = (idx, count) => `validate-batch-${idx}: validator omitted scores — ${count} finding(s) unvalidated (validation=skipped, held back to the report)`;
 const VALIDATE_STATS = { batches_dispatched: 1, batches_completed: 1, validated: 1, skipped: 1, adjusted: 1 };
 const VALIDATE_ROWS = [
   { name: 'id adjustment', input: [finding({ id: 'F1', confidence: 90 }), finding({ id: 'F2', confidence: 80 })],

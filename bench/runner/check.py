@@ -492,6 +492,39 @@ def _load_manifest(run_dir):
         return None
 
 
+def _held_back_unknown_findings(pr_dir, label):
+    """Yield unknown-origin findings the workflow held back to the checkpoint's unverified list."""
+    for path in sorted(pr_dir.glob("code-gauntlet-checkpoint-all-*.json")):
+        try:
+            checkpoint = _load_json(path)
+        except (json.JSONDecodeError, UnicodeError, OSError):
+            continue
+        unverified = _dig(checkpoint, "phases", "challenge", "unverified")
+        if not isinstance(unverified, list):
+            continue
+        for i, finding in enumerate(unverified):
+            if isinstance(finding, dict) and finding.get("origin") == "unknown":
+                yield f"{label}:{path.name}.phases.challenge.unverified[{i}]", finding
+
+
+def _dig(value, *keys):
+    for key in keys:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    return value
+
+
+def _finding_identity(finding):
+    """The same finding can appear in findings.json and the checkpoint; count it once."""
+    key = (
+        [finding["id"], finding.get("file"), finding.get("line_start")]
+        if finding.get("id")
+        else finding
+    )
+    return json.dumps(key, sort_keys=True)
+
+
 def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
     """Run functional smoke gates against ``run_dir``.
 
@@ -626,36 +659,10 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 if isinstance(finding, dict) and finding.get("origin") == "unknown":
                     unknown_findings.append((flabel, finding))
 
-        for checkpoint_path in sorted(
-            pr_dir.glob("code-gauntlet-checkpoint-all-*.json")
-        ):
-            try:
-                checkpoint = _load_json(checkpoint_path)
-            except (json.JSONDecodeError, UnicodeError, OSError):
-                continue
-            phases = checkpoint.get("phases") if isinstance(checkpoint, dict) else None
-            challenge = phases.get("challenge") if isinstance(phases, dict) else None
-            unverified = (
-                challenge.get("unverified") if isinstance(challenge, dict) else None
-            )
-            if not isinstance(unverified, list):
-                continue
-            for i, finding in enumerate(unverified):
-                if isinstance(finding, dict) and finding.get("origin") == "unknown":
-                    unknown_findings.append(
-                        (
-                            f"{label}:{checkpoint_path.name}.phases.challenge.unverified[{i}]",
-                            finding,
-                        )
-                    )
+        unknown_findings.extend(_held_back_unknown_findings(pr_dir, label))
         seen_unknown = set()
         for flabel, finding in unknown_findings:
-            identity = json.dumps(
-                [finding["id"], finding.get("file"), finding.get("line_start")]
-                if finding.get("id")
-                else finding,
-                sort_keys=True,
-            )
+            identity = _finding_identity(finding)
             if identity in seen_unknown:
                 continue
             seen_unknown.add(identity)
