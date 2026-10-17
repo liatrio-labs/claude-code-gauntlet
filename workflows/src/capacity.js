@@ -6,6 +6,8 @@ import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding
 import { pythonArgv, shellWord } from './wire.js';
 import { hostPlatformForRoots, trustedScriptPath } from './paths.js';
 
+// Shell quoting preserves each argv word; retry paths stay fixed so outputs
+// overwrite the first attempt.
 export function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   const v = inp.verify || {};
   const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;

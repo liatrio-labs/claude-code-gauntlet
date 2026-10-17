@@ -297,8 +297,6 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, e
   return { ok: true };
 }
 
-// Shell quoting preserves each argv word; retry paths stay fixed so outputs
-// overwrite the first attempt.
 // Read the deltas prefix because length-capped Reads give no truncation notice;
 // the later full finding arrays are unnecessary for the join.
 function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
