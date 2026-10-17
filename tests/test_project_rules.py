@@ -380,7 +380,7 @@ def test_over_cap_review_has_a_bounded_digest(
 
 
 @pytest.mark.parametrize(
-    "max_files, proven, read_sizes", [(3, 1, [3]), (512, 2, [3, 3, 2])]
+    "max_files, proven, read_sizes", [(1, 1, [3]), (512, 2, [3, 3, 2])]
 )
 def test_fallback_digests_share_read_and_byte_budgets(
     max_files, proven, read_sizes, collect_rules, write_rule, monkeypatch

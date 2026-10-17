@@ -79,7 +79,8 @@ DEFAULT_MAX_TOTAL_BYTES = 131072
 # Empty files do not consume bytes, so the walk needs a separate bound.
 DEFAULT_MAX_FILES = 512
 
-# Settings still need a proof when prose budgets exclude a file.
+# Settings still need a proof when the per-file prose cap excludes a file; past the file-count cap
+# the entry stays unproven.
 MAX_REVIEW_DIGEST_BYTES = 1024 * 1024
 MAX_REVIEW_DIGEST_TOTAL_BYTES = 8 * 1024 * 1024
 
@@ -286,9 +287,8 @@ class RuleCollector:
         try:
             if text is None:
                 remaining = MAX_REVIEW_DIGEST_TOTAL_BYTES - self.review_digest_bytes
-                if self.walked >= self.max_files or remaining <= 0:
+                if remaining <= 0:
                     return None
-                self.walked += 1
                 with open(real, "rb") as handle:
                     raw = handle.read(min(MAX_REVIEW_DIGEST_BYTES + 1, remaining))
                 self.review_digest_bytes += len(raw)
@@ -324,7 +324,7 @@ class RuleCollector:
             "modified_in_diff": self._is_modified(real),
             "checksum": (
                 self._review_checksum(real, st.st_size, text)
-                if text is not None or reason in ("too_large", "file_cap_reached")
+                if text is not None or reason == "too_large"
                 else None
             ),
         }
