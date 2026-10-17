@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## v3.42.42 (2026-10-17)
+
+### Bug Fixes
+
+- Bound checksum fallback reads and prove the list formula
+  ([#521](https://github.com/liatrio-labs/claude-code-gauntlet/pull/521),
+  [`e84b997`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e84b9978d9d70809bd9a59074075ef7643026d28))
+
+- Prove stamped REVIEW.md text against the collected file
+  ([#521](https://github.com/liatrio-labs/claude-code-gauntlet/pull/521),
+  [`e84b997`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e84b9978d9d70809bd9a59074075ef7643026d28))
+
+- Trim review text in linear time
+  ([#521](https://github.com/liatrio-labs/claude-code-gauntlet/pull/521),
+  [`e84b997`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e84b9978d9d70809bd9a59074075ef7643026d28))
+
+### Refactoring
+
+- Drop the dead file-cap arm from the checksum fallback
+  ([#521](https://github.com/liatrio-labs/claude-code-gauntlet/pull/521),
+  [`e84b997`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e84b9978d9d70809bd9a59074075ef7643026d28))
+
+### Testing
+
+- Give subprocess timing rows room for coverage tracing
+  ([#521](https://github.com/liatrio-labs/claude-code-gauntlet/pull/521),
+  [`e84b997`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e84b9978d9d70809bd9a59074075ef7643026d28))
+
+
 ## v3.42.41 (2026-10-17)
 
 ### Bug Fixes
