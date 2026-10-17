@@ -523,6 +523,7 @@ _IMPORT_PROBE_ROWS = [
     ("d1-cr-only-multiline-span", "see `a\r@imp.md` here", []),
     ("d2-blockquote-fence", "> ```\n> @imp.md\n> ```\n", []),
     ("d4-html-comment", "<!-- @imp.md -->\n", []),
+    ("d4b-bang-close-keeps-comment-open", "<!--\nx --!>\n@imp.md\n", []),
     ("d5-indented-code", "paragraph\n\n    @imp.md\n", []),
     ("p4-lazy-indent", "paragraph\n    @imp.md\n", ["imp.md"]),
     ("p7-quote-indented", "> para\n>\n>     @imp.md\n", []),
