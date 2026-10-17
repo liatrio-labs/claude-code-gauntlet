@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v3.42.43 (2026-10-17)
+
+### Bug Fixes
+
+- Align the validator agent with one entry per finding
+  ([#522](https://github.com/liatrio-labs/claude-code-gauntlet/pull/522),
+  [`fab1f02`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fab1f02e0f913d447dde1a5d6b8c07011d7a6ee8))
+
+- Hold back findings that skipped validation or verification
+  ([#522](https://github.com/liatrio-labs/claude-code-gauntlet/pull/522),
+  [`fab1f02`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fab1f02e0f913d447dde1a5d6b8c07011d7a6ee8))
+
+### Refactoring
+
+- Name the G3 held-back read and match gap separators
+  ([#522](https://github.com/liatrio-labs/claude-code-gauntlet/pull/522),
+  [`fab1f02`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fab1f02e0f913d447dde1a5d6b8c07011d7a6ee8))
+
+### Testing
+
+- Pin the undecodable checkpoint path in G3
+  ([#522](https://github.com/liatrio-labs/claude-code-gauntlet/pull/522),
+  [`fab1f02`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fab1f02e0f913d447dde1a5d6b8c07011d7a6ee8))
+
+
 ## v3.42.42 (2026-10-17)
 
 ### Bug Fixes
