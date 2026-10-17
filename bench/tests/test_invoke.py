@@ -162,6 +162,18 @@ class PrDirNameTest(unittest.TestCase):
 # --------------------------------------------------------------------------- build_env
 
 
+def test_build_env_strips_model_mappings_in_both_auth_modes(tmp_path, monkeypatch):
+    monkeypatch.setattr(invoke, "_load_dotenv_key", lambda path, key: None)
+    aliases = ("SONNET", "OPUS", "HAIKU", "FABLE")
+    ambient = {f"ANTHROPIC_DEFAULT_{alias}_MODEL": "unexpected" for alias in aliases}
+    ambient.update(CLAUDE_CODE_OAUTH_TOKEN="example-token", KEEP="preserved")
+    for auth_mode in ("api", "subscription"):
+        env = build_env(PR, tmp_path / auth_mode, ambient, child_auth=auth_mode)
+        assert all(f"ANTHROPIC_DEFAULT_{alias}_MODEL" not in env for alias in aliases)
+        assert env["KEEP"] == "preserved"
+    assert all(f"ANTHROPIC_DEFAULT_{alias}_MODEL" in ambient for alias in aliases)
+
+
 class BuildEnvTest(InvokeTestBase):
     def test_sets_ten_bench_values(self):
         env = build_env(PR, self.run_dir, {})

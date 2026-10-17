@@ -174,18 +174,18 @@ export const RULE_SOURCE_LABELS = deepFreeze({
 });
 export const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 
-// Use the full agent suffix as the key so a model override binds to the dispatched agent.
 export const STAGE_DEFAULTS = deepFreeze({
   validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
 });
 
-// Pin first-party model IDs to prevent session-variant inheritance.
-// Other providers require aliases resolved through deployment mappings rather than first-party IDs.
+// Pin first-party IDs so the session's model variant cannot cascade into agents.
 const MODEL_IDS = deepFreeze({ sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' });
-// Leave unknown providers on the portable alias path; args validation rejects provider typos before dispatch.
-const pinsModelIds = (provider) => provider === undefined || provider === null || provider === 'firstParty';
-const toModelId = (m, provider) => (pinsModelIds(provider) ? (MODEL_IDS[m] || m) : m);
+export const MODEL_ALIASES = deepFreeze(Object.keys(MODEL_IDS));
+export const pinsModelIds = (provider) => provider === undefined || provider === null || provider === 'firstParty';
+// Claude Code must resolve user mappings itself, including suffixes, overrides and allowlists.
+const toModelId = (m, provider, mappedAliases) =>
+  (pinsModelIds(provider) && !mappedAliases?.includes(m) ? (MODEL_IDS[m] || m) : m);
 
 // A gateway may preserve first-party model names while forwarding schemas to another backend.
 // Gate conditional schemas separately from model pinning for that host constraint.
@@ -197,15 +197,17 @@ export const conditionalSchemaActive = (policy) => {
 export function resolvePolicy(agentType, opts = {}, dimensions = DIMENSIONS) {
   if (opts.subagentModelEnv) {
     // Preserve explicit third-party deployment IDs so the override remains an escape hatch from alias mapping.
-    return { model: toModelId(opts.subagentModelEnv, opts.provider) };
+    return { model: toModelId(opts.subagentModelEnv, opts.provider, opts.mappedAliases) };
   }
   const dim = dimensions.find((d) => d.agentType === agentType);
-  const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider);
+  const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider, opts.mappedAliases);
   return { model };
 }
 
 export function modelFor(agentType, policy, dimensions = DIMENSIONS) {
-  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }, dimensions).model;
+  return resolvePolicy(agentType, {
+    subagentModelEnv: policy.subagentModel, provider: policy.provider, mappedAliases: policy.mappedAliases,
+  }, dimensions).model;
 }
 
 export const REQUIRED = deepFreeze(['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles',

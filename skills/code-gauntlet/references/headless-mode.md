@@ -52,13 +52,13 @@ The resolver stops with a non-zero outcome. It never falls back or asks. The loc
 
 ---
 
-## Orchestrator model & per-agent pins (V3.1)
+## Orchestrator model & per-agent pins
 
 The **orchestrator** (the session running this skill and the workflow's own reasoning) is simply the session's model — there is no skill-level knob for it. In bench harness runs it is selected with `--child-model`; in real use it is whatever model the user's session runs.
 
-**Per-agent pins are explicit full model IDs on first-party sessions** (`resolvePolicy` maps the policy aliases through a `MODEL_IDS` table: `sonnet` → `claude-sonnet-5-5`, `opus` → `claude-opus-5-5`, `haiku` → `claude-haiku-4-5-20251001`). Bare aliases resolve against the *session's* model variant at dispatch time — a session pinned to `sonnet[1m]` used to cascade the `[1m]` variant into every agent whose policy said `sonnet`. With full-ID pins, agent models are immune to the orchestrator's session variant. **The pin is conditional on `policy.provider`:** when the Phase 2 capture stamps `bedrock`/`vertex`/`foundry`, agents dispatch the bare aliases untouched — third-party providers use deployment-specific model IDs and would 400 the first-party names, so the deployment mapping (`ANTHROPIC_DEFAULT_*_MODEL`) is the resolution layer there, and variant-cascade immunity does not apply.
+**Per-agent pins use full model IDs on first-party sessions**, except aliases listed in `policy.mappedAliases`. `resolvePolicy` maps unmapped aliases through `MODEL_IDS` (`sonnet` -> `claude-sonnet-5-5`, `opus` -> `claude-opus-5-5`, `haiku` -> `claude-haiku-4-5-20251001`) to prevent the session's model variant from cascading into agents. Mapped aliases dispatch bare so Claude Code resolves the user's `ANTHROPIC_DEFAULT_<ALIAS>_MODEL`, including its `[1m]` suffix, model overrides and allowlist. Only alias names enter the policy and methodology, never deployment IDs. Bedrock, Vertex and Foundry always receive bare aliases because their deployment mappings require them. Gateways retain the provider's naming rule; a gateway with nonstandard names can use a tier mapping or `CLAUDE_CODE_SUBAGENT_MODEL`. Schema handling is independent; see the [capture contract](phase2-triage.md#args-preparation).
 
-**Behavior change (intended):** the `CLAUDE_CODE_SUBAGENT_MODEL` override maps through the same first-party pin — a bare `sonnet` pins plain `claude-sonnet-5-5` instead of inheriting the session variant. Pass an explicit full/dated model ID if you need a specific variant. On a non-`firstParty` provider the override passes through verbatim (an explicit deployment ID like `us.anthropic.…` is exactly what the knob is for there).
+`CLAUDE_CODE_SUBAGENT_MODEL` follows the same resolution: a bare override of a mapped alias stays bare; an unmapped first-party alias receives its full-ID pin. Explicit model or deployment IDs pass through unchanged. The override applies to every stage.
 
 ---
 

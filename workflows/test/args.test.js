@@ -26,6 +26,13 @@ const REJECTION_ROWS = [
     input: (a) => { a.policy.tier = "standard"; }, expected: [ "invalid policy.tier: standard (expected optimized)" ] },
   { name: 'policy gateway',
     input: (a) => { a.policy.gateway = "true"; }, expected: [ "invalid policy.gateway: true (expected a boolean)" ] },
+  ...[
+    ['unknown alias', ['fable'], 'fable'],
+    ['duplicate alias', ['sonnet', 'sonnet'], 'sonnet,sonnet'],
+    ['non-array aliases', 'sonnet', 'sonnet'],
+  ].map(([name, value, display]) => ({ name,
+    input: (a) => { a.policy.mappedAliases = value; },
+    expected: [`invalid policy.mappedAliases: ${display} (expected distinct values from sonnet, opus, haiku)`] })),
   { name: 'repoRoot control', input: (a) => { a.repoRoot = "/p\n"; }, expected: [ "repoRoot must not contain a control character" ] },
   { name: 'headShaShort shell metacharacter', input: (a) => { a.headShaShort = 'abc;id'; }, expected: [
     "headShaShort must match /^[A-Za-z0-9._-]+$/ (AST-safe, non-splitting \u2014 interpolated into the verify command " +

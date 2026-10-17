@@ -346,7 +346,7 @@ Keep `reviewConfigPath: null` when the receipt has no root REVIEW.md, even if it
 | `configEcho` | Copy `configResult.waist.configEcho` verbatim. It is the only model-stamped configuration receipt. |
 | `pluginRoot` | the required absolute POSIX path to this plugin; `persist.assembleScriptPath` and `verify.scriptPath`, when present, must start with `{pluginRoot}/scripts/` |
 | `reviewScope` | Headless PR/MR targets omit `requested` (see the derived waist fields under "Args Preparation"). Interactive PR/MR targets stamp the gate answer, or `full` when no prior review exists. Local and branch targets stamp `full`. Copy detector facts verbatim for PR/MR targets. Use `kind=incremental` only for an incremental request with `detector.incremental_safe=true`. Set `since` to the detector's safe `last_reviewed_sha` only for incremental kind. Set `since` to `null` otherwise. Retain detector facts when an incremental request becomes full. The renderer computes the fallback reason from retained detector facts. |
-| `policy` | `{ tier, subagentModel, provider, gateway }` — see below |
+| `policy` | `{ tier, subagentModel, provider, gateway, mappedAliases }` — see below |
 | `limits` | Stamp `{}` unless a genuine REVIEW.md-set override exists. |
 | `delivery` | For PR/MR targets, stamp only `{ prIdentity }` using the generated field contract above. Omit it for local targets. |
 
@@ -367,10 +367,15 @@ The Challenge stage applies the receipt-backed tier and cap before Phase 8 posts
 
 **`policy` (model policy the workflow runs under):**
 
-- `tier` — copy `configResult.resolved.model_tier`; the resolver owns its value and source.
-- `subagentModel` — read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment (or `null`). **The workflow cannot read `process.env`**, so this capture is the only path for it. If set, warn the user and record it in the methodology — it silently overrides the entire per-stage model policy.
-- `provider` — which API provider the session runs on, resolved from the environment (first match wins; a flag counts only when truthy per Claude Code's own parsing — `1`/`true`/`yes`/`on`, case-insensitive): `CLAUDE_CODE_USE_BEDROCK` → `"bedrock"`, `CLAUDE_CODE_USE_VERTEX` → `"vertex"`, `CLAUDE_CODE_USE_FOUNDRY` → `"foundry"`, else `"firstParty"`. `ANTHROPIC_BASE_URL` does not change the provider — an LLM gateway proxies the Anthropic API and expects standard Claude model names, so gateway sessions keep the first-party pin. Same capture-only path as `subagentModel`. On `firstParty` the workflow pins full first-party model IDs; on any other value it dispatches bare aliases (`sonnet`/`opus`) because third-party providers use deployment-specific model IDs and pass first-party names through unchecked, failing every agent dispatch as an invalid model identifier. Any other spelling is rejected at the waist (`invalid policy.provider`).
-- `gateway` — optional boolean (issue #218): `true` iff `ANTHROPIC_BASE_URL` is set, after trimming whitespace, to a non-blank value, else `false`. `ANTHROPIC_BASE_URL` does NOT change `provider` (above), but it DOES set `policy.gateway`, which turns off the pipeline's conditional per-dimension schema construct on the conventions-and-intent dispatch — a gateway forwards `input_schema` verbatim to whatever backend it fronts, an unmeasured surface even though the session itself reads as `firstParty` — while leaving the first-party model-ID pin from `provider` untouched. The waist treats an omitted `gateway` identically to a stamped `false` (the construct stays active), so this capture is not optional in practice: an orchestrator that never resolves `ANTHROPIC_BASE_URL` and never stamps this field leaves the conditional construct fail-OPEN on every gateway session, silently sending the construct to whatever unmeasured backend the gateway fronts.
+Run `scripts/capture_policy_env.py` and stamp its four keys verbatim. The workflow cannot read `process.env`.
+
+- `tier` - copy `configResult.resolved.model_tier`; the resolver owns its value and source.
+- `subagentModel` - `CLAUDE_CODE_SUBAGENT_MODEL`, or `null` when unset or blank. If non-null, warn the user and record the override in the methodology.
+- `provider` - first truthy switch in Bedrock, Vertex, Foundry order (`CLAUDE_CODE_USE_<PROVIDER>`), else `firstParty`. Truthy means `1`/`true`/`yes`/`on`, trimmed and case-insensitive. Other provider spellings are rejected at the waist.
+- `gateway` - stamp `policy.gateway` as `true` iff `ANTHROPIC_BASE_URL` is nonblank after trimming. It leaves `provider` unchanged and disables conditional per-dimension schemas because gateways can forward schemas to another backend. Absent or null equals `false`.
+- `mappedAliases` - distinct model aliases whose `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` value is nonblank after trimming, in registry order. Captured on every provider; absent or null equals `[]`.
+
+Model dispatch, including user mappings and gateway naming, follows [Orchestrator model & per-agent pins](headless-mode.md#orchestrator-model--per-agent-pins).
 
 **Other inputs (optional unless noted):**
 

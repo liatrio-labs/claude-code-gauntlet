@@ -387,6 +387,7 @@ def test_detector_real_child_degradation(tmp_path, invoke, monkeypatch):
 PATCH = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
 # argv strings split on spaces before placeholders expand, so paths may hold spaces.
 MAIN_FAILURE = {
+    "capture_policy_env": "",
     "check_eligibility": "--platform github --pr 7",
     "list_pr_files": "--platform github --pr 7",
     "assemble_artifacts": "--plan {missing}",
@@ -436,6 +437,7 @@ BAD_INPUT = {
 POST = {"platform": "github", "owner": "o", "repo": "r", "pr_number": 5, "sha": FULL}
 # Each success row is (files written under the case directory, argv).
 SUCCESS = {
+    "capture_policy_env": ({}, ""),
     "check_eligibility": ({}, "--platform github --pr 7"),
     "list_pr_files": ({}, "--platform github --pr 7"),
     "build_style_artifacts": ({}, "--repo-root {root} --check"),
@@ -506,6 +508,13 @@ WINDOWS_EXCEPTIONS = {
         "success",
     ): "the parent write_text input uses CRLF on Windows",
 }
+
+
+def _captured_policy_key(key):
+    return key.startswith(("CLAUDE_CODE_USE_", "ANTHROPIC_DEFAULT_")) or key in (
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+        "ANTHROPIC_BASE_URL",
+    )
 
 
 def _windows_skip(name, case, *, platform=None):
@@ -813,6 +822,10 @@ def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch, forge_factory):
     directory, argv, stdin, fake_bin = scenario(name, case, tmp_path)
     monkeypatch.setenv("PATH", str(fake_bin) + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("CODE_GAUNTLET_OUTPUT_DIR", str(directory / "output"))
+    if name == "capture_policy_env":
+        for key in list(os.environ):
+            if _captured_policy_key(key):
+                monkeypatch.delenv(key)
     if name == "emit_style_context" and case == "failure":
         carrier = directory / "unreadable-carrier"
         carrier.write_text("x", encoding="utf-8")
@@ -876,6 +889,10 @@ def test_entry_runs_from_foreign_cwd(name, tmp_path):
         name, "success", tmp_path, shell_fixture=True
     )
     env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    if name == "capture_policy_env":
+        env = {
+            key: value for key, value in env.items() if not _captured_policy_key(key)
+        }
     env.update(
         PYTHONSAFEPATH="1",
         PYTHONIOENCODING="latin-1",

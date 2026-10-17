@@ -75,6 +75,7 @@ function resolvedPolicyEnvelope(policy) {
     subagentModel: policy.subagentModel || null,
     provider: policy.provider || 'firstParty',
     gateway: !!policy.gateway,
+    mappedAliases: policy.mappedAliases || [],
     conditionalSchema: conditionalSchemaActive(policy),
   };
 }

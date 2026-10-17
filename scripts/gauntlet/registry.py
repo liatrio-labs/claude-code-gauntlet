@@ -4,6 +4,8 @@ from types import MappingProxyType
 from typing import Any, Literal, TypedDict
 
 Severity = Literal["critical", "high", "medium", "low"]
+ModelAlias = Literal["sonnet", "opus", "haiku"]
+PolicyProvider = Literal["firstParty", "bedrock", "vertex", "foundry"]
 Reachability = Literal["current", "future_change_only", "uncertain"]
 DeltaKey = Literal[
     "id", "verified", "origin", "severity", "confidence", "elimination_reason"
@@ -11,6 +13,15 @@ DeltaKey = Literal[
 DeltaValueField = Literal["origin", "severity", "confidence", "elimination_reason"]
 
 SEVERITY_ORDER: tuple[Severity, ...] = ("critical", "high", "medium", "low")
+
+MODEL_ALIASES: tuple[ModelAlias, ...] = ("sonnet", "opus", "haiku")
+
+POLICY_PROVIDERS: tuple[PolicyProvider, ...] = (
+    "firstParty",
+    "bedrock",
+    "vertex",
+    "foundry",
+)
 
 REACHABILITY_VALUES: tuple[Reachability, ...] = (
     "current",

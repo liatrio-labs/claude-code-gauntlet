@@ -33,7 +33,7 @@ from gauntlet.config import (
     matches_rule,
     resolve,
 )
-from gauntlet.registry import KNOB_REGISTRY
+from gauntlet.registry import KNOB_REGISTRY, MODEL_ALIASES
 
 from bench.runner.costs import parse_costs
 from bench.runner.ledger import API_AUTH_MODE, AUTH_MODES, SUBSCRIPTION_AUTH_MODE
@@ -686,6 +686,9 @@ def build_env(pr, run_dir, base_env, child_auth=API_AUTH_MODE):
     """
     run_dir = Path(run_dir)
     env, _ = scrub_ambient(base_env)
+    # Ambient alias mappings would silently replace the benchmark's pinned models.
+    for alias in (*MODEL_ALIASES, "fable"):
+        env.pop(f"ANTHROPIC_DEFAULT_{alias.upper()}_MODEL", None)
     env.update(BENCH_ENV)
     auth_updates, auth_removals = _claude_auth_env(base_env, child_auth)
     for name in auth_removals:

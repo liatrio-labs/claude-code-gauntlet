@@ -138,6 +138,8 @@ _REGISTRY_FIELDS = (
     "ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK",
     "codeOwnedHeadings: m.CODE_OWNED_HEADINGS",
     "agents: m.AGENTS",
+    "modelAliases: m.MODEL_ALIASES",
+    "policyProviders: m.POLICY_PROVIDERS",
     "prIdentityFields: m.PR_IDENTITY_FIELDS.map(f => ({name: f.name,"
     " required: f.required, describe: f.describe}))",
     "permalinkTemplates: m.PERMALINK_TEMPLATES",
@@ -449,6 +451,8 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "from typing import Any, Literal, TypedDict",
         "",
         f"Severity = {literal_type(identity['severityOrder'])}",
+        f"ModelAlias = {literal_type(identity['modelAliases'])}",
+        f"PolicyProvider = {literal_type(identity['policyProviders'])}",
         f"Reachability = {literal_type(identity['reachability'])}",
         f"DeltaKey = {literal_type(delta_keys)}",
         f"DeltaValueField = {literal_type(delta_value_fields)}",
@@ -456,6 +460,8 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     ]
     values = {
         "SEVERITY_ORDER": tuple(identity["severityOrder"]),
+        "MODEL_ALIASES": tuple(identity["modelAliases"]),
+        "POLICY_PROVIDERS": tuple(identity["policyProviders"]),
         "REACHABILITY_VALUES": tuple(identity["reachability"]),
         "DELTA_KEYS": tuple(delta_keys),
         "DELTA_VALUE_FIELDS": tuple(delta_value_fields),
@@ -472,6 +478,8 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     }
     annotations = {
         "SEVERITY_ORDER": "tuple[Severity, ...]",
+        "MODEL_ALIASES": "tuple[ModelAlias, ...]",
+        "POLICY_PROVIDERS": "tuple[PolicyProvider, ...]",
         "REACHABILITY_VALUES": "tuple[Reachability, ...]",
         "DELTA_KEYS": "tuple[DeltaKey, ...]",
         "DELTA_VALUE_FIELDS": "tuple[DeltaValueField, ...]",

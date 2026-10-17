@@ -3,7 +3,7 @@
 import { rankFindings } from './applyChallenges.js';
 import { PERMALINK_TEMPLATES, identityCheck, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES } from './registry.js';
 import { DIMENSIONS, AGENTS, AGENT_LABELS, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI } from './registry.js';
-import { RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, conditionalSchemaActive, resolvePolicy } from './registry.js';
+import { RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, conditionalSchemaActive, pinsModelIds, resolvePolicy } from './registry.js';
 import { SEVERITY_ORDER, REPORT_FOLD_LIMITS } from './registry.js';
 import { REPORT_PLACED_FIELDS, STAGE_DEFAULTS, FINDING_PATH_ARRAY_FIELDS } from './registry.js';
 import { KNOB_REGISTRY } from './knobs.js';
@@ -750,6 +750,9 @@ function methodologyRows(input, rawFindings) {
   if (policy.subagentModel) {
     rows.push(['Subagent model override', `EVERY stage uses ${inline(policy.subagentModel)}`]);
   }
+  if (pinsModelIds(provider) && policy.mappedAliases?.length) {
+    rows.push(['User tier mapping', policy.mappedAliases.map((alias) => inline(alias)).join(', ')]);
+  }
   const stageTypes = [
     'change-summarizer', ...AGENTS.map((agentType) => agentType.split(':').pop()),
     ...Object.keys(STAGE_DEFAULTS),
@@ -758,6 +761,7 @@ function methodologyRows(input, rawFindings) {
     const model = resolvePolicy(`code-gauntlet:${agentType}`, {
       subagentModelEnv: policy.subagentModel,
       provider,
+      mappedAliases: policy.mappedAliases,
     }).model;
     return `${agentType}=${inline(model)}`;
   }).join(', ');
