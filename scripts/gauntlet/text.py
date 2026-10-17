@@ -11,7 +11,6 @@ from typing import Literal
 
 from gauntlet.markdown import (
     TickRunIndex,
-    blocks,
     code_span,
     open_fence,
     paired_code_spans,
@@ -138,6 +137,10 @@ _MARKER_OPEN_RE = re.compile(
 _BACKTICK_FENCE_SHAPE_RE = re.compile(
     r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*(`{3,})"
 )
+_CONTAINER_CANDIDATE_RE = re.compile(
+    r"^ {0,3}(?:>|[-+*](?=[ \t]|$)|[0-9]{1,9}[.)](?=[ \t]|$)|\[\^)"
+)
+_INERT_INDENT_RE = re.compile(r" {4,}[^ \t]")
 _MULTILINE_QUOTE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})")
 _DEFINITION_LINK_TRIGGER_RE = re.compile(r"\]\\?\(")
 _DEFINITION_CLOSE_COLON_RE = re.compile(r"\](\\*):")
@@ -716,21 +719,25 @@ def _prepare_text(
     # Bracket replacements can complete definition-shaped labels.
     prepared = _map_blocks(prepared, protected_lines, str, _escape_definitions)
     if not single_line and trust_fences:
-        # A field may start a block or continue a label's paragraph. Escapes can
-        # change its blocks, so require both readings to be inert before relaxing.
-        prepared_text = "\n".join(prepared)
-        facts = zip(
-            blocks("paragraph\n" + prepared_text, html=False)[1:],
-            blocks(prepared_text, html=False),
-            strict=True,
-        )
-        seen_blank = False
-        for index, readings in enumerate(facts):
-            seen_blank = seen_blank or not prepared[index].strip()
-            if seen_blank and all(
-                fact.kind == "indented_code" and not fact.contained for fact in readings
-            ):
+        # No earlier container marker and a blank/code predecessor exclude open
+        # containers and lazy paragraphs; escaped HTML and protected fences stay safe.
+        seen_container = False
+        previous_blank = False
+        previous_inert = False
+        for index, (line, protected) in enumerate(
+            zip(prepared, protected_lines, strict=True)
+        ):
+            inert = (
+                not protected
+                and not seen_container
+                and (previous_blank or previous_inert)
+                and _INERT_INDENT_RE.match(line) is not None
+            )
+            if inert:
                 prepared[index] = _contain_line(lines[index], inert=True)
+            seen_container = seen_container or bool(_CONTAINER_CANDIDATE_RE.match(line))
+            previous_blank = not line.strip()
+            previous_inert = inert
     result = "\n".join(prepared)
     if fence is not None:
         result += "\n" + fence[0] * fence[1]

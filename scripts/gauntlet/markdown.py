@@ -328,7 +328,8 @@ def _interrupts(content: str, *, html: bool) -> bool:
         _HEADING.match(content)
         or _RULE.fullmatch(content)
         or _QUOTE.match(content)
-        or _list_start(content, True)
+        # The paragraph belongs to an unmatched container, not this block level.
+        or _list_start(content, False)
         or _fence_opener(content)
         or (
             html
@@ -419,7 +420,12 @@ def blocks(text: str, *, html: bool = True) -> tuple[BlockLine, ...]:
                     position = quote.end()
                 elif item is not None:
                     padding = len(item[3])
-                    width = item.end() if padding <= 4 else item.end() - padding + 1
+                    # An empty item's padding cannot move its content column.
+                    width = (
+                        item.end()
+                        if padding <= 4 and line[position + item.end() :]
+                        else item.end() - padding + 1
+                    )
                     stack.append(_Container("list", width))
                     position += width
                 new_container = True

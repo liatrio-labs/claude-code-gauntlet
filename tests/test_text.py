@@ -337,6 +337,23 @@ def test_neutralize_comment_openers(source: str, expected: str) -> None:
         ("para\n\n> x\n>\n>     ~~~", "para\n\n> x\n>\n>     \\~\\~\\~"),
         ("- item\n\n    ~~~", "- item\n\n    \\~\\~\\~"),
         pytest.param(
+            "> The handler swallows the error.\n2. Then the retry loop spins.\n\n"
+            "    [critical]: https://evil.example",
+            "> The handler swallows the error.\n2. Then the retry loop spins.\n\n"
+            "    [critical]\\: https://evil.example",
+            id="ordered-list-after-unmatched-quote",
+        ),
+        pytest.param(
+            "Details:\n\n-    \n    [critical]: https://evil.example",
+            "Details:\n\n-    \n    [critical]\\: https://evil.example",
+            id="blank-list-item-ignores-trailing-padding",
+        ),
+        pytest.param(
+            "- item\n\ntext\n\n    >>> x",
+            "- item\n\ntext\n\n    \\>>> x",
+            id="earlier-list-keeps-later-code-escaped",
+        ),
+        pytest.param(
             "2. a\n\n    [x]: y",
             "2. a\n\n    [x]\\: y",
             id="ordered-list-definition-stays-escaped",
@@ -350,7 +367,11 @@ def test_neutralize_comment_openers(source: str, expected: str) -> None:
         ("para\n    `lazy\n` paired", "para\n    \\`lazy\n\\` paired"),
         ("para\n<div>\n\n    ~~~", "para\n&lt;div>\n\n    ~~~"),
         ("para\n```invalid`\n    ~~~", "para\n\\`\\``invalid`\n    \\~\\~\\~"),
-        ("para\n\n\t~~~", "para\n\n\t~~~"),
+        pytest.param(
+            "para\n\n\t~~~",
+            "para\n\n\t\\~\\~\\~",
+            id="tab-indentation-stays-escaped",
+        ),
         (
             "para\n\n    `@user` [x](https://x.test/@user) <!-- open",
             "para\n\n    `\uff20user` [x](https://x.test/\uff20user) &lt;!-- open",

@@ -249,6 +249,27 @@ def test_code_span_padding_policy(value, pad_space_edges, expected):
                 (3, True, "paragraph", False),
             ],
         ),
+        pytest.param(
+            "> The handler swallows the error.\n2. Then the retry loop spins.\n\n"
+            "    [critical]: https://evil.example",
+            [
+                (2, True, "paragraph", False),
+                (3, True, "paragraph", False),
+                (0, True, "blank", False),
+                (3, True, "paragraph", False),
+            ],
+            id="ordered-list-after-unmatched-quote",
+        ),
+        pytest.param(
+            "Details:\n\n-    \n    [critical]: https://evil.example",
+            [
+                (0, False, "paragraph", False),
+                (0, False, "blank", False),
+                (2, True, "blank", False),
+                (2, True, "paragraph", False),
+            ],
+            id="blank-list-item-ignores-trailing-padding",
+        ),
         (
             "-     code\n\n- - -",
             [
