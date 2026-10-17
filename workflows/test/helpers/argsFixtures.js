@@ -1,4 +1,13 @@
+import { fnv1a32, normalizeReviewText } from '../../src/wire.js';
 import { KNOB_REGISTRY } from '../../src/knobs.js';
+
+export function reviewMdArgs(entries) {
+  const reviewMd = entries.map((entry) => ({
+    ...entry, checksum: Object.hasOwn(entry, 'checksum') ? entry.checksum : fnv1a32(normalizeReviewText(entry.text)),
+  }));
+  return { reviewMd,
+    reviewMdSetChecksum: fnv1a32(reviewMd.map((entry) => `${entry.path}\0${entry.checksum || 'null'}`).join('\n')) };
+}
 
 // Wired callers retain their dispatch defaults while focused rows use the smaller waist below.
 export function validArgs(over = {}) {
@@ -42,6 +51,8 @@ export function validArgs(over = {}) {
       trivial_scope: { value: args.scopeAnswer || 'full', source: 'default' },
     };
   }
+  if (Array.isArray(over.reviewMd)) Object.assign(args, reviewMdArgs(over.reviewMd),
+    Object.hasOwn(over, 'reviewMdSetChecksum') ? { reviewMdSetChecksum: over.reviewMdSetChecksum } : {});
   return structuredClone(args);
 }
 
@@ -62,6 +73,8 @@ export function interactiveArgs(over = {}) {
     reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
     limits: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 25, maxLineSpan: 100 },
     ...over,
+    ...(Array.isArray(over.reviewMd) ? reviewMdArgs(over.reviewMd) : {}),
+    ...(Object.hasOwn(over, 'reviewMdSetChecksum') ? { reviewMdSetChecksum: over.reviewMdSetChecksum } : {}),
   });
 }
 

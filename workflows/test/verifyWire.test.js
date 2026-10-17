@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { joinVerifyDeltas, deltaContentProof, encodeInlineString, encodeSliceInline, sliceInputChecksum, sliceTokenChecksum, projectVerifySliceFinding } from '../src/verifyWire.js';
+import { fnv1a32, normalizeReviewText } from '../src/wire.js';
 import { loadCases } from './helpers/goldenCases.js';
 
 // Python-produced fixtures pin the join and content proof independently of the mock.
@@ -52,3 +53,10 @@ test('join pins numerics when the delta omits confidence', () => {
   assert.deepEqual(joinVerifyDeltas([{ id: 'F0', line_start: '42', line_end: 9.2, confidence: 82.5 }], [{ id: 'F0', verified: true }]),
     [{ id: 'F0', line_start: 42, line_end: 9, confidence: 83 }]);
 });
+
+for (const c of loadCases('review_text_checksum')) {
+  test(`review_text_checksum parity: ${c.name}`, () => {
+    const normalized = normalizeReviewText(c.input.text);
+    assert.deepEqual({ normalized, checksum: fnv1a32(normalized) }, c.expected);
+  });
+}

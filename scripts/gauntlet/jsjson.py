@@ -1,6 +1,7 @@
 """JavaScript-compatible JSON output."""
 
 import json
+import re
 import struct
 from typing import Any
 
@@ -73,6 +74,14 @@ def fnv1a32(s: str) -> str:
         h ^= unit
         h = (h * FNV_PRIME) & 0xFFFFFFFF
     return f"fnv1a32:0x{h:08x}"
+
+
+def normalize_review_text(s: str) -> str:
+    """Tolerate Read presentation changes that cannot affect review settings."""
+    if s.startswith("\ufeff"):
+        s = s[1:]
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    return re.sub(r"[ \t]+(?=\n|$)", "", s).rstrip("\n")
 
 
 def normalize_content(s: str) -> str:

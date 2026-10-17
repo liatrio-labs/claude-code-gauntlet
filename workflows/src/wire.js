@@ -11,6 +11,11 @@ export function fnv1a32(s) {
   return `fnv1a32:0x${h.toString(16).padStart(8, '0')}`;
 }
 
+// Read presentation changes must not alter either parsed settings or their proof.
+export function normalizeReviewText(s) {
+  return s.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').replace(/[ \t]+(?=\n|$)/g, '').replace(/\n+$/, '');
+}
+
 // The Write tool may add a BOM or one newline; tolerate those without hiding additional trailing newlines.
 export function normalizeForChecksum(s) {
   let out = typeof s === 'string' ? s : '';

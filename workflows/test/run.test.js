@@ -876,7 +876,7 @@ for (const row of BODY_ROWS) test(`summary delivery modes: ${row.name}`, async (
 
 const ROOT_REVIEW = '```yaml code-gauntlet\nconfidence_threshold: 90\n```';
 const CONFIG_ROWS = [
-  { name: 'raw root threshold', input: { reviewMd: [{ path: 'REVIEW.md', text: ROOT_REVIEW }], reviewConfigPath: '/repo/REVIEW.md' },
+  { name: 'raw root threshold with proof gaps on fresh and replay', proofGaps: true, fresh: true, input: { reviewMdSetChecksum: 'different-list', reviewMd: [{ path: 'REVIEW.md', text: ROOT_REVIEW, checksum: 'different-text' }], reviewConfigPath: '/repo/REVIEW.md' },
     findings: [makeFinding('KEEP', { confidence: 95 }), makeFinding('DROP', { confidence: 65 })],
     source: 'reviewMd', entries: 1, total: 2, passed: 1, subtrees: [] },
   { name: 'legacy preParsed root threshold', input: { reviewConfig: { confidence_threshold: 90, ignore: [] } },
@@ -913,6 +913,23 @@ for (const row of CONFIG_ROWS) test(`review configuration wiring: ${row.name}`, 
   assert.equal(out.stats.filter.total, row.total);
   assert.equal(out.stats.filter.passed_threshold, row.passed);
   assert.deepEqual(out.stats.reviewMdSubtrees, row.subtrees);
+  const expectedProofGaps = row.proofGaps ? [
+    'review_md: REVIEW.md text differs from the collected file (checksum mismatch); its settings were applied as stamped',
+    'review_md: stamped entries differ from the collected list (omitted, extra or reordered REVIEW.md); settings were applied as stamped',
+  ] : [];
+  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('review_md:')), expectedProofGaps);
+  if (row.proofGaps) {
+    const filterCheckpoint = { filtered: payload.findings, eliminated: [], stats: out.stats.filter,
+      gaps: ['filter checkpoint marker'] };
+    const resumed = await runAndCapture({ ...args, checkpoints: {
+      ...payload.checkpoints.phases, filter: filterCheckpoint,
+    } }, { findings: row.findings });
+    assert.equal(resumed.out.ok, true);
+    assert.deepEqual(resumed.out.gaps.filter((gap) => gap.startsWith('review_md:')), expectedProofGaps);
+    assert.deepEqual(resumed.out.stats.filter, out.stats.filter);
+    assert.ok(resumed.out.gaps.includes('filter checkpoint marker'));
+    assert.ok(resumed.payload.report.includes(`| Gaps | ${resumed.out.gaps.length} |`));
+  }
   if (row.exclusions) assert.equal(out.stats.exclusionsSource, row.exclusions);
   if (row.ids) {
     assert.deepEqual(payload.findings.map((finding) => finding.id), row.ids);

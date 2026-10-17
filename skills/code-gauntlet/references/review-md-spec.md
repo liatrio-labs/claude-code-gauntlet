@@ -18,6 +18,8 @@ config block — a fenced ```` ```yaml # code-gauntlet ```` block, or an
 recognized snake_case keys. Everything else in the file (headings, prose, a `## Rules` list) is
 free markdown and is never parsed; the collector copies the whole file, including its config block, into a source-path-tagged `review-rules` block in the shared context read by every context-reading agent (summarize, discovery, validate), with prose advisory for that source directory's subtree (see "Rules and other prose" below).
 
+The collector stamps normalized text and ordered-list checksums; the workflow discloses unproven text or mismatches as run gaps while applying the stamped settings.
+
 <!-- code-gauntlet-defaults -->
 Built-in defaults, applied whenever a key is absent from the config block: `confidence_threshold`
 **55** for non-security dimensions, `security_min_confidence` **70**, `severity_threshold`

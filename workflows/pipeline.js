@@ -70,6 +70,9 @@ function fnv1a32(s) {
   }
   return `fnv1a32:0x${h.toString(16).padStart(8, '0')}`;
 }
+function normalizeReviewText(s) {
+  return s.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').replace(/[ \t]+(?=\n|$)/g, '').replace(/\n+$/, '');
+}
 function normalizeForChecksum(s) {
   let out = typeof s === 'string' ? s : '';
   if (out.charCodeAt(0) === 0xfeff) out = out.slice(1);
@@ -4506,7 +4509,7 @@ const LIMIT_KEYS = deepFreeze([
 const ARGS_SHAPES = deepFreeze({
   pathFields: ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot'],
   riskFields: ['path', 'risk'],
-  reviewMdFields: ['path', 'text'],
+  reviewMdFields: ['path', 'text', 'checksum'],
   scopeLayerFields: ['dir', 'ignore', ...REVIEW_SETTING_KEYS],
   scopeFields: ['requested', 'kind', 'since', 'commits', 'detector'],
   scopeKinds: ['full', 'incremental'],
@@ -4899,23 +4902,29 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
   }
   if (args.exclusionPatterns !== undefined) validateFlatPatterns(args.exclusionPatterns, 'exclusionPatterns', errors);
   if (args.reviewMd !== undefined) {
+    if (typeof args.reviewMdSetChecksum !== 'string') {
+      errors.push('reviewMdSetChecksum must be a string when reviewMd is present');
+    }
     if (!Array.isArray(args.reviewMd)) {
-      errors.push('reviewMd must be an array of {path, text} objects when present');
+      errors.push('reviewMd must be an array of {path, text, checksum} objects when present');
     } else {
       for (let i = 0; i < args.reviewMd.length; i++) {
         const entry = args.reviewMd[i];
         if (!isPlainObject(entry)) {
-          errors.push(`reviewMd[${i}] must be an object of the form {path, text}`);
+          errors.push(`reviewMd[${i}] must be an object of the form {path, text, checksum}`);
           continue;
         }
         const extra = extraKeys(entry, ARGS_SHAPES.reviewMdFields, true);
         if (extra.length > 0) {
-          errors.push(`reviewMd[${i}] has unexpected key(s): ${extra.join(', ')} (only path and text are allowed)`);
+          errors.push(`reviewMd[${i}] has unexpected key(s): ${extra.join(', ')} (only path, text and checksum are allowed)`);
         }
         if (typeof entry.path !== 'string' || entry.path === '') {
           errors.push(`reviewMd[${i}].path must be a non-empty string`);
         } else {
           errors.push(...validatePathSegments(entry.path, `reviewMd[${i}].path`, true));
+        }
+        if (entry.checksum !== null && typeof entry.checksum !== 'string') {
+          errors.push(`reviewMd[${i}].checksum must be a string or null`);
         }
         if (typeof entry.text !== 'string') {
           errors.push(`reviewMd[${i}].text must be a string`);
@@ -5097,15 +5106,29 @@ function resolveReviewConfig(A) {
     : (a.exclusionPatterns !== undefined ? 'preParsed' : 'none');
   let reviewConfig;
   let reviewMdEntryCount = 0;
+  const gaps = [];
   if (a.reviewMd !== undefined) {
-    reviewConfig = buildReviewConfig(a.reviewMd);
+    const entries = a.reviewMd.map((entry) => {
+      const text = normalizeReviewText(entry.text);
+      if (entry.checksum === null) {
+        gaps.push(`review_md: ${entry.path} text is unproven (no collector checksum); its settings were applied as stamped`);
+      } else if (fnv1a32(text) !== entry.checksum) {
+        gaps.push(`review_md: ${entry.path} text differs from the collected file (checksum mismatch); its settings were applied as stamped`);
+      }
+      return { ...entry, text };
+    });
+    const setChecksum = fnv1a32(entries.map((entry) => `${entry.path}\0${entry.checksum || 'null'}`).join('\n'));
+    if (setChecksum !== a.reviewMdSetChecksum) {
+      gaps.push('review_md: stamped entries differ from the collected list (omitted, extra or reordered REVIEW.md); settings were applied as stamped');
+    }
+    reviewConfig = buildReviewConfig(entries);
     reviewMdEntryCount = a.reviewMd.length;
   } else {
     reviewConfig = a.reviewConfig || {};
   }
   const exclusionPatterns = a.exclusionsText !== undefined ? loadExclusions(a.exclusionsText)
     : (a.exclusionPatterns || []);
-  return { reviewConfig, exclusionPatterns, reviewConfigSource, exclusionsSource, reviewMdEntryCount };
+  return { reviewConfig, exclusionPatterns, reviewConfigSource, exclusionsSource, reviewMdEntryCount, gaps };
 }
 // --- entry.js ---
 const REVIEW_TARGET_LABEL = deepFreeze({
@@ -6196,6 +6219,7 @@ async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(validateOut.gaps || []));
     const resolvedReview = resolveReviewConfig(A);
+    gaps.push(...resolvedReview.gaps);
     const reviewMdSubtrees = (Array.isArray(resolvedReview.reviewConfig.scopes)
       ? resolvedReview.reviewConfig.scopes
       : []).map((scope) => ({

@@ -8,3 +8,5 @@ resulting diff.
 `verify_deltas`, `slice_input_proof`, and `slice_inline` are verify-wire fixtures
 recorded by `workflows/test/tools/record_parity.py`. The Python recorder uses
 the JavaScript encoder for `slice_inline`.
+
+`review_text_checksum` pins REVIEW.md normalization and UTF-16 hashing in both runtimes, recorded by the Python recorder.

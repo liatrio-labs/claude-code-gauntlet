@@ -213,8 +213,9 @@ export async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(validateOut.gaps || []));
 
-    // Resolve configuration once so filtering and reporting use the same layers.
     const resolvedReview = resolveReviewConfig(A);
+    // Keep input disclosures outside phase outputs so checkpoint replay cannot duplicate them.
+    gaps.push(...resolvedReview.gaps);
     const reviewMdSubtrees = (Array.isArray(resolvedReview.reviewConfig.scopes)
       ? resolvedReview.reviewConfig.scopes
       : []).map((scope) => ({

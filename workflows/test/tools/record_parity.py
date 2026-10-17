@@ -72,7 +72,15 @@ def _slice_inline(inp):
     }
 
 
+def _review_text_checksum(inp):
+    from gauntlet.jsjson import fnv1a32, normalize_review_text
+
+    normalized = normalize_review_text(inp["text"])
+    return {"normalized": normalized, "checksum": fnv1a32(normalized)}
+
+
 RECORDERS = {
+    "review_text_checksum": _review_text_checksum,
     "verify_deltas": _verify_deltas,
     "slice_input_proof": _slice_input_proof,
     "slice_inline": _slice_inline,

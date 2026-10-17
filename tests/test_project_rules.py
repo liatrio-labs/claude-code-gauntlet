@@ -3,6 +3,7 @@
 import builtins
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -132,7 +133,15 @@ def test_write_failure_receipt_and_recovery(
     assert receipt == {
         "ok": False,
         "sources": [],
-        "review_md": [{"path": "REVIEW.md", "bytes": 5, "modified_in_diff": False}],
+        "review_md": [
+            {
+                "path": "REVIEW.md",
+                "bytes": 5,
+                "modified_in_diff": False,
+                "checksum": "fnv1a32:0x9af1ed37",
+            }
+        ],
+        "review_md_checksum": "fnv1a32:0x265844d5",
         "review_md_dirs": ["."],
         "skipped": [],
         "total_bytes": 0,
@@ -258,15 +267,24 @@ def test_windows_style_changed_entry_discovers_nested_rules(collect_rules, write
     assert "NESTED-RULE" in body
 
 
-def test_review_only_repo_renders_caveat_and_block(collect_rules, write_rule):
+def test_review_only_repo_renders_caveat_and_block(
+    collect_rules, write_rule, opened_paths
+):
     write_rule("REVIEW.md", "ONLY\n")
     code, receipt, body = collect_rules()
     assert code == 0
     assert receipt["ok"] is True
     assert receipt["sources"] == []
     assert receipt["review_md"] == [
-        {"path": "REVIEW.md", "bytes": 5, "modified_in_diff": False}
+        {
+            "path": "REVIEW.md",
+            "bytes": 5,
+            "modified_in_diff": False,
+            "checksum": "fnv1a32:0x9af1ed37",
+        }
     ]
+    assert receipt["review_md_checksum"] == "fnv1a32:0x265844d5"
+    assert len([path for path in opened_paths if path.endswith("REVIEW.md")]) == 1
     assert receipt["gaps"] == [
         "project_rules_absent: no CLAUDE.md/AGENTS.md/QODO.md found; "
         "agents receive no project rules for this repository"
@@ -283,16 +301,71 @@ def test_review_only_repo_renders_caveat_and_block(collect_rules, write_rule):
     )
 
 
-def test_over_cap_review_is_discovered_but_never_opened(
-    collect_rules, write_rule, opened_paths
+@pytest.mark.parametrize(
+    "size, fault",
+    [
+        (5000, None),
+        (1024 * 1024, None),
+        (1024 * 1024 + 1, None),
+        (5000, "overflow"),
+        (5000, "read"),
+    ],
+    ids=[
+        "over-prose-cap",
+        "digest-ceiling",
+        "oversize",
+        "grew-during-read",
+        "read-failed",
+    ],
+)
+def test_over_cap_review_has_a_bounded_digest(
+    size, fault, collect_rules, write_rule, opened_paths, monkeypatch
 ):
-    write_rule("REVIEW.md", "x" * 5000)
+    write_rule("REVIEW.md", "x" * size)
+    original = builtins.open
+    reads = []
+
+    @contextmanager
+    def digest_open(path, mode="r", *args, **kwargs):
+        with original(path, mode, *args, **kwargs) as handle:
+            if str(path).endswith("REVIEW.md") and mode == "rb":
+
+                class Reader:
+                    def read(self, bound):
+                        reads.append(bound)
+                        if fault == "read":
+                            raise OSError("unreadable")
+                        return (
+                            b"x" * bound if fault == "overflow" else handle.read(bound)
+                        )
+
+                yield Reader()
+            else:
+                yield handle
+
+    monkeypatch.setattr(builtins, "open", digest_open)
     code, receipt, body = collect_rules("--max-file-bytes", "100")
     assert code == 0
     assert receipt["ok"]
+    checksum = (
+        None
+        if size > 1024 * 1024 or fault
+        else {5000: "fnv1a32:0x616035e5", 1024 * 1024: "fnv1a32:0x805c9dc5"}[size]
+    )
     assert receipt["review_md"] == [
-        {"path": "REVIEW.md", "bytes": 5000, "modified_in_diff": False}
+        {
+            "path": "REVIEW.md",
+            "bytes": size,
+            "modified_in_diff": False,
+            "checksum": checksum,
+        }
     ]
+    from gauntlet.jsjson import fnv1a32
+
+    assert receipt["review_md_checksum"] == fnv1a32(
+        "REVIEW.md\0" + (checksum or "null")
+    )
+    assert reads == ([] if size > 1024 * 1024 else [1024 * 1024 + 1])
     assert {"path": "REVIEW.md", "reason": "too_large"} in receipt["skipped"]
     assert any(
         "project_rules_truncated: REVIEW.md (too_large)" in gap
@@ -301,7 +374,9 @@ def test_over_cap_review_is_discovered_but_never_opened(
     assert not receipt["truncated"]
     assert receipt["total_bytes"] == 0
     assert "<review-rules " not in body
-    assert not [path for path in opened_paths if path.endswith("REVIEW.md")]
+    assert len([path for path in opened_paths if path.endswith("REVIEW.md")]) == (
+        0 if size > 1024 * 1024 else 1
+    )
 
 
 def test_total_cap_is_shared_and_discovery_survives_it(collect_rules, write_rule):
@@ -340,7 +415,21 @@ def test_file_cap_bounds_review_reads_but_not_the_inventory(collect_rules, write
     code, receipt, body = collect_rules("--changed-files", changed, "--max-files", "1")
     assert code == 0
     assert receipt["ok"]
-    assert len(receipt["review_md"]) == 2
+    assert receipt["review_md"] == [
+        {
+            "path": "REVIEW.md",
+            "bytes": 2,
+            "modified_in_diff": False,
+            "checksum": "fnv1a32:0xc40bf6cc",
+        },
+        {
+            "path": "api/REVIEW.md",
+            "bytes": 2,
+            "modified_in_diff": False,
+            "checksum": "fnv1a32:0xc70bfb85",
+        },
+    ]
+    assert receipt["review_md_checksum"] == "fnv1a32:0x94a9005e"
     assert 'path="REVIEW.md"' in body
     assert 'path="api/REVIEW.md"' not in body
     assert {"path": "api/REVIEW.md", "reason": "file_cap_reached"} in receipt["skipped"]
@@ -384,7 +473,12 @@ def test_project_import_of_rendered_review_stops_at_that_target(
     )
     assert ("SHARED-CONTENT" in body) is collected
     assert receipt["review_md"] == [
-        {"path": "sub/REVIEW.md", "bytes": 11, "modified_in_diff": False}
+        {
+            "path": "sub/REVIEW.md",
+            "bytes": 11,
+            "modified_in_diff": False,
+            "checksum": "fnv1a32:0x81820781",
+        }
     ]
 
 
@@ -398,7 +492,12 @@ def test_review_receipt_directories_pin_walk_order_and_root(collect_rules, write
     assert receipt["ok"]
     assert receipt["review_md_dirs"] == [".", "a", "a/deep", "z"]
     assert receipt["review_md"] == [
-        {"path": "REVIEW.md", "bytes": 5, "modified_in_diff": False}
+        {
+            "path": "REVIEW.md",
+            "bytes": 5,
+            "modified_in_diff": False,
+            "checksum": "fnv1a32:0x1e4ede85",
+        }
     ]
 
 
@@ -609,6 +708,7 @@ def test_full_project_context_and_receipt(
             },
         ],
         "review_md": [],
+        "review_md_checksum": "fnv1a32:0x811c9dc5",
         "review_md_dirs": ["."],
         "skipped": [],
         "total_bytes": 11,

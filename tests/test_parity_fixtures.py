@@ -58,6 +58,17 @@ def test_slice_input_proof_parity(case_dir):
     assert checksum_or_none(inp["doc"]) == expected["checksum"]
 
 
+@pytest.mark.parametrize(
+    "case_dir", _case_dirs("review_text_checksum"), ids=lambda path: path.name
+)
+def test_review_text_checksum_parity(case_dir):
+    from gauntlet.jsjson import fnv1a32, normalize_review_text
+
+    inp, expected = _load(case_dir)
+    normalized = normalize_review_text(inp["text"])
+    assert {"normalized": normalized, "checksum": fnv1a32(normalized)} == expected
+
+
 @pytest.mark.parametrize("mode", [[], ["--check"]], ids=["record", "check"])
 def test_recorder_rejects_unknown_family(mode):
     result = subprocess.run(
