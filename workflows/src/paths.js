@@ -57,6 +57,15 @@ export function normalizeAbsoluteRoot(root) {
   return normalized;
 }
 
+export function hostPlatformForRoots(input = {}) {
+  return [input.repoRoot, input.outputDir, input.pluginRoot].some((root) =>
+    typeof root === 'string' && /^[A-Za-z]:\//.test(root)) ? 'windows' : 'posix';
+}
+
+function pathComparisonKey(path) {
+  return /^[A-Za-z]:\//.test(path) ? path.toLowerCase() : path;
+}
+
 const HOST_PATH_RIGHT_CONTINUATION_RE = /^[A-Za-z0-9._~+%@-]$/;
 // A charset- and length-bounded id is printed so readers can find the finding; anything else uses the positional label.
 const SAFE_FINDING_LABEL_RE = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -77,6 +86,16 @@ function hostPathPattern(root, caseInsensitive) {
   return new RegExp(`/${source}`, caseInsensitive ? 'iy' : 'y');
 }
 
+function driveHostPathPatterns(root) {
+  const drive = root[0];
+  const tail = root.slice(3).split('/').map(escapeRegExp);
+  return [
+    new RegExp(`${drive}:/` + tail.join('/(?:/|\\./)*'), 'iy'),
+    new RegExp(`${drive}:\\\\+` + tail.join('\\\\+'), 'iy'),
+    new RegExp(`/${drive}/` + tail.join('/(?:/|\\./)*'), 'iy'),
+  ];
+}
+
 export function prepareHostRootPatterns(roots) {
   const patterns = [];
   const derivedHomes = new Set();
@@ -85,11 +104,9 @@ export function prepareHostRootPatterns(roots) {
     const normalized = normalizeAbsoluteRoot(root);
     if (normalized === null || normalized === '/') continue;
     if (/^[A-Za-z]:\//.test(normalized)) {
-      const drive = normalized[0];
-      const tail = normalized.slice(3).split('/').map(escapeRegExp);
-      patterns.push(new RegExp(`[${drive.toUpperCase()}${drive.toLowerCase()}]:/` + tail.join('/(?:/|\\./)*'), 'y'));
-      patterns.push(new RegExp(`[${drive.toUpperCase()}${drive.toLowerCase()}]:\\\\` + tail.join('\\\\'), 'y'));
-      patterns.push(new RegExp(`/[${drive.toUpperCase()}${drive.toLowerCase()}]/` + tail.join('/(?:/|\\./)*'), 'y'));
+      patterns.push(...driveHostPathPatterns(normalized));
+      const home = normalized.match(/^([A-Za-z]:\/Users\/[^/]+)\//i);
+      if (home) derivedHomes.add(home[1]);
       continue;
     }
     for (const spelling of hostPathSpellings(normalized)) {
@@ -100,7 +117,10 @@ export function prepareHostRootPatterns(roots) {
     const home = unaliased.match(HOST_PATH_HOME_RE);
     if (home) derivedHomes.add(home[0].slice(0, -1));
   }
-  for (const home of derivedHomes) patterns.push(hostPathPattern(home, false));
+  for (const home of derivedHomes) {
+    if (/^[A-Za-z]:\//.test(home)) patterns.push(...driveHostPathPatterns(home));
+    else patterns.push(hostPathPattern(home, false));
+  }
   return patterns;
 }
 
@@ -193,8 +213,9 @@ export function pathUnderRoot(root, path) {
   if (normalizedRoot === null || typeof path !== 'string' || path === '') return false;
   const normalizedPath = normalizeAbsoluteRoot(path);
   if (normalizedPath === null) return false;
-  const prefix = rootPrefix(normalizedRoot);
-  return normalizedPath === normalizedRoot || normalizedPath.startsWith(prefix);
+  const key = pathComparisonKey(normalizedRoot);
+  const pathKey = pathComparisonKey(normalizedPath);
+  return pathKey === key || pathKey.startsWith(rootPrefix(key));
 }
 
 export function repoRelativeFindingPath(repoRoot, file) {
@@ -212,7 +233,6 @@ export function repoRelativeFindingPath(repoRoot, file) {
       normalized = `${file[1]}:${file.slice(2)}`;
       driveAbsolute = true;
     }
-    if (driveAbsolute) normalized = normalized[0].toUpperCase() + normalized.slice(1);
   }
   // Each changing pass removes characters, so input length bounds convergence.
   let location;
@@ -236,13 +256,12 @@ export function repoRelativeFindingPath(repoRoot, file) {
     relative = normalizePathString(path);
     while (relative.startsWith('./')) relative = relative.slice(2);
   } else {
-    let root = normalizeAbsoluteRoot(repoRoot);
-    if (root !== null && driveRoot) root = root[0].toUpperCase() + root.slice(1);
+    const root = normalizeAbsoluteRoot(repoRoot);
     if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
     const absolute = normalizePathString(path);
-    if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
+    if (pathComparisonKey(absolute) === pathComparisonKey(root)) return { reason: 'absolute file path resolves to repoRoot' };
     const prefix = rootPrefix(root);
-    if (!absolute.startsWith(prefix)) return { reason: 'absolute file path is outside repoRoot' };
+    if (!pathComparisonKey(absolute).startsWith(pathComparisonKey(prefix))) return { reason: 'absolute file path is outside repoRoot' };
     relative = absolute.slice(prefix.length);
   }
 

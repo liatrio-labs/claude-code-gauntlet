@@ -281,7 +281,7 @@ for (const hostPlatform of ['posix', 'windows']) test(`oversize finding is discl
     { id: 'OK', file: 'b.js', line_start: 2, origin: 'new', cross_file_refs: [] },
   ];
   const ctx = verifyCtx(() => deltaEnvelope([findings[1]], { nonce: 'n-1.0', n_in: 1 }));
-  const out = await verifyStage(ctx, verifyInput(findings, { hostPlatform, limits: { verifySliceSize: 2 } }));
+  const out = await verifyStage(ctx, verifyInput(findings, { repoRoot: hostPlatform === 'windows' ? 'D:/repo' : '/repo', limits: { verifySliceSize: 2 } }));
   assert.equal(out.verified, false);
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1, oversize: 1 });
   assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0']);

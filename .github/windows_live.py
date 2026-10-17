@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -83,9 +84,17 @@ def assert_run(transcript: Path, output: Path, config: Path) -> LiveReceipt:
                 uses[block["id"]] = block
             if block.get("type") == "tool_result":
                 results[block["tool_use_id"]] = block
-    assert any("Workflow" in use.get("name", "") for use in uses.values()), (
-        "Workflow was never launched"
-    )
+    launches = [use for use in uses.values() if "Workflow" in use.get("name", "")]
+    assert launches, "Workflow was never launched"
+    for launch in launches:
+        args = launch.get("input", {}).get("args", {})
+        if isinstance(args, str):
+            args = json.loads(args)
+        assert args.get("python") == "py -3", args
+        for key in ("repoRoot", "outputDir", "pluginRoot"):
+            root = args.get(key)
+            assert isinstance(root, str) and re.match(r"^[A-Za-z]:/", root), (key, root)
+            assert "\\" not in root, (key, root)
     awaits = []
     materializations = []
     for ident, use in uses.items():

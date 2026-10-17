@@ -5,8 +5,7 @@ import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, resolveRev
 import { interactiveArgs, headlessArgs, priorReviewDetector, prIdentity, reviewMdArgs } from './helpers/argsFixtures.js';
 
 const REJECTION_ROWS = [
-  ...[['python', 'python3;id', 'python3, python, py -3'],
-    ['hostPlatform', 'win32', 'posix, windows']].map(([key, value, allowed]) => ({
+  ...[['python', 'python3;id', 'python3, python, py -3']].map(([key, value, allowed]) => ({
     name: `${key} allowlist ${value}`, input: (a) => { a[key] = value; }, expected: [`${key} must be one of ${allowed}`],
   })),
   ...[undefined, 1].map((checksum) => ({
@@ -148,6 +147,8 @@ const REJECTION_ROWS = [
   }, expected: [ "delivery.prIdentity.platform must be one of github, gitlab" ] },
   { name: 'persist returns',
     input: (a) => { a.persist = { returnPrimaries: "false" }; }, expected: [ "persist.returnPrimaries must be a boolean when present" ] },
+  { name: 'persist shape', input: (a) => { a.persist = []; },
+    expected: ['persist must be an object of the form { returnPrimaries } when present'] },
   { name: 'limits unknown', input: (a) => { a.limits.verifySclieSize = 50; }, expected: [
     "unknown limits key: verifySclieSize (expected one of summarizeBucketSize, validateBatch, challengeCap, " +
       "verifySliceSize, deliveryCap, discoveryCap, maxLineSpan)",
@@ -246,7 +247,7 @@ for (const { name, input, expected } of NON_OBJECT_ROWS) {
 
 const ACCEPTANCE_ROWS = [
   { name: 'drive roots and host selections', input: () => interactiveArgs({
-    repoRoot: 'D:/repo', outputDir: 'D:/repo/.code-gauntlet', pluginRoot: 'C:/plug in', python: 'py -3', hostPlatform: 'windows',
+    repoRoot: 'D:/repo', outputDir: 'D:/repo/.code-gauntlet', pluginRoot: 'C:/plug in', python: 'py -3',
   }), expected: { ok: true, errors: [] } },
   ...['fnv1a32:0x811c9dc5', null].map((checksum) => ({ name: `review checksum accepted ${checksum}`,
     input: () => interactiveArgs({ ...reviewMdArgs([{ path: 'api/REVIEW.md', text: '', checksum }]),

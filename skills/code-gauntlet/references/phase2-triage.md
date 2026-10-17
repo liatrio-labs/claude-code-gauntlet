@@ -328,6 +328,8 @@ The title and URL reach the script only through the pipe.
 The waist treats `null` as absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`.
 Keep `reviewConfigPath: null` when the receipt has no root REVIEW.md, even if it lists subdirectory files; this field records root provenance.
 
+The workflow derives the host platform from `repoRoot`, `outputDir`, and `pluginRoot`; any drive-form root selects Windows command limits.
+
 **Required fields (`validateArgs` fails loud without them):**
 
 | Field | Value |
@@ -346,7 +348,6 @@ Keep `reviewConfigPath: null` when the receipt has no root REVIEW.md, even if it
 | `configEcho` | Copy `configResult.waist.configEcho` verbatim. It is the only model-stamped configuration receipt. |
 | `pluginRoot` | `configResult.identity.plugin_root`; the workflow derives its script paths from this root. |
 | `python` | Phase 1 selection: `python3`, `python`, or `py -3`; optional, defaults to `python3`. |
-| `hostPlatform` | `configResult.identity.host_platform`: `posix` or `windows`; optional, defaults to `posix`. |
 | `reviewScope` | Headless PR/MR targets omit `requested` (see the derived waist fields under "Args Preparation"). Interactive PR/MR targets stamp the gate answer, or `full` when no prior review exists. Local and branch targets stamp `full`. Copy detector facts verbatim for PR/MR targets. Use `kind=incremental` only for an incremental request with `detector.incremental_safe=true`. Set `since` to the detector's safe `last_reviewed_sha` only for incremental kind. Set `since` to `null` otherwise. Retain detector facts when an incremental request becomes full. The renderer computes the fallback reason from retained detector facts. |
 | `policy` | `{ tier, subagentModel, provider, gateway, mappedAliases }` — see below |
 | `limits` | Stamp `{}` unless a genuine REVIEW.md-set override exists. |

@@ -1,3 +1,4 @@
+import { hostPlatformForRoots } from './paths.js';
 import { modelFor } from './registry.js';
 import { firstUnsafeNumber } from './wire.js';
 import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, sliceInputChecksum, sliceTokenChecksum } from './verifyWire.js';
@@ -65,8 +66,9 @@ export async function verifyStage(ctx, input) {
 
   const model = modelFor('code-gauntlet:executor', inp.policy || {});
   const baseBranch = effectiveVerifyBaseBranch((inp.verify || {}).baseBranch);
+  const hostPlatform = hostPlatformForRoots(inp);
   const inlineBudget = verifyInlineBudget(inp);
-  const plan = planVerifySlices(findings, sliceSize, inlineBudget, baseBranch, inp.hostPlatform);
+  const plan = planVerifySlices(findings, sliceSize, inlineBudget, baseBranch, hostPlatform);
   const slices = plan.slices;
 
   const gaps = [];
@@ -97,8 +99,8 @@ export async function verifyStage(ctx, input) {
   for (const unit of units) {
     if (unit.kind === 'oversize') {
       const content = { findings: [projectVerifySliceFinding(unit.finding)], base_branch: baseBranch };
-      const encodedLength = verifyInlineCost(encodeSliceInline(content), inp.hostPlatform);
-      const lengthKind = inp.hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length';
+      const encodedLength = verifyInlineCost(encodeSliceInline(content), hostPlatform);
+      const lengthKind = hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length';
       inputProof.oversize += 1;
       out.push(...degradedSlice([unit.finding]));
       gaps.push(verifyDegradeGap(
@@ -117,7 +119,7 @@ export async function verifyStage(ctx, input) {
     const payload = encodeSliceInline(content);
     const expectedInlineChecksum = sliceTokenChecksum(payload);
     const predictedPayloadLength = predictVerifySliceInlineLength(slice, baseBranch);
-    const commandCost = predictVerifySliceInlineLength(slice, baseBranch, inp.hostPlatform);
+    const commandCost = predictVerifySliceInlineLength(slice, baseBranch, hostPlatform);
     if (payload.length !== predictedPayloadLength || commandCost > inlineBudget) {
       throw new Error(`verify inline planner produced an oversized slice ${i} (${commandCost} > ${inlineBudget})`);
     }

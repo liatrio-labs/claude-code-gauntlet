@@ -205,7 +205,7 @@ export async function runWith(ctx, rawArgs) {
 
     const verifyOut = await runPhase('verify', () => verifyStage(c, {
       findings: mergeOut.findings || [], limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
-      python: A.python, hostPlatform: A.hostPlatform, pluginRoot: A.pluginRoot,
+      python: A.python, repoRoot: A.repoRoot, outputDir: A.outputDir, pluginRoot: A.pluginRoot,
       verify: { ...(A.verify || {}), baseBranch: A.baseBranch, diffPath: A.diffPath },
     }));
     gaps.push(...(verifyOut.gaps || []));

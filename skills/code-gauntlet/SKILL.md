@@ -97,7 +97,7 @@ printf '%s\n' "$ELIGIBILITY_JSON"
 For GitLab, replace the eligibility section with:
 
 ```bash
-if ! ELIGIBILITY_JSON=$(printf '%s' "$CONFIG_JSON" | {python} "{plugin_root}/scripts/check_eligibility.py" --platform gitlab --pr {pr_number}); then
+if ! ELIGIBILITY_JSON=$(printf '%s' "$CONFIG_JSON" | "${PYTHON[@]}" "{plugin_root}/scripts/check_eligibility.py" --platform gitlab --pr {pr_number}); then
   echo "eligibility: FAILED"
   exit 1
 fi
@@ -387,7 +387,7 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   argsVersion: 1,
   mode: "interactive" | "headless",
   repoRoot: configResult.identity.repo_root, outputDir, headShaShort, nonce, generatedAt,
-  python, hostPlatform: configResult.identity.host_platform,
+  python,
   diffPath, changedFilesPath, reviewConfigPath,
   riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
   scopeAnswer: "light" | "full",  // interactive answer only when the trivial-scope question fires

@@ -9,8 +9,11 @@ import { makeCtx } from './helpers/pipelineMock.js';
 const ROOT = '/repo/.code-gauntlet';
 
 const HOST_PATH_CASES = [
-  ...['d:/Work/repo/a.js', String.raw`d:\Work\repo\a.js`, '/d/Work/repo/a.js'].map((text) => ({
+  ...['d:/work/REPO/a.js', String.raw`d:\work\REPO\a.js`, '/d/work/REPO/a.js', String.raw`d:\\work\\REPO\\a.js`].map((text) => ({
     name: `drive spelling ${text}`, text, roots: ['D:/Work/repo'], expected: true,
+  })),
+  ...['c:/users/LEE/other/a.js', String.raw`c:\users\LEE\other\a.js`, '/c/users/LEE/other/a.js'].map((text) => ({
+    name: `drive derived home ${text}`, text, roots: ['C:/Users/lee/repo'], expected: true,
   })),
   { name: 'does not match a nested short-root path', text: 'packages/web/src/index.js', roots: ['/src'], expected: false },
   ...[
@@ -164,6 +167,19 @@ test('safeFindingLabel defaults to null for unsafe ids', () => {
 
 // --- pathUnderRoot matrix ----------------------------------------------------
 
+for (const [path, expected] of [
+  ['d:/work/REPO', true],
+  ['d:/work/REPO/Src/A.js', true],
+  ['d:/work/REPO-other/a.js', false],
+  ['/work/repo/a.js', false],
+]) test(`pathUnderRoot: drive case ${path}`, () => {
+  assert.equal(pathUnderRoot('D:/Work/repo', path), expected);
+});
+
+test('pathUnderRoot: POSIX paths retain case sensitivity', () => {
+  assert.equal(pathUnderRoot('/Work/repo', '/work/repo/a.js'), false);
+});
+
 test('pathUnderRoot: path under root passes', () => {
   assert.equal(pathUnderRoot(ROOT, `${ROOT}/findings.json`), true);
 });
@@ -210,9 +226,11 @@ test('pathUnderRoot: relative or missing root is false', () => {
 
 const REPO_ROOT = '/private/tmp/wt-410';
 const REPO_RELATIVE_CASES = [
-  ...['d:/Work/repo/src/a.js:L3-L9', String.raw`d:\Work\repo\src\a.js:L3-L9`, '/d/Work/repo/src/a.js:L3-L9'].map((file) => ({
-    name: `drive relative ${file}`, root: 'D:/Work/repo', file, expected: { file: 'src/a.js:L3-L9' },
+  ...['d:/work/REPO/Src/A.js:L3-L9', String.raw`d:\work\REPO\Src\A.js:L3-L9`, '/d/work/REPO/Src/A.js:L3-L9'].map((file) => ({
+    name: `drive relative ${file}`, root: 'D:/Work/repo', file, expected: { file: 'Src/A.js:L3-L9' },
   })),
+  { name: 'drive root equality ignores case', root: 'D:/Work/repo', file: 'd:/work/REPO', expected: { reason: 'absolute file path resolves to repoRoot' } },
+  { name: 'drive sibling stays outside', root: 'D:/Work/repo', file: 'd:/work/REPO-other/a.js', expected: { reason: 'absolute file path is outside repoRoot' } },
   { name: 'drive tail', file: 'src/D:/host/a', expected: { reason: 'file path starts with a URI scheme or drive letter' } },
   { name: 'relative path stays relative', file: 'scripts/gauntlet/proc.py', expected: { file: 'scripts/gauntlet/proc.py' } },
   { name: 'leading dot slash is stripped', file: './scripts/gauntlet/proc.py', expected: { file: 'scripts/gauntlet/proc.py' } },

@@ -4,7 +4,7 @@ import { LIMIT_DEFAULTS } from './registry.js';
 import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding } from './verifyWire.js';
 
 import { pythonArgv, shellWord } from './wire.js';
-import { trustedScriptPath } from './paths.js';
+import { hostPlatformForRoots, trustedScriptPath } from './paths.js';
 
 export function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   const v = inp.verify || {};
@@ -25,7 +25,7 @@ export function verifyCommand(inp, i, sliceNonce, inlinePayload) {
 
 // CreateProcess counts the entire UTF-16 command, including executable and quoting.
 export function verifyInlineBudget(input = {}) {
-  if (input.hostPlatform !== 'windows') return VERIFY_INLINE_CHAR_BUDGET;
+  if (hostPlatformForRoots(input) !== 'windows') return VERIFY_INLINE_CHAR_BUDGET;
   const prepared = { ...input, verify: { ...(input.verify || {}),
     baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
   const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
@@ -129,7 +129,7 @@ function findingCount(findings) {
 function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   const count = findingCount(findings);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudget(input), baseBranch, input.hostPlatform).slices.length
+    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudget(input), baseBranch, hostPlatformForRoots(input)).slices.length
       * VERIFY_ATTEMPTS_PER_SLICE;
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;

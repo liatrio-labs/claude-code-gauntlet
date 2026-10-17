@@ -14,6 +14,11 @@ const BASIC = [
   { id: 'C', file: 'c.js', line_start: 3, origin: 'new', cross_file_refs: [], description: 'z'.repeat(100) },
 ];
 const PLAN_GOLDEN = { slices: [['A', 'B'], ['C']], oversize: [], closeReasons: ['count', null] };
+
+for (const key of ['repoRoot', 'outputDir', 'pluginRoot']) test(`Windows budget derives from ${key}`, () => {
+  assert.ok(verifyInlineBudget({ [key]: 'd:/work/repo' }) < 32767);
+  assert.equal(verifyInlineBudget({ [key]: '/work/repo' }), 50000);
+});
 const PLAN_ROWS = [
   { name: 'Windows quoted JSON budget', size: 25, budget: 220, hostPlatform: 'windows', length: 249,
     input: Array.from({ length: 4 }, (_, i) => ({ id: `F${i}`, file: 'a', description: '' })),
@@ -105,7 +110,7 @@ for (const row of COARSEN_ROWS) test(`coarsening: ${row.name}`, () => {
   assert.equal(worstCaseAgentCount(coarse, row.files, row.findings), row.count);
 });
 const BRANCH_ROWS = [
-  { name: 'windows command budget', branch: 'main', input: { hostPlatform: 'windows' }, slices: 800, count: 1611, coarseCount: 1616,
+  { name: 'windows command budget', branch: 'main', input: { repoRoot: 'D:/repo' }, slices: 800, count: 1611, coarseCount: 1616,
     coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 5, verifySliceSize: 50 } },
   { name: 'main', branch: 'main', slices: 400, count: 811, coarseCount: 811,
     coarse: { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 } },

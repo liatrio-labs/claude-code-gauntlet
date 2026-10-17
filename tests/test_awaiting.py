@@ -13,6 +13,7 @@ import pytest
 from gauntlet import awaiting, tasks
 
 from tests.support.artifacts import task_file
+from tests.support.shell import bash_executable
 
 REPO = Path(__file__).resolve().parents[1]
 ARTIFACT_NAMES = (
@@ -396,7 +397,7 @@ def test_grace_resets_after_completeness_loss(tmp_path, monkeypatch):
 def test_retry_command(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(awaiting.time, "time", lambda: 10)
-    plugin_entry = os.path.join("plugin path's", "scripts", "await_workflow.py")
+    plugin_entry = "plugin path's/scripts/await_workflow.py"
     monkeypatch.setattr(awaiting, "entry", lambda _: plugin_entry)
     root = tmp_path / "root"
     path = task_file(root, "bare-id")
@@ -431,14 +432,14 @@ def test_retry_command(tmp_path, monkeypatch, capsys):
         "--artifacts-dir 'out space'\"'\"'s' --head-sha abc "
         "--artifacts-grace-seconds 11.0 -- "
     )
-    expected += shlex.quote(str(path))
+    expected += shlex.quote(path.as_posix())
     assert json.loads(capsys.readouterr().out)["next_command"] == expected
 
 
 def test_executed_retry_preserves_leading_dash_and_quotes(
     tmp_path, monkeypatch, capsys
 ):
-    shell = shutil.which("bash")
+    shell = shutil.which(bash_executable())
     if shell is None:
         pytest.skip("retry command requires a POSIX shell")
     monkeypatch.chdir(tmp_path)

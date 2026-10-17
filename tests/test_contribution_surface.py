@@ -12,6 +12,7 @@ import pytest
 from gauntlet import contract_gen as contract_gen
 
 from tests.support.repository import copy_generator_tree, tracked_paths
+from tests.support.shell import bash_executable
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -516,6 +517,11 @@ def test_documented_and_ci_gate_commands_are_byte_identical_sets() -> None:
         "phase",
         "path-target",
         "interpreter",
+        "workflow-python",
+        "workflow-repoRoot",
+        "workflow-outputDir",
+        "workflow-pluginRoot",
+        "workflow-native-root",
         "materialize",
         "nonce",
         "outside",
@@ -565,6 +571,18 @@ def test_windows_live_receipt_gate(fault, tmp_path, monkeypatch):
         "assemble": {"written": []},
     }
     command = 'py -3 /plugin/scripts/await_workflow.py --python "py -3" -- task1'
+    workflow_args = {
+        "python": "py -3",
+        "repoRoot": "D:/repo",
+        "outputDir": "D:/artifacts",
+        "pluginRoot": "C:/plugin",
+    }
+    if fault == "workflow-python":
+        workflow_args["python"] = "python3"
+    elif fault in ("workflow-repoRoot", "workflow-outputDir", "workflow-pluginRoot"):
+        workflow_args[fault.removeprefix("workflow-")] = "/posix/root"
+    elif fault == "workflow-native-root":
+        workflow_args["repoRoot"] = "D:/repo\\nested"
     if fault == "args":
         terminal["gaps"] = ["invalid args"]
     elif fault == "host-path":
@@ -587,7 +605,12 @@ def test_windows_live_receipt_gate(fault, tmp_path, monkeypatch):
         Path(paths["report"]).unlink()
     source.write_text(json.dumps({"result": terminal}), encoding="utf-8")
     blocks = [
-        {"type": "tool_use", "id": "w", "name": "Workflow", "input": {}},
+        {
+            "type": "tool_use",
+            "id": "w",
+            "name": "Workflow",
+            "input": {"args": workflow_args},
+        },
         {"type": "tool_use", "id": "a", "name": "Bash", "input": {"command": command}},
         {
             "type": "tool_use",
@@ -672,7 +695,7 @@ def test_windows_live_driver(has_token, tmp_path, monkeypatch, capsys):
         assert first_step is not None
         command = "\n".join(line[10:] for line in first_step[1].splitlines())
         result = subprocess.run(
-            ["bash", "-c", command],
+            [bash_executable(), "-c", command],
             capture_output=True,
             text=True,
             encoding="utf-8",
