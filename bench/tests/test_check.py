@@ -1818,5 +1818,15 @@ def test_unknown_origin_fails_g3(tmp_path, held_back):
     assert sum("origin=unknown" in failure for failure in result["failures"]) == 1
 
 
+def test_undecodable_checkpoint_does_not_crash_g3(tmp_path):
+    _build_ok_run(tmp_path, origin="new")
+    checkpoint = (
+        tmp_path / "pr-example-repo-1" / "code-gauntlet-checkpoint-all-deadbeef.json"
+    )
+    checkpoint.write_bytes(b'{"a": "\xff"}')
+    result = check.check_run(tmp_path, repo_root=REPO_ROOT)
+    assert result["stats"]["unknown_origin"] == 0
+
+
 if __name__ == "__main__":
     unittest.main()
