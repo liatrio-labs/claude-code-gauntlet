@@ -631,7 +631,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         ):
             try:
                 checkpoint = _load_json(checkpoint_path)
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, UnicodeError, OSError):
                 continue
             phases = checkpoint.get("phases") if isinstance(checkpoint, dict) else None
             challenge = phases.get("challenge") if isinstance(phases, dict) else None

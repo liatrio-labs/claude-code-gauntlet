@@ -1801,19 +1801,22 @@ class MiniResolutionTest(unittest.TestCase):
         self.assertEqual(args.prs, subsets["mini"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 @pytest.mark.parametrize("held_back", [False, True])
 def test_unknown_origin_fails_g3(tmp_path, held_back):
     _build_ok_run(tmp_path, origin="new" if held_back else "unknown")
-    finding = {**_ok_finding(), "origin": "unknown"}
-    _write_json(
-        tmp_path / "pr-example-repo-1" / "code-gauntlet-checkpoint-all-deadbeef.json",
-        {"phases": {"challenge": {"unverified": [finding, finding]}}},
-    )
+    if held_back:
+        finding = {**_ok_finding(), "origin": "unknown"}
+        _write_json(
+            tmp_path
+            / "pr-example-repo-1"
+            / "code-gauntlet-checkpoint-all-deadbeef.json",
+            {"phases": {"challenge": {"unverified": [finding, finding]}}},
+        )
     result = check.check_run(tmp_path, repo_root=REPO_ROOT)
     assert not result["ok"]
     assert result["stats"]["unknown_origin"] == 1
     assert sum("origin=unknown" in failure for failure in result["failures"]) == 1
+
+
+if __name__ == "__main__":
+    unittest.main()
