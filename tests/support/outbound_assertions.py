@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import gauntlet.text as outbound_text
-from gauntlet.markdown import code_spans, open_fence
+from gauntlet.markdown import blocks, code_spans, open_fence
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -16,6 +16,10 @@ def assert_outbound_string_invariant(
     check_prose_rules: bool = True,
     literal_locations: tuple[str, ...] = (),
 ) -> None:
+    inert = [
+        line.kind == "indented_code" and not line.contained
+        for line in blocks(output, html=False)
+    ]
     fences: list[tuple[int, int]] = []
     open_fence(output, strict=True, intervals=fences)
     if check_prose_rules:
@@ -29,15 +33,17 @@ def assert_outbound_string_invariant(
                 "fence opener must have no info string"
             )
     cursor = 0
-    outside: list[str] = []
+    outside: list[tuple[str, int]] = []
+    line_number = 0
     for start, end in fences:
-        outside.append(output[cursor:start])
+        outside.append((output[cursor:start], line_number))
+        line_number += output.count("\n", cursor, end)
         assert not outbound_text.has_marker_opener(output[start:end]), (
             "fenced output contains a marker opener"
         )
         cursor = end
-    outside.append(output[cursor:])
-    for fragment in outside:
+    outside.append((output[cursor:], line_number))
+    for fragment, first_line in outside:
         assert re.search(r"[!\[]\\*\[", fragment) is None, repr(fragment)
         markup = fragment
         # Code-owned locations cannot define references, but still contain openers.
@@ -45,7 +51,10 @@ def assert_outbound_string_invariant(
             markup = markup.replace(location, "")
         spans, _ = code_spans(markup)
         line_offset = 0
-        for line in markup.split("\n"):
+        for row, line in enumerate(markup.split("\n"), first_line):
+            if inert[row]:
+                line_offset += len(line) + 1
+                continue
             if re.search(r"\]\\?\(", line):
                 assert re.search(r"\](\\*):", line) is None, repr(line)
             if check_prose_rules:
@@ -58,9 +67,10 @@ def assert_outbound_string_invariant(
         slashes = 0
         line_start = 0
         first_bracket = True
+        row = first_line
         for index, character in enumerate(markup):
             escaped = slashes % 2 == 1
-            if character == "[" and not escaped:
+            if character == "[" and not escaped and not inert[row]:
                 prefix = markup[line_start:index]
                 if first_bracket and not any(
                     "A" <= ch <= "Z" or "a" <= ch <= "z" or ch == "\\" for ch in prefix
@@ -96,13 +106,16 @@ def assert_outbound_string_invariant(
             if character == "\n":
                 line_start = index + 1
                 first_bracket = True
+                row += 1
             slashes = slashes + 1 if character == "\\" else 0
         for visible in (fragment, fragment.replace("`", "")):
             assert not re.search(r"<(?=[A-Za-z/!?])", visible), repr(visible)
             assert not re.search(r"(?<![A-Za-z0-9])@", visible), repr(visible)
             assert not outbound_text.has_marker_opener(visible), repr(visible)
         if check_prose_rules:
-            for line in fragment.splitlines():
+            for row, line in enumerate(fragment.split("\n"), first_line):
+                if inert[row]:
+                    continue
                 assert not line.startswith("/"), line
                 assert not re.match(
                     r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})", line

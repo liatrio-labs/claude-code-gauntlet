@@ -52,6 +52,8 @@ _CONTAINMENT_RULES = (
     "prose.footnote_opener",
     "prose.reference_definition",
     "prose.wikilink",
+    "prose.indented_code",
+    "span.indented_unpaired",
 )
 
 
@@ -247,7 +249,10 @@ def test_control_fixture_rows_match_current_sanitizers():
         field = (
             "body"
             if case["field_class"] == "prose"
-            and "fence.column_zero" in case["rule_ids"]
+            and any(
+                rule in case["rule_ids"]
+                for rule in ("fence.column_zero", "prose.indented_code")
+            )
             else "suggestion"
             if case["field_class"] == "prose"
             else "claude_md_rule"
@@ -387,3 +392,64 @@ def test_summary_containment(title: str, path: str, expected: str) -> None:
     assert expected in summary
     assert outbound_text.prepare_prose(summary) == summary
     assert_outbound_string_invariant(summary)
+
+
+def _text(node):
+    # GitLab wraps each highlighted code line in a span.
+    return "".join(c if isinstance(c, str) else _text(c) for c in node.children)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [case for case in CASES if case["id"].startswith("indented_inert_")],
+    ids=lambda case: case["id"],
+)
+def test_inert_probe_lines_render_as_code_with_a_separate_footer(case):
+    expected_code = case["expected"].split("\n\n", 1)[1]
+    expected_code = "\n".join(line[4:] for line in expected_code.split("\n"))
+    for platform in ("github", "gitlab"):
+        probe = case[f"{platform}_probe"]
+        assert probe["input_sha256"] == input_sha256(input_text(case)), (
+            case["id"],
+            platform,
+            "record renders",
+        )
+        parser = _TreeParser()
+        parser.feed(probe["html"])
+        parser.close()
+        nodes = _walk(parser.root)
+        code_text = [
+            _text(node)
+            for node, parent in nodes
+            if node.tag == "code" and parent is not None and parent.tag == "pre"
+        ]
+        assert any(value.rstrip("\n") == expected_code for value in code_text), (
+            case["id"],
+            platform,
+            code_text,
+        )
+        paragraphs = [
+            _text(node)
+            for node, parent in nodes
+            if node.tag == "p" and parent is parser.root
+        ]
+        assert "footer line" in paragraphs, (case["id"], platform, paragraphs)
+
+
+def test_indented_field_containment_after_composition():
+    sources = [case["input"] for case in CASES if case["id"].startswith("indented_")]
+    for source in sources:
+        finding = {
+            "severity": "high",
+            "title": "Code",
+            "body": source,
+            "suggestion": source,
+        }
+        for body in (
+            compose.render_comment_body(finding),
+            compose.render_group_body(finding, [finding]),
+            compose.build_skipped_section(
+                [compose.SkippedEntry("src/file.py", 3, finding)]
+            ),
+        ):
+            assert_outbound_string_invariant(body)

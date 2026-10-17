@@ -1,8 +1,22 @@
-"""Top-level Markdown fences, one-line spans, and safe delimiter selection."""
+"""Markdown block facts, spans, and safe delimiter selection."""
 
 import re
 from bisect import bisect_left
 from dataclasses import dataclass
+from typing import Literal
+
+
+def _fence_line(line: str) -> tuple[str, int, int, int] | None:
+    indent = 0
+    while indent < 3 and indent < len(line) and line[indent] == " ":
+        indent += 1
+    if indent >= len(line) or line[indent] not in "`~":
+        return None
+    char = line[indent]
+    end = indent
+    while end < len(line) and line[end] == char:
+        end += 1
+    return char, end - indent, end, indent
 
 
 # Twin of ``openProseFence`` in ``workflows/src/outboundText.js``.
@@ -22,21 +36,9 @@ def open_fence(
     line_start = 0
     index = 0
 
-    def line_run(line: str) -> tuple[str, int, int, int] | None:
-        indent = 0
-        while indent < 3 and indent < len(line) and line[indent] == " ":
-            indent += 1
-        if indent >= len(line) or line[indent] not in "`~":
-            return None
-        char = line[indent]
-        end = indent
-        while end < len(line) and line[end] == char:
-            end += 1
-        return char, end - indent, end, indent
-
     def visit(line: str, offset: int, line_end: int) -> None:
         nonlocal state, opened_at
-        run = line_run(line)
+        run = _fence_line(line)
         if state is not None:
             if (
                 run is not None
@@ -233,3 +235,253 @@ def code_span(value: str, *, pad_space_edges: bool = False) -> str:
     edges = ("`", " ") if pad_space_edges else ("`",)
     padding = " " if value.startswith(edges) or value.endswith(edges) else ""
     return f"{delimiter}{padding}{value}{padding}{delimiter}"
+
+
+BlockKind = Literal[
+    "blank", "paragraph", "fence", "indented_code", "html", "heading", "rule"
+]
+
+
+@dataclass(frozen=True, slots=True)
+class BlockLine:
+    prefix_end: int
+    contained: bool
+    kind: BlockKind
+    continues_paragraph: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _Container:
+    kind: Literal["quote", "list"]
+    width: int = 0
+
+
+_QUOTE = re.compile(r" {0,3}> ?")
+_LIST = re.compile(r"( {0,3})([-+*]|[0-9]{1,9}[.)])( +|$)")
+_HEADING = re.compile(r" {0,3}#{1,6}(?: |$)")
+_RULE = re.compile(r" {0,3}(?:(?:\* *){3,}|(?:- *){3,}|(?:_ *){3,})$")
+_SETEXT = re.compile(r" {0,3}(?:=+|-+) *$")
+_TAG = r"[A-Za-z][A-Za-z0-9-]*"
+_ATTRIBUTE = (
+    r"""[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?"""
+)
+_BLOCK_TAGS = (
+    "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|"
+    "dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|"
+    "frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|"
+    "nav|noframes|ol|optgroup|option|p|param|search|section|source|summary|table|"
+    "tbody|td|tfoot|th|thead|title|tr|track|ul"
+)
+_HTML_BLOCKS = (
+    (
+        re.compile(r"<(?:script|pre|style|textarea)(?:\s|>|$)", re.I),
+        re.compile(r"</(?:script|pre|style|textarea)>", re.I),
+        True,
+    ),
+    (re.compile(r"<!--"), re.compile(r"-->"), True),
+    (re.compile(r"<\?"), re.compile(r"\?>"), True),
+    (re.compile(r"<![A-Z]"), re.compile(r">"), True),
+    (re.compile(r"<!\[CDATA\["), re.compile(r"\]\]>"), True),
+    (re.compile(r"</?(?:" + _BLOCK_TAGS + r")(?:\s|/?>|$)", re.I), None, True),
+    (
+        re.compile(
+            r"(?:<"
+            + _TAG
+            + r"(?:\s+"
+            + _ATTRIBUTE
+            + r")*\s*/?>|</"
+            + _TAG
+            + r"\s*>)\s*$"
+        ),
+        None,
+        False,
+    ),
+)
+_MAX_CONTAINERS = 64
+
+
+def _html_start(content: str, paragraph: bool) -> int | None:
+    for index, (start, _end, interrupts) in enumerate(_HTML_BLOCKS):
+        if (interrupts or not paragraph) and start.match(content):
+            return index
+    return None
+
+
+def _fence_opener(content: str) -> tuple[str, int, int, int] | None:
+    run = _fence_line(content)
+    if run is None or run[1] < 3 or (run[0] == "`" and "`" in content[run[2] :]):
+        return None
+    return run
+
+
+def _list_start(content: str, paragraph: bool) -> re.Match[str] | None:
+    match = _LIST.match(content)
+    if match is not None and paragraph:
+        marker = match[2]
+        if (len(marker) > 1 and marker[:-1] != "1") or not content[match.end() :]:
+            return None
+    return match
+
+
+def _interrupts(content: str, *, html: bool) -> bool:
+    return bool(
+        _HEADING.match(content)
+        or _RULE.fullmatch(content)
+        or _QUOTE.match(content)
+        or _list_start(content, True)
+        or _fence_opener(content)
+        or (
+            html
+            and _html_start(content.lstrip(" "), True) is not None
+            and len(content) - len(content.lstrip(" ")) < 4
+        )
+    )
+
+
+def _prefix_index(line: str, column: int) -> int:
+    if "\t" not in line:
+        return column
+    expanded = 0
+    for index, character in enumerate(line):
+        if expanded >= column:
+            return index
+        expanded += 4 - expanded % 4 if character == "\t" else 1
+    return len(line)
+
+
+def blocks(text: str, *, html: bool = True) -> tuple[BlockLine, ...]:
+    """Classify LF-separated lines; prefix_end indexes the original, unexpanded line.
+
+    Container depth is bounded. Beyond the bound, ambiguous lines are contained
+    paragraph text until an unindented plain line establishes a fresh block.
+    """
+    result: list[BlockLine] = []
+    stack: list[_Container] = []
+    paragraph = False
+    fence: tuple[str, int, int, int] | None = None
+    html_block: int | None = None
+    indented = False
+    overflow = False
+    for original in text.split("\n"):
+        line = original.expandtabs(4)
+        if overflow:
+            if not line or line[0] in " >" or _LIST.match(line):
+                result.append(
+                    BlockLine(0, True, "paragraph" if line.strip() else "blank", False)
+                )
+                continue
+            overflow = False
+        position = 0
+        matched = 0
+        for container in stack:
+            if container.kind == "quote":
+                quote = _QUOTE.match(line, position)
+                if quote is None:
+                    break
+                position = quote.end()
+            else:
+                end = position + container.width
+                if line[position:end] != " " * container.width:
+                    if line[position:].strip():
+                        break
+                    position = len(line)
+                else:
+                    position = end
+            matched += 1
+        content = line[position:]
+        lazy = (
+            matched < len(stack)
+            and paragraph
+            and bool(content.strip())
+            and not _interrupts(content, html=html)
+        )
+        if matched < len(stack) and not lazy:
+            del stack[matched:]
+            paragraph = False
+            fence = None
+            html_block = None
+            indented = False
+        new_container = False
+        if fence is None and html_block is None and not lazy:
+            while True:
+                quote = _QUOTE.match(line, position)
+                item = (
+                    None
+                    if _RULE.fullmatch(line[position:])
+                    else _list_start(line[position:], paragraph)
+                )
+                if quote is None and item is None:
+                    break
+                if len(stack) == _MAX_CONTAINERS:
+                    overflow = True
+                    stack.clear()
+                    break
+                if quote is not None:
+                    stack.append(_Container("quote"))
+                    position = quote.end()
+                elif item is not None:
+                    padding = len(item[3])
+                    width = item.end() if padding <= 4 else item.end() - padding + 1
+                    stack.append(_Container("list", width))
+                    position += width
+                new_container = True
+                paragraph = False
+                indented = False
+        if overflow:
+            result.append(BlockLine(0, True, "paragraph", False))
+            paragraph = False
+            continue
+        content = line[position:]
+        stripped = content.lstrip(" ")
+        indent = len(content) - len(stripped)
+        kind: BlockKind
+        continues = False
+        if fence is not None:
+            kind = "fence"
+            run = _fence_line(content)
+            if (
+                run is not None
+                and run[0] == fence[0]
+                and run[1] >= fence[1]
+                and not content[run[2] :].strip()
+            ):
+                fence = None
+        elif html_block is not None and (
+            stripped or _HTML_BLOCKS[html_block][1] is not None
+        ):
+            kind = "html"
+        elif not stripped:
+            kind = "blank"
+            html_block = None
+        elif lazy:
+            kind = "paragraph"
+            continues = True
+        elif indent >= 4 and (indented or not paragraph):
+            kind = "indented_code"
+        elif indent < 4 and (opener := _fence_opener(content)) is not None:
+            kind = "fence"
+            fence = opener
+        elif (
+            indent < 4
+            and html
+            and (start := _html_start(stripped, paragraph)) is not None
+        ):
+            kind = "html"
+            html_block = start
+        elif _HEADING.match(content) or (paragraph and _SETEXT.fullmatch(content)):
+            kind = "heading"
+        elif _RULE.fullmatch(content):
+            kind = "rule"
+        else:
+            kind = "paragraph"
+            continues = paragraph and not new_container
+        if kind == "html" and html_block is not None:
+            closer = _HTML_BLOCKS[html_block][1]
+            if closer is not None and closer.search(content):
+                html_block = None
+        result.append(
+            BlockLine(_prefix_index(original, position), bool(stack), kind, continues)
+        )
+        paragraph = kind == "paragraph"
+        indented = kind == "indented_code" or (indented and kind == "blank")
+    return tuple(result)

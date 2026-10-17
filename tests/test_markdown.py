@@ -163,3 +163,191 @@ def test_fence_run(payload, expected):
 )
 def test_code_span_padding_policy(value, pad_space_edges, expected):
     assert code_span(value, pad_space_edges=pad_space_edges) == expected
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        (
+            "para\n    code\n\n    code\n\nnext",
+            [
+                (0, False, "paragraph", False),
+                (0, False, "paragraph", True),
+                (0, False, "blank", False),
+                (0, False, "indented_code", False),
+                (0, False, "blank", False),
+                (0, False, "paragraph", False),
+            ],
+        ),
+        (
+            "> - para\n>   lazy\nlazy\n\n    code",
+            [
+                (4, True, "paragraph", False),
+                (4, True, "paragraph", True),
+                (0, True, "paragraph", True),
+                (0, False, "blank", False),
+                (0, False, "indented_code", False),
+            ],
+        ),
+        (
+            "- item\n\n    para\n\n      code\nout",
+            [
+                (2, True, "paragraph", False),
+                (0, True, "blank", False),
+                (2, True, "paragraph", False),
+                (0, True, "blank", False),
+                (2, True, "indented_code", False),
+                (0, False, "paragraph", False),
+            ],
+        ),
+        (
+            "> ```\n> body\nplain",
+            [
+                (2, True, "fence", False),
+                (2, True, "fence", False),
+                (0, False, "paragraph", False),
+            ],
+        ),
+        (
+            "- ~~~\n  body\n  ~~~~ trailing\n  ~~~~\n  next",
+            [
+                (2, True, "fence", False),
+                (2, True, "fence", False),
+                (2, True, "fence", False),
+                (2, True, "fence", False),
+                (2, True, "paragraph", False),
+            ],
+        ),
+        (
+            "# heading\n    code\npara\n===\n    code\n---",
+            [
+                (0, False, "heading", False),
+                (0, False, "indented_code", False),
+                (0, False, "paragraph", False),
+                (0, False, "heading", False),
+                (0, False, "indented_code", False),
+                (0, False, "rule", False),
+            ],
+        ),
+        (
+            "\tcode\n\n-\titem\n\t\tcode",
+            [
+                (0, False, "indented_code", False),
+                (0, False, "blank", False),
+                (2, True, "paragraph", False),
+                (1, True, "paragraph", True),
+            ],
+        ),
+        (
+            "para\n2. continuation\n\n2. item\n\n    code",
+            [
+                (0, False, "paragraph", False),
+                (0, False, "paragraph", True),
+                (0, False, "blank", False),
+                (3, True, "paragraph", False),
+                (0, True, "blank", False),
+                (3, True, "paragraph", False),
+            ],
+        ),
+        (
+            "-     code\n\n- - -",
+            [
+                (2, True, "indented_code", False),
+                (0, True, "blank", False),
+                (0, False, "rule", False),
+            ],
+        ),
+    ],
+)
+def test_blocks_container_and_paragraph_facts(source, expected):
+    from dataclasses import astuple
+
+    from gauntlet.markdown import blocks
+
+    assert [astuple(line) for line in blocks(source)] == expected
+
+
+@pytest.mark.parametrize(
+    "opening, closing, blank_ends",
+    [
+        ("<script>", "</script>", False),
+        ("<!--", "-->", False),
+        ("<?x", "?>", False),
+        ("<!DOCTYPE x", ">", False),
+        ("<![CDATA[", "]]>", False),
+        ("<div>", "", True),
+        ('<custom-tag attr="x">', "", True),
+    ],
+)
+def test_blocks_html_end_conditions_and_disable(opening, closing, blank_ends):
+    from gauntlet.markdown import blocks
+
+    source = f"{opening}\n\nopaque\n{closing}\n\nlive"
+    kinds = [line.kind for line in blocks(source)]
+    assert kinds == (
+        ["html", "blank", "paragraph", "blank", "blank", "paragraph"]
+        if blank_ends
+        else ["html", "html", "html", "html", "blank", "paragraph"]
+    )
+    assert all(line.kind != "html" for line in blocks(source, html=False))
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        (
+            "- " * 16000 + "x\n" + "\n" * 30000 + "plain",
+            ["paragraph", "blank", "paragraph"],
+        ),
+        (("> - x\n\nplain\n" * 16667), ["paragraph", "paragraph", "blank"]),
+        ("<!--" * 25000, ["html", "html", "html"]),
+        (
+            ">" * 64000 + "x\n\n    ambiguous\nplain",
+            ["paragraph", "paragraph", "paragraph"],
+        ),
+    ],
+    ids=["deep-list-blanks", "alternating-containers", "unclosed-html", "deep-quotes"],
+)
+def test_blocks_hostile_inputs(source, expected):
+    import json
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "import json, sys; sys.path.insert(0, 'scripts'); from gauntlet.markdown import blocks; facts = blocks(sys.stdin.read()); print(json.dumps([facts[0].kind, facts[len(facts)//2].kind, facts[-1].kind])); assert not any(f.kind == 'indented_code' and not f.contained for f in facts)",
+        ],
+        input=source,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=5,
+        check=True,
+    )
+    assert json.loads(result.stdout) == expected
+
+
+@pytest.mark.parametrize("comment, masked", [("<!--", False), ("<!-->", True)])
+def test_import_inline_scan_does_not_rescan_comment_suffixes(comment, masked):
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.path.insert(0, 'scripts'); from gauntlet.project_rules import _strip_code; text = sys.stdin.read(); result = _strip_code(text); assert result == ('text ' + ' ' * 25000 if sys.argv[1] == 'masked' else text)",
+            "masked" if masked else "literal",
+        ],
+        input="text " + comment * 25000,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=5,
+        check=True,
+    )
+    assert result.stdout == ""

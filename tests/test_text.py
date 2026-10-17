@@ -93,6 +93,8 @@ VECTORS: list[TextVector] = [
     if case["operation"] == "line"
     and case["id"]
     in {
+        "outbound_line_reference_indented_code",
+        "outbound_line_reference_tab",
         "outbound_line_reference_issue",
         "outbound_line_reference_merge_request",
         "outbound_line_reference_gh",
@@ -316,3 +318,44 @@ def test_large_definition_preparation(source: str, expected: str) -> None:
 )
 def test_neutralize_comment_openers(source: str, expected: str) -> None:
     assert text.neutralize_comment_openers(source) == expected
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("para\n\n    >>> parse(x)", "para\n\n    >>> parse(x)"),
+        (
+            "para\n\n    ```\n    ~~~\n    [a]: b\n    `",
+            "para\n\n    ```\n    ~~~\n    [a]: b\n    `",
+        ),
+        ("    ```", "    \\`\\`\\`"),
+        ("# heading\n    ~~~", "# heading\n    \\~\\~\\~"),
+        ("---\n    ~~~", "---\n    \\~\\~\\~"),
+        ("para\n\n<custom-tag>\n    ~~~", "para\n\n&lt;custom-tag>\n    \\~\\~\\~"),
+        ("para\n    >>> x", "para\n    \\>>> x"),
+        ("para\n\n>>>\n    ~~~", "para\n\n\\>>>\n    \\~\\~\\~"),
+        ("para\n\n> x\n>\n>     ~~~", "para\n\n> x\n>\n>     \\~\\~\\~"),
+        ("- item\n\n    ~~~", "- item\n\n    \\~\\~\\~"),
+        ("> x\n>\n>     ~~~", "> x\n>\n>     \\~\\~\\~"),
+        ("para\n    `lazy\n` paired", "para\n    \\`lazy\n\\` paired"),
+        ("para\n<div>\n\n    ~~~", "para\n&lt;div>\n\n    ~~~"),
+        ("para\n```invalid`\n    ~~~", "para\n\\`\\``invalid`\n    \\~\\~\\~"),
+        ("para\n\n\t~~~", "para\n\n\t~~~"),
+        (
+            "para\n\n    `@user` [x](https://x.test/@user) <!-- open",
+            "para\n\n    `\uff20user` [x](https://x.test/\uff20user) &lt;!-- open",
+        ),
+        ("para\n\n    ghp_" + "A" * 20 + " ~~~", "para\n\n    [REDACTED] ~~~"),
+    ],
+)
+def test_indented_prose_preserves_only_inert_delimiters(source, expected):
+    assert text.prepare_prose(source) == expected
+    assert text.prepare_prose(expected) == expected
+    assert_outbound_string_invariant(expected)
+
+
+def test_cited_rules_keep_indented_delimiters_contained():
+    assert (
+        text.prepared_prose("para\n\n    ```\n    ~~~\n    [a]: b", cap=True)
+        == "para\n\n    \\`\\`\n    \\~\\~\\~\n    [a]\\: b"
+    )

@@ -17,7 +17,7 @@ from typing import Literal, TypedDict, cast
 from gauntlet.cli import Command, Parser
 from gauntlet.framing import BlockTag, frame
 from gauntlet.fs import confined, read_json, read_text, write_atomic
-from gauntlet.markdown import code_spans
+from gauntlet.markdown import blocks, span_close, tick_run_index
 
 SkipReason = Literal[
     "missing",
@@ -79,30 +79,68 @@ _TRAILING_PUNCT = ".,;:!?)]}>\"'"
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
 
-def _strip_code(text: str) -> str:
-    """Claude Code ignores fenced and inline code; spans become import boundaries."""
-    # Measured: a`x`@imp.md loads. Only top-level fences and one-line spans
-    # are modeled; containers, HTML and multiline spans need a block parser.
-    normalized = "\n".join(text.splitlines())
-    spans, fences = code_spans(normalized)
-    intervals = [(start, end, "span") for start, end in spans]
-    for start, end in fences:
-        line_start = start
-        while line_start < end:
-            line_end = normalized.find("\n", line_start, end)
-            if line_end < 0:
-                line_end = end
-            intervals.append((line_start, line_end, "fence"))
-            line_start = line_end + 1
-    intervals.sort()
-    parts = []
+def _mask_inline(text: str) -> str:
+    index = tick_run_index(text)
+    parts: list[str] = []
     cursor = 0
-    for start, end, kind in intervals:
-        parts.append(normalized[cursor:start])
-        parts.append("" if kind == "fence" else " ")
+    comments_exhausted = False
+    for token in re.finditer(r"`+|<!--", text):
+        start = token.start()
+        if start < cursor:
+            continue
+        if token.group() == "<!--":
+            if comments_exhausted:
+                continue
+            slash = start
+            while slash and text[slash - 1] == "\\":
+                slash -= 1
+            if (start - slash) % 2:
+                continue
+            if text.startswith(">", start + 4):
+                end = start + 2
+            elif text.startswith("->", start + 4):
+                end = start + 3
+            else:
+                end = text.find("-->", start + 4)
+            if end < 0:
+                comments_exhausted = True
+                continue
+            end += 3
+        else:
+            slash = start
+            while slash and text[slash - 1] == "\\":
+                slash -= 1
+            escaped = (start - slash) % 2
+            start += escaped
+            width = token.end() - start
+            close = span_close(index, token.end(), width) if width else None
+            if close is None:
+                continue
+            end = close + width
+        parts.extend((text[cursor:start], " "))
         cursor = end
-    parts.append(normalized[cursor:])
+    parts.append(text[cursor:])
     return "".join(parts)
+
+
+def _strip_code(text: str) -> str:
+    """Mask opaque blocks and leftmost inline spans without joining import tokens."""
+    normalized = "\n".join(text.splitlines())
+    parts: list[str] = []
+    paragraph: list[str] = []
+    for line, fact in zip(normalized.split("\n"), blocks(normalized), strict=True):
+        if paragraph and not fact.continues_paragraph:
+            parts.append(_mask_inline("\n".join(paragraph)))
+            paragraph.clear()
+        if fact.kind == "paragraph":
+            paragraph.append(line[fact.prefix_end :])
+        elif fact.kind == "heading":
+            parts.append(_mask_inline(line[fact.prefix_end :]))
+        else:
+            parts.append("")
+    if paragraph:
+        parts.append(_mask_inline("\n".join(paragraph)))
+    return "\n".join(parts)
 
 
 def _find_imports(text: str) -> list[str]:

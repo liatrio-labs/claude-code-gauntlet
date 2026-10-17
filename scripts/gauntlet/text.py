@@ -11,6 +11,7 @@ from typing import Literal
 
 from gauntlet.markdown import (
     TickRunIndex,
+    blocks,
     code_span,
     open_fence,
     paired_code_spans,
@@ -570,7 +571,7 @@ def _opaque_run_indexes(line: str, index: TickRunIndex) -> frozenset[int]:
     return frozenset(skip_openers)
 
 
-def _contain_line(line: str) -> str:
+def _contain_line(line: str, *, inert: bool = False) -> str:
     line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
     index = tick_run_index(line)
     skip_openers = _opaque_run_indexes(line, index)
@@ -601,7 +602,7 @@ def _contain_line(line: str) -> str:
         if span_index < len(spans) and spans[span_index][0] < run.end:
             selected, close, close_end = spans[span_index]
             span_index += 1
-            out.append("\\`" * (selected - opener))
+            out.append(("`" if inert else "\\`") * (selected - opener))
             opener_end = selected + close_end - close
             out.append(line[selected:opener_end])
             out.append(_escape_characters(line[opener_end:close], code=True))
@@ -611,7 +612,7 @@ def _contain_line(line: str) -> str:
             while run_index < len(index.runs) and index.runs[run_index].start < cursor:
                 run_index += 1
         else:
-            out.append("\\`" * (run.width - int(run.escaped)))
+            out.append(("`" if inert else "\\`") * (run.width - int(run.escaped)))
             cursor = run.end
             run_index += 1
     out.append(
@@ -691,11 +692,12 @@ def _prepare_text(
                 break
             suffix_index += 1
         offset += len(line) + 1
-    lines = _map_blocks(
+
+    mapped = _map_blocks(
         lines, protected_lines, _break_marker_openers, _escape_definitions
     )
     prepared = []
-    for line, protected in zip(lines, protected_lines, strict=True):
+    for line, protected in zip(mapped, protected_lines, strict=True):
         shape = _BACKTICK_FENCE_SHAPE_RE.match(line) if not single_line else None
         if shape and not protected:
             tick = shape.start(1)
@@ -713,6 +715,15 @@ def _prepare_text(
         prepared.append(line)
     # Bracket replacements can complete definition-shaped labels.
     prepared = _map_blocks(prepared, protected_lines, str, _escape_definitions)
+    if not single_line and trust_fences:
+        # A field may follow a label without a blank separator. Escapes can also
+        # change its blocks, so classify the prepared output before relaxing it.
+        facts = blocks("paragraph\n" + "\n".join(prepared), html=False)[1:]
+        seen_blank = False
+        for index, fact in enumerate(facts):
+            seen_blank = seen_blank or not prepared[index].strip()
+            if seen_blank and fact.kind == "indented_code" and not fact.contained:
+                prepared[index] = _contain_line(lines[index], inert=True)
     result = "\n".join(prepared)
     if fence is not None:
         result += "\n" + fence[0] * fence[1]
