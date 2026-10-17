@@ -2,9 +2,24 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeArgs, normalizeArgsReport, validateArgs, stripNullOptionalsReport } from '../src/args.js';
 import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, resolveReviewConfig } from '../src/args.js';
-import { interactiveArgs, headlessArgs, priorReviewDetector, prIdentity } from './helpers/argsFixtures.js';
+import { interactiveArgs, headlessArgs, priorReviewDetector, prIdentity, reviewMdArgs } from './helpers/argsFixtures.js';
 
 const REJECTION_ROWS = [
+  ...[undefined, 1].map((checksum) => ({
+    name: `review checksum ${JSON.stringify(checksum)}`,
+    input: (a) => { Object.assign(a, reviewMdArgs([{ path: 'api/REVIEW.md', text: '' }]));
+      a.configEcho.review_md.value = 'present';
+      if (checksum === undefined) delete a.reviewMd[0].checksum;
+      else a.reviewMd[0].checksum = checksum; },
+    expected: ['reviewMd[0].checksum must be a string or null'],
+  })),
+  ...[undefined, null].map((checksum) => ({
+    name: `review set checksum ${JSON.stringify(checksum)}`,
+    input: (a) => { Object.assign(a, reviewMdArgs([]));
+      if (checksum === undefined) delete a.reviewMdSetChecksum;
+      else a.reviewMdSetChecksum = checksum; },
+    expected: ['reviewMdSetChecksum must be a string when reviewMd is present'],
+  })),
   { name: 'version', input: (a) => { a.argsVersion = 2; }, expected: [ "unsupported argsVersion 2 (expected 1)" ] },
   { name: 'mode', input: (a) => { a.mode = "bogus"; }, expected: [
     "invalid mode: bogus",
@@ -82,21 +97,21 @@ const REJECTION_ROWS = [
   { name: 'exclusion shape',
     input: (a) => { a.exclusionPatterns = {}; }, expected: [ "exclusionPatterns must be an array of flat pattern strings" ] },
   { name: 'review md extra', input: (a) => {
-    a.reviewMd = [{ path: "api/REVIEW.md", text: "", extra: 1 }]; a.configEcho.review_md.value = "present";
-  }, expected: [ "reviewMd[0] has unexpected key(s): extra (only path and text are allowed)" ] },
+    a.reviewMdSetChecksum = ""; a.reviewMd = [{ checksum: null, path: "api/REVIEW.md", text: "", extra: 1 }]; a.configEcho.review_md.value = "present";
+  }, expected: [ "reviewMd[0] has unexpected key(s): extra (only path, text and checksum are allowed)" ] },
   { name: 'review md receipt mismatch', input: (a) => {
-    a.reviewMd = [{ path: 'api/REVIEW.md', text: '' }];
+    a.reviewMdSetChecksum = ""; a.reviewMd = [{ checksum: null, path: 'api/REVIEW.md', text: '' }];
   }, expected: ['configEcho.review_md does not match reviewMd'] },
   { name: 'review md text type', input: (a) => {
-    a.reviewMd = [{ path: "api/REVIEW.md", text: 1 }]; a.configEcho.review_md.value = "present";
+    a.reviewMdSetChecksum = ""; a.reviewMd = [{ checksum: null, path: "api/REVIEW.md", text: 1 }]; a.configEcho.review_md.value = "present";
   }, expected: [ "reviewMd[0].text must be a string" ] },
   { name: 'review path absolute', input: (a) => {
-    a.reviewMd = [{ path: "/api/REVIEW.md", text: "" }]; a.configEcho.review_md.value = "present";
+    a.reviewMdSetChecksum = ""; a.reviewMd = [{ checksum: null, path: "/api/REVIEW.md", text: "" }]; a.configEcho.review_md.value = "present";
   }, expected: [
     "reviewMd[0].path must be repo-relative (must not start with /)",
     "reviewMd[0].path must not contain an empty path segment",
   ] },
-  { name: 'raw parsed review', input: (a) => { a.reviewMd = []; a.reviewConfig = {}; }, expected: [
+  { name: 'raw parsed review', input: (a) => { a.reviewMdSetChecksum = ""; a.reviewMd = []; a.reviewConfig = {}; }, expected: [
     "reviewMd and reviewConfig are both present \u2014 pass raw reviewMd or pre-parsed reviewConfig, not both (single " +
       "authority)",
   ] },
@@ -233,6 +248,11 @@ for (const { name, input, expected } of NON_OBJECT_ROWS) {
 }
 
 const ACCEPTANCE_ROWS = [
+  ...['fnv1a32:0x811c9dc5', null].map((checksum) => ({ name: `review checksum accepted ${checksum}`,
+    input: () => interactiveArgs({ ...reviewMdArgs([{ path: 'api/REVIEW.md', text: '', checksum }]),
+      configEcho: { ...interactiveArgs().configEcho, review_md: { value: 'present', source: 'discovery' } } }),
+    expected: { ok: true, errors: [] },
+  })),
   { name: 'local scope ignores policy lockstep', input: () => headlessArgs('incremental', { detector: null }),
     expected: { ok: true, errors: [] } },
   { name: 'optional domains', input: () => interactiveArgs({
@@ -396,8 +416,52 @@ const RESOLVE_ROWS = [
     exclusionPatterns: ['foo.js', 'bar/*.js'], reviewConfigSource: 'reviewMd', exclusionsSource: 'exclusionsText', reviewMdEntryCount: 2,
   } },
 ];
+const PROOF_TEXT = '```yaml code-gauntlet\nconfidence_threshold: 90\nignore:\n  - one  two.js\n```';
+const TEXT_MISMATCH = 'review_md: api/REVIEW.md text differs from the collected file (checksum mismatch); its settings were applied as stamped';
+const SET_MISMATCH = 'review_md: stamped entries differ from the collected list (omitted, extra or reordered REVIEW.md); settings were applied as stamped';
+RESOLVE_ROWS.push({ name: 'whole array omitted', input: {
+  reviewMdSetChecksum: reviewMdArgs([{ path: 'api/REVIEW.md', text: '' }]).reviewMdSetChecksum,
+}, expected: { reviewConfig: {}, exclusionPatterns: [], reviewConfigSource: 'none', exclusionsSource: 'none',
+  reviewMdEntryCount: 0, gaps: [SET_MISMATCH] } });
+for (const row of [
+  { name: 'proven', text: PROOF_TEXT },
+  { name: 'CRLF equal', text: PROOF_TEXT.replaceAll('\n', '\r\n') },
+  { name: 'lone CR equal and parsed', text: PROOF_TEXT.replaceAll('\n', '\r') },
+  { name: 'BOM equal', text: '\uFEFF' + PROOF_TEXT },
+  { name: 'trailing newlines equal', text: PROOF_TEXT + '\n\n' },
+  { name: 'trailing spaces and tabs equal', text: PROOF_TEXT.replaceAll('\n', ' \t\n') + '\t ' },
+  { name: 'interior whitespace differs', text: PROOF_TEXT.replace('one  two.js', 'one two.js'),
+    gaps: [TEXT_MISMATCH], ignore: ['one two.js'] },
+  { name: 'null checksum', text: PROOF_TEXT, checksum: null,
+    gaps: ['review_md: api/REVIEW.md text is unproven (no collector checksum); its settings were applied as stamped'] },
+]) {
+  const input = reviewMdArgs([{ path: 'api/REVIEW.md', text: PROOF_TEXT,
+    ...(Object.hasOwn(row, 'checksum') ? { checksum: row.checksum } : {}) }]);
+  input.reviewMd[0].text = row.text;
+  RESOLVE_ROWS.push({ name: row.name, input, expected: {
+    reviewConfig: { ignore: [], scopes: [{ dir: 'api', confidence_threshold: 90, ignore: row.ignore || ['one  two.js'] }] },
+    exclusionPatterns: [], reviewConfigSource: 'reviewMd', exclusionsSource: 'none', reviewMdEntryCount: 1,
+    gaps: row.gaps || [],
+  } });
+}
+for (const kind of ['omitted', 'extra', 'reordered']) {
+  const input = reviewMdArgs([{ path: 'api/REVIEW.md', text: '' }, { path: 'docs/REVIEW.md', text: '' }]);
+  if (kind === 'omitted') input.reviewMd.pop();
+  if (kind === 'extra') input.reviewMd.push({ ...input.reviewMd[0], path: 'other/REVIEW.md' });
+  if (kind === 'reordered') input.reviewMd.reverse();
+  RESOLVE_ROWS.push({ name: kind, input, expected: {
+    reviewConfig: { ignore: [], scopes: input.reviewMd.map((entry) => ({ dir: entry.path.split('/')[0], ignore: [] })) },
+    exclusionPatterns: [], reviewConfigSource: 'reviewMd', exclusionsSource: 'none', reviewMdEntryCount: input.reviewMd.length,
+    gaps: [SET_MISMATCH],
+  } });
+}
 for (const { name, input, expected } of RESOLVE_ROWS) {
-  test(`resolve config: ${name}`, () => assert.deepEqual(resolveReviewConfig(input), expected));
+  test(`resolve config: ${name}`, () => {
+    const stamped = input?.reviewMd && input.reviewMdSetChecksum === undefined ? { ...input, ...reviewMdArgs(input.reviewMd) } : input;
+    const before = structuredClone(stamped);
+    assert.deepEqual(resolveReviewConfig(stamped), { ...expected, gaps: expected.gaps || [] });
+    assert.deepEqual(stamped, before);
+  });
 }
 
 const GAP_ROWS = [

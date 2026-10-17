@@ -17,6 +17,7 @@ from typing import Literal, TypedDict, cast
 from gauntlet.cli import Command, Parser
 from gauntlet.framing import BlockTag, frame
 from gauntlet.fs import confined, read_json, read_text, write_atomic
+from gauntlet.jsjson import fnv1a32, normalize_review_text
 from gauntlet.markdown import blocks, span_close, tick_run_index
 
 SkipReason = Literal[
@@ -30,7 +31,7 @@ SkipReason = Literal[
     "file_cap_reached",  # Read-attempt bound, including empty files.
     "depth_exceeded",
     "cycle",
-    "duplicate_of",  # Same real path or byte-identical effective content.
+    "duplicate_of",  # Same real path or comment-free, outer-stripped content.
     "review_rules_source",  # Imported target already rendered as review rules.
 ]
 
@@ -44,10 +45,18 @@ class ProjectRuleSkip(_RequiredSkip, total=False):
     detail: str
 
 
+class ReviewMdEntry(TypedDict):
+    path: str
+    bytes: int
+    modified_in_diff: bool
+    checksum: str | None
+
+
 class ProjectRulesReceipt(TypedDict):
     ok: bool
     sources: list[dict[str, object]]
-    review_md: list[dict[str, object]]
+    review_md: list[ReviewMdEntry]
+    review_md_checksum: str
     review_md_dirs: list[str]
     skipped: list[ProjectRuleSkip]
     total_bytes: int
@@ -69,6 +78,20 @@ DEFAULT_MAX_TOTAL_BYTES = 131072
 
 # Empty files do not consume bytes, so the walk needs a separate bound.
 DEFAULT_MAX_FILES = 512
+
+# Settings still need a proof when the per-file prose cap excludes a file; past the file-count cap
+# the entry stays unproven.
+MAX_REVIEW_DIGEST_BYTES = 1024 * 1024
+MAX_REVIEW_DIGEST_TOTAL_BYTES = 8 * 1024 * 1024
+
+
+def review_md_set_checksum(entries: Sequence[ReviewMdEntry]) -> str:
+    return fnv1a32(
+        "\n".join(
+            entry["path"] + "\0" + (entry["checksum"] or "null") for entry in entries
+        )
+    )
+
 
 # A mid-word at-sign is an email address or annotation, not an import.
 _IMPORT_RE = re.compile(r"(?:^|(?<=\s))@(\S+)")
@@ -183,7 +206,7 @@ class RuleCollector:
         self.max_files = max_files
         self.changed_realpaths = _changed_path_sets(self.repo_root, changed_files)
         self.sources: list[dict[str, object]] = []
-        self.review_md: list[dict[str, object]] = []
+        self.review_md: list[ReviewMdEntry] = []
         self.review_md_dirs: list[str] = []
         self.review_sources: list[dict[str, object]] = []
         self.review_realpaths: dict[str, str] = {}
@@ -194,6 +217,7 @@ class RuleCollector:
         self.included: set[str] = set()
         self.seen_content: set[str] = set()
         self.walked = 0
+        self.review_digest_bytes = 0
 
     def _skip(self, path: str, reason: SkipReason) -> ProjectRuleSkip:
         entry: ProjectRuleSkip = {"path": self._display(path), "reason": reason}
@@ -257,6 +281,25 @@ class RuleCollector:
             return None, "missing"
         return text, None
 
+    def _review_checksum(self, real: str, size: int, text: str | None) -> str | None:
+        if size > MAX_REVIEW_DIGEST_BYTES:
+            return None
+        try:
+            if text is None:
+                remaining = MAX_REVIEW_DIGEST_TOTAL_BYTES - self.review_digest_bytes
+                if remaining <= 0:
+                    return None
+                with open(real, "rb") as handle:
+                    raw = handle.read(min(MAX_REVIEW_DIGEST_BYTES + 1, remaining))
+                self.review_digest_bytes += len(raw)
+                # A full budget-sized read cannot prove EOF without exceeding the budget.
+                if len(raw) > MAX_REVIEW_DIGEST_BYTES or len(raw) == remaining:
+                    return None
+                text = raw.decode("utf-8", errors="replace")
+            return fnv1a32(normalize_review_text(text))
+        except (OSError, UnicodeError):
+            return None
+
     def visit_review(self, candidate: str) -> None:
         path = os.path.relpath(candidate, self.repo_root).replace(os.sep, "/")
         real = os.path.realpath(candidate)
@@ -274,13 +317,18 @@ class RuleCollector:
         if not stat.S_ISREG(st.st_mode):
             self.skipped.append({"path": path, "reason": "not_regular"})
             return
-        entry: dict[str, object] = {
+        text, reason = self._read(real)
+        entry: ReviewMdEntry = {
             "path": path,
             "bytes": st.st_size,
             "modified_in_diff": self._is_modified(real),
+            "checksum": (
+                self._review_checksum(real, st.st_size, text)
+                if text is not None or reason == "too_large"
+                else None
+            ),
         }
         self.review_md.append(entry)
-        text, reason = self._read(real)
         if text is None:
             self.skipped.append({"path": path, "reason": reason or "missing"})
             return
@@ -536,7 +584,10 @@ def _receipt(
     return {
         "ok": ok,
         "sources": _sources_without_text(collector.sources) if collector else [],
-        "review_md": _sources_without_text(collector.review_md) if collector else [],
+        "review_md": list(collector.review_md) if collector else [],
+        "review_md_checksum": review_md_set_checksum(
+            collector.review_md if collector else []
+        ),
         "review_md_dirs": list(collector.review_md_dirs) if collector else [],
         "skipped": collector.skipped if collector else [],
         "total_bytes": total_bytes,

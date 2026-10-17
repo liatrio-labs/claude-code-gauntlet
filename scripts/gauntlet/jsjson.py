@@ -75,6 +75,14 @@ def fnv1a32(s: str) -> str:
     return f"fnv1a32:0x{h:08x}"
 
 
+def normalize_review_text(s: str) -> str:
+    """Tolerate Read presentation changes that cannot affect review settings."""
+    if s.startswith("\ufeff"):
+        s = s[1:]
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    return "\n".join(line.rstrip(" \t") for line in s.split("\n")).rstrip("\n")
+
+
 def normalize_content(s: str) -> str:
     """Strip a BOM and at most one trailing newline before a content proof.
 
