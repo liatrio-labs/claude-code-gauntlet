@@ -274,24 +274,24 @@ _BLOCK_TAGS = (
 )
 _HTML_BLOCKS = (
     (
-        re.compile(r"<(?:script|pre|style|textarea)(?:\s|>|$)", re.I),
+        re.compile(r"<(?:script|pre|style|textarea)(?:[ \t]|>|$)", re.I),
         re.compile(r"</(?:script|pre|style|textarea)>", re.I),
         True,
     ),
     (re.compile(r"<!--"), re.compile(r"-->"), True),
     (re.compile(r"<\?"), re.compile(r"\?>"), True),
-    (re.compile(r"<![A-Z]"), re.compile(r">"), True),
+    (re.compile(r"<![A-Za-z]"), re.compile(r">"), True),
     (re.compile(r"<!\[CDATA\["), re.compile(r"\]\]>"), True),
-    (re.compile(r"</?(?:" + _BLOCK_TAGS + r")(?:\s|/?>|$)", re.I), None, True),
+    (re.compile(r"</?(?:" + _BLOCK_TAGS + r")(?:[ \t]|/?>|$)", re.I), None, True),
     (
         re.compile(
-            r"(?:<"
+            r"(?:<(?!(?i:pre|script|style|textarea)(?:[ \t]|/?>|$))"
             + _TAG
-            + r"(?:\s+"
+            + r"(?:[ \t]+"
             + _ATTRIBUTE
-            + r")*\s*/?>|</"
+            + r")*[ \t]*/?>|</"
             + _TAG
-            + r"\s*>)\s*$"
+            + r"[ \t]*>)[ \t]*$"
         ),
         None,
         False,
@@ -360,7 +360,6 @@ def blocks(text: str, *, html: bool = True) -> tuple[BlockLine, ...]:
     paragraph = False
     fence: tuple[str, int, int, int] | None = None
     html_block: int | None = None
-    indented = False
     overflow = False
     for original in text.split("\n"):
         line = original.expandtabs(4)
@@ -400,7 +399,6 @@ def blocks(text: str, *, html: bool = True) -> tuple[BlockLine, ...]:
             paragraph = False
             fence = None
             html_block = None
-            indented = False
         new_container = False
         if fence is None and html_block is None and not lazy:
             while True:
@@ -426,7 +424,6 @@ def blocks(text: str, *, html: bool = True) -> tuple[BlockLine, ...]:
                     position += width
                 new_container = True
                 paragraph = False
-                indented = False
         if overflow:
             result.append(BlockLine(0, True, "paragraph", False))
             paragraph = False
@@ -443,7 +440,7 @@ def blocks(text: str, *, html: bool = True) -> tuple[BlockLine, ...]:
                 run is not None
                 and run[0] == fence[0]
                 and run[1] >= fence[1]
-                and not content[run[2] :].strip()
+                and all(character in " \t" for character in content[run[2] :])
             ):
                 fence = None
         elif html_block is not None and (
@@ -456,7 +453,7 @@ def blocks(text: str, *, html: bool = True) -> tuple[BlockLine, ...]:
         elif lazy:
             kind = "paragraph"
             continues = True
-        elif indent >= 4 and (indented or not paragraph):
+        elif indent >= 4 and not paragraph:
             kind = "indented_code"
         elif indent < 4 and (opener := _fence_opener(content)) is not None:
             kind = "fence"
@@ -483,5 +480,4 @@ def blocks(text: str, *, html: bool = True) -> tuple[BlockLine, ...]:
             BlockLine(_prefix_index(original, position), bool(stack), kind, continues)
         )
         paragraph = kind == "paragraph"
-        indented = kind == "indented_code" or (indented and kind == "blank")
     return tuple(result)

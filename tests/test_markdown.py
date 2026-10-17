@@ -257,6 +257,36 @@ def test_code_span_padding_policy(value, pad_space_edges, expected):
                 (0, False, "rule", False),
             ],
         ),
+        pytest.param(
+            "~~~\n~~~\u00a0\nx",
+            [
+                (0, False, "fence", False),
+                (0, False, "fence", False),
+                (0, False, "fence", False),
+            ],
+            id="non-ascii-space-does-not-close-fence",
+        ),
+        pytest.param(
+            "<!a>",
+            [(0, False, "html", False)],
+            id="lowercase-html-declaration",
+        ),
+        pytest.param(
+            "<pre\u00a0>\n\n<div\u00a0>\n\n<x\u00a0>",
+            [
+                (0, False, "paragraph", False),
+                (0, False, "blank", False),
+                (0, False, "paragraph", False),
+                (0, False, "blank", False),
+                (0, False, "paragraph", False),
+            ],
+            id="non-ascii-space-is-not-tag-boundary",
+        ),
+        pytest.param(
+            "<PrE/>",
+            [(0, False, "paragraph", False)],
+            id="raw-text-tag-excluded-from-type-seven",
+        ),
     ],
 )
 def test_blocks_container_and_paragraph_facts(source, expected):

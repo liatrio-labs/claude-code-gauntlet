@@ -716,13 +716,20 @@ def _prepare_text(
     # Bracket replacements can complete definition-shaped labels.
     prepared = _map_blocks(prepared, protected_lines, str, _escape_definitions)
     if not single_line and trust_fences:
-        # A field may follow a label without a blank separator. Escapes can also
-        # change its blocks, so classify the prepared output before relaxing it.
-        facts = blocks("paragraph\n" + "\n".join(prepared), html=False)[1:]
+        # A field may start a block or continue a label's paragraph. Escapes can
+        # change its blocks, so require both readings to be inert before relaxing.
+        prepared_text = "\n".join(prepared)
+        facts = zip(
+            blocks("paragraph\n" + prepared_text, html=False)[1:],
+            blocks(prepared_text, html=False),
+            strict=True,
+        )
         seen_blank = False
-        for index, fact in enumerate(facts):
+        for index, readings in enumerate(facts):
             seen_blank = seen_blank or not prepared[index].strip()
-            if seen_blank and fact.kind == "indented_code" and not fact.contained:
+            if seen_blank and all(
+                fact.kind == "indented_code" and not fact.contained for fact in readings
+            ):
                 prepared[index] = _contain_line(lines[index], inert=True)
     result = "\n".join(prepared)
     if fence is not None:

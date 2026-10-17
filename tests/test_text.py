@@ -336,6 +336,16 @@ def test_neutralize_comment_openers(source: str, expected: str) -> None:
         ("para\n\n>>>\n    ~~~", "para\n\n\\>>>\n    \\~\\~\\~"),
         ("para\n\n> x\n>\n>     ~~~", "para\n\n> x\n>\n>     \\~\\~\\~"),
         ("- item\n\n    ~~~", "- item\n\n    \\~\\~\\~"),
+        pytest.param(
+            "2. a\n\n    [x]: y",
+            "2. a\n\n    [x]\\: y",
+            id="ordered-list-definition-stays-escaped",
+        ),
+        pytest.param(
+            "3) a\n\n    ~~~",
+            "3) a\n\n    \\~\\~\\~",
+            id="ordered-list-fence-stays-escaped",
+        ),
         ("> x\n>\n>     ~~~", "> x\n>\n>     \\~\\~\\~"),
         ("para\n    `lazy\n` paired", "para\n    \\`lazy\n\\` paired"),
         ("para\n<div>\n\n    ~~~", "para\n&lt;div>\n\n    ~~~"),
