@@ -1,7 +1,6 @@
 """JavaScript-compatible JSON output."""
 
 import json
-import re
 import struct
 from typing import Any
 
@@ -81,7 +80,7 @@ def normalize_review_text(s: str) -> str:
     if s.startswith("\ufeff"):
         s = s[1:]
     s = s.replace("\r\n", "\n").replace("\r", "\n")
-    return re.sub(r"[ \t]+(?=\n|$)", "", s).rstrip("\n")
+    return "\n".join(line.rstrip(" \t") for line in s.split("\n")).rstrip("\n")
 
 
 def normalize_content(s: str) -> str:

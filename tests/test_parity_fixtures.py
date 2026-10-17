@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,15 @@ def test_review_text_checksum_parity(case_dir):
     inp, expected = _load(case_dir)
     normalized = normalize_review_text(inp["text"])
     assert {"normalized": normalized, "checksum": fnv1a32(normalized)} == expected
+
+
+def test_review_text_normalization_is_linear_on_long_space_runs():
+    from gauntlet.jsjson import normalize_review_text
+
+    text = " " * 50_000 + "x\n" + "\n" * 50_000
+    started = time.monotonic()
+    assert normalize_review_text(text) == " " * 50_000 + "x"
+    assert time.monotonic() - started < 1
 
 
 @pytest.mark.parametrize("mode", [[], ["--check"]], ids=["record", "check"])

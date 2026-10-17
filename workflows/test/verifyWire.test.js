@@ -60,3 +60,10 @@ for (const c of loadCases('review_text_checksum')) {
     assert.deepEqual({ normalized, checksum: fnv1a32(normalized) }, c.expected);
   });
 }
+
+test('normalizeReviewText is linear on long space and newline runs', () => {
+  const text = `${' '.repeat(100_000)}x\n${'\n'.repeat(100_000)}`;
+  const started = Date.now();
+  assert.equal(normalizeReviewText(text), `${' '.repeat(100_000)}x`);
+  assert.ok(Date.now() - started < 1000);
+});
