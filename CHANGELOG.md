@@ -2,6 +2,39 @@
 
 <!-- version list -->
 
+## v3.42.41 (2026-10-17)
+
+### Bug Fixes
+
+- Count only space and tab as blank and ignore leading field blanks
+  ([#520](https://github.com/liatrio-labs/claude-code-gauntlet/pull/520),
+  [`265c972`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/265c97259c6ec3c4dabde31d60382136c508034d))
+
+- Gate outbound escape relaxation on a structural rule
+  ([#520](https://github.com/liatrio-labs/claude-code-gauntlet/pull/520),
+  [`265c972`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/265c97259c6ec3c4dabde31d60382136c508034d))
+
+- Mask imports and relax outbound escapes by CommonMark block structure
+  ([#520](https://github.com/liatrio-labs/claude-code-gauntlet/pull/520),
+  [`265c972`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/265c97259c6ec3c4dabde31d60382136c508034d))
+
+- Relax outbound escapes only where both field-start readings agree
+  ([#520](https://github.com/liatrio-labs/claude-code-gauntlet/pull/520),
+  [`265c972`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/265c97259c6ec3c4dabde31d60382136c508034d))
+
+### Refactoring
+
+- Hold HTML-block rules and fence runs in frozen records
+  ([#520](https://github.com/liatrio-labs/claude-code-gauntlet/pull/520),
+  [`265c972`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/265c97259c6ec3c4dabde31d60382136c508034d))
+
+### Testing
+
+- Pin trusted-fence code lines as verbatim under the inert gate
+  ([#520](https://github.com/liatrio-labs/claude-code-gauntlet/pull/520),
+  [`265c972`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/265c97259c6ec3c4dabde31d60382136c508034d))
+
+
 ## v3.42.40 (2026-10-17)
 
 ### Bug Fixes
