@@ -1730,6 +1730,11 @@ def test_marker_delivery(kind, posting):
 
 
 INPUT_REFUSALS = [
+    (review(web_origin=None), "web_origin must be a string"),
+    (
+        review(web_origin="https://git.example.com/path"),
+        "web_origin: web_origin must be an http(s) origin without a path, query or fragment",
+    ),
     (7, "Findings JSON must be an object or an array."),
     ({"repo": "r"}, "Missing required field in findings JSON: 'owner'"),
     (review(owner=7), "owner must be a string"),
@@ -1863,3 +1868,24 @@ def test_gitlab_identity_failure_warns_and_posts_without_dedup(
     )
     warning = capsys.readouterr().err
     assert failure in warning and "posting them" in warning
+
+
+@pytest.mark.parametrize(
+    "origin, arguments, host",
+    [
+        (None, (), None),
+        ("https://Git.Example.COM:8443/", (), "git.example.com"),
+        (
+            "invalid",
+            ("--web-origin", "http://Override.Example:8080"),
+            "override.example",
+        ),
+    ],
+)
+def test_posting_origin(origin, arguments, host, posting):
+    data = review()
+    if origin is not None:
+        data["web_origin"] = origin
+    run = posting(data, arguments=arguments)
+    assert (run.code, run.err) == (0, "")
+    assert run.forge_factory_calls == (("github", host),)

@@ -58,13 +58,14 @@ def _legacy_group_body(
 
 @pytest.mark.parametrize("forge_factory", [detect_prior_review], indirect=True)
 @pytest.mark.parametrize(
-    "platform, bodies, error, expected_sha",
+    "platform, bodies, error, expected_sha, pr_url",
     [
         pytest.param(
             "github",
             [review_marker.build_footer(3, FULL_SHA)],
             None,
             FULL_SHA,
+            None,
             id="github-review",
         ),
         pytest.param(
@@ -72,6 +73,7 @@ def _legacy_group_body(
             [review_marker.build_marker(FULL_SHA, 1)],
             None,
             FULL_SHA,
+            None,
             id="gitlab-note",
         ),
         pytest.param(
@@ -79,6 +81,7 @@ def _legacy_group_body(
             [],
             "github reviews: fetch failed (exit 1): gh: fetch failed",
             None,
+            "enterprise",
             id="github-failure",
         ),
         pytest.param(
@@ -89,6 +92,7 @@ def _legacy_group_body(
             ],
             None,
             "d" * 40,
+            None,
             id="newest-entry",
         ),
     ],
@@ -98,6 +102,7 @@ def test_network_scan(
     bodies: list[str],
     error: str | None,
     expected_sha: str | None,
+    pr_url: str | None,
     forge_factory: FakeForgeFactory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -116,9 +121,16 @@ def test_network_scan(
         FakeForge(platform, entries=[JsonFetch(payload, error)])
     )
     monkeypatch.setattr(proc, "run", _fake_git_run())
-    out, code = _run_main(
-        ["--platform", platform, "--owner", "o", "--repo", "r", "--number", "5"]
-    )
+    target_flags = ["--owner", "o", "--repo", "r", "--number", "5"]
+    owner = "o"
+    if pr_url:
+        owner = "group/sub" if platform == "gitlab" else "o"
+        surface = "-/merge_requests" if platform == "gitlab" else "pull"
+        target_flags = [
+            "--pr-url",
+            f"https://Git.Example.COM:8443/{owner}/r/{surface}/5",
+        ]
+    out, code = _run_main(["--platform", platform, *target_flags])
     result: dict[str, object] = json.loads(out)
     source = "review" if platform == "github" else "note"
     assert code == 0
@@ -129,9 +141,9 @@ def test_network_scan(
     assert result["scanned"] == {source: len(bodies)}
     assert result["errors"] == ([error] if error else [])
     assert result["incremental_safe"] is (expected_sha is not None)
-    assert forge_factory.calls == [platform]
+    assert forge_factory.calls == [(platform, "git.example.com" if pr_url else None)]
     assert fake.calls == [
-        ForgeCall("review_entries", ReviewTarget("o", "r", "5")),
+        ForgeCall("review_entries", ReviewTarget(owner, "r", 5 if pr_url else "5")),
         ForgeCall("poster"),
     ]
 
@@ -263,7 +275,7 @@ def test_detector_origin_receipt(
     result: dict[str, object] = json.loads(out)
     assert code == 0
     assert result["previously_reviewed"] is False
-    assert forge_factory.calls == ["github"]
+    assert forge_factory.calls == [("github", None)]
     assert calls == [
         (
             ["git", "remote", "get-url", "origin"],
@@ -695,7 +707,7 @@ def test_network_identity_boundary(
             else Poster("poster", None)
         ],
     )
-    monkeypatch.setattr(detect_prior_review, "make_forge", lambda _: fake)
+    monkeypatch.setattr(detect_prior_review, "make_forge", lambda _, host=None: fake)
     monkeypatch.setattr(proc, "run", _fake_git_run())
     out, code = _run_main(
         ["--platform", platform, "--owner", "o", "--repo", "r", "--number", "5"]
@@ -767,3 +779,41 @@ def test_offline_detector_without_git_degrades_with_receipt(
     errors = cast("list[str]", result["errors"])
     assert "could not resolve the head commit" in errors[0]
     assert ("timed out after 10s" if timeout else "missing git") in errors[1]
+
+
+@pytest.mark.parametrize("forge_factory", [detect_prior_review], indirect=True)
+@pytest.mark.parametrize(
+    "flags, error, fetched",
+    [
+        (
+            ["--pr-url", "invalid"],
+            "--pr-url: URL must use http(s) and include a host",
+            False,
+        ),
+        (
+            ["--pr-url", "https://git.example.com/o/r/pull/5", "--owner", "o"],
+            "usage: --pr-url cannot be combined with --owner, --repo or --number",
+            False,
+        ),
+        (
+            ["--pr-url", ""],
+            "usage: --number is required unless --bodies-file is given",
+            False,
+        ),
+        (["--pr-url", "", "--number", "5"], None, True),
+    ],
+)
+def test_pr_url_degradation(flags, error, fetched, forge_factory, monkeypatch):
+    fake = forge_factory.configure(FakeForge())
+    monkeypatch.setattr(proc, "run", _fake_git_run())
+    monkeypatch.setattr(detect_prior_review, "remote_slug", lambda: ("o", "r"))
+    out, code = _run_main(["--platform", "github", *flags])
+    result = json.loads(out)
+    assert code == 0
+    assert result["errors"] == ([error] if error else [])
+    assert forge_factory.calls == ([] if error and flags[1] else [("github", None)])
+    assert fake.calls == (
+        [ForgeCall("review_entries", ReviewTarget("o", "r", "5")), ForgeCall("poster")]
+        if fetched
+        else []
+    )

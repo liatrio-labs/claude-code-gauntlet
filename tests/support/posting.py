@@ -166,7 +166,7 @@ class PostingRun:
     raw: bytes | None
     requests: tuple[PostRequest, ...]
     fake: FakeForge | None
-    forge_factory_calls: tuple[Platform, ...]
+    forge_factory_calls: tuple[tuple[Platform, str | None], ...]
     head_calls: tuple[tuple[str, ...], ...]
 
 

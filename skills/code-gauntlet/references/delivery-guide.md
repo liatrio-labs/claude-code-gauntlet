@@ -88,8 +88,9 @@ python3 "{plugin_root}/scripts/post_review.py" "<findings_json_path>" [--report 
 ```
 
 For a legacy bare findings array, pass `--report PATH` together with `--owner`, `--repo`,
-`--pr-number`, `--platform`, and `--sha`. The script derives `review_body` from the report Summary
-and forms the wrapper in code. Wrapper inputs already carrying `review_body` use that body as is.
+`--pr-number`, `--platform`, `--web-origin`, and `--sha`. The script derives `review_body` from the
+report Summary and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
+that body as is.
 
 **Findings JSON schema:**
 
@@ -280,10 +281,11 @@ the trigger-based rule.
 - `repo` — repository name
 - `pr_number` — GitHub PR number or GitLab MR IID
 - `platform` — optional; "github" or "gitlab". If omitted, the poster recognizes validated `github.com`/`gitlab.com` hosts and their dot subdomains from git remote. Other hosts must set `platform` explicitly.
+- `web_origin` — optional; the PR forge's http(s) origin (scheme, host and optional port, no path). On GitHub it selects the `gh` host; when omitted, `gh` uses its default host.
 - `sha` — optional; the full commit the review actually ran against. `post_review.py` stamps this into the prior-review marker, falling back to `git rev-parse HEAD` when absent. Always set it (the workflow's `prIdentity` wrapper already carries it) — if HEAD moved between the review and the post, the fallback records a commit no review examined, and the next run's incremental diff is scoped against it.
 
 A wrong type on the fields below is refused before any forge access; other fields are not type-checked.
-`owner`/`repo`: strings; `pr_number`: non-bool integer or string; `platform`: string or null.
+`owner`/`repo`: strings; `pr_number`: non-bool integer or string; `platform`: string or null; `web_origin`: string when present.
 `findings`: array of objects; `file`: string when present; `line`/`end_line`: non-bool integer or null; `consolidation_key`: string or null.
 
 **Example workflow:**

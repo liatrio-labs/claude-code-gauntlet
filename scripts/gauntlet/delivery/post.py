@@ -27,6 +27,7 @@ from gauntlet.forge import (
     PostRequest,
     ReviewTarget,
     detect_platform,
+    gh_hostname,
     github_review_request,
     gitlab_discussion_request,
     gitlab_note_request,
@@ -994,11 +995,12 @@ def _parser() -> Parser:
         "--pr-number", type=int, help="Override the wrapper PR/MR number."
     )
     parser.add_argument("--platform", help="Override the wrapper platform field.")
+    parser.add_argument("--web-origin", help="Override the wrapper web_origin field.")
     parser.add_argument("--sha", help="Override the wrapper reviewed commit SHA.")
     return parser
 
 
-_INPUT_FIELDS = ("owner", "repo", "pr_number", "platform", "sha")
+_INPUT_FIELDS = ("owner", "repo", "pr_number", "platform", "sha", "web_origin")
 
 
 def _execute(args: argparse.Namespace) -> int:
@@ -1057,7 +1059,10 @@ def _execute(args: argparse.Namespace) -> int:
 
     delivery_platform: Platform = "github" if platform == "github" else "gitlab"
 
-    forge = make_forge(delivery_platform)
+    web_origin = data.get("web_origin")
+    forge = make_forge(
+        delivery_platform, gh_hostname(web_origin) if web_origin else None
+    )
     facts = fetch_diff_facts(_target(data), forge=forge)
 
     if isinstance(forge, GitLab):

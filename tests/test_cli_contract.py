@@ -112,7 +112,7 @@ def test_poster_mode_stdout(
     )
     assert result.returncode == 0
     assert result.stderr == b""
-    assert forge_factory.calls == [platform]
+    assert forge_factory.calls == [(platform, None)]
     writes = [call for call in fake.calls if call.method == "submit"]
     if dry_run:
         assert writes == []
@@ -352,7 +352,9 @@ def test_detector_real_child_degradation(tmp_path, invoke, monkeypatch):
         return real_run([sys.executable, "-c", child], **kwargs)
 
     monkeypatch.setattr(proc, "run", child_run)
-    monkeypatch.setattr(prior_review, "make_forge", lambda platform: GitHub())
+    monkeypatch.setattr(
+        prior_review, "make_forge", lambda platform, host=None: GitHub(host=host)
+    )
     result = invoke(
         "detect_prior_review",
         ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"],
@@ -440,7 +442,7 @@ SUCCESS = {
     "collect_project_rules": ({}, "--repo-root {dir} --out {dir}/rules.md"),
     "detect_prior_review": (
         {"bodies.json": "[]"},
-        f"--platform github --bodies-file {{dir}}/bodies.json --head-sha {FULL}",
+        f"--platform github --pr-url https://git.example.com/o/r/pull/5 --bodies-file {{dir}}/bodies.json --head-sha {FULL}",
     ),
     "diff_numstat": ({"change.patch": PATCH}, "{dir}/change.patch"),
     "emit_style_context": ({}, ""),
@@ -451,8 +453,12 @@ SUCCESS = {
         f"--files {{dir}}/files.json --since {FULL}",
     ),
     "post_review": (
-        {"post.json": json.dumps({**POST, "findings": []})},
-        "{dir}/post.json --dry-run",
+        {
+            "post.json": json.dumps(
+                {**POST, "web_origin": "https://git.example.com", "findings": []}
+            )
+        },
+        "{dir}/post.json --web-origin https://override.example --dry-run",
     ),
     "render_fix_tasks": ({"p.json": "[]"}, "{dir}/p.json --repo-root {dir}"),
     "report_patches": (
@@ -784,6 +790,8 @@ def rows():
             "resolve_pr_identity",
             "check_eligibility",
             "list_pr_files",
+            "detect_prior_review",
+            "post_review",
         )
     )
     yield "await_workflow", "pending"
@@ -959,7 +967,7 @@ def test_poster_auto_detection(
         assert result.stdout.startswith(
             f"Detected platform: {platform} (from git remote: {host})\n".encode()
         )
-        assert forge_factory.calls == [platform]
+        assert forge_factory.calls == [(platform, None)]
         assert json.loads(artifact.read_text(encoding="utf-8"))["platform"] == platform
         assert all(call.method != "submit" for call in fake.calls)
         assert len([call for call in fake.calls if call.method == "diff"]) == 1
@@ -1028,7 +1036,7 @@ def test_explicit_platform(
         tmp_path,
     )
     assert len(origins) == origin_reads
-    assert forge_factory.calls == ([selected] if selected else [])
+    assert forge_factory.calls == ([(selected, None)] if selected else [])
     if selected:
         assert result.returncode == 0
         assert result.stderr == b""

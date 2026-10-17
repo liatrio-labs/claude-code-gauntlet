@@ -506,6 +506,7 @@ def _parser() -> Parser:
         "--repo",
         help="Repository name. Defaults to the 'origin' remote.",
     )
+    parser.add_argument("--pr-url", help="PR/MR URL, including its forge host.")
     parser.add_argument("--number", help="PR number / MR IID.")
     parser.add_argument(
         "--head-sha",
@@ -521,9 +522,32 @@ def _parser() -> Parser:
     return parser
 
 
+def _resolve_pr_url(args: argparse.Namespace) -> tuple[str | None, str | None]:
+    if not args.pr_url:
+        return None, None
+    if any(value is not None for value in (args.owner, args.repo, args.number)):
+        return (
+            None,
+            "usage: --pr-url cannot be combined with --owner, --repo or --number",
+        )
+    try:
+        parsed = forge_api.parse_pr_url(args.platform, args.pr_url)
+    except ValueError as exc:
+        return None, f"--pr-url: {exc}"
+
+    args.owner, args.repo, args.number = parsed.owner, parsed.repo, parsed.number
+    return forge_api.gh_hostname(parsed.web_origin), None
+
+
 def _handle(args: argparse.Namespace) -> tuple[PriorReviewWire, int]:
-    forge = make_forge(args.platform)
-    entries, errors, scanned, ignored = gather_entries(args, forge=forge)
+    host, error = _resolve_pr_url(args)
+    entries: list[ReviewEntryWire]
+    scanned: dict[str, int]
+    if error:
+        entries, errors, scanned, ignored = [], [error], {}, 0
+    else:
+        forge = make_forge(args.platform, host)
+        entries, errors, scanned, ignored = gather_entries(args, forge=forge)
 
     signal = select_latest(entries)
 

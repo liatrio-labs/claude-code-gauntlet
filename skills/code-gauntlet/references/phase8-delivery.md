@@ -122,7 +122,7 @@ headless run reaches this step only when `configResult.resolved.delivery` includ
 follows `configResult.resolved.post_mode`.)
 
 When `delivery.prIdentity` is set in the args waist, the persisted `artifactPaths.postReview` file
-already is the post_review-ready wrapper (`{ owner, repo, pr_number, sha, platform, review_body, findings }`).
+already is the post_review-ready wrapper (`{ owner, repo, pr_number, sha, platform, web_origin, review_body, findings }`).
 Pass that file to `post_review.py` unchanged. Its `review_body` is exactly the report's outcome-first Summary section body: counts, selected findings index, and any remainder. `post_review.py` bounds the complete posted comment with a per-platform UTF-8 byte
 budget: the header and footer are reserved first; the summary folds only when it cannot fit beside
 the skipped-section frame and footer; skipped groups appear whole or not at all in list order,
@@ -135,8 +135,10 @@ identity flags. The script derives the Summary body from the report and forms th
 ```bash
 python3 "{plugin_root}/scripts/post_review.py" "{artifactPaths.postReview}" \
   --report "{artifactPaths.report}" --owner "{owner}" --repo "{repo}" \
-  --pr-number "{pr_number}" --platform "{platform}" --sha "{full_head_sha}"
+  --pr-number "{pr_number}" --platform "{platform}" --web-origin "{web_origin}" --sha "{full_head_sha}"
 ```
+
+The `{web_origin}` placeholder comes from `delivery.prIdentity.web_origin`.
 
 > Headless carve-out (`configResult.resolved.post_mode == "dry-run"`): append `--dry-run` to the `post_review.py` invocation so it captures the payload instead of posting. `post_review.py` self-enforces this regardless — it reads `CODE_GAUNTLET_POST_MODE` directly and treats `dry-run` as `--dry-run` even when the flag is omitted (belt-and-braces) — but pass the flag explicitly so the dry-run intent is visible in the command.
 

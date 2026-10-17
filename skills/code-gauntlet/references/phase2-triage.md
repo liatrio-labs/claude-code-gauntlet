@@ -88,9 +88,9 @@ Now that the working tree reflects the review target, compute the short SHA and 
 
 **2. Output-dir ignore** — owned by `scripts/ensure_output_dir.py`, invoked in Phase 1. Phase 2 does not re-establish ignore and has no `gitignore` composite section. Never append to the repo's tracked `.gitignore`.
 
-**3. Previously-reviewed gate** (`owner_repo` + `prior_review` sections; PR/MR targets only — skip for `local`):
+**3. Previously-reviewed gate** (`pr_url` + `prior_review` sections; PR/MR targets only — skip for `local`):
 
-Runs the gate documented in `phase1-preflight.md` → "Previously-Reviewed Gate", which resolves whether this PR/MR was already reviewed and whether the incremental path is safe. `{owner}`/`{repo}` are resolved first from the PR's **own URL** — never the `origin` remote, which is the fork in a fork clone (`gh repo view` would resolve the current clone instead). GitLab: `glab mr view {pr_number} --output json | jq -r '.web_url'`, then take the path segments before `/-/merge_requests/`.
+Runs the gate documented in `phase1-preflight.md` → "Previously-Reviewed Gate", which resolves whether this PR/MR was already reviewed and whether the incremental path is safe. Pass the PR's **own URL** to `--pr-url` so the detector uses the base repository and its host. GitLab: `PR_URL=$(glab mr view {pr_number} --output json | jq -r .web_url)`.
 
 This runs **here, not in Phase 1**: the gate compares the last-reviewed commit against the PR head and counts the commits between them, so it needs the working tree at the review target and the PR's objects fetched. Before checkout it would measure whatever branch the session started on. By this point the checkout section has already switched the working tree to the PR; a Skip answer below stops the review but does not revert the checkout — the tree stays checked out on the PR branch.
 
