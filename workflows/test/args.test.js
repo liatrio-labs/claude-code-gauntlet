@@ -419,6 +419,10 @@ const RESOLVE_ROWS = [
 const PROOF_TEXT = '```yaml code-gauntlet\nconfidence_threshold: 90\nignore:\n  - one  two.js\n```';
 const TEXT_MISMATCH = 'review_md: api/REVIEW.md text differs from the collected file (checksum mismatch); its settings were applied as stamped';
 const SET_MISMATCH = 'review_md: stamped entries differ from the collected list (omitted, extra or reordered REVIEW.md); settings were applied as stamped';
+RESOLVE_ROWS.push({ name: 'whole array omitted', input: {
+  reviewMdSetChecksum: reviewMdArgs([{ path: 'api/REVIEW.md', text: '' }]).reviewMdSetChecksum,
+}, expected: { reviewConfig: {}, exclusionPatterns: [], reviewConfigSource: 'none', exclusionsSource: 'none',
+  reviewMdEntryCount: 0, gaps: [SET_MISMATCH] } });
 for (const row of [
   { name: 'proven', text: PROOF_TEXT },
   { name: 'CRLF equal', text: PROOF_TEXT.replaceAll('\n', '\r\n') },

@@ -79,7 +79,14 @@ def _review_text_checksum(inp):
     return {"normalized": normalized, "checksum": fnv1a32(normalized)}
 
 
+def _review_md_set_checksum(inp):
+    from gauntlet.project_rules import review_md_set_checksum
+
+    return {"checksum": review_md_set_checksum(inp["entries"])}
+
+
 RECORDERS = {
+    "review_md_set_checksum": _review_md_set_checksum,
     "review_text_checksum": _review_text_checksum,
     "verify_deltas": _verify_deltas,
     "slice_input_proof": _slice_input_proof,

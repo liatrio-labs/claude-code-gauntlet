@@ -81,21 +81,15 @@ DEFAULT_MAX_FILES = 512
 
 # Settings still need a proof when prose budgets exclude a file.
 MAX_REVIEW_DIGEST_BYTES = 1024 * 1024
+MAX_REVIEW_DIGEST_TOTAL_BYTES = 8 * 1024 * 1024
 
 
-def _review_checksum(real: str, size: int, text: str | None) -> str | None:
-    if size > MAX_REVIEW_DIGEST_BYTES:
-        return None
-    try:
-        if text is None:
-            with open(real, "rb") as handle:
-                raw = handle.read(MAX_REVIEW_DIGEST_BYTES + 1)
-            if len(raw) > MAX_REVIEW_DIGEST_BYTES:
-                return None
-            text = raw.decode("utf-8", errors="replace")
-        return fnv1a32(normalize_review_text(text))
-    except (OSError, UnicodeError):
-        return None
+def review_md_set_checksum(entries: Sequence[ReviewMdEntry]) -> str:
+    return fnv1a32(
+        "\n".join(
+            entry["path"] + "\0" + (entry["checksum"] or "null") for entry in entries
+        )
+    )
 
 
 # A mid-word at-sign is an email address or annotation, not an import.
@@ -222,6 +216,7 @@ class RuleCollector:
         self.included: set[str] = set()
         self.seen_content: set[str] = set()
         self.walked = 0
+        self.review_digest_bytes = 0
 
     def _skip(self, path: str, reason: SkipReason) -> ProjectRuleSkip:
         entry: ProjectRuleSkip = {"path": self._display(path), "reason": reason}
@@ -285,6 +280,26 @@ class RuleCollector:
             return None, "missing"
         return text, None
 
+    def _review_checksum(self, real: str, size: int, text: str | None) -> str | None:
+        if size > MAX_REVIEW_DIGEST_BYTES:
+            return None
+        try:
+            if text is None:
+                remaining = MAX_REVIEW_DIGEST_TOTAL_BYTES - self.review_digest_bytes
+                if self.walked >= self.max_files or remaining <= 0:
+                    return None
+                self.walked += 1
+                with open(real, "rb") as handle:
+                    raw = handle.read(min(MAX_REVIEW_DIGEST_BYTES + 1, remaining))
+                self.review_digest_bytes += len(raw)
+                # A full budget-sized read cannot prove EOF without exceeding the budget.
+                if len(raw) > MAX_REVIEW_DIGEST_BYTES or len(raw) == remaining:
+                    return None
+                text = raw.decode("utf-8", errors="replace")
+            return fnv1a32(normalize_review_text(text))
+        except (OSError, UnicodeError):
+            return None
+
     def visit_review(self, candidate: str) -> None:
         path = os.path.relpath(candidate, self.repo_root).replace(os.sep, "/")
         real = os.path.realpath(candidate)
@@ -308,7 +323,7 @@ class RuleCollector:
             "bytes": st.st_size,
             "modified_in_diff": self._is_modified(real),
             "checksum": (
-                _review_checksum(real, st.st_size, text)
+                self._review_checksum(real, st.st_size, text)
                 if text is not None or reason in ("too_large", "file_cap_reached")
                 else None
             ),
@@ -570,11 +585,8 @@ def _receipt(
         "ok": ok,
         "sources": _sources_without_text(collector.sources) if collector else [],
         "review_md": list(collector.review_md) if collector else [],
-        "review_md_checksum": fnv1a32(
-            "\n".join(
-                entry["path"] + "\0" + (entry["checksum"] or "null")
-                for entry in (collector.review_md if collector else [])
-            )
+        "review_md_checksum": review_md_set_checksum(
+            collector.review_md if collector else []
         ),
         "review_md_dirs": list(collector.review_md_dirs) if collector else [],
         "skipped": collector.skipped if collector else [],

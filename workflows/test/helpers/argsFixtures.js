@@ -1,4 +1,5 @@
 import { fnv1a32, normalizeReviewText } from '../../src/wire.js';
+import { reviewMdSetChecksum } from '../../src/args.js';
 import { KNOB_REGISTRY } from '../../src/knobs.js';
 
 export function reviewMdArgs(entries) {
@@ -6,7 +7,7 @@ export function reviewMdArgs(entries) {
     ...entry, checksum: Object.hasOwn(entry, 'checksum') ? entry.checksum : fnv1a32(normalizeReviewText(entry.text)),
   }));
   return { reviewMd,
-    reviewMdSetChecksum: fnv1a32(reviewMd.map((entry) => `${entry.path}\0${entry.checksum || 'null'}`).join('\n')) };
+    reviewMdSetChecksum: reviewMdSetChecksum(reviewMd) };
 }
 
 // Wired callers retain their dispatch defaults while focused rows use the smaller waist below.

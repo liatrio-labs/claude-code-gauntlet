@@ -70,6 +70,16 @@ def test_review_text_checksum_parity(case_dir):
     assert {"normalized": normalized, "checksum": fnv1a32(normalized)} == expected
 
 
+@pytest.mark.parametrize(
+    "case_dir", _case_dirs("review_md_set_checksum"), ids=lambda path: path.name
+)
+def test_review_md_set_checksum_parity(case_dir):
+    from gauntlet.project_rules import review_md_set_checksum
+
+    inp, expected = _load(case_dir)
+    assert {"checksum": review_md_set_checksum(inp["entries"])} == expected
+
+
 def test_review_text_normalization_is_linear_on_long_space_runs():
     from gauntlet.jsjson import normalize_review_text
 

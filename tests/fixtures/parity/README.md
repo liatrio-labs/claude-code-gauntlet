@@ -10,3 +10,5 @@ recorded by `workflows/test/tools/record_parity.py`. The Python recorder uses
 the JavaScript encoder for `slice_inline`.
 
 `review_text_checksum` pins REVIEW.md normalization and UTF-16 hashing in both runtimes, recorded by the Python recorder.
+
+`review_md_set_checksum` pins ordered REVIEW.md list hashing, including null checksums and the empty list, in both runtimes, recorded by the Python recorder.

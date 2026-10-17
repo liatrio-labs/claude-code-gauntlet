@@ -379,6 +379,50 @@ def test_over_cap_review_has_a_bounded_digest(
     )
 
 
+@pytest.mark.parametrize(
+    "max_files, proven, read_sizes", [(3, 1, [3]), (512, 2, [3, 3, 2])]
+)
+def test_fallback_digests_share_read_and_byte_budgets(
+    max_files, proven, read_sizes, collect_rules, write_rule, monkeypatch
+):
+    monkeypatch.setattr(collect_project_rules, "MAX_REVIEW_DIGEST_TOTAL_BYTES", 8)
+    for directory in ["a", "b", "c", "d"]:
+        write_rule(f"{directory}/REVIEW.md", "xxx")
+    changed = write_rule("../changed.json", json.dumps([f"{d}/x" for d in "abcd"]))
+    original = builtins.open
+    reads = []
+
+    @contextmanager
+    def digest_open(path, mode="r", *args, **kwargs):
+        with original(path, mode, *args, **kwargs) as handle:
+            if str(path).endswith("REVIEW.md") and mode == "rb":
+
+                class Reader:
+                    def read(self, bound):
+                        raw = handle.read(bound)
+                        reads.append(len(raw))
+                        return raw
+
+                yield Reader()
+            else:
+                yield handle
+
+    monkeypatch.setattr(builtins, "open", digest_open)
+    code, receipt, _ = collect_rules(
+        "--changed-files",
+        changed,
+        "--max-file-bytes",
+        "1",
+        "--max-files",
+        str(max_files),
+    )
+    assert code == 0
+    assert [entry["checksum"] for entry in receipt["review_md"]] == (
+        ["fnv1a32:0xcca4340f"] * proven + [None] * (4 - proven)
+    )
+    assert reads == read_sizes
+
+
 def test_total_cap_is_shared_and_discovery_survives_it(collect_rules, write_rule):
     write_rule("REVIEW.md", "a" * 4)
     write_rule("api/REVIEW.md", "b" * 4)
@@ -408,7 +452,9 @@ def test_total_cap_is_shared_and_discovery_survives_it(collect_rules, write_rule
     ]
 
 
-def test_file_cap_bounds_review_reads_but_not_the_inventory(collect_rules, write_rule):
+def test_file_cap_bounds_review_reads_but_not_the_inventory(
+    collect_rules, write_rule, opened_paths
+):
     write_rule("REVIEW.md", "A\n")
     write_rule("api/REVIEW.md", "B\n")
     changed = write_rule("../changed.json", json.dumps(["api/x.py"]))
@@ -426,10 +472,11 @@ def test_file_cap_bounds_review_reads_but_not_the_inventory(collect_rules, write
             "path": "api/REVIEW.md",
             "bytes": 2,
             "modified_in_diff": False,
-            "checksum": "fnv1a32:0xc70bfb85",
+            "checksum": None,
         },
     ]
-    assert receipt["review_md_checksum"] == "fnv1a32:0x94a9005e"
+    assert receipt["review_md_checksum"] == "fnv1a32:0xa2ddac79"
+    assert not any(path.endswith("api/REVIEW.md") for path in opened_paths)
     assert 'path="REVIEW.md"' in body
     assert 'path="api/REVIEW.md"' not in body
     assert {"path": "api/REVIEW.md", "reason": "file_cap_reached"} in receipt["skipped"]

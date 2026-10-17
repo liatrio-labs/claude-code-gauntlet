@@ -5104,6 +5104,9 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
   }
   return { ok: errors.length === 0, errors };
 }
+function reviewMdSetChecksum(entries) {
+  return fnv1a32(entries.map((entry) => `${entry.path}\0${entry.checksum || 'null'}`).join('\n'));
+}
 function resolveReviewConfig(A) {
   const a = A || {};
   const reviewConfigSource = a.reviewMd !== undefined ? 'reviewMd'
@@ -5123,14 +5126,14 @@ function resolveReviewConfig(A) {
       }
       return { ...entry, text };
     });
-    const setChecksum = fnv1a32(entries.map((entry) => `${entry.path}\0${entry.checksum || 'null'}`).join('\n'));
-    if (setChecksum !== a.reviewMdSetChecksum) {
-      gaps.push('review_md: stamped entries differ from the collected list (omitted, extra or reordered REVIEW.md); settings were applied as stamped');
-    }
     reviewConfig = buildReviewConfig(entries);
     reviewMdEntryCount = a.reviewMd.length;
   } else {
     reviewConfig = a.reviewConfig || {};
+  }
+  if ((a.reviewMd !== undefined || a.reviewMdSetChecksum !== undefined) &&
+      reviewMdSetChecksum(a.reviewMd || []) !== a.reviewMdSetChecksum) {
+    gaps.push('review_md: stamped entries differ from the collected list (omitted, extra or reordered REVIEW.md); settings were applied as stamped');
   }
   const exclusionPatterns = a.exclusionsText !== undefined ? loadExclusions(a.exclusionsText)
     : (a.exclusionPatterns || []);

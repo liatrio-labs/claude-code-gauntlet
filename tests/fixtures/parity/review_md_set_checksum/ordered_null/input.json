@@ -1,0 +1,16 @@
+{
+  "entries": [
+    {
+      "checksum": "fnv1a32:0x12345678",
+      "path": "z/caf\u00e9\ud83d\ude00/REVIEW.md"
+    },
+    {
+      "checksum": null,
+      "path": "a/REVIEW.md"
+    },
+    {
+      "checksum": "fnv1a32:0x811c9dc5",
+      "path": "REVIEW.md"
+    }
+  ]
+}
