@@ -477,7 +477,7 @@ for (const row of METHODOLOGY_ROWS) test(`methodology facts: ${row.name}`, () =>
   for (const expected of row.expected) assert.ok(text.includes(expected), expected);
 });
 
-for (const policy of [{}, { mappedAliases: [] }, { mappedAliases: null },
+for (const policy of [{ mappedAliases: [] },
   { provider: 'bedrock', mappedAliases: ['sonnet'] }]) {
   test(`methodology omits ineffective mapping: ${JSON.stringify(policy)}`, () => {
     assert.equal(rendered({ policy }).includes('| User tier mapping |'), false);

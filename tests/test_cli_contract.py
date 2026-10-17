@@ -890,7 +890,9 @@ def test_entry_runs_from_foreign_cwd(name, tmp_path):
     )
     env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     if name == "capture_policy_env":
-        env = {key: value for key, value in env.items() if not _captured_policy_key(key)}
+        env = {
+            key: value for key, value in env.items() if not _captured_policy_key(key)
+        }
     env.update(
         PYTHONSAFEPATH="1",
         PYTHONIOENCODING="latin-1",

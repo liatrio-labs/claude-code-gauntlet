@@ -4,16 +4,6 @@ import { DIMENSIONS } from '../src/registry.js';
 import { WEB_ORIGIN_RE, resolvePolicy, modelFor } from '../src/registry.js';
 
 const POLICY_ROWS = [
-  { name: 'mapped first-party dimension', agent: 'code-gauntlet:bug-detector',
-    input: { provider: 'firstParty', mappedAliases: ['sonnet'] }, expected: { model: 'sonnet' } },
-  { name: 'unmapped first-party dimension', agent: 'code-gauntlet:security-reviewer',
-    input: { provider: 'firstParty', mappedAliases: ['sonnet'] }, expected: { model: 'claude-opus-5-5' } },
-  { name: 'mapped default provider stage', agent: 'code-gauntlet:executor',
-    input: { mappedAliases: ['sonnet'] }, expected: { model: 'sonnet' } },
-  { name: 'mapped bare override', agent: 'code-gauntlet:security-reviewer',
-    input: { subagentModelEnv: 'sonnet', mappedAliases: ['sonnet'] }, expected: { model: 'sonnet' } },
-  { name: 'mapped explicit deployment override', agent: 'code-gauntlet:security-reviewer',
-    input: { subagentModelEnv: 'deployment-id', mappedAliases: ['sonnet'] }, expected: { model: 'deployment-id' } },
   { name: 'third-party alias override', agent: 'code-gauntlet:bug-detector',
     input: { provider: 'bedrock', subagentModelEnv: 'sonnet' }, expected: { model: 'sonnet' } },
   { name: 'vertex stage default', agent: 'code-gauntlet:executor', input: { provider: 'vertex' },

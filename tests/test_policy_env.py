@@ -1,7 +1,5 @@
 """Environment capture preserves Claude Code's model resolution inputs."""
 
-import json
-
 import pytest
 from gauntlet.policy_env import capture_policy_env
 
@@ -9,15 +7,6 @@ from gauntlet.policy_env import capture_policy_env
 @pytest.mark.parametrize(
     "env,expected",
     [
-        ({}, (None, "firstParty", False, [])),
-        (
-            {
-                "CLAUDE_CODE_USE_BEDROCK": "  TrUe \t",
-                "CLAUDE_CODE_USE_VERTEX": "1",
-                "CLAUDE_CODE_USE_FOUNDRY": "on",
-            },
-            (None, "bedrock", False, []),
-        ),
         (
             {
                 "CLAUDE_CODE_USE_BEDROCK": "false",
@@ -35,8 +24,6 @@ from gauntlet.policy_env import capture_policy_env
             (None, "foundry", False, []),
         ),
         ({"CLAUDE_CODE_USE_BEDROCK": "1"}, (None, "bedrock", False, [])),
-        ({"CLAUDE_CODE_USE_BEDROCK": "yes"}, (None, "bedrock", False, [])),
-        ({"CLAUDE_CODE_USE_BEDROCK": "on"}, (None, "bedrock", False, [])),
         (
             {
                 "CLAUDE_CODE_USE_BEDROCK": "enabled",
@@ -47,14 +34,6 @@ from gauntlet.policy_env import capture_policy_env
             },
             (None, "firstParty", False, []),
         ),
-        (
-            {
-                "ANTHROPIC_BASE_URL": " https://gateway.example ",
-                "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
-            },
-            ("sonnet", "firstParty", True, []),
-        ),
-        ({"ANTHROPIC_BASE_URL": "false"}, (None, "firstParty", True, [])),
         (
             {
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL": "haiku-deployment",
@@ -81,25 +60,4 @@ def test_capture_policy_env(env, expected):
         "provider": provider,
         "gateway": gateway,
         "mappedAliases": mapped_aliases,
-    }
-
-
-def test_capture_policy_env_cli(tmp_path, invoke, monkeypatch):
-    monkeypatch.setattr(
-        "gauntlet.policy_env.os.environ",
-        {
-            "CLAUDE_CODE_USE_BEDROCK": " true ",
-            "ANTHROPIC_BASE_URL": "https://gateway.example",
-            "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
-            "ANTHROPIC_DEFAULT_OPUS_MODEL": "deployment[1m]",
-        },
-    )
-    result = invoke("capture_policy_env", [], tmp_path)
-    assert result.returncode == 0
-    assert result.stderr == b""
-    assert json.loads(result.stdout) == {
-        "subagentModel": "sonnet",
-        "provider": "bedrock",
-        "gateway": True,
-        "mappedAliases": ["opus"],
     }

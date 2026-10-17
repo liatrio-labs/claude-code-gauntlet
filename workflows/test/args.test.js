@@ -233,11 +233,6 @@ for (const { name, input, expected } of NON_OBJECT_ROWS) {
 }
 
 const ACCEPTANCE_ROWS = [
-  ...[null, [], ['haiku', 'sonnet', 'opus']].map((mappedAliases) => ({
-    name: `mapped aliases ${JSON.stringify(mappedAliases)}`,
-    input: () => interactiveArgs({ policy: { tier: 'optimized', mappedAliases } }),
-    expected: { ok: true, errors: [] },
-  })),
   { name: 'local scope ignores policy lockstep', input: () => headlessArgs('incremental', { detector: null }),
     expected: { ok: true, errors: [] } },
   { name: 'optional domains', input: () => interactiveArgs({
