@@ -1,5 +1,7 @@
 """Environment capture preserves Claude Code's model resolution inputs."""
 
+import json
+
 import pytest
 from gauntlet.policy_env import capture_policy_env
 
@@ -60,4 +62,25 @@ def test_capture_policy_env(env, expected):
         "provider": provider,
         "gateway": gateway,
         "mappedAliases": mapped_aliases,
+    }
+
+
+def test_capture_policy_env_cli(tmp_path, invoke, monkeypatch):
+    monkeypatch.setattr(
+        "gauntlet.policy_env.os.environ",
+        {
+            "CLAUDE_CODE_USE_BEDROCK": " true ",
+            "ANTHROPIC_BASE_URL": "https://gateway.example",
+            "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "deployment[1m]",
+        },
+    )
+    result = invoke("capture_policy_env", [], tmp_path)
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert json.loads(result.stdout) == {
+        "subagentModel": "sonnet",
+        "provider": "bedrock",
+        "gateway": True,
+        "mappedAliases": ["opus"],
     }
