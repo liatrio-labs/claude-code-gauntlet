@@ -354,6 +354,11 @@ def test_neutralize_comment_openers(source: str, expected: str) -> None:
             id="earlier-list-keeps-later-code-escaped",
         ),
         pytest.param(
+            "para\n\n```\nx\n\n    @user <b> ~~~\n```",
+            "para\n\n```\nx\n\n    @user <b> ~~~\n```",
+            id="trusted-fence-code-stays-verbatim",
+        ),
+        pytest.param(
             "2. a\n\n    [x]: y",
             "2. a\n\n    [x]\\: y",
             id="ordered-list-definition-stays-escaped",
