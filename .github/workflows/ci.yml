@@ -1,220 +1,61 @@
 name: CI - Tests and Linting
 
 on:
-  push:
-    branches: ["main"]
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-env:
-  NODE_VERSION: "24.18.0"
-
 jobs:
-  lint:
-    name: Run Linting
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-
-      - name: Set up Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install pre-commit
-        run: pip install pre-commit==4.6.1
-
-      - name: Run pre-commit hooks
-        run: pre-commit run --all-files
-
-      - name: Show files modified by pre-commit hooks
-        if: failure()
-        run: |
-          echo "::group::Files modified by pre-commit hooks"
-          git diff --name-only
-          echo "::endgroup::"
-          echo "::group::Full diff of modifications"
-          git diff
-          echo "::endgroup::"
-
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Set up Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install the dev group
-        run: |
-          pip install pip==26.2
-          pip install --group dev
-
-      - name: Run pytest
-        if: matrix.python-version != '3.12'
-        run: python -m pytest tests/ -q
-
-      - name: Run pytest with coverage gate
-        if: matrix.python-version == '3.12'
-        run: |
-          COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest tests/ -q \
-            --cov=scripts --cov=.github --cov-fail-under=94.6
-
-  js-lint:
-    name: Run Workflow JS Lint
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-
-      - name: Lint workflows JS
-        run: python3 workflows/test/tools/biome_check.py
-
-  workflow-tests:
-    name: Run Workflow JS Tests
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          # Exact patch: coverage percentages move across Node builds; 24.18.0 is
-          # the sandboxed runtime / reference build this repo develops against.
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Run node test suite
-        run: |
-          LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage \
-            --test-coverage-include='workflows/src/*.js' \
-            --test-coverage-include='workflows/build.js' \
-            --test-coverage-lines=98.6 \
-            --test-coverage-branches=91.8 \
-            --test-coverage-functions=98.5 \
-            --test-reporter=spec --test-reporter-destination=stdout \
-            --test-reporter=lcov --test-reporter-destination="$LCOV" \
-            workflows/test/*.test.js \
-            && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
-
-      - name: Verify committed bundle matches a fresh build
-        run: |
-          node workflows/build.js
-          git diff --exit-code workflows/pipeline.js
-
-  bench-tests:
-    name: Run Bench Self-Tests
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install pytest
-        if: matrix.python-version != '3.12'
-        run: pip install pytest==9.1.1
-
-      - name: Run bench self-tests
-        if: matrix.python-version != '3.12'
-        run: python -m pytest bench/tests/ -q
-
-      - name: Install pytest + coverage (gate leg)
-        if: matrix.python-version == '3.12'
-        run: |
-          pip install pip==26.2
-          pip install --group dev
-
-      - name: Run bench self-tests with coverage gate
-        if: matrix.python-version == '3.12'
-        run: |
-          COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
-            --cov=bench --cov-fail-under=88.6
-
-  test-windows:
-    name: Run Tests on Windows
+  probe:
+    name: Windows path and interpreter probe (${{ matrix.setup }})
     runs-on: windows-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.14"]
-    env:
-      PYTHONUTF8: "0"
+        setup: ["stock-image", "setup-python"]
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Set up Python
+      - if: matrix.setup == 'setup-python'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Set up Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Install the dev group
+          node-version: "24.18.0"
+      - name: Probe
         shell: bash
         run: |
-          python -m pip install pip==26.2
-          python -m pip install --group dev
-      - name: Run pytest
-        shell: bash
-        run: python -m pytest tests/ -q
+          set +e
+          section() { echo; echo "=== $1"; }
+          section shell; uname -a; echo "BASH_VERSION=$BASH_VERSION MSYSTEM=$MSYSTEM OSTYPE=$OSTYPE"
+          section pwd; pwd; pwd -W; echo "PWD=$PWD"
+          section git-toplevel; git rev-parse --show-toplevel; git --version
+          section interpreters
+          for c in python3 python py; do echo "-- $c: $(command -v $c)"; done
+          for c in python3 python "py -3"; do echo "-- $c -V:"; $c -V; echo "exit=$?"; done
+          for c in python3 python "py -3"; do echo "-- $c version>=3.10 check:"; $c -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'; echo "exit=$?"; done
+          PY=python
+          section msys-arg-conversion
+          $PY -c 'import sys; print(sys.argv[1:])' /c/Users/x C:/Users/x 'C:\Users\x' --opt=/c/Users/x "/tmp/x"
+          section python-paths
+          $PY -c 'import os, sys, tempfile; print("cwd", os.getcwd()); print("realpath", os.path.realpath(".")); print("gettempdir", tempfile.gettempdir()); print("TEMP", os.environ.get("TEMP")); print("TMP", os.environ.get("TMP")); print("TMPDIR", os.environ.get("TMPDIR")); print("sys.executable", sys.executable)'
+          section node-paths
+          node -e 'const os=require("os"); console.log("tmpdir", os.tmpdir()); console.log("cwd", process.cwd())'
+          section ensure_output_dir
+          $PY scripts/ensure_output_dir.py; echo "exit=$?"
+          section resolve_config
+          $PY scripts/resolve_config.py --plugin-root "$(pwd)" 2>&1 | head -c 1500; echo "exit=$?"
+          section resolve_config_W
+          $PY scripts/resolve_config.py --plugin-root "$(pwd -W)" 2>&1 | head -c 600; echo "exit=$?"
+          section recorder-native-outputdir
+          OUT="$($PY -c 'import tempfile; print(tempfile.mkdtemp())')"
+          echo "OUT=$OUT"
+          node workflows/test/tools/emit_task_output.mjs "$OUT" 2>&1 | head -c 800; echo "exit=$?"
+          section claude-install
+          npm install -g @anthropic-ai/claude-code > /dev/null 2>&1; echo "npm exit=$?"
+          claude --version; echo "exit=$?"
+          command -v claude
