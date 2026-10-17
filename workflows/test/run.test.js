@@ -172,23 +172,25 @@ for (const row of COARSEN_ROWS) test(`coarsening wiring: ${row.name}`, async () 
   assert.equal(ctx.calls.filter((call) => call.label.startsWith('validate-batch-')).length, row.batchCount);
 });
 
-test('verification wiring: failed slice retains unknown origins through delivery', async () => {
-  const { out, ctx, payload } = await runAndCapture(validArgs({ limits: { verifySliceSize: 2 } }), {
-    findings: [makeFinding('F0'), makeFinding('F1'), makeFinding('F2'), makeFinding('F3')], verifySliceFailIndex: 0,
+test('verification wiring: incomplete survivors are held back after challenge', async () => {
+  const { out, ctx, payload } = await runAndCapture(validArgs({ limits: { verifySliceSize: 2, validateBatch: 1 } }), {
+    findings: ['BOTH', 'VERIFY', 'VALIDATE', 'CLEAN'].map((id) => makeFinding(id)), verifySliceFailIndex: 0,
+    nullAgentLabels: ['validate-batch-0', 'validate-batch-2'],
   });
   assert.equal(out.ok, true);
-  assert.equal(out.phaseReached, 'report');
   assert.equal(out.stats.verified, false);
-  assert.ok(out.gaps.some((gap) => gap.includes('UNVERIFIED') && gap.includes('slice 0') && gap.includes('2 of 4')));
-  assert.deepEqual(ctx.calls.filter((call) => call.label.startsWith('verify-slice-')).map((call) => call.label), [
-    'verify-slice-0', 'verify-slice-0-retry', 'verify-slice-1',
-  ]);
-  assert.ok(ctx.calls.some((call) => call.label === 'validate-batch-0'));
-  assert.ok(ctx.calls.some((call) => call.label === 'challenge-0'));
-  assert.equal(out.artifactPaths.report, PATHS.report);
-  assert.deepEqual(payload.findings.map((finding) => [finding.id, finding.origin]), [
-    ['F2', 'new'], ['F3', 'new'], ['F0', 'unknown'], ['F1', 'unknown'],
-  ]);
+  assert.deepEqual(payload.findings.map((f) => f.id), ['CLEAN']);
+  assert.deepEqual(payload.postReview.map((f) => f.id), ['CLEAN']);
+  const cp = payload.checkpoints.phases.challenge;
+  assert.deepEqual(cp.unverified.map((f) => f.id).sort(), ['BOTH', 'VALIDATE', 'VERIFY']);
+  assert.equal(out.stats.highConfidence, 1);
+  assert.equal(out.stats.unverified, 3);
+  assert.equal(out.stats.challenge.held_back, 3);
+  assert.equal(out.stats.challenge.skipped, 0);
+  assert.ok(ctx.calls.some((call) => call.label === 'challenge-3'));
+  const section = payload.report.split('## Unverified / pipeline-degraded')[1];
+  assert.ok(section.includes('the validator did not score this finding, so it was not skeptically validated'));
+  assert.ok(section.includes('the verify slice could not be proven against the dispatched document'));
 });
 
 test('fresh paths: discovery normalizes files and both reference arrays', async () => {
@@ -357,11 +359,11 @@ for (const row of KEY_ROWS) test(`legacy consolidation key: ${row.name}`, async 
   const { out, payload } = await runAndCapture(args, row.writerFails ? { agentThrowLabel: 'artifact-writer' } : {});
   assert.equal(out.ok, true);
   const findings = row.writerFails ? out.checkpoints.phases.challenge.findings : payload.postReview;
-  assert.deepEqual(findings.map((finding) => [finding.file, finding.consolidation_key]), [['src/a.js', 'src/a.js:0']]);
+  assert.deepEqual(findings.map((finding) => [finding.file, finding.consolidation_key]), [['src/a.js', undefined]]);
   if (row.writerFails) assert.ok(out.gaps.some((gap) => gap.includes('partial-artifacts')));
   else {
-    assert.equal(payload.findings[0].consolidation_key, 'src/a.js:0');
-    assert.equal(payload.checkpoints.phases.challenge.findings[0].consolidation_key, 'src/a.js:0');
+    assert.equal(payload.findings[0].consolidation_key, undefined);
+    assert.equal(payload.checkpoints.phases.challenge.findings[0].consolidation_key, undefined);
     assert.equal(JSON.stringify(payload).includes('/repo/src'), false);
   }
   assert.equal(JSON.stringify(out).includes('/repo/src'), false);

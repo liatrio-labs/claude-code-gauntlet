@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from gauntlet.registry import ARTIFACT_BASENAMES
 
 from bench import run
@@ -457,12 +458,6 @@ class CheckRunTest(unittest.TestCase):
         )
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertTrue(result["ok"], result["failures"])
-
-    def test_bare_list_unknown_origin_fails_g3(self):
-        _build_ok_run(self.run_dir, origin="unknown")
-        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
-        self.assertFalse(result["ok"])
-        self.assertTrue(any("origin=unknown" in f for f in result["failures"]))
 
     def test_missing_payload_fails_g2(self):
         _build_ok_run(self.run_dir)
@@ -1808,3 +1803,17 @@ class MiniResolutionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("held_back", [False, True])
+def test_unknown_origin_fails_g3(tmp_path, held_back):
+    _build_ok_run(tmp_path, origin="new" if held_back else "unknown")
+    finding = {**_ok_finding(), "origin": "unknown"}
+    _write_json(
+        tmp_path / "pr-example-repo-1" / "code-gauntlet-checkpoint-all-deadbeef.json",
+        {"phases": {"challenge": {"unverified": [finding, finding]}}},
+    )
+    result = check.check_run(tmp_path, repo_root=REPO_ROOT)
+    assert not result["ok"]
+    assert result["stats"]["unknown_origin"] == 1
+    assert sum("origin=unknown" in failure for failure in result["failures"]) == 1

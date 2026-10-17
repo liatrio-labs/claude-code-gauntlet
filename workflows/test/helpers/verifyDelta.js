@@ -70,6 +70,12 @@ function decodeInlineValue(value) {
   return value;
 }
 
+export function dispatchedFindings(prompt) {
+  const argv = shellSplit(prompt.split('\n').pop());
+  const index = argv.indexOf('--input-inline');
+  return index < 0 ? null : decodeInlineValue(JSON.parse(argv[index + 1])).findings;
+}
+
 // Derive honest mock proofs from the actual command, leaving explicit faults untouched.
 export function sliceInputRecorder(env, prompt) {
   const argv = shellSplit(prompt.split('\n').pop());

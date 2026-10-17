@@ -32,7 +32,6 @@ export function applyValidations(findings, validations) {
       continue;
     }
 
-    // Save original_confidence before updating (only on first validation).
     if (!('original_confidence' in finding)) {
       finding.original_confidence = 'confidence' in finding ? finding.confidence : 0;
     }

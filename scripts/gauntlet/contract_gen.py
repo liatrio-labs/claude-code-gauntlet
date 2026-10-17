@@ -608,9 +608,11 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
             **_TEMPLATE_FINDING,
             "severity": "medium",
             "origin": "unknown",
-            "challenge": "skipped",
+            "challenge": "capped",
+            "validation": "skipped",
             "evidence": "{finding.evidence}",
-        }
+        },
+        {**_TEMPLATE_FINDING, "challenge": "failed"},
     ],
     "dimensions": {"dispatched": [], "degraded": []},
     "stats": {

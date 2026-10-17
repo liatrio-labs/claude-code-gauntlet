@@ -710,7 +710,7 @@ It must not recreate policy, per-stage models, scope, stats, gaps, or dimensions
 
 ## Error Recovery
 
-The workflow degrades internally rather than throwing: a failed discovery agent marks its dimensions degraded; an unverified verify slice re-emits findings with `origin=unknown`; a skipped validation batch keeps findings at face value; challenge overflow routes findings to the unverified bucket; a failed artifact-writer yields a partial-artifacts gap. All of these arrive as `gaps` in the return — surface them, never hide them. For a hard `ok:false`, use resume-from-checkpoint (Phase 8). **Never reproduce a failed stage inline in the main session** — correlated error rates of ~60% are exactly what the workflow's fresh-agent isolation exists to avoid.
+The workflow degrades internally rather than throwing: a failed discovery agent marks its dimensions degraded; an unverified verify slice re-emits findings with `origin=unknown`; skipped validation batches and degraded verify slices still face challenge, then survivors are held back to the report; challenge overflow or failure routes findings to the unverified bucket; a failed artifact-writer yields a partial-artifacts gap. All of these arrive as `gaps` in the return — surface them, never hide them. For a hard `ok:false`, use resume-from-checkpoint (Phase 8). **Never reproduce a failed stage inline in the main session** — correlated error rates of ~60% are exactly what the workflow's fresh-agent isolation exists to avoid.
 
 ---
 

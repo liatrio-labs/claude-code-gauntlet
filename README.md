@@ -69,7 +69,7 @@ Discovery produces candidates, and each one then runs the gauntlet:
 
 A finding the challenger rejects is removed, unless it is a security finding, which is downgraded to a suggestion instead.
 Weakly supported findings are downgraded to suggestions too, and a downgrade removes a finding already at the lowest severity; contested findings are kept and marked in the report.
-If verification or validation itself breaks, the report records the gap and the affected findings still face the blind challenge.
+If verification or validation itself breaks, the report records the gap. The affected findings still face the blind challenge, then survivors are held back to the report's Unverified / pipeline-degraded section instead of being posted.
 
 Agents see the full diff and follow callers, dependencies, and tests across files.
 Git blame separates new issues from older ones your changes exposed, which the report downgrades and groups separately.

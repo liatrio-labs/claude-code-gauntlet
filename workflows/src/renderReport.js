@@ -1,5 +1,6 @@
 // Owns local report rendering: multiline prose keeps Markdown, while evidence and receipts keep their fence grammars.
 // Line fields use the outbound line contract, and repository spans preserve copyable normalized text in dynamic delimiters.
+import { incompleteVetting, UNVERIFIED_REASONS } from './vetting.js';
 import { rankFindings } from './applyChallenges.js';
 import { PERMALINK_TEMPLATES, identityCheck, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES } from './registry.js';
 import { DIMENSIONS, AGENTS, AGENT_LABELS, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI } from './registry.js';
@@ -424,12 +425,9 @@ function locationUrl(finding, permalinks, displayedLocation) {
 }
 
 function unverifiedReason(finding) {
-  const reasons = [];
-  if (finding.origin === 'unknown') {
-    reasons.push('the verify slice could not be proven against the dispatched document');
-  }
-  if (finding.challenge === 'skipped') {
-    reasons.push('the challenge cap was reached, so this finding was not challenge-verified');
+  const reasons = incompleteVetting(finding).map((check) => UNVERIFIED_REASONS[check]);
+  if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge)) {
+    reasons.push(UNVERIFIED_REASONS.challenge[finding.challenge]);
   }
   return reasons.length ? reasons.join('; ') : 'a pipeline stage was skipped or failed';
 }

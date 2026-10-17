@@ -11,7 +11,7 @@
 import { parseWriterPayload } from '../../src/persist.js';
 import { plannedArtifactPaths } from '../../src/outputPaths.js';
 import { AGENTS } from '../../src/registry.js';
-import { deltaEnvelope, sliceInputRecorder } from './verifyDelta.js';
+import { deltaEnvelope, sliceInputRecorder, dispatchedFindings } from './verifyDelta.js';
 
 const DISCOVERY_AGENT_TYPES = new Set(AGENTS);
 
@@ -171,7 +171,7 @@ export function makeCtx(args, opts = {}) {
       if (opts.verifySliceFailIndex === sliceIndex) {
         return { status: 'failed', exitCode: 1, stderr: `injected verify failure on slice ${sliceIndex}` };
       }
-      const slice = sliceForIndex(sliceIndex);
+      const slice = dispatchedFindings(prompt) ?? sliceForIndex(sliceIndex);
       const sliceNonce = isRetry ? `${A.nonce}.${sliceIndex}.r1` : `${A.nonce}.${sliceIndex}`;
       // deltaEnvelope builds a TRUSTED delta echo for this slice — one {id, verified, ...}
       // decision per dispatched finding, never the finding itself (the executor can no
@@ -187,7 +187,10 @@ export function makeCtx(args, opts = {}) {
         overrides: originOverrides,
       }), prompt);
     }
-    if (label.startsWith('validate-batch-')) return { validations: [] }; // object-rooted { validations: [...] }
+    if (label.startsWith('validate-batch-')) {
+      const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
+      return { validations: ids.map((finding_id) => ({ finding_id, confidence: seedFindings().find((f) => f.id === finding_id)?.confidence ?? 90 })) };
+    }
     if (label.startsWith('challenge-')) return { confidence_claim_is_correct: 80, justification: 'claim holds' };
     if (label === 'artifact-writer') {
       if (opts.onPersist) opts.onPersist(parseWriterPayload(prompt));

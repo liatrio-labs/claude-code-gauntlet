@@ -110,7 +110,7 @@ Reviewed head `{head_sha_short}` at {generatedAt} by Code Gauntlet.
 
 ## Summary
 
-4 findings after the gauntlet — 1 critical, 1 high, 1 medium, 1 low. 1 routed as improvement suggestion. 1 unverified / pipeline-degraded.
+4 findings after the gauntlet — 1 critical, 1 high, 1 medium, 1 low. 1 routed as improvement suggestion. 2 unverified / pipeline-degraded.
 
 - 🔴 [CRITICAL] `{finding.file}:{finding.line_start}-{finding.line_end}`: {finding.title}
 - 🟠 [HIGH] `{finding.file}:{finding.line_start}`: {finding.title}
@@ -202,7 +202,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 
 - **Location:** `{finding.file}:{finding.line_start}`
 - **Dimension:** {finding.dimension}
-- **Unverified because:** the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
+- **Unverified because:** the validator did not score this finding, so it was not skeptically validated; the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
 
 {finding.description}
 
@@ -211,6 +211,16 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 ```
 {finding.evidence}
 ```
+
+### 💡 Low
+
+#### {finding.title}
+
+- **Location:** `{finding.file}:{finding.line_start}`
+- **Dimension:** {finding.dimension}
+- **Unverified because:** the challenger failed or returned no score, so this finding was not challenge-verified
+
+{finding.description}
 
 ## Review Dimensions Summary
 

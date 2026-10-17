@@ -58,7 +58,7 @@ for (const row of TRUSTED_ROWS) {
 
 const degradedGap = (reason, first = reason, slice, affected, total) =>
   `verify: UNVERIFIED \u2014 slice ${slice}: ${reason} \u2014 retried once after the first attempt failed (${first}); `
-  + `${affected} of ${total} finding(s) marked origin=unknown, surfaced-classification skipped`;
+  + `${affected} of ${total} finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report`;
 
 const UNTRUSTED_ROWS = [
   { name: 'omitted id keeps the uncovered finding', count: 3,
@@ -157,7 +157,7 @@ test('missing id degrades without dispatch', async () => {
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1 });
   assert.deepEqual(out.gaps, [
     'verify: UNVERIFIED \u2014 slice 0: a dispatched finding has no usable id \u2014 the delta echo is keyed by '
-      + 'id, so this slice cannot be verified; 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped'
+      + 'id, so this slice cannot be verified; 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report'
   ]);
 });
 
@@ -250,7 +250,7 @@ test('sibling-slice substitution keeps every finding and degrades only the subst
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['F0', 'unknown'], ['F1', 'unknown'], ['F2', 'new'], ['F3', 'new']]);
   assert.deepEqual(out.gaps, [('verify: UNVERIFIED \u2014 slice 0: delta names a finding this slice did not dispatch '
     + '(F2) \u2014 retried once after the first attempt failed (status=failed (transient)); 2 of 4 finding(s) marked '
-    + 'origin=unknown, surfaced-classification skipped')]);
+    + 'origin=unknown, surfaced-classification skipped, held back to the report')]);
 });
 
 test('shell quoting preserves paths with spaces, apostrophes and special branch names', async () => {
@@ -281,5 +281,5 @@ test('oversize finding is disclosed without dispatch and leaves the next slice n
   assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0']);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['BIG', 'unknown'], ['OK', 'new']]);
   assert.deepEqual(out.gaps, [('verify: UNVERIFIED \u2014 finding BIG has encoded length 50130, over '
-    + 'VERIFY_INLINE_CHAR_BUDGET=50000; 1 of 2 finding(s) marked origin=unknown, surfaced-classification skipped')]);
+    + 'VERIFY_INLINE_CHAR_BUDGET=50000; 1 of 2 finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report')]);
 });

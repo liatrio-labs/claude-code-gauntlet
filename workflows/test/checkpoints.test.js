@@ -135,8 +135,18 @@ const REPLAY_INPUT = challengeOutput({
   findings: [replaySurvivor(), makeFinding('BAD1', { description: SHELL_PAYLOAD })],
   stats: { total_input: 2, dispatched: 2, completed: 2, skipped: 0, final_count: 999 },
 });
-const REPLAY_GOLDEN = { kept: ['M1'], unverified: [], eliminated: ['BAD1'], final: 1, skipped: 0, belt: 1 };
+const REPLAY_GOLDEN = { held: 0, consolidated: 0, kept: ['M1'], unverified: [], eliminated: ['BAD1'], final: 1, skipped: 0, belt: 1 };
 const REPLAY_ROWS = [
+  { name: 'old incomplete primary releases clean corroborator', challenge: {
+    findings: [makeFinding('DIRTY', { file: 'same.js', agent: 'bug-detector', validation: 'skipped',
+      consolidation_key: 'same.js:2', consolidation_primary: true }),
+    makeFinding('CLEAN', { file: 'same.js', agent: 'security-reviewer',
+      consolidation_key: 'same.js:2', consolidation_primary: false })],
+    unverified: ['capped', 'failed', 'skipped'].map((challenge) => makeFinding(challenge, { challenge })),
+    eliminated: [], 'stats.skipped': 999, 'stats.final_count': 999, 'stats.cross_agent_consolidated': 2,
+  }, expected: { kept: ['CLEAN'], unverified: ['capped', 'failed', 'skipped', 'DIRTY'], eliminated: [],
+    held: 1, skipped: 3, final: 1, belt: 0 }, repeat: true, regrouped: true },
+
   { name: 'findings elimination corrects stale final count', challenge: {}, expected: {},
     reason: /contains shell command pattern/, repeat: true },
   { name: 'unverified elimination corrects skipped count', challenge: {
@@ -174,6 +184,15 @@ for (const row of REPLAY_ROWS) {
     assert.equal(out.stats.highConfidence, expected.kept.length);
     assert.equal(out.stats.unverified, expected.unverified.length);
     assert.equal(out.stats.challenge.skipped, expected.skipped);
+    assert.equal(out.stats.challenge.held_back, expected.held);
+    assert.equal(out.stats.challenge.cross_agent_consolidated, expected.consolidated);
+    if (row.regrouped) {
+      for (const f of [...cp.findings, ...cp.unverified]) {
+        assert.equal(f.consolidation_key, undefined);
+        assert.equal(f.consolidation_primary, undefined);
+      }
+      assert.ok(payload.report.includes('#### finding CLEAN'));
+    }
     assert.equal(out.stats.challenge.replay_belt_eliminated, expected.belt);
     if (challenge) assert.ok(!ctx.calls.some((call) => call.label.startsWith('challenge-')));
     else assert.ok(ctx.calls.some((call) => call.label.startsWith('challenge-')));
@@ -214,9 +233,12 @@ for (const row of REPLAY_ROWS) {
       assert.deepEqual(second.out.gaps.filter((gap) => gap.startsWith('replay-filter:')), gaps);
       assert.deepEqual(second.payload.checkpoints.phases.challenge.findings, snapshot.findings);
       assert.deepEqual(second.payload.checkpoints.phases.challenge.eliminated, snapshot.eliminated);
-      const survivor = second.payload.checkpoints.phases.challenge.findings.find((finding) => finding.id === 'M1');
+      assert.deepEqual(second.payload.checkpoints.phases.challenge.unverified, snapshot.unverified);
+      assert.equal(second.out.stats.challenge.held_back, expected.held);
+      assert.equal(second.out.stats.challenge.skipped, expected.skipped);
+      const survivor = second.payload.checkpoints.phases.challenge.findings.find((finding) => finding.id === (row.regrouped ? 'CLEAN' : 'M1'));
       assert.ok(survivor);
-      assert.deepEqual(survivor, snapshot.findings.find((finding) => finding.id === 'M1'));
+      assert.deepEqual(survivor, snapshot.findings.find((finding) => finding.id === (row.regrouped ? 'CLEAN' : 'M1')));
     }
   });
 }

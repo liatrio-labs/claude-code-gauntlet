@@ -103,15 +103,19 @@ const REPORT_ROWS = [
     ] },
   { name: 'surfaced origin', input: { findings: [finding('S', { origin: 'surfaced' })] }, prefix: '- **Origin:',
     expected: '- **Origin:** surfaced — pre-existing, surfaced by this change' },
-  { name: 'unverified reasons', input: { findings: [finding('M')], unverified: [finding('U1', { origin: 'unknown' }),
-    finding('U2', { challenge: 'skipped' }), finding('U3', { origin: 'unknown', challenge: 'skipped' }), finding('U4')] },
-    prefix: '- **Unverified because:', all: true, expected: [
-      '- **Unverified because:** the challenge cap was reached, so this finding was not challenge-verified',
-      '- **Unverified because:** a pipeline stage was skipped or failed',
-      '- **Unverified because:** the verify slice could not be proven against the dispatched document',
-      '- **Unverified because:** the verify slice could not be proven against the dispatched document; '
-        + 'the challenge cap was reached, so this finding was not challenge-verified',
-    ] },
+  { name: 'unverified reasons', input: { findings: [finding('M')], unverified: [
+    finding('U1', { origin: 'unknown' }), finding('U2', { challenge: 'capped' }),
+    finding('U3', { validation: 'skipped', origin: 'unknown', challenge: 'failed' }),
+    finding('U4'), finding('U5', { challenge: 'skipped' }),
+  ] }, prefix: '- **Unverified because:', all: true, expected: [
+    '- **Unverified because:** the challenge cap was reached, so this finding was not challenge-verified',
+    '- **Unverified because:** a pipeline stage was skipped or failed',
+    '- **Unverified because:** this finding was not challenge-verified',
+    '- **Unverified because:** the verify slice could not be proven against the dispatched document',
+    '- **Unverified because:** the validator did not score this finding, so it was not skeptically validated; '
+      + 'the verify slice could not be proven against the dispatched document; '
+      + 'the challenger failed or returned no score, so this finding was not challenge-verified',
+  ] },
   { name: 'interactive receipt', surface: 'receipt', expected: 'Resolved config:\n  model_tier=optimized (fixed)\n'
     + '  pr_comment_cap=null (default)\n  delivery_tier=all (default)\n  review_md=absent (discovery)\n'
     + '  pipeline_version=3.26.0 (bundle)\n  plugin_root=/absolute/plugin (resolved)', ends: 'orchestrator at delivery.' },

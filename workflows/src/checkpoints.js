@@ -378,9 +378,6 @@ export function applyChallengeReplayBelt(challengeOut) {
     if (typeof challengeOut.stats.final_count === 'number' && Array.isArray(challengeOut.findings)) {
       challengeOut.stats.final_count = challengeOut.findings.length;
     }
-    if (typeof challengeOut.stats.skipped === 'number' && Array.isArray(challengeOut.unverified)) {
-      challengeOut.stats.skipped = challengeOut.unverified.length;
-    }
     challengeOut.stats.replay_belt_eliminated = k1 + k2;
   }
   return challengeOut.eliminated.filter((f) => f.replay_belt === true).length;

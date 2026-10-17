@@ -4,50 +4,52 @@ import { validateStage, filterStage, challengeStage, blindChallengeFields, selec
 import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
 
-const VALIDATE_STATS = { batches_dispatched: 1, batches_completed: 1, validated: 2, skipped: 0, adjusted: 1 };
+const omittedGap = (idx, count) => `validate-batch-${idx}: validator omitted scores - ${count} finding(s) unvalidated (validation=skipped, held back to the report)`;
+const VALIDATE_STATS = { batches_dispatched: 1, batches_completed: 1, validated: 1, skipped: 1, adjusted: 1 };
 const VALIDATE_ROWS = [
   { name: 'id adjustment', input: [finding({ id: 'F1', confidence: 90 }), finding({ id: 'F2', confidence: 80 })],
-    reply: [{ id: 'F1', confidence: 50, justification: 'weak' }],
-    expected: [['F1', 50, 90, 'weak', undefined, 'validated'], ['F2', 80, undefined, undefined, undefined, 'validated']] },
+    reply: [{ id: 'F1', confidence: 50, justification: 'weak' }, { id: 'F2', confidence: 'invalid' }, null],
+    gaps: [omittedGap(0, 1)],
+    expected: [['F1', 50, 90, 'weak', undefined, 'validated'], ['F2', 80, undefined, undefined, undefined, 'skipped']] },
   { name: 'finding_id adjustment', input: [finding({ id: 'F1', confidence: 90 }), finding({ id: 'F2', confidence: 80 })],
-    reply: [{ finding_id: 'F1', confidence: 40, justification: 'reachable only hypothetically' }],
+    reply: [{ finding_id: 'F1', confidence: 40, justification: 'reachable only hypothetically' }], gaps: [omittedGap(0, 1)],
     expected: [['F1', 40, 90, 'reachable only hypothetically', undefined, 'validated'],
-      ['F2', 80, undefined, undefined, undefined, 'validated']] },
+      ['F2', 80, undefined, undefined, undefined, 'skipped']] },
   { name: 'validations envelope', input: [finding({ confidence: 40 })],
-    reply: { validations: [{ id: 'f1', confidence: 85 }] }, stats: { ...VALIDATE_STATS, validated: 1 },
+    reply: { validations: [{ id: 'f1', confidence: 85 }] }, stats: { ...VALIDATE_STATS, validated: 1, skipped: 0 },
     expected: [['f1', 85, 40, undefined, undefined, 'validated']] },
   { name: 'known reachability', input: [finding({ id: 'F1', confidence: 80 })],
     reply: [{ finding_id: 'F1', confidence: 80, reachability: 'future_change_only' }],
-    stats: { ...VALIDATE_STATS, validated: 1 }, expected: [['F1', 80, 80, undefined, 'future_change_only', 'validated']] },
+    stats: { ...VALIDATE_STATS, validated: 1, skipped: 0 }, expected: [['F1', 80, 80, undefined, 'future_change_only', 'validated']] },
   { name: 'count batches', batch: 2,
     input: ['F1', 'F2', 'F3', 'F4', 'F5'].map((id) => finding({ id, confidence: 80 })), reply: [],
-    stats: { batches_dispatched: 3, batches_completed: 3, validated: 5, skipped: 0, adjusted: 0 },
-    labels: ['validate-batch-0', 'validate-batch-1', 'validate-batch-2'], expected: [
-      ['F1', 80, undefined, undefined, undefined, 'validated'], ['F2', 80, undefined, undefined, undefined, 'validated'],
-      ['F3', 80, undefined, undefined, undefined, 'validated'], ['F4', 80, undefined, undefined, undefined, 'validated'],
-      ['F5', 80, undefined, undefined, undefined, 'validated'],
+    stats: { batches_dispatched: 3, batches_completed: 3, validated: 0, skipped: 5, adjusted: 0 },
+    labels: ['validate-batch-0', 'validate-batch-1', 'validate-batch-2'], gaps: [omittedGap(0, 2), omittedGap(1, 2), omittedGap(2, 1)], expected: [
+      ['F1', 80, undefined, undefined, undefined, 'skipped'], ['F2', 80, undefined, undefined, undefined, 'skipped'],
+      ['F3', 80, undefined, undefined, undefined, 'skipped'], ['F4', 80, undefined, undefined, undefined, 'skipped'],
+      ['F5', 80, undefined, undefined, undefined, 'skipped'],
     ] },
   { name: 'null batch retains confidence', batch: 2,
     input: ['F1', 'F2', 'F3', 'F4'].map((id) => finding({ id, confidence: 80 })), reply: [], nulls: ['validate-batch-1'],
-    stats: { batches_dispatched: 2, batches_completed: 1, validated: 2, skipped: 2, adjusted: 0 },
-    labels: ['validate-batch-0', 'validate-batch-1'], gaps: [
+    stats: { batches_dispatched: 2, batches_completed: 1, validated: 0, skipped: 4, adjusted: 0 },
+    labels: ['validate-batch-0', 'validate-batch-1'], gaps: [omittedGap(0, 2),
       'validate-batch-1: validator returned null/malformed \u2014 2 finding(s) unvalidated '
-      + '(validation=skipped, kept conservatively)',
+      + '(validation=skipped, held back to the report)',
     ], expected: [
-      ['F1', 80, undefined, undefined, undefined, 'validated'], ['F2', 80, undefined, undefined, undefined, 'validated'],
+      ['F1', 80, undefined, undefined, undefined, 'skipped'], ['F2', 80, undefined, undefined, undefined, 'skipped'],
       ['F3', 80, undefined, undefined, undefined, 'skipped'], ['F4', 80, undefined, undefined, undefined, 'skipped'],
     ] },
   { name: 'malformed object retains confidence', input: [finding({ id: 'F1', confidence: 80 })], reply: {},
     expected: [['F1', 80, undefined, undefined, undefined, 'skipped']],
     stats: { batches_dispatched: 1, batches_completed: 0, validated: 0, skipped: 1, adjusted: 0 }, gaps: [
       'validate-batch-0: validator returned null/malformed \u2014 1 finding(s) unvalidated '
-      + '(validation=skipped, kept conservatively)',
+      + '(validation=skipped, held back to the report)',
     ] },
   { name: 'fractional batch clamps to one', batch: 0.5,
     input: [finding({ id: 'F1', confidence: 80 }), finding({ id: 'F2', confidence: 80 })], reply: [],
-    expected: [['F1', 80, undefined, undefined, undefined, 'validated'], ['F2', 80, undefined, undefined, undefined, 'validated']],
-    stats: { batches_dispatched: 2, batches_completed: 2, validated: 2, skipped: 0, adjusted: 0 },
-    labels: ['validate-batch-0', 'validate-batch-1'] },
+    expected: [['F1', 80, undefined, undefined, undefined, 'skipped'], ['F2', 80, undefined, undefined, undefined, 'skipped']],
+    stats: { batches_dispatched: 2, batches_completed: 2, validated: 0, skipped: 2, adjusted: 0 },
+    labels: ['validate-batch-0', 'validate-batch-1'], gaps: [omittedGap(0, 1), omittedGap(1, 1)] },
   { name: 'empty', input: [], reply: [], expected: [], labels: [],
     stats: { batches_dispatched: 0, batches_completed: 0, validated: 0, skipped: 0, adjusted: 0 } },
 ];
@@ -67,7 +69,7 @@ const VALIDATE_HEAD = 'VALIDATOR_CONTEXT Independently validate this batch of fi
   + 'and line range shown, attempt to disprove the claim, and score it. Findings:\n';
 const VALIDATE_TAIL = '\nReturn { validations: [{ finding_id, confidence, justification, '
   + 'reachability (current | future_change_only | uncertain) }] } \u2014 confidence 0-100 '
-  + '(one entry per finding you scored; omit the rest).';
+  + '(one entry per finding).';
 const VALIDATE_PROMPT_ROWS = [
   { name: 'equal range endpoints print once', fields: { file: 'one.js', line_start: 42, line_end: 42 },
     block: '- f1 [bug/high] one.js:42 \u2014 The function returns the wrong result for a real input.' },
@@ -118,17 +120,17 @@ const CHALLENGE_GOLDEN = {
 };
 const CHALLENGE_ROWS = [
   { name: 'negative cap clamps to zero', input: [finding({ id: 'F1' }), finding({ id: 'F2', severity: 'critical' })],
-    cap: -1, reply: { score: 80 }, kept: [], scores: [], labels: [], unverified: [['F2', 'skipped'], ['F1', 'skipped']],
-    gaps: ['challenge: 2 finding(s) over challengeCap=0 left unchallenged (challenge=skipped, pipeline-degraded)'],
+    cap: -1, reply: { score: 80 }, kept: [], scores: [], labels: [], unverified: [['F2', 'capped'], ['F1', 'capped']],
+    gaps: ['challenge: 2 finding(s) over challengeCap=0 left unchallenged (challenge=capped, pipeline-degraded)'],
     stats: { ...CHALLENGE_GOLDEN, total_input: 2, dispatched: 0, completed: 0, skipped: 2,
       challenge_survived: 0, final_count: 0 } },
   { name: 'failed candidates stay ranked in unverified', input: [finding({ id: 'LOW', severity: 'low' }),
     finding({ id: 'HIGH', severity: 'high' }), finding({ id: 'CRIT', severity: 'critical' })],
     reply: null, kept: [], scores: [], labels: ['challenge-0', 'challenge-1', 'challenge-2'],
-    unverified: [['CRIT', 'skipped'], ['HIGH', 'skipped'], ['LOW', 'skipped']], gaps: [
-      'challenge-0: challenger returned null/unscored \u2014 finding CRIT unchallenged (challenge=skipped, pipeline-degraded)',
-      'challenge-1: challenger returned null/unscored \u2014 finding HIGH unchallenged (challenge=skipped, pipeline-degraded)',
-      'challenge-2: challenger returned null/unscored \u2014 finding LOW unchallenged (challenge=skipped, pipeline-degraded)',
+    unverified: [['CRIT', 'failed'], ['HIGH', 'failed'], ['LOW', 'failed']], gaps: [
+      'challenge-0: challenger returned null/unscored \u2014 finding CRIT unchallenged (challenge=failed, pipeline-degraded)',
+      'challenge-1: challenger returned null/unscored \u2014 finding HIGH unchallenged (challenge=failed, pipeline-degraded)',
+      'challenge-2: challenger returned null/unscored \u2014 finding LOW unchallenged (challenge=failed, pipeline-degraded)',
     ], stats: { ...CHALLENGE_GOLDEN, total_input: 3, dispatched: 3, completed: 0, skipped: 3,
       challenge_survived: 0, final_count: 0 } },
   { name: 'legacy score and stage envelope', input: [finding()], reply: { score: 80 }, kept: ['f1'], scores: [80] },
@@ -137,27 +139,32 @@ const CHALLENGE_ROWS = [
     labels: ['challenge-0', 'challenge-1'], stats: { ...CHALLENGE_GOLDEN,
       total_input: 2, dispatched: 2, completed: 2, challenge_survived: 2, final_count: 2 }, justifications: ['claim holds',
         'claim holds'] },
-  { name: 'legacy low score removes', input: [finding({ id: 'F1' })], reply: { score: 10, justification: 'does not hold' },
+  { name: 'legacy low score removes', input: [finding({ id: 'F1', validation: 'skipped', origin: 'unknown' })], reply: { score: 10, justification: 'does not hold' },
     kept: [], scores: [], eliminated: ['F1'],
     stats: { ...CHALLENGE_GOLDEN, challenge_removed: 1, challenge_survived: 0, final_count: 0 } },
   { name: 'canonical zero is scored', input: [finding({ id: 'F1' })],
     reply: { confidence_claim_is_correct: 0, justification: 'disproved' }, kept: [], scores: [], eliminated: ['F1'],
     stats: { ...CHALLENGE_GOLDEN, challenge_removed: 1, challenge_survived: 0, final_count: 0 } },
   { name: 'invalid score stays unverified', input: [finding({ id: 'F1' })], reply: { score: 'not-a-number', justification: 'x' },
-    kept: [], scores: [], unverified: [['F1', 'skipped']], gaps: [
-      'challenge-0: challenger returned null/unscored \u2014 finding F1 unchallenged (challenge=skipped, pipeline-degraded)',
+    kept: [], scores: [], unverified: [['F1', 'failed']], gaps: [
+      'challenge-0: challenger returned null/unscored \u2014 finding F1 unchallenged (challenge=failed, pipeline-degraded)',
     ], stats: { ...CHALLENGE_GOLDEN, completed: 0, skipped: 1, challenge_survived: 0, final_count: 0 } },
   { name: 'null member is positional', input: [finding({ id: 'F1', severity: 'critical' }), finding({ id: 'F2', severity: 'low' })],
-    reply: { score: 80 }, nulls: ['challenge-1'], kept: ['F1'], scores: [80], unverified: [['F2', 'skipped']],
+    reply: { score: 80 }, nulls: ['challenge-1'], kept: ['F1'], scores: [80], unverified: [['F2', 'failed']],
     labels: ['challenge-0', 'challenge-1'], gaps: [
-      'challenge-1: challenger returned null/unscored \u2014 finding F2 unchallenged (challenge=skipped, pipeline-degraded)',
+      'challenge-1: challenger returned null/unscored \u2014 finding F2 unchallenged (challenge=failed, pipeline-degraded)',
     ], stats: { ...CHALLENGE_GOLDEN, total_input: 2, dispatched: 2, skipped: 1 } },
   { name: 'cap overflow stays unverified', input: [finding({ id: 'F3', severity: 'low' }),
     finding({ id: 'F2' }), finding({ id: 'F1', severity: 'critical' })], reply: { score: 80 }, cap: 2,
-    kept: ['F1', 'F2'], scores: [80, 80], unverified: [['F3', 'skipped']], labels: ['challenge-0', 'challenge-1'], gaps: [
-      'challenge: 1 finding(s) over challengeCap=2 left unchallenged (challenge=skipped, pipeline-degraded)',
+    kept: ['F1', 'F2'], scores: [80, 80], unverified: [['F3', 'capped']], labels: ['challenge-0', 'challenge-1'], gaps: [
+      'challenge: 1 finding(s) over challengeCap=2 left unchallenged (challenge=capped, pipeline-degraded)',
     ], stats: { ...CHALLENGE_GOLDEN, total_input: 3, dispatched: 2, completed: 2, skipped: 1,
       challenge_survived: 2, final_count: 2 } },
+  { name: 'clean candidates fill cap first', input: [finding({ id: 'DIRTY', severity: 'critical', validation: 'skipped' }),
+    finding({ id: 'CLEAN', severity: 'low' })], reply: { score: 80 }, cap: 1, kept: ['CLEAN'], scores: [80],
+    unverified: [['DIRTY', 'capped']], gaps: [
+      'challenge: 1 finding(s) over challengeCap=1 left unchallenged (challenge=capped, pipeline-degraded)',
+    ], stats: { ...CHALLENGE_GOLDEN, total_input: 2, skipped: 1 } },
   { name: 'empty with timestamp', input: [], reply: { score: 80 }, kept: [], scores: [], labels: [],
     generatedAt: '2026-07-18T00:00:00Z',
     stats: { ...CHALLENGE_GOLDEN, total_input: 0, dispatched: 0, completed: 0, challenge_survived: 0, final_count: 0 } },
