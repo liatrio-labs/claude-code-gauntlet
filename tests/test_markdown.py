@@ -254,11 +254,11 @@ def test_code_span_padding_policy(value, pad_space_edges, expected):
             "    [critical]: https://evil.example",
             [
                 (2, True, "paragraph", False),
-                (3, True, "paragraph", False),
-                (0, True, "blank", False),
-                (3, True, "paragraph", False),
+                (0, True, "paragraph", True),
+                (0, False, "blank", False),
+                (0, False, "indented_code", False),
             ],
-            id="ordered-list-after-unmatched-quote",
+            id="ordered-two-continues-unmatched-quote",
         ),
         pytest.param(
             "Details:\n\n-    \n    [critical]: https://evil.example",

@@ -722,6 +722,7 @@ def _prepare_text(
         # No earlier container marker and a blank/code predecessor exclude open
         # containers and lazy paragraphs; escaped HTML and protected fences stay safe.
         seen_container = False
+        seen_content = False
         previous_blank = False
         previous_inert = False
         for index, (line, protected) in enumerate(
@@ -730,13 +731,15 @@ def _prepare_text(
             inert = (
                 not protected
                 and not seen_container
+                and seen_content
                 and (previous_blank or previous_inert)
                 and _INERT_INDENT_RE.match(line) is not None
             )
             if inert:
                 prepared[index] = _contain_line(lines[index], inert=True)
             seen_container = seen_container or bool(_CONTAINER_CANDIDATE_RE.match(line))
-            previous_blank = not line.strip()
+            seen_content = seen_content or bool(line.strip(" \t"))
+            previous_blank = not line.strip(" \t")
             previous_inert = inert
     result = "\n".join(prepared)
     if fence is not None:

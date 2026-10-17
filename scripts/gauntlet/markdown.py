@@ -328,8 +328,7 @@ def _interrupts(content: str, *, html: bool) -> bool:
         _HEADING.match(content)
         or _RULE.fullmatch(content)
         or _QUOTE.match(content)
-        # The paragraph belongs to an unmatched container, not this block level.
-        or _list_start(content, False)
+        or _list_start(content, True)
         or _fence_opener(content)
         or (
             html

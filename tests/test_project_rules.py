@@ -533,6 +533,12 @@ _IMPORT_PROBE_ROWS = [
     ("p18-html-block-blank-ends", "<div>\n\n@imp.md\n</div>\n", ["imp.md"]),
     ("s1-setext-then-indent", "Guide\n===\n    @imp.md\n", []),
     ("h1-atx-span", "# Guide: ` @imp.md `\n", []),
+    ("r1-quote-then-ordered-two", "> note\n2. step\n\n    @imp.md\n", []),
+    (
+        "r2-empty-item-trailing-spaces",
+        "Details:\n\n-    \n    @imp.md\n",
+        ["imp.md"],
+    ),
     ("i1-comment-then-span-live", "Text <!-- ` --> @imp.md `\n", ["imp.md"]),
     ("i2-span-then-comment-live", "Text `<!--` @imp.md `-->`\n", ["imp.md"]),
     ("t7-custom-tag", "<custom-tag>\n@imp.md\n", []),

@@ -341,12 +341,12 @@ def test_neutralize_comment_openers(source: str, expected: str) -> None:
             "    [critical]: https://evil.example",
             "> The handler swallows the error.\n2. Then the retry loop spins.\n\n"
             "    [critical]\\: https://evil.example",
-            id="ordered-list-after-unmatched-quote",
+            id="earlier-quote-marker-keeps-code-escaped",
         ),
         pytest.param(
             "Details:\n\n-    \n    [critical]: https://evil.example",
             "Details:\n\n-    \n    [critical]\\: https://evil.example",
-            id="blank-list-item-ignores-trailing-padding",
+            id="earlier-bullet-marker-keeps-code-escaped",
         ),
         pytest.param(
             "- item\n\ntext\n\n    >>> x",
@@ -368,6 +368,11 @@ def test_neutralize_comment_openers(source: str, expected: str) -> None:
         ("para\n<div>\n\n    ~~~", "para\n&lt;div>\n\n    ~~~"),
         ("para\n```invalid`\n    ~~~", "para\n\\`\\``invalid`\n    \\~\\~\\~"),
         pytest.param(
+            "para\n　\n    ~~~",
+            "para\n　\n    \\~\\~\\~",
+            id="unicode-space-is-not-blank-predecessor",
+        ),
+        pytest.param(
             "para\n\n\t~~~",
             "para\n\n\t\\~\\~\\~",
             id="tab-indentation-stays-escaped",
@@ -383,6 +388,10 @@ def test_indented_prose_preserves_only_inert_delimiters(source, expected):
     assert text.prepare_prose(source) == expected
     assert text.prepare_prose(expected) == expected
     assert_outbound_string_invariant(expected)
+
+
+def test_prepared_prose_leading_blank_lines_do_not_make_code_inert():
+    assert text.prepared_prose("\n\n    ~~~") == "    \\~\\~\\~"
 
 
 def test_cited_rules_keep_indented_delimiters_contained():
