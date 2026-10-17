@@ -26,6 +26,13 @@ const REJECTION_ROWS = [
     input: (a) => { a.policy.tier = "standard"; }, expected: [ "invalid policy.tier: standard (expected optimized)" ] },
   { name: 'policy gateway',
     input: (a) => { a.policy.gateway = "true"; }, expected: [ "invalid policy.gateway: true (expected a boolean)" ] },
+  ...[
+    ['unknown alias', ['fable'], 'fable'],
+    ['duplicate alias', ['sonnet', 'sonnet'], 'sonnet,sonnet'],
+    ['non-array aliases', 'sonnet', 'sonnet'],
+  ].map(([name, value, display]) => ({ name,
+    input: (a) => { a.policy.mappedAliases = value; },
+    expected: [`invalid policy.mappedAliases: ${display} (expected distinct values from sonnet, opus, haiku)`] })),
   { name: 'repoRoot control', input: (a) => { a.repoRoot = "/p\n"; }, expected: [ "repoRoot must not contain a control character" ] },
   { name: 'headShaShort shell metacharacter', input: (a) => { a.headShaShort = 'abc;id'; }, expected: [
     "headShaShort must match /^[A-Za-z0-9._-]+$/ (AST-safe, non-splitting \u2014 interpolated into the verify command " +
@@ -226,6 +233,11 @@ for (const { name, input, expected } of NON_OBJECT_ROWS) {
 }
 
 const ACCEPTANCE_ROWS = [
+  ...[undefined, null, [], ['haiku', 'sonnet', 'opus']].map((mappedAliases) => ({
+    name: `mapped aliases ${JSON.stringify(mappedAliases)}`,
+    input: () => interactiveArgs({ policy: { tier: 'optimized', mappedAliases } }),
+    expected: { ok: true, errors: [] },
+  })),
   { name: 'local scope ignores policy lockstep', input: () => headlessArgs('incremental', { detector: null }),
     expected: { ok: true, errors: [] } },
   { name: 'optional domains', input: () => interactiveArgs({

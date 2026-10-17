@@ -323,22 +323,26 @@ const STAGE_DEFAULTS = deepFreeze({
   'artifact-writer': 'sonnet',
 });
 const MODEL_IDS = deepFreeze({ sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' });
+const MODEL_ALIASES = deepFreeze(Object.keys(MODEL_IDS));
 const pinsModelIds = (provider) => provider === undefined || provider === null || provider === 'firstParty';
-const toModelId = (m, provider) => (pinsModelIds(provider) ? (MODEL_IDS[m] || m) : m);
+const toModelId = (m, provider, mappedAliases) =>
+  (pinsModelIds(provider) && !mappedAliases?.includes(m) ? (MODEL_IDS[m] || m) : m);
 const conditionalSchemaActive = (policy) => {
   const p = policy || {};
   return pinsModelIds(p.provider) && !p.gateway;
 };
 function resolvePolicy(agentType, opts = {}, dimensions = DIMENSIONS) {
   if (opts.subagentModelEnv) {
-    return { model: toModelId(opts.subagentModelEnv, opts.provider) };
+    return { model: toModelId(opts.subagentModelEnv, opts.provider, opts.mappedAliases) };
   }
   const dim = dimensions.find((d) => d.agentType === agentType);
-  const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider);
+  const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider, opts.mappedAliases);
   return { model };
 }
 function modelFor(agentType, policy, dimensions = DIMENSIONS) {
-  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }, dimensions).model;
+  return resolvePolicy(agentType, {
+    subagentModelEnv: policy.subagentModel, provider: policy.provider, mappedAliases: policy.mappedAliases,
+  }, dimensions).model;
 }
 const REQUIRED = deepFreeze(['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles',
   'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope']);
@@ -3473,6 +3477,9 @@ function methodologyRows(input, rawFindings) {
   if (policy.subagentModel) {
     rows.push(['Subagent model override', `EVERY stage uses ${inline(policy.subagentModel)}`]);
   }
+  if (pinsModelIds(provider) && policy.mappedAliases?.length) {
+    rows.push(['User tier mapping', policy.mappedAliases.map((alias) => inline(alias)).join(', ')]);
+  }
   const stageTypes = [
     'change-summarizer', ...AGENTS.map((agentType) => agentType.split(':').pop()),
     ...Object.keys(STAGE_DEFAULTS),
@@ -3481,6 +3488,7 @@ function methodologyRows(input, rawFindings) {
     const model = resolvePolicy(`code-gauntlet:${agentType}`, {
       subagentModelEnv: policy.subagentModel,
       provider,
+      mappedAliases: policy.mappedAliases,
     }).model;
     return `${agentType}=${inline(model)}`;
   }).join(', ');
@@ -4514,6 +4522,8 @@ const ARGS_FIELD_CHECKS = deepFreeze({
       message: 'invalid {label}: {value} (expected one of {values})' },
     { key: 'tier', values: KNOB_VOCAB.modelTiers, message: 'invalid {label}: {value} (expected optimized)' },
     { key: 'gateway', presence: 'nonnull', domain: 'boolean', message: 'invalid {label}: {value} (expected a boolean)' },
+    { key: 'mappedAliases', presence: 'nonnull', domain: 'aliasList',
+      message: `invalid {label}: {value} (expected distinct values from ${MODEL_ALIASES.join(', ')})` },
   ],
   changed: [
     { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
@@ -4551,6 +4561,8 @@ const ARGS_FIELD_CHECKS = deepFreeze({
   ],
 });
 const FIELD_DOMAINS = deepFreeze({
+  aliasList: (value) => Array.isArray(value)
+    && value.every((alias) => MODEL_ALIASES.includes(alias)) && new Set(value).size === value.length,
   array: Array.isArray,
   number: (value) => typeof value === 'number',
   boolean: (value) => typeof value === 'boolean',
@@ -6077,6 +6089,7 @@ function resolvedPolicyEnvelope(policy) {
     subagentModel: policy.subagentModel || null,
     provider: policy.provider || 'firstParty',
     gateway: !!policy.gateway,
+    mappedAliases: policy.mappedAliases || [],
     conditionalSchema: conditionalSchemaActive(policy),
   };
 }

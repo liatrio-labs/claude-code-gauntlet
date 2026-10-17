@@ -578,7 +578,7 @@ const DEGRADED_ERROR = 'all-degraded: every active discovery dimension degraded 
 const DEGRADED_ROWS = [
   { name: 'fresh total degradation fails loud', nulls: DISCOVERY,
     policy: { subagentModel: 'claude-x', provider: 'bedrock' }, ok: false, phase: 'discover',
-    resolved: { subagentModel: 'claude-x', provider: 'bedrock', gateway: false, conditionalSchema: false }, perAgent: 7 },
+    resolved: { subagentModel: 'claude-x', provider: 'bedrock', gateway: false, mappedAliases: [], conditionalSchema: false }, perAgent: 7 },
   { name: 'replayed total degradation fails loud', discover: { findings: [], degraded: DIMENSIONS,
     dispatched: DISCOVERY, gaps: ['legacy discovery gap'] }, ok: false, phase: 'discover', noDiscovery: true },
   { name: 'rejected file URI leaves no review or host path', hostPaths: true, discover: {
@@ -736,14 +736,30 @@ for (const row of NULL_ROWS) test(`null waist disclosure: ${row.name}`, async ()
 });
 
 const POLICY_ROWS = [
+  { name: 'mapped sonnet preserves schema and opus pin', policy: { mappedAliases: ['sonnet'] },
+    expected: { subagentModel: null, provider: 'firstParty', gateway: false,
+      mappedAliases: ['sonnet'], conditionalSchema: true },
+    models: ['claude-opus-5-5', 'sonnet'], conditional: true },
+  { name: 'mapped subagent override', policy: { subagentModel: 'sonnet', mappedAliases: ['sonnet'] },
+    expected: { subagentModel: 'sonnet', provider: 'firstParty', gateway: false,
+      mappedAliases: ['sonnet'], conditionalSchema: true },
+    models: ['sonnet'], conditional: true },
+  { name: 'bedrock echoes mapping without changing dispatch', policy: { provider: 'bedrock', mappedAliases: ['opus'] },
+    expected: { subagentModel: null, provider: 'bedrock', gateway: false,
+      mappedAliases: ['opus'], conditionalSchema: false },
+    models: ['opus', 'sonnet'], conditional: false },
+  { name: 'null mappings resolve empty', policy: { mappedAliases: null },
+    expected: { subagentModel: null, provider: 'firstParty', gateway: false,
+      mappedAliases: [], conditionalSchema: true },
+    models: ['claude-opus-5-5', 'claude-sonnet-5-5'], conditional: true },
   { name: 'default claude pin and conditional schema', policy: {},
-    expected: { subagentModel: null, provider: 'firstParty', gateway: false, conditionalSchema: true },
+    expected: { subagentModel: null, provider: 'firstParty', gateway: false, mappedAliases: [], conditionalSchema: true },
     models: ['claude-opus-5-5', 'claude-sonnet-5-5'], conditional: true },
   { name: 'gateway keeps claude pin and flat schema', policy: { tier: 'optimized', subagentModel: null, gateway: true },
-    expected: { subagentModel: null, provider: 'firstParty', gateway: true, conditionalSchema: false },
+    expected: { subagentModel: null, provider: 'firstParty', gateway: true, mappedAliases: [], conditionalSchema: false },
     models: ['claude-opus-5-5', 'claude-sonnet-5-5'], conditional: false },
   { name: 'bedrock alias and flat schema', policy: { tier: 'optimized', subagentModel: null, provider: 'bedrock', gateway: false },
-    expected: { subagentModel: null, provider: 'bedrock', gateway: false, conditionalSchema: false },
+    expected: { subagentModel: null, provider: 'bedrock', gateway: false, mappedAliases: [], conditionalSchema: false },
     models: ['opus', 'sonnet'], conditional: false },
 ];
 for (const row of POLICY_ROWS) test(`policy wiring: ${row.name}`, async () => {

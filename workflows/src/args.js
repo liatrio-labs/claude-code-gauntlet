@@ -1,7 +1,7 @@
 import { normalizeAbsoluteRoot } from './paths.js';
 import { REQUIRED, DELIVERY_TIERS, SCOPE_ANSWERS, CONTROL_RE } from './registry.js';
 import { LIMIT_DEFAULTS, LIGHT_SCOPE_MAX_CHANGED_LINES } from './registry.js';
-import { PR_IDENTITY_FIELDS, POLICY_PROVIDERS, TRUSTED_SCRIPT_BASENAMES } from './registry.js';
+import { PR_IDENTITY_FIELDS, POLICY_PROVIDERS, MODEL_ALIASES, TRUSTED_SCRIPT_BASENAMES } from './registry.js';
 import { REVIEW_SETTING_KEYS, SEVERITY_ORDER, KNOB_VOCAB } from './registry.js';
 import { KNOB_REGISTRY, computeLightEligible, receiptEntryFor, receiptEntryForKey, mappedReceiptValue, DERIVED_FROM } from './knobs.js';
 import { deriveWhenHolds, deriveConfigWaist, configEchoValue, validateConfigEcho } from './knobs.js';
@@ -63,6 +63,8 @@ const ARGS_FIELD_CHECKS = deepFreeze({
       message: 'invalid {label}: {value} (expected one of {values})' },
     { key: 'tier', values: KNOB_VOCAB.modelTiers, message: 'invalid {label}: {value} (expected optimized)' },
     { key: 'gateway', presence: 'nonnull', domain: 'boolean', message: 'invalid {label}: {value} (expected a boolean)' },
+    { key: 'mappedAliases', presence: 'nonnull', domain: 'aliasList',
+      message: `invalid {label}: {value} (expected distinct values from ${MODEL_ALIASES.join(', ')})` },
   ],
   changed: [
     { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
@@ -102,6 +104,8 @@ const ARGS_FIELD_CHECKS = deepFreeze({
 });
 
 const FIELD_DOMAINS = deepFreeze({
+  aliasList: (value) => Array.isArray(value)
+    && value.every((alias) => MODEL_ALIASES.includes(alias)) && new Set(value).size === value.length,
   array: Array.isArray,
   number: (value) => typeof value === 'number',
   boolean: (value) => typeof value === 'boolean',

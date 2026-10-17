@@ -452,6 +452,9 @@ for (const row of RECEIPT_ROWS) test(`methodology: ${row.name}`, () => {
 });
 
 const METHODOLOGY_ROWS = [
+  { name: 'mapped alias changes first-party dispatch', input: {
+    policy: { provider: 'firstParty', mappedAliases: ['sonnet', 'haiku'] },
+  }, expected: ['| User tier mapping | sonnet, haiku |', 'bug-detector=sonnet, security-reviewer=claude-opus-5-5'] },
   { name: 'run facts with full fallback and degraded agent', input: {
     pipelineVersion: '3.26.0', deliveryTier: 'main_only', deliveryCap: null,
     reviewScope: { requested: 'incremental', kind: 'full', since: null, commits: null,
@@ -473,6 +476,13 @@ for (const row of METHODOLOGY_ROWS) test(`methodology facts: ${row.name}`, () =>
   const text = rendered(row.input);
   for (const expected of row.expected) assert.ok(text.includes(expected), expected);
 });
+
+for (const policy of [{}, { mappedAliases: [] }, { mappedAliases: null },
+  { provider: 'bedrock', mappedAliases: ['sonnet'] }]) {
+  test(`methodology omits ineffective mapping: ${JSON.stringify(policy)}`, () => {
+    assert.equal(rendered({ policy }).includes('| User tier mapping |'), false);
+  });
+}
 
 const RULE_ROWS = [
   ['code_comment', '**Cited comment:**'],
