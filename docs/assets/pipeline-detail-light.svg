@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 2403" role="img" aria-labelledby="pipeline-title pipeline-desc">
   <title id="pipeline-title">Code Gauntlet review pipeline in detail</title>
-  <desc id="pipeline-desc">A GitHub pull request, GitLab merge request or local change is prepared in your session, then reviewed inside one Workflow call. On a full review seven specialist agents discover candidate findings in parallel; a light review, offered when every changed file is low risk and the change is under 50 lines, runs only the bug and security reviewers. Each candidate passes through merge, verify, validate, filter and a blind challenge that sees only the claim and its location. If verification or validation itself fails, the finding continues and a gap is recorded. Code ranks and selects the delivery set and renders the report, then hands the results back to your session. On an interactive run the session always saves a Markdown report, asks before posting inline comments to an open pull or merge request, and offers an optional task board. A headless run asks nothing, delivers to chat, Markdown or PR comments as configured, and defaults posting to dry-run.</desc>
+  <desc id="pipeline-desc">A GitHub pull request, GitLab merge request or local change is prepared in your session, then reviewed inside one Workflow call. On a full review seven specialist agents discover candidate findings in parallel; a light review, offered when every changed file is low risk and the change is under 50 lines, runs only the bug and security reviewers. Each candidate passes through merge, verify, validate, filter and a blind challenge that sees only the claim and its location. If verification or validation fails, the finding still faces challenge, then surviving findings are held back to the unverified report section and a gap is recorded. Code ranks and selects the delivery set and renders the report, then hands the results back to your session. On an interactive run the session always saves a Markdown report, asks before posting inline comments to an open pull or merge request, and offers an optional task board. A headless run asks nothing, delivers to chat, Markdown or PR comments as configured, and defaults posting to dry-run.</desc>
   <defs>
     <style>
       text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 18px; fill: #1f2937; }
@@ -162,7 +162,7 @@
   <text class="detail" x="92" y="1770">Rank, cap and select the delivery set, render the report</text>
   <text class="detail" x="92" y="1795">Hand the findings, report and delivery selection back to your session</text>
   <line class="divider" x1="780" y1="1700" x2="780" y2="1797"/>
-  <text class="effect" x="802" y="1728">Unchallenged: listed as unverified</text>
+  <text class="effect" x="802" y="1728">Incomplete checks: report only</text>
   <text class="effect" x="802" y="1754">Failed agents and gap count shown</text>
   <text class="effect" x="802" y="1780">Selection made by code</text>
   <text class="kind" x="64" y="1863">DESIGN PRINCIPLES</text>

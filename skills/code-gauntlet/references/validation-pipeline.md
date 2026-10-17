@@ -75,7 +75,7 @@ The stage batches findings into `limits.validateBatch` chunks and dispatches one
 100  = definitely real
 ```
 
-**Degradation.** A null/malformed batch means its findings went UNVALIDATED: they are kept at face value (never dropped, confidence untouched) and marked `validation='skipped'` with a loud gap. Attribution is by batch index so a degraded batch traces to its exact findings.
+**Degradation.** A null/malformed batch or a missing matched score marks the affected findings `validation='skipped'`, with confidence untouched and one gap per batch naming the count. They still face challenge, then survivors enter the unverified bucket and appear only in the report. Degraded verify slices (`origin='unknown'`) follow the same route. How often validators omit scores is unmeasured.
 
 ---
 
@@ -95,9 +95,9 @@ Pure, deterministic JS — no agents. It applies dimension-specific confidence/s
 
 # Challenge stage (`challengeStage`)
 
-Blind, independent scrutiny — the only stage where findings face agents that have never seen the original reasoning. Fresh challengers see **only** `blindChallengeFields`: `title`, `description`, and raw `code` (an allowlist, not a delete-list — no evidence, origin, cross_file_refs, or reasoning can ever leak). Always Sonnet.
+Blind, independent scrutiny — the only stage where findings face agents that have never seen the original reasoning. Fresh challengers see **only** `blindChallengeFields`: `title`, `description`, `file`, `line_start`, and `line_end` (an allowlist, not a delete-list — no evidence, origin, cross_file_refs, or reasoning can ever leak). Always Sonnet.
 
-The stage ranks findings, blind-challenges the top `min(n, limits.challengeCap)` through `parallel()`, and applies the score thresholds. Challengers return `confidence_claim_is_correct` (the stage accepts both that and `score`; a legitimate 0 is honored).
+The stage ranks clean findings first, then incomplete findings, and blind-challenges the top `min(n, limits.challengeCap)` through `parallel()`, and applies the score thresholds. Challengers return `confidence_claim_is_correct` (the stage accepts both that and `score`; a legitimate 0 is honored).
 
 **Thresholds** (`applyChallenges`):
 
@@ -106,7 +106,7 @@ The stage ranks findings, blind-challenges the top `min(n, limits.challengeCap)`
 - **50–74** → `challenge_contested: true`; surfaced re-routed to `"suggestion"`
 - **≥ 75** → survives unchanged
 
-After thresholds it re-runs cross-agent consolidation (re-stamps `consolidation_key`/`consolidation_primary` on the surviving set; nothing is dropped) and ranks; that ranked set is the **high-confidence bucket**. Every UNCHALLENGED finding — challengeCap overflow OR a null/unscored member — is marked `challenge='skipped'` and routed to the **unverified** bucket (pipeline-degraded); it never enters the high-confidence set. Both buckets flow to the Report stage.
+After thresholds it consolidates and ranks survivors. Challenge cap overflow is stamped `challenge='capped'`; null/unscored results are stamped `challenge='failed'`. Both enter the **unverified** bucket. Immediately after the challenge phase and replay belt, `holdBackIncomplete` moves survivors missing validation or verification to that bucket, on fresh runs and old checkpoints alike. Eliminated findings stay eliminated. The helper clears unverified consolidation stamps and regroups only clean survivors, which form the **high-confidence bucket**. Legacy `challenge='skipped'` entries remain unchallenged with neutral report wording. Both buckets flow to the report; only high-confidence findings enter findings.json and delivery. Bench scores inline comments, so degraded runs now post fewer candidates; G3 also reads unknown-origin findings from the challenge checkpoint's unverified bucket without double counting.
 
 ---
 

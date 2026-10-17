@@ -22,6 +22,8 @@ The Phase 3 `Workflow` call returned a compact object that always includes a `ch
 
 Never hand-write an artifact from `persistReturn`'s contents. The whole channel exists because a model transcribing those bytes loses 36% of them, most damagingly by rewriting long prose shorter with the schema intact — which is why `await_workflow.py` elides them from its stdout and only the path reaches you.
 
+Findings with skipped validation or unknown verify origin are challenged, then held back to the report's Unverified / pipeline-degraded section alongside capped or failed challenges. They are absent from findings.json, PR comments, patches, and fix tasks. Old challenge checkpoints pass through the same holdback before delivery.
+
 **Then render the apply-checked patches** whenever `artifactPaths.findings` is non-null — SKILL.md Phase 8 → "Render apply-checked patches" owns the command, the exit-code table, and where the patches path is surfaced in delivery.
 
 **On `ok: true` (writer succeeded):** read the artifacts — they are the source of truth for delivery. Do not reconstruct, re-filter, or re-rank findings from the return value or from memory.

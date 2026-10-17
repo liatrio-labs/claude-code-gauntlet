@@ -16,6 +16,7 @@ import { renderReport, renderSummaryBody } from './renderReport.js';
 import { writeArtifacts } from './persist.js';
 import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
 import { checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
+import { holdBackIncomplete } from './holdBackIncomplete.js';
 
 // The host injects runtime globals, while tests supply context explicitly.
 function defaultCtx() {
@@ -238,6 +239,7 @@ export async function runWith(ctx, rawArgs) {
     // Derive the loss disclosure from carried eliminations so resumes report the same loss.
     // Keep it outside the persisted challenge output to avoid duplicating gaps on replay.
     const markedCount = applyChallengeReplayBelt(challengeOut);
+    holdBackIncomplete(challengeOut);
     if (markedCount > 0) {
       gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
     }

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="872" viewBox="0 0 1200 872" role="img" aria-labelledby="pipeline-title pipeline-desc">
   <title id="pipeline-title">Code Gauntlet pipeline overview</title>
-  <desc id="pipeline-desc">The review pipeline for GitHub pull requests, GitLab merge requests, and local changes. Preparation supplies the diff, project rules, risk triage, review scope, and related tests. Full review runs seven concern-specialized reviewers in parallel across the diff and codebase. Light review is offered when every changed file is low risk and fewer than 50 lines changed; it runs only the marked Bugs and Security reviewers. Candidates pass through deterministic merge and verification, independent validation, deterministic filtering, and a blind challenge that receives only the claim and location. Verification checks source evidence with a deterministic script and trusts its results only with a valid receipt. The report includes ranked findings, improvement suggestions, methodology, and explicit gaps. Delivery supports PR or MR comments, Markdown, and a task board. Skipped or capped challenges appear separately as unverified findings.</desc>
+  <desc id="pipeline-desc">The review pipeline for GitHub pull requests, GitLab merge requests, and local changes. Preparation supplies the diff, project rules, risk triage, review scope, and related tests. Full review runs seven concern-specialized reviewers in parallel across the diff and codebase. Light review is offered when every changed file is low risk and fewer than 50 lines changed; it runs only the marked Bugs and Security reviewers. Candidates pass through deterministic merge and verification, independent validation, deterministic filtering, and a blind challenge that receives only the claim and location. Verification checks source evidence with a deterministic script and trusts its results only with a valid receipt. The report includes ranked findings, improvement suggestions, methodology, and explicit gaps. Delivery supports PR or MR comments, Markdown, and a task board. Skipped checks and capped or failed challenges appear only in the unverified report section.</desc>
   <defs>
     <style>
       text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 18px; fill: #1f2937; }
@@ -145,6 +145,6 @@
 
   <rect class="unverified-panel" x="888" y="748" width="272" height="100" rx="10"/>
   <text class="section" x="908" y="781">Unverified findings</text>
-  <text class="detail" x="908" y="810">Skipped / capped challenges</text>
+  <text class="detail" x="908" y="810">Incomplete checks / challenges</text>
   <text class="detail" x="908" y="833">Separate report section</text>
 </svg>

@@ -161,9 +161,9 @@ const emptyInputProof = () => ({
   retried: 0, retriedMismatch: 0, retriedMissing: 0,
 });
 
-// The bench degradation scan requires UNVERIFIED and the affected count.
+// Name the affected count so partial verification failures remain attributable.
 function verifyDegradeGap(detail, k, n) {
-  return `verify: UNVERIFIED — ${detail}; ${k} of ${n} finding(s) marked origin=unknown, surfaced-classification skipped`;
+  return `verify: UNVERIFIED — ${detail}; ${k} of ${n} finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report`;
 }
 
 // A fresh sample can repair transcription. A distinct retry nonce prevents replay

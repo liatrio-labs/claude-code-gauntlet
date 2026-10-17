@@ -1,4 +1,5 @@
 // Validation, filtering, challenge, and delivery selection stages.
+import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap } from './capacity.js';
 import { modelFor } from './registry.js';
 import { INT_POLICY, coerceInt } from './wire.js';
@@ -75,14 +76,19 @@ export async function validateStage(ctx, input) {
       ? null
       : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
     if (list === null) {
-      gaps.push(`validate-batch-${idx}: validator returned null/malformed — ${batch.length} finding(s) unvalidated (validation=skipped, kept conservatively)`);
+      gaps.push(`validate-batch-${idx}: validator returned null/malformed — ${batch.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
       for (const f of batch) skippedSet.add(f);
       return;
     }
     completed += 1;
-    // The validator returns finding_id per its schema and agent contract; applyValidations matches on id, so copy it across or no adjustment matches.
-    for (const e of list) {
-      validations.push(e && typeof e === 'object' ? { ...e, id: e.id ?? e.finding_id } : e);
+    const entries = list.filter((e) => e && typeof e === 'object')
+      .map((e) => ({ ...e, id: e.id ?? e.finding_id }));
+    validations.push(...entries);
+    const scored = new Set(entries.filter((e) => coerceInt(e.confidence, INT_POLICY.validation) !== null).map((e) => e.id));
+    const unscored = batch.filter((f) => !scored.has(f.id));
+    if (unscored.length) {
+      gaps.push(`validate-batch-${idx}: validator omitted scores — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
+      for (const f of unscored) skippedSet.add(f);
     }
   });
 
@@ -117,7 +123,7 @@ function validatePrompt(inp, batch) {
     const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
     return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}`;
   }).join('\n');
-  return `${ctxLine}Independently validate this batch of findings. For each, Read the code at the file and line range shown, attempt to disprove the claim, and score it. Findings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding you scored; omit the rest).`;
+  return `${ctxLine}Independently validate this batch of findings. For each, Read the code at the file and line range shown, attempt to disprove the claim, and score it. Findings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
 }
 
 // The runtime has no wall clock, so generated_at must come from the supplied arguments.
@@ -180,8 +186,11 @@ export async function challengeStage(ctx, input) {
 
   const model = modelFor('code-gauntlet:challenger', policy);
 
-  // Ranking before applying the cap reserves challenge capacity for the highest-priority findings.
-  const ranked = rankFindings(findings);
+  // Reserve scarce challenge capacity for findings that can still be delivered.
+  const ranked = [
+    ...rankFindings(findings.filter((f) => incompleteVetting(f).length === 0)),
+    ...rankFindings(findings.filter((f) => incompleteVetting(f).length > 0)),
+  ];
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);
 
@@ -205,8 +214,8 @@ export async function challengeStage(ctx, input) {
     // Nullish fallback preserves a legitimate zero score.
     const rawScore = res && typeof res === 'object' ? (res.confidence_claim_is_correct ?? res.score) : undefined;
     if (res === null || res === undefined || coerceInt(rawScore, INT_POLICY.validation) === null) {
-      gaps.push(`challenge-${idx}: challenger returned null/unscored — finding ${finding.id} unchallenged (challenge=skipped, pipeline-degraded)`);
-      skipped.push(finding);
+      gaps.push(`challenge-${idx}: challenger returned null/unscored — finding ${finding.id} unchallenged (challenge=failed, pipeline-degraded)`);
+      skipped.push({ ...finding, challenge: 'failed' });
       return;
     }
     // Use the known finding id because challenger output cannot be trusted to echo it.
@@ -214,15 +223,14 @@ export async function challengeStage(ctx, input) {
     challenged.push(finding);
   });
 
-  for (const f of overflow) skipped.push(f);
+  for (const f of overflow) skipped.push({ ...f, challenge: 'capped' });
   if (overflow.length) {
-    gaps.push(`challenge: ${overflow.length} finding(s) over challengeCap=${cap} left unchallenged (challenge=skipped, pipeline-degraded)`);
+    gaps.push(`challenge: ${overflow.length} finding(s) over challengeCap=${cap} left unchallenged (challenge=capped, pipeline-degraded)`);
   }
 
   const applied = applyChallenges(challenged, challenges);
 
-  // Clone skipped findings so adding challenge status does not mutate caller-owned objects.
-  const unverified = rankFindings(skipped.map((f) => ({ ...f, challenge: 'skipped' })));
+  const unverified = rankFindings(skipped);
 
   return {
     findings: applied.findings,

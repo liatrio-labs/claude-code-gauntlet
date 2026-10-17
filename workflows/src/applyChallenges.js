@@ -31,7 +31,6 @@ export function rankFindings(findings) {
   });
 }
 
-// Match challenges by finding id, adjust scores, and return the active and eliminated findings.
 export function applyChallenges(findings, challenges) {
   const challengeById = new Map();
   for (const entry of challenges) {

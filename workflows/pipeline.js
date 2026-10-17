@@ -1105,6 +1105,22 @@ function discoverPrompt(inp, spec) {
   const base = `${ctxLine}This is a code gauntlet built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Every finding MUST cite concrete evidence: the evidence field must be non-empty and reference real lines you actually inspected (in the diff or in a file you opened) — a finding you cannot ground in inspected code is noise, do not emit it. For any absence or "missing" claim (e.g. a test-coverage negative asserting no test exists), name in evidence the specific file or path you checked; an unproven absence is not a finding. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
   return spec.promptExtra ? `${base} ${spec.promptExtra}` : base;
 }
+// --- vetting.js ---
+const UNVERIFIED_REASONS = {
+  validation: 'the validator did not score this finding, so it was not skeptically validated',
+  verify: 'the verify slice could not be proven against the dispatched document',
+  challenge: {
+    capped: 'the challenge cap was reached, so this finding was not challenge-verified',
+    failed: 'the challenger failed or returned no score, so this finding was not challenge-verified',
+    skipped: 'this finding was not challenge-verified',
+  },
+};
+function incompleteVetting(finding) {
+  const missing = [];
+  if (finding.validation === 'skipped') missing.push('validation');
+  if (finding.origin === 'unknown') missing.push('verify');
+  return missing;
+}
 // --- applyValidations.js ---
 const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
 function applyValidations(findings, validations) {
@@ -3187,12 +3203,9 @@ function locationUrl(finding, permalinks, displayedLocation) {
   return `${permalinks.blobBase}${path}${anchor}`;
 }
 function unverifiedReason(finding) {
-  const reasons = [];
-  if (finding.origin === 'unknown') {
-    reasons.push('the verify slice could not be proven against the dispatched document');
-  }
-  if (finding.challenge === 'skipped') {
-    reasons.push('the challenge cap was reached, so this finding was not challenge-verified');
+  const reasons = incompleteVetting(finding).map((check) => UNVERIFIED_REASONS[check]);
+  if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge)) {
+    reasons.push(UNVERIFIED_REASONS.challenge[finding.challenge]);
   }
   return reasons.length ? reasons.join('; ') : 'a pipeline stage was skipped or failed';
 }
@@ -3699,13 +3712,19 @@ async function validateStage(ctx, input) {
       ? null
       : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
     if (list === null) {
-      gaps.push(`validate-batch-${idx}: validator returned null/malformed — ${batch.length} finding(s) unvalidated (validation=skipped, kept conservatively)`);
+      gaps.push(`validate-batch-${idx}: validator returned null/malformed — ${batch.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
       for (const f of batch) skippedSet.add(f);
       return;
     }
     completed += 1;
-    for (const e of list) {
-      validations.push(e && typeof e === 'object' ? { ...e, id: e.id ?? e.finding_id } : e);
+    const entries = list.filter((e) => e && typeof e === 'object')
+      .map((e) => ({ ...e, id: e.id ?? e.finding_id }));
+    validations.push(...entries);
+    const scored = new Set(entries.filter((e) => coerceInt(e.confidence, INT_POLICY.validation) !== null).map((e) => e.id));
+    const unscored = batch.filter((f) => !scored.has(f.id));
+    if (unscored.length) {
+      gaps.push(`validate-batch-${idx}: validator omitted scores — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
+      for (const f of unscored) skippedSet.add(f);
     }
   });
   const { adjustedCount } = applyValidations(findings, validations);
@@ -3735,7 +3754,7 @@ function validatePrompt(inp, batch) {
     const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
     return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}`;
   }).join('\n');
-  return `${ctxLine}Independently validate this batch of findings. For each, Read the code at the file and line range shown, attempt to disprove the claim, and score it. Findings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding you scored; omit the rest).`;
+  return `${ctxLine}Independently validate this batch of findings. For each, Read the code at the file and line range shown, attempt to disprove the claim, and score it. Findings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
 }
 function filterStage(input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -3784,7 +3803,10 @@ async function challengeStage(ctx, input) {
     };
   }
   const model = modelFor('code-gauntlet:challenger', policy);
-  const ranked = rankFindings(findings);
+  const ranked = [
+    ...rankFindings(findings.filter((f) => incompleteVetting(f).length === 0)),
+    ...rankFindings(findings.filter((f) => incompleteVetting(f).length > 0)),
+  ];
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);
   const thunks = candidates.map((finding, idx) => () => ctx.agent(challengePrompt(finding), {
@@ -3802,19 +3824,19 @@ async function challengeStage(ctx, input) {
     const finding = candidates[idx];
     const rawScore = res && typeof res === 'object' ? (res.confidence_claim_is_correct ?? res.score) : undefined;
     if (res === null || res === undefined || coerceInt(rawScore, INT_POLICY.validation) === null) {
-      gaps.push(`challenge-${idx}: challenger returned null/unscored — finding ${finding.id} unchallenged (challenge=skipped, pipeline-degraded)`);
-      skipped.push(finding);
+      gaps.push(`challenge-${idx}: challenger returned null/unscored — finding ${finding.id} unchallenged (challenge=failed, pipeline-degraded)`);
+      skipped.push({ ...finding, challenge: 'failed' });
       return;
     }
     challenges.push({ id: finding.id, score: rawScore, justification: res.justification });
     challenged.push(finding);
   });
-  for (const f of overflow) skipped.push(f);
+  for (const f of overflow) skipped.push({ ...f, challenge: 'capped' });
   if (overflow.length) {
-    gaps.push(`challenge: ${overflow.length} finding(s) over challengeCap=${cap} left unchallenged (challenge=skipped, pipeline-degraded)`);
+    gaps.push(`challenge: ${overflow.length} finding(s) over challengeCap=${cap} left unchallenged (challenge=capped, pipeline-degraded)`);
   }
   const applied = applyChallenges(challenged, challenges);
-  const unverified = rankFindings(skipped.map((f) => ({ ...f, challenge: 'skipped' })));
+  const unverified = rankFindings(skipped);
   return {
     findings: applied.findings,
     unverified,
@@ -4361,7 +4383,7 @@ const emptyInputProof = () => ({
   retried: 0, retriedMismatch: 0, retriedMissing: 0,
 });
 function verifyDegradeGap(detail, k, n) {
-  return `verify: UNVERIFIED — ${detail}; ${k} of ${n} finding(s) marked origin=unknown, surfaced-classification skipped`;
+  return `verify: UNVERIFIED — ${detail}; ${k} of ${n} finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report`;
 }
 async function verifySliceWithRetry(c, inp, i, slice, record) {
   const { nonce } = inp;
@@ -6060,12 +6082,33 @@ function applyChallengeReplayBelt(challengeOut) {
     if (typeof challengeOut.stats.final_count === 'number' && Array.isArray(challengeOut.findings)) {
       challengeOut.stats.final_count = challengeOut.findings.length;
     }
-    if (typeof challengeOut.stats.skipped === 'number' && Array.isArray(challengeOut.unverified)) {
-      challengeOut.stats.skipped = challengeOut.unverified.length;
-    }
     challengeOut.stats.replay_belt_eliminated = k1 + k2;
   }
   return challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
+}
+// --- holdBackIncomplete.js ---
+function holdBackIncomplete(challengeOut) {
+  const clean = [];
+  const unverified = challengeOut.unverified || [];
+  for (const finding of challengeOut.findings || []) {
+    if (incompleteVetting(finding).length) unverified.push(finding);
+    else clean.push(finding);
+  }
+  for (const finding of unverified) {
+    delete finding.consolidation_key;
+    delete finding.consolidation_primary;
+  }
+  const { findings, consolidatedCount } = consolidateCrossAgent(clean);
+  challengeOut.findings = findings;
+  challengeOut.unverified = unverified;
+  challengeOut.stats = {
+    ...challengeOut.stats,
+    skipped: unverified.filter((f) => Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
+    held_back: unverified.filter((f) => !Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge) && incompleteVetting(f).length).length,
+    cross_agent_consolidated: consolidatedCount,
+    final_count: findings.length,
+  };
+  return challengeOut;
 }
 // --- run.js ---
 function defaultCtx() {
@@ -6246,6 +6289,7 @@ async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(challengeOut.gaps || []));
     const markedCount = applyChallengeReplayBelt(challengeOut);
+    holdBackIncomplete(challengeOut);
     if (markedCount > 0) {
       gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
     }
