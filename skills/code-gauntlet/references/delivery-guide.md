@@ -84,7 +84,7 @@ Rule source labels: documented_rule -> Cited rule, code_comment -> Cited comment
 **Usage:**
 
 ```bash
-python3 "{plugin_root}/scripts/post_review.py" "<findings_json_path>" [--report "PATH"]
+{python} "{plugin_root}/scripts/post_review.py" "<findings_json_path>" [--report "PATH"]
 ```
 
 For a legacy bare findings array, pass `--report PATH` together with `--owner`, `--repo`,
@@ -310,7 +310,7 @@ in the JSON file rather than becoming Python or shell source:
 Then post the file:
 
 ```bash
-python3 "{plugin_root}/scripts/post_review.py" \
+{python} "{plugin_root}/scripts/post_review.py" \
   "{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json" \
   --report "{output_dir}/code-gauntlet-report-{head_sha_short}.md" \
   --owner "myorg" --repo "myapp" --pr-number 42 --platform github --sha "FULL_HEAD_SHA"

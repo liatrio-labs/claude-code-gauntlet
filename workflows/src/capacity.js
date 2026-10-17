@@ -1,32 +1,66 @@
 // Verify slice capacity and dispatch limits shared by stages and the agent-count guard.
-import { AGENTS } from './registry.js';
+import { AGENTS, TRUSTED_SCRIPT_BASENAMES } from './registry.js';
 import { LIMIT_DEFAULTS } from './registry.js';
 import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding } from './verifyWire.js';
 
+import { pythonArgv, shellWord } from './wire.js';
+import { trustedScriptPath } from './paths.js';
+
+export function verifyCommand(inp, i, sliceNonce, inlinePayload) {
+  const v = inp.verify || {};
+  const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;
+  const outPath = `${v.outputPathBase || 'phase4-output'}.slice${i}.json`;
+  const parts = [
+    ...pythonArgv(inp.python), inp.pluginRoot ? trustedScriptPath(inp.pluginRoot, TRUSTED_SCRIPT_BASENAMES.verify) : 'scripts/verify_findings.py',
+    '--input', inPath,
+    '--input-inline', inlinePayload,
+    '--output', outPath,
+    '--nonce', sliceNonce,
+    '--head-sha', inp.headShaShort,
+    '--base-branch', effectiveVerifyBaseBranch(v.baseBranch),
+  ];
+  if (v.diffPath) parts.push('--diff-file', v.diffPath);
+  return parts.map(shellWord).join(' ');
+}
+
+// CreateProcess counts the entire UTF-16 command, including executable and quoting.
+export function verifyInlineBudget(input = {}) {
+  if (input.hostPlatform !== 'windows') return VERIFY_INLINE_CHAR_BUDGET;
+  const prepared = { ...input, verify: { ...(input.verify || {}),
+    baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
+  const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
+  return Math.max(0, 32767 - overhead - 2048);
+}
+
 export const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
+
+// Native Windows argv quotes JSON quotes again, including the Bash -c launch envelope.
+export function verifyInlineCost(token, hostPlatform) {
+  return token.length + (hostPlatform === 'windows' ? (token.match(/["\\]/g) || []).length : 0);
+}
 
 // Exact wire cost includes the empty envelope and commas between findings.
 const verifySliceLengthFromCosts = (envelopeLength, findingCost, findingCount) =>
   envelopeLength + findingCost + Math.max(0, findingCount - 1);
-const projectedVerifyFindingInlineLength = (finding) =>
-  encodeSliceInline(projectVerifySliceFinding(finding)).length;
+const projectedVerifyFindingInlineLength = (finding, hostPlatform) =>
+  verifyInlineCost(encodeSliceInline(projectVerifySliceFinding(finding)), hostPlatform);
 
 // Prediction and admission share a cost primitive so dispatch assertions cannot disagree with planning.
-export function predictVerifySliceInlineLength(slice, baseBranch) {
+export function predictVerifySliceInlineLength(slice, baseBranch, hostPlatform) {
   const branch = effectiveVerifyBaseBranch(baseBranch);
-  const envelopeLength = encodeSliceInline({ findings: [], base_branch: branch }).length;
+  const envelopeLength = verifyInlineCost(encodeSliceInline({ findings: [], base_branch: branch }), hostPlatform);
   let findingCost = 0;
-  for (const finding of slice) findingCost += projectedVerifyFindingInlineLength(finding);
+  for (const finding of slice) findingCost += projectedVerifyFindingInlineLength(finding, hostPlatform);
   return verifySliceLengthFromCosts(envelopeLength, findingCost, slice.length);
 }
 
 // A skipped oversize finding hides a boundary that neighboring slices cannot reconstruct, so the planner records closing reasons.
-export function planVerifySlices(findings, sliceSize, budget, baseBranch) {
+export function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPlatform) {
   const source = Array.isArray(findings) ? findings : [];
   const branch = effectiveVerifyBaseBranch(baseBranch);
   const maxFindings = Math.max(1, sliceSize || source.length || 1);
-  const maxChars = Math.max(1, budget || VERIFY_INLINE_CHAR_BUDGET);
-  const envelopeAllowance = encodeSliceInline({ findings: [], base_branch: branch }).length;
+  const maxChars = Math.max(0, budget ?? VERIFY_INLINE_CHAR_BUDGET);
+  const envelopeAllowance = verifyInlineCost(encodeSliceInline({ findings: [], base_branch: branch }), hostPlatform);
   const slices = [];
   const oversize = [];
   const closeReasons = [];
@@ -42,7 +76,7 @@ export function planVerifySlices(findings, sliceSize, budget, baseBranch) {
   };
 
   for (const finding of source) {
-    const findingCost = projectedVerifyFindingInlineLength(finding);
+    const findingCost = projectedVerifyFindingInlineLength(finding, hostPlatform);
     const singleCost = verifySliceLengthFromCosts(envelopeAllowance, findingCost, 1);
     if (singleCost > maxChars) {
       flush('oversize');
@@ -92,10 +126,10 @@ function findingCount(findings) {
   return Array.isArray(findings) ? findings.length : Math.max(0, findings || 0);
 }
 
-function verifyTerm(L, findings, baseBranch = 'main') {
+function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   const count = findingCount(findings);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), VERIFY_INLINE_CHAR_BUDGET, baseBranch).slices.length
+    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudget(input), baseBranch, input.hostPlatform).slices.length
       * VERIFY_ATTEMPTS_PER_SLICE;
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
@@ -103,12 +137,12 @@ function verifyTerm(L, findings, baseBranch = 'main') {
 
 // Every verify slice can retry independently, so its term must include retries.
 // The +2 covers up to two artifact-writer attempts; renderReport is code-only.
-export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main') {
+export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
   const findings = findingCount(nFindings);
   const summarizeCalls = ceilDiv(files, effectiveBucketSize(L)) + 1;
-  const verifyCalls = verifyTerm(L, nFindings, baseBranch);
+  const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
   const validateCalls = ceilDiv(findings, effectiveBatchSize(L, findings));
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + 2;
@@ -116,13 +150,13 @@ export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'mai
 
 // Removing terms that cannot shrink guarantees termination when the inline budget binds.
 // Summarize must also shrink because its term alone can exceed the guard.
-export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main') {
+export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = { ...(limits || {}) };
   const files = Math.max(0, nFiles || 0);
   const findings = findingCount(nFindings);
   const candidates = new Set(['summarize', 'verify', 'validate', 'challenge']);
 
-  while (worstCaseAgentCount(L, files, nFindings, baseBranch) >= AGENT_COUNT_GUARD && candidates.size > 0) {
+  while (worstCaseAgentCount(L, files, nFindings, baseBranch, input) >= AGENT_COUNT_GUARD && candidates.size > 0) {
     const summarizeTerm = ceilDiv(files, effectiveBucketSize(L)) + 1;
     if (summarizeTerm > SUMMARIZE_TERM_BOUND && candidates.has('summarize')) {
       // Doubling a raw absent size could lower the effective bucket size and increase fan-out.
@@ -132,7 +166,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main') {
       continue;
     }
     // Compare each term using its full dispatch cost so retrying verify slices receive the same weight as in the guard.
-    const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch);
+    const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch, input);
     const validateTerm = ceilDiv(findings, effectiveBatchSize(L, findings));
     const challengeTerm = Math.min(findings, effectiveChallengeCap(L, findings));
     const choices = [
@@ -148,7 +182,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main') {
       if (ceilDiv(findings, effectiveBatchSize(L, findings)) >= validateTerm) candidates.delete('validate');
     } else if (largest[0] === 'verify') {
       L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
-      if (verifyTerm(L, nFindings, baseBranch) >= currentVerifyTerm) candidates.delete('verify');
+      if (verifyTerm(L, nFindings, baseBranch, input) >= currentVerifyTerm) candidates.delete('verify');
     } else {
       // Halving the effective cap ensures progress even when the nominal cap exceeds the finding count.
       L.challengeCap = Math.max(CHALLENGE_CAP_FLOOR, Math.floor(Math.min(effectiveChallengeCap(L, findings), findings) / 2));

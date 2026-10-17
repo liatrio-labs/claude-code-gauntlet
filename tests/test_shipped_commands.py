@@ -22,7 +22,7 @@ from tests.support.phase2 import (
 REPO = Path(__file__).resolve().parents[1]
 NONCE = "0123456789abcdef"
 
-_PYTHON = r"\b(?:python3?|py)"
+_PYTHON = r"(?:\b(?:python3?|py)|\{python\})"
 _QUOTED_PYTHON = re.compile(
     _PYTHON
     + r"""(?:\s+-[A-Za-z0-9]\S*)*\s+-c\s+(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')""",
@@ -91,7 +91,12 @@ def _shell_fences(text: str) -> list[tuple[int, str]]:
 
 def _markdown_sources() -> list[tuple[Path, str]]:
     return [
-        (path.relative_to(REPO), path.read_text(encoding="utf-8"))
+        (
+            path.relative_to(REPO),
+            path.read_text(encoding="utf-8")
+            .replace("{python}", "python3")
+            .replace('"${PYTHON[@]}"', "python3"),
+        )
         for root in ("skills", "agents")
         for path in (REPO / root).rglob("*.md")
     ]
@@ -117,7 +122,12 @@ def _unquoted_path_lines(body: str) -> list[int]:
 
 
 def _context_block() -> str:
-    skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+    skill = (
+        (REPO / "skills/code-gauntlet/SKILL.md")
+        .read_text(encoding="utf-8")
+        .replace("{python}", "python3")
+        .replace('"${PYTHON[@]}"', "python3")
+    )
     start = skill.index("### Write the shared agent context file")
     end = skill.index("\n### ", start + 5)
     section = skill[start:end]
@@ -126,7 +136,12 @@ def _context_block() -> str:
 
 
 def test_shipped_context_paths(tmp_path: Path) -> None:
-    skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+    skill = (
+        (REPO / "skills/code-gauntlet/SKILL.md")
+        .read_text(encoding="utf-8")
+        .replace("{python}", "python3")
+        .replace('"${PYTHON[@]}"', "python3")
+    )
     collector = re.search(r'collect_project_rules\.py"[^\n]*--out "([^"]+)"', skill)
     assert collector is not None
     start = skill.index('echo "=== diff ==="')
@@ -187,7 +202,7 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    shutil.which("bash") is None or sys.platform == "win32",
+    shutil.which("bash") is None,
     reason="bash is required for the heredoc injection regression",
 )
 def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) -> None:
@@ -216,7 +231,9 @@ def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) ->
     }
     for placeholder, value in replacements.items():
         block = block.replace(placeholder, value)
-    block = block.replace("python3 ", f"{shlex.quote(sys.executable)} ", 1)
+    block = block.replace(
+        "python3 ", f"{shlex.quote(Path(sys.executable).as_posix())} ", 1
+    )
     result = subprocess.run(
         ["bash", "-c", block], cwd=cwd, capture_output=True, check=False
     )
@@ -233,7 +250,12 @@ def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) ->
 
 
 def _command_after_section(label: str, *, pipe: bool) -> str:
-    skill = (REPO / "skills" / "code-gauntlet" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (
+        (REPO / "skills" / "code-gauntlet" / "SKILL.md")
+        .read_text(encoding="utf-8")
+        .replace("{python}", "python3")
+        .replace('"${PYTHON[@]}"', "python3")
+    )
     marker = f'echo "=== {label} ==="'
     start = skill.index(marker) + len(marker)
     end = skill.index("```", start)
@@ -281,7 +303,12 @@ def _run_shipped(
 def test_shipped_pr_identity_keeps_author_text_on_stdin(
     platform: str, url_key: str, url: str, tmp_path: Path, monkeypatch
 ) -> None:
-    skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+    skill = (
+        (REPO / "skills/code-gauntlet/SKILL.md")
+        .read_text(encoding="utf-8")
+        .replace("{python}", "python3")
+        .replace('"${PYTHON[@]}"', "python3")
+    )
     start = skill.index("<!-- generated-from-registry-identity:pr_identity_fields")
     end = skill.index(
         "<!-- /generated-from-registry-identity:pr_identity_fields", start
@@ -426,7 +453,12 @@ def test_shipped_incremental_diff_keeps_paths_as_data(
                 .stdout.decode()
                 .strip()
             )
-    skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+    skill = (
+        (REPO / "skills/code-gauntlet/SKILL.md")
+        .read_text(encoding="utf-8")
+        .replace("{python}", "python3")
+        .replace('"${PYTHON[@]}"', "python3")
+    )
     command = next(line for line in skill.splitlines() if "incremental_diff.py" in line)
     output_dir = tmp_path / "out [1]"
     output_dir.mkdir()
@@ -472,7 +504,13 @@ def test_shipped_incremental_diff_keeps_paths_as_data(
 def test_skills_do_not_interpolate_changed_paths_in_shell_commands() -> None:
     offenders = []
     for path in (REPO / "skills").rglob("*.md"):
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8")
+            .replace("{python}", "python3")
+            .replace('"${PYTHON[@]}"', "python3")
+            .splitlines(),
+            1,
+        ):
             if re.search(r"git (?:diff|log)\b[^`\n]*-- <", line):
                 offenders.append(f"{path.relative_to(REPO)}:{number}")
     assert offenders == []
@@ -481,7 +519,13 @@ def test_skills_do_not_interpolate_changed_paths_in_shell_commands() -> None:
 def test_skills_do_not_interpolate_branch_names_in_git_commands() -> None:
     offenders = []
     for path in (REPO / "skills").rglob("*.md"):
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8")
+            .replace("{python}", "python3")
+            .replace('"${PYTHON[@]}"', "python3")
+            .splitlines(),
+            1,
+        ):
             if re.search(
                 r"git\s+[^`\n]*(?:<(?:branch|base)>|\{(?:branch|base_branch|baseBranch)\})",
                 line,
@@ -518,8 +562,10 @@ def test_shipped_branch_resolver_keeps_names_on_stdin(
         check=True,
         timeout=10,
     ).stdout
-    reference = (REPO / "skills/code-gauntlet/references/phase2-triage.md").read_text(
-        encoding="utf-8"
+    reference = (
+        (REPO / "skills/code-gauntlet/references/phase2-triage.md")
+        .read_text(encoding="utf-8")
+        .replace("{python}", "python3")
     )
     block = re.search(
         r"```bash\n(python3 \S+/resolve_branch\.py.*?)\n```", reference, re.S
@@ -555,12 +601,12 @@ def test_shipped_branch_resolver_keeps_names_on_stdin(
     assert result.stderr == b""
     # macOS ships bash 3.2, which re-parses a heredoc body nested in $( ).
     bash = "/bin/bash" if os.path.exists("/bin/bash") else shutil.which("bash")
-    if bash and sys.platform != "win32":
+    if bash:
         shell_block = (
             block[1]
             .replace("<branch name exactly as the user gave it>", branch)
             .replace("{plugin_root}", REPO.as_posix())
-            .replace("python3 ", shlex.quote(sys.executable) + " ", 1)
+            .replace("python3 ", shlex.quote(Path(sys.executable).as_posix()) + " ", 1)
         )
         shell_result = subprocess.run(
             [bash, "-c", shell_block], cwd=tmp_path, capture_output=True, timeout=10
@@ -574,7 +620,11 @@ def test_shipped_branch_resolver_keeps_names_on_stdin(
 def test_skill_heredocs_are_never_nested_in_command_substitution() -> None:
     offenders = []
     for path in [*(REPO / "skills").rglob("*.md"), *(REPO / "agents").rglob("*.md")]:
-        text = path.read_text(encoding="utf-8")
+        text = (
+            path.read_text(encoding="utf-8")
+            .replace("{python}", "python3")
+            .replace('"${PYTHON[@]}"', "python3")
+        )
         for match in re.finditer(r"[$<]\([^)\n]*<<", text):
             offenders.append(
                 f"{path.relative_to(REPO)}:{text.count(chr(10), 0, match.start()) + 1}"
@@ -583,7 +633,12 @@ def test_skill_heredocs_are_never_nested_in_command_substitution() -> None:
 
 
 def test_local_branch_form_uses_the_sha_computed_in_the_same_call() -> None:
-    skill = (REPO / "skills" / "code-gauntlet" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (
+        (REPO / "skills" / "code-gauntlet" / "SKILL.md")
+        .read_text(encoding="utf-8")
+        .replace("{python}", "python3")
+        .replace('"${PYTHON[@]}"', "python3")
+    )
     line = next(
         line
         for line in skill.splitlines()
@@ -677,7 +732,12 @@ POSIX_FAKES = pytest.mark.skipif(
 def test_eligibility_shipped_producer_passes_config_as_stdin(
     platform, exit_code, tmp_path
 ):
-    text = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+    text = (
+        (REPO / "skills/code-gauntlet/SKILL.md")
+        .read_text(encoding="utf-8")
+        .replace("{python}", "python3")
+        .replace('"${PYTHON[@]}"', "python3")
+    )
     pattern = (
         r'if ! ELIGIBILITY_JSON=\$\(printf [^\n]*check_eligibility\.py" --platform '
         + platform
@@ -725,7 +785,11 @@ def test_eligibility_shipped_producer_passes_config_as_stdin(
         encoding="utf-8",
         check=False,
     )
-    assert json.loads(capture.read_text(encoding="utf-8")) == [
+    assert json.loads(
+        capture.read_text(encoding="utf-8")
+        .replace("{python}", "python3")
+        .replace('"${PYTHON[@]}"', "python3")
+    ) == [
         [
             str(plugin / "scripts/check_eligibility.py"),
             "--platform",
@@ -756,7 +820,12 @@ def test_eligibility_shipped_producer_passes_config_as_stdin(
 def test_shipped_file_producer(platform, outcome, tmp_path):
     from tests.support.pr_files import FIXTURES, gitlab_view
 
-    text = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+    text = (
+        (REPO / "skills/code-gauntlet/SKILL.md")
+        .read_text(encoding="utf-8")
+        .replace("{python}", "python3")
+        .replace('"${PYTHON[@]}"', "python3")
+    )
     commands = re.findall(
         r'if ! python3 "[^\n]+/scripts/list_pr_files\.py" --platform '
         + platform
@@ -781,7 +850,10 @@ def test_shipped_file_producer(platform, outcome, tmp_path):
     listing = (
         '"render.py"\n'
         if platform == "github"
-        else (FIXTURES / "glab_mr_diffs.ndjson").read_text(encoding="utf-8")
+        else (FIXTURES / "glab_mr_diffs.ndjson")
+        .read_text(encoding="utf-8")
+        .replace("{python}", "python3")
+        .replace('"${PYTHON[@]}"', "python3")
     )
     fake = fake_bin / ("gh" if platform == "github" else "glab")
     fake.write_text(
@@ -825,7 +897,11 @@ def test_shipped_file_producer(platform, outcome, tmp_path):
         check=False,
     )
     calls = [
-        json.loads(line) for line in capture.read_text(encoding="utf-8").splitlines()
+        json.loads(line)
+        for line in capture.read_text(encoding="utf-8")
+        .replace("{python}", "python3")
+        .replace('"${PYTHON[@]}"', "python3")
+        .splitlines()
     ]
     assert calls == (
         [
@@ -860,6 +936,161 @@ def test_shipped_file_producer(platform, outcome, tmp_path):
         assert result.returncode == 0, result.stderr
         assert result.stdout == "continued\n"
         assert json.loads(
-            (tmp_path / "code-gauntlet-files-abc12345.json").read_text(encoding="utf-8")
+            (tmp_path / "code-gauntlet-files-abc12345.json")
+            .read_text(encoding="utf-8")
+            .replace("{python}", "python3")
+            .replace('"${PYTHON[@]}"', "python3")
         ) == ["render.py"]
         assert bool(result.stderr) == (outcome == "incomplete")
+
+
+@pytest.mark.parametrize(
+    "statuses,selected,visited",
+    [
+        ((0, 0, 0), "python3", ["python3"]),
+        ((49, 0, 0), "python", ["python3", "python"]),
+        ((49, 49, 0), "py -3", ["python3", "python", "py"]),
+        ((39, 0, 0), "python", ["python3", "python"]),
+        ((49, 49, 49), None, ["python3", "python", "py"]),
+    ],
+)
+def test_shipped_interpreter_selection(statuses, selected, visited, tmp_path):
+    if shutil.which("bash") is None:
+        pytest.skip("Bash is required to execute the shipped preflight")
+    skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+    selector = skill[
+        skill.index("PYTHON=()") : skill.index('echo "=== output_dir ==="')
+    ]
+    fake_bin = tmp_path / "stub bin"
+    fake_bin.mkdir()
+    trace = tmp_path / "visited"
+    for command, status in zip(("python3", "python", "py"), statuses, strict=True):
+        body = f"printf '%s\\n' {command} >> {shlex.quote(trace.as_posix())}\n"
+        if command == "py":
+            body += '[ "$1" = -3 ] || exit 88\nshift\n'
+        if status == 0:
+            body += f'exec {shlex.quote(Path(sys.executable).as_posix())} "$@"\n'
+        elif status == 39:
+            body += (
+                f"exec {shlex.quote(Path(sys.executable).as_posix())} -c "
+                + shlex.quote(
+                    "import sys; sys.version_info = (3, 9); exec(sys.argv[1])"
+                )
+                + ' "$2"\n'
+            )
+        else:
+            body += f"exit {status}\n"
+        stub = fake_bin / command
+        stub.write_text("#!/bin/bash\n" + body, encoding="utf-8", newline="\n")
+        stub.chmod(0o755)
+    result = subprocess.run(
+        ["bash", "-c", selector],
+        env={
+            **os.environ,
+            "PATH": fake_bin.as_posix() + os.pathsep + os.environ["PATH"],
+        },
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert trace.read_text(encoding="utf-8").splitlines() == visited
+    assert result.returncode == (0 if selected else 1), result.stderr
+    assert result.stdout == (
+        f"python={selected}\n"
+        if selected
+        else "Install Python 3.10+ reachable as python3, python, or py -3.\n"
+    )
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="native Windows argv and py launcher require Windows",
+)
+@pytest.mark.parametrize("python", ["python", "py -3"])
+def test_windows_emitted_commands_through_git_bash(python, tmp_path):
+    from gauntlet import awaiting
+
+    # Paths with spaces require native argv quoting as well as Bash word quoting.
+    output = tmp_path / "native output"
+    output.mkdir()
+    node_program = r"""
+import { writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+const [root, outputDir, python] = process.argv.slice(1);
+const load = (path) => import(pathToFileURL(`${root}/${path}`).href);
+const { verifyStage } = await load('workflows/src/verifyStage.js');
+const { verifyInlineBudget } = await load('workflows/src/capacity.js');
+const { verifyCtx, verifyInput, deltaEnvelope } = await load('workflows/test/helpers/verifyDelta.js');
+const { writeArtifacts } = await load('workflows/src/persist.js');
+const { persistCtx, persistInput } = await load('workflows/test/helpers/persistFixtures.js');
+const { parseWriterPayload } = await load('workflows/src/persist.js');
+const input = { python, pluginRoot: root, hostPlatform: 'windows', nonce: 'n-1', headShaShort: 'abc123',
+  verify: { scriptPath: '/untrusted.py', inputPathBase: `${outputDir}/input`, outputPathBase: `${outputDir}/verified` } };
+const finding = { id: 'F1', file: 'source.py', line_start: 1, origin: 'new', description: '' };
+const budget = verifyInlineBudget(input);
+// The projected description costs one code unit per x, so fill to just below admission.
+finding.description = 'x'.repeat(budget - 200);
+const ctx = verifyCtx(() => deltaEnvelope([finding], { nonce: 'n-1.0' }));
+await verifyStage(ctx, verifyInput([finding], input));
+const verify = ctx.calls[0].prompt.split('\n').at(-1);
+const persist = persistCtx();
+await writeArtifacts(persist, persistInput({ python, pluginRoot: root, outputDir, persist: {} }));
+for (const entry of parseWriterPayload(persist.calls[0].prompt)) writeFileSync(entry.path, entry.text, 'utf8');
+console.log(JSON.stringify({verify, assemble: persist.calls[1].prompt.split('\n').at(-1), budget}));
+"""
+    generated = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            node_program,
+            REPO.as_posix(),
+            output.as_posix(),
+            python,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    commands = json.loads(generated.stdout)
+    assert 28000 < len(commands["verify"]) < 32767 - 1800
+    (tmp_path / "source.py").write_text("answer = 42\n", encoding="utf-8")
+    for name in ("verify", "assemble"):
+        result = subprocess.run(
+            ["bash", "-c", commands[name]],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        assert result.returncode == 0, (name, result.stderr)
+    envelope = json.loads((output / "verified.slice0.json").read_text(encoding="utf-8"))
+    assert envelope["status"] == "ok"
+    assert envelope["receipt"]["inline_checksum"].startswith("fnv1a32:")
+    target = output / "retry.output"
+    args = awaiting.CLI.parser.parse_args(
+        [
+            target.as_posix(),
+            "--python",
+            python,
+            "--timeout-seconds",
+            "0",
+            "--max-attempts",
+            "2",
+        ]
+    )
+    retry = awaiting.build_next_command(args, None, 0)
+    target.write_text('{"ok":true,"phaseReached":"report"}', encoding="utf-8")
+    result = subprocess.run(
+        ["bash", "-c", retry],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"ok": True, "phaseReached": "report"}

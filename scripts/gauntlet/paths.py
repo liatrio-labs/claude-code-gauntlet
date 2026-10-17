@@ -20,3 +20,12 @@ def is_shell_safe_path(path: str) -> bool:
 
 def entry(name: str) -> str:
     return os.path.join(ENTRY_ROOT, "scripts", f"{name}.py")
+
+
+def wire_path(path: str, *, separator: str = os.sep) -> str:
+    """Keep resolved host roots unambiguous at the workflow boundary."""
+    if separator == "\\":
+        if path.startswith(("\\\\", "//")):
+            raise ValueError("UNC roots are unsupported; use a mapped drive")
+        return path.replace(separator, "/")
+    return path

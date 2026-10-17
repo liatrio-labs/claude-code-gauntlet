@@ -315,6 +315,11 @@ def _derive_required_pr_check_contexts() -> list[str]:
     contexts: list[str] = []
     for rel in REQUIRED_PR_CHECK_WORKFLOWS:
         for job_id, job in _ci_job_blocks(_read(rel)):
+            if re.search(
+                r"(?m)^    if: github.event_name == 'workflow_dispatch' && inputs\.windows_live$",
+                job,
+            ):
+                continue
             names = re.findall(r"(?m)^    name:\s*(.+?)\s*$", job)
             label = _unquote(names[0]) if names else job_id
             matrices = re.findall(r"(?m)^        python-version:\s*\[(.*)\]\s*$", job)
@@ -497,3 +502,206 @@ def test_documented_and_ci_gate_commands_are_byte_identical_sets() -> None:
         "in a reviewed diff; verify-wire fixtures updated with "
         "`workflows/test/tools/record_parity.py`"
     ) in _read(".github/pull_request_template.md")
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "no-launch",
+        "early-args",
+        "args",
+        "host-path",
+        "no-proof",
+        "phase",
+        "path-target",
+        "interpreter",
+        "materialize",
+        "nonce",
+        "outside",
+        "missing-report",
+    ],
+)
+def test_windows_live_receipt_gate(fault, tmp_path, monkeypatch):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "windows_live", REPO / ".github/windows_live.py"
+    )
+    assert spec is not None and spec.loader is not None
+    live = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(live)
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    paths = {
+        key: str(output / name)
+        for key, name in {
+            "report": "report.md",
+            "findings": "findings.json",
+            "postReview": "post.json",
+            "checkpoints": "checkpoint.json",
+        }.items()
+    }
+    for path in paths.values():
+        Path(path).write_text("defects.py\n", encoding="utf-8")
+    terminal = {
+        "ok": True,
+        "phaseReached": "report",
+        "stats": {"inputProof": {"proven": 1}},
+        "gaps": [],
+        "artifactPaths": paths,
+    }
+    task_dir = tmp_path / "tasks"
+    task_dir.mkdir()
+    source = task_dir / "task1.output"
+    monkeypatch.setenv("CODE_GAUNTLET_TASKS_DIR", str(task_dir))
+    materialized = {
+        "ok": True,
+        "channel": "return",
+        "source": str(source),
+        "scanned": 1,
+        "errors": [],
+        "materialized": [{"path": paths["report"]}],
+        "assemble": {"written": []},
+    }
+    command = 'py -3 /plugin/scripts/await_workflow.py --python "py -3" -- task1'
+    if fault == "args":
+        terminal["gaps"] = ["invalid args"]
+    elif fault == "host-path":
+        terminal["gaps"] = ["host-path-text: finding F1"]
+    elif fault == "no-proof":
+        terminal["stats"]["inputProof"]["proven"] = 0
+    elif fault == "phase":
+        terminal["phaseReached"] = "verify"
+    elif fault == "path-target":
+        command = command.replace("-- task1", "-- /tasks/task1.output")
+    elif fault == "interpreter":
+        command = command.replace("py -3 /plugin", "python /plugin")
+    elif fault == "materialize":
+        materialized["ok"] = False
+    elif fault == "nonce":
+        materialized["scanned"] = 2
+    elif fault == "outside":
+        terminal["artifactPaths"]["report"] = str(tmp_path / "outside.md")
+    elif fault == "missing-report":
+        Path(paths["report"]).unlink()
+    source.write_text(json.dumps({"result": terminal}), encoding="utf-8")
+    blocks = [
+        {"type": "tool_use", "id": "w", "name": "Workflow", "input": {}},
+        {"type": "tool_use", "id": "a", "name": "Bash", "input": {"command": command}},
+        {
+            "type": "tool_use",
+            "id": "m",
+            "name": "Bash",
+            "input": {
+                "command": "py -3 /plugin/scripts/materialize_artifacts.py --task-id task1"
+            },
+        },
+        {"type": "tool_result", "tool_use_id": "a", "content": json.dumps(terminal)},
+        {
+            "type": "tool_result",
+            "tool_use_id": "m",
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(
+                        {"stdout": json.dumps(materialized), "stderr": ""}
+                    ),
+                }
+            ],
+        },
+    ]
+    if fault == "no-launch":
+        blocks = blocks[1:]
+    if fault == "early-args":
+        blocks.extend(
+            [
+                {
+                    "type": "tool_use",
+                    "id": "earlier",
+                    "name": "Bash",
+                    "input": {"command": command},
+                },
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "earlier",
+                    "content": json.dumps(
+                        {"ok": False, "phaseReached": "args", "failingPhase": "args"}
+                    ),
+                },
+            ]
+        )
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps({"message": {"content": blocks}}) + "\n", encoding="utf-8"
+    )
+    if fault:
+        with pytest.raises(AssertionError):
+            live.assert_run(transcript, output, tmp_path / "config")
+    else:
+        receipt = live.assert_run(transcript, output, tmp_path / "config")
+        assert receipt["ok"] and receipt["planted_file_mentioned"]
+        assert (tmp_path / "workflow.output").read_bytes() == source.read_bytes()
+
+
+@pytest.mark.parametrize("has_token", [False, True])
+def test_windows_live_driver(has_token, tmp_path, monkeypatch, capsys):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "windows_live_driver", REPO / ".github/windows_live.py"
+    )
+    assert spec is not None and spec.loader is not None
+    live = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(live)
+    job = dict(_ci_job_blocks(_read(".github/workflows/ci.yml")))["windows-live"]
+    assert "if: github.event_name == 'workflow_dispatch' && inputs.windows_live" in job
+    assert "environment: windows-live" in job
+    assert job.index("Require subscription token") < job.index(
+        "Checkout dispatched ref"
+    )
+    assert "CLAUDE_CODE_OAUTH_TOKEN is absent from environment windows-live" in job
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    if not has_token:
+        with pytest.raises(SystemExit, match="CLAUDE_CODE_OAUTH_TOKEN is required"):
+            live.main(tmp_path / "run")
+        assert not (tmp_path / "run").exists()
+        first_step = re.search(
+            r"Require subscription token.*?run: \|\n(.*?)(?=      - name:)", job, re.S
+        )
+        assert first_step is not None
+        command = "\n".join(line[10:] for line in first_step[1].splitlines())
+        result = subprocess.run(
+            ["bash", "-c", command],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        assert result.returncode == 1
+        assert (
+            "CLAUDE_CODE_OAUTH_TOKEN is absent from environment windows-live"
+            in result.stdout
+        )
+        return
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "test-subscription")
+    calls = []
+    monkeypatch.setattr(
+        live.subprocess, "run", lambda argv, **kwargs: calls.append((argv, kwargs))
+    )
+    monkeypatch.setattr(live.shutil, "which", lambda name: name)
+    monkeypatch.setattr(live, "assert_run", lambda *args: {"ok": True})
+    run = tmp_path / "run"
+    live.main(run)
+    argv, options = calls[-1]
+    assert argv[:2] == ["claude", "-p"]
+    assert "--plugin-dir" in argv and "--output-format" in argv
+    assert options["env"]["CODE_GAUNTLET_HEADLESS"] == "1"
+    assert options["env"]["CODE_GAUNTLET_OUTPUT_DIR"] == (run / "artifacts").as_posix()
+    assert options["env"]["PATH"].startswith(str(run / "stubs"))
+    assert (run / "stubs/python3").read_text(
+        encoding="utf-8"
+    ) == "#!/bin/bash\nexit 49\n"
+    assert (run / "stubs/python").read_bytes() == (run / "stubs/python3").read_bytes()
+    assert len(calls) == 4
+    assert json.loads(capsys.readouterr().out) == {"ok": True}

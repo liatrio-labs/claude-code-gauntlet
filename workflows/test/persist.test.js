@@ -97,10 +97,10 @@ const WRITER_FAILURE_ROWS = [
     DERIVED_ECHO_REASON],
   ['derived escape', {}, (entries) => ({ written: entries.map((e) => e.path).concat('/tmp/evil.json') }),
     'path-escape: writer-reported paths outside outputDir (written[3]=/tmp/evil.json)'],
-  ['legacy missing echo', { persist: {} }, () => ({}), LEGACY_ECHO_REASON],
-  ['legacy null', { persist: {} }, () => null, 'writer returned null'],
+  ['legacy missing echo', { persist: undefined }, () => ({}), LEGACY_ECHO_REASON],
+  ['legacy null', { persist: undefined }, () => null, 'writer returned null'],
   ['derived null', {}, () => null, 'writer returned null'],
-  ['legacy escaping checkpoint', { persist: {} }, () => ({ artifactPaths: { ...PATHS, checkpoints: '/tmp/evil-checkpoints.json' } }),
+  ['legacy escaping checkpoint', { persist: undefined }, () => ({ artifactPaths: { ...PATHS, checkpoints: '/tmp/evil-checkpoints.json' } }),
     'path-escape: writer-reported paths outside outputDir (checkpoints=/tmp/evil-checkpoints.json)'],
 ];
 for (const [name, input, writer, reason] of WRITER_FAILURE_ROWS) {
@@ -116,7 +116,7 @@ for (const [name, input, writer, reason] of WRITER_FAILURE_ROWS) {
 
 for (const [name, input, options, calls] of [
     ['derived writer', {}, { writer: () => { throw new Error('disk full'); } }, ['artifact-writer']],
-  ['legacy writer', { persist: {} }, { writer: () => { throw new Error('disk full'); } }, ['artifact-writer']],
+  ['legacy writer', { persist: undefined }, { writer: () => { throw new Error('disk full'); } }, ['artifact-writer']],
   ['executor', {}, { receipt: () => { throw new Error('disk full'); } }, ['artifact-writer', 'assemble-artifacts']],
 ]) {
   test('exception: ' + name, async () => {
@@ -200,14 +200,14 @@ test('fallback retains disclosure when the legacy echo is empty', async () => {
 test('relative output root is refused before dispatch', async () => {
   const ctx = persistCtx();
   await assert.rejects(writeArtifacts(ctx, persistInput({ outputDir: '.code-gauntlet' })), { name: 'Error',
-    message: 'outputDir must be an absolute confined root (POSIX /-prefix, no .. or \\ segments); got ".code-gauntlet"',
+    message: 'outputDir must be an absolute confined root (no .. or \\ segments); got ".code-gauntlet"',
   });
   assert.deepEqual(labels(ctx), []);
 });
 
 test('JSON input uses the same artifact paths', async () => {
   const ctx = persistCtx({ writer: () => ({ artifactPaths: PATHS }) });
-  const input = JSON.stringify(persistInput({ persist: {} }));
+  const input = JSON.stringify(persistInput({ persist: undefined }));
   assert.deepEqual(await writeArtifacts(ctx, input), { artifactPaths: PATHS, gaps: [], partial: false });
   assert.deepEqual(labels(ctx), ['artifact-writer']);
 });
@@ -219,12 +219,18 @@ const DERIVED_WRITER_LINE = 'Persist these code-gauntlet artifacts to disk exact
 const ASSEMBLE_LINE = 'Run exactly this command, then return its single line of stdout JSON verbatim via the schema:';
 const COMMAND_WORDS = ['python3', SCRIPT, '--plan', PLAN_PATH];
 const PROMPT_ROWS = [
+  ...[['python', ['python']], ['py -3', ['py', '-3']]].map(([python, words]) => [
+    `drive interpreter ${python}`, { python, pluginRoot: 'D:/plug in', outputDir: 'D:/Work/out', persist: { assembleScriptPath: '/untrusted.py' } },
+    [...words, 'D:/plug in/scripts/assemble_artifacts.py', '--plan', 'D:/Work/out/code-gauntlet-persist-plan-abc1234.json'],
+    { findings: 'D:/Work/out/code-gauntlet-findings-abc1234.json', report: 'D:/Work/out/code-gauntlet-report-abc1234.md',
+      postReview: 'D:/Work/out/code-gauntlet-post-review-abc1234.json', checkpoints: 'D:/Work/out/code-gauntlet-checkpoint-all-abc1234.json' },
+  ]),
   ['space and apostrophe paths', {
     outputDir: '/My Repo/.code-gauntlet',
-    persist: { assembleScriptPath: "/plug in/scripts/o'brien/assemble_artifacts.py" }
+    pluginRoot: "/plug in/o'brien", persist: {}
   }, [
     'python3',
-    "/plug in/scripts/o'brien/assemble_artifacts.py",
+    "/plug in/o'brien/scripts/assemble_artifacts.py",
     '--plan',
     '/My Repo/.code-gauntlet/code-gauntlet-persist-plan-abc1234.json'
   ], {
@@ -253,7 +259,7 @@ for (const [name, input, commandWords = COMMAND_WORDS, expectedPaths = PATHS, ch
     assert.equal(ctx.calls[0].agentType, 'code-gauntlet:artifact-writer');
     assert.equal(ctx.calls[1].agentType, 'code-gauntlet:executor');
     const entries = parseWriterPayload(ctx.calls[0].prompt);
-    assert.deepEqual(entries.map((e) => e.path), [expectedPaths.findings, expectedPaths.report, commandWords[3]]);
+    assert.deepEqual(entries.map((e) => e.path), [expectedPaths.findings, expectedPaths.report, commandWords.at(-1)]);
     const primaries = persistPrimaries(inp);
     assert.equal(entries[0].text, primaries.findingsJson);
     assert.equal(entries[1].text, primaries.reportMd);
@@ -333,12 +339,12 @@ for (const [name, patch, nonce, checks = {}] of RETURN_ROWS) {
 }
 const OVERSIZED_ROWS = [
   ['script fallback', { assembleScriptPath: SCRIPT, returnPrimaries: true }, ['artifact-writer', 'assemble-artifacts']],
-  ['scriptless fallback', { returnPrimaries: true }, ['artifact-writer']],
+  ['scriptless fallback', { returnPrimaries: true }, ['artifact-writer'], { pluginRoot: undefined }],
 ];
-for (const [name, persist, dispatched] of OVERSIZED_ROWS) {
+for (const [name, persist, dispatched, extra] of OVERSIZED_ROWS) {
   test(`return budget: ${name}`, async () => {
     const ctx = persistCtx();
-    const out = await writeArtifacts(ctx, persistInput({ ...EMPTY_RETURN_INPUT, persist, report: 'r'.repeat(1000000) }));
+    const out = await writeArtifacts(ctx, persistInput({ ...EMPTY_RETURN_INPUT, persist, ...extra, report: 'r'.repeat(1000000) }));
     assert.equal(out.partial, false);
     assert.equal(out.persistReturn, undefined);
     assert.deepEqual(labels(ctx), dispatched);

@@ -10,6 +10,7 @@ Workflow-tool availability check, review target resolution, the error-path AskUs
 
 v3 orchestration is a single `Workflow` tool call (Phase 3). There is no in-session fallback — the break from v2's inline subagent dispatch is a locked decision. Before any other work, confirm the **`Workflow` tool is present in this session's tool definitions** by passive self-inspection only — never via `ToolSearch`, which searches deferred tools only and returns a false "absent" for a top-level `Workflow`.
 
+- **No Bash tool (PowerShell only)** -> print `Install Git for Windows to run code-gauntlet in Bash.` and STOP.
 - **Present in your tool definitions** → continue with target resolution.
 - **Absent from your tool definitions** → print exactly the message below and STOP. Do not emulate the pipeline by dispatching agents inline.
 
@@ -89,7 +90,7 @@ PR_URL=$(gh pr view {pr_number} --json url --jq .url)
 For GitLab, use `PR_URL=$(glab mr view {pr_number} --output json | jq -r .web_url)`.
 
 ```bash
-python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --pr-url "$PR_URL" --head-sha {head_sha_full}
+{python} "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --pr-url "$PR_URL" --head-sha {head_sha_full}
 ```
 
 It always exits 0 and prints exactly one JSON object on stdout (detection degrades, never blocks the review):

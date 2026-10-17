@@ -315,7 +315,7 @@ def test_doc_contract__review_gate_precedes_stale_truncation(
     skill = _read(SKILL_REL)
     truncate_block = skill[skill.find('echo "=== stale_truncate ==="') :]
     truncate_block = truncate_block[: truncate_block.find("```", 1)]
-    assert "printf '%s\\n' \"$PRIOR_JSON\" | python3 " in truncate_block
+    assert "printf '%s\\n' \"$PRIOR_JSON\" | {python} " in truncate_block
     assert '"{plugin_root}/scripts/stale_truncate.py"' in truncate_block
     assert '--head-sha "$HEAD_SHA_SHORT"' in truncate_block
     assert "--unconditional" not in truncate_block

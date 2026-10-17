@@ -3,7 +3,6 @@
 import json
 import os
 import shutil
-import sys
 from pathlib import Path
 
 import pytest
@@ -374,9 +373,6 @@ def test_proof_disclosure(mode, wrote, want, gap, errors, tmp_path, monkeypatch)
     assert len(receipt["materialized"]) == (2 if mode == "duplicate" else 1)
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32", reason="pipeline outputDir requires a POSIX path"
-)
 def test_real_node_return_channel(tmp_path):
     if shutil.which("node") is None:
         pytest.skip("node unavailable")

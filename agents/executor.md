@@ -15,7 +15,7 @@ summarize, fix, or re-run.
 ## Protocol
 
 1. Run the command in the dispatch prompt exactly as written: a single pinned
-   `python3 <script> <flags>` invocation whose tokens are bare words, except that a
+   `python3`, `python`, or `py -3` followed by `<script> <flags>` invocation whose tokens are bare words, except that a
    token may arrive already single-quoted. Do not add flags, redirections, pipes, env
    prefixes, command substitution, or quoting of your own, and do not remove quoting
    that is there — the command is already AST-safe and altering it breaks sandbox

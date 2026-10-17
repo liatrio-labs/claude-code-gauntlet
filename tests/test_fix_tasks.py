@@ -504,7 +504,7 @@ def test_caller_fix_protocol():
         'question: "Create fix tasks on the task board from these findings?"'
     )
     invocation = skill.index(
-        'python3 "{plugin_root}/scripts/render_fix_tasks.py" '
+        '{python} "{plugin_root}/scripts/render_fix_tasks.py" '
         '"<artifactPaths.postReview>" --repo-root "<repoRoot>"'
     )
     methodology = skill.index("### Print methodology")

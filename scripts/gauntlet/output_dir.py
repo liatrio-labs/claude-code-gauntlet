@@ -10,7 +10,7 @@ import sys
 from gauntlet import proc
 from gauntlet.cli import CliError, Command, Parser
 from gauntlet.fs import confined, read_text
-from gauntlet.paths import is_shell_safe_path
+from gauntlet.paths import is_shell_safe_path, wire_path
 
 DEFAULT_OUTPUT_DIR = ".code-gauntlet"
 GLOB_META = set("*?[]\\!")
@@ -169,6 +169,10 @@ def _handle(args: argparse.Namespace) -> int:
         raise CliError(f"cannot run git in {cwd}: {exc}") from exc
     if repo_root is None:
         raise CliError("not a git repository (git rev-parse --show-toplevel failed)", 2)
+    try:
+        wire_path(repo_root)
+    except ValueError as exc:
+        raise CliError(str(exc), 2) from exc
     if not is_shell_safe_path(repo_root):
         raise CliError(
             "repository path contains shell-active or control characters; "
@@ -177,9 +181,10 @@ def _handle(args: argparse.Namespace) -> int:
         )
     try:
         abs_dir = resolve_absolute(repo_root, raw)
+        output_wire = wire_path(abs_dir)
     except ValueError as exc:
         raise CliError(
-            "output directory cannot be resolved; "
+            f"output directory cannot be resolved ({exc}); "
             "set $CODE_GAUNTLET_OUTPUT_DIR to a shell-safe path",
             2,
         ) from exc
@@ -210,7 +215,7 @@ def _handle(args: argparse.Namespace) -> int:
     except OSError as exc:
         raise CliError(f"mkdir failed for {abs_dir}: {exc}") from exc
     sys.stderr.write(disclosure + "\n")
-    sys.stdout.write(abs_dir + "\n")
+    sys.stdout.write(output_wire + "\n")
     return 0
 
 

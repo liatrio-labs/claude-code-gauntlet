@@ -25,6 +25,11 @@ const inlineOf = (call) => {
 };
 
 const TRUSTED_ROWS = [
+  ...[['python', ['python']], ['py -3', ['py', '-3']]].map(([python, argv]) => ({
+    name: `drive interpreter ${python}`, findings: BASE,
+    input: { python, pluginRoot: 'D:/plug in', verify: { scriptPath: '/untrusted.py' } },
+    commandPrefix: [...argv, 'D:/plug in/scripts/verify_findings.py'],
+  })),
   { name: 'dispatched slice document carries pinned numerics and no undeclared field',
     findings: [{ id: 'F1', file: 'a.js', line_start: 3.5, confidence: 90.2, origin: 'new', title: 'undeclared', suggestion: 'undeclared' }],
     changes: { line_start: 4, confidence: 90 },
@@ -46,12 +51,13 @@ for (const row of TRUSTED_ROWS) {
       return env;
     });
     const expected = row.findings.filter((f) => !row.ids || row.ids.includes(f.id)).map((f) => ({ ...f, ...row.changes }));
-    const out = await verifyStage(ctx, verifyInput(row.findings));
+    const out = await verifyStage(ctx, verifyInput(row.findings, row.input));
     assert.equal(out.verified, true);
     assert.deepEqual(out.findings, expected);
     assert.deepEqual(out.gaps, []);
     assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1 });
     assert.deepEqual(ctx.calls.map((call) => [call.label, call.agentType]), [['verify-slice-0', 'code-gauntlet:executor']]);
+    if (row.commandPrefix) assert.deepEqual(argvOf(ctx.calls[0]).slice(0, row.commandPrefix.length), row.commandPrefix);
     if (row.inline) assert.equal(inlineOf(ctx.calls[0]), row.inline);
   });
 }
@@ -255,7 +261,7 @@ test('sibling-slice substitution keeps every finding and degrades only the subst
 
 test('shell quoting preserves paths with spaces, apostrophes and special branch names', async () => {
   const ctx = verifyCtx(() => deltaEnvelope(BASE, { nonce: 'n-1.0' }));
-  await verifyStage(ctx, verifyInput(BASE, { verify: {
+  await verifyStage(ctx, verifyInput(BASE, { pluginRoot: '/plug in', verify: {
     scriptPath: '/plug in/scripts/verify_findings.py', inputPathBase: '/My Documents/out/phase4-input-abc123',
     outputPathBase: '/My Documents/out/phase4-output-abc123', baseBranch: 'feature/$x-`y`',
     diffPath: "/Users/o'brien/out/code-gauntlet diff.patch",
@@ -269,17 +275,16 @@ test('shell quoting preserves paths with spaces, apostrophes and special branch 
   assert.doesNotMatch(outsideSingleQuotes(commandOf(ctx.calls[0])), /[$`]/);
 });
 
-test('oversize finding is disclosed without dispatch and leaves the next slice nonce intact', async () => {
+for (const hostPlatform of ['posix', 'windows']) test(`oversize finding is disclosed without dispatch and leaves the next slice nonce intact: ${hostPlatform}`, async () => {
   const findings = [
-    { id: 'BIG', file: 'a.js', line_start: 1, origin: 'new', cross_file_refs: [], description: 'x'.repeat(50000) },
+    { id: 'BIG', file: 'a.js', line_start: 1, origin: 'new', cross_file_refs: [], description: 'x'.repeat(hostPlatform === 'windows' ? 31000 : 50000) },
     { id: 'OK', file: 'b.js', line_start: 2, origin: 'new', cross_file_refs: [] },
   ];
   const ctx = verifyCtx(() => deltaEnvelope([findings[1]], { nonce: 'n-1.0', n_in: 1 }));
-  const out = await verifyStage(ctx, verifyInput(findings, { limits: { verifySliceSize: 2 } }));
+  const out = await verifyStage(ctx, verifyInput(findings, { hostPlatform, limits: { verifySliceSize: 2 } }));
   assert.equal(out.verified, false);
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1, oversize: 1 });
   assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0']);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['BIG', 'unknown'], ['OK', 'new']]);
-  assert.deepEqual(out.gaps, [('verify: UNVERIFIED \u2014 finding BIG has encoded length 50130, over '
-    + 'VERIFY_INLINE_CHAR_BUDGET=50000; 1 of 2 finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report')]);
+  assert.deepEqual(out.gaps, [`verify: UNVERIFIED \u2014 finding BIG has ${hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length'} ${hostPlatform === 'windows' ? 31156 : 50130}, over VERIFY_INLINE_CHAR_BUDGET=${hostPlatform === 'windows' ? 30442 : 50000}; 1 of 2 finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report`]);
 });

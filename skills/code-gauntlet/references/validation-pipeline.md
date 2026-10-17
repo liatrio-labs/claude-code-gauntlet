@@ -15,7 +15,7 @@ Classifies each finding as `new` (introduced by this change) or `surfaced` (pre-
 **The executor pattern.** The stage slices the merged findings into `limits.verifySliceSize` chunks and plans each projected slice under `VERIFY_INLINE_CHAR_BUDGET`. The dispatched slice input carries only the fields `verify_findings.py` consults — `VERIFY_SLICE_FIELDS` (JS), generated as `gauntlet.registry.VERIFY_SLICE_FIELDS` (Python) — so passthrough fields like `title`, `suggestion`, per-dimension extras, and `agent` never transit the executor. It then dispatches one `executor` agent per slice **sequentially** so each receipt pairs to its slice by order. Each executor runs this command shape:
 
 ```
-python3 '{verify.scriptPath}' --input '{inputPathBase}.slice{i}.json' --input-inline '<payload>' \
+{python} '{verify.scriptPath}' --input '{inputPathBase}.slice{i}.json' --input-inline '<payload>' \
   --output '{outputPathBase}.slice{i}.json' --nonce '{nonce}.{i}' --head-sha '{headShaShort}' \
   --base-branch '{baseBranch}' [--diff-file '{diffPath}']
 ```

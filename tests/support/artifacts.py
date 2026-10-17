@@ -148,7 +148,7 @@ def record_task_output(tmp, nonce=NONCE):
     task_path = os.path.join(tmp, "tasks", "task-abc123.output")
     os.makedirs(os.path.dirname(task_path), exist_ok=True)
     proc = subprocess.run(
-        ["node", RECORDER, task_path, out_dir, nonce],
+        ["node", RECORDER, task_path, Path(out_dir).as_posix(), nonce],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
