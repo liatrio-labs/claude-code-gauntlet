@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v3.42.40 (2026-10-17)
+
+### Bug Fixes
+
+- Honour the user's model alias mapping on first-party sessions
+  ([#519](https://github.com/liatrio-labs/claude-code-gauntlet/pull/519),
+  [`8944a92`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8944a92bddf901fbc98b20e7be3461bfce896452))
+
+### Testing
+
+- Cut new mapping tests to the rows a kill matrix needs
+  ([#519](https://github.com/liatrio-labs/claude-code-gauntlet/pull/519),
+  [`8944a92`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8944a92bddf901fbc98b20e7be3461bfce896452))
+
+- Iterate a copy of the environment and drop an unencodable args row
+  ([#519](https://github.com/liatrio-labs/claude-code-gauntlet/pull/519),
+  [`8944a92`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8944a92bddf901fbc98b20e7be3461bfce896452))
+
+- Restore the CLI proof that capture reads the process environment
+  ([#519](https://github.com/liatrio-labs/claude-code-gauntlet/pull/519),
+  [`8944a92`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8944a92bddf901fbc98b20e7be3461bfce896452))
+
+
 ## v3.42.39 (2026-10-17)
 
 ### Bug Fixes
