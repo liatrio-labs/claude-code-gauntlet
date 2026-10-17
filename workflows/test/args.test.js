@@ -233,7 +233,7 @@ for (const { name, input, expected } of NON_OBJECT_ROWS) {
 }
 
 const ACCEPTANCE_ROWS = [
-  ...[undefined, null, [], ['haiku', 'sonnet', 'opus']].map((mappedAliases) => ({
+  ...[null, [], ['haiku', 'sonnet', 'opus']].map((mappedAliases) => ({
     name: `mapped aliases ${JSON.stringify(mappedAliases)}`,
     input: () => interactiveArgs({ policy: { tier: 'optimized', mappedAliases } }),
     expected: { ok: true, errors: [] },

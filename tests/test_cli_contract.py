@@ -510,6 +510,13 @@ WINDOWS_EXCEPTIONS = {
 }
 
 
+def _captured_policy_key(key):
+    return key.startswith(("CLAUDE_CODE_USE_", "ANTHROPIC_DEFAULT_")) or key in (
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+        "ANTHROPIC_BASE_URL",
+    )
+
+
 def _windows_skip(name, case, *, platform=None):
     if (os.name if platform is None else platform) != "nt":
         return None
@@ -816,11 +823,8 @@ def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch, forge_factory):
     monkeypatch.setenv("PATH", str(fake_bin) + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("CODE_GAUNTLET_OUTPUT_DIR", str(directory / "output"))
     if name == "capture_policy_env":
-        for key in os.environ:
-            if key.startswith(("CLAUDE_CODE_USE_", "ANTHROPIC_DEFAULT_")) or key in (
-                "CLAUDE_CODE_SUBAGENT_MODEL",
-                "ANTHROPIC_BASE_URL",
-            ):
+        for key in list(os.environ):
+            if _captured_policy_key(key):
                 monkeypatch.delenv(key)
     if name == "emit_style_context" and case == "failure":
         carrier = directory / "unreadable-carrier"
@@ -886,12 +890,7 @@ def test_entry_runs_from_foreign_cwd(name, tmp_path):
     )
     env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     if name == "capture_policy_env":
-        env = {
-            key: value
-            for key, value in env.items()
-            if not key.startswith(("CLAUDE_CODE_USE_", "ANTHROPIC_DEFAULT_"))
-            and key not in ("CLAUDE_CODE_SUBAGENT_MODEL", "ANTHROPIC_BASE_URL")
-        }
+        env = {key: value for key, value in env.items() if not _captured_policy_key(key)}
     env.update(
         PYTHONSAFEPATH="1",
         PYTHONIOENCODING="latin-1",
