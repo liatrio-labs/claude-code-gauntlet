@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.42.39 (2026-10-17)
+
+### Bug Fixes
+
+- Document web_origin and trim redundant host test rows
+  ([#518](https://github.com/liatrio-labs/claude-code-gauntlet/pull/518),
+  [`71eb480`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/71eb48036a0ee28031b1d85343f1c4cd386b82d2))
+
+- Pass the PR's GitHub host on every gh call
+  ([#518](https://github.com/liatrio-labs/claude-code-gauntlet/pull/518),
+  [`71eb480`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/71eb48036a0ee28031b1d85343f1c4cd386b82d2))
+
+### Refactoring
+
+- Resolve --pr-url in one helper and name the gh --repo value
+  ([#518](https://github.com/liatrio-labs/claude-code-gauntlet/pull/518),
+  [`71eb480`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/71eb48036a0ee28031b1d85343f1c4cd386b82d2))
+
+
 ## v3.42.38 (2026-10-16)
 
 ### Bug Fixes
