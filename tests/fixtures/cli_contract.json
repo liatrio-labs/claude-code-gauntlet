@@ -52,7 +52,7 @@
   "incremental_diff/usage": [2, ""],
   "list_pr_files/bad_input": [2, ""],
   "list_pr_files/failure": [1, ""],
-  "list_pr_files/help": [0, "usage: list_pr_files [-h] --platform {github,gitlab} --pr PR\n\noptions:\n  -h, --help            show this help message and exit\n  --platform {github,gitlab}\n  --pr PR\n"],
+  "list_pr_files/help": [0, "usage: list_pr_files [-h] (--platform {github,gitlab} | --git-range GIT_RANGE) [--pr PR]\n\noptions:\n  -h, --help            show this help message and exit\n  --platform {github,gitlab}\n  --git-range GIT_RANGE\n  --pr PR\n"],
   "list_pr_files/success": [0, "[\"src/code\"]\n"],
   "list_pr_files/usage": [2, ""],
   "materialize_artifacts/bad_input": [2, ""],

@@ -517,6 +517,7 @@ def test_documented_and_ci_gate_commands_are_byte_identical_sets() -> None:
         "phase",
         "path-target",
         "interpreter",
+        "assigned-prefix",
         "workflow-python",
         "workflow-repoRoot",
         "workflow-outputDir",
@@ -599,6 +600,8 @@ def test_windows_live_receipt_gate(fault, tmp_path, monkeypatch):
         command = command.replace("-- task1", "-- /tasks/task1.output")
     elif fault == "interpreter":
         command = command.replace("py -3 /plugin", "python /plugin")
+    elif fault == "assigned-prefix":
+        command = 'PR="/c/plugin"; ' + command
     elif fault == "materialize":
         materialized["ok"] = False
     elif fault == "nonce":
@@ -662,7 +665,7 @@ def test_windows_live_receipt_gate(fault, tmp_path, monkeypatch):
     transcript.write_text(
         json.dumps({"message": {"content": blocks}}) + "\n", encoding="utf-8"
     )
-    if fault:
+    if fault not in (None, "assigned-prefix"):
         with pytest.raises(AssertionError):
             live.assert_run(transcript, output, tmp_path / "config")
     else:

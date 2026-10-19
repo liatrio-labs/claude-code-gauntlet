@@ -276,7 +276,29 @@ fi
 command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
 ```
 
-**Branch/local targets:** for branch comparison use 2b's resolved SHAs: `git diff {base_sha}...{target_sha}` for `diff` and `git diff --name-only {base_sha}...{target_sha}` for `files`. For local changes use `git diff HEAD` and `git diff --name-only HEAD`. If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own `git diff` chain inside an executor subagent (which has shell) — not in this composite.
+**Branch comparison:** use 2b's resolved SHAs with `git diff {base_sha}...{target_sha}` for `diff`. Replace the `files` producer with:
+
+```bash
+if ! {python} "{plugin_root}/scripts/list_pr_files.py" --git-range "{base_sha}...{target_sha}" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
+  echo "files: FAILED"
+  exit 1
+fi
+command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+```
+
+**Local changes:** use `git diff HEAD` for `diff`. Replace the `files` producer with:
+
+```bash
+if ! {python} "{plugin_root}/scripts/list_pr_files.py" --git-range "HEAD" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
+  echo "files: FAILED"
+  exit 1
+fi
+command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+```
+
+On `files: FAILED`, stop the handoff and report the stderr reason (headless: non-zero outcome).
+
+If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own `git diff` chain inside an executor subagent (which has shell) — not in this composite.
 
 **Composites A/B do not subsume 2d, 2g, or 2k.** Run 2d's collector as a separate script call after the changed-file list is saved; its receipt is the only REVIEW.md discovery source. Keep test discovery (2g) and AI-marker scanning (2k) as separate Glob/Grep tool calls under `references/phase2-triage.md`; never use `find` or `grep` from Bash for those searches.
 

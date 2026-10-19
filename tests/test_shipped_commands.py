@@ -926,6 +926,89 @@ def test_shipped_file_producer(platform, outcome, tmp_path):
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        "skills/code-gauntlet/SKILL.md",
+        "skills/code-gauntlet/references/phase2-triage.md",
+    ],
+)
+@pytest.mark.parametrize("revision_range", ["HEAD", "{base_sha}...{target_sha}"])
+@pytest.mark.parametrize("outcome", ["success", "failure"])
+def test_shipped_git_file_producer(source, revision_range, outcome, tmp_path):
+    text = skill_text(REPO / source, python=shlex.quote(sys.executable))
+    commands = [
+        body.strip()
+        for _, body in _shell_fences(text)
+        if f'--git-range "{revision_range}"' in body
+    ]
+    assert len(commands) == 1
+    sha = "a" * 40
+    if outcome == "success":
+        for args in (
+            ["init", "-q"],
+            [
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "base",
+            ],
+        ):
+            subprocess.run(
+                ["git", *args], cwd=tmp_path, check=True, capture_output=True
+            )
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+    output_dir = tmp_path / "output space"
+    output_dir.mkdir()
+    command = (
+        commands[0]
+        .replace("{plugin_root}", REPO.as_posix())
+        .replace("{base_sha}", sha)
+        .replace("{target_sha}", sha)
+        .replace("{output_dir}", output_dir.as_posix())
+        .replace("{head_sha_short}", "abc12345")
+    )
+    result = subprocess.run(
+        [bash_executable(), "-c", command + "\nprintf 'continued\\n'"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if outcome == "failure":
+        assert result.returncode == 1
+        assert result.stdout == "files: FAILED\n"
+        assert "list_pr_files: FAILED:" in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "[]\ncontinued\n"
+        assert result.stderr == ""
+        assert (
+            json.loads(
+                (output_dir / "code-gauntlet-files-abc12345.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            == []
+        )
+
+
+@pytest.mark.parametrize(
     "statuses,selected,visited",
     [
         ((0, 0, 0), "python3", ["python3"]),

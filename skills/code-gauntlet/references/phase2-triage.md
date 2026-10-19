@@ -107,8 +107,26 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 1. **PR/MR mode** (`pr_number` set) — Use `gh pr view {pr_number}`/`glab mr view {pr_number}` + diff commands. Get full SHA: `git rev-parse HEAD`
    - **GitHub (PR):** Gather the file list with `{python} "{plugin_root}/scripts/list_pr_files.py" --platform github --pr {pr_number}`. Gather the full diff with `gh pr diff {pr_number}`.
    - **GitLab (MR):** Gather the file list with `{python} "{plugin_root}/scripts/list_pr_files.py" --platform gitlab --pr {pr_number}` (the Composite B `files` producer in SKILL.md). Gather the full diff with `glab mr diff {pr_number}`.
-2. **Branch comparison** — `git diff {base_sha}...{target_sha}` and `git diff --name-only {base_sha}...{target_sha}` using 2b's resolved SHAs.
-3. **Local changes** — `git diff HEAD` (or `git diff --cached` if nothing unstaged)
+2. **Branch comparison** — `git diff {base_sha}...{target_sha}` using 2b's resolved SHAs. Save the changed-file JSON first:
+
+   ```bash
+   if ! {python} "{plugin_root}/scripts/list_pr_files.py" --git-range "{base_sha}...{target_sha}" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
+     echo "files: FAILED"
+     exit 1
+   fi
+   command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+   ```
+
+3. **Local changes** — `git diff HEAD`. Save the changed-file JSON first:
+
+   ```bash
+   if ! {python} "{plugin_root}/scripts/list_pr_files.py" --git-range "HEAD" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
+     echo "files: FAILED"
+     exit 1
+   fi
+   command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+   ```
+
 4. **Incremental** (2b-post step 3's gate resolved "Incremental"; PR/MR mode only) — use branch 1's full server file list saved below to bound the diff:
 
    ```bash
@@ -116,6 +134,8 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
    ```
 
    An unbounded diff would include unrelated files from a base-branch merge. A base merge that touches a PR file still appears. Validate the saved patch as below. If the command fails or the patch is empty, save branch 1's full server diff instead and disclose the fallback. Record `last_reviewed_sha` in the triage announcement and Phase 8 methodology.
+
+On `files: FAILED`, stop the handoff and report the stderr reason (headless: non-zero outcome).
 
 **Save the diff and the changed-file list (the workflow has no git access):** Persist both git-derived inputs to disk so the workflow can consume them.
 
@@ -131,7 +151,7 @@ Validate the saved diff before relying on it:
 - Non-empty (file size > 0)
 - Starts with `diff --git` (confirms it is a valid unified diff, not an error message)
 
-If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own git diff chain inside an executor subagent. For branch/local targets, use the diff and file-list commands in steps 2/3 above (add `--name-only` for local files).
+If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own git diff chain inside an executor subagent. For branch/local targets, use the diff and file-list commands in steps 2/3 above.
 
 Check for `docs/`, `specs/`, and `research/` directories. Use only the collector receipt from 2d for REVIEW.md discovery and its output for CLAUDE.md/AGENTS.md/QODO.md rules.
 

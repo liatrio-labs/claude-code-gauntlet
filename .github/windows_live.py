@@ -109,7 +109,14 @@ def assert_run(transcript: Path, output: Path, config: Path) -> LiveReceipt:
                 "awaiter must discover output by task id"
             )
             assert "--python" in words and words[words.index("--python") + 1] == "py -3"
-            assert words[:2] == ["py", "-3"], "live run did not exercise the launcher"
+            # The command may start with variable assignments, so check the words
+            # that launch the script rather than the first words of the line.
+            script = next(
+                i for i, word in enumerate(words) if word.endswith("await_workflow.py")
+            )
+            assert words[script - 2 : script] == ["py", "-3"], (
+                "live run did not exercise the launcher"
+            )
             docs = checked_result(results[ident])
             for doc in docs:
                 assert not doc.get("failingPhase"), doc
