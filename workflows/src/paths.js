@@ -97,29 +97,35 @@ function driveHostPathPatterns(root) {
 }
 
 export function prepareHostRootPatterns(roots) {
-  const patterns = [];
+  const patterns = { roots: [], homes: [] };
   const derivedHomes = new Set();
   if (!Array.isArray(roots)) return patterns;
   for (const root of roots) {
     const normalized = normalizeAbsoluteRoot(root);
     if (normalized === null || normalized === '/') continue;
     if (/^[A-Za-z]:\//.test(normalized)) {
-      patterns.push(...driveHostPathPatterns(normalized));
+      patterns.roots.push(...driveHostPathPatterns(normalized).map((detect, index) => ({
+        detect, rewrite: new RegExp(detect.source, detect.flags), backslash: index === 1,
+      })));
       const home = normalized.match(/^([A-Za-z]:\/Users\/[^/]+)\//i);
       if (home) derivedHomes.add(home[1]);
       continue;
     }
+    const unaliased = normalized.startsWith('/private/') ? normalized.slice('/private'.length) : normalized;
     for (const spelling of hostPathSpellings(normalized)) {
       const caseInsensitive = spelling.slice(1).split('/').length > 1;
-      patterns.push(hostPathPattern(spelling, caseInsensitive));
+      patterns.roots.push({
+        detect: hostPathPattern(spelling, caseInsensitive),
+        rewrite: unaliased.slice(1).split('/').length > 1 ? hostPathPattern(spelling, false) : null,
+        backslash: false,
+      });
     }
-    const unaliased = normalized.startsWith('/private/') ? normalized.slice('/private'.length) : normalized;
     const home = unaliased.match(HOST_PATH_HOME_RE);
     if (home) derivedHomes.add(home[0].slice(0, -1));
   }
   for (const home of derivedHomes) {
-    if (/^[A-Za-z]:\//.test(home)) patterns.push(...driveHostPathPatterns(home));
-    else patterns.push(hostPathPattern(home, false));
+    if (/^[A-Za-z]:\//.test(home)) patterns.homes.push(...driveHostPathPatterns(home));
+    else patterns.homes.push(hostPathPattern(home, false));
   }
   return patterns;
 }
@@ -196,9 +202,67 @@ function mentionsInView(view, patterns) {
 
 export function mentionsPreparedHostRoot(text, patterns) {
   if (typeof text !== 'string') return false;
+  const matchers = [...patterns.roots.map((pattern) => pattern.detect), ...patterns.homes];
   const raw = { text, escaped: [] };
-  if (mentionsInView(raw, patterns)) return true;
-  return text.includes('%') && mentionsInView(decodeAsciiEscapes(text), patterns);
+  if (mentionsInView(raw, matchers)) return true;
+  return text.includes('%') && mentionsInView(decodeAsciiEscapes(text), matchers);
+}
+
+const REWRITE_CONTINUATION_RE = /[A-Za-z0-9._~+%@\-\p{L}\p{N}\p{M}]/u;
+const REWRITE_TAIL_END_RE = /[\s"'`()\[\]{}<>|,;]/u;
+
+function rewriteContinuation(text, index) {
+  if (index < 0 || index >= text.length) return false;
+  if (index > 0 && text.codePointAt(index - 1) > 0xFFFF) index -= 1;
+  return REWRITE_CONTINUATION_RE.test(String.fromCodePoint(text.codePointAt(index)));
+}
+
+function rewriteRightBoundary(text, end) {
+  let next = end;
+  while (text[next] === '.') next += 1;
+  if (next !== end && (text[next] === '/' || text[next] === '\\')) return false;
+  return !rewriteContinuation(text, next);
+}
+
+function rewrittenHostTail(text, end, backslash) {
+  const separator = (char) => char === '/' || (backslash && char === '\\');
+  if (!separator(text[end])) return { end, replacement: './' };
+  let stop = end;
+  while (stop < text.length && !REWRITE_TAIL_END_RE.test(text[stop])) stop += 1;
+  let tail = text.slice(end, stop);
+  if (backslash) tail = tail.replace(/\\+/g, '/');
+  if (hasDotDotSegment(splitLocationSuffix(tail).path) || /%[0-9A-Fa-f]{2}/.test(tail)) return { end: stop, replacement: null };
+  const dots = tail.match(/\.+$/)?.[0] || '';
+  tail = tail.slice(0, tail.length - dots.length);
+  if (hasDotDotSegment(splitLocationSuffix(tail).path)) return { end: stop, replacement: null };
+  tail = tail.replace(/\/+/g, '/').slice(1);
+  return { end: stop, replacement: `${tail || './'}${dots}` };
+}
+
+export function rewritePreparedRepoRoot(text, roots) {
+  if (typeof text !== 'string') return text;
+  const chunks = [];
+  const view = { text, escaped: [] };
+  let copied = 0;
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== '/' && !/^[A-Za-z]:[/\\]/.test(text.slice(start, start + 3))) continue;
+    if (rewriteContinuation(text, start - 1) || text[start - 1] === '/' || text[start - 1] === '\\'
+      || hostPathFileSchemePrefix(view, start)) continue;
+    for (const { rewrite, backslash } of roots) {
+      if (!rewrite) continue;
+      rewrite.lastIndex = start;
+      if (!rewrite.exec(text) || !rewriteRightBoundary(text, rewrite.lastIndex)) continue;
+      const tail = rewrittenHostTail(text, rewrite.lastIndex, backslash);
+      if (tail.replacement !== null) {
+        chunks.push(text.slice(copied, start), tail.replacement);
+        copied = tail.end;
+      }
+      start = tail.end - 1;
+      break;
+    }
+  }
+  chunks.push(text.slice(copied));
+  return chunks.join('');
 }
 
 export function safeFindingLabel(value, fallback = null) {

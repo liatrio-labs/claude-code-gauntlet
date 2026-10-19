@@ -369,143 +369,151 @@ for (const row of KEY_ROWS) test(`legacy consolidation key: ${row.name}`, async 
   assert.equal(JSON.stringify(out).includes('/repo/src'), false);
 });
 
-const HOST_FINDING_GOLDEN = {
-  id: 'SAFE_ID', file: 'SAFE_ID.js', line_start: 10, line_end: 10, title: 'finding SAFE_ID',
-  description: 'a genuine correctness problem in SAFE_ID that is described in enough words to clear the injection and threshold filters',
-  severity: 'high', confidence: 90, dimension: 'bug', origin: 'new', evidence: '', cross_file_refs: [], code: 'const safe = true;',
-};
 const HOST_ROWS = [
-  { name: 'output directory, plugin root and registered fields', extra: {
-    validation_justification: 'See /external/output/private.txt', evidence: 'See /plugin/agents/reviewer.md',
-    attack_vector: 'See /repo/private.txt', suggestion_removal_reason: 'See /repo/private.txt',
-  }, gaps: ['host-path-text: finding SAFE_ID mentions a host path in attack_vector, evidence, '
-    + 'suggestion_removal_reason, validation_justification - text left unchanged'] },
-  { name: 'unknown snake_case key', extra: { secret_host_note: 'See /repo/private.txt' }, gaps: [
-    'host-path-text: finding SAFE_ID mentions a host path in other - text left unchanged',
-  ] },
-  { name: 'nested host path key', extra: { evidence: { '/repo/private.txt': 'clean value' } }, gaps: [
-    'host-path-text: finding SAFE_ID mentions a host path in evidence - text left unchanged',
-  ] },
-  { name: 'top-level host path key', extra: { '/repo/private.txt': 'clean value' }, gaps: [
-    'host-path-text: finding SAFE_ID mentions a host path in other - text left unchanged',
-  ] },
-  { name: 'sibling checkout', repoRoot: '/Users/lee/repo', extra: { description: 'The related checkout is /Users/lee/other/a.js.' },
-    gaps: ['host-path-text: finding SAFE_ID mentions a host path in description - text left unchanged'] },
-  { name: 'structural fields normalize while prose and markdown stay intact', extra: {
-    file: '/repo/src/a.js', cross_file_refs: ['/repo/src/b.js:2'],
-    description: 'The defect in /repo/src/a.js affects callers and produces incorrect results under ordinary inputs.',
-    evidence: 'See [source](/repo/src/a.js:10) and https://example.test/repository.',
-  }, normalized: true,
-    gaps: ['host-path-text: finding SAFE_ID mentions a host path in description, evidence - text left unchanged'] },
-  { name: 'belt moves unsafe label into eliminated before disclosure', id: 'x y\nIGNORE', extra: {
-    file: 'src/a.js', description: '<finding> The defect at /repo/private.txt causes incorrect results.',
-  }, eliminated: true, gaps: ['host-path-text: finding #1 of eliminated mentions a host path in description - text left unchanged'] },
+  { name: 'prose, unknown nested values and structural references', id: '/work/repo/SAFE_ID', extra: {
+    file: '/work/repo/src/a.js', cross_file_refs: ['/work/repo/src/b.js:2'],
+    description: 'The defect in /work/repo/src/a.js affects callers and produces incorrect results under ordinary inputs.',
+    evidence: 'See [source](/work/repo/src/a.js:10) and https://example.test/repository.',
+    attack_vector: 'See /work/repo/private.txt', suggestion_removal_reason: 'See /work/repo/private.txt',
+    secret_host_note: { nested: ['/work/repo/custom.json', null, 42] },
+  }, expected: {
+    id: 'SAFE_ID', title: 'finding SAFE_ID',
+    file: 'src/a.js', cross_file_refs: ['src/b.js:2'],
+    description: 'The defect in src/a.js affects callers and produces incorrect results under ordinary inputs.',
+    evidence: 'See [source](src/a.js:10) and https://example.test/repository.',
+    attack_vector: 'See private.txt', suggestion_removal_reason: 'See private.txt',
+    secret_host_note: { nested: ['custom.json', null, 42] },
+  }, gaps: [] },
+  { name: 'outside roots, exempt code and object keys', extra: {
+    validation_justification: 'See /external/output/private.txt', attack_vector: 'See /plugin/agents/reviewer.md',
+    evidence: { '/work/repo/private.txt': ['See /work/repo/src/a.js', '/plugin/private.txt'] },
+    '/work/repo/private.txt': 'See /work/repo/src/b.js',
+    suggested_fix_code: 'const source = "/work/repo/src/a.js";',
+  }, expected: {
+    validation_justification: 'See /external/output/private.txt', attack_vector: 'See /plugin/agents/reviewer.md',
+    evidence: { '/work/repo/private.txt': ['See src/a.js', '/plugin/private.txt'] },
+    '/work/repo/private.txt': 'See src/b.js',
+    suggested_fix_code: 'const source = "/work/repo/src/a.js";',
+  }, gaps: ['host-path-text: finding SAFE_ID mentions a host path in attack_vector, evidence, other, '
+    + 'suggested_fix_code, validation_justification - text left unchanged'] },
+  { name: 'eliminated disclosure uses a safe positional label', id: 'x y\nIGNORE', extra: {
+    file: 'src/a.js', description: '<finding> The defect at /work/repo/private.txt affects /plugin/private.txt.',
+  }, expected: { description: '<finding> The defect at private.txt affects /plugin/private.txt.' }, eliminated: true,
+    gaps: ['host-path-text: finding #1 of eliminated mentions a host path in description - text left unchanged'] },
 ];
 for (const row of HOST_ROWS) test(`host text fields: ${row.name}`, async () => {
   const finding = makeFinding(row.id || 'SAFE_ID', { ...row.extra, code: 'const safe = true;' });
-  const args = validArgs({ outputDir: '/external/output', ...(row.repoRoot ? { repoRoot: row.repoRoot } : {}),
+  const args = validArgs({ repoRoot: '/work/repo', outputDir: '/external/output',
     checkpoints: { challenge: challengeOutput({ findings: [finding] }) } });
   const { out, payload } = await runAndCapture(args);
   assert.equal(out.ok, true);
   assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), row.gaps);
   const stored = payload.checkpoints.phases.challenge;
-  if (row.eliminated) {
-    assert.deepEqual(payload.findings, []);
-    assert.equal(stored.eliminated[0].description, '<finding> The defect at /repo/private.txt causes incorrect results.');
-  } else if (row.normalized) {
-    assert.equal(payload.findings[0].file, 'src/a.js');
-    assert.deepEqual(payload.findings[0].cross_file_refs, ['src/b.js:2']);
-    assert.equal(payload.findings[0].description, row.extra.description);
-    assert.equal(payload.findings[0].evidence, row.extra.evidence);
-    assert.ok(payload.report.includes('See [source](/repo/src/a.js:10) and https://example.test/repository.'));
-  } else assert.deepEqual(stored.findings[0], { ...HOST_FINDING_GOLDEN, ...row.extra });
-});
-
-const HOST_RESUME_GOLDEN = {
-  findings: [{
-    id: '/repo/unsafe-id', file: 'src/finding.js', line_start: 10, line_end: 10, title: 'Finding with a path-bearing id',
-    description: 'Description preserves /repo/src/finding.js exactly.', severity: 'high', confidence: 90,
-    dimension: 'bug', origin: 'new', evidence: 'Evidence preserves /plugin/agents/reviewer.md exactly.', cross_file_refs: [],
-    code: 'const safe = true;', suggested_fix_code: 'const source = "/repo/src/finding.js";',
-    validation_justification: 'Validator cites /plugin/workflows/src/validate.js.',
-    'unknown-field': { nested: ['Unknown data cites /repo/custom/path.json.'] },
-  }],
-  unverified: [{
-    id: 'UNVERIFIED_TEXT', file: 'src/unverified.js', line_start: 10, line_end: 10, title: 'finding UNVERIFIED_TEXT',
-    description: 'a genuine correctness problem in UNVERIFIED_TEXT that is described in enough words '
-      + 'to clear the injection and threshold filters',
-    severity: 'high', confidence: 90, dimension: 'bug', origin: 'new', evidence: '', cross_file_refs: [],
-    code: 'const UNVERIFIED_TEXT = broken();', challenge_justification: 'Challenge notes /repo/src/unverified.js.',
-  }],
-  eliminated: [{
-    id: 'ELIMINATED_TEXT', file: 'src/eliminated.js', line_start: 10, line_end: 10, title: 'finding ELIMINATED_TEXT',
-    description: 'a genuine correctness problem in ELIMINATED_TEXT that is described in enough words '
-      + 'to clear the injection and threshold filters',
-    severity: 'high', confidence: 90, dimension: 'bug', origin: 'new', evidence: '', cross_file_refs: [],
-    code: 'const ELIMINATED_TEXT = broken();', elimination_reason: 'Elimination cites /repo/src/eliminated.js.',
-  }], gaps: [],
-};
-test('host text resume: all buckets disclose once across repeated runs and resume', async () => {
-  const row = { summary: 'The change summary cites /repo/src/summary.js and leaves the wording intact.',
-  findings: [makeFinding('/repo/unsafe-id', { file: 'src/finding.js', title: 'Finding with a path-bearing id',
-    description: 'Description preserves /repo/src/finding.js exactly.', evidence: 'Evidence preserves /plugin/agents/reviewer.md exactly.',
-    suggested_fix_code: 'const source = "/repo/src/finding.js";',
-    validation_justification: 'Validator cites /plugin/workflows/src/validate.js.',
-    'unknown-field': { nested: ['Unknown data cites /repo/custom/path.json.'] }, code: 'const safe = true;' })],
-  unverified: [makeFinding('UNVERIFIED_TEXT', { file: 'src/unverified.js',
-    challenge_justification: 'Challenge notes /repo/src/unverified.js.' })],
-  eliminated: [makeFinding('ELIMINATED_TEXT', { file: 'src/eliminated.js',
-    elimination_reason: 'Elimination cites /repo/src/eliminated.js.' })], gaps: [
-    'host-path-text: finding #1 of findings mentions a host path in description, evidence, id, other, '
-      + 'suggested_fix_code, validation_justification - text left unchanged',
-    'host-path-text: finding UNVERIFIED_TEXT mentions a host path in challenge_justification - text left unchanged',
-    'host-path-text: finding ELIMINATED_TEXT mentions a host path in elimination_reason - text left unchanged',
-    'host-path-text: change summary mentions a host path - text left unchanged',
-  ] };
-  const checkpoint = challengeOutput({ findings: row.findings, unverified: row.unverified, eliminated: row.eliminated });
-  const freshArgs = () => validArgs({ checkpoints: { challenge: JSON.parse(JSON.stringify(checkpoint)) } });
-  const first = await captureRun(freshArgs(), { summary: row.summary });
-  const repeated = await captureRun(freshArgs(), { summary: row.summary });
-  const resumed = await captureRun(validArgs({ checkpoints: first.payload.checkpoints }), { summary: row.summary });
-  for (const { out, payload } of [first, repeated, resumed]) {
-    assert.equal(out.ok, true);
-    assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), row.gaps);
-    assert.equal(out.gaps.filter((gap) => gap === row.gaps[0]).length, 1);
-    assert.deepEqual(out.gaps, [UNMEASURED_GAP, ...row.gaps]);
-    for (const gap of row.gaps) {
-      for (const root of ['/repo', '/plugin']) assert.equal(gap.includes(root), false);
-      assert.doesNotMatch(gap, /no write proof|partial-artifacts/i);
-    }
-    const stored = payload.checkpoints.phases.challenge;
-    assert.deepEqual(stored.findings, HOST_RESUME_GOLDEN.findings);
-    assert.deepEqual(stored.unverified, HOST_RESUME_GOLDEN.unverified);
-    assert.deepEqual(stored.eliminated, HOST_RESUME_GOLDEN.eliminated);
-    assert.deepEqual(stored.gaps, HOST_RESUME_GOLDEN.gaps);
-    assert.ok(payload.report.includes(row.summary));
-    assert.ok(payload.report.includes('| Gaps | 5 |'));
+  const bucket = row.eliminated ? 'eliminated' : 'findings';
+  const persisted = stored[bucket][0];
+  for (const [field, expected] of Object.entries(row.expected)) assert.deepEqual(persisted[field], expected, field);
+  if (row.eliminated) assert.deepEqual(payload.findings, []);
+  else {
+    for (const [field, expected] of Object.entries(row.expected)) assert.deepEqual(payload.findings[0][field], expected, field);
+    if (typeof row.expected.evidence === 'string') assert.ok(payload.report.includes(row.expected.evidence));
   }
 });
 
+const HOST_RESUME_ROWS = [
+  { name: 'fresh and resumed delivery agree across all buckets' },
+];
+for (const row of HOST_RESUME_ROWS) test(`host text resume: ${row.name}`, async () => {
+  const summary = 'The change summary cites /work/repo/src/summary.js.';
+  const finding = makeFinding('SAFE_ID', { file: 'src/finding.js',
+    description: 'The defect at /work/repo/src/finding.js causes incorrect results under ordinary inputs.',
+    code: 'const path = "/work/repo/src/finding.js";',
+  });
+  const first = await captureRun(validArgs({ repoRoot: '/work/repo' }), { summary, findings: [finding] });
+  const resumed = await captureRun(validArgs({ repoRoot: '/work/repo', checkpoints: first.payload.checkpoints }), { summary });
+  for (const { out, payload } of [first, resumed]) {
+    assert.equal(out.ok, true);
+    assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), []);
+    assert.equal(payload.findings[0].description, 'The defect at src/finding.js causes incorrect results under ordinary inputs.');
+    assert.equal(payload.findings[0].code, 'const path = "src/finding.js";');
+    assert.ok(payload.report.includes('The change summary cites src/summary.js.'));
+    assert.deepEqual(payload.checkpoints.phases.challenge.findings[0].description, payload.findings[0].description);
+  }
+  assert.deepEqual(resumed.payload.findings, first.payload.findings);
+  assert.deepEqual(resumed.payload.postReview, first.payload.postReview);
+});
+
+const HOST_BUCKET_ROWS = [
+  { bucket: 'unverified', field: 'challenge_justification' },
+  { bucket: 'eliminated', field: 'elimination_reason' },
+];
+for (const row of HOST_BUCKET_ROWS) test(`host text bucket: ${row.bucket}`, async () => {
+  const { out, payload } = await runAndCapture(validArgs({ repoRoot: '/work/repo', checkpoints: {
+    challenge: challengeOutput({ [row.bucket]: [makeFinding('SAFE_ID', {
+      [row.field]: 'See /work/repo/src/a.js and /plugin/private.txt.',
+    })] }),
+  } }));
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), [
+    `host-path-text: finding SAFE_ID mentions a host path in ${row.field} - text left unchanged`,
+  ]);
+  assert.equal(payload.checkpoints.phases.challenge[row.bucket][0][row.field], 'See src/a.js and /plugin/private.txt.');
+});
+
+const HOST_ORDER_ROWS = [
+  { name: 'duplicate signature uses rewritten titles' },
+];
+for (const row of HOST_ORDER_ROWS) test(`host text order: ${row.name}`, async () => {
+  const { out, payload } = await runAndCapture(validArgs({ repoRoot: '/work/repo', checkpoints: {
+    challenge: challengeOutput({ findings: [
+      makeFinding('A', { file: 'src/a.js', title: 'Defect at /work/repo/src/a.js' }),
+      makeFinding('B', { file: 'src/a.js', title: 'Defect at src/a.js' }),
+    ] }),
+  } }));
+  assert.equal(out.ok, true);
+  assert.deepEqual(payload.findings.map((finding) => finding.id), ['A']);
+  assert.deepEqual(payload.checkpoints.phases.challenge.eliminated.map((finding) => finding.id), ['B']);
+});
+
 const SUMMARY_HOST_ROWS = [
-  { name: 'gaps excluded from summary scan', summary: { summary: 'ok', gaps: ['boom at /repo/q'] }, rendered: 'ok', expected: [] },
-  { name: 'summary still scans when gap also has path', summary: { summary: 'path at /repo/q', gaps: ['boom at /repo/q'] },
-    rendered: 'path at /repo/q', expected: ['host-path-text: change summary mentions a host path - text left unchanged'] },
-  { name: 'nested summary arrays', summary: { summary: ['/repo/private.txt', { nested: '/repo/another.txt' }], gaps: [] },
-    rendered: '/repo/private.txt,[object Object]',
-    expected: ['host-path-text: change summary mentions a host path - text left unchanged'] },
-  { name: 'summary extras and object keys', summary: { summary: 'clean summary',
-    details: [{ '/repo/private.txt': 'clean value' }, '/plugin/private.txt'], gaps: [] },
+  { name: 'rewrite precedes summary rendering and excludes gaps',
+    summary: { summary: 'path at /work/repo/q', gaps: ['boom at /work/repo/q'] },
+    rendered: 'path at q', expected: [] },
+  { name: 'nested summary arrays in failure checkpoints', writerFails: true,
+    summary: { summary: ['/work/repo/private.txt', { nested: '/work/repo/another.txt' }], gaps: ['boom at /work/repo/q'] },
+    stored: { summary: ['private.txt', { nested: 'another.txt' }], gaps: ['boom at /work/repo/q'] }, expected: [] },
+  { name: 'summary extras and object keys remain disclosed', summary: { summary: 'clean summary',
+    details: [{ '/work/repo/private.txt': 'clean value' }, '/plugin/private.txt'], gaps: [] },
     rendered: 'clean summary', expected: ['host-path-text: change summary mentions a host path - text left unchanged'] },
 ];
 for (const row of SUMMARY_HOST_ROWS) test(`summary host text: ${row.name}`, async () => {
-  const args = validArgs({ checkpoints: { summarize: row.summary } });
-  const before = structuredClone(row.summary);
-  const { out, payload } = await runAndCapture(args);
+  const args = validArgs({ repoRoot: '/work/repo', checkpoints: { summarize: row.summary } });
+  const { out, payload } = await runAndCapture(args, row.writerFails ? { agentThrowLabel: 'artifact-writer' } : {});
   assert.equal(out.ok, true);
   assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), row.expected);
   for (const gap of row.summary.gaps) assert.ok(out.gaps.includes(gap));
-  assert.ok(payload.report.includes(row.rendered));
-  assert.deepEqual(args.checkpoints.summarize, before);
+  if (row.writerFails) assert.deepEqual(out.checkpoints.phases.summarize, row.stored);
+  else assert.ok(payload.report.includes(row.rendered));
+});
+
+const HOST_DERIVED_ROWS = [
+  { name: 'rewrite preserves the derived persistence twin check' },
+];
+for (const row of HOST_DERIVED_ROWS) test(`host text persistence: ${row.name}`, async () => {
+  const { out, ctx } = await runAndCapture(validArgs({ repoRoot: '/work/repo', persist: { returnPrimaries: true },
+    checkpoints: { challenge: challengeOutput({ findings: [makeFinding('SAFE_ID', {
+      description: 'The defect at /work/repo/src/a.js causes incorrect results under ordinary inputs.',
+    })] }) },
+  }));
+  assert.equal(out.ok, true);
+  assert.equal(out.gaps.some((gap) => /differs|derived persistence unavailable|host-path-text:/.test(gap)), false);
+  assert.equal(ctx.calls.some((call) => call.label === 'artifact-writer'), false);
+  const entry = out.persistReturn.entries.find((value) => value.path === PATHS.findings);
+  const plan = JSON.parse(out.persistReturn.entries.find((value) => value.path.includes('persist-plan')).text);
+  const derived = deriveFromPlan(plan, entry.text);
+  const expected = 'The defect at src/a.js causes incorrect results under ordinary inputs.';
+  assert.equal(JSON.parse(entry.text)[0].description, expected);
+  assert.equal(derived.postReview[0].description, expected);
+  assert.equal(derived.checkpoints.phases.challenge.findings[0].description, expected);
 });
 
 const METHODOLOGY_REPLAY_ROWS = [

@@ -264,6 +264,7 @@ const FINDING_PROP_TYPES = deepFreeze({
   cross_file_refs: { type: 'array', items: { type: 'string' } },
 });
 const FINDING_PATH_ARRAY_FIELDS = deepFreeze(['cross_file_refs', 'affected_consumers']);
+const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code']);
 const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
 const DIMENSIONS = deepFreeze([
   { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' },
@@ -630,29 +631,35 @@ function driveHostPathPatterns(root) {
   ];
 }
 function prepareHostRootPatterns(roots) {
-  const patterns = [];
+  const patterns = { roots: [], homes: [] };
   const derivedHomes = new Set();
   if (!Array.isArray(roots)) return patterns;
   for (const root of roots) {
     const normalized = normalizeAbsoluteRoot(root);
     if (normalized === null || normalized === '/') continue;
     if (/^[A-Za-z]:\//.test(normalized)) {
-      patterns.push(...driveHostPathPatterns(normalized));
+      patterns.roots.push(...driveHostPathPatterns(normalized).map((detect, index) => ({
+        detect, rewrite: new RegExp(detect.source, detect.flags), backslash: index === 1,
+      })));
       const home = normalized.match(/^([A-Za-z]:\/Users\/[^/]+)\//i);
       if (home) derivedHomes.add(home[1]);
       continue;
     }
+    const unaliased = normalized.startsWith('/private/') ? normalized.slice('/private'.length) : normalized;
     for (const spelling of hostPathSpellings(normalized)) {
       const caseInsensitive = spelling.slice(1).split('/').length > 1;
-      patterns.push(hostPathPattern(spelling, caseInsensitive));
+      patterns.roots.push({
+        detect: hostPathPattern(spelling, caseInsensitive),
+        rewrite: unaliased.slice(1).split('/').length > 1 ? hostPathPattern(spelling, false) : null,
+        backslash: false,
+      });
     }
-    const unaliased = normalized.startsWith('/private/') ? normalized.slice('/private'.length) : normalized;
     const home = unaliased.match(HOST_PATH_HOME_RE);
     if (home) derivedHomes.add(home[0].slice(0, -1));
   }
   for (const home of derivedHomes) {
-    if (/^[A-Za-z]:\//.test(home)) patterns.push(...driveHostPathPatterns(home));
-    else patterns.push(hostPathPattern(home, false));
+    if (/^[A-Za-z]:\//.test(home)) patterns.homes.push(...driveHostPathPatterns(home));
+    else patterns.homes.push(hostPathPattern(home, false));
   }
   return patterns;
 }
@@ -720,9 +727,62 @@ function mentionsInView(view, patterns) {
 }
 function mentionsPreparedHostRoot(text, patterns) {
   if (typeof text !== 'string') return false;
+  const matchers = [...patterns.roots.map((pattern) => pattern.detect), ...patterns.homes];
   const raw = { text, escaped: [] };
-  if (mentionsInView(raw, patterns)) return true;
-  return text.includes('%') && mentionsInView(decodeAsciiEscapes(text), patterns);
+  if (mentionsInView(raw, matchers)) return true;
+  return text.includes('%') && mentionsInView(decodeAsciiEscapes(text), matchers);
+}
+const REWRITE_CONTINUATION_RE = /[A-Za-z0-9._~+%@\-\p{L}\p{N}\p{M}]/u;
+const REWRITE_TAIL_END_RE = /[\s"'`()\[\]{}<>|,;]/u;
+function rewriteContinuation(text, index) {
+  if (index < 0 || index >= text.length) return false;
+  if (index > 0 && text.codePointAt(index - 1) > 0xFFFF) index -= 1;
+  return REWRITE_CONTINUATION_RE.test(String.fromCodePoint(text.codePointAt(index)));
+}
+function rewriteRightBoundary(text, end) {
+  let next = end;
+  while (text[next] === '.') next += 1;
+  if (next !== end && (text[next] === '/' || text[next] === '\\')) return false;
+  return !rewriteContinuation(text, next);
+}
+function rewrittenHostTail(text, end, backslash) {
+  const separator = (char) => char === '/' || (backslash && char === '\\');
+  if (!separator(text[end])) return { end, replacement: './' };
+  let stop = end;
+  while (stop < text.length && !REWRITE_TAIL_END_RE.test(text[stop])) stop += 1;
+  let tail = text.slice(end, stop);
+  if (backslash) tail = tail.replace(/\\+/g, '/');
+  if (hasDotDotSegment(splitLocationSuffix(tail).path) || /%[0-9A-Fa-f]{2}/.test(tail)) return { end: stop, replacement: null };
+  const dots = tail.match(/\.+$/)?.[0] || '';
+  tail = tail.slice(0, tail.length - dots.length);
+  if (hasDotDotSegment(splitLocationSuffix(tail).path)) return { end: stop, replacement: null };
+  tail = tail.replace(/\/+/g, '/').slice(1);
+  return { end: stop, replacement: `${tail || './'}${dots}` };
+}
+function rewritePreparedRepoRoot(text, roots) {
+  if (typeof text !== 'string') return text;
+  const chunks = [];
+  const view = { text, escaped: [] };
+  let copied = 0;
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== '/' && !/^[A-Za-z]:[/\\]/.test(text.slice(start, start + 3))) continue;
+    if (rewriteContinuation(text, start - 1) || text[start - 1] === '/' || text[start - 1] === '\\'
+      || hostPathFileSchemePrefix(view, start)) continue;
+    for (const { rewrite, backslash } of roots) {
+      if (!rewrite) continue;
+      rewrite.lastIndex = start;
+      if (!rewrite.exec(text) || !rewriteRightBoundary(text, rewrite.lastIndex)) continue;
+      const tail = rewrittenHostTail(text, rewrite.lastIndex, backslash);
+      if (tail.replacement !== null) {
+        chunks.push(text.slice(copied, start), tail.replacement);
+        copied = tail.end;
+      }
+      start = tail.end - 1;
+      break;
+    }
+  }
+  chunks.push(text.slice(copied));
+  return chunks.join('');
 }
 function safeFindingLabel(value, fallback = null) {
   if (typeof value !== 'string' || !SAFE_FINDING_LABEL_RE.test(value)) {
@@ -6162,26 +6222,33 @@ function defaultCtx() {
     pipelineVersion: null,
   };
 }
+function walkHostPathText(value, transform, field = null, exempt = false) {
+  if (typeof value === 'string') return transform(value, field ?? 'other', exempt);
+  if (value === null || typeof value !== 'object') return value;
+  for (const [key, entry] of Object.entries(value)) {
+    const name = Array.isArray(value) ? field : field ?? (FINDING_TEXT_FIELD_NAMES.includes(key) ? key : 'other');
+    if (!Array.isArray(value)) transform(key, name, true);
+    value[key] = walkHostPathText(entry, transform, name, exempt || FINDING_REWRITE_EXEMPT_FIELDS.includes(key));
+  }
+  return value;
+}
 function hostPathTextFields(value, patterns) {
   const fields = new Set();
-  const visit = (value, field) => {
-    if (typeof value === 'string') {
-      if (mentionsPreparedHostRoot(value, patterns)) fields.add(field ?? 'other');
-      return;
-    }
-    if (value === null || typeof value !== 'object') return;
-    if (Array.isArray(value)) {
-      for (const entry of value) visit(entry, field);
-      return;
-    }
-    for (const [key, entry] of Object.entries(value)) {
-      const name = field ?? (FINDING_TEXT_FIELD_NAMES.includes(key) ? key : 'other');
-      visit(key, name);
-      visit(entry, name);
-    }
-  };
-  visit(value, null);
+  walkHostPathText(value, (text, field) => {
+    if (mentionsPreparedHostRoot(text, patterns)) fields.add(field);
+    return text;
+  });
   return [...fields].sort();
+}
+function rewriteHostPathText(challengeOut, summaryOut, repoRoot) {
+  const { roots } = prepareHostRootPatterns([repoRoot]);
+  const rewrite = (text, field, exempt) => exempt ? text : rewritePreparedRepoRoot(text, roots);
+  for (const bucket of ['findings', 'unverified', 'eliminated']) {
+    if (Array.isArray(challengeOut[bucket])) walkHostPathText(challengeOut[bucket], rewrite);
+  }
+  for (const key of Object.keys(summaryOut)) {
+    if (key !== 'gaps') summaryOut[key] = walkHostPathText(summaryOut[key], rewrite);
+  }
 }
 function hostPathTextGaps(challengeOut, summaryOut, roots) {
   const gaps = [];
@@ -6331,6 +6398,7 @@ async function runWith(ctx, rawArgs) {
     const challengeOut = await runPhase('challenge', () => challengeStage(c, {
       findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt,
     }));
+    rewriteHostPathText(challengeOut, summaryOut, A.repoRoot);
     gaps.push(...(challengeOut.gaps || []));
     const markedCount = applyChallengeReplayBelt(challengeOut);
     holdBackIncomplete(challengeOut);

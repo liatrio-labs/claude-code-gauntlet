@@ -2,11 +2,77 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { runWith } from '../src/run.js';
-import { mentionsPreparedHostRoot, normalizeAbsoluteRoot, pathUnderRoot, prepareHostRootPatterns, repoRelativeFindingPath, safeFindingLabel } from '../src/paths.js';
+import { mentionsPreparedHostRoot, normalizeAbsoluteRoot, pathUnderRoot, prepareHostRootPatterns, repoRelativeFindingPath, rewritePreparedRepoRoot, safeFindingLabel } from '../src/paths.js';
 import { validArgs } from './helpers/argsFixtures.js';
 import { makeCtx } from './helpers/pipelineMock.js';
 
 const ROOT = '/repo/.code-gauntlet';
+
+const REWRITE_ROWS = [
+  ['POSIX tail', '/work/repo', 'See /work/repo/src/a.js.', 'See src/a.js.'],
+  ['private alias', '/private/tmp/repo', '/tmp/repo/src/a.js', 'src/a.js'],
+  ['private spelling', '/tmp/repo', '/private/tmp/repo/src/a.js', 'src/a.js'],
+  ['POSIX case sibling', '/work/repo', '/work/Repo/a.js', '/work/Repo/a.js'],
+  ['single segment route', '/app', '/app/settings', '/app/settings'],
+  ['single segment private alias', '/app', '/private/app/settings', '/private/app/settings'],
+  ['drive forward', 'D:/Work/repo', 'D:/Work/repo/src/a.js', 'src/a.js'],
+  ['drive backslash tail', 'D:/Work/repo', String.raw`D:\Work\repo\src\a.js`, 'src/a.js'],
+  ['drive doubled backslashes', 'D:/Work/repo', String.raw`D:\\Work\\repo\\src\\a.js`, 'src/a.js'],
+  ['MSYS', 'D:/Work/repo', '/d/Work/repo/src/a.js', 'src/a.js'],
+  ['drive case variant', 'D:/Work/repo', 'd:/work/REPO/src/a.js', 'src/a.js'],
+  ['bare root', '/work/repo', '/work/repo', './'],
+  ['bare sentence root', '/work/repo', 'See /work/repo.', 'See ./.'],
+  ['separator only', '/work/repo', '/work/repo///', './'],
+  ['separator sentence ending', '/work/repo', '/work/repo///.', './.'],
+  ['backslash separator only', 'D:/Work/repo', String.raw`D:\Work\repo\\`, './'],
+  ['numeric location', '/work/repo', '/work/repo/src/a.js:12', 'src/a.js:12'],
+  ['range location', '/work/repo', '/work/repo/src/a.js:L12-L20', 'src/a.js:L12-L20'],
+  ['sibling segment', '/work/repo', '/work/repo2/a.js', '/work/repo2/a.js'],
+  ...['\u00e9', '\u0661', '\u0301', '\u{10400}', '.bak', '../a'].map((suffix) =>
+    [`sibling ${suffix}`, '/work/repo', `/work/repo${suffix}/x`, `/work/repo${suffix}/x`]),
+  ['first traversal', '/work/repo', '/work/repo//./../x', '/work/repo//./../x'],
+  ['later traversal', '/work/repo', '/work/repo/src/../x', '/work/repo/src/../x'],
+  ['bare traversal', '/work/repo', '/work/repo/..', '/work/repo/..'],
+  ['traversal location in sentence', '/work/repo', '/work/repo/..:12.', '/work/repo/..:12.'],
+  ['backslash traversal', 'D:/Work/repo', String.raw`D:\Work\repo\src\..\x`, String.raw`D:\Work\repo\src\..\x`],
+  ['derived home', '/Users/lee/repo', '/Users/lee/other/a.js', '/Users/lee/other/a.js'],
+  ...['file:', 'file:/', 'file://', 'FILE://'].map((prefix) =>
+    [`POSIX scheme ${prefix}`, '/work/repo', `${prefix}/work/repo/x`, `${prefix}/work/repo/x`]),
+  ...['file:', 'file:/', 'file://', 'file:///'].map((prefix) =>
+    [`drive scheme ${prefix}`, 'D:/Work/repo', `${prefix}D:/Work/repo/x`, `${prefix}D:/Work/repo/x`]),
+  ['percent root', '/work/repo', '%2Fwork%2Frepo/x', '%2Fwork%2Frepo/x'],
+  ['percent separator', '/work/repo', '/work/repo%2Fx', '/work/repo%2Fx'],
+  ['percent tail', '/work/repo', '/work/repo/a%20b', '/work/repo/a%20b'],
+  ['option flag', '/work/repo', '-I/work/repo/include', '-I/work/repo/include'],
+  ['relative token', '/work/repo', 'src/work/repo/x', 'src/work/repo/x'],
+  ['relative repeated separator', '/work/repo', 'src//work/repo/x', 'src//work/repo/x'],
+  ['Unicode left continuation', '/work/repo', '\u00e9/work/repo/x', '\u00e9/work/repo/x'],
+  ['astral left continuation', '/work/repo', '\u{10400}/work/repo/x', '\u{10400}/work/repo/x'],
+  ['unpaired surrogate boundary', '/work/repo', '\uDC00/work/repo/x', '\uDC00x'],
+  ['backslash left continuation', 'D:/Work/repo', String.raw`x\D:\Work\repo\x`, String.raw`x\D:\Work\repo\x`],
+  ['root and tail separators', '/work/repo', '/work//./repo//./src///a.js', './src/a.js'],
+  ['tail delimiters', 'D:/Work/repo', String.raw`[D:\Work\repo\src\a.js], D:\Work\repo\b.js;`, '[src/a.js], b.js;'],
+  ['non-string', '/work/repo', null, null],
+];
+for (const [name, root, input, expected] of REWRITE_ROWS) test(`rewrite repo root: ${name}`, () => {
+  const { roots } = prepareHostRootPatterns([root]);
+  const rewritten = rewritePreparedRepoRoot(input, roots);
+  assert.equal(rewritten, expected);
+  assert.equal(rewritePreparedRepoRoot(rewritten, roots), expected);
+});
+
+test('rewrite repo root scans 200000 characters promptly', { timeout: 2000 }, () => {
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { rewritePreparedRepoRoot, prepareHostRootPatterns } from ${JSON.stringify(new URL('../src/paths.js', import.meta.url).href)};
+    const { roots } = prepareHostRootPatterns(['/abc/end']);
+    const inputs = ['/abc' + '/'.repeat(200000) + 'X', '/abc' + '/'.repeat(200000) + 'end/a',
+      '/abc/end/x:'.repeat(20000) + '/../escape'];
+    console.log(JSON.stringify(inputs.map((text) => rewritePreparedRepoRoot(text, roots))));
+  `], { encoding: 'utf8', timeout: 1000 });
+  assert.equal(result.status, 0, `rewrite must complete within one second: ${result.error || result.stderr}`);
+  assert.deepEqual(JSON.parse(result.stdout), ['/abc' + '/'.repeat(200000) + 'X', 'a',
+    '/abc/end/x:'.repeat(20000) + '/../escape']);
+});
 
 const HOST_PATH_CASES = [
   ...['d:/work/REPO/a.js', String.raw`d:\work\REPO\a.js`, '/d/work/REPO/a.js', String.raw`d:\\work\\REPO\\a.js`].map((text) => ({

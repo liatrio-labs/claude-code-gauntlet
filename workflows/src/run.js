@@ -5,8 +5,8 @@ import { summarize, deriveAgentFlags, discover, allActiveDimensionsDegraded } fr
 import { validateStage, filterStage, challengeStage, selectDelivery } from './reviewStages.js';
 import { mergeStage } from './mergeFindings.js';
 import { verifyStage } from './verifyStage.js';
-import { FINDING_TEXT_FIELD_NAMES, conditionalSchemaActive } from './registry.js';
-import { mentionsPreparedHostRoot, prepareHostRootPatterns, safeFindingLabel } from './paths.js';
+import { FINDING_TEXT_FIELD_NAMES, FINDING_REWRITE_EXEMPT_FIELDS, conditionalSchemaActive } from './registry.js';
+import { mentionsPreparedHostRoot, prepareHostRootPatterns, rewritePreparedRepoRoot, safeFindingLabel } from './paths.js';
 import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs } from './args.js';
 import { resolveReviewConfig } from './args.js';
 import { entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from './entry.js';
@@ -28,26 +28,35 @@ function defaultCtx() {
   };
 }
 
+function walkHostPathText(value, transform, field = null, exempt = false) {
+  if (typeof value === 'string') return transform(value, field ?? 'other', exempt);
+  if (value === null || typeof value !== 'object') return value;
+  for (const [key, entry] of Object.entries(value)) {
+    const name = Array.isArray(value) ? field : field ?? (FINDING_TEXT_FIELD_NAMES.includes(key) ? key : 'other');
+    if (!Array.isArray(value)) transform(key, name, true);
+    value[key] = walkHostPathText(entry, transform, name, exempt || FINDING_REWRITE_EXEMPT_FIELDS.includes(key));
+  }
+  return value;
+}
+
 function hostPathTextFields(value, patterns) {
   const fields = new Set();
-  const visit = (value, field) => {
-    if (typeof value === 'string') {
-      if (mentionsPreparedHostRoot(value, patterns)) fields.add(field ?? 'other');
-      return;
-    }
-    if (value === null || typeof value !== 'object') return;
-    if (Array.isArray(value)) {
-      for (const entry of value) visit(entry, field);
-      return;
-    }
-    for (const [key, entry] of Object.entries(value)) {
-      const name = field ?? (FINDING_TEXT_FIELD_NAMES.includes(key) ? key : 'other');
-      visit(key, name);
-      visit(entry, name);
-    }
-  };
-  visit(value, null);
+  walkHostPathText(value, (text, field) => {
+    if (mentionsPreparedHostRoot(text, patterns)) fields.add(field);
+    return text;
+  });
   return [...fields].sort();
+}
+
+function rewriteHostPathText(challengeOut, summaryOut, repoRoot) {
+  const { roots } = prepareHostRootPatterns([repoRoot]);
+  const rewrite = (text, field, exempt) => exempt ? text : rewritePreparedRepoRoot(text, roots);
+  for (const bucket of ['findings', 'unverified', 'eliminated']) {
+    if (Array.isArray(challengeOut[bucket])) walkHostPathText(challengeOut[bucket], rewrite);
+  }
+  for (const key of Object.keys(summaryOut)) {
+    if (key !== 'gaps') summaryOut[key] = walkHostPathText(summaryOut[key], rewrite);
+  }
 }
 
 function hostPathTextGaps(challengeOut, summaryOut, roots) {
@@ -235,10 +244,10 @@ export async function runWith(ctx, rawArgs) {
       // Shared context would weaken the challenger's independent check, so its prompt contains only the claim and location.
       findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt,
     }));
+    rewriteHostPathText(challengeOut, summaryOut, A.repoRoot);
     gaps.push(...(challengeOut.gaps || []));
 
-    // Derive the loss disclosure from carried eliminations so resumes report the same loss.
-    // Keep it outside the persisted challenge output to avoid duplicating gaps on replay.
+    // Keep replay disclosures outside checkpoints so resumes cannot duplicate them.
     const markedCount = applyChallengeReplayBelt(challengeOut);
     holdBackIncomplete(challengeOut);
     if (markedCount > 0) {
