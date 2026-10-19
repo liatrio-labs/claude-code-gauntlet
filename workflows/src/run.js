@@ -15,7 +15,7 @@ import { scopeMatchesFile } from './reviewConfig.js';
 import { renderReport, renderSummaryBody } from './renderReport.js';
 import { writeArtifacts } from './persist.js';
 import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
-import { checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
+import { checkpointChecksumErrors, checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
 import { holdBackIncomplete } from './holdBackIncomplete.js';
 
 // The host injects runtime globals, while tests supply context explicitly.
@@ -137,7 +137,11 @@ export async function runWith(ctx, rawArgs) {
   const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars });
   // Inspect the stamped checkpoints before readCheckpoints can discard malformed input.
   const discardGap = checkpointDiscardGap(A.checkpoints);
-  const checkpoints = readCheckpoints(c, A);
+  const checkpoints = readCheckpoints(A);
+  const checksumViolations = checkpointChecksumErrors(A.checkpoints);
+  if (checksumViolations.length) {
+    return makeCheckpointShapeRejectEnvelope(checksumViolations, nullArgGaps, contextSizeGap, discardGap);
+  }
   // Reject malformed replay data before any phase reads it or dispatches work.
   const checkpointShapeViolations = checkpointShapeErrors(checkpoints);
   if (checkpointShapeViolations.length) {
@@ -321,7 +325,6 @@ export async function runWith(ctx, rawArgs) {
       prIdentity: (A.delivery || {}).prIdentity,
       reviewBody,
       report: reportOut.report,
-      // Only challenge needs full persisted output because it preserves the delivered findings for resume.
       checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, phaseReached),
       outputDir: A.outputDir,
       headShaShort: A.headShaShort,
@@ -364,7 +367,6 @@ export async function runWith(ctx, rawArgs) {
       },
       artifactPaths: writeOut.artifactPaths,
       resolvedPolicy: resolvedPolicyEnvelope(policy),
-      // Successful persistence allows a compact return; failed persistence requires bounded in-memory checkpoints so the skill can still resume.
       checkpoints: writeOut.partial ? buildResumeCheckpoints(phaseOutputs) : { completed },
       gaps,
       // Keep bulk persistence data last so a truncated return still includes status and gaps.
@@ -372,7 +374,6 @@ export async function runWith(ctx, rawArgs) {
       ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
     };
   } catch (e) {
-    // The throw path persists nothing, so bounded in-memory checkpoints are needed to resume completed work.
     return {
       ok: false,
       error: (e && e.message) || String(e),

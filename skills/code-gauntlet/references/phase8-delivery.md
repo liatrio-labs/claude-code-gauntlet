@@ -35,18 +35,9 @@ Findings with skipped validation or unknown verify origin are challenged, then h
   by severity, the Unverified/pipeline-degraded section, the Review Dimensions Summary, and
   the last-section Review Methodology with its code-rendered identity receipt and methodology
   table. The report is complete when materialized; the orchestrator never appends to `report.md`.
-- The return's own `checkpoints` is just `{ completed: [...] }` (phase names). A **slim** resume checkpoint (`{ phases, completed, phaseReached, counts }` — full output only for the resume-consumed `challenge` phase, plus a per-phase `counts` map for every phase including `filter`) is persisted at `artifactPaths.checkpoints`. Read that file if a later re-run needs to resume a successful-but-superseded run: it reuses the delivered `challenge` findings verbatim and re-runs the upstream phases (discover/verify/validate/**filter**/report) — `filter` is deliberately not persisted: it is a pure, agent-free JS function, so re-running it on resume costs nothing (issue #38, P1). The fast full-skip resume map still rides back **in-memory** on the failure path below.
+- `artifactPaths.checkpoints` holds the signed slim resume object. The return's own `checkpoints` contains only completed phase names. See [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable).
 
-**On `ok: false`, or `ok: true` with a partial-artifacts gap** (writer failed, `artifactPaths` empty/null): the run reached `phaseReached` but did not finish, and nothing was persisted — so the resume state rides back **in the return's `checkpoints` field**, not on disk. Offer **resume-from-checkpoint** before delivering anything partial:
-
-1. Inspect `return.checkpoints`.
-   - Has a `.phases` map → re-invoke the same `Workflow(name, args)` call with `args.checkpoints` set to `return.checkpoints`. The workflow skips every already-completed phase (it unwraps `.phases`) and resumes at the first missing one.
-   - Is `{ completed, truncated: true }` (the phase-outputs map exceeded the ~1M-char return budget, so the workflow withheld the findings bulk) → there is no phase map and nothing was persisted; **re-run from scratch** (re-invoke without `args.checkpoints`) and note the truncation in the methodology.
-   - Has `failingPhase: 'checkpoints'` (a pre-dispatch `checkpoint-shape:` refusal — a malformed value was found in `args.checkpoints` itself before any phase dispatched) → `checkpoints` is `{ completed: [] }` with no `.phases` map: there is nothing to resume, and re-invoking unchanged refuses identically. Read the `checkpoint-shape:`-prefixed `error`/`gaps` for which phase/field is malformed, then repair or delete the corrupt checkpoint artifact, or re-run without `args.checkpoints`.
-2. If resume is declined or fails again, deliver whatever `artifactPaths.report` exists markdown-only —
-   report the path plus a short chat summary — and report the `gaps`.
-
-> Headless mode exception: never prompt. Auto-resume **once** when `return.checkpoints` has a `.phases` map; otherwise (truncated, or the retry also fails) deliver the partial report + `gaps` and stop. See `references/headless-mode.md`.
+**On failure, partial artifacts, or a checkpoint refusal:** follow [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable). That reference owns whole-object copying (`checksum` included), checksum re-copy, and interactive/headless retry limits. Never edit the checkpoint.
 
 **Surface the integer gap count in report methodology regardless of `ok`**; at delivery, include the full `gaps` entries in chat as post-report gap details. Each entry names a degraded or skipped stage (unverified findings, skipped validation batch, capped challenges, partial artifacts).
 

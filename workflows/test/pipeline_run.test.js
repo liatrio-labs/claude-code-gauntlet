@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { runWith } from '../src/run.js';
 import { shellSplit } from './helpers/shellWords.js';
 import { parseWriterPayload } from '../src/persist.js';
-import { PATHS, persistCtx, runAndCapture } from './helpers/persistFixtures.js';
+import { PATHS, persistCtx, replayProducedCheckpoint, runAndCapture } from './helpers/persistFixtures.js';
 import { validArgs } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { captureRun, withSandboxGlobals } from './helpers/runFixtures.js';
@@ -157,13 +157,14 @@ test('persisted checkpoint wiring: slim challenge survives empty and degraded fr
   assert.equal(first.out.ok, true);
   assert.equal(Object.hasOwn(first.payload, 'unverified'), false);
   const checkpoints = first.payload.checkpoints;
+  await replayProducedCheckpoint(validArgs(), checkpoints);
   assert.deepEqual(Object.keys(checkpoints.phases), ['challenge']);
   assert.deepEqual(checkpoints.completed, PHASES);
   assert.deepEqual(Object.keys(checkpoints.counts), PHASES);
   for (const phase of PHASES) assert.equal(typeof checkpoints.counts[phase], 'number');
   for (const row of [
     { name: 'healthy fresh discovery' },
-    { name: 'empty fresh discovery and stale report', findings: [], stale: true },
+    { name: 'empty fresh discovery', findings: [] },
     { name: 'total fresh degradation', nulls: [
       'code-gauntlet:bug-detector', 'code-gauntlet:security-reviewer', 'code-gauntlet:cross-file-impact',
       'code-gauntlet:test-analyzer', 'code-gauntlet:conventions-and-intent', 'code-gauntlet:type-design-analyzer',
@@ -172,8 +173,7 @@ test('persisted checkpoint wiring: slim challenge survives empty and degraded fr
       'comment_accuracy', 'type_design', 'simplification'] },
   ]) await t.test(row.name, async () => {
     const replay = structuredClone(checkpoints);
-    if (row.stale) replay.phases.report = { report: '', gaps: [] };
-    const { out, ctx, payload } = await runAndCapture(validArgs({ checkpoints: replay }), {
+    const { out, ctx, payload } = await runAndCapture({ ...validArgs(), checkpoints: replay }, {
       findings: row.findings, nullAgentLabels: row.nulls,
     });
     assert.equal(out.ok, true);

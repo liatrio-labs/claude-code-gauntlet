@@ -1,6 +1,26 @@
 import { parseWriterPayload } from '../../src/persist.js';
+import assert from 'node:assert/strict';
+import { fnv1a32 } from '../../src/wire.js';
 import { runWith } from '../../src/run.js';
 import { makeFinding, makeCtx } from './pipelineMock.js';
+
+export async function replayProducedCheckpoint(args, checkpoint) {
+  const copy = JSON.parse(JSON.stringify(checkpoint));
+  const { checksum, ...rest } = copy;
+  assert.equal(checksum, fnv1a32(JSON.stringify(rest, null, 2)));
+  assert.equal(Object.keys(copy).at(-1), 'checksum');
+  const resumed = await runAndCapture({ ...args, checkpoints: copy });
+  assert.equal(resumed.out.ok, true);
+  for (const phase of Object.keys(copy.phases)) {
+    const labels = resumed.ctx.calls.map((call) => call.label);
+    if (phase === 'summarize') assert.equal(labels.includes('summarize'), false);
+    if (phase === 'discover') assert.equal(labels.some((label) => label.startsWith('code-gauntlet:')), false);
+    if (phase === 'verify') assert.equal(labels.some((label) => label.startsWith('verify-')), false);
+    if (phase === 'validate') assert.equal(labels.some((label) => label.startsWith('validate-')), false);
+    if (phase === 'challenge') assert.equal(labels.some((label) => label.startsWith('challenge-')), false);
+  }
+  return resumed;
+}
 
 export const PATHS = {
   findings: '/repo/.code-gauntlet/code-gauntlet-findings-abc1234.json',

@@ -1,23 +1,19 @@
 import { normalizeFindingPaths } from './mergeFindings.js';
-import { RETURN_CHAR_BUDGET } from './wire.js';
+import { fnv1a32, isPlainObject, RETURN_CHAR_BUDGET } from './wire.js';
 import { applyInjectedProseStrip, applyReplayInjectionScan } from './injection.js';
 import { normalizeFieldNames } from './filterFindings.js';
 
 // Arrays are unusable phase maps: indexing a phase name can otherwise replay an Array prototype method.
 function unwrapCheckpointMap(cp) {
-  if (!isPlainCheckpointObject(cp)) return null;
+  if (!isPlainObject(cp)) return null;
   if (cp.phases === undefined) return cp;
-  return isPlainCheckpointObject(cp.phases) ? cp.phases : null;
+  return isPlainObject(cp.phases) ? cp.phases : null;
 }
 
-// Returns a phase-keyed resume map, accepting either a bare map or a phases wrapper.
-// Unusable args checkpoints fall back to ctx checkpoints, then an empty map.
-export function readCheckpoints(ctx, args) {
-  const A = args || {};
-  return unwrapCheckpointMap(A.checkpoints) || (ctx && unwrapCheckpointMap(ctx.checkpoints)) || {};
+export function readCheckpoints(args) {
+  return unwrapCheckpointMap(args.checkpoints) || {};
 }
 
-// Returns zero or one checkpoint-discarded gap for rejected or wholly ignored resume input.
 // Absent and legitimately empty maps stay silent because they contain no resume state to lose.
 // Diagnostics use fixed vocabulary so caller-controlled keys cannot inject prose into gaps.
 export function checkpointDiscardGap(topLevelCheckpoints) {
@@ -26,7 +22,7 @@ export function checkpointDiscardGap(topLevelCheckpoints) {
   const resolved = unwrapCheckpointMap(topLevelCheckpoints);
 
   if (resolved === null) {
-    const atTopLevel = !isPlainCheckpointObject(topLevelCheckpoints);
+    const atTopLevel = !isPlainObject(topLevelCheckpoints);
     const position = atTopLevel ? 'checkpoints' : 'checkpoints.phases';
     const offending = atTopLevel ? topLevelCheckpoints : topLevelCheckpoints.phases;
     return [`checkpoint-discarded: ${position} must be a plain object, got ${describeCheckpointShape(offending)} -- `
@@ -67,8 +63,8 @@ export function checkpointDiscardGap(topLevelCheckpoints) {
   const wrapperHasRecognizedKey = Object.keys(topLevelCheckpoints).some((k) => recognizedPhaseNames.includes(k));
   if (tookPhasesBranch && resolvedKeys.length === 0 && wrapperHasRecognizedKey) {
     return ['checkpoint-discarded: checkpoints.phases is empty and a value under a recognized phase name '
-      + "at the wrapper's top level was ignored -- re-supply it as the .phases map, or as a bare phase "
-      + 'map, to attempt resuming from it.'];
+      + "at the wrapper's top level was ignored -- re-copy the complete signed checkpoint "
+      + 'object to attempt resuming from it.'];
   }
 
   return [];
@@ -118,8 +114,18 @@ const CHECKPOINT_REQUIRED_CONTENT_FIELD = Object.fromEntries(CHECKPOINT_FINDING_
 const CHECKPOINT_NULLABLE_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS
   .filter(([, , , nullable]) => nullable).map(([phase, field]) => `${phase}.${field}`));
 
-export function isPlainCheckpointObject(v) {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
+// Verify before replay mutates paths or finding lists; the proof covers the whole wrapper.
+export function checkpointChecksumErrors(checkpoint) {
+  const phases = unwrapCheckpointMap(checkpoint);
+  if (!phases || !Object.keys(CHECKPOINT_PHASE_SHAPE_TABLE).some((name) => phases[name] !== undefined)) return [];
+  const violation = ['checkpoint-checksum: supplied replay state is missing a valid producer checksum'];
+  if (!isPlainObject(checkpoint.phases) || typeof checkpoint.checksum !== 'string') return violation;
+  const { checksum, ...rest } = checkpoint;
+  try {
+    return checksum === fnv1a32(JSON.stringify(rest, null, 2)) ? [] : violation;
+  } catch {
+    return violation;
+  }
 }
 
 function describeCheckpointShape(v) {
@@ -165,7 +171,7 @@ function checkpointFindingShapeErrors(finding, path) {
       violations.push(`checkpoint-shape: ${path}.corroborations must be an array, got ${describeCheckpointShape(finding.corroborations)}`);
     } else {
       finding.corroborations.forEach((corroboration, idx) => {
-        if (!isPlainCheckpointObject(corroboration)) {
+        if (!isPlainObject(corroboration)) {
           violations.push(
             `checkpoint-shape: ${path}.corroborations[${idx}] must be a plain object, got ${describeCheckpointShape(corroboration)}`,
           );
@@ -176,16 +182,15 @@ function checkpointFindingShapeErrors(finding, path) {
   return violations;
 }
 
-// Returns every checkpoint-shape violation from the resolved map returned by readCheckpoints.
 // Optional fields may be absent so checkpoints remain usable when a producer adds fields.
-// Collecting all violations lets callers repair the shape in one pass.
+// Collect all violations so producers can diagnose malformed output in one pass.
 export function checkpointShapeErrors(resolvedCheckpoints) {
-  const cp = isPlainCheckpointObject(resolvedCheckpoints) ? resolvedCheckpoints : {};
+  const cp = isPlainObject(resolvedCheckpoints) ? resolvedCheckpoints : {};
   const violations = [];
   for (const phase of Object.keys(CHECKPOINT_PHASE_SHAPE_TABLE)) {
     const value = cp[phase];
     if (value === undefined) continue;
-    if (!isPlainCheckpointObject(value)) {
+    if (!isPlainObject(value)) {
       violations.push(`checkpoint-shape: phases.${phase} must be a plain object, got ${describeCheckpointShape(value)}`);
       continue; // container failed -- no field inside it can be checked
     }
@@ -203,7 +208,7 @@ export function checkpointShapeErrors(resolvedCheckpoints) {
         continue;
       }
       arrVal.forEach((el, idx) => {
-        if (!isPlainCheckpointObject(el)) {
+        if (!isPlainObject(el)) {
           if (fields[field] === CHECKPOINT_ARRAY_STRICT) {
             violations.push(
               `checkpoint-shape: phases.${phase}.${field}[${idx}] must be a plain object, got ${describeCheckpointShape(el)}`,
@@ -221,17 +226,19 @@ export function checkpointShapeErrors(resolvedCheckpoints) {
 }
 
 // Re-running with the same corrupt artifact repeats the failure; recovery must address the checkpoint.
-const CHECKPOINT_SHAPE_RECOVERY_LINE = 'Repair or delete the corrupt checkpoint artifact, or re-run without the '
+const CHECKPOINT_SHAPE_RECOVERY_LINE = 'Use an intact producer checkpoint, or re-run without the '
   + '`checkpoints` argument to start the review fresh.';
 
-// Returns a checkpoint refusal envelope; violations must be non-empty and gap arguments must be arrays.
 // Omitting phases prevents automatic resume from replaying the same malformed state.
 // Carry prior disclosures because this early return bypasses the normal return path.
 export function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps, contextSizeGap, discardGap) {
   const extra = violations.length - 1;
+  const recovery = violations[0].startsWith('checkpoint-checksum:')
+    ? 'Re-copy the complete checkpoint object unchanged from the original source; see crash-recovery.md.'
+    : CHECKPOINT_SHAPE_RECOVERY_LINE;
   const error = extra > 0
-    ? `${violations[0]} (and ${extra} more checkpoint-shape violation${extra === 1 ? '' : 's'}). ${CHECKPOINT_SHAPE_RECOVERY_LINE}`
-    : `${violations[0]}. ${CHECKPOINT_SHAPE_RECOVERY_LINE}`;
+    ? `${violations[0]} (and ${extra} more checkpoint-shape violation${extra === 1 ? '' : 's'}). ${recovery}`
+    : `${violations[0]}. ${recovery}`;
   return {
     ok: false,
     error,
@@ -244,11 +251,14 @@ export function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps, conte
   };
 }
 
-// Returns { phases, completed } within the return budget, otherwise { completed, truncated: true }.
-// The harness serializes this channel without model transcription, so the return budget applies.
+// Sign the exact wire value so a copied or persisted checkpoint can detect transcription drift.
+export function signCheckpoints(obj) {
+  return { ...obj, checksum: fnv1a32(JSON.stringify(obj, null, 2)) };
+}
+
 export function buildResumeCheckpoints(phaseOutputs) {
   const completed = Object.keys(phaseOutputs);
-  const withPhases = { phases: phaseOutputs, completed };
+  const withPhases = signCheckpoints({ phases: phaseOutputs, completed });
   if (JSON.stringify(withPhases).length <= RETURN_CHAR_BUDGET) return withPhases;
   return { completed, truncated: true };
 }
@@ -263,7 +273,6 @@ function phaseFindingCount(out) {
   return 0;
 }
 
-// Returns the persisted checkpoint with resume-consumed outputs and per-phase counts.
 // Failure-path checkpoints stay full so crash recovery can skip all completed work.
 export function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) {
   const outputs = phaseOutputs || {};
@@ -273,7 +282,7 @@ export function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) 
   }
   const counts = {};
   for (const [name, out] of Object.entries(outputs)) counts[name] = phaseFindingCount(out);
-  return { phases, completed, phaseReached, counts };
+  return signCheckpoints({ phases, completed, phaseReached, counts });
 }
 
 // Duplicate detection depends on scan order, so the round trip must preserve original positions.
@@ -323,14 +332,14 @@ export function normalizePhaseFindings(name, out, replayed, args) {
     warnings.push(...normalized.warnings);
   }
   if (pathRewrites || (replayed && rejected)) {
-    const stats = isPlainCheckpointObject(out.stats) ? out.stats : {};
+    const stats = isPlainObject(out.stats) ? out.stats : {};
     out.stats = { ...stats,
       ...(pathRewrites ? { path_rewrites: (stats.path_rewrites || 0) + pathRewrites } : {}),
       ...(replayed && rejected ? { replay_path_rejected: rejected } : {}),
     }
   }
   if (name === 'merge') {
-    const methodology = isPlainCheckpointObject(out.methodology) ? out.methodology : {};
+    const methodology = isPlainObject(out.methodology) ? out.methodology : {};
     out.methodology = methodology;
     const channels = methodology.findings_per_channel;
     const surviving = out.findings.length;

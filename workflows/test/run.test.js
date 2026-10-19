@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runWith, compactMethodology } from '../src/run.js';
-import { validArgs } from './helpers/argsFixtures.js';
+import { checkpointArgs, validArgs } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
-import { PATHS, challengeOutput, runAndCapture } from './helpers/persistFixtures.js';
+import { PATHS, challengeOutput, replayProducedCheckpoint, runAndCapture } from './helpers/persistFixtures.js';
 import { captureRun, mixedSurvivors, withSandboxGlobals, drainMicrotasks } from './helpers/runFixtures.js';
 import { deriveFromPlan } from './helpers/deriveFromPlan.js';
 import { normalizeForChecksum, fnv1a32 } from '../src/wire.js';
@@ -322,7 +322,7 @@ for (const row of FILTER_RESUME_ROWS) test(`resume of resume: ${row.name}`, asyn
   assert.deepEqual(first.checkpoints.phases.filter.gaps, [warning]);
   assert.equal(first.gaps.filter((gap) => gap === warning).length, 1);
   assert.deepEqual(first.checkpoints.phases.filter[row.field].map((finding) => finding.id), row.retained);
-  const { out, payload } = await runAndCapture(validArgs({ checkpoints: first.checkpoints }));
+  const { out, payload } = await runAndCapture({ ...validArgs(), checkpoints: first.checkpoints });
   assert.equal(out.ok, true);
   assert.equal(out.gaps.filter((gap) => gap === warning).length, 1);
   assert.deepEqual(payload.findings.map((finding) => finding.id), ['CLEAN_FILTER']);
@@ -423,7 +423,7 @@ test('host text walker does not assign unchanged entries', async () => {
   const note = Object.freeze(JSON.parse('{"__proto__":"ordinary text","note":"/plugin/private.txt"}'));
   const finding = makeFinding('SAFE_ID', { secret_host_note: note });
   const args = validArgs({ repoRoot: '/work/repo' });
-  args.checkpoints = { challenge: challengeOutput({ findings: [finding] }) };
+  Object.assign(args, checkpointArgs({ challenge: challengeOutput({ findings: [finding] }) }));
   const { out, payload } = await runAndCapture(args);
   assert.equal(out.ok, true);
   assert.deepEqual(payload.findings[0].secret_host_note, note);
@@ -457,7 +457,7 @@ for (const row of HOST_RESUME_ROWS) test(`host text resume: ${row.name}`, async 
     ...(row.outside ? { evidence: 'See /plugin/agents/reviewer.md' } : {}),
   });
   const first = await captureRun(validArgs({ repoRoot: '/work/repo' }), { summary, findings: [finding] });
-  const resumed = await captureRun(validArgs({ repoRoot: '/work/repo', checkpoints: first.payload.checkpoints }), { summary });
+  const resumed = await captureRun({ ...validArgs({ repoRoot: '/work/repo' }), checkpoints: first.payload.checkpoints }, { summary });
   for (const { out, payload } of [first, resumed]) {
     assert.equal(out.ok, true);
     assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), row.outside ? [
@@ -653,6 +653,7 @@ for (const row of DEGRADED_ROWS) test(`degradation envelope: ${row.name}`, async
     assert.deepEqual([...out.stats.degraded].sort(), [...DIMENSIONS].sort());
     assert.equal(out.gaps.filter((gap) => gap.startsWith('all-degraded:')).length, 1);
     assert.deepEqual(Object.keys(out.checkpoints.phases), ['summarize']);
+    await replayProducedCheckpoint(validArgs(), out.checkpoints);
     assert.equal(ctx.calls.some((call) => /validate-batch-|challenge-|artifact-writer/.test(call.label)), false);
     if (row.resolved) assert.deepEqual(out.resolvedPolicy, row.resolved);
   } else {
@@ -687,6 +688,7 @@ for (const row of FAILURE_ROWS) test(`path-safe failure: ${row.name}`, async () 
   assert.equal(out.ok, row.ok);
   assert.equal(out.phaseReached, row.phase);
   assert.deepEqual(out.artifactPaths, row.paths);
+  await replayProducedCheckpoint(args, out.checkpoints);
   assert.equal(out.checkpoints.phases.discover.findings[0].file, 'src/module.js');
   assert.deepEqual(out.checkpoints.phases.discover.findings[0].cross_file_refs, ['src/other.js:4']);
   for (const path of ['/repo/src/module.js', 'file:///repo/src/module.js']) assert.equal(JSON.stringify(out).includes(path), false);
@@ -963,9 +965,9 @@ for (const row of CONFIG_ROWS) test(`review configuration wiring: ${row.name}`, 
   if (row.proofGaps) {
     const filterCheckpoint = { filtered: payload.findings, eliminated: [], stats: out.stats.filter,
       gaps: ['filter checkpoint marker'] };
-    const resumed = await runAndCapture({ ...args, checkpoints: {
+    const resumed = await runAndCapture({ ...args, ...checkpointArgs({
       ...payload.checkpoints.phases, filter: filterCheckpoint,
-    } }, { findings: row.findings });
+    }) }, { findings: row.findings });
     assert.equal(resumed.out.ok, true);
     assert.deepEqual(resumed.out.gaps.filter((gap) => gap.startsWith('review_md:')), expectedProofGaps);
     assert.deepEqual(resumed.out.stats.filter, out.stats.filter);

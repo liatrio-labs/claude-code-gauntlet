@@ -1,6 +1,15 @@
-import { fnv1a32, normalizeReviewText } from '../../src/wire.js';
+import { fnv1a32, isPlainObject, normalizeReviewText } from '../../src/wire.js';
 import { reviewMdSetChecksum } from '../../src/args.js';
 import { KNOB_REGISTRY } from '../../src/knobs.js';
+
+export function checkpointArgs(checkpoints) {
+  if (!isPlainObject(checkpoints) || Object.hasOwn(checkpoints, 'checksum')) return { checkpoints };
+  const phases = checkpoints.phases === undefined ? checkpoints : checkpoints.phases;
+  if (!isPlainObject(phases) || !['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report']
+    .some((name) => Object.hasOwn(phases, name))) return { checkpoints };
+  const wrapper = checkpoints.phases === undefined ? { phases: checkpoints } : checkpoints;
+  return { checkpoints: { ...wrapper, checksum: fnv1a32(JSON.stringify(wrapper, null, 2)) } };
+}
 
 export function reviewMdArgs(entries) {
   const reviewMd = entries.map((entry) => ({
@@ -54,6 +63,7 @@ export function validArgs(over = {}) {
   }
   if (Array.isArray(over.reviewMd)) Object.assign(args, reviewMdArgs(over.reviewMd),
     Object.hasOwn(over, 'reviewMdSetChecksum') ? { reviewMdSetChecksum: over.reviewMdSetChecksum } : {});
+  if (Object.hasOwn(over, 'checkpoints')) Object.assign(args, checkpointArgs(over.checkpoints));
   return structuredClone(args);
 }
 
@@ -74,6 +84,7 @@ export function interactiveArgs(over = {}) {
     reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
     limits: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 25, maxLineSpan: 100 },
     ...over,
+    ...(Object.hasOwn(over, 'checkpoints') ? checkpointArgs(over.checkpoints) : {}),
     ...(Array.isArray(over.reviewMd) ? reviewMdArgs(over.reviewMd) : {}),
     ...(Object.hasOwn(over, 'reviewMdSetChecksum') ? { reviewMdSetChecksum: over.reviewMdSetChecksum } : {}),
   });
