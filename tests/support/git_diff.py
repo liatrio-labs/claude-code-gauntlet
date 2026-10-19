@@ -29,15 +29,15 @@ def patch_repo(directory, monkeypatch, config="external"):
     git(directory, "config", "commit.gpgsign", "false")
     git(directory, "config", "core.hooksPath", os.devnull)
     source = directory / "file"
-    source.write_text("old\n", encoding="utf-8")
+    source.write_text("old\n", encoding="utf-8", newline="\n")
     git(directory, "add", "file")
     git(directory, "commit", "-qm", "base")
     base = git(directory, "rev-parse", "HEAD")
-    source.write_text("new\n", encoding="utf-8")
+    source.write_text("new\n", encoding="utf-8", newline="\n")
     git(directory, "add", "file")
     git(directory, "commit", "-qm", "target")
     target = git(directory, "rev-parse", "HEAD")
-    source.write_text("local\n", encoding="utf-8")
+    source.write_text("local\n", encoding="utf-8", newline="\n")
     git(directory, "config", "color.ui", "always")
     git(directory, "config", "diff.mnemonicPrefix", "true")
     if config == "external":

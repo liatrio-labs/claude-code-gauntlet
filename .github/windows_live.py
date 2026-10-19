@@ -156,13 +156,39 @@ def assert_run(transcript: Path, output: Path, config: Path) -> LiveReceipt:
     ), paths
     report = Path(terminal["artifactPaths"]["report"])
     assert report.stat().st_size > 0
-    # Agents may quote the absolute path they read in internal fields, which the
-    # detector discloses as gaps; the delivered report must not carry it.
+    # Agents may quote the host paths they read. The product contract is
+    # disclosure, so every finding carrying a repository-root spelling must be
+    # named by a host-path-text gap, and the report may only carry such text
+    # through those findings.
     report_text = report.read_text(encoding="utf-8").lower()
-    for root in repo_roots:
-        spellings = (root, root.replace("/", "\\"), f"/{root[0]}/{root[3:]}")
-        leaked = [s for s in spellings if s.lower() in report_text]
-        assert not leaked, ("report names a host path", leaked)
+    spellings = {
+        spelling.lower()
+        for root in repo_roots
+        for spelling in (root, root.replace("/", "\\"), f"/{root[0]}/{root[3:]}")
+    }
+    findings = json.loads(
+        Path(terminal["artifactPaths"]["findings"]).read_text(encoding="utf-8")
+    )
+    if isinstance(findings, dict):
+        findings = findings.get("findings", [])
+    carrying = {
+        str(finding.get("id"))
+        for finding in findings
+        if any(
+            isinstance(value, str) and any(s in value.lower() for s in spellings)
+            for value in finding.values()
+        )
+    }
+    disclosed = set(
+        re.findall(r"host-path-text: finding (\S+) mentions", "\n".join(gaps))
+    )
+    assert carrying <= disclosed, (
+        "undisclosed host path",
+        sorted(carrying - disclosed),
+    )
+    assert carrying or not any(s in report_text for s in spellings), (
+        "report names a host path outside any finding"
+    )
     source = materialized.get("source")
     assert source and Path(source).stem == target, (target, source)
     observed = tasks.observe(target, tasks.roots_from_environment(os.environ))
