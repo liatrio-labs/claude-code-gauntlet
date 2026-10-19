@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.42.47 (2026-10-19)
+
+### Bug Fixes
+
+- Audit removed tests against surviving coverage
+  ([#530](https://github.com/liatrio-labs/claude-code-gauntlet/pull/530),
+  [`0c92c70`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c92c70a7ae074bcfcc6ad99f1f69cbc91fe8be7))
+
+
 ## v3.42.46 (2026-10-19)
 
 ### Bug Fixes
