@@ -50,6 +50,37 @@ test('audit dispatch converts losses and reserves removed_test for code', async 
   }
 });
 
+test('audit losses drop only overlapping ordinary findings from the same dispatch', async () => {
+  const anchor = { ...loss, file: '/repo/bin/seat', line: 545 };
+  const ordinary = (id, fields = {}) => makeFinding(id, {
+    file: 'bin/seat', line_start: 545, line_end: undefined, dimension: 'test_coverage',
+    title: anchor.title, ...fields,
+  });
+  const ctx = stageCtx({ replies: {
+    'code-gauntlet:bug-detector': { ...cleanReply([]), findings: [ordinary('other-agent')] },
+    'code-gauntlet:test-analyzer': {
+      ...cleanReply([{ ...lost, losses: [anchor] }]), total_seen: 7,
+      findings: [
+        ordinary('range-start', { file: './bin/seat', line_end: 566 }),
+        ordinary('range-middle', { file: '/repo/bin/seat', line_start: 540, line_end: 550 }),
+        ordinary('range-end', { line_start: 540, line_end: 545 }),
+        ordinary('single-line'),
+        ordinary('before', { line_start: 540, line_end: 544 }),
+        ordinary('after', { line_start: 546 }),
+        ordinary('other-file', { file: 'bin/other' }),
+      ],
+    },
+  } });
+  const out = await discover(ctx, { repoRoot: '/repo', removedTests: body });
+  assert.deepEqual(out.findings.map((finding) => finding.id), [
+    'other-agent', `removed-test:${item.id}:1`, 'before', 'after', 'other-file',
+  ]);
+  assert.equal(out.findings[0].agent, 'bug-detector');
+  assert.equal(out.findings[1].file, 'bin/seat');
+  assert.deepEqual(out.gaps, []);
+  assert.equal(out.removedTestAudit.duplicates_dropped, 4);
+});
+
 const badRows = [
   ['missing id', []], ['unknown id', [{ ...lost, id: 'unknown' }]],
   ['duplicate id', [lost, lost]],

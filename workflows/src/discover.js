@@ -5,6 +5,7 @@ import { LIMIT_DEFAULTS } from './registry.js';
 import { effectiveBucketSize } from './capacity.js';
 import { deepClone } from './wire.js';
 import { checkRemovedTestAudit } from './removedTests.js';
+import { repoRelativeFindingPath } from './paths.js';
 
 // StructuredOutput requires an object wrapper around summary prose.
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
@@ -224,16 +225,19 @@ export async function discover(ctx, input) {
   const gaps = [];
   const findings = [];
   const degradedDims = [];
+  let droppedAuditOverlaps = 0;
 
   const schemaActive = conditionalSchemaActive(policy);
 
   // Failed parallel members become null in place, preserving positional attribution to the dispatched specs.
   results.forEach((res, i) => {
     const spec = specs[i];
+    let auditLosses = [];
     if (spec.agentType === 'code-gauntlet:test-analyzer' && inventory.status === 'available' && res) {
       const checked = checkRemovedTestAudit(inventory, res.removed_test_audit, inp.repoRoot);
       removedTestAudit = checked.audit;
-      findings.push(...checked.findings);
+      auditLosses = checked.findings;
+      findings.push(...auditLosses);
     }
     if (res === null || res === undefined) {
       // Conditional schema failures need distinct diagnostics so operators can identify the construct that may have exhausted retries.
@@ -252,6 +256,13 @@ export async function discover(ctx, input) {
       return;
     }
     for (const f of list) {
+      // The audit already represents coverage lost at this anchor within this dispatch.
+      const normalized = repoRelativeFindingPath(inp.repoRoot, f.file);
+      if (auditLosses.some((loss) => normalized.file === loss.file
+        && f.line_start <= loss.line_start && (f.line_end ?? f.line_start) >= loss.line_start)) {
+        droppedAuditOverlaps += 1;
+        continue;
+      }
       delete f.removed_test;
       // Filtering and merge grouping require canonical short agent names, so dispatch prefixes must be stripped.
       f.agent = spec.agentType.split(':').pop();
@@ -262,6 +273,8 @@ export async function discover(ctx, input) {
       gaps.push(`${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
     }
   });
+
+  if (droppedAuditOverlaps > 0) removedTestAudit.duplicates_dropped = droppedAuditOverlaps;
 
   if (inventory.omitted > 0) removedTestAudit.omitted = inventory.omitted;
   if (removedTestAudit.status !== 'ran-clean') {

@@ -1550,13 +1550,16 @@ async function discover(ctx, input) {
   const gaps = [];
   const findings = [];
   const degradedDims = [];
+  let droppedAuditOverlaps = 0;
   const schemaActive = conditionalSchemaActive(policy);
   results.forEach((res, i) => {
     const spec = specs[i];
+    let auditLosses = [];
     if (spec.agentType === 'code-gauntlet:test-analyzer' && inventory.status === 'available' && res) {
       const checked = checkRemovedTestAudit(inventory, res.removed_test_audit, inp.repoRoot);
       removedTestAudit = checked.audit;
-      findings.push(...checked.findings);
+      auditLosses = checked.findings;
+      findings.push(...auditLosses);
     }
     if (res === null || res === undefined) {
       const conditionalNote = schemaActive && (spec.conditionalRequired || []).length
@@ -1573,6 +1576,12 @@ async function discover(ctx, input) {
       return;
     }
     for (const f of list) {
+      const normalized = repoRelativeFindingPath(inp.repoRoot, f.file);
+      if (auditLosses.some((loss) => normalized.file === loss.file
+        && f.line_start <= loss.line_start && (f.line_end ?? f.line_start) >= loss.line_start)) {
+        droppedAuditOverlaps += 1;
+        continue;
+      }
       delete f.removed_test;
       f.agent = spec.agentType.split(':').pop();
       findings.push(f);
@@ -1582,6 +1591,7 @@ async function discover(ctx, input) {
       gaps.push(`${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
     }
   });
+  if (droppedAuditOverlaps > 0) removedTestAudit.duplicates_dropped = droppedAuditOverlaps;
   if (inventory.omitted > 0) removedTestAudit.omitted = inventory.omitted;
   if (removedTestAudit.status !== 'ran-clean') {
     degradedDims.push('test_coverage');
