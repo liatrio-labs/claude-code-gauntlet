@@ -2,6 +2,65 @@
 
 <!-- version list -->
 
+## v3.42.44 (2026-10-19)
+
+### Bug Fixes
+
+- Check the delivered report for host paths in the live job
+  ([#523](https://github.com/liatrio-labs/claude-code-gauntlet/pull/523),
+  [`4b0d34f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4b0d34f9fa1481bc6902e33f46b9cbd035907872))
+
+- Drop the unread host_platform identity and pin the allowlist pair
+  ([#523](https://github.com/liatrio-labs/claude-code-gauntlet/pull/523),
+  [`4b0d34f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4b0d34f9fa1481bc6902e33f46b9cbd035907872))
+
+- Emit the retry task path in wire form and run Bash tests from files
+  ([#523](https://github.com/liatrio-labs/claude-code-gauntlet/pull/523),
+  [`4b0d34f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4b0d34f9fa1481bc6902e33f46b9cbd035907872))
+
+- Live job checks host-path disclosure, Windows-safe diff fixture
+  ([#523](https://github.com/liatrio-labs/claude-code-gauntlet/pull/523),
+  [`4b0d34f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4b0d34f9fa1481bc6902e33f46b9cbd035907872))
+
+- Pin forge status, branch and local diffs, and branch composites
+  ([#523](https://github.com/liatrio-labs/claude-code-gauntlet/pull/523),
+  [`4b0d34f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4b0d34f9fa1481bc6902e33f46b9cbd035907872))
+
+- Pin the changed-files producer for branch and local reviews
+  ([#523](https://github.com/liatrio-labs/claude-code-gauntlet/pull/523),
+  [`4b0d34f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4b0d34f9fa1481bc6902e33f46b9cbd035907872))
+
+- Run on Windows with one forward-slash drive path form
+  ([#523](https://github.com/liatrio-labs/claude-code-gauntlet/pull/523),
+  [`4b0d34f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4b0d34f9fa1481bc6902e33f46b9cbd035907872))
+
+- Test a distinct repo root and tidy the git file listing
+  ([#523](https://github.com/liatrio-labs/claude-code-gauntlet/pull/523),
+  [`4b0d34f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4b0d34f9fa1481bc6902e33f46b9cbd035907872))
+
+- Windows CI shell, case-insensitive drive paths, derived platform
+  ([#523](https://github.com/liatrio-labs/claude-code-gauntlet/pull/523),
+  [`4b0d34f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4b0d34f9fa1481bc6902e33f46b9cbd035907872))
+
+### Chores
+
+- **deps**: Bump the actions group with 3 updates
+  ([#524](https://github.com/liatrio-labs/claude-code-gauntlet/pull/524),
+  [`f7f7597`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f7f7597a8f9fbfef3ed657720b8361126289a4d4))
+
+### Documentation
+
+- Claim native Windows support after a passing live run
+  ([#523](https://github.com/liatrio-labs/claude-code-gauntlet/pull/523),
+  [`4b0d34f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4b0d34f9fa1481bc6902e33f46b9cbd035907872))
+
+### Refactoring
+
+- Move the verify command comment to the function it describes
+  ([#523](https://github.com/liatrio-labs/claude-code-gauntlet/pull/523),
+  [`4b0d34f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4b0d34f9fa1481bc6902e33f46b9cbd035907872))
+
+
 ## v3.42.43 (2026-10-17)
 
 ### Bug Fixes
