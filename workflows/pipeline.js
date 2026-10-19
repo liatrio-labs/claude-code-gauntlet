@@ -264,8 +264,34 @@ const FINDING_PROP_TYPES = deepFreeze({
   cross_file_refs: { type: 'array', items: { type: 'string' } },
 });
 const FINDING_PATH_ARRAY_FIELDS = deepFreeze(['cross_file_refs', 'affected_consumers']);
-const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code']);
+const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code', 'removed_test']);
 const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
+const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
+const closedDispatchRow = (properties) => ({
+  type: 'object', properties, required: Object.keys(properties), additionalProperties: false,
+});
+const DISPATCH_RESULTS = deepFreeze({
+  'code-gauntlet:test-analyzer': {
+    removed_test_audit: {
+      type: 'array', items: closedDispatchRow({
+        id: { type: 'string' },
+        status: { type: 'string', enum: ['removed_with_code', 'covered_elsewhere', 'lost'] },
+        covered_by: { type: 'array', items: closedDispatchRow({
+          file: { type: 'string' }, line: { type: 'integer', minimum: 1 },
+          input: { type: 'string' }, assertion: { type: 'string' },
+        }) },
+        losses: { type: 'array', items: closedDispatchRow({
+          file: { type: 'string' }, line: { type: 'integer', minimum: 1 },
+          title: { type: 'string' }, description: { type: 'string' },
+          severity: { type: 'string', enum: SEVERITY_ORDER },
+          confidence: { type: 'number', minimum: 0, maximum: 100 },
+          criticality: { type: 'number', minimum: 1, maximum: 10 },
+          failure_scenario: { type: 'string' },
+        }) },
+      }),
+    },
+  },
+});
 const DIMENSIONS = deepFreeze([
   { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' },
     requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
@@ -293,6 +319,7 @@ const DIMENSIONS = deepFreeze([
       promptExtra: null },
 ]);
 const PIPELINE_FINDING_FIELDS = deepFreeze([
+  'removed_test',
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
   'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
@@ -378,7 +405,6 @@ const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
   verify: 'verify_findings.py',
 });
 const FIELD_RENAMES = deepFreeze({ body: 'description', line: 'line_start', blame_tag: 'origin' });
-const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
 const REVIEW_SETTING_KEYS = deepFreeze([
   'confidence_threshold',
   'security_min_confidence',
@@ -527,7 +553,7 @@ function pinNumericFields(finding) {
   }
   return out;
 }
-const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'line_end', 'description', 'evidence', 'severity', 'confidence', 'cross_file_refs', 'origin'];
+const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'line_end', 'description', 'evidence', 'severity', 'confidence', 'cross_file_refs', 'origin', 'removed_test'];
 function projectVerifySliceFinding(finding) {
   const projected = {};
   for (const k of VERIFY_SLICE_FIELDS) {
@@ -1256,6 +1282,79 @@ function validateConfigEcho(args, errors, table = KNOB_REGISTRY) {
     }
   }
 }
+// --- removedTests.js ---
+const exactKeys = (value, keys) => isPlainObject(value)
+  && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+const nonempty = (value) => typeof value === 'string' && value.trim().length > 0;
+const removedTestLine = (value) => Number.isSafeInteger(value) && value > 0;
+const confinedPath = (value) => nonempty(value)
+  && !value.includes('\\')
+  && repoRelativeFindingPath(null, value).file === value;
+function validateRemovedTests(value) {
+  const unavailable = (reason) => ({ status: 'unavailable', items: [], omitted: 0, reason });
+  if (value === undefined || value === null) return unavailable('inventory not supplied');
+  if (!exactKeys(value, ['status', 'items', 'omitted', 'checksum'])
+    || !['available', 'unavailable'].includes(value.status)
+    || !Array.isArray(value.items) || value.items.length > 60
+    || !Number.isSafeInteger(value.omitted) || value.omitted < 0
+    || (value.status === 'unavailable' && (value.items.length || value.omitted))) {
+    return unavailable('invalid inventory shape');
+  }
+  const ids = new Set();
+  for (const item of value.items) {
+    if (!exactKeys(item, ['id', 'path', 'old_start', 'old_end', 'kind'])
+      || typeof item.id !== 'string' || !/^[a-f0-9]{16}$/.test(item.id) || ids.has(item.id)
+      || !confinedPath(item.path) || !removedTestLine(item.old_start)
+      || !removedTestLine(item.old_end) || item.old_end < item.old_start
+      || !['deleted_file', 'hunk'].includes(item.kind)) return unavailable('invalid inventory item');
+    ids.add(item.id);
+  }
+  const body = { status: value.status, items: value.items, omitted: value.omitted };
+  if (fnv1a32(JSON.stringify(body, null, 2)) !== value.checksum) return unavailable('inventory checksum mismatch');
+  return value.status === 'unavailable' ? unavailable('saved diff structure unavailable') : body;
+}
+function matchesAuditSchema(value, schema) {
+  if (schema.type === 'object') return exactKeys(value, Object.keys(schema.properties))
+    && Object.entries(schema.properties).every(([key, child]) => matchesAuditSchema(value[key], child));
+  if (schema.type === 'array') return Array.isArray(value) && value.every((entry) => matchesAuditSchema(entry, schema.items));
+  if (schema.type === 'string') return nonempty(value) && (!schema.enum || schema.enum.includes(value));
+  return typeof value === 'number' && Number.isFinite(value)
+    && (schema.type !== 'integer' || Number.isSafeInteger(value))
+    && (schema.minimum === undefined || value >= schema.minimum)
+    && (schema.maximum === undefined || value <= schema.maximum);
+}
+function checkRemovedTestAudit(inventory, rows) {
+  const findings = [];
+  const gap = (reason) => ({ findings: [], audit: { status: 'gap', reason } });
+  const schema = DISPATCH_RESULTS['code-gauntlet:test-analyzer'].removed_test_audit;
+  if (!matchesAuditSchema(rows, schema)) return gap('malformed audit rows');
+  const items = new Map(inventory.items.map((item) => [item.id, item]));
+  const seen = new Set();
+  for (const row of rows) {
+    if (!items.has(row.id) || seen.has(row.id)) return gap('unknown or duplicate inventory id');
+    seen.add(row.id);
+    if (row.status === 'covered_elsewhere' && (!row.covered_by.length
+      || row.covered_by.some((cite) => !confinedPath(cite.file)))) return gap('incomplete surviving-test citation');
+    if (row.status === 'lost' ? !row.losses.length : row.losses.length) return gap('losses disagree with audit status');
+    const { id, path, old_start, old_end } = items.get(row.id);
+    for (const [index, loss] of row.losses.entries()) {
+      if (!confinedPath(loss.file)) return gap('invalid behavior anchor');
+      if (items.get(row.id).kind === 'deleted_file' && loss.file === path) return gap('behavior anchor was deleted');
+      if ([loss.title, loss.description, loss.failure_scenario].some((text) => text.includes(path))) {
+        return gap('deleted test path belongs only in inventory metadata');
+      }
+      findings.push({
+        id: `removed-test:${id}:${index + 1}`, agent: 'test-analyzer', dimension: 'test_coverage',
+        file: loss.file, line_start: loss.line, title: loss.title, description: loss.description,
+        severity: loss.severity, confidence: loss.confidence, criticality: loss.criticality,
+        failure_scenario: loss.failure_scenario, removed_test: { id, path, old_start, old_end },
+      });
+    }
+  }
+  if (seen.size !== items.size) return gap('missing inventory ids');
+  return { findings, audit: inventory.omitted > 0
+    ? { status: 'overflow', omitted: inventory.omitted } : { status: 'ran-clean' } };
+}
 // --- discover.js ---
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
 async function summarize(ctx, input) {
@@ -1381,6 +1480,7 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
 }
 function findingSchema(spec, policy) {
   const conditionalRequired = conditionalSchemaActive(policy) ? (spec.conditionalRequired || []) : [];
+  const resultFields = DISPATCH_RESULTS[spec.agentType] || {};
   return {
     type: 'object',
     properties: {
@@ -1390,8 +1490,9 @@ function findingSchema(spec, policy) {
       },
       complete: { type: 'boolean' },
       total_seen: { type: 'number' },
+      ...deepClone(resultFields),
     },
-    required: ['findings', 'complete', 'total_seen'],
+    required: ['findings', 'complete', 'total_seen', ...Object.keys(resultFields)],
   };
 }
 const effectiveMaxLineSpan = (L) => Math.max(1, L.maxLineSpan || LIMIT_DEFAULTS.maxLineSpan);
@@ -1407,6 +1508,14 @@ async function discover(ctx, input) {
   const policy = inp.policy || {};
   const discoveryCap = limits.discoveryCap;
   const specs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
+  const inventory = inp.removedTests || { status: 'unavailable', items: [], omitted: 0, reason: 'inventory not supplied' };
+  const auditDispatched = specs.some((spec) => spec.agentType === 'code-gauntlet:test-analyzer');
+  let removedTestAudit = inventory.status === 'unavailable'
+    ? { status: 'unavailable', reason: inventory.reason }
+    : !auditDispatched && inventory.items.length > 0
+      ? { status: 'skipped_light_scope' }
+      : auditDispatched ? { status: 'gap', reason: 'audit dispatch did not complete' }
+        : inventory.omitted > 0 ? { status: 'overflow', omitted: inventory.omitted } : { status: 'ran-clean' };
   const thunks = specs.map((spec) => {
     const model = modelFor(spec.agentType, policy);
     return () => ctx.agent(discoverPrompt(inp, spec), {
@@ -1423,6 +1532,11 @@ async function discover(ctx, input) {
   const schemaActive = conditionalSchemaActive(policy);
   results.forEach((res, i) => {
     const spec = specs[i];
+    if (spec.agentType === 'code-gauntlet:test-analyzer' && inventory.status === 'available' && res) {
+      const checked = checkRemovedTestAudit(inventory, res.removed_test_audit);
+      removedTestAudit = checked.audit;
+      findings.push(...checked.findings);
+    }
     if (res === null || res === undefined) {
       const conditionalNote = schemaActive && (spec.conditionalRequired || []).length
         ? ' (dispatch carried the conditional per-dimension schema)'
@@ -1446,6 +1560,11 @@ async function discover(ctx, input) {
       gaps.push(`${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
     }
   });
+  if (inventory.omitted > 0) removedTestAudit.omitted = inventory.omitted;
+  if (removedTestAudit.status !== 'ran-clean') {
+    degradedDims.push('test_coverage');
+    gaps.push(`removed-test audit: ${removedTestAudit.status}${removedTestAudit.reason ? ` (${removedTestAudit.reason})` : ''}${removedTestAudit.omitted ? ` (${removedTestAudit.omitted} omitted)` : ''}`);
+  }
   const maxLineSpan = effectiveMaxLineSpan(limits);
   let droppedLineSpans = 0;
   let droppedNoLineEnd = 0;
@@ -1477,13 +1596,19 @@ async function discover(ctx, input) {
     gaps,
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
+    removedTestAudit,
   };
 }
 function discoverPrompt(inp, spec) {
   const ctxLine = inp.contextLine || '';
   const dims = spec.dimensions.join(', ');
   const base = `${ctxLine}This is a code gauntlet built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Every finding MUST cite concrete evidence: the evidence field must be non-empty and reference real lines you actually inspected (in the diff or in a file you opened) — a finding you cannot ground in inspected code is noise, do not emit it. For any absence or "missing" claim (e.g. a test-coverage negative asserting no test exists), name in evidence the specific file or path you checked; an unproven absence is not a finding. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
-  return spec.promptExtra ? `${base} ${spec.promptExtra}` : base;
+  const resultFields = DISPATCH_RESULTS[spec.agentType] || {};
+  const resultContract = Object.keys(resultFields).length
+    ? ` Also return the required dispatch-result fields: ${Object.keys(resultFields).join(', ')}.` : '';
+  const audit = spec.agentType === 'code-gauntlet:test-analyzer'
+    ? ` Audit every removed test item below from the saved diff. Return exactly one removed_test_audit row per id (or [] when unavailable/empty). Loss locations and prose describe surviving behavior; keep deleted paths only in the item reference. Inventory: ${JSON.stringify(inp.removedTests || { status: 'unavailable', items: [] })}` : '';
+  return `${base}${spec.promptExtra ? ` ${spec.promptExtra}` : ''}${resultContract}${audit}`;
 }
 // --- vetting.js ---
 const UNVERIFIED_REASONS = {
@@ -2438,6 +2563,9 @@ function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
     if (finding.demoted_by === 'reachability') {
       destination = 'suggestion';
       finding.routed_by = 'reachability';
+    } else if (finding.removed_test) {
+      destination = 'main';
+      finding.routed_by = 'removed_test';
     } else {
       const dimRoute = routeByDimension(finding, routes);
       if (dimRoute !== null) {
@@ -3285,9 +3413,13 @@ function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
     const isDispatched = dispatchedSet.has(agentType);
     const label = AGENT_LABELS[agentType] || agentType;
     const agentShort = agentType.split(':').pop();
+    const audit = agentShort === 'test-analyzer' ? inp.removedTestAudit : null;
     let findingsCell;
     let notes;
-    if (!isDispatched) {
+    if (audit && audit.status !== 'ran-clean') {
+      findingsCell = `${n}${m ? ` (+${m} unverified)` : ''}`;
+      notes = `Degraded - removed-test audit: ${inline(audit.status)}${audit.reason ? ` (${inline(audit.reason)})` : ''}${audit.omitted ? ` (${audit.omitted} omitted)` : ''}`;
+    } else if (!isDispatched) {
       findingsCell = '—';
       notes = 'Skipped — not dispatched in this run';
     } else if (isDegraded && n + m === 0) {
@@ -4151,19 +4283,29 @@ const CHALLENGE_SCHEMA = {
   },
   required: ['confidence_claim_is_correct'],
 };
-function blindChallengeFields(finding) {
+function blindChallengeFields(finding, diffPath) {
   return {
     title: finding.title || '',
     description: finding.description || '',
     file: finding.file || '',
     line_start: finding.line_start != null ? finding.line_start : '',
     line_end: finding.line_end != null ? finding.line_end : '',
+    ...(finding.removed_test ? {
+      removed_test: {
+        path: finding.removed_test.path,
+        old_start: finding.removed_test.old_start,
+        old_end: finding.removed_test.old_end,
+      },
+      diffPath,
+    } : {}),
   };
 }
-function challengePrompt(finding) {
-  const b = blindChallengeFields(finding);
+function challengePrompt(finding, diffPath) {
+  const b = blindChallengeFields(finding, diffPath);
   const range = b.line_end !== '' && b.line_end !== b.line_start ? `${b.line_start}-${b.line_end}` : `${b.line_start}`;
-  return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it. First VERIFY the claim's central factual assertion against the raw code: the claim concerns ${b.file}:${range} — open that location and enough surrounding context yourself (Read/Grep/LSP), find the specific lines the claim rests on, and confirm they actually say what the claim needs them to say. If that central assertion cannot be verified from the code and context — for example a test-coverage "no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no in-diff evidence — treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the code confirms it, so it does not survive). Reserve scores above 25 for claims whose central assertion you positively confirmed in the code.\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct 0-100 (higher = the claim holds).`;
+  const removedContext = b.removed_test
+    ? `\nRead saved diff ${b.diffPath}: deleted test ${b.removed_test.path}, old lines ${b.removed_test.old_start}-${b.removed_test.old_end}. Check the removed input and assertion, then search surviving tests at HEAD for the same behavior. This coverage-loss claim is verifiable from the saved diff and surviving tests.` : '';
+  return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it. First VERIFY the claim's central factual assertion against the raw code: the claim concerns ${b.file}:${range} — open that location and enough surrounding context yourself (Read/Grep/LSP), find the specific lines the claim rests on, and confirm they actually say what the claim needs them to say. If that central assertion cannot be verified from the code and context — for example a test-coverage "no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no in-diff evidence — treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the code confirms it, so it does not survive). A removed-test claim can be verified using its deleted location in the saved diff and a search for surviving assertions at HEAD. Reserve scores above 25 for claims whose central assertion you positively confirmed in the code.${removedContext}\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct 0-100 (higher = the claim holds).`;
 }
 async function challengeStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -4189,7 +4331,7 @@ async function challengeStage(ctx, input) {
   ];
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);
-  const thunks = candidates.map((finding, idx) => () => ctx.agent(challengePrompt(finding), {
+  const thunks = candidates.map((finding, idx) => () => ctx.agent(challengePrompt(finding, inp.diffPath), {
     label: `challenge-${idx}`,
     agentType: 'code-gauntlet:challenger',
     model,
@@ -4671,6 +4813,9 @@ function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
   return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (sha, n_in, nonce, deltas_checksum, inline_checksum, and input_checksum when present — never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token IS the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
 }
 // --- args.js ---
+function resolveRemovedTestsArgs(args) {
+  return validateRemovedTests(args.removedTests);
+}
 const ARGS_VERSION = 1;
 const NONCE_RE = /^[A-Za-z0-9._-]+$/;
 const NULLABLE_TOP_LEVEL = deepFreeze(['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints',
@@ -6400,7 +6545,7 @@ async function runWith(ctx, rawArgs) {
     }));
     const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      agentFlags: derivedAgentFlags, limits, policy, contextLine,
+      agentFlags: derivedAgentFlags, limits, policy, contextLine, removedTests: resolveRemovedTestsArgs(A),
     }));
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
     gaps.push(...(summaryOut.gaps || []));
@@ -6454,7 +6599,7 @@ async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(filterOut.gaps || []));
     const challengeOut = await runPhase('challenge', () => challengeStage(c, {
-      findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt,
+      findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
     }));
     rewriteHostPathText(challengeOut, summaryOut, A.repoRoot);
     gaps.push(...(challengeOut.gaps || []));
@@ -6495,7 +6640,7 @@ async function runWith(ctx, rawArgs) {
         challenge: challengeOut.stats,
         merge: compactMethodology(mergeOut.methodology),
       },
-      dimensions: { dispatched: discoverOut.dispatched || [], degraded: discoverOut.degraded || [] },
+      dimensions: { dispatched: discoverOut.dispatched || [], degraded: discoverOut.degraded || [], removedTestAudit: discoverOut.removedTestAudit || { status: 'unavailable' } },
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,
       prIdentity: (A.delivery || {}).prIdentity || null,

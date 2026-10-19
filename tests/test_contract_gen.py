@@ -44,6 +44,35 @@ def registry_tree(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.mark.parametrize("agent", ["bug-detector", "conventions-and-intent"])
+def test_dispatch_result_descriptor_generates_agent_contract_and_python_registry(
+    registry_tree, invoke, agent
+):
+    source = registry_tree / "workflows/src/registry.js"
+    text = source.read_text(encoding="utf-8").replace(
+        "export const DISPATCH_RESULTS = deepFreeze({",
+        "export const DISPATCH_RESULTS = deepFreeze({\n"
+        f"  'code-gauntlet:{agent}': {{ audit_note: {{ type: 'string' }} }},",
+    )
+    source.write_text(text, encoding="utf-8")
+    (registry_tree / "agents" / f"{agent}.md").write_text(
+        (ROOT / "agents" / f"{agent}.md").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    args = ["--repo-root", str(registry_tree)]
+    result = invoke("generate_contract_requirements", args, registry_tree)
+    assert result.returncode == 0, result.stderr
+    contract = (registry_tree / "agents" / f"{agent}.md").read_text(encoding="utf-8")
+    assert '"audit_note": {\n      "type": "string"' in contract
+    assert '"required": [\n    "audit_note"' in contract
+    generated = (registry_tree / "scripts/gauntlet/registry.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"audit_note":' in generated
+    assert '"removed_test_audit":' in generated
+    check = invoke("generate_contract_requirements", [*args, "--check"], registry_tree)
+    assert check.returncode == 0, check.stderr
+
+
 KNOB_CASES: list[tuple[str, dict[str, list[str]], dict[str, Any], dict[str, Any]]] = [
     (
         "alpha",

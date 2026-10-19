@@ -394,6 +394,9 @@ export function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
     if (finding.demoted_by === 'reachability') {
       destination = 'suggestion';
       finding.routed_by = 'reachability';
+    } else if (finding.removed_test) {
+      destination = 'main';
+      finding.routed_by = 'removed_test';
     } else {
       const dimRoute = routeByDimension(finding, routes);
       if (dimRoute !== null) {

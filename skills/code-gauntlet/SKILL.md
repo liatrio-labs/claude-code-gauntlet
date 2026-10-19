@@ -447,7 +447,7 @@ CODE_GAUNTLET_TRIAGE_{nonce}
 The quoted delimiter passes the text verbatim. Never pipe it through `echo` or unquote the delimiter.
 The nonce in the delimiter keeps any line of the text from ending it.
 The script writes the context file threaded to the discovery, validate and summarize agents from the collector's `--out` file, stdin text and saved diff, in that order.
-Stamp the printed `contextLines` and `contextChars` into the args waist verbatim, never estimated, carried over or re-derived.
+Stamp the printed `contextLines`, `contextChars` and `removedTests` into the args waist verbatim, never estimated, carried over or re-derived.
 An exit 2 wrote no usable context; stop and report its one-line error.
 `scripts/gauntlet/shared_context.py`'s docstring holds the content and measurement rules.
 
@@ -512,6 +512,7 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   repoRoot: configResult.identity.repo_root, outputDir, headShaShort, nonce, generatedAt,
   python,
   diffPath, changedFilesPath, reviewConfigPath,
+  removedTests: contextReceipt.removedTests,  // verbatim saved-diff inventory and checksum
   riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
   scopeAnswer: "light" | "full",  // interactive answer only when the trivial-scope question fires
   policy: { tier, subagentModel, provider, gateway, mappedAliases },

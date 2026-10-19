@@ -91,10 +91,39 @@ export const FINDING_PROP_TYPES = deepFreeze({
 export const FINDING_PATH_ARRAY_FIELDS = deepFreeze(['cross_file_refs', 'affected_consumers']);
 
 // Identifiers must not collide; structural paths and suggestion code retain their own semantics.
-export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code']);
+export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code', 'removed_test']);
 
 // Flat required fields must be unconditional for every dimension in a dispatch to avoid forcing fabricated sibling fields.
 export const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
+
+export const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
+
+const closedDispatchRow = (properties) => ({
+  type: 'object', properties, required: Object.keys(properties), additionalProperties: false,
+});
+
+export const DISPATCH_RESULTS = deepFreeze({
+  'code-gauntlet:test-analyzer': {
+    removed_test_audit: {
+      type: 'array', items: closedDispatchRow({
+        id: { type: 'string' },
+        status: { type: 'string', enum: ['removed_with_code', 'covered_elsewhere', 'lost'] },
+        covered_by: { type: 'array', items: closedDispatchRow({
+          file: { type: 'string' }, line: { type: 'integer', minimum: 1 },
+          input: { type: 'string' }, assertion: { type: 'string' },
+        }) },
+        losses: { type: 'array', items: closedDispatchRow({
+          file: { type: 'string' }, line: { type: 'integer', minimum: 1 },
+          title: { type: 'string' }, description: { type: 'string' },
+          severity: { type: 'string', enum: SEVERITY_ORDER },
+          confidence: { type: 'number', minimum: 0, maximum: 100 },
+          criticality: { type: 'number', minimum: 1, maximum: 10 },
+          failure_scenario: { type: 'string' },
+        }) },
+      }),
+    },
+  },
+});
 
 // `requiredWhenDimension` names fields the owning contract emits
 // within one dimension; sibling dimensions omit them, so a flat dispatch requirement
@@ -129,6 +158,7 @@ export const DIMENSIONS = deepFreeze([
 
 // Keep pipeline stamp names code-owned so disclosure can use a safe other fallback for unknown fields.
 const PIPELINE_FINDING_FIELDS = deepFreeze([
+  'removed_test',
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
   'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
@@ -243,8 +273,6 @@ export const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
 });
 
 export const FIELD_RENAMES = deepFreeze({ body: 'description', line: 'line_start', blame_tag: 'origin' });
-
-export const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
 
 export const REVIEW_SETTING_KEYS = deepFreeze([
   'confidence_threshold',

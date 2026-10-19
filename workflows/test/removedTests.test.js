@@ -1,0 +1,177 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fnv1a32 } from '../src/wire.js';
+import { resolveRemovedTestsArgs } from '../src/args.js';
+import { discover } from '../src/discover.js';
+import { dimensionsSummaryTable } from '../src/renderReport.js';
+import { runWith } from '../src/run.js';
+import { stageCtx } from './helpers/stageFixtures.js';
+import { validArgs, checkpointArgs } from './helpers/argsFixtures.js';
+import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
+import { shellSplit } from './helpers/shellWords.js';
+
+const item = { id: '0123456789abcdef', path: 'tests/removed', old_start: 3, old_end: 7, kind: 'deleted_file' };
+const body = { status: 'available', items: [item], omitted: 0 };
+const signed = (value = body) => ({ ...value, checksum: fnv1a32(JSON.stringify(value, null, 2)) });
+const loss = {
+  file: 'source', line: 1, title: 'Coverage lost for override precedence',
+  description: 'Override precedence still controls selection, but no surviving assertion exercises competing values.',
+  severity: 'high', confidence: 95, criticality: 8,
+  failure_scenario: 'Reversing selection precedence silently chooses the wrong value.',
+};
+const lost = { id: item.id, status: 'lost', covered_by: [], losses: [loss] };
+const cleanReply = (rows) => ({ findings: [], complete: true, total_seen: 0, removed_test_audit: rows });
+const auditCtx = (rows) => stageCtx({ replies: { 'code-gauntlet:test-analyzer': cleanReply(rows) } });
+
+test('audit dispatch converts losses and reserves removed_test for code', async () => {
+  const ctx = auditCtx([lost]);
+  const out = await discover(ctx, { removedTests: body });
+  assert.deepEqual(out.removedTestAudit, { status: 'ran-clean' });
+  assert.equal(out.findings.length, 1);
+  assert.deepEqual(out.findings[0], {
+    id: `removed-test:${item.id}:1`, agent: 'test-analyzer', dimension: 'test_coverage',
+    file: loss.file, line_start: loss.line, title: loss.title, description: loss.description,
+    severity: loss.severity, confidence: loss.confidence, criticality: loss.criticality,
+    failure_scenario: loss.failure_scenario,
+    removed_test: { id: item.id, path: item.path, old_start: 3, old_end: 7 },
+  });
+  const dispatch = ctx.calls.find((call) => call.agentType === 'code-gauntlet:test-analyzer');
+  assert.match(dispatch.prompt, /tests\/removed/);
+  assert.ok(dispatch.schema.required.includes('removed_test_audit'));
+  assert.equal(dispatch.schema.properties.removed_test_audit.items.additionalProperties, false);
+  for (const call of ctx.calls) {
+    const schema = call.schema.properties.findings.items;
+    assert.equal(schema.additionalProperties, false);
+    assert.equal(Object.hasOwn(schema.properties, 'removed_test'), false, 'forged metadata fails the closed finding schema');
+  }
+});
+
+const badRows = [
+  ['missing id', []], ['unknown id', [{ ...lost, id: 'unknown' }]],
+  ['duplicate id', [lost, lost]],
+  ['missing citation', [{ ...lost, status: 'covered_elsewhere', losses: [] }]],
+  ['incomplete citation', [{ ...lost, status: 'covered_elsewhere', losses: [], covered_by: [{ file: 'tests/new', line: 1, input: '', assertion: 'equals override' }] }]],
+  ['lost without loss', [{ ...lost, losses: [] }]],
+  ['non-lost losses', [{ ...lost, status: 'removed_with_code' }]],
+  ['confidence range', [{ ...lost, losses: [{ ...loss, confidence: 101 }] }]],
+  ['severity domain', [{ ...lost, losses: [{ ...loss, severity: 'blocker' }] }]],
+  ['escaped anchor', [{ ...lost, losses: [{ ...loss, file: '../source' }] }]],
+  ['deleted anchor', [{ ...lost, losses: [{ ...loss, file: item.path }] }]],
+  ['deleted path in prose', [{ ...lost, losses: [{ ...loss, description: `Missing ${item.path}` }] }]],
+];
+for (const [name, rows] of badRows) test(`audit gap: ${name}`, async () => {
+  const out = await discover(auditCtx(rows), { removedTests: body });
+  assert.equal(out.removedTestAudit.status, 'gap');
+  assert.equal(out.findings.length, 0);
+  assert.ok(out.degraded.includes('test_coverage'));
+  assert.ok(out.gaps.some((gap) => gap.includes('removed-test audit: gap')));
+});
+
+for (const row of [
+  { ...lost, status: 'removed_with_code', losses: [] },
+  { ...lost, status: 'covered_elsewhere', losses: [], covered_by: [{ file: 'tests/new', line: 2, input: 'competing values', assertion: 'override wins' }] },
+]) test(`audit accepts ${row.status}`, async () => {
+  const out = await discover(auditCtx([row]), { removedTests: body });
+  assert.deepEqual(out.removedTestAudit, { status: 'ran-clean' });
+  assert.deepEqual(out.findings, []);
+});
+
+for (const [name, value] of [
+  ['checksum mismatch', { ...signed(), checksum: 'wrong' }],
+  ['bad shape', { ...signed(), items: 'bad' }],
+  ['null', null], ['missing', undefined],
+  ['unsafe inventory path', signed({ ...body, items: [{ ...item, path: '../tests/removed' }] })],
+  ['numeric inventory id', signed({ ...body, items: [{ ...item, id: 1234567890123456 }] })],
+]) test(`inventory ${name} degrades without refusing review`, async () => {
+  const args = validArgs({ removedTests: value });
+  assert.equal(resolveRemovedTestsArgs(args).status, 'unavailable');
+  const out = await runWith(makeCtx(args, { findings: [] }), args);
+  assert.equal(out.ok, true);
+  assert.ok(out.gaps.some((gap) => gap.includes('removed-test audit: unavailable')));
+  assert.ok(out.stats.degraded.includes('test_coverage'));
+});
+
+for (const [status, input] of [
+  ['gap', { removedTests: body }],
+  ['overflow', { removedTests: { ...body, omitted: 2 } }],
+  ['unavailable', { removedTests: { status: 'unavailable', items: [], omitted: 0, reason: 'malformed patch' } }],
+  ['skipped_light_scope', { removedTests: body, agentFlags: { deep: false } }],
+]) test(`report discloses ${status} without a Clean test dimension`, async () => {
+  const out = await discover(auditCtx(status === 'gap' ? [] : [lost]), input);
+  assert.equal(out.removedTestAudit.status, status);
+  const table = dimensionsSummaryTable({ ...out, removedTestAudit: out.removedTestAudit });
+  const row = table.split('\n').find((line) => line.includes('| test-analyzer |'));
+  assert.match(row, /Degraded - removed-test audit:/);
+  assert.ok(row.includes(status));
+  assert.doesNotMatch(row, /Clean/);
+  if (status === 'overflow' || status === 'unavailable') assert.ok(!out.gaps.some((gap) => gap.includes('possibly incomplete')));
+});
+
+test('removed coverage reaches capped delivery and main_only with real Verify and discovery replay', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'removed-tests-'));
+  const outputDir = join(dir, 'out');
+  mkdirSync(outputDir);
+  writeFileSync(join(dir, 'source'), 'return override\n');
+  const bugs = Array.from({ length: 6 }, (_, index) => makeFinding(`bug${index}`, {
+    file: `bug${index}`, line_start: 1, line_end: 1, severity: 'medium',
+  }));
+  for (const bug of bugs) writeFileSync(join(dir, bug.file), 'return broken\n');
+  const diffPath = join(outputDir, 'code-gauntlet-diff-abc1234.patch');
+  writeFileSync(diffPath, 'diff --git a/tests/removed b/tests/removed\n--- a/tests/removed\n+++ /dev/null\n@@ -3,5 +0,0 @@\n-assert override\n-assert selection\n-assert precedence\n-assert competing\n-assert values\n'
+    + bugs.map((bug) => `diff --git a/${bug.file} b/${bug.file}\n--- a/${bug.file}\n+++ b/${bug.file}\n@@ -0,0 +1 @@\n+return broken\n`).join(''));
+  writeFileSync(join(outputDir, 'code-gauntlet-project-rules-abc1234.md'), 'project rules\n');
+  const produced = spawnSync('python3', [resolve('scripts/write_shared_context.py'), '--output-dir', outputDir, '--head-sha', 'abc1234'], {
+    cwd: dir, input: 'Risk: medium\nAI-generated code: none', encoding: 'utf8',
+  });
+  assert.equal(produced.status, 0, produced.stderr);
+  const receipt = JSON.parse(produced.stdout);
+  assert.equal(receipt.removedTests.items.length, 1);
+  const auditRow = { ...lost, id: receipt.removedTests.items[0].id };
+  let discoverOutput;
+  for (const tier of ['all', 'main_only']) {
+    let payload;
+    const args = validArgs({
+      repoRoot: dir, outputDir, diffPath, pluginRoot: resolve('.'),
+      ...receipt, delivery: { tier }, limits: { deliveryCap: 6 },
+      ...(tier === 'main_only' ? checkpointArgs({ discover: discoverOutput }) : {}),
+    });
+    const ctx = makeCtx(args, { findings: bugs, onPersist: (value) => { payload = value; } });
+    const agent = ctx.agent;
+    ctx.agent = async (prompt, dispatch) => {
+      if (dispatch.label === 'code-gauntlet:test-analyzer') return cleanReply([auditRow]);
+      if (dispatch.label.startsWith('verify-slice-')) {
+        const argv = shellSplit(prompt.split('\n').pop());
+        const result = spawnSync(argv[0], argv.slice(1), { cwd: dir, encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stderr);
+        return JSON.parse(readFileSync(resolve(dir, argv[argv.indexOf('--output') + 1]), 'utf8'));
+      }
+      const result = await agent(prompt, dispatch);
+      // A partial persistence return carries the discovery phase for resume.
+      if (tier === 'all' && dispatch.label === 'artifact-writer') throw new Error('capture resumable phases');
+      return result;
+    };
+    const out = await runWith(ctx, args);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.equal(out.stats.verified, true, JSON.stringify(out.gaps));
+    assert.equal(payload.postReview.length, 6);
+    const delivered = payload.postReview.find((finding) => finding.removed_test);
+    assert.ok(delivered, `${tier} must deliver the removed coverage loss above medium bugs`);
+    assert.equal(delivered.origin, 'new');
+    assert.equal(delivered.severity, 'high');
+    assert.equal(delivered.report_destination, 'main');
+    assert.equal(delivered.removed_test.path, item.path);
+    const challenge = ctx.calls.find((call) => call.label.startsWith('challenge-') && call.prompt.includes(loss.title));
+    assert.ok(challenge.prompt.includes(diffPath));
+    assert.ok(challenge.prompt.includes(`${item.path}, old lines 3-7`));
+    assert.doesNotMatch(challenge.prompt, /failure_scenario|criticality|covered_by/);
+    assert.match(payload.report, /\| Test Coverage \| test-analyzer \| 1 \|/);
+    if (tier === 'all') {
+      discoverOutput = out.checkpoints.phases.discover;
+      assert.deepEqual(discoverOutput.removedTestAudit, { status: 'ran-clean' });
+    } else assert.ok(!ctx.calls.some((call) => call.label === 'code-gauntlet:test-analyzer'));
+  }
+});

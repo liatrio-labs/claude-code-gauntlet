@@ -5,6 +5,7 @@ import os
 
 from gauntlet.cli import Command, Parser, UsageError, read_stdin_bytes, require_head_sha
 from gauntlet.framing import frame
+from gauntlet.removed_tests import removed_tests
 
 DESCRIPTION = (
     "Write the shared agent context from paths and triage text supplied as data.\n"
@@ -87,7 +88,11 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
 
     lines = content.count(b"\n")
     chars = len(content.decode("utf-8", errors="replace"))
-    return {"contextLines": lines, "contextChars": chars}, 0
+    return {
+        "contextLines": lines,
+        "contextChars": chars,
+        "removedTests": removed_tests(diff.decode("utf-8", errors="replace")),
+    }, 0
 
 
 parser = Parser(prog="write_shared_context", description=DESCRIPTION)

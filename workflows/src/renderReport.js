@@ -85,10 +85,14 @@ export function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
     const isDispatched = dispatchedSet.has(agentType);
     const label = AGENT_LABELS[agentType] || agentType;
     const agentShort = agentType.split(':').pop();
+    const audit = agentShort === 'test-analyzer' ? inp.removedTestAudit : null;
 
     let findingsCell;
     let notes;
-    if (!isDispatched) {
+    if (audit && audit.status !== 'ran-clean') {
+      findingsCell = `${n}${m ? ` (+${m} unverified)` : ''}`;
+      notes = `Degraded - removed-test audit: ${inline(audit.status)}${audit.reason ? ` (${inline(audit.reason)})` : ''}${audit.omitted ? ` (${audit.omitted} omitted)` : ''}`;
+    } else if (!isDispatched) {
       findingsCell = '—';
       notes = 'Skipped — not dispatched in this run';
     } else if (isDegraded && n + m === 0) {

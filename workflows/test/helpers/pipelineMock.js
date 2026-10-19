@@ -204,7 +204,8 @@ export function makeCtx(args, opts = {}) {
       const disc = seedFindings();
       return dispatch.agentType === 'code-gauntlet:bug-detector'
         ? { findings: disc, complete: true, total_seen: disc.length }
-        : { findings: [], complete: true, total_seen: 0 };
+        : { findings: [], complete: true, total_seen: 0,
+          ...(dispatch.agentType === 'code-gauntlet:test-analyzer' ? { removed_test_audit: [] } : {}) };
     }
     return null;
   };

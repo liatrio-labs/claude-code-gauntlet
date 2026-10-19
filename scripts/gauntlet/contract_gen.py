@@ -117,6 +117,7 @@ _REGISTRY_FIELDS = (
     "waistRequired: m.REQUIRED",
     "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
     "findingTypes: m.FINDING_PROP_TYPES",
+    "dispatchResults: m.DISPATCH_RESULTS",
     "dimensions: m.DIMENSIONS.map(d => ({dimension: d.dimension,"
     " agentType: d.agentType, requiredExtra: d.requiredExtra || [],"
     " requiredWhenDimension: d.requiredWhenDimension || [],"
@@ -262,7 +263,7 @@ _EXISTING_BLOCK = re.compile(
     re.escape(MARKER_OPEN) + r"\n.*?\n" + re.escape(MARKER_CLOSE), re.DOTALL
 )
 
-# Loose first-run anchors swallow earlier hand-written wording into the generated block.
+# Unfenced contracts need anchors so regeneration can introduce ownership markers.
 _SINGLE_SENTENCE_ANCHOR = re.compile(
     "`[a-z_]+`(?:, `[a-z_]+`)*(?:,? and `[a-z_]+`)? (?:is|are) required by "
     "the dispatch "
@@ -273,7 +274,9 @@ _CONDITIONAL_ANCHOR = re.compile(
 )
 
 
-def splice(text: str, anchor_re: re.Pattern[str], body: str) -> str:
+def splice(
+    text: str, anchor_re: re.Pattern[str], body: str, *, allow_append: bool = False
+) -> str:
     """Reject broken markers so --check cannot silently accept stale debris."""
     open_count = text.count(MARKER_OPEN)
     close_count = text.count(MARKER_CLOSE)
@@ -292,6 +295,8 @@ def splice(text: str, anchor_re: re.Pattern[str], body: str) -> str:
         return replaced
     match = anchor_re.search(text)
     if not match:
+        if allow_append:
+            return text.rstrip("\n") + "\n\n" + new_block + "\n"
         raise CliError("no generated block and no recognizable anchor text to replace")
     return text[: match.start()] + new_block + text[match.end() :]
 
@@ -304,6 +309,16 @@ def single_dimension_targets(registry: Mapping[str, Any]) -> dict[str, str]:
             continue
         path = f"agents/{row['agentType'].split(':', 1)[1]}.md"
         targets[path] = dispatch_required_sentence(fields)
+    for agent, fields in registry.get("dispatchResults", {}).items():
+        path = f"agents/{agent.split(':', 1)[1]}.md"
+        schema = {"type": "object", "properties": fields, "required": list(fields)}
+        contract = (
+            "Required dispatch-result fields (alongside findings, complete, total_seen):\n\n"
+            "```json\n" + json.dumps(schema, indent=2) + "\n```"
+        )
+        targets[path] = "\n\n".join(
+            part for part in (targets.get(path), contract) if part
+        )
     return targets
 
 
@@ -359,6 +374,8 @@ def _python_literal(value: object, indent: int = 0, *, column: int = 0) -> str:
         return "True"
     if value is False:
         return "False"
+    if isinstance(value, (int, float)):
+        return json.dumps(value, allow_nan=False)
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)
     if isinstance(value, (list, tuple)):
@@ -466,6 +483,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "DELTA_KEYS": tuple(delta_keys),
         "DELTA_VALUE_FIELDS": tuple(delta_value_fields),
         "VERIFY_SLICE_FIELDS": tuple(identity["verifySliceFields"]),
+        "DISPATCH_RESULTS": identity.get("dispatchResults", {}),
         "BRAND_MARK": identity["brand"]["mark"],
         "BRAND_NAME": identity["brand"]["name"],
         "SEVERITY_EMOJI": identity["severityEmoji"],
@@ -1073,22 +1091,34 @@ def rendered_targets(
     repo_root: str, registry: Mapping[str, Any], source: str
 ) -> dict[str, str | Callable[[str], str]]:
     steps: dict[str, list[Callable[[str], str]]] = {}
-    for rel_path, sentence in single_dimension_targets(registry).items():
-        steps.setdefault(rel_path, []).append(
-            partial(splice, anchor_re=_SINGLE_SENTENCE_ANCHOR, body=sentence)
-        )
+    bodies = single_dimension_targets(registry)
     rows = [
         row
         for row in registry["dimensions"]
         if row["agentType"] == "code-gauntlet:conventions-and-intent"
     ]
-    steps.setdefault("agents/conventions-and-intent.md", []).append(
-        partial(
-            splice,
-            anchor_re=_CONDITIONAL_ANCHOR,
-            body="\n\n".join(conditional_paragraphs(rows)),
-        )
+    conditional_path = "agents/conventions-and-intent.md"
+    bodies[conditional_path] = "\n\n".join(
+        [
+            *conditional_paragraphs(rows),
+            *([bodies[conditional_path]] if conditional_path in bodies else []),
+        ]
     )
+    dispatch_paths = {
+        f"agents/{agent.split(':', 1)[1]}.md"
+        for agent in registry.get("dispatchResults", {})
+    }
+    for rel_path, body in bodies.items():
+        steps.setdefault(rel_path, []).append(
+            partial(
+                splice,
+                anchor_re=_CONDITIONAL_ANCHOR
+                if rel_path == conditional_path
+                else _SINGLE_SENTENCE_ANCHOR,
+                body=body,
+                allow_append=rel_path in dispatch_paths,
+            )
+        )
     steps.setdefault(REPORT_FORMAT_REL, []).append(
         partial(rewrite_required_column, registry=registry)
     )

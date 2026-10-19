@@ -194,6 +194,8 @@ def _stamp_blame(
 
 def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
     """Classify blame and downgrade surfaced severity in place."""
+    if finding.get("removed_test"):
+        return _stamp_blame(finding, "new", finding.get("severity", ""))
     base_branch = context.base_branch
 
     filepath = finding.get("file", "")
@@ -325,7 +327,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
     description = finding.get("description", "") or ""
     evidence = finding.get("evidence", "") or ""
 
-    if not line_start:
+    if not line_start and not finding.get("removed_test"):
         finding["factual_verification"] = {
             "verified": True,
             "reason": "no line reference — verification skipped",
@@ -364,7 +366,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
 
     total_lines = len(all_lines)
 
-    if line_start < 1 or line_start > total_lines:
+    if not line_start or line_start < 1 or line_start > total_lines:
         finding["confidence"] = 0
         finding["factual_verification"] = {
             "verified": False,
@@ -380,7 +382,12 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
     relevant_lines = all_lines[line_start - 1 : effective_end]
     code_at_lines = "".join(relevant_lines).rstrip("\n")
 
-    symbols_to_check = _extract_symbols(description, evidence)
+    # Removed test identifiers need not exist at HEAD; the anchor still must.
+    symbols_to_check = (
+        set()
+        if finding.get("removed_test")
+        else _extract_symbols(description, evidence)
+    )
 
     if not symbols_to_check:
         finding["factual_verification"] = {
@@ -446,6 +453,12 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
 
 def validate_diff_lines(finding: FindingWire, facts: DiffFacts | None) -> bool:
     """Keep off-diff findings as surfaced context instead of eliminating them."""
+    if finding.get("removed_test"):
+        finding["diff_validation"] = {
+            "in_diff": True,
+            "reason": "removed test inventory anchors a new coverage loss",
+        }
+        return True
     if facts is None:
         finding["diff_validation"] = {
             "in_diff": None,

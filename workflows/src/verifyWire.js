@@ -126,7 +126,7 @@ export function pinNumericFields(finding) {
 
 // Fixed order makes the wire deterministic. The generator projects this list into
 // gauntlet.registry; classify_blame overwrites origin before reading it.
-export const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'line_end', 'description', 'evidence', 'severity', 'confidence', 'cross_file_refs', 'origin'];
+export const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'line_end', 'description', 'evidence', 'severity', 'confidence', 'cross_file_refs', 'origin', 'removed_test'];
 
 // Absent and null differ under Python .get() defaults. The join restores fields
 // omitted here from the held finding.

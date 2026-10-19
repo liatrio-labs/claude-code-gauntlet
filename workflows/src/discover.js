@@ -1,9 +1,10 @@
 // Summary and discovery stages, finding schemas, and scope flags.
-import { DIMENSIONS, modelFor, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
+import { DIMENSIONS, DISPATCH_RESULTS, modelFor, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { computeLightEligible } from './knobs.js';
 import { LIMIT_DEFAULTS } from './registry.js';
 import { effectiveBucketSize } from './capacity.js';
 import { deepClone } from './wire.js';
+import { checkRemovedTestAudit } from './removedTests.js';
 
 // StructuredOutput requires an object wrapper around summary prose.
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
@@ -164,6 +165,7 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
 // Conditional requirements depend on provider capability; unsupported providers retain contract enforcement through agent instructions.
 function findingSchema(spec, policy) {
   const conditionalRequired = conditionalSchemaActive(policy) ? (spec.conditionalRequired || []) : [];
+  const resultFields = DISPATCH_RESULTS[spec.agentType] || {};
   return {
     type: 'object',
     properties: {
@@ -173,8 +175,9 @@ function findingSchema(spec, policy) {
       },
       complete: { type: 'boolean' },
       total_seen: { type: 'number' },
+      ...deepClone(resultFields),
     },
-    required: ['findings', 'complete', 'total_seen'],
+    required: ['findings', 'complete', 'total_seen', ...Object.keys(resultFields)],
   };
 }
 
@@ -196,6 +199,14 @@ export async function discover(ctx, input) {
   const discoveryCap = limits.discoveryCap;
 
   const specs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
+  const inventory = inp.removedTests || { status: 'unavailable', items: [], omitted: 0, reason: 'inventory not supplied' };
+  const auditDispatched = specs.some((spec) => spec.agentType === 'code-gauntlet:test-analyzer');
+  let removedTestAudit = inventory.status === 'unavailable'
+    ? { status: 'unavailable', reason: inventory.reason }
+    : !auditDispatched && inventory.items.length > 0
+      ? { status: 'skipped_light_scope' }
+      : auditDispatched ? { status: 'gap', reason: 'audit dispatch did not complete' }
+        : inventory.omitted > 0 ? { status: 'overflow', omitted: inventory.omitted } : { status: 'ran-clean' };
   // The platform accepts zero-argument thunks calling agent with a prompt string and options.
   // Labels preserve agent identity for gap attribution.
   const thunks = specs.map((spec) => {
@@ -219,6 +230,11 @@ export async function discover(ctx, input) {
   // Failed parallel members become null in place, preserving positional attribution to the dispatched specs.
   results.forEach((res, i) => {
     const spec = specs[i];
+    if (spec.agentType === 'code-gauntlet:test-analyzer' && inventory.status === 'available' && res) {
+      const checked = checkRemovedTestAudit(inventory, res.removed_test_audit);
+      removedTestAudit = checked.audit;
+      findings.push(...checked.findings);
+    }
     if (res === null || res === undefined) {
       // Conditional schema failures need distinct diagnostics so operators can identify the construct that may have exhausted retries.
       const conditionalNote = schemaActive && (spec.conditionalRequired || []).length
@@ -245,6 +261,12 @@ export async function discover(ctx, input) {
       gaps.push(`${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
     }
   });
+
+  if (inventory.omitted > 0) removedTestAudit.omitted = inventory.omitted;
+  if (removedTestAudit.status !== 'ran-clean') {
+    degradedDims.push('test_coverage');
+    gaps.push(`removed-test audit: ${removedTestAudit.status}${removedTestAudit.reason ? ` (${removedTestAudit.reason})` : ''}${removedTestAudit.omitted ? ` (${removedTestAudit.omitted} omitted)` : ''}`);
+  }
 
   // Dropping an implausible end line preserves the valid anchor without fabricating a replacement range.
   // The configurable span limit permits legitimate large findings.
@@ -283,6 +305,7 @@ export async function discover(ctx, input) {
     gaps,
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
+    removedTestAudit,
   };
 }
 
@@ -291,5 +314,10 @@ function discoverPrompt(inp, spec) {
   const ctxLine = inp.contextLine || '';
   const dims = spec.dimensions.join(', ');
   const base = `${ctxLine}This is a code gauntlet built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Every finding MUST cite concrete evidence: the evidence field must be non-empty and reference real lines you actually inspected (in the diff or in a file you opened) — a finding you cannot ground in inspected code is noise, do not emit it. For any absence or "missing" claim (e.g. a test-coverage negative asserting no test exists), name in evidence the specific file or path you checked; an unproven absence is not a finding. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
-  return spec.promptExtra ? `${base} ${spec.promptExtra}` : base;
+  const resultFields = DISPATCH_RESULTS[spec.agentType] || {};
+  const resultContract = Object.keys(resultFields).length
+    ? ` Also return the required dispatch-result fields: ${Object.keys(resultFields).join(', ')}.` : '';
+  const audit = spec.agentType === 'code-gauntlet:test-analyzer'
+    ? ` Audit every removed test item below from the saved diff. Return exactly one removed_test_audit row per id (or [] when unavailable/empty). Loss locations and prose describe surviving behavior; keep deleted paths only in the item reference. Inventory: ${JSON.stringify(inp.removedTests || { status: 'unavailable', items: [] })}` : '';
+  return `${base}${spec.promptExtra ? ` ${spec.promptExtra}` : ''}${resultContract}${audit}`;
 }

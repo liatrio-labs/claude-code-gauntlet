@@ -100,7 +100,19 @@ def raw_contract_blocks(name):
     text = (ROOT / "agents" / f"{name}.md").read_text(encoding="utf-8")
     raw_blocks = _JSON_BLOCK.findall(text)
     assert raw_blocks
-    return raw_blocks
+    finding_blocks = []
+    for raw in raw_blocks:
+        obj = json.loads(_UNQUOTED_PLACEHOLDER.sub(" 0", raw))
+        if obj.get("type") == "object" and "properties" in obj:
+            fields = python_registry.DISPATCH_RESULTS[f"code-gauntlet:{name}"]
+            assert obj == {
+                "type": "object",
+                "properties": fields,
+                "required": list(fields),
+            }
+        else:
+            finding_blocks.append(raw)
+    return finding_blocks
 
 
 def contract_blocks(name):

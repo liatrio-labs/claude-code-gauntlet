@@ -263,21 +263,20 @@ For reference, the Summarize stage produces a 3–5 sentence summary of what the
 
 ## 2g. Related Test Discovery
 
-For each changed production file, find test files by convention (`Tests`, `.test`, `.spec`, `_test`, `_spec` patterns; `tests/`, `__tests__/`, `spec/` directories). Include in context for bug-detector and test-analyzer.
-
-**Tool instructions:**
-
-Use **Glob** to find test files. Pattern examples:
-
-- `**/*.test.js`, `**/*.test.ts` (Jest/Vitest style)
-- `**/*.spec.js`, `**/*.spec.ts` (Jasmine/Mocha style)
-- `**/tests/**/*.py`, `**/__tests__/**/*.py` (Python)
-- `**/*_test.go`, `**/*_test.rs` (Go/Rust)
+For each changed production file, use **Glob** to find related tests without filtering by language
+or extension. Select paths with a case-insensitive directory segment `test`, `tests`, `spec`,
+`specs` or `__tests__`; or basename tokens `test_*`, `*_test`, `*_spec`, `*.test.*`, `*.spec.*`,
+`*Test`, `*Tests`, `*Spec` (stem before the first dot). Exclude non-source directories such as
+vendor, node_modules, third_party, deps and generated output before selection.
+Include related tests in context for bug-detector and test-analyzer. The saved-diff inventory
+uses the old path for removed and renamed tests.
 
 Example:
 
-```
-Glob(pattern: "**/*.test.{js,ts,py}")
+```text
+Glob(pattern: "**/*.test.*")
+Glob(pattern: "**/*_test*")
+Glob(pattern: "**/test_*")
 Glob(pattern: "**/__tests__/**/*")
 Glob(pattern: "**/tests/**/*")
 ```

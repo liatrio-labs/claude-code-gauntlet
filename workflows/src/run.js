@@ -8,7 +8,7 @@ import { verifyStage } from './verifyStage.js';
 import { FINDING_TEXT_FIELD_NAMES, FINDING_REWRITE_EXEMPT_FIELDS, conditionalSchemaActive } from './registry.js';
 import { mentionsPreparedHostRoot, prepareHostRootPatterns, rewritePreparedRepoRoot, safeFindingLabel } from './paths.js';
 import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs } from './args.js';
-import { resolveReviewConfig } from './args.js';
+import { resolveReviewConfig, resolveRemovedTestsArgs } from './args.js';
 import { entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from './entry.js';
 import { computeLightEligible, configEchoValue } from './knobs.js';
 import { scopeMatchesFile } from './reviewConfig.js';
@@ -179,7 +179,7 @@ export async function runWith(ctx, rawArgs) {
     // Derive scope flags from validated inputs so callers cannot stamp a different decision.
     const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      agentFlags: derivedAgentFlags, limits, policy, contextLine,
+      agentFlags: derivedAgentFlags, limits, policy, contextLine, removedTests: resolveRemovedTestsArgs(A),
     }));
 
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
@@ -247,7 +247,7 @@ export async function runWith(ctx, rawArgs) {
 
     const challengeOut = await runPhase('challenge', () => challengeStage(c, {
       // Shared context would weaken the challenger's independent check, so its prompt contains only the claim and location.
-      findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt,
+      findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
     }));
     rewriteHostPathText(challengeOut, summaryOut, A.repoRoot);
     gaps.push(...(challengeOut.gaps || []));
@@ -294,7 +294,7 @@ export async function runWith(ctx, rawArgs) {
         merge: compactMethodology(mergeOut.methodology),
       },
       // The report needs recorded dispatch scope because a gated agent differs from an agent returning no findings.
-      dimensions: { dispatched: discoverOut.dispatched || [], degraded: discoverOut.degraded || [] },
+      dimensions: { dispatched: discoverOut.dispatched || [], degraded: discoverOut.degraded || [], removedTestAudit: discoverOut.removedTestAudit || { status: 'unavailable' } },
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,
       prIdentity: (A.delivery || {}).prIdentity || null,
