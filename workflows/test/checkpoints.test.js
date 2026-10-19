@@ -1,19 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readCheckpoints, buildResumeCheckpoints, slimPersistedCheckpoints } from '../src/checkpoints.js';
+import { slimPersistedCheckpoints } from '../src/checkpoints.js';
+import { fnv1a32, RETURN_CHAR_BUDGET } from '../src/wire.js';
 import { runWith } from '../src/run.js';
 import { validArgs } from './helpers/argsFixtures.js';
 import { makeFinding, makeCtx } from './helpers/pipelineMock.js';
-import { expectedWith, challengeOutput, runAndCapture, replaySurvivor, wellFormedCheckpoints } from './helpers/persistFixtures.js';
+import { expectedWith, replayProducedCheckpoint, challengeOutput, runAndCapture, replaySurvivor, wellFormedCheckpoints } from './helpers/persistFixtures.js';
 
 const PHASES = ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'];
 
-test('checkpoint source precedence and wrapped map', () => {
-  const fallback = { checkpoints: { report: {} } };
-  assert.deepEqual(readCheckpoints(fallback, { checkpoints: { phases: { summarize: {} } } }), { summarize: {} });
-  assert.deepEqual(readCheckpoints(fallback, {}), { report: {} });
-  assert.deepEqual(readCheckpoints(fallback, { checkpoints: {} }), {});
-});
 const DISCARD_ROWS = [
   ['top-level array', [], ['checkpoint-discarded: checkpoints must be a plain object, got array -- the supplied checkpoints argument was discarded entirely; nothing was resumed, exactly as if no checkpoints had been supplied.']],
   ['truncated return', { completed: [], truncated: true }, [
@@ -24,21 +19,8 @@ const DISCARD_ROWS = [
     + 'rather than a checkpoint artifact -- it carries no phase outputs to resume from; the '
     + 'on-disk resume state from that run lives at artifactPaths.checkpoints.']],
 ];
-const RECOVERY = 'Repair or delete the corrupt checkpoint artifact, or re-run without the `checkpoints` '
+const RECOVERY = 'Use an intact producer checkpoint, or re-run without the `checkpoints` '
 + 'argument to start the review fresh.';
-const RESUME_ROWS = [
-  ['small state', { summarize: { summary: 's' }, discover: { findings: [{ id: 'F1' }] } }, ['summarize', 'discover'], false],
-  ['above return budget', {
-    discover: { findings: Array.from({ length: 2000 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) },
-    verify: { findings: Array.from({ length: 2000 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) } },
-    ['discover', 'verify'], true],
-];
-for (const [name, input, completed, truncated] of RESUME_ROWS) {
-  test(`resume budget: ${name}`, () => {
-    const out = buildResumeCheckpoints(input);
-    assert.deepEqual(out, truncated ? { completed, truncated: true } : { phases: input, completed });
-  });
-}
 const SLIM_INPUT = {
   summarize: { summary: 's' }, discover: { findings: [{ id: 'F1' }, { id: 'F2' }] },
   merge: { findings: [{ id: 'F1' }] }, verify: { findings: [{ id: 'F1' }] }, validate: { findings: [{ id: 'F1' }] },
@@ -52,7 +34,9 @@ const SLIM_GOLDEN = {
 
 test('slim checkpoint preserves challenge and completed phase counts', () => {
   const out = slimPersistedCheckpoints(SLIM_INPUT, PHASES, 'report');
-  assert.deepEqual(out, SLIM_GOLDEN);
+  const { checksum, ...rest } = out;
+  assert.deepEqual(rest, SLIM_GOLDEN);
+  assert.equal(checksum, fnv1a32(JSON.stringify(rest, null, 2)));
 });
 
 const SHELL_PAYLOAD = 'The cleanup script runs rm -rf /tmp/cache which looks concerning for a routine build step.';
@@ -242,3 +226,70 @@ for (const row of REPLAY_ROWS) {
     }
   });
 }
+
+const CHECKSUM_ROWS = [
+  ['shortened description', (cp) => { cp.phases.challenge.findings[0].description = 'short'; }],
+  ['changed line', (cp) => { cp.phases.challenge.findings[0].line_start += 1; }],
+  ['dropped finding', (cp) => { cp.phases.challenge.findings.pop(); }],
+  ['missing checksum', (cp) => { delete cp.checksum; }],
+  ['non-string checksum', (cp) => { cp.checksum = 17; }],
+  ['bare map', (cp, args) => { args.checkpoints = cp.phases; }],
+  ['changed metadata', (cp) => { cp.completed = ['challenge']; }],
+  ['unsigned invalid shape', (cp) => { cp.phases.challenge.findings = null; delete cp.checksum; }],
+];
+for (const [name, tamper] of CHECKSUM_ROWS) test(`checkpoint checksum refuses: ${name}`, async () => {
+  const args = validArgs({ checkpoints: wellFormedCheckpoints() });
+  tamper(args.checkpoints, args);
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, false);
+  assert.equal(out.failingPhase, 'checkpoints');
+  assert.match(out.error, /^checkpoint-checksum:/);
+  assert.deepEqual(out.checkpoints, { completed: [] });
+  assert.deepEqual(ctx.calls, []);
+});
+
+test('checkpoint context cannot replay without args', async () => {
+  const args = validArgs();
+  const ctx = makeCtx(args);
+  ctx.checkpoints = wellFormedCheckpoints();
+  ctx.checkpoints.summarize.summary = 'context-only marker';
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.ok(ctx.calls.some((call) => call.label === 'summarize'));
+  assert.ok(ctx.calls.some((call) => call.label.startsWith('challenge-')));
+  assert.equal(JSON.stringify(out).includes('context-only marker'), false);
+});
+
+for (const [name, size, truncated] of [
+  ['small', 1, false], ['just fitting', RETURN_CHAR_BUDGET - 97, false],
+  ['checksum overhead crosses budget', RETURN_CHAR_BUDGET - 96, true],
+  ['far over budget', RETURN_CHAR_BUDGET + 1000, true],
+]) test(`checkpoint producer budget: ${name}`, async () => {
+  const args = validArgs({ checkpoints: { summarize: { summary: 'x'.repeat(size) } } });
+  const nullAgentLabels = [
+    'bug-detector', 'security-reviewer', 'cross-file-impact', 'test-analyzer',
+    'conventions-and-intent', 'type-design-analyzer', 'code-simplifier',
+  ].map((name) => `code-gauntlet:${name}`);
+  const { out } = await runAndCapture(args, { nullAgentLabels });
+  assert.equal(out.failingPhase, 'discover');
+  assert.deepEqual(out.checkpoints.completed, ['summarize']);
+  if (truncated) {
+    assert.equal(out.checkpoints.truncated, true);
+    assert.deepEqual(out.checkpoints, { completed: ['summarize'], truncated: true });
+  } else {
+    assert.equal(JSON.stringify(out.checkpoints).length <= RETURN_CHAR_BUDGET, true);
+    await replayProducedCheckpoint(validArgs(), out.checkpoints);
+  }
+});
+
+test('checkpoint producer retains fractional criticality across JSON replay', async () => {
+  const args = validArgs();
+  const description = 'Detailed diagnosis with line breaks\r\nC:\\tmp\\out and astral \u{1f600}. '.repeat(40);
+  const { out } = await runAndCapture(args, {
+    findings: [makeFinding('FRACTION', { criticality: 0.75, description })], agentThrowLabel: 'artifact-writer',
+  });
+  const resumed = await replayProducedCheckpoint(args, out.checkpoints);
+  assert.equal(resumed.payload.findings[0].criticality, 0.75);
+  assert.equal(resumed.payload.findings[0].description, description);
+});

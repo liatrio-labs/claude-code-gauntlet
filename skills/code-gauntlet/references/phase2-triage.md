@@ -462,7 +462,7 @@ verify: {
 
 The skill supplies only the path base (and `verifySliceSize` only when REVIEW.md overrides it). The Verify stage does the rest **inside the workflow**: it slices the mid-workflow merged findings, plans each projected slice under `VERIFY_INLINE_CHAR_BUDGET`, then dispatches one `executor` per slice to run `verify_findings.py --input <destination> --input-inline '<payload>' --output <slice-out> --nonce {nonce}.{i} --head-sha {headShaShort} --base-branch {baseBranch} [--diff-file {diffPath}]` and return the receipt plus a per-finding delta array — never the full `verified`/`eliminated` arrays the same `--output` file also holds (see `references/validation-pipeline.md`). The executor reproduces the quoted payload exactly; the script decodes it and writes the destination before verification. An untrusted slice is re-dispatched exactly once with the distinct nonce `{nonce}.{i}.r1` before it degrades, so the base `nonce` you stamp must stay inside `^[A-Za-z0-9._-]+$` for that suffixed form too. The skill never pre-writes slice contents — it cannot, since the merged findings do not exist until Discover→Merge run.
 
-**`checkpoints` (resume only):** omit on a fresh run. On resume-from-checkpoint (Phase 8), set it to the content of the persisted checkpoint artifact so the workflow skips completed phases.
+**`checkpoints` (resume only):** omit on a fresh run. On resume, copy the whole producer object, `checksum` included, from `return.checkpoints` or the file at `artifactPaths.checkpoints`; never edit it. See [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable) for refusal handling.
 
 ---
 

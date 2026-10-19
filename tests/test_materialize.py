@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -419,6 +420,48 @@ def test_real_node_return_channel(tmp_path):
             else plan["checkpoint"]["challengeFindingIds"]
         )
         assert [f["id"] for f in projected] == ids
+    checkpoint_path = Path(output, "code-gauntlet-checkpoint-all-abc1234.json")
+    replay = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { runWith } from './workflows/src/run.js';
+import { validArgs } from './workflows/test/helpers/argsFixtures.js';
+import { makeCtx } from './workflows/test/helpers/pipelineMock.js';
+const checkpoint = JSON.parse(readFileSync(process.argv[1], 'utf8'));
+const description = checkpoint.phases.challenge.findings[0].description;
+assert.equal(typeof checkpoint.checksum, 'string');
+let payload;
+const args = { ...validArgs(), checkpoints: checkpoint };
+const ctx = makeCtx(args, { onPersist: (value) => { payload = value; } });
+assert.equal((await runWith(ctx, args)).ok, true);
+assert.equal(ctx.calls.some((call) => call.label.startsWith('challenge-')), false);
+assert.equal(payload.findings[0].description, description);
+checkpoint.phases.challenge.findings[0].description = 'short';
+const refusedCtx = makeCtx(args);
+const refused = await runWith(refusedCtx, args);
+assert.equal(refused.ok, false);
+assert.match(refused.error, /^checkpoint-checksum:/);
+assert.equal(refused.failingPhase, 'checkpoints');
+assert.deepEqual(refusedCtx.calls, []);
+console.log('derived checkpoint replayed; tampered checkpoint refused');
+""",
+            str(checkpoint_path),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    assert replay.returncode == 0, replay.stderr
+    assert replay.stdout.strip() == (
+        "derived checkpoint replayed; tampered checkpoint refused"
+    )
 
 
 def test_unexpected_failure(tmp_path, monkeypatch, capsys):

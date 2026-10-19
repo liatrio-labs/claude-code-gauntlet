@@ -118,11 +118,10 @@ Renders `report.md` in code — `renderReport()` in `workflows/src/renderReport.
 
 # Operational Recovery
 
-The workflow degrades internally and returns `gaps` rather than throwing, so most recovery is reading gaps and disclosing them. On the failure paths, nothing is persisted, so the resume state rides back **in the return's `checkpoints` field** (not on disk). Two cases need the skill:
-
-1. **Hard failure (`ok:false`).** An unexpected throw in the deterministic glue returns `{ ok:false, error, phaseReached, checkpoints, ... }` with `artifactPaths` empty. Offer **resume-from-checkpoint**: if `return.checkpoints` has a `.phases` map, re-invoke the same `Workflow` call with `args.checkpoints` set to `return.checkpoints` (the workflow unwraps `.phases` and resumes at the first missing phase). If it is `{ completed, truncated: true }` (phase-outputs map over the ~1M-char return budget — the findings bulk is deliberately withheld from the return), re-run from scratch without `args.checkpoints`. A third, distinct shape (`failingPhase: 'checkpoints'`, `checkpoints: { completed: [] }`, no `.phases` map) is a pre-dispatch `checkpoint-shape:` refusal (#248/#250): the `args.checkpoints` value itself was malformed, caught before any phase ran — there is nothing to resume, so repair or delete the corrupt checkpoint artifact, or re-run without `args.checkpoints`.
-2. **Partial artifacts (`ok:true`, writer failed).** A failed artifact-writer empties `artifactPaths` and records a partial-artifacts gap; the return's `checkpoints` carries the same `{ phases, completed }` (or truncated) resume state. Retry via resume-from-checkpoint as above; if it fails again, deliver whatever report exists markdown-only (report path plus a short chat summary) and disclose the gap.
-
-On `ok:true` **success**, resume state is NOT in the return (`checkpoints` is just `{ completed }` names) — the full `{ phases, completed, phaseReached }` map is on disk at `artifactPaths.checkpoints` for a later re-run.
+The workflow reports gaps and returns signed checkpoints on failure or partial persistence.
+Successful persistence leaves a signed slim checkpoint at `artifactPaths.checkpoints`;
+the success return contains only completed phase names.
+Follow [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable)
+for whole-object copying, checksum refusals, and retry limits.
 
 **Never reproduce a failed stage inline in the main session.** The stages exist as isolated fresh-agent dispatches precisely because LLM-inline re-analysis carries ~60% correlated error. A skipped stage with a methodology note beats fabricated results.

@@ -5923,19 +5923,18 @@ function assemblePrompt(scriptPath, planPath, python) {
 }
 // --- checkpoints.js ---
 function unwrapCheckpointMap(cp) {
-  if (!isPlainCheckpointObject(cp)) return null;
+  if (!isPlainObject(cp)) return null;
   if (cp.phases === undefined) return cp;
-  return isPlainCheckpointObject(cp.phases) ? cp.phases : null;
+  return isPlainObject(cp.phases) ? cp.phases : null;
 }
-function readCheckpoints(ctx, args) {
-  const A = args || {};
-  return unwrapCheckpointMap(A.checkpoints) || (ctx && unwrapCheckpointMap(ctx.checkpoints)) || {};
+function readCheckpoints(args) {
+  return unwrapCheckpointMap(args.checkpoints) || {};
 }
 function checkpointDiscardGap(topLevelCheckpoints) {
   if (topLevelCheckpoints === undefined) return [];
   const resolved = unwrapCheckpointMap(topLevelCheckpoints);
   if (resolved === null) {
-    const atTopLevel = !isPlainCheckpointObject(topLevelCheckpoints);
+    const atTopLevel = !isPlainObject(topLevelCheckpoints);
     const position = atTopLevel ? 'checkpoints' : 'checkpoints.phases';
     const offending = atTopLevel ? topLevelCheckpoints : topLevelCheckpoints.phases;
     return [`checkpoint-discarded: ${position} must be a plain object, got ${describeCheckpointShape(offending)} -- `
@@ -5969,8 +5968,8 @@ function checkpointDiscardGap(topLevelCheckpoints) {
   const wrapperHasRecognizedKey = Object.keys(topLevelCheckpoints).some((k) => recognizedPhaseNames.includes(k));
   if (tookPhasesBranch && resolvedKeys.length === 0 && wrapperHasRecognizedKey) {
     return ['checkpoint-discarded: checkpoints.phases is empty and a value under a recognized phase name '
-      + "at the wrapper's top level was ignored -- re-supply it as the .phases map, or as a bare phase "
-      + 'map, to attempt resuming from it.'];
+      + "at the wrapper's top level was ignored -- re-copy the complete signed checkpoint "
+      + 'object to attempt resuming from it.'];
   }
   return [];
 }
@@ -6012,8 +6011,17 @@ const CHECKPOINT_REQUIRED_CONTENT_FIELD = Object.fromEntries(CHECKPOINT_FINDING_
   .filter(([, , mode]) => mode === CHECKPOINT_ARRAY_STRICT).map(([phase, field]) => [phase, field]));
 const CHECKPOINT_NULLABLE_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS
   .filter(([, , , nullable]) => nullable).map(([phase, field]) => `${phase}.${field}`));
-function isPlainCheckpointObject(v) {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
+function checkpointChecksumErrors(checkpoint) {
+  const phases = unwrapCheckpointMap(checkpoint);
+  if (!phases || !Object.keys(CHECKPOINT_PHASE_SHAPE_TABLE).some((name) => phases[name] !== undefined)) return [];
+  const violation = ['checkpoint-checksum: supplied replay state is missing a valid producer checksum'];
+  if (!isPlainObject(checkpoint.phases) || typeof checkpoint.checksum !== 'string') return violation;
+  const { checksum, ...rest } = checkpoint;
+  try {
+    return checksum === fnv1a32(JSON.stringify(rest, null, 2)) ? [] : violation;
+  } catch {
+    return violation;
+  }
 }
 function describeCheckpointShape(v) {
   if (v === null) return 'null';
@@ -6053,7 +6061,7 @@ function checkpointFindingShapeErrors(finding, path) {
       violations.push(`checkpoint-shape: ${path}.corroborations must be an array, got ${describeCheckpointShape(finding.corroborations)}`);
     } else {
       finding.corroborations.forEach((corroboration, idx) => {
-        if (!isPlainCheckpointObject(corroboration)) {
+        if (!isPlainObject(corroboration)) {
           violations.push(
             `checkpoint-shape: ${path}.corroborations[${idx}] must be a plain object, got ${describeCheckpointShape(corroboration)}`,
           );
@@ -6064,12 +6072,12 @@ function checkpointFindingShapeErrors(finding, path) {
   return violations;
 }
 function checkpointShapeErrors(resolvedCheckpoints) {
-  const cp = isPlainCheckpointObject(resolvedCheckpoints) ? resolvedCheckpoints : {};
+  const cp = isPlainObject(resolvedCheckpoints) ? resolvedCheckpoints : {};
   const violations = [];
   for (const phase of Object.keys(CHECKPOINT_PHASE_SHAPE_TABLE)) {
     const value = cp[phase];
     if (value === undefined) continue;
-    if (!isPlainCheckpointObject(value)) {
+    if (!isPlainObject(value)) {
       violations.push(`checkpoint-shape: phases.${phase} must be a plain object, got ${describeCheckpointShape(value)}`);
       continue; // container failed -- no field inside it can be checked
     }
@@ -6087,7 +6095,7 @@ function checkpointShapeErrors(resolvedCheckpoints) {
         continue;
       }
       arrVal.forEach((el, idx) => {
-        if (!isPlainCheckpointObject(el)) {
+        if (!isPlainObject(el)) {
           if (fields[field] === CHECKPOINT_ARRAY_STRICT) {
             violations.push(
               `checkpoint-shape: phases.${phase}.${field}[${idx}] must be a plain object, got ${describeCheckpointShape(el)}`,
@@ -6103,13 +6111,16 @@ function checkpointShapeErrors(resolvedCheckpoints) {
   }
   return violations;
 }
-const CHECKPOINT_SHAPE_RECOVERY_LINE = 'Repair or delete the corrupt checkpoint artifact, or re-run without the '
+const CHECKPOINT_SHAPE_RECOVERY_LINE = 'Use an intact producer checkpoint, or re-run without the '
   + '`checkpoints` argument to start the review fresh.';
 function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps, contextSizeGap, discardGap) {
   const extra = violations.length - 1;
+  const recovery = violations[0].startsWith('checkpoint-checksum:')
+    ? 'Re-copy the complete checkpoint object unchanged from the original source; see crash-recovery.md.'
+    : CHECKPOINT_SHAPE_RECOVERY_LINE;
   const error = extra > 0
-    ? `${violations[0]} (and ${extra} more checkpoint-shape violation${extra === 1 ? '' : 's'}). ${CHECKPOINT_SHAPE_RECOVERY_LINE}`
-    : `${violations[0]}. ${CHECKPOINT_SHAPE_RECOVERY_LINE}`;
+    ? `${violations[0]} (and ${extra} more checkpoint-shape violation${extra === 1 ? '' : 's'}). ${recovery}`
+    : `${violations[0]}. ${recovery}`;
   return {
     ok: false,
     error,
@@ -6121,9 +6132,12 @@ function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps, contextSizeG
     checkpoints: { completed: [] },
   };
 }
+function signCheckpoints(obj) {
+  return { ...obj, checksum: fnv1a32(JSON.stringify(obj, null, 2)) };
+}
 function buildResumeCheckpoints(phaseOutputs) {
   const completed = Object.keys(phaseOutputs);
-  const withPhases = { phases: phaseOutputs, completed };
+  const withPhases = signCheckpoints({ phases: phaseOutputs, completed });
   if (JSON.stringify(withPhases).length <= RETURN_CHAR_BUDGET) return withPhases;
   return { completed, truncated: true };
 }
@@ -6142,7 +6156,7 @@ function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) {
   }
   const counts = {};
   for (const [name, out] of Object.entries(outputs)) counts[name] = phaseFindingCount(out);
-  return { phases, completed, phaseReached, counts };
+  return signCheckpoints({ phases, completed, phaseReached, counts });
 }
 const REPLAY_BELT_INDEX_KEY = '__replayBeltIndex';
 function beltPartitionList(list) {
@@ -6179,14 +6193,14 @@ function normalizePhaseFindings(name, out, replayed, args) {
     warnings.push(...normalized.warnings);
   }
   if (pathRewrites || (replayed && rejected)) {
-    const stats = isPlainCheckpointObject(out.stats) ? out.stats : {};
+    const stats = isPlainObject(out.stats) ? out.stats : {};
     out.stats = { ...stats,
       ...(pathRewrites ? { path_rewrites: (stats.path_rewrites || 0) + pathRewrites } : {}),
       ...(replayed && rejected ? { replay_path_rejected: rejected } : {}),
     }
   }
   if (name === 'merge') {
-    const methodology = isPlainCheckpointObject(out.methodology) ? out.methodology : {};
+    const methodology = isPlainObject(out.methodology) ? out.methodology : {};
     out.methodology = methodology;
     const channels = methodology.findings_per_channel;
     const surviving = out.findings.length;
@@ -6354,7 +6368,11 @@ async function runWith(ctx, rawArgs) {
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
   const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars });
   const discardGap = checkpointDiscardGap(A.checkpoints);
-  const checkpoints = readCheckpoints(c, A);
+  const checkpoints = readCheckpoints(A);
+  const checksumViolations = checkpointChecksumErrors(A.checkpoints);
+  if (checksumViolations.length) {
+    return makeCheckpointShapeRejectEnvelope(checksumViolations, nullArgGaps, contextSizeGap, discardGap);
+  }
   const checkpointShapeViolations = checkpointShapeErrors(checkpoints);
   if (checkpointShapeViolations.length) {
     return makeCheckpointShapeRejectEnvelope(checkpointShapeViolations, nullArgGaps, contextSizeGap, discardGap);

@@ -92,6 +92,7 @@ Every interactive gate maps to a deterministic headless outcome. Phase 1 eligibi
 | Trivial / light-scope (all low-risk, <50 lines) | `CODE_GAUNTLET_TRIVIAL_SCOPE` selects the scope: `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven discovery agents covering nine dimensions. The resolver emits no resolved key for `trivial_scope`. |
 | REVIEW.md detection (root setup + subdirectory offer) | Discovered configs apply as in interactive mode: root defaults plus matching subtree overrides; never invoke `build-review-md`. |
 | Phase 8 Stage 1 (delivery question) | Not asked. Deliver per `resolved.delivery` and post `artifactPaths.postReview` verbatim, including its renderer-owned outcome-first Summary body. The Challenge stage applies the receipt-backed tier and cap. Posting follows `resolved.post_mode`; `dry-run` captures the payload without posting. |
+| Checkpoint recovery | Follow [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable): one retry total; after a second checksum refusal deliver partial report plus gaps and stop, with no fresh paid review. |
 | Phase 8 Stage 2 (task board) | Skipped; no tasks are created. |
 
 ---

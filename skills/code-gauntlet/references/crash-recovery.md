@@ -1,10 +1,7 @@
 # Crash recovery — resume-first playbook
 
-When a code-gauntlet Workflow run dies mid-pipeline (a stage throws, the background task
-is killed, the session loses the compact return), recover in this order. Do **not** start
-by hand-marshalling checkpoint JSON into a fresh invocation — the live PR-310 recovery
-spent a 73KB checkpoint-assembly detour before pivoting to the path below, which then
-replayed all 11 completed agents from cache with **zero re-billed tokens**.
+When a workflow dies mid-pipeline, recover in this order. Keep the original args and
+checkpoint source so recovery can reuse completed work without reconstructing findings.
 
 ## 1. `resumeFromRunId` first
 
@@ -16,8 +13,7 @@ Workflow({ name: "code-gauntlet:code-gauntlet-pipeline", args: <the identical ar
 ```
 
 - Completed `agent()` calls with unchanged (prompt, opts) return their cached results
-  instantly — **no re-billing** (verified live: journal `wf_cb410bd2-208` replayed 11/11
-  agents from cache).
+  instantly without re-billing.
 - Only the failed call and everything after it runs live.
 - The args waist must be **byte-identical** (same `generatedAt`, same `nonce`, same
   everything) or the changed-prefix rule re-runs stages you already paid for. Reuse the
@@ -27,13 +23,11 @@ Workflow({ name: "code-gauntlet:code-gauntlet-pipeline", args: <the identical ar
 ## 2. Diagnose from the journal + envelope, not the narrative
 
 - The error envelope names the crash site: **`failingPhase`** is the stage that actually
-  threw; `phaseReached` is the last stage that *completed* (narrating from `phaseReached`
-  misattributes the crash — the live Filter crash read as "failed during Validate").
+  threw; `phaseReached` is the last stage that completed.
   `failingPhase` also carries two pre-dispatch pseudo-phases that never named a real
   stage: `'args'` (the waist itself failed validation) and `'checkpoints'` (a
-  `checkpoint-shape:` refusal — a malformed value in `args.checkpoints`, caught before
-  any phase dispatched). Neither is resumable by id — nothing ran, so there is nothing
-  cached to replay; fix the cited waist field or checkpoint artifact and re-invoke.
+  `checkpoint-shape:` or `checkpoint-checksum:` refusal before dispatch). Neither has
+  cached work to replay; follow the checkpoint refusal rules below.
 - The workflow journal (`<transcriptDir>/journal.jsonl`) records each agent's actual
   return value — read it before assuming what any stage produced.
 - `.code-gauntlet/` artifacts (context, diff, checkpoint files) show what was persisted
@@ -41,11 +35,30 @@ Workflow({ name: "code-gauntlet:code-gauntlet-pipeline", args: <the identical ar
 
 ## 3. Checkpoint resume (fallback when `resumeFromRunId` is unavailable)
 
-Only when the run cannot be resumed by id (e.g. a new session without the prior runId,
-or the runtime rejected the resume): use the compact return's `checkpoints` per SKILL.md
-Phase 3 — a `.phases` map re-enters via `args.checkpoints` (the workflow skips completed
-phases); a `{ completed, truncated: true }` return means nothing resumable came back —
-re-run from scratch and note it in the methodology.
+When resume by id is unavailable, copy the checkpoint object **whole, `checksum` included**
+from `return.checkpoints` on failure or partial persistence, or from the file at
+`artifactPaths.checkpoints` after successful persistence, into `args.checkpoints`.
+The slim disk checkpoint retains challenge output and per-phase counts; upstream phases run again.
+Never edit, summarize, unwrap, rebuild, or re-sign the checkpoint. The producer's checksum covers
+`JSON.stringify` of the whole object except `checksum`, with two-space indentation,
+native key order and UTF-16 hashing. This detects value drift, not authentication or
+changes to the disk JSON's presentation whitespace. Fractional numbers remain valid.
+
+- A signed `.phases` map replays completed outputs and dispatches missing phases.
+- `{ completed }`, `{ completed, truncated: true }`, and empty maps contain no replay
+  state. Interactive mode can offer a fresh run without `args.checkpoints`; headless
+  delivers the partial report plus gaps and stops.
+- On `checkpoint-checksum:`, re-copy once from the **original source**, unchanged.
+  A second refusal offers a fresh run interactively. Headless delivers the partial
+  report plus gaps and stops; never start a fresh paid review.
+- On `checkpoint-shape:`, read the cited phase/field. Do not edit signed checkpoints;
+  offer a fresh run interactively, or deliver partial results and gaps headless.
+- On other failures or partial artifacts, offer resume interactively. Headless has a
+  **single retry budget**, including checksum re-copy: auto-resume once when a signed
+  phase map is available, then deliver the partial report plus gaps and stop.
+- If resume is declined or fails again, deliver any existing report markdown-only
+  (path plus a short chat summary) and disclose all gaps. Partial persistence can
+  leave proved findings/report primaries even when derived artifact paths are null.
 
 ## Rules
 
