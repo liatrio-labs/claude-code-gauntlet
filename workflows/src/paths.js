@@ -133,7 +133,9 @@ export function prepareHostRootPatterns(roots) {
 function decodeAsciiEscapes(text) {
   const chars = [];
   const escaped = [];
+  const offsets = [];
   for (let index = 0; index < text.length;) {
+    offsets.push(index);
     const digits = text.slice(index + 1, index + 3);
     const byte = text[index] === '%' && HOST_PATH_HEX_RE.test(digits) ? parseInt(digits, 16) : -1;
     if (byte >= 0 && byte < 0x80) {
@@ -146,7 +148,8 @@ function decodeAsciiEscapes(text) {
       index += 1;
     }
   }
-  return { text: chars.join(''), escaped };
+  offsets.push(text.length);
+  return { text: chars.join(''), escaped, offsets };
 }
 
 function isPathContinuation(view, index) {
@@ -158,12 +161,12 @@ function hostPathFileSchemePrefix(view, slashRunEnd) {
   let prefixEnd = slashRunEnd;
   while (view.text[prefixEnd - 1] === '/') prefixEnd -= 1;
   const prefixStart = prefixEnd - 5;
-  if (prefixStart < 0 || view.text.slice(prefixStart, prefixEnd).toLowerCase() !== 'file:') return false;
+  if (prefixStart < 0 || view.text.slice(prefixStart, prefixEnd).toLowerCase() !== 'file:') return null;
   for (let index = prefixStart; index < prefixEnd; index += 1) {
-    if (view.escaped[index] === true) return false;
+    if (view.escaped[index] === true) return null;
   }
   return prefixStart === 0
-    || (view.escaped[prefixStart - 1] !== true && !/[A-Za-z0-9+.-]/.test(view.text[prefixStart - 1]));
+    || (view.escaped[prefixStart - 1] !== true && !/[A-Za-z0-9+.-]/.test(view.text[prefixStart - 1])) ? prefixStart : null;
 }
 
 function hostPathOptionFlag(view, start) {
@@ -179,7 +182,7 @@ function hostPathLeftBoundary(view, start) {
   const previous = view.text[start - 1];
   if (isPathContinuation(view, start - 1)) return hostPathOptionFlag(view, start);
   if (previous !== '/') return true;
-  return hostPathFileSchemePrefix(view, start);
+  return hostPathFileSchemePrefix(view, start) !== null;
 }
 
 function hostPathRightBoundary(view, end) {
@@ -217,24 +220,35 @@ function rewriteContinuation(text, index) {
   return REWRITE_CONTINUATION_RE.test(String.fromCodePoint(text.codePointAt(index)));
 }
 
-function rewriteRightBoundary(text, end) {
+function rewriteRightBoundary(view, end, backslash) {
+  const { text, escaped } = view;
   let next = end;
-  while (text[next] === '.') next += 1;
+  while (text[next] === '.' && escaped[next] !== true) next += 1;
   if (next !== end && (text[next] === '/' || text[next] === '\\')) return false;
-  return !rewriteContinuation(text, next);
+  return !rewriteContinuation(text, next)
+    && (escaped[next] !== true || text[next] === '/' || (backslash && text[next] === '\\'));
 }
 
-function rewrittenHostTail(text, end, backslash) {
+function rawOffset(view, index) {
+  return view.offsets?.[index] ?? index;
+}
+
+function rewrittenHostTail(text, view, start, end, backslash) {
   const separator = (char) => char === '/' || (backslash && char === '\\');
-  if (!separator(text[end])) return { end, replacement: './' };
+  if (!separator(view.text[end])) return { end, replacement: './' };
   let stop = end;
-  while (stop < text.length && !REWRITE_TAIL_END_RE.test(text[stop])) stop += 1;
-  let tail = text.slice(end, stop);
+  while (stop < view.text.length && (view.escaped[stop] === true || !REWRITE_TAIL_END_RE.test(view.text[stop]))) stop += 1;
+  let tail = view.text.slice(end, stop);
   if (backslash) tail = tail.replace(/\\+/g, '/');
-  if (hasDotDotSegment(splitLocationSuffix(tail).path) || /%[0-9A-Fa-f]{2}/.test(tail)) return { end: stop, replacement: null };
+  if (hasDotDotSegment(splitLocationSuffix(tail).path)) return { end: stop, replacement: null };
   const dots = tail.match(/\.+$/)?.[0] || '';
   tail = tail.slice(0, tail.length - dots.length);
   if (hasDotDotSegment(splitLocationSuffix(tail).path)) return { end: stop, replacement: null };
+  if (rawOffset(view, stop) - rawOffset(view, start) !== stop - start) {
+    while (separator(view.text[end])) end += 1;
+    const rawTail = text.slice(rawOffset(view, end), rawOffset(view, stop));
+    return { end: stop, replacement: /^\.*$/.test(rawTail) ? `./${rawTail}` : rawTail };
+  }
   tail = tail.replace(/\/+/g, '/').slice(1);
   return { end: stop, replacement: `${tail || './'}${dots}` };
 }
@@ -242,20 +256,22 @@ function rewrittenHostTail(text, end, backslash) {
 export function rewritePreparedRepoRoot(text, roots) {
   if (typeof text !== 'string') return text;
   const chunks = [];
-  const view = { text, escaped: [] };
+  const view = text.includes('%') ? decodeAsciiEscapes(text) : { text, escaped: [] };
   let copied = 0;
-  for (let start = 0; start < text.length; start += 1) {
-    if (text[start] !== '/' && !/^[A-Za-z]:[/\\]/.test(text.slice(start, start + 3))) continue;
-    if (rewriteContinuation(text, start - 1) || text[start - 1] === '/' || text[start - 1] === '\\'
-      || hostPathFileSchemePrefix(view, start)) continue;
+  for (let start = 0; start < view.text.length; start += 1) {
+    if (view.text[start] !== '/' && !/^[A-Za-z]:[/\\]/.test(view.text.slice(start, start + 3))) continue;
     for (const { rewrite, backslash } of roots) {
       if (!rewrite) continue;
       rewrite.lastIndex = start;
-      if (!rewrite.exec(text) || !rewriteRightBoundary(text, rewrite.lastIndex)) continue;
-      const tail = rewrittenHostTail(text, rewrite.lastIndex, backslash);
+      if (!rewrite.exec(view.text) || !rewriteRightBoundary(view, rewrite.lastIndex, backslash)) continue;
+      const schemeStart = hostPathFileSchemePrefix(view, start);
+      if (schemeStart === null && (view.text[start - 1] === '/' || view.text[start - 1] === '\\'
+        || ((rewriteContinuation(view.text, start - 1) || isPathContinuation(view, start - 1))
+          && !hostPathOptionFlag(view, start)))) continue;
+      const tail = rewrittenHostTail(text, view, start, rewrite.lastIndex, backslash);
       if (tail.replacement !== null) {
-        chunks.push(text.slice(copied, start), tail.replacement);
-        copied = tail.end;
+        chunks.push(text.slice(copied, rawOffset(view, schemeStart ?? start)), tail.replacement);
+        copied = rawOffset(view, tail.end);
       }
       start = tail.end - 1;
       break;

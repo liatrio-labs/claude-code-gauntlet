@@ -37,13 +37,50 @@ const REWRITE_ROWS = [
   ['backslash traversal', 'D:/Work/repo', String.raw`D:\Work\repo\src\..\x`, String.raw`D:\Work\repo\src\..\x`],
   ['derived home', '/Users/lee/repo', '/Users/lee/other/a.js', '/Users/lee/other/a.js'],
   ...['file:', 'file:/', 'file://', 'FILE://'].map((prefix) =>
-    [`POSIX scheme ${prefix}`, '/work/repo', `${prefix}/work/repo/x`, `${prefix}/work/repo/x`]),
+    [`POSIX scheme ${prefix}`, '/work/repo', `${prefix}/work/repo/x`, 'x']),
   ...['file:', 'file:/', 'file://', 'file:///'].map((prefix) =>
-    [`drive scheme ${prefix}`, 'D:/Work/repo', `${prefix}D:/Work/repo/x`, `${prefix}D:/Work/repo/x`]),
-  ['percent root', '/work/repo', '%2Fwork%2Frepo/x', '%2Fwork%2Frepo/x'],
-  ['percent separator', '/work/repo', '/work/repo%2Fx', '/work/repo%2Fx'],
-  ['percent tail', '/work/repo', '/work/repo/a%20b', '/work/repo/a%20b'],
-  ['option flag', '/work/repo', '-I/work/repo/include', '-I/work/repo/include'],
+    [`drive scheme ${prefix}`, 'D:/Work/repo', `${prefix}D:/Work/repo/x`, 'x']),
+  ['bare file root', '/work/repo', '(file:///work/repo)', '(./)'],
+  ['bare drive file root', 'D:/Work/repo', 'file:D:/Work/repo', './'],
+  ['file separators', '/work/repo', 'file:////work/repo///', './'],
+  ...['x-file', 'a+file', '1file', 'my.file'].map((scheme) =>
+    [`scheme boundary ${scheme}`, '/work/repo', `${scheme}:///work/repo/x`, `${scheme}:///work/repo/x`]),
+  ['escaped scheme letter', '/work/repo', 'f%69le:///work/repo/x', 'f%69le:///work/repo/x'],
+  ['escaped scheme boundary', '/work/repo', '%28file:///work/repo/x', '%28file:///work/repo/x'],
+  ['file traversal', '/work/repo', 'file:///work/repo/../x', 'file:///work/repo/../x'],
+  ['percent root', '/work/repo', '%2Fwork%2Frepo/x', 'x'],
+  ...Array.from('/work/repo', (char, index) => [
+    `percent root character ${index}`, '/work/repo',
+    '/work/repo'.slice(0, index) + `%${char.charCodeAt(0).toString(16)}` + '/work/repo'.slice(index + 1) + '/src%2Fa.js', 'src%2Fa.js',
+  ]),
+  ['bare percent root', '/work/repo', '%2fwork%2frepo', './'],
+  ['percent separator', '/work/repo', '/work/repo%2Fx', 'x'],
+  ['percent bare separators', '/work/repo', '/work/repo%2F%2f', './'],
+  ['percent separator sentence ending', '/work/repo', '/work/repo%2F.', './.'],
+  ['percent tail', '/work/repo', '/work/repo/a%20b', 'a%20b'],
+  ['percent raw tail', '/work/repo', '%2Fwork%2Frepo%2Fsrc%2Fa.js', 'src%2Fa.js'],
+  ['percent repeated separators', '/work/repo', '%2Fwork%2Frepo%2F%2fsrc//a.js', 'src//a.js'],
+  ['percent root space', '/work/My Repo', '/work/My%20Repo/a', 'a'],
+  ['percent drive', 'D:/Work/repo', '%44%3A%2fWork%2frepo%2fsrc%2fa.js', 'src%2fa.js'],
+  ['percent backslash', 'D:/Work/repo', 'D:%5CWork%5Crepo%5Csrc%5Ca.js', 'src%5Ca.js'],
+  ['percent file', '/work/repo', 'file://%2Fwork%2Frepo%2Fsrc%2Fa.js', 'src%2Fa.js'],
+  ['percent option', '/work/repo', '-I%2Fwork%2Frepo%2Finclude', '-Iinclude'],
+  ['mixed spellings and offsets', '/work/repo', '%41 file:///work/repo/a, -I/work/repo/b; %2Fwork%2Frepo%2Fc%2Fd.',
+    '%41 a, -Ib; c%2Fd.'],
+  ...['src%2F..%2Fx', 'src/%2e%2E/x', '%2E%2E', '%2e%2e:12.'].map((tail) =>
+    [`percent traversal ${tail}`, '/work/repo', `/work/repo/${tail}`, `/work/repo/${tail}`]),
+  ['percent backslash traversal', 'D:/Work/repo', 'D:/Work/repo%5Csrc%5C%2e%2e%5Cx', 'D:/Work/repo%5Csrc%5C%2e%2e%5Cx'],
+  ...['%20x', '%22x', '%2e', '%C3%A9', '2/x'].map((tail) =>
+    [`percent right boundary ${tail}`, '/work/repo', `%2Fwork%2Frepo${tail}`, `%2Fwork%2Frepo${tail}`]),
+  ['percent left boundary', '/work/repo', '%28/work/repo/x', '%28/work/repo/x'],
+  ['percent relative token', '/work/repo', 'x%2Fwork%2Frepo/x', 'x%2Fwork%2Frepo/x'],
+  ['percent case sibling', '/work/repo', '%2FWork%2Frepo/x', '%2FWork%2Frepo/x'],
+  ['percent single segment', '/app', '%2Fapp/x', '%2Fapp/x'],
+  ['option flag', '/work/repo', '-I/work/repo/include', '-Iinclude'],
+  ['bare option flag', '/work/repo', '-I/work/repo', '-I./'],
+  ['drive option flag', 'D:/Work/repo', '-ID:/Work/repo/include', '-Iinclude'],
+  ...['src-I', 'a/-I', '-1', '%2DI', '-%49', '%28-I'].map((prefix) =>
+    [`option boundary ${prefix}`, '/work/repo', `${prefix}/work/repo/x`, `${prefix}/work/repo/x`]),
   ['relative token', '/work/repo', 'src/work/repo/x', 'src/work/repo/x'],
   ['relative repeated separator', '/work/repo', 'src//work/repo/x', 'src//work/repo/x'],
   ['Unicode left continuation', '/work/repo', '\u00e9/work/repo/x', '\u00e9/work/repo/x'],
@@ -66,12 +103,14 @@ test('rewrite repo root scans 200000 characters promptly', { timeout: 2000 }, ()
     import { rewritePreparedRepoRoot, prepareHostRootPatterns } from ${JSON.stringify(new URL('../src/paths.js', import.meta.url).href)};
     const { roots } = prepareHostRootPatterns(['/abc/end']);
     const inputs = ['/abc' + '/'.repeat(200000) + 'X', '/abc' + '/'.repeat(200000) + 'end/a',
-      '/abc/end/x:'.repeat(20000) + '/../escape'];
+      '/abc/end/x:'.repeat(20000) + '/../escape',
+      '/abc' + '%2F'.repeat(200000) + 'end/src%2Fa.js',
+      'file:'.repeat(40000) + '///abc/end/a'];
     console.log(JSON.stringify(inputs.map((text) => rewritePreparedRepoRoot(text, roots))));
   `], { encoding: 'utf8', timeout: 1000 });
   assert.equal(result.status, 0, `rewrite must complete within one second: ${result.error || result.stderr}`);
   assert.deepEqual(JSON.parse(result.stdout), ['/abc' + '/'.repeat(200000) + 'X', 'a',
-    '/abc/end/x:'.repeat(20000) + '/../escape']);
+    '/abc/end/x:'.repeat(20000) + '/../escape', 'src%2Fa.js', 'file:'.repeat(39999) + 'a']);
 });
 
 const HOST_PATH_CASES = [
