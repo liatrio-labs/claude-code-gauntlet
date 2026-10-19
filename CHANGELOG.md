@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.42.45 (2026-10-19)
+
+### Bug Fixes
+
+- Rewrite repository-root host paths in delivered review text
+  ([#527](https://github.com/liatrio-labs/claude-code-gauntlet/pull/527),
+  [`712446f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/712446fd98692bbd2d98c0911d0aeab6fe3e435c))
+
+
 ## v3.42.44 (2026-10-19)
 
 ### Bug Fixes
