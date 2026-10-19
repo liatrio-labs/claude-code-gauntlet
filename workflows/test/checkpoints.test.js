@@ -244,7 +244,7 @@ for (const [name, tamper] of CHECKSUM_ROWS) test(`checkpoint checksum refuses: $
   const out = await runWith(ctx, args);
   assert.equal(out.ok, false);
   assert.equal(out.failingPhase, 'checkpoints');
-  assert.match(out.error, /^checkpoint-checksum:/);
+  assert.match(out.error, /^checkpoint-checksum:.*Re-copy the complete checkpoint object unchanged/);
   assert.deepEqual(out.checkpoints, { completed: [] });
   assert.deepEqual(ctx.calls, []);
 });
