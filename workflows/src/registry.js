@@ -90,6 +90,9 @@ export const FINDING_PROP_TYPES = deepFreeze({
 // Structural references need the same confinement as file before reaching artifacts.
 export const FINDING_PATH_ARRAY_FIELDS = deepFreeze(['cross_file_refs', 'affected_consumers']);
 
+// Identifiers must not collide; structural paths and suggestion code retain their own semantics.
+export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code']);
+
 // Flat required fields must be unconditional for every dimension in a dispatch to avoid forcing fabricated sibling fields.
 export const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
 

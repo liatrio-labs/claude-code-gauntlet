@@ -2,11 +2,141 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { runWith } from '../src/run.js';
-import { mentionsPreparedHostRoot, normalizeAbsoluteRoot, pathUnderRoot, prepareHostRootPatterns, repoRelativeFindingPath, safeFindingLabel } from '../src/paths.js';
+import { mentionsPreparedHostRoot, normalizeAbsoluteRoot, pathUnderRoot, prepareHostRootPatterns, repoRelativeFindingPath, rewritePreparedRepoRoot, safeFindingLabel } from '../src/paths.js';
 import { validArgs } from './helpers/argsFixtures.js';
 import { makeCtx } from './helpers/pipelineMock.js';
 
 const ROOT = '/repo/.code-gauntlet';
+
+const REWRITE_ROWS = [
+  ['POSIX tail', '/work/repo', 'See /work/repo/src/a.js.', 'See src/a.js.'],
+  ['private alias', '/private/tmp/repo', '/tmp/repo/src/a.js', 'src/a.js'],
+  ['private spelling', '/tmp/repo', '/private/tmp/repo/src/a.js', 'src/a.js'],
+  ['POSIX case sibling', '/work/repo', '/work/Repo/a.js', '/work/Repo/a.js'],
+  ['single segment route', '/app', '/app/settings', '/app/settings'],
+  ['single segment private alias', '/app', '/private/app/settings', '/private/app/settings'],
+  ['colon-joined paths', '/Users/u/repo', 'PYTHONPATH=/Users/u/repo/src:/Users/u/repo/tests', 'PYTHONPATH=src:tests'],
+  ...['12', 'L12', '12:3', '12-20', 'L12-L20'].map((suffix) =>
+    [`location-joined paths ${suffix}`, '/Users/u/repo', `/Users/u/repo/a.js:${suffix}:/Users/u/repo/b.js`, `a.js:${suffix}:b.js`]),
+  ['traversal joined to clean path', '/Users/u/repo', '/Users/u/repo/src/../x:/Users/u/repo/tests', '/Users/u/repo/src/../x:tests'],
+  ['following root in token', '/Users/u/repo', '/Users/u/repo/a#/Users/u/repo/b', 'a#b'],
+  ['following file URI in token', '/Users/u/repo', 'file:///Users/u/repo/a#file:///Users/u/repo/b', 'a#b'],
+  ['encoded colon-joined paths', '/Users/u/repo', '?p=%2FUsers%2Fu%2Frepo%2Fsrc%3A%2FUsers%2Fu%2Frepo%2Ftests', '?p=src%3Atests'],
+  ['encoded space before root', '/Users/u/repo', 'pytest%20%2FUsers%2Fu%2Frepo%2Ftests', 'pytest%20tests'],
+  ...['D:/Work/repo', String.raw`D:\Work\repo`, '/d/Work/repo'].flatMap((root) => [
+    [`mixed drive separators ${root}`, 'D:/Work/repo', `${root}\\src\\a.js`, 'src/a.js'],
+    [`encoded drive separators ${root}`, 'D:/Work/repo', `${root}%5Csrc%5Ca.js`, 'src%5Ca.js'],
+    [`mixed drive traversal ${root}`, 'D:/Work/repo', `${root}\\src\\..\\..\\secret`, `${root}\\src\\..\\..\\secret`],
+    [`encoded drive traversal ${root}`, 'D:/Work/repo', `${root}%5Csrc%5C..%5C..%5Csecret`, `${root}%5Csrc%5C..%5C..%5Csecret`],
+    [`mixed drive separator runs ${root}`, 'D:/Work/repo', `${root}/\\src\\/a.js`, 'src/a.js'],
+  ]),
+  ['Windows Python traversal', 'C:/Users/u/repo', String.raw`C:/Users/u/repo\src\..\..\secret`, String.raw`C:/Users/u/repo\src\..\..\secret`],
+  ['POSIX tail retains backslashes', '/work/repo', String.raw`/work/repo/src\a.js`, String.raw`src\a.js`],
+  ['POSIX backslash is not a separator', '/work/repo', '/work/repo%5Csrc%5Ca.js', './%5Csrc%5Ca.js'],
+  ['drive forward', 'D:/Work/repo', 'D:/Work/repo/src/a.js', 'src/a.js'],
+  ['drive backslash tail', 'D:/Work/repo', String.raw`D:\Work\repo\src\a.js`, 'src/a.js'],
+  ['drive doubled backslashes', 'D:/Work/repo', String.raw`D:\\Work\\repo\\src\\a.js`, 'src/a.js'],
+  ['MSYS', 'D:/Work/repo', '/d/Work/repo/src/a.js', 'src/a.js'],
+  ['drive case variant', 'D:/Work/repo', 'd:/work/REPO/src/a.js', 'src/a.js'],
+  ['bare root', '/work/repo', '/work/repo', './'],
+  ['bare sentence root', '/work/repo', 'See /work/repo.', 'See ./.'],
+  ['separator only', '/work/repo', '/work/repo///', './'],
+  ['separator sentence ending', '/work/repo', '/work/repo///.', './.'],
+  ['backslash separator only', 'D:/Work/repo', String.raw`D:\Work\repo\\`, './'],
+  ['numeric location', '/work/repo', '/work/repo/src/a.js:12', 'src/a.js:12'],
+  ['range location', '/work/repo', '/work/repo/src/a.js:L12-L20', 'src/a.js:L12-L20'],
+  ['sibling segment', '/work/repo', '/work/repo2/a.js', '/work/repo2/a.js'],
+  ...['\u00e9', '\u0661', '\u0301', '\u{10400}', '.bak', '../a'].map((suffix) =>
+    [`sibling ${suffix}`, '/work/repo', `/work/repo${suffix}/x`, `/work/repo${suffix}/x`]),
+  ['first traversal', '/work/repo', '/work/repo//./../x', '/work/repo//./../x'],
+  ['later traversal', '/work/repo', '/work/repo/src/../x', '/work/repo/src/../x'],
+  ['bare traversal', '/work/repo', '/work/repo/..', '/work/repo/..'],
+  ['traversal location in sentence', '/work/repo', '/work/repo/..:12.', '/work/repo/..:12.'],
+  ['backslash traversal', 'D:/Work/repo', String.raw`D:\Work\repo\src\..\x`, String.raw`D:\Work\repo\src\..\x`],
+  ['derived home', '/Users/lee/repo', '/Users/lee/other/a.js', '/Users/lee/other/a.js'],
+  ...['file:', 'file:/', 'file://', 'FILE://'].map((prefix) =>
+    [`POSIX scheme ${prefix}`, '/work/repo', `${prefix}/work/repo/x`, 'x']),
+  ...['file:', 'file:/', 'file://', 'file:///'].map((prefix) =>
+    [`drive scheme ${prefix}`, 'D:/Work/repo', `${prefix}D:/Work/repo/x`, 'x']),
+  ['bare file root', '/work/repo', '(file:///work/repo)', '(./)'],
+  ['bare drive file root', 'D:/Work/repo', 'file:D:/Work/repo', './'],
+  ['file separators', '/work/repo', 'file:////work/repo///', './'],
+  ...['x-file', 'a+file', '1file', 'my.file'].map((scheme) =>
+    [`scheme boundary ${scheme}`, '/work/repo', `${scheme}:///work/repo/x`, `${scheme}:///work/repo/x`]),
+  ['escaped scheme letter', '/work/repo', 'f%69le:///work/repo/x', 'f%69le:///work/repo/x'],
+  ['escaped scheme boundary', '/work/repo', '%28file:///work/repo/x', '%28file:///work/repo/x'],
+  ['file traversal', '/work/repo', 'file:///work/repo/../x', 'file:///work/repo/../x'],
+  ['percent root', '/work/repo', '%2Fwork%2Frepo/x', 'x'],
+  ...Array.from('/work/repo', (char, index) => [
+    `percent root character ${index}`, '/work/repo',
+    '/work/repo'.slice(0, index) + `%${char.charCodeAt(0).toString(16)}` + '/work/repo'.slice(index + 1) + '/src%2Fa.js', 'src%2Fa.js',
+  ]),
+  ['bare percent root', '/work/repo', '%2fwork%2frepo', './'],
+  ['percent separator', '/work/repo', '/work/repo%2Fx', 'x'],
+  ['percent bare separators', '/work/repo', '/work/repo%2F%2f', './'],
+  ['percent separator sentence ending', '/work/repo', '/work/repo%2F.', './.'],
+  ['percent tail', '/work/repo', '/work/repo/a%20b', 'a%20b'],
+  ['percent raw tail', '/work/repo', '%2Fwork%2Frepo%2Fsrc%2Fa.js', 'src%2Fa.js'],
+  ['percent repeated separators', '/work/repo', '%2Fwork%2Frepo%2F%2fsrc//a.js', 'src//a.js'],
+  ['percent root space', '/work/My Repo', '/work/My%20Repo/a', 'a'],
+  ['percent drive', 'D:/Work/repo', '%44%3A%2fWork%2frepo%2fsrc%2fa.js', 'src%2fa.js'],
+  ['percent backslash', 'D:/Work/repo', 'D:%5CWork%5Crepo%5Csrc%5Ca.js', 'src%5Ca.js'],
+  ['percent file', '/work/repo', 'file://%2Fwork%2Frepo%2Fsrc%2Fa.js', 'src%2Fa.js'],
+  ['percent file prefix preserves tail normalization', '/work/repo', 'file:%2F%2F/work/repo/a//b', 'a/b'],
+  ['percent option', '/work/repo', '-I%2Fwork%2Frepo%2Finclude', '-Iinclude'],
+  ['mixed spellings and offsets', '/work/repo', '%41 file:///work/repo/a, -I/work/repo/b; %2Fwork%2Frepo%2Fc%2Fd.',
+    '%41 a, -Ib; c%2Fd.'],
+  ...['src%2F..%2Fx', 'src/%2e%2E/x', '%2E%2E', '%2e%2e:12.'].map((tail) =>
+    [`percent traversal ${tail}`, '/work/repo', `/work/repo/${tail}`, `/work/repo/${tail}`]),
+  ['percent backslash traversal', 'D:/Work/repo', 'D:/Work/repo%5Csrc%5C%2e%2e%5Cx', 'D:/Work/repo%5Csrc%5C%2e%2e%5Cx'],
+  ...['%2e', '%C3%A9', '2/x', '%41%2Fx'].map((tail) =>
+    [`percent right boundary ${tail}`, '/work/repo', `%2Fwork%2Frepo${tail}`, `%2Fwork%2Frepo${tail}`]),
+  ...['%20', '%22', '%3A', '%3D', '%3B', '%2C', '%28'].flatMap((boundary) => [
+    [`percent left boundary ${boundary}`, '/work/repo', `${boundary}%2Fwork%2Frepo/x`, `${boundary}x`],
+    [`percent right boundary ${boundary}`, '/work/repo', `%2Fwork%2Frepo${boundary}x`, `./${boundary}x`],
+  ]),
+  ['percent left boundary before raw root', '/work/repo', '%28/work/repo/x', '%28x'],
+  ['percent relative token', '/work/repo', 'x%2Fwork%2Frepo/x', 'x%2Fwork%2Frepo/x'],
+  ['percent case sibling', '/work/repo', '%2FWork%2Frepo/x', '%2FWork%2Frepo/x'],
+  ['percent single segment', '/app', '%2Fapp/x', '%2Fapp/x'],
+  ['option flag', '/work/repo', '-I/work/repo/include', '-Iinclude'],
+  ['bare option flag', '/work/repo', '-I/work/repo', '-I./'],
+  ['drive option flag', 'D:/Work/repo', '-ID:/Work/repo/include', '-Iinclude'],
+  ...['src-I', 'a/-I', '-1', '%2DI', '-%49', '%28-I'].map((prefix) =>
+    [`option boundary ${prefix}`, '/work/repo', `${prefix}/work/repo/x`, `${prefix}/work/repo/x`]),
+  ['relative token', '/work/repo', 'src/work/repo/x', 'src/work/repo/x'],
+  ['relative repeated separator', '/work/repo', 'src//work/repo/x', 'src//work/repo/x'],
+  ['Unicode left continuation', '/work/repo', '\u00e9/work/repo/x', '\u00e9/work/repo/x'],
+  ['astral left continuation', '/work/repo', '\u{10400}/work/repo/x', '\u{10400}/work/repo/x'],
+  ['unpaired surrogate boundary', '/work/repo', '\uDC00/work/repo/x', '\uDC00x'],
+  ['backslash left continuation', 'D:/Work/repo', String.raw`x\D:\Work\repo\x`, String.raw`x\D:\Work\repo\x`],
+  ['root and tail separators', '/work/repo', '/work//./repo//./src///a.js', './src/a.js'],
+  ['tail delimiters', 'D:/Work/repo', String.raw`[D:\Work\repo\src\a.js], D:\Work\repo\b.js;`, '[src/a.js], b.js;'],
+  ['non-string', '/work/repo', null, null],
+];
+for (const [name, root, input, expected] of REWRITE_ROWS) test(`rewrite repo root: ${name}`, () => {
+  const patterns = prepareHostRootPatterns([root]);
+  const { roots } = patterns;
+  if (name.includes('drive') || name === 'Windows Python traversal') assert.equal(mentionsPreparedHostRoot(input, patterns), true);
+  const rewritten = rewritePreparedRepoRoot(input, roots);
+  assert.equal(rewritten, expected);
+  assert.equal(rewritePreparedRepoRoot(rewritten, roots), expected);
+});
+
+test('rewrite repo root scans 200000 characters promptly', { timeout: 2000 }, () => {
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { rewritePreparedRepoRoot, prepareHostRootPatterns } from ${JSON.stringify(new URL('../src/paths.js', import.meta.url).href)};
+    const { roots } = prepareHostRootPatterns(['/abc/end']);
+    const inputs = ['/abc' + '/'.repeat(200000) + 'X', '/abc' + '/'.repeat(200000) + 'end/a',
+      '/abc/end/x:'.repeat(20000) + '/../escape',
+      '/abc' + '%2F'.repeat(200000) + 'end/src%2Fa.js',
+      'file:'.repeat(40000) + '///abc/end/a'];
+    console.log(JSON.stringify(inputs.map((text) => rewritePreparedRepoRoot(text, roots))));
+  `], { encoding: 'utf8', timeout: 1000 });
+  assert.equal(result.status, 0, `rewrite must complete within one second: ${result.error || result.stderr}`);
+  assert.deepEqual(JSON.parse(result.stdout), ['/abc' + '/'.repeat(200000) + 'X', 'a',
+    'x:'.repeat(20000) + '/../escape', 'src%2Fa.js', 'file:'.repeat(39999) + 'a']);
+});
 
 const HOST_PATH_CASES = [
   ...['d:/work/REPO/a.js', String.raw`d:\work\REPO\a.js`, '/d/work/REPO/a.js', String.raw`d:\\work\\REPO\\a.js`].map((text) => ({
@@ -73,8 +203,13 @@ const HOST_PATH_CASES = [
   { name: 'leaves a high-byte root character encoded after escaped slashes', text: '%2Fopt%2F%FF%2Frepo/a', roots: ['/opt/\u00ff/repo'], expected: false },
   { name: 'matches a root containing an escaped space in text', text: '/opt/team/My%20Projects/repo/a', roots: ['/opt/team/My Projects/repo'], expected: true },
   { name: 'matches a root when its following slash is escaped', text: '/opt/team/repo%2Fx', roots: ['/opt/team/repo'], expected: true },
-  { name: 'rejects an escaped space as a root continuation', text: '/opt/team/repo%20x', roots: ['/opt/team/repo'], expected: false },
-  { name: 'rejects an escaped quote as a root continuation', text: '/opt/repo%22x', roots: ['/opt/repo'], expected: false },
+  { name: 'matches a root before an escaped space', text: '/opt/team/repo%20x', roots: ['/opt/team/repo'], expected: true },
+  { name: 'matches a root before an escaped quote', text: '/opt/repo%22x', roots: ['/opt/repo'], expected: true },
+  { name: 'matches an encoded outside-repo mention after an encoded space', text: 'pytest%20%2FUsers%2Fu%2Fother%2Fx', roots: ['/Users/u/repo'], expected: true },
+  { name: 'rejects an encoded letter as a root continuation', text: '%2Fwork%2Frepo%41%2Fx', roots: ['/work/repo'], expected: false },
+  ...['%20', '%3A', '%3D', '%3B', '%2C', '%28'].map((boundary) => ({
+    name: `matches an encoded root after ${boundary}`, text: `x${boundary}%2Fwork%2Frepo/x`, roots: ['/work/repo'], expected: true,
+  })),
   { name: 'rejects an escaped dot as a root continuation', text: '%2Fopt%2Fteam%2Frepo%2E', roots: ['/opt/team/repo'], expected: false },
   { name: 'does not decode malformed escapes', text: '/opt/repo%2Gx', roots: ['/opt/repo\u0002x'], expected: false },
   { name: 'decodes escaped bytes only once', text: '%252Fhome%252Fu%252Frepo%252Fx', roots: ['/home/u/repo'], expected: false },
