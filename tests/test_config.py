@@ -1,7 +1,6 @@
 """Registry interpretation and the configuration receipt consumed by callers."""
 
 import json
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -229,7 +228,6 @@ def test_cli_shape_identity_and_stderr_block(config_cli, mode):
         "pipeline_version": manifest["version"],
         "plugin_root": ROOT.as_posix(),
         "repo_root": ROOT.as_posix(),
-        "host_platform": "windows" if os.name == "nt" else "posix",
     }
     echo = HEADLESS_ECHO if mode == "headless" else INTERACTIVE_ECHO
     resolved = HEADLESS_RESOLVED if mode == "headless" else {"model_tier": "optimized"}

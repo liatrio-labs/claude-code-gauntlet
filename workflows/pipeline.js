@@ -4830,8 +4830,8 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
   for (const k of REQUIRED) if (args[k] === undefined) errors.push(`missing required field: ${k}`);
   if (args.mode && !KNOB_VOCAB.modes.includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
   validateConfigEcho(args, errors, descriptors);
-  for (const [key, allowed] of [['python', Object.keys(PYTHON_COMMAND_ARGV)]]) {
-    if (args[key] !== undefined && !allowed.includes(args[key])) errors.push(`${key} must be one of ${allowed.join(', ')}`);
+  if (args.python !== undefined && !Object.hasOwn(PYTHON_COMMAND_ARGV, args.python)) {
+    errors.push(`python must be one of ${Object.keys(PYTHON_COMMAND_ARGV).join(', ')}`);
   }
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);

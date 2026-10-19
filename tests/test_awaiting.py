@@ -547,3 +547,26 @@ def test_explicit_await_path_never_probes_discovery_roots(
         code = awaiting.CLI.invoke([str(target), "--timeout-seconds", "0"])
     assert code == 0
     assert capsys.readouterr().out.strip() == '{"ok":true,"stats":{}}'
+
+
+def test_interpreter_allowlist_matches_the_workflow():
+    from gauntlet.interpreters import PYTHON_ARGV
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is required to load the workflow allowlist")
+    wire = Path(__file__).resolve().parents[1] / "workflows/src/wire.js"
+    loader = (
+        "import(require('url').pathToFileURL(process.argv[1]).href)"
+        ".then((m) => console.log(JSON.stringify(m.PYTHON_COMMAND_ARGV)))"
+    )
+    result = subprocess.run(
+        [node, "-e", loader, str(wire)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    assert json.loads(result.stdout) == {
+        name: list(argv) for name, argv in PYTHON_ARGV.items()
+    }

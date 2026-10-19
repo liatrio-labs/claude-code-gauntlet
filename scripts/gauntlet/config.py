@@ -9,7 +9,7 @@ import os
 import re
 import sys
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, TypedDict
+from typing import Any, TypedDict
 
 from gauntlet import proc
 from gauntlet.cli import CliError, Command, Parser
@@ -36,7 +36,6 @@ class RuntimeIdentity(TypedDict):
     pipeline_version: str
     plugin_root: str
     repo_root: str
-    host_platform: Literal["posix", "windows"]
 
 
 class ResolverError(Exception):
@@ -435,7 +434,6 @@ def _handle(args: argparse.Namespace) -> int:
                 "pipeline_version": version,
                 "plugin_root": wire_path(plugin_root),
                 "repo_root": wire_path(repo_root),
-                "host_platform": "windows" if os.name == "nt" else "posix",
             }
         except ValueError as exc:
             raise ResolverSetupError(str(exc)) from exc
