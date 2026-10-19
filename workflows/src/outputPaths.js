@@ -7,7 +7,7 @@ export function requireAbsoluteOutputDir(outputDir) {
   const root = normalizeAbsoluteRoot(outputDir);
   if (root === null) {
     throw new Error(
-      `outputDir must be an absolute confined root (POSIX /-prefix, no .. or \\ segments); got ${JSON.stringify(outputDir)}`,
+      `outputDir must be an absolute confined root (no .. or \\ segments); got ${JSON.stringify(outputDir)}`,
     );
   }
   return root;

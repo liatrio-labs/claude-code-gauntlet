@@ -2,6 +2,7 @@
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -223,7 +224,11 @@ def test_cli_shape_identity_and_stderr_block(config_cli, mode):
         (ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     # The manifest is independent of the bundle the resolver reads.
-    identity = {"pipeline_version": manifest["version"], "plugin_root": str(ROOT)}
+    identity = {
+        "pipeline_version": manifest["version"],
+        "plugin_root": ROOT.as_posix(),
+        "repo_root": ROOT.as_posix(),
+    }
     echo = HEADLESS_ECHO if mode == "headless" else INTERACTIVE_ECHO
     resolved = HEADLESS_RESOLVED if mode == "headless" else {"model_tier": "optimized"}
     prefix = (
@@ -245,7 +250,7 @@ def test_cli_shape_identity_and_stderr_block(config_cli, mode):
     )
     block = (
         prefix + f"  pipeline_version={manifest['version']} (bundle)\n"
-        f"  plugin_root={ROOT} (resolved)"
+        f"  plugin_root={ROOT.as_posix()} (resolved)"
     )
     expected = {
         "mode": mode,
@@ -261,6 +266,18 @@ def test_cli_shape_identity_and_stderr_block(config_cli, mode):
         == json.dumps(expected, indent=2, ensure_ascii=False) + "\n"
     )
     assert result.stderr.decode() == block + "\n"
+
+
+def test_cli_identity_separates_plugin_and_repository_roots(config_cli, tmp_path):
+    repo = tmp_path / "consumer"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+
+    result = config_cli(cwd=repo)
+    assert result.returncode == 0, result.stderr.decode()
+    identity = json.loads(result.stdout)["identity"]
+    assert identity["repo_root"] == repo.resolve().as_posix()
+    assert identity["plugin_root"] == ROOT.resolve().as_posix()
 
 
 @pytest.mark.parametrize("case", ["usage", "nonrepo"])
@@ -303,7 +320,7 @@ def test_resolver_checks_resolved_plugin_root(
             b"characters; install the plugin at a shell-safe path\n"
         )
     else:
-        assert json.loads(result.stdout)["identity"]["plugin_root"] == str(root)
+        assert json.loads(result.stdout)["identity"]["plugin_root"] == root.as_posix()
 
 
 def test_missing_bundle_version_is_setup_failure(tmp_path):

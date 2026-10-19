@@ -1,7 +1,8 @@
+import { hostPlatformForRoots } from './paths.js';
 import { modelFor } from './registry.js';
-import { firstUnsafeNumber, shellWord } from './wire.js';
-import { VERIFY_INLINE_CHAR_BUDGET, deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, sliceInputChecksum, sliceTokenChecksum } from './verifyWire.js';
-import { VERIFY_ATTEMPTS_PER_SLICE, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
+import { firstUnsafeNumber } from './wire.js';
+import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, sliceInputChecksum, sliceTokenChecksum } from './verifyWire.js';
+import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
 
 // Allow honest failures in the schema to avoid fabricated successes under retry
 // pressure. Deltas avoid retranscribing finding fields.
@@ -65,7 +66,9 @@ export async function verifyStage(ctx, input) {
 
   const model = modelFor('code-gauntlet:executor', inp.policy || {});
   const baseBranch = effectiveVerifyBaseBranch((inp.verify || {}).baseBranch);
-  const plan = planVerifySlices(findings, sliceSize, VERIFY_INLINE_CHAR_BUDGET, baseBranch);
+  const hostPlatform = hostPlatformForRoots(inp);
+  const inlineBudget = verifyInlineBudget(inp);
+  const plan = planVerifySlices(findings, sliceSize, inlineBudget, baseBranch, hostPlatform);
   const slices = plan.slices;
 
   const gaps = [];
@@ -96,11 +99,12 @@ export async function verifyStage(ctx, input) {
   for (const unit of units) {
     if (unit.kind === 'oversize') {
       const content = { findings: [projectVerifySliceFinding(unit.finding)], base_branch: baseBranch };
-      const encodedLength = encodeSliceInline(content).length;
+      const encodedLength = verifyInlineCost(encodeSliceInline(content), hostPlatform);
+      const lengthKind = hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length';
       inputProof.oversize += 1;
       out.push(...degradedSlice([unit.finding]));
       gaps.push(verifyDegradeGap(
-        `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has encoded length ${encodedLength}, over VERIFY_INLINE_CHAR_BUDGET=${VERIFY_INLINE_CHAR_BUDGET}`,
+        `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has ${lengthKind} ${encodedLength}, over VERIFY_INLINE_CHAR_BUDGET=${inlineBudget}`,
         1,
         findings.length,
       ));
@@ -115,8 +119,9 @@ export async function verifyStage(ctx, input) {
     const payload = encodeSliceInline(content);
     const expectedInlineChecksum = sliceTokenChecksum(payload);
     const predictedPayloadLength = predictVerifySliceInlineLength(slice, baseBranch);
-    if (payload.length !== predictedPayloadLength || predictedPayloadLength > VERIFY_INLINE_CHAR_BUDGET) {
-      throw new Error(`verify inline planner produced an oversized slice ${i} (${payload.length} > ${VERIFY_INLINE_CHAR_BUDGET})`);
+    const commandCost = predictVerifySliceInlineLength(slice, baseBranch, hostPlatform);
+    if (payload.length !== predictedPayloadLength || commandCost > inlineBudget) {
+      throw new Error(`verify inline planner produced an oversized slice ${i} (${commandCost} > ${inlineBudget})`);
     }
     const degrade = (detail) => {
       out.push(...degradedSlice(slice));
@@ -290,25 +295,6 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, e
   }
 
   return { ok: true };
-}
-
-// Shell quoting preserves each argv word; retry paths stay fixed so outputs
-// overwrite the first attempt.
-function verifyCommand(inp, i, sliceNonce, inlinePayload) {
-  const v = inp.verify || {};
-  const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;
-  const outPath = `${v.outputPathBase || 'phase4-output'}.slice${i}.json`;
-  const parts = [
-    'python3', v.scriptPath || 'scripts/verify_findings.py',
-    '--input', inPath,
-    '--input-inline', inlinePayload,
-    '--output', outPath,
-    '--nonce', sliceNonce,
-    '--head-sha', inp.headShaShort,
-    '--base-branch', effectiveVerifyBaseBranch(v.baseBranch),
-  ];
-  if (v.diffPath) parts.push('--diff-file', v.diffPath);
-  return parts.map(shellWord).join(' ');
 }
 
 // Read the deltas prefix because length-capped Reads give no truncation notice;

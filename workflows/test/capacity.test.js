@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   planVerifySlices, predictVerifySliceInlineLength, worstCaseAgentCount, coarsenLimits,
-  effectiveVerifyBaseBranch, effectiveSliceSize, effectiveChallengeCap, effectiveBucketSize, effectiveBatchSize,
+  verifyInlineBudget, effectiveVerifyBaseBranch, effectiveSliceSize, effectiveChallengeCap, effectiveBucketSize, effectiveBatchSize,
 } from '../src/capacity.js';
 import { encodeSliceInline, projectVerifySliceFinding } from '../src/verifyWire.js';
 import { summarize } from '../src/discover.js';
@@ -14,7 +14,15 @@ const BASIC = [
   { id: 'C', file: 'c.js', line_start: 3, origin: 'new', cross_file_refs: [], description: 'z'.repeat(100) },
 ];
 const PLAN_GOLDEN = { slices: [['A', 'B'], ['C']], oversize: [], closeReasons: ['count', null] };
+
+for (const key of ['repoRoot', 'outputDir', 'pluginRoot']) test(`Windows budget derives from ${key}`, () => {
+  assert.ok(verifyInlineBudget({ [key]: 'd:/work/repo' }) < 32767);
+  assert.equal(verifyInlineBudget({ [key]: '/work/repo' }), 50000);
+});
 const PLAN_ROWS = [
+  { name: 'Windows quoted JSON budget', size: 25, budget: 220, hostPlatform: 'windows', length: 249,
+    input: Array.from({ length: 4 }, (_, i) => ({ id: `F${i}`, file: 'a', description: '' })),
+    expected: { slices: [['F0', 'F1', 'F2'], ['F3']], oversize: [], closeReasons: ['budget', null] } },
   { name: 'count closes a slice', input: BASIC, size: 2, budget: 100000 },
   { name: 'single finding exceeds budget', input: [BASIC[0]], size: 2, budget: 10,
     expected: { slices: [], oversize: ['A'], closeReasons: [] } },
@@ -33,7 +41,7 @@ const PLAN_ROWS = [
 ];
 for (const row of PLAN_ROWS) test(`slice planning: ${row.name}`, () => {
   const input = JSON.parse(JSON.stringify(row.input));
-  const out = planVerifySlices(input, row.size, row.budget, row.branch);
+  const out = planVerifySlices(input, row.size, row.budget, row.branch, row.hostPlatform);
   assert.deepEqual(input, row.input);
   assert.deepEqual({ slices: out.slices.map((slice) => slice.map((f) => f.id)),
     oversize: out.oversize.map((f) => f.id), closeReasons: out.closeReasons }, row.expected ?? PLAN_GOLDEN);
@@ -41,7 +49,7 @@ for (const row of PLAN_ROWS) test(`slice planning: ${row.name}`, () => {
     assert.ok(encodeSliceInline({ findings: slice.map(projectVerifySliceFinding),
       base_branch: row.branch ?? 'main' }).length <= row.budget);
   }
-  if (row.length) assert.equal(predictVerifySliceInlineLength(input, row.branch), row.length);
+  if (row.length) assert.equal(predictVerifySliceInlineLength(input, row.branch, row.hostPlatform), row.length);
 });
 const COST_ROWS = [
   { branch: 'b', lengths: [3952, 4102, 3863, 3420, 4037, 851] },
@@ -102,6 +110,8 @@ for (const row of COARSEN_ROWS) test(`coarsening: ${row.name}`, () => {
   assert.equal(worstCaseAgentCount(coarse, row.files, row.findings), row.count);
 });
 const BRANCH_ROWS = [
+  { name: 'windows command budget', branch: 'main', input: { repoRoot: 'D:/repo' }, slices: 800, count: 1611, coarseCount: 1616,
+    coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 5, verifySliceSize: 50 } },
   { name: 'main', branch: 'main', slices: 400, count: 811, coarseCount: 811,
     coarse: { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 } },
   { name: 'long branch binds wire budget', branch: `${'b'.repeat(249)}/${'b'.repeat(249)}/${'b'.repeat(249)}/${'b'.repeat(250)}`,
@@ -111,10 +121,10 @@ const BRANCH_ROWS = [
 for (const row of BRANCH_ROWS) test(`array guard branch: ${row.name}`, () => {
   const findings = Array.from({ length: 800 }, (_, i) => ({ id: `F${i}`, description: (i % 2 ? 'y' : 'x').repeat(24500) }));
   const limits = { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 };
-  assert.equal(planVerifySlices(findings, 25, 50000, row.branch).slices.length, row.slices);
-  assert.equal(worstCaseAgentCount(limits, 0, findings, row.branch), row.count);
-  assert.deepEqual(coarsenLimits(limits, 0, findings, row.branch), row.coarse);
-  assert.equal(worstCaseAgentCount(row.coarse, 0, findings, row.branch), row.coarseCount);
+  assert.equal(planVerifySlices(findings, 25, verifyInlineBudget(row.input), row.branch).slices.length, row.slices);
+  assert.equal(worstCaseAgentCount(limits, 0, findings, row.branch, row.input), row.count);
+  assert.deepEqual(coarsenLimits(limits, 0, findings, row.branch, row.input), row.coarse);
+  assert.equal(worstCaseAgentCount(row.coarse, 0, findings, row.branch, row.input), row.coarseCount);
 });
 const EMPTY_BRANCH_ROWS = [undefined, null, '', 'main'];
 for (const [index, branch] of EMPTY_BRANCH_ROWS.entries()) test(`empty branch normalization: ${index}`, () => {

@@ -24,7 +24,7 @@ def fake_files_forge(
 ):
     calls = []
     view = (
-        ["gh", "pr", "view", "7", "--json", "state,isDraft,url"]
+        ["gh", "pr", "view", "7", "--json", "state,isDraft,url,headRefOid"]
         if platform == "github"
         else ["glab", "mr", "view", "7", "--output", "json"]
     )

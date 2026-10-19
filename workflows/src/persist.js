@@ -1,7 +1,8 @@
 import { pathEscapeReason, persistPlanPath, plannedArtifactPaths, requireAbsoluteOutputDir } from './outputPaths.js';
 import { hardenEscapeRuns, persistDerivable, persistPlan, persistPrimaries, writerPayload } from './persistPlan.js';
-import { modelFor } from './registry.js';
-import { RETURN_CHAR_BUDGET, shellWord } from './wire.js';
+import { trustedScriptPath } from './paths.js';
+import { modelFor, TRUSTED_SCRIPT_BASENAMES } from './registry.js';
+import { RETURN_CHAR_BUDGET, pythonArgv, shellWord } from './wire.js';
 
 const WRITER_SCHEMA = {
   type: 'object',
@@ -66,9 +67,8 @@ export async function writeArtifacts(ctx, input) {
 
   try {
     const persist = inp.persist || {};
-    const scriptPath = typeof persist.assembleScriptPath === 'string' && persist.assembleScriptPath !== ''
-      ? persist.assembleScriptPath
-      : null;
+    const scriptPath = inp.persist && inp.pluginRoot
+      ? trustedScriptPath(inp.pluginRoot, TRUSTED_SCRIPT_BASENAMES.assemble) : null;
     // The return channel needs no executor script, so its opt-in is independent of scriptPath.
     const wantsReturn = persist.returnPrimaries === true;
     if (scriptPath || wantsReturn) {
@@ -172,7 +172,7 @@ function returnChannelPersist(inp, paths, outputDir, sha) {
 // The by-value writer cannot check content, so it cannot safely recover a failed content proof.
 async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath) {
   const { plan, planPath, entries } = persistEntries(inp, paths, outputDir, sha);
-  const attempt = () => attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath);
+  const attempt = () => attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath, inp.python);
 
   // Only the last attempt can prove salvageable bytes because retrying overwrites the files.
   const salvage = (att) => {
@@ -200,7 +200,7 @@ async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, part
 }
 
 // Only a receipt refusal is retryable; an incomplete dispatch has no assemble proof to repair.
-async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath) {
+async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath, python) {
   const fail = (reason, retryable) => ({ ok: false, retryable: !!retryable, reason });
 
   let writerOut;
@@ -229,7 +229,7 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDi
 
   let receipt;
   try {
-    receipt = await c.agent(assemblePrompt(assembleScriptPath, planPath), {
+    receipt = await c.agent(assemblePrompt(assembleScriptPath, planPath, python), {
       label: 'assemble-artifacts',
       agentType: 'code-gauntlet:executor',
       model: modelFor('code-gauntlet:executor', policy),
@@ -392,6 +392,6 @@ const ASSEMBLE_RECEIPT_SCHEMA = {
 };
 
 // Shell quoting keeps paths with spaces in one argument without exposing shell operators.
-function assemblePrompt(scriptPath, planPath) {
-  return `Run exactly this command, then return its single line of stdout JSON verbatim via the schema:\npython3 ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
+function assemblePrompt(scriptPath, planPath, python) {
+  return `Run exactly this command, then return its single line of stdout JSON verbatim via the schema:\n${pythonArgv(python).map(shellWord).join(' ')} ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
 }

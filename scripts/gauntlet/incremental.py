@@ -6,6 +6,7 @@ import sys
 
 from gauntlet import proc
 from gauntlet.cli import CliError, Command, Parser, require_full_sha
+from gauntlet.git_diff import DIFF_FLAGS
 
 
 def _execute(args: argparse.Namespace) -> int:
@@ -26,7 +27,15 @@ def _execute(args: argparse.Namespace) -> int:
         return 0
     try:
         result = proc.run_bytes(
-            ["git", "--literal-pathspecs", "diff", f"{args.since}..HEAD", "--", *paths]
+            [
+                "git",
+                "--literal-pathspecs",
+                "diff",
+                *DIFF_FLAGS,
+                f"{args.since}..HEAD",
+                "--",
+                *paths,
+            ]
         )
     except OSError as exc:
         raise CliError(f"cannot run git diff: {exc.strerror or exc}") from exc

@@ -10,6 +10,7 @@ Workflow-tool availability check, review target resolution, the error-path AskUs
 
 v3 orchestration is a single `Workflow` tool call (Phase 3). There is no in-session fallback — the break from v2's inline subagent dispatch is a locked decision. Before any other work, confirm the **`Workflow` tool is present in this session's tool definitions** by passive self-inspection only — never via `ToolSearch`, which searches deferred tools only and returns a false "absent" for a top-level `Workflow`.
 
+- **No Bash tool (PowerShell only)** -> print `Install Git for Windows to run code-gauntlet in Bash.` and STOP.
 - **Present in your tool definitions** → continue with target resolution.
 - **Absent from your tool definitions** → print exactly the message below and STOP. Do not emulate the pipeline by dispatching agents inline.
 
@@ -29,7 +30,7 @@ The user's input determines the review target. Resolve it before eligibility che
 
 1. **User passed a PR/MR number** (e.g., `/code-gauntlet 42`, `review PR 42`, `review #42`, or ARGUMENTS: `1`) → **PR/MR mode**. Store the number as `pr_number`. Use this number for all `gh pr` / `glab mr` commands. Do NOT extract numbers from branch names — the branch name may contain the upstream PR number which differs from the PR number in the current repo.
 2. **User passed a URL** (e.g., `github.com/.../pull/42`) → **PR/MR mode**. Extract `pr_number` from the URL path.
-3. **User said "review" with no number/URL** and a PR/MR exists for the current branch → **PR/MR mode**. Use `gh pr view --json number --jq '.number'` to get the number for the current branch.
+3. **User said "review" with no number/URL** and a PR/MR exists for the current branch → **PR/MR mode**. Use `gh pr view --json number` and read its `number` field for the current branch.
 4. **No PR/MR found** → **Local changes mode**. Review uncommitted changes or branch diff.
 
 **Validation:** After resolving to PR/MR mode, verify the PR/MR exists by running `gh pr view {pr_number}` (or `glab mr view`). If the command fails, do NOT silently fall back to local mode — ask the user:
@@ -80,16 +81,42 @@ AskUserQuestion(
 
 > Runs in **Phase 2, section 2b-post step 3** — after checkout, never in Phase 1. Listed here with the other pre-flight templates because it is a pre-flight UX decision.
 
-Skip entirely when `target_type == local` (no PR/MR signal to detect). Otherwise resolve the PR's own URL so fork clones use the base repository and its host:
+Skip entirely for local and branch targets (no PR/MR signal to detect). Otherwise use the literal forge sections below in Composite A so fork clones use the base repository and its host.
+
+GitHub:
 
 ```bash
-PR_URL=$(gh pr view {pr_number} --json url --jq .url)
+echo "=== status ==="
+PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform github --pr {pr_number}) || exit 1
+TARGET_SHA=${PR_STATUS%%$'\n'*}
+TARGET_SHA=${TARGET_SHA#head_sha=}
 ```
 
-For GitLab, use `PR_URL=$(glab mr view {pr_number} --output json | jq -r .web_url)`.
+```bash
+echo "=== pr_url ==="
+PR_URL=${PR_STATUS#*pr_url=}
+printf '%s\n' "$PR_URL"
+```
+
+GitLab:
 
 ```bash
-python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --pr-url "$PR_URL" --head-sha {head_sha_full}
+echo "=== status ==="
+PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform gitlab --pr {pr_number}) || exit 1
+TARGET_SHA=${PR_STATUS%%$'\n'*}
+TARGET_SHA=${TARGET_SHA#head_sha=}
+```
+
+```bash
+echo "=== pr_url ==="
+PR_URL=${PR_STATUS#*pr_url=}
+printf '%s\n' "$PR_URL"
+```
+
+After checkout and SHA resolution, pass the URL unchanged in the same composite:
+
+```bash
+{python} "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --pr-url "$PR_URL" --head-sha {head_sha_full}
 ```
 
 It always exits 0 and prints exactly one JSON object on stdout (detection degrades, never blocks the review):

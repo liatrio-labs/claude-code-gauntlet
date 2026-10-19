@@ -1,4 +1,4 @@
-"""Fetch changed paths with forge-specific evidence of completeness."""
+"""Fetch changed paths from Git or a forge with evidence of completeness."""
 
 import argparse
 import json
@@ -16,6 +16,7 @@ from gauntlet.forge import (
     make_forge,
     parse_pr_url,
 )
+from gauntlet.git_diff import require_git_range
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,17 +95,45 @@ def list_pr_files(platform: Platform, view: Mapping[str, object]) -> FileListing
         return FileListing(tuple(paths), f"file listing failed: {exc}", failed=True)
 
 
+def list_git_files(revision_range: str) -> FileListing:
+    try:
+        result = proc.run_bytes(
+            ["git", "diff", "--name-only", "-z", revision_range], timeout=180
+        )
+        if result.returncode:
+            reason = (
+                result.stderr.decode("utf-8", errors="replace").strip()
+                or f"git exited {result.returncode}"
+            )
+            return FileListing((), f"file listing failed: {reason}", failed=True)
+        # NUL framing preserves newlines and avoids Git's quoted filename format.
+        paths = result.stdout.decode("utf-8", errors="surrogateescape").split("\0")
+        return FileListing(tuple(paths[:-1]))
+    except (OSError, proc.TimeoutExpired) as exc:
+        return FileListing((), f"file listing failed: {exc}", failed=True)
+
+
 def _parser() -> Parser:
     parser = Parser(prog="list_pr_files")
-    parser.add_argument("--platform", choices=("github", "gitlab"), required=True)
-    parser.add_argument("--pr", type=int, required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--platform", choices=("github", "gitlab"))
+    mode.add_argument("--git-range")
+    parser.add_argument("--pr", type=int)
     return parser
 
 
 def _handle(args: argparse.Namespace) -> int:
-    if args.pr <= 0:
-        raise CliError("--pr must be positive", 2)
-    listing = list_pr_files(args.platform, fetch_pr_view(args.platform, args.pr))
+    if args.git_range is not None:
+        if args.pr is not None:
+            raise CliError("--pr cannot be used with --git-range", 2)
+        require_git_range(args.git_range)
+        listing = list_git_files(args.git_range)
+    else:
+        if args.pr is None:
+            raise CliError("--pr is required with --platform", 2)
+        if args.pr <= 0:
+            raise CliError("--pr must be positive", 2)
+        listing = list_pr_files(args.platform, fetch_pr_view(args.platform, args.pr))
     if listing.failed:
         raise CliError(f"FAILED: {listing.reason}")
     print(json.dumps(listing.paths))

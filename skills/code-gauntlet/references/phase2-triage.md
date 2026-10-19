@@ -30,20 +30,39 @@ If detection fails, ask the user.
 
 Before running any diff commands, confirm the local working tree matches the review target. Use the `pr_number` resolved in Phase 1 — never extract PR numbers from branch names (branch names may contain upstream PR numbers that differ from the PR number in the current repo).
 
-**This section is the canonical target-type table.** SKILL.md's "Phase 2 Composite A" `status`/`checkout` sections are one runnable instantiation of it (the PR/MR row, plus the headless row inlined as a real `exit 1`) — do not re-derive the branch/local variants or the checkout-failure message independently there; apply steps 1/3/4 below directly, per SKILL.md's cross-reference.
+**SKILL.md owns the literal Composite A blocks for GitHub, GitLab, and branch targets.** Run those blocks as written; this section explains their target resolution and failure rules.
 
 **1. Resolve the target's head SHA:**
 
-- **PR/MR mode (`pr_number` set):** `gh pr view {pr_number} --json headRefOid --jq '.headRefOid'` (GitHub) / `glab mr view {pr_number} --output json | jq '.sha'` (GitLab)
+**PR/MR mode (`pr_number` set):** use these literal status sections. The producer validates both fields before emitting either.
+
+GitHub:
+
+```bash
+echo "=== status ==="
+PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform github --pr {pr_number}) || exit 1
+TARGET_SHA=${PR_STATUS%%$'\n'*}
+TARGET_SHA=${TARGET_SHA#head_sha=}
+```
+
+GitLab:
+
+```bash
+echo "=== status ==="
+PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform gitlab --pr {pr_number}) || exit 1
+TARGET_SHA=${PR_STATUS%%$'\n'*}
+TARGET_SHA=${TARGET_SHA#head_sha=}
+```
+
 - **Branch comparison:** resolve the target branch with this bare quoted heredoc. Branch names are data, never shell words:
 
 ```bash
-python3 "{plugin_root}/scripts/resolve_branch.py" <<'CODE_GAUNTLET~BRANCH'
+{python} "{plugin_root}/scripts/resolve_branch.py" <<'CODE_GAUNTLET~BRANCH'
 <branch name exactly as the user gave it>
 CODE_GAUNTLET~BRANCH
 ```
 
-Resolve the comparison base (the repository's default branch or the user's chosen base) the same way. The resolver looks the name up as a local branch, then a remote-tracking branch (`origin/main`), and refuses a name that is both; a name that is neither, such as a tag, a SHA or `HEAD~1`, resolves as a git revision. If either call exits non-zero, stop and report its one-line error. Otherwise record the printed SHAs as `{target_sha}` and `{base_sha}` and type those hex values into later commands; shell variables do not survive between Bash calls. Never put the heredoc inside `$( )`: bash 3.2 parses its body for parentheses. `~` cannot appear in a git ref name, so no branch name can end the heredoc early.
+Resolve the comparison base (the repository's default branch or the user's chosen base) with SKILL.md's literal `CODE_GAUNTLET~BASE` block in its own Bash call. The resolver looks the name up as a local branch, then a remote-tracking branch (`origin/main`), and refuses a name that is both; a name that is neither, such as a tag, a SHA or `HEAD~1`, resolves as a git revision. If either call exits non-zero, stop and report its one-line error. Otherwise record the printed SHAs as `{target_sha}` and `{base_sha}` and type those hex values into later commands; shell variables do not survive between Bash calls. Never put the heredoc inside `$( )`: bash 3.2 parses its body for parentheses. `~` cannot appear in a git ref name, so no branch name can end the heredoc early.
 
 - **Local changes:** HEAD — no-op, already on correct state
 
@@ -90,7 +109,13 @@ Now that the working tree reflects the review target, compute the short SHA and 
 
 **3. Previously-reviewed gate** (`pr_url` + `prior_review` sections; PR/MR targets only — skip for `local`):
 
-Runs the gate documented in `phase1-preflight.md` → "Previously-Reviewed Gate", which resolves whether this PR/MR was already reviewed and whether the incremental path is safe. Pass the PR's **own URL** to `--pr-url` so the detector uses the base repository and its host. GitLab: `PR_URL=$(glab mr view {pr_number} --output json | jq -r .web_url)`.
+Runs the gate documented in `phase1-preflight.md` → "Previously-Reviewed Gate", which resolves whether this PR/MR was already reviewed and whether the incremental path is safe. Pass the PR's **own URL** to `--pr-url` so the detector uses the base repository and its host. For both forges, the matching status section above already fetched the URL. Use this literal section in the same composite:
+
+```bash
+echo "=== pr_url ==="
+PR_URL=${PR_STATUS#*pr_url=}
+printf '%s\n' "$PR_URL"
+```
 
 This runs **here, not in Phase 1**: the gate compares the last-reviewed commit against the PR head and counts the commits between them, so it needs the working tree at the review target and the PR's objects fetched. Before checkout it would measure whatever branch the session started on. By this point the checkout section has already switched the working tree to the PR; a Skip answer below stops the review but does not revert the checkout — the tree stays checked out on the PR branch.
 
@@ -105,33 +130,67 @@ If the gate resolves to **Incremental**, store `last_reviewed_sha` — section 2
 Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. Do not re-derive the PR number here.
 
 1. **PR/MR mode** (`pr_number` set) — Use `gh pr view {pr_number}`/`glab mr view {pr_number}` + diff commands. Get full SHA: `git rev-parse HEAD`
-   - **GitHub (PR):** Gather the file list with `python3 "{plugin_root}/scripts/list_pr_files.py" --platform github --pr {pr_number}`. Gather the full diff with `gh pr diff {pr_number}`.
-   - **GitLab (MR):** Gather the file list with `python3 "{plugin_root}/scripts/list_pr_files.py" --platform gitlab --pr {pr_number}` (the Composite B `files` producer in SKILL.md). Gather the full diff with `glab mr diff {pr_number}`.
-2. **Branch comparison** — `git diff {base_sha}...{target_sha}` and `git diff --name-only {base_sha}...{target_sha}` using 2b's resolved SHAs.
-3. **Local changes** — `git diff HEAD` (or `git diff --cached` if nothing unstaged)
+   - **GitHub (PR):** Gather the file list with `{python} "{plugin_root}/scripts/list_pr_files.py" --platform github --pr {pr_number}`. Gather the full diff with `gh pr diff {pr_number}`.
+   - **GitLab (MR):** Gather the file list with `{python} "{plugin_root}/scripts/list_pr_files.py" --platform gitlab --pr {pr_number}` (the Composite B `files` producer in SKILL.md). Gather the full diff with `glab mr diff {pr_number}`.
+2. **Branch comparison** - use 2b's resolved SHAs. Save the changed-file JSON first, then the validated patch:
+
+   ```bash
+   if ! {python} "{plugin_root}/scripts/list_pr_files.py" --git-range "{base_sha}...{target_sha}" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
+     echo "files: FAILED"
+     exit 1
+   fi
+   command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+   ```
+
+   ```bash
+   if ! {python} "{plugin_root}/scripts/save_git_diff.py" --git-range "{base_sha}...{target_sha}" --output "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"; then
+     echo "diff: FAILED"
+     exit 1
+   fi
+   ```
+
+3. **Local changes** - save the changed-file JSON first, then the validated patch:
+
+   ```bash
+   if ! {python} "{plugin_root}/scripts/list_pr_files.py" --git-range "HEAD" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
+     echo "files: FAILED"
+     exit 1
+   fi
+   command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+   ```
+
+   ```bash
+   if ! {python} "{plugin_root}/scripts/save_git_diff.py" --git-range "HEAD" --output "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"; then
+     echo "diff: FAILED"
+     exit 1
+   fi
+   ```
+
 4. **Incremental** (2b-post step 3's gate resolved "Incremental"; PR/MR mode only) — use branch 1's full server file list saved below to bound the diff:
 
    ```bash
-   python3 "{plugin_root}/scripts/incremental_diff.py" --files "{output_dir}/code-gauntlet-files-{head_sha_short}.json" --since {last_reviewed_sha} > "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"
+   {python} "{plugin_root}/scripts/incremental_diff.py" --files "{output_dir}/code-gauntlet-files-{head_sha_short}.json" --since {last_reviewed_sha} > "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"
    ```
 
    An unbounded diff would include unrelated files from a base-branch merge. A base merge that touches a PR file still appears. Validate the saved patch as below. If the command fails or the patch is empty, save branch 1's full server diff instead and disclose the fallback. Record `last_reviewed_sha` in the triage announcement and Phase 8 methodology.
 
+On `files: FAILED`, stop the handoff and report the stderr reason (headless: non-zero outcome).
+
 **Save the diff and the changed-file list (the workflow has no git access):** Persist both git-derived inputs to disk so the workflow can consume them.
 
 1. **Changed files** → `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file. On the incremental path, this stays branch 1's full server file list unchanged — the same list branch 4 uses to bound the diff, never a narrower incremental-only set. Saved **first**, so branch 4's incremental diff (below) has a file list already on disk to bound against.
-2. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when 2b-post step 3 resolved incremental, branch 4's `incremental_diff.py` command); for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
+2. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when 2b-post step 3 resolved incremental, branch 4's `incremental_diff.py` command); for branch/local targets use `save_git_diff.py` from steps 2/3, which refuses empty or malformed patches. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
 
 **These saves run as SKILL.md's Phase 2 Composite B** — one Bash call. `files` runs first and gates the rest: the incremental diff reads its list, and `numstat` reads the saved patch. See SKILL.md for the exact script.
 
 `changedLines` (threaded into `args.changedLines`, Args Preparation below) is counted from the diff actually saved above — the incremental diff on the incremental path, never branch 1's full-PR diff. The `numstat` section runs `scripts/diff_numstat.py` against that saved patch; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules. Check `binary_files > 0` before treating a low count as no diff. Never run a second `gh pr diff`; the 2k scan reads the same saved patch, never a fresh diff fetch.
 
-Validate the saved diff before relying on it:
+For PR/MR server diffs, validate the saved diff before relying on it. Branch/local validation is enforced by `save_git_diff.py`:
 
 - Non-empty (file size > 0)
 - Starts with `diff --git` (confirms it is a valid unified diff, not an error message)
 
-If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own git diff chain inside an executor subagent. For branch/local targets, use the diff and file-list commands in steps 2/3 above (add `--name-only` for local files).
+If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own git diff chain inside an executor subagent. For branch/local targets, use the diff and file-list commands in steps 2/3 above.
 
 Check for `docs/`, `specs/`, and `research/` directories. Use only the collector receipt from 2d for REVIEW.md discovery and its output for CLAUDE.md/AGENTS.md/QODO.md rules.
 
@@ -143,7 +202,7 @@ Check for `docs/`, `specs/`, and `research/` directories. Use only the collector
 2. **Run the collector first**, after 2c saves the changed-file list, as a standalone script call:
 
    ```bash
-   python3 "{plugin_root}/scripts/collect_project_rules.py" --repo-root "$(git rev-parse --show-toplevel)" --out "{output_dir}/code-gauntlet-project-rules-{head_sha_short}.md" --changed-files "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+   {python} "{plugin_root}/scripts/collect_project_rules.py" --repo-root "$(git rev-parse --show-toplevel)" --out "{output_dir}/code-gauntlet-project-rules-{head_sha_short}.md" --changed-files "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
    ```
 
    Parse its one-line stdout JSON receipt and retain it; stop on failure instead of stamping a successful empty discovery. The script owns the repo-root, changed-file-directory, and ancestor walk. REVIEW.md text is copied with source provenance into review-rules blocks before project-rules blocks; the script does not parse its config fence. PROJECT_RULE_FILENAMES controls CLAUDE.md/AGENTS.md/QODO.md discovery, and REVIEW_RULE_FILENAME names the separate REVIEW.md source kind.
@@ -317,9 +376,9 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 
 Producer commands:
 
-`gh pr view {pr_number} --json url,title | python3 "{plugin_root}/scripts/resolve_pr_identity.py" --platform github --sha "$(git rev-parse HEAD)"`
+`gh pr view {pr_number} --json url,title | {python} "{plugin_root}/scripts/resolve_pr_identity.py" --platform github --sha "$(git rev-parse HEAD)"`
 
-`glab mr view {pr_number} --output json | python3 "{plugin_root}/scripts/resolve_pr_identity.py" --platform gitlab --sha "$(git rev-parse HEAD)"`
+`glab mr view {pr_number} --output json | {python} "{plugin_root}/scripts/resolve_pr_identity.py" --platform gitlab --sha "$(git rev-parse HEAD)"`
 
 The title and URL reach the script only through the pipe.
 <!-- /generated-from-registry-identity:pr_identity_fields -->
@@ -328,13 +387,15 @@ The title and URL reach the script only through the pipe.
 The waist treats `null` as absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`.
 Keep `reviewConfigPath: null` when the receipt has no root REVIEW.md, even if it lists subdirectory files; this field records root provenance.
 
+The workflow derives the host platform from `repoRoot`, `outputDir`, and `pluginRoot`; any drive-form root selects Windows command limits.
+
 **Required fields (`validateArgs` fails loud without them):**
 
 | Field | Value |
 |---|---|
 | `argsVersion` | `1` |
 | `mode` | Copy `configResult.mode` from the resolver JSON |
-| `repoRoot` | `git rev-parse --show-toplevel` |
+| `repoRoot` | `configResult.identity.repo_root` (Python-resolved wire path) |
 | `outputDir` | resolved `{output_dir}` (absolute) |
 | `headShaShort` | `head_sha_short` from 2b-post |
 | `nonce` | freshly generated, matching `^[A-Za-z0-9._-]+$` (interpolated into the verify executor argv per slice — no whitespace/shell metacharacters) |
@@ -344,7 +405,8 @@ Keep `reviewConfigPath: null` when the receipt has no root REVIEW.md, even if it
 | `changedLines` | total changed line count, by value (Summarize bucketing threshold) |
 | `riskTable` | the Phase 2e per-file risk classification, by value, as `[{ path, risk }]` — `path` set must equal `changedFiles` exactly (missing or extra paths fail loud; see Phase 2e's risk-level table for the `risk` contract) |
 | `configEcho` | Copy `configResult.waist.configEcho` verbatim. It is the only model-stamped configuration receipt. |
-| `pluginRoot` | the required absolute POSIX path to this plugin; `persist.assembleScriptPath` and `verify.scriptPath`, when present, must start with `{pluginRoot}/scripts/` |
+| `pluginRoot` | `configResult.identity.plugin_root`; the workflow derives its script paths from this root. |
+| `python` | Phase 1 selection: `python3`, `python`, or `py -3`; optional, defaults to `python3`. |
 | `reviewScope` | Headless PR/MR targets omit `requested` (see the derived waist fields under "Args Preparation"). Interactive PR/MR targets stamp the gate answer, or `full` when no prior review exists. Local and branch targets stamp `full`. Copy detector facts verbatim for PR/MR targets. Use `kind=incremental` only for an incremental request with `detector.incremental_safe=true`. Set `since` to the detector's safe `last_reviewed_sha` only for incremental kind. Set `since` to `null` otherwise. Retain detector facts when an incremental request becomes full. The renderer computes the fallback reason from retained detector facts. |
 | `policy` | `{ tier, subagentModel, provider, gateway, mappedAliases }` — see below |
 | `limits` | Stamp `{}` unless a genuine REVIEW.md-set override exists. |
@@ -387,13 +449,12 @@ Model dispatch, including user mappings and gateway naming, follows [Orchestrato
 - `exclusionsText` — the raw text of whatever exclusions source was found (e.g. `.reviewignore`), parsed by `resolveReviewConfig` via `loadExclusions` (`workflows/src/reviewConfig.js`).
 - `reviewConfig` / `exclusionPatterns` — the LEGACY pre-parsed form. Still accepted for backward compatibility (bench children, older callers), but do not stamp these alongside `reviewMd`/`exclusionsText` for the same axis — the waist rejects a waist that stamps both the raw and pre-parsed form (single authority).
 - `reviewConfigPath` - the root REVIEW.md path (or `null`), carried for provenance. When `reviewMd` is an array, this must be non-null iff an entry has path exactly "REVIEW.md"; legacy pre-parsed callers retain their existing path provenance.
-- `persist` — optional, `{ assembleScriptPath: "{plugin_root}/scripts/assemble_artifacts.py", returnPrimaries: true }`. **Stamp both.** It selects one of three channels. `returnPrimaries: true` takes the RETURN channel: no agent is dispatched at persist time — the workflow returns the three primaries (findings JSON, report markdown, persist plan) in its own return, and Phase 8 writes them with `materialize_artifacts.py`. `{ assembleScriptPath }` alone takes the derived-writer path: the artifact-writer transcribes those primaries and a pinned executor runs `assemble_artifacts.py` to *derive* the post-review and checkpoint artifacts from `findings.json` plus the plan, returning a content-proof receipt instead of re-emitting them by value. That path is still live and is the automatic fallback when the primaries exceed the return channel's budget, which is the only reason to stamp the script path alongside `returnPrimaries`. Absent → the legacy full by-value writer, unchanged. `artifactPaths` and Phase 8 are the same on all three; see `SKILL.md` § "`persist` (optional, but stamp it)".
+- `persist` - optional, `{ returnPrimaries: true }`. Stamp it to use the RETURN channel. The workflow derives the fallback assemble command from `pluginRoot`; omit both script-path fields. With `returnPrimaries: false`, the artifact-writer transcribes primaries and the executor derives post-review and checkpoint artifacts. Without `persist`, the legacy by-value writer remains available.
 
 **`verify` handoff (sha-scoped paths for the executor's pinned command):**
 
 ```
 verify: {
-  scriptPath: "{plugin_root}/scripts/verify_findings.py",
   inputPathBase: "{output_dir}/code-gauntlet-phase4-input-{head_sha_short}",
   outputPathBase: "{output_dir}/code-gauntlet-phase4-output-{head_sha_short}"
 }

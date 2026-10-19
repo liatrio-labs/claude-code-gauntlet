@@ -726,7 +726,7 @@ def pr_identity_fields_body(identity: Mapping[str, Any]) -> list[str]:
         requirement = "required" if field["required"] else "optional"
         lines.append(f"- `{field['name']}` ({requirement}): {field['describe']}.")
     consumer = (
-        'python3 "{plugin_root}/scripts/resolve_pr_identity.py" --platform {platform} '
+        '{python} "{plugin_root}/scripts/resolve_pr_identity.py" --platform {platform} '
         '--sha "$(git rev-parse HEAD)"'
     )
     github = "gh pr view {pr_number} --json url,title | " + consumer.replace(

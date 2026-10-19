@@ -1,10 +1,113 @@
 """Shared listing behavior exercised through the two shipped consumers."""
 
 import json
+import os
+import subprocess
 
 import pytest
 
 from tests.support.pr_files import FIXTURES, fake_files_forge, github_view, gitlab_view
+
+
+def _git(directory, *args):
+    return subprocess.run(
+        ["git", *args],
+        cwd=directory,
+        env=dict(
+            os.environ,
+            GIT_CONFIG_GLOBAL=os.devnull,
+            GIT_CONFIG_SYSTEM=os.devnull,
+            GIT_AUTHOR_NAME="test",
+            GIT_AUTHOR_EMAIL="test@example.invalid",
+            GIT_COMMITTER_NAME="test",
+            GIT_COMMITTER_EMAIL="test@example.invalid",
+        ),
+        capture_output=True,
+        check=True,
+        encoding="utf-8",
+    ).stdout.strip()
+
+
+@pytest.fixture
+def files_repo(tmp_path):
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "nested").mkdir()
+    for name in ("modified.txt", "nested/path with space.txt"):
+        (tmp_path / name).write_text("before\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "-c", "commit.gpgsign=false", "commit", "-qm", "base")
+    return tmp_path
+
+
+def test_git_local_range_emits_json_paths(files_repo, invoke):
+    paths = ["modified.txt", "nested/path with space.txt"]
+    for name in paths:
+        (files_repo / name).write_text("after\n", encoding="utf-8")
+    _git(files_repo, "add", "modified.txt")
+    assert _git(files_repo, "ls-files", "--others", "--exclude-standard") == ""
+    result = invoke("list_pr_files", ["--git-range", "HEAD"], files_repo)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (json.dumps(paths) + "\n").encode("utf-8")
+    assert result.stderr == b""
+
+
+def test_git_branch_range_uses_commits_not_working_tree(files_repo, invoke):
+    base = _git(files_repo, "rev-parse", "HEAD")
+    (files_repo / "nested/path with space.txt").write_text("target\n", encoding="utf-8")
+    _git(files_repo, "add", ".")
+    _git(files_repo, "-c", "commit.gpgsign=false", "commit", "-qm", "target")
+    target = _git(files_repo, "rev-parse", "HEAD")
+    _git(files_repo, "checkout", "-q", "--detach", base)
+    (files_repo / "modified.txt").write_text("base side\n", encoding="utf-8")
+    _git(files_repo, "add", ".")
+    _git(files_repo, "-c", "commit.gpgsign=false", "commit", "-qm", "base side")
+    base = _git(files_repo, "rev-parse", "HEAD")
+    (files_repo / "modified.txt").write_text("local\n", encoding="utf-8")
+    result = invoke("list_pr_files", ["--git-range", f"{base}...{target}"], files_repo)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == b'["nested/path with space.txt"]\n'
+    assert result.stderr == b""
+
+
+@pytest.mark.parametrize(
+    "revision_range",
+    ["--output=sentinel", "HEAD --output=sentinel", "HEAD~1", "a" * 40 + "...--stat"],
+)
+def test_git_range_refuses_option_injection(
+    revision_range, monkeypatch, tmp_path, invoke
+):
+    from gauntlet import proc
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid range must not reach git")
+
+    monkeypatch.setattr(proc, "run_bytes", forbidden)
+    result = invoke("list_pr_files", [f"--git-range={revision_range}"], tmp_path)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert b"--git-range must be HEAD or <base_sha>...<target_sha>" in result.stderr
+
+
+def test_git_failure_stops_without_json(tmp_path, invoke):
+    result = invoke("list_pr_files", ["--git-range", "HEAD"], tmp_path)
+    assert result.returncode == 1
+    assert result.stdout == b""
+    assert b"FAILED: file listing failed:" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--git-range", "HEAD", "--pr", "7"],
+        ["--git-range", "HEAD", "--platform", "github"],
+        ["--platform", "github"],
+    ],
+)
+def test_file_listing_refuses_incomplete_or_mixed_modes(arguments, tmp_path, invoke):
+    result = invoke("list_pr_files", arguments, tmp_path)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert result.stderr
 
 
 def _invoke(invoke, tmp_path, platform="gitlab", script="list_pr_files"):

@@ -913,7 +913,7 @@ def test_pr_view_and_gitlab_listing_timeouts(platform, monkeypatch):
         adapter.pr_view(7)
         assert calls == [
             (
-                ["gh", "pr", "view", "7", "--json", "state,isDraft,url"],
+                ["gh", "pr", "view", "7", "--json", "state,isDraft,url,headRefOid"],
                 {"timeout": 30},
             ),
         ]

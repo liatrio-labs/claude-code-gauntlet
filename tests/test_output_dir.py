@@ -1,11 +1,14 @@
 """Output directories are returned only after their ignore gate succeeds."""
 
+import ntpath
 import os
+import posixpath
 import subprocess
 from pathlib import Path
 
 import pytest
 from gauntlet import output_dir as eod
+from gauntlet.paths import wire_path
 
 
 @pytest.fixture
@@ -37,6 +40,7 @@ def output_cli(invoke, monkeypatch, output_repo):
 def assert_created_ignored(result, repo, target):
     assert result.returncode == 0, result.stderr
     actual = Path(result.stdout.decode("utf-8").strip())
+    assert result.stdout.decode("utf-8").strip() == target.resolve().as_posix()
     assert actual == target.resolve()
     assert actual.is_dir()
     assert (
@@ -337,3 +341,22 @@ def test_missing_cwd_reports_one_git_error_line(invoke, tmp_path):
     lines = stderr.splitlines()
     assert len(lines) == 1
     assert lines[0][len(prefix) :]
+
+
+@pytest.mark.parametrize(
+    "path_module,raw,expected",
+    [
+        (posixpath, r"/tmp/a\b", r"/tmp/a\b"),
+        (ntpath, r"D:\Work\repo", "D:/Work/repo"),
+        (ntpath, r"\\host\share\repo", None),
+        (ntpath, "//host/share/repo", None),
+    ],
+)
+def test_wire_roots(path_module, raw, expected):
+    if expected is None:
+        with pytest.raises(
+            ValueError, match="UNC roots are unsupported; use a mapped drive"
+        ):
+            wire_path(raw, separator=path_module.sep)
+    else:
+        assert wire_path(raw, separator=path_module.sep) == expected

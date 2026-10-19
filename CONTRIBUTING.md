@@ -334,11 +334,17 @@ claude plugin validate .
 pre-commit run --all-files
 ```
 
-`python -m pytest tests/ -q` runs on Linux, macOS and Windows. That covers the
-test suite only: the plugin itself does not yet run on Windows, because the
-workflow waist refuses Windows drive paths (#351). The Node
-suite (`workflows/test`) and `bench/tests` run in CI on Linux only; on Windows,
-run them under WSL or skip them. Scripts write UTF-8 with LF on every OS;
+`python -m pytest tests/ -q` runs on Linux, macOS and Windows. Windows requires
+Git for Windows and Python 3.10+ reachable as `python3`, `python`, or `py -3`.
+The manual `windows_live: true` input on CI runs a live headless local-changes
+review on windows-latest, using the `windows-live` environment and subscription
+token behind a required reviewer. Windows CI covers command execution and PR
+checkout and posting where tests do not rely on shebang fake CLIs; no live forge
+review runs on Windows.
+The job pins its Claude Code version, so rerun it only for changes to path
+handling, interpreter selection, shell commands, the job itself, or that pin.
+The Node suite (`workflows/test`) and `bench/tests` run in CI on Linux.
+Scripts write UTF-8 with LF on every OS;
 `tests/test_text_io_guard.py` checks known standard-library file, path,
 compression, temporary-file, logging, and subprocess calls; it requires a
 literal encoding for supported text-mode calls and rejects APIs that cannot
