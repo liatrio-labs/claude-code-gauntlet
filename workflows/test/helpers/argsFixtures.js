@@ -2,6 +2,11 @@ import { fnv1a32, isPlainObject, normalizeReviewText } from '../../src/wire.js';
 import { reviewMdSetChecksum } from '../../src/args.js';
 import { KNOB_REGISTRY } from '../../src/knobs.js';
 
+export function emptyRemovedTests() {
+  const body = { status: 'available', items: [], omitted: 0 };
+  return { ...body, checksum: fnv1a32(JSON.stringify(body, null, 2)) };
+}
+
 export function checkpointArgs(checkpoints) {
   if (!isPlainObject(checkpoints) || Object.hasOwn(checkpoints, 'checksum')) return { checkpoints };
   const phases = checkpoints.phases === undefined ? checkpoints : checkpoints.phases;
@@ -24,6 +29,7 @@ export function validArgs(over = {}) {
   const changedFiles = over.changedFiles || ['a.js'];
   const base = {
     argsVersion: 1,
+    removedTests: emptyRemovedTests(),
     mode: 'headless',
     repoRoot: '/repo',
     outputDir: '/repo/.code-gauntlet',
@@ -69,7 +75,7 @@ export function validArgs(over = {}) {
 
 export function interactiveArgs(over = {}) {
   return structuredClone({
-    argsVersion: 1, mode: 'interactive', repoRoot: '/r', outputDir: '/r/.code-gauntlet',
+    argsVersion: 1, removedTests: emptyRemovedTests(), mode: 'interactive', repoRoot: '/r', outputDir: '/r/.code-gauntlet',
     headShaShort: 'abc123', nonce: 'n-1', generatedAt: '2026-07-18T00:00:00Z',
     diffPath: '/r/.code-gauntlet/d.patch', changedFilesPath: '/r/.code-gauntlet/f.json',
     changedFiles: ['a.js'], changedLines: 1, reviewConfigPath: null,

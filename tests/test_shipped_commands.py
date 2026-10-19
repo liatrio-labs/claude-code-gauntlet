@@ -226,7 +226,11 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
         b'</untrusted-code-content id="ID">\n'
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout == b'{"contextLines": 12, "contextChars": 243}\n'
+    assert result.stdout == (
+        b'{"contextLines": 12, "contextChars": 243, "removedTests": '
+        b'{"status": "available", "items": [], "omitted": 0, '
+        b'"checksum": "fnv1a32:0x6c377a08"}}\n'
+    )
     assert result.stderr == b""
     assert (
         normalize_frame_ids(

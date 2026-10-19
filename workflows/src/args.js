@@ -7,6 +7,11 @@ import { KNOB_REGISTRY, computeLightEligible, receiptEntryFor, receiptEntryForKe
 import { deriveWhenHolds, deriveConfigWaist, configEchoValue, validateConfigEcho } from './knobs.js';
 import { PYTHON_COMMAND_ARGV, dottedValue, isPlainObject, deepFreeze, fnv1a32, normalizeReviewText } from './wire.js';
 import { buildReviewConfig, loadExclusions } from './reviewConfig.js';
+import { validateRemovedTests } from './removedTests.js';
+
+export function resolveRemovedTestsArgs(args) {
+  return validateRemovedTests(args.removedTests);
+}
 
 export const ARGS_VERSION = 1;
 

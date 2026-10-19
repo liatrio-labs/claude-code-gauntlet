@@ -763,6 +763,7 @@ def foreign_reads(source):
         "validate_input_shape": {"findings"},
         "validate_diff_lines": {"classification"},
         "run_receipt": {"findings", "base_branch", "verified"},
+        "_has_removed_test_location": {"path", "old_start", "old_end"},
     }
     bad = []
     sites = {

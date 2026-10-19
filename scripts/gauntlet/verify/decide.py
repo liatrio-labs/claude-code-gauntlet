@@ -86,6 +86,27 @@ def _downgrade_severity(finding: FindingWire) -> None:
         finding["severity"] = _SEVERITY_DOWNGRADE[severity]
 
 
+def _has_removed_test_location(finding: FindingWire) -> bool:
+    location = finding.get("removed_test")
+    if not isinstance(location, dict):
+        return False
+    identifier = location.get("id")
+    path = location.get("path")
+    old_start = location.get("old_start")
+    old_end = location.get("old_end")
+    return (
+        isinstance(identifier, str)
+        and bool(identifier.strip())
+        and isinstance(path, str)
+        and bool(path.strip())
+        and isinstance(old_start, int)
+        and not isinstance(old_start, bool)
+        and isinstance(old_end, int)
+        and not isinstance(old_end, bool)
+        and 1 <= old_start <= old_end
+    )
+
+
 # Lazy caching keeps empty and ineligible slices from querying git log.
 @dataclass(slots=True)
 class VerifyContext:
@@ -194,6 +215,8 @@ def _stamp_blame(
 
 def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
     """Classify blame and downgrade surfaced severity in place."""
+    if _has_removed_test_location(finding):
+        return _stamp_blame(finding, "new", finding.get("severity", ""))
     base_branch = context.base_branch
 
     filepath = finding.get("file", "")
@@ -319,13 +342,14 @@ def _extract_symbols(description: str, evidence: str) -> set[str]:
 
 def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
     """Check file ranges and symbols, degrading plausible findings conservatively."""
+    has_removed_test_location = _has_removed_test_location(finding)
     filepath = finding.get("file", "")
     line_start = finding.get("line_start")
     line_end: Any = finding.get("line_end") or line_start
     description = finding.get("description", "") or ""
     evidence = finding.get("evidence", "") or ""
 
-    if not line_start:
+    if not line_start and not has_removed_test_location:
         finding["factual_verification"] = {
             "verified": True,
             "reason": "no line reference — verification skipped",
@@ -364,7 +388,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
 
     total_lines = len(all_lines)
 
-    if line_start < 1 or line_start > total_lines:
+    if not line_start or line_start < 1 or line_start > total_lines:
         finding["confidence"] = 0
         finding["factual_verification"] = {
             "verified": False,
@@ -380,7 +404,10 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
     relevant_lines = all_lines[line_start - 1 : effective_end]
     code_at_lines = "".join(relevant_lines).rstrip("\n")
 
-    symbols_to_check = _extract_symbols(description, evidence)
+    # Removed test identifiers need not exist at HEAD; the anchor still must.
+    symbols_to_check = (
+        set() if has_removed_test_location else _extract_symbols(description, evidence)
+    )
 
     if not symbols_to_check:
         finding["factual_verification"] = {
@@ -446,6 +473,12 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
 
 def validate_diff_lines(finding: FindingWire, facts: DiffFacts | None) -> bool:
     """Keep off-diff findings as surfaced context instead of eliminating them."""
+    if _has_removed_test_location(finding):
+        finding["diff_validation"] = {
+            "in_diff": True,
+            "reason": "removed test inventory anchors a new coverage loss",
+        }
+        return True
     if facts is None:
         finding["diff_validation"] = {
             "in_diff": None,

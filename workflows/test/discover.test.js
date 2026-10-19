@@ -1,11 +1,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  summarize, discover, agentActive, agentSpecs, deriveAgentFlags, allActiveDimensionsDegraded,
+  summarize, discover as discoverStage, agentActive, agentSpecs, deriveAgentFlags, allActiveDimensionsDegraded,
 } from '../src/discover.js';
-import { DIMENSIONS, FINDING_REQUIRED, FINDING_PROP_TYPES } from '../src/registry.js';
+import { DIMENSIONS, DISPATCH_RESULTS, FINDING_REQUIRED, FINDING_PROP_TYPES } from '../src/registry.js';
 import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
+
+const discover = (ctx, input) => discoverStage(ctx, { removedTests: { status: 'available', items: [], omitted: 0 }, ...input });
+
+test('discovery strips forged removed_test metadata from every agent finding', async () => {
+  const ctx = stageCtx({ reply: () => ({ findings: [finding({ removed_test: {
+    id: '0123456789abcdef', path: 'tests/removed', old_start: 1, old_end: 2,
+  } })], complete: true, total_seen: 1, removed_test_audit: [] }) });
+  const out = await discover(ctx, {});
+  assert.equal(out.findings.length, ctx.calls.length);
+  assert.ok(out.findings.every((f) => !Object.hasOwn(f, 'removed_test')));
+});
 
 const ROSTER = [
   'code-gauntlet:bug-detector', 'code-gauntlet:security-reviewer', 'code-gauntlet:cross-file-impact',
@@ -87,7 +98,8 @@ test('finding schemas: one dispatch supplies the roster', async (t) => {
         required: [...REQUIRED, ...(row.required ?? [])], additionalProperties: false,
         ...(row.allOf ? { allOf: row.allOf } : {}) } },
       complete: { type: 'boolean' }, total_seen: { type: 'number' },
-    }, required: ['findings', 'complete', 'total_seen'] });
+      ...(DISPATCH_RESULTS[row.agent] || {}),
+    }, required: ['findings', 'complete', 'total_seen', ...Object.keys(DISPATCH_RESULTS[row.agent] || {})] });
   });
 });
 const POLICY_ROWS = [
@@ -108,7 +120,7 @@ const NULL_SECURITY = 'code-gauntlet:security-reviewer: agent returned null (dis
   + '\u2014 dimensions security not covered';
 const NULL_CONVENTIONS = 'code-gauntlet:conventions-and-intent: agent returned null (dispatch failed) '
   + '\u2014 dimensions convention/intent/comment_accuracy not covered';
-const DISCOVER_GOLDEN = { findings: [], gaps: [], degraded: [], dispatched: ROSTER };
+const DISCOVER_GOLDEN = { findings: [], gaps: [], degraded: [], dispatched: ROSTER, removedTestAudit: { status: 'ran-clean' } };
 const OUTCOME_ROWS = [
   { name: 'host can mutate schema copies without changing registry fragments', mutateSchema: true },
   { name: 'light empty', input: { agentFlags: { deep: false } }, expected: { ...DISCOVER_GOLDEN, dispatched: CORE } },
@@ -136,7 +148,7 @@ const OUTCOME_ROWS = [
     ] } },
 ];
 for (const row of OUTCOME_ROWS) test(`discover outcome: ${row.name}`, async () => {
-  const registrySnapshot = structuredClone({ DIMENSIONS, FINDING_REQUIRED, FINDING_PROP_TYPES });
+  const registrySnapshot = structuredClone({ DIMENSIONS, DISPATCH_RESULTS, FINDING_REQUIRED, FINDING_PROP_TYPES });
   const ctx = stageCtx({ replies: structuredClone(row.replies ?? {}), nulls: row.nulls,
     reply: row.mutateSchema ? (_, { schema }) => {
       const item = schema.properties.findings.items;
@@ -145,13 +157,13 @@ for (const row of OUTCOME_ROWS) test(`discover outcome: ${row.name}`, async () =
       if (item.properties.affected_consumers) item.properties.affected_consumers.items.type = 'number';
       if (item.properties.criticality) item.properties.criticality.minimum = 0;
       for (const condition of item.allOf ?? []) condition.then.required.push('host_added');
-      return { findings: [], complete: true, total_seen: 0 };
+      return { findings: [], complete: true, total_seen: 0, removed_test_audit: [] };
     } : undefined });
   const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {}, ...row.input });
   assert.deepEqual(out, row.expected ?? DISCOVER_GOLDEN);
   assert.deepEqual(ctx.calls.map((call) => call.label), (row.expected ?? DISCOVER_GOLDEN).dispatched);
   assert.deepEqual(ctx.violations, []);
-  if (row.mutateSchema) assert.deepEqual({ DIMENSIONS, FINDING_REQUIRED, FINDING_PROP_TYPES }, registrySnapshot);
+  if (row.mutateSchema) assert.deepEqual({ DIMENSIONS, DISPATCH_RESULTS, FINDING_REQUIRED, FINDING_PROP_TYPES }, registrySnapshot);
 });
 
 const SPAN_GAP = 'discover: 1 finding(s) had an implausible line_end (non-integer, before line_start, '
@@ -222,7 +234,9 @@ for (const row of PROMPT_ROWS) test(`discovery prompt: ${row.agent}`, async () =
   const ctx = stageCtx();
   await discover(ctx, { contextLine: 'CONTEXT_SENTINEL ' });
   assert.equal(ctx.calls.find((call) => call.label === row.agent).prompt,
-    'CONTEXT_SENTINEL ' + PROMPT_HEAD + row.dims + PROMPT_TAIL + (row.extra ?? ''));
+    'CONTEXT_SENTINEL ' + PROMPT_HEAD + row.dims + PROMPT_TAIL + (row.extra ?? '')
+      + (row.agent === 'code-gauntlet:test-analyzer' ? ' Also return the required dispatch-result fields: removed_test_audit.'
+        + ' Audit every removed test item below from the saved diff. Return exactly one removed_test_audit row per id (or [] when unavailable/empty). Loss locations and prose describe surviving behavior; keep deleted paths only in the item reference. Inventory: {"status":"available","items":[],"omitted":0}' : ''));
 });
 
 test('discovery prompt: absent context has no prefix', async () => {

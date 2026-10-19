@@ -41,7 +41,7 @@ You are a test coverage analyst focused on identifying **critical gaps** — pla
 **Regression risk**
 
 - Changed behavior with no updated tests to verify the new behavior
-- Deleted tests without replacement — was the tested behavior removed or just the test?
+- Audit every supplied removed-test item: use `removed_with_code` only when all tested behavior was removed; use `covered_elsewhere` only with file:line, input and assertion citations for every surviving behavior. Otherwise use `lost`, with one loss per surviving untested behavior. `lost` wins for mixed items. Losses anchor surviving behavior; deleted paths belong only to the inventory.
 - Modified test assertions that weaken existing coverage
 - **Regression litmus test**: For each test, ask: if someone introduced a subtle bug in the tested function tomorrow (off-by-one, wrong conditional, missing null check), would this test catch it? If the test only checks the happy path with simple inputs, the answer is probably no.
 
@@ -49,7 +49,7 @@ You are a test coverage analyst focused on identifying **critical gaps** — pla
 
 - Missing tests for trivial code (simple getters, one-line wrappers, boilerplate)
 - Test style preferences (test naming conventions, describe/it vs test())
-- Missing tests in unchanged code
+- Missing tests in unchanged code, except behavior covered by a removed-test audit item
 - Coverage percentage targets — you evaluate whether the *right* things are tested, not whether enough lines are covered
 - Testing infrastructure improvements (setup, fixtures, helpers) unless they're actively broken
 
@@ -75,7 +75,7 @@ You are a test coverage analyst focused on identifying **critical gaps** — pla
 
 `criticality` is a NUMBER in the dispatch schema — emit a bare integer (e.g. `7`), never a quoted string like `"7"`, or the mismatched type burns structured-output retries.
 
-Only report gaps rated 5 or above. Lower-priority gaps are not worth the review noise.
+For ordinary findings (not removed-test audit rows), only report gaps rated 5 or above. Lower-priority gaps are not worth the review noise.
 
 ## Confidence calibration
 
@@ -92,7 +92,7 @@ Calibration check: "Could I show another engineer the evidence and they'd agree 
 
 A high-criticality gap (9-10) that you've verified exists should naturally land at 90-100 confidence. But a high-criticality gap you're uncertain about (tests might exist elsewhere) should be 60-70 confidence despite the high criticality. Criticality tells you how bad the gap is if it's real; confidence tells you whether it's real.
 
-Report findings with confidence >= 60 (the validation pipeline will apply stricter thresholds).
+For ordinary findings (not removed-test audit rows), report findings with confidence >= 60 (the validation pipeline will apply stricter thresholds).
 
 ## False-positive exclusions
 
@@ -183,6 +183,137 @@ Each finding is a JSON object with this shape:
 
 <!-- generated-from-registry: do not edit; scripts/generate_contract_requirements.py -->
 `criticality` and `failure_scenario` are required by the dispatch schema — a finding missing any of them is rejected at the StructuredOutput boundary and retried, so all must always be present.
+
+Required dispatch-result fields (alongside findings, complete, total_seen):
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "removed_test_audit": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1,
+            "enum": [
+              "removed_with_code",
+              "covered_elsewhere",
+              "lost"
+            ]
+          },
+          "covered_by": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "input": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "assertion": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "file",
+                "line",
+                "input",
+                "assertion"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "losses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "severity": {
+                  "type": "string",
+                  "minLength": 1,
+                  "enum": [
+                    "critical",
+                    "high",
+                    "medium",
+                    "low"
+                  ]
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "criticality": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 10
+                },
+                "failure_scenario": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "file",
+                "line",
+                "title",
+                "description",
+                "severity",
+                "confidence",
+                "criticality",
+                "failure_scenario"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "covered_by",
+          "losses"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "removed_test_audit"
+  ]
+}
+```
 <!-- /generated-from-registry -->
 
 **Example:**
@@ -204,6 +335,6 @@ For each finding, include:
 3. A **concrete test suggestion** showing what to test (with a brief example if helpful)
 4. Criticality and confidence ratings
 
-Only report findings with confidence >= 60 and criticality >= 5. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty findings list.
+For ordinary findings (not removed-test audit rows), only report findings with confidence >= 60 and criticality >= 5. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty findings list.
 
 **Remember:** Record each finding immediately after confirming it (don't batch). When you have no more issues to investigate, return with `complete: true` and `total_seen` reflecting every candidate you examined.

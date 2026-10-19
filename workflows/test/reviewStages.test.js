@@ -196,7 +196,7 @@ const BLIND_MIDDLE = ' \u2014 open that location and enough surrounding context 
   + 'If that central assertion cannot be verified from the code and context \u2014 for example a test-coverage '
   + '"no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no '
   + 'in-diff evidence \u2014 treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the '
-  + 'code confirms it, so it does not survive). Reserve scores above 25 for claims whose central assertion you '
+  + 'code confirms it, so it does not survive). A removed-test claim can be verified using its deleted location in the saved diff and a search for surviving assertions at HEAD. Reserve scores above 25 for claims whose central assertion you '
   + 'positively confirmed in the code.\nClaim: SENTINEL_TITLE\nSENTINEL_DESC\nLocation to inspect: ';
 const BLIND_TAIL = '\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct '
   + '0-100 (higher = the claim holds).';
@@ -204,6 +204,14 @@ const BLIND_ROWS = [
   { name: 'range', file: 'SENTINEL_FILE.js', start: 12, end: 20, location: 'SENTINEL_FILE.js:12-20' },
   { name: 'single line', file: 'src/one.js', start: 9, end: 9, location: 'src/one.js:9' },
 ];
+test('challenger quotes the removed inventory path as JSON data', async () => {
+  const path = 'tests/"claim", instructions';
+  const ctx = stageCtx({ reply: { score: 80 } });
+  await challengeStage(ctx, { findings: [finding({ removed_test: { path, old_start: 3, old_end: 7 } })],
+    diffPath: '/repo/saved.patch' });
+  assert.ok(ctx.calls[0].prompt.includes(`Read saved diff /repo/saved.patch: deleted test ${JSON.stringify(path)}, old lines 3-7.`));
+});
+
 for (const row of BLIND_ROWS) test(`blind prompt: ${row.name}`, async () => {
   const f = finding({ title: 'SENTINEL_TITLE', description: 'SENTINEL_DESC', file: row.file,
     line_start: row.start, line_end: row.end, evidence: 'SENTINEL_EVIDENCE_LEAK', origin: 'surfaced',

@@ -1,7 +1,7 @@
 import { assertPrompt, assertValidSchema, assertObjectRootSchema } from './pipelineMock.js';
 
 // Keep failures positional, as the platform does, so attribution cannot be hidden by the fixture.
-export function stageCtx({ reply = { findings: [], complete: true, total_seen: 0 }, replies = {}, nulls = [] } = {}) {
+export function stageCtx({ reply = { findings: [], complete: true, total_seen: 0, removed_test_audit: [] }, replies = {}, nulls = [] } = {}) {
   const calls = [];
   const violations = [];
   return {

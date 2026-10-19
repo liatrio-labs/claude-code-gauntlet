@@ -1,8 +1,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeArgs, normalizeArgsReport, validateArgs, stripNullOptionalsReport } from '../src/args.js';
+import { normalizeArgs, normalizeArgsReport, validateArgs, stripNullOptionalsReport, resolveRemovedTestsArgs } from '../src/args.js';
+import { fnv1a32 } from '../src/wire.js';
 import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, resolveReviewConfig } from '../src/args.js';
 import { interactiveArgs, headlessArgs, priorReviewDetector, prIdentity, reviewMdArgs } from './helpers/argsFixtures.js';
+
+test('removed-test args treat every inventory path control character as unavailable', () => {
+  const controls = [...Array.from({ length: 32 }, (_, i) => i),
+    ...Array.from({ length: 33 }, (_, i) => i + 127), 0x2028, 0x2029];
+  for (const code of controls) {
+    const body = { status: 'available', items: [{ id: '0123456789abcdef',
+      path: `tests/control${String.fromCodePoint(code)}path`, old_start: 1, old_end: 2, kind: 'deleted_file' }], omitted: 0 };
+    const removedTests = { ...body, checksum: fnv1a32(JSON.stringify(body, null, 2)) };
+    assert.deepEqual(resolveRemovedTestsArgs({ removedTests }), {
+      status: 'unavailable', items: [], omitted: 0, reason: 'invalid inventory item',
+    }, `U+${code.toString(16)}`);
+  }
+});
 
 const REJECTION_ROWS = [
   ...[['python', 'python3;id', 'python3, python, py -3']].map(([key, value, allowed]) => ({

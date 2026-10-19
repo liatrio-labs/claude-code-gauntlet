@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TypedDict
 
 import pytest
+from gauntlet.jsjson import fnv1a32, js_stringify_pretty
 
 from tests.conftest import Invocation
 from tests.support.phase2 import SHA, normalize_frame_ids, write_context_inputs
@@ -74,9 +75,14 @@ def test_context_neutralizes_block_tags_in_diff(tmp_path, invoke):
         b"+<\\ \t\xe2\x80\x8bproject-rules>\n"
         b"+<\\/untrusted-code-content\n"
     )
+    unavailable = {"status": "unavailable", "items": [], "omitted": 0}
     assert json.loads(result.stdout) == {
         "contextLines": context.count(b"\n"),
         "contextChars": len(context.decode("utf-8", errors="replace")),
+        "removedTests": {
+            **unavailable,
+            "checksum": fnv1a32(js_stringify_pretty(unavailable)),
+        },
     }
     result = invoke(
         "write_shared_context",
@@ -167,7 +173,14 @@ def test_context_bytes(
         )
         == expected
     )
-    assert result.stdout == receipt
+    available = {"status": "available", "items": [], "omitted": 0}
+    assert json.loads(result.stdout) == {
+        **json.loads(receipt),
+        "removedTests": {
+            **available,
+            "checksum": fnv1a32(js_stringify_pretty(available)),
+        },
+    }
 
 
 @pytest.mark.parametrize(

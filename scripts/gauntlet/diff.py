@@ -126,18 +126,31 @@ def _decode_header_path(field: str) -> str:
         return field
 
 
-def _walk_diff_indexed(lines: list[str]) -> Iterator[tuple[int, DiffEvent]]:
+class DiffStructureError(ValueError):
+    """A strict consumer cannot account for all hunk lines."""
+
+
+def _walk_diff_indexed(
+    lines: list[str], *, strict: bool = False
+) -> Iterator[tuple[int, DiffEvent]]:
     old_line = new_line = old_rem = new_rem = 0
+    pending_old_header = False
 
     for line_index, raw_line in enumerate(lines):
         if old_rem <= 0 and new_rem <= 0:
             if raw_line.startswith(_GIT_HEADER_PREFIX):
+                if strict and pending_old_header:
+                    raise DiffStructureError("unpaired old path")
                 yield (
                     line_index,
                     HeaderEvent("git_header", raw_line[len(_GIT_HEADER_PREFIX) :]),
                 )
             elif path_match := _PATH_HEADER_RE.match(raw_line):
                 marker, field = path_match.groups()
+                if strict:
+                    if (marker == "---") == pending_old_header:
+                        raise DiffStructureError("unpaired diff paths")
+                    pending_old_header = marker == "---"
                 yield (
                     line_index,
                     HeaderEvent(
@@ -154,6 +167,11 @@ def _walk_diff_indexed(lines: list[str]) -> Iterator[tuple[int, DiffEvent]]:
                 new_rem = 1 if new_count is None else int(new_count)
                 yield line_index, HunkEvent(old_line, new_line, old_rem, new_rem)
 
+            elif strict and (
+                raw_line.startswith("@@") or raw_line.startswith(("+", "-", " "))
+            ):
+                raise DiffStructureError("malformed hunk header or excess body")
+
             # Header-zone noise must not become phantom lines in the preceding file.
             continue
 
@@ -162,6 +180,14 @@ def _walk_diff_indexed(lines: list[str]) -> Iterator[tuple[int, DiffEvent]]:
         if raw_line.startswith("\\"):
             # `\ No newline at end of file` belongs to neither side.
             continue
+
+        if strict and (
+            not raw_line.startswith(("+", "-", " "))
+            or (raw_line.startswith("+") and new_rem <= 0)
+            or (raw_line.startswith("-") and old_rem <= 0)
+            or (raw_line.startswith(" ") and (old_rem <= 0 or new_rem <= 0))
+        ):
+            raise DiffStructureError("broken hunk budget")
 
         if raw_line.startswith("+"):
             new_rem -= 1
@@ -180,10 +206,15 @@ def _walk_diff_indexed(lines: list[str]) -> Iterator[tuple[int, DiffEvent]]:
             new_line += 1
             old_line += 1
 
+    if strict and (old_rem != 0 or new_rem != 0):
+        raise DiffStructureError("truncated hunk")
+    if strict and pending_old_header:
+        raise DiffStructureError("unpaired old path")
 
-def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
+
+def walk_diff(diff_text: str, *, strict: bool = False) -> Iterator[DiffEvent]:
     lines, _ = _split_lines(diff_text)
-    for _, event in _walk_diff_indexed(lines):
+    for _, event in _walk_diff_indexed(lines, strict=strict):
         yield event
 
 

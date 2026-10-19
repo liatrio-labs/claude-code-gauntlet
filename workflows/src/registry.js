@@ -17,6 +17,8 @@ const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and na
 // Scope gating is opt-out so absent flags preserve full review; null flags keep core agents ungateable.
 const DEEP = 'deep';
 
+export const AGENT_TYPE_TEST_ANALYZER = 'code-gauntlet:test-analyzer';
+
 // Share ordered identity checks with validation, rendering, and generated references so their contracts cannot drift.
 export const SHA_FULL_RE = /^[0-9a-f]{40}$/;
 export const WEB_ORIGIN_RE = new RegExp(
@@ -91,10 +93,39 @@ export const FINDING_PROP_TYPES = deepFreeze({
 export const FINDING_PATH_ARRAY_FIELDS = deepFreeze(['cross_file_refs', 'affected_consumers']);
 
 // Identifiers must not collide; structural paths and suggestion code retain their own semantics.
-export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code']);
+export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code', 'removed_test']);
 
 // Flat required fields must be unconditional for every dimension in a dispatch to avoid forcing fabricated sibling fields.
 export const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
+
+export const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
+
+const closedDispatchRow = (properties) => ({
+  type: 'object', properties, required: Object.keys(properties), additionalProperties: false,
+});
+
+export const DISPATCH_RESULTS = deepFreeze({
+  [AGENT_TYPE_TEST_ANALYZER]: {
+    removed_test_audit: {
+      type: 'array', items: closedDispatchRow({
+        id: { type: 'string', minLength: 1 },
+        status: { type: 'string', minLength: 1, enum: ['removed_with_code', 'covered_elsewhere', 'lost'] },
+        covered_by: { type: 'array', items: closedDispatchRow({
+          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
+          input: { type: 'string', minLength: 1 }, assertion: { type: 'string', minLength: 1 },
+        }) },
+        losses: { type: 'array', items: closedDispatchRow({
+          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
+          title: { type: 'string', minLength: 1 }, description: { type: 'string', minLength: 1 },
+          severity: { type: 'string', minLength: 1, enum: SEVERITY_ORDER },
+          confidence: { type: 'number', minimum: 0, maximum: 100 },
+          criticality: { type: 'number', minimum: 1, maximum: 10 },
+          failure_scenario: { type: 'string', minLength: 1 },
+        }) },
+      }),
+    },
+  },
+});
 
 // `requiredWhenDimension` names fields the owning contract emits
 // within one dimension; sibling dimensions omit them, so a flat dispatch requirement
@@ -107,7 +138,7 @@ export const DIMENSIONS = deepFreeze([
   { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
     schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'],
       requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP,
+  { dimension: 'test_coverage', agentType: AGENT_TYPE_TEST_ANALYZER, conditionalFlag: DEEP,
     // Bound the impact scale at dispatch; confidence remains unbounded here because runtime validators adjust it.
     schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
     requiredExtra: ['criticality', 'failure_scenario'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
@@ -129,6 +160,7 @@ export const DIMENSIONS = deepFreeze([
 
 // Keep pipeline stamp names code-owned so disclosure can use a safe other fallback for unknown fields.
 const PIPELINE_FINDING_FIELDS = deepFreeze([
+  'removed_test',
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
   'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
@@ -155,7 +187,7 @@ export const AGENT_LABELS = deepFreeze({
   'code-gauntlet:bug-detector': 'Correctness & Error Handling',
   'code-gauntlet:security-reviewer': 'Security',
   'code-gauntlet:cross-file-impact': 'Cross-file Impact',
-  'code-gauntlet:test-analyzer': 'Test Coverage',
+  [AGENT_TYPE_TEST_ANALYZER]: 'Test Coverage',
   'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
   'code-gauntlet:type-design-analyzer': 'Type Design',
   'code-gauntlet:code-simplifier': 'Code Simplification',
@@ -243,8 +275,6 @@ export const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
 });
 
 export const FIELD_RENAMES = deepFreeze({ body: 'description', line: 'line_start', blame_tag: 'origin' });
-
-export const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
 
 export const REVIEW_SETTING_KEYS = deepFreeze([
   'confidence_threshold',

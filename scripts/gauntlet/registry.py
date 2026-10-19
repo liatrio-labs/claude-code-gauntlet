@@ -56,7 +56,112 @@ VERIFY_SLICE_FIELDS: tuple[str, ...] = (
     "confidence",
     "cross_file_refs",
     "origin",
+    "removed_test",
 )
+
+DISPATCH_RESULTS = {
+    "code-gauntlet:test-analyzer": {
+        "removed_test_audit": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                    "status": {
+                        "type": "string",
+                        "minLength": 1,
+                        "enum": ["removed_with_code", "covered_elsewhere", "lost"],
+                    },
+                    "covered_by": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                },
+                                "line": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                },
+                                "input": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                },
+                                "assertion": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                },
+                            },
+                            "required": ["file", "line", "input", "assertion"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "losses": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                },
+                                "line": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                },
+                                "title": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                },
+                                "severity": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "enum": ["critical", "high", "medium", "low"],
+                                },
+                                "confidence": {
+                                    "type": "number",
+                                    "minimum": 0,
+                                    "maximum": 100,
+                                },
+                                "criticality": {
+                                    "type": "number",
+                                    "minimum": 1,
+                                    "maximum": 10,
+                                },
+                                "failure_scenario": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                },
+                            },
+                            "required": [
+                                "file",
+                                "line",
+                                "title",
+                                "description",
+                                "severity",
+                                "confidence",
+                                "criticality",
+                                "failure_scenario",
+                            ],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["id", "status", "covered_by", "losses"],
+                "additionalProperties": False,
+            },
+        },
+    },
+}
 
 BRAND_MARK = "⚔️"
 
@@ -370,6 +475,7 @@ class VerifySliceFinding(TypedDict, total=False):
     confidence: Any
     cross_file_refs: Any
     origin: Any
+    removed_test: Any
 
 
 ARTIFACT_PATH_TEMPLATES = MappingProxyType(
