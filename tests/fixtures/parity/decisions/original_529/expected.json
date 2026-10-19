@@ -1,0 +1,21 @@
+[
+  {
+    "confidence": 46,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "original_confidence": 90,
+      "reason": "referenced symbol(s) not found in codebase: The, decisionreaches, jsnew_panel, missing_symbol, rules",
+      "symbols_checked": 8,
+      "symbols_missing": 5,
+      "verified": false
+    },
+    "id": "three-cross-file-paths",
+    "origin": "surfaced",
+    "severity": "medium",
+    "verified": true
+  }
+]

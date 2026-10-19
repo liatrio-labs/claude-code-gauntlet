@@ -1,0 +1,276 @@
+[
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "no extractable symbols \u2014 verification skipped",
+      "verified": true
+    },
+    "id": "diaeresis-snake",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "no extractable symbols \u2014 verification skipped",
+      "verified": true
+    },
+    "id": "diaeresis-punctuation",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 30,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "original_confidence": 90,
+      "reason": "referenced symbol(s) not found in codebase: nave_func",
+      "symbols_checked": 1,
+      "symbols_missing": 1,
+      "verified": false
+    },
+    "id": "diaeresis-backticks",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "no extractable symbols \u2014 verification skipped",
+      "verified": true
+    },
+    "id": "astral-snake",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "no extractable symbols \u2014 verification skipped",
+      "verified": true
+    },
+    "id": "astral-punctuation",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "no extractable symbols \u2014 verification skipped",
+      "verified": true
+    },
+    "id": "astral-suffix",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "file content and symbols verified",
+      "verified": true
+    },
+    "id": "nel-underscore",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "file content and symbols verified",
+      "verified": true
+    },
+    "id": "control-underscore",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "file content and symbols verified",
+      "verified": true
+    },
+    "id": "nel-backticks",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "file content and symbols verified",
+      "verified": true
+    },
+    "id": "control-backticks",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "no extractable symbols \u2014 verification skipped",
+      "verified": true
+    },
+    "id": "unicode-prose",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 55,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "original_confidence": 90,
+      "reason": "referenced symbol(s) not found in codebase: missing_symbol",
+      "symbols_checked": 2,
+      "symbols_missing": 1,
+      "verified": false
+    },
+    "id": "unclosed-fence",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 43,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "original_confidence": 90,
+      "reason": "referenced symbol(s) not found in codebase: langnew_panel, missing_symbol",
+      "symbols_checked": 3,
+      "symbols_missing": 2,
+      "verified": false
+    },
+    "id": "unclosed-fence-inline",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 67,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "original_confidence": 90,
+      "reason": "referenced symbol(s) not found in codebase: langAlphaTypeBetaType",
+      "symbols_checked": 3,
+      "symbols_missing": 1,
+      "verified": false
+    },
+    "id": "cross-field-fence",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 67,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "original_confidence": 90,
+      "reason": "referenced symbol(s) not found in codebase: langAlphaTypeBetaType",
+      "symbols_checked": 3,
+      "symbols_missing": 1,
+      "verified": false
+    },
+    "id": "multiline-dotall",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 55,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "original_confidence": 90,
+      "reason": "referenced symbol(s) not found in codebase: __important_func__",
+      "symbols_checked": 2,
+      "symbols_missing": 1,
+      "verified": false
+    },
+    "id": "stripped-underscores",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  }
+]

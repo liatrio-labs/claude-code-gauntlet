@@ -1,0 +1,78 @@
+[
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": false,
+      "reason": "lines 9-9 of 'lib/panel-run.js' not found in diff \u2014 tagged as surfaced (was: surfaced)"
+    },
+    "factual_verification": {
+      "code_at_lines": "stable_anchor();",
+      "reason": "file content and symbols verified",
+      "verified": true
+    },
+    "id": "old-off-diff",
+    "origin": "surfaced",
+    "severity": "medium",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": false,
+      "reason": "lines 1-1 of 'bin/review-next' not found in diff \u2014 tagged as surfaced (was: surfaced)"
+    },
+    "factual_verification": {
+      "code_at_lines": "important_func get_user_data join method obj path Foo bar",
+      "reason": "file content and symbols verified",
+      "verified": true
+    },
+    "id": "old-file",
+    "origin": "surfaced",
+    "severity": "medium",
+    "verified": true
+  },
+  {
+    "confidence": 0,
+    "diff_validation": null,
+    "elimination_reason": "evidence does not match file content",
+    "factual_verification": {
+      "code_at_lines": null,
+      "reason": "file not found: 'lib/missing.js'",
+      "verified": false
+    },
+    "id": "missing-file",
+    "origin": "new",
+    "severity": "high",
+    "verified": false
+  },
+  {
+    "confidence": 0,
+    "diff_validation": null,
+    "elimination_reason": "evidence does not match file content",
+    "factual_verification": {
+      "code_at_lines": null,
+      "reason": "line_start 99 out of range (file has 10 line(s))",
+      "verified": false
+    },
+    "id": "out-of-range",
+    "origin": "new",
+    "severity": "high",
+    "verified": false
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "no line reference \u2014 validation skipped"
+    },
+    "factual_verification": {
+      "code_at_lines": null,
+      "reason": "no line reference \u2014 verification skipped",
+      "verified": true
+    },
+    "id": "no-line",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  }
+]

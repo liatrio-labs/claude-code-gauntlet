@@ -1,0 +1,34 @@
+{
+  "repository": {
+    "base": {
+      "lib/panel-run.js": "old_panel();\ncontext_two\ncontext_three\ncontext_four\ncontext_five\ncontext_six\ncontext_seven\ncontext_eight\nstable_anchor();\nstable_tail();\n",
+      "bin/review-next": "important_func get_user_data join method obj path Foo bar\n",
+      "tests/test_review_rules.py": "block_symbol another_symbol inline_symbol AlphaType BetaType\n"
+    },
+    "head": {
+      "lib/panel-run.js": "new_panel();\ncontext_two\ncontext_three\ncontext_four\ncontext_five\ncontext_six\ncontext_seven\ncontext_eight\nstable_anchor();\nstable_tail();\n"
+    }
+  },
+  "findings": [
+    {
+      "id": "three-cross-file-paths",
+      "title": "Cross-file review decision reaches the wrong receipt",
+      "file": "lib/panel-run.js",
+      "line_start": 1,
+      "line_end": 1,
+      "description": "The `new_panel` receipt disagrees with `important_func` and the review rules.",
+      "evidence": "```js\nnew_panel();\n```\nThe `get_user_data` decision reaches `missing_symbol`.",
+      "severity": "high",
+      "confidence": 90,
+      "cross_file_refs": [
+        "lib/panel-run.js",
+        "bin/review-next",
+        "tests/test_review_rules.py"
+      ],
+      "removed_test": null,
+      "origin": "unknown",
+      "agent": "review-rules",
+      "suggestion": "Check the review decision against the recorded evidence."
+    }
+  ]
+}

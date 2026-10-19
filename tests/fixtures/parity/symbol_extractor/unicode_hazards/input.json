@@ -1,0 +1,84 @@
+{
+  "cases": [
+    {
+      "name": "diaeresis-snake",
+      "description": "na\u00efve_func",
+      "evidence": ""
+    },
+    {
+      "name": "diaeresis-punctuation",
+      "description": "na\u00efve_func()",
+      "evidence": ""
+    },
+    {
+      "name": "diaeresis-backticks",
+      "description": "`na\u00efve_func`",
+      "evidence": ""
+    },
+    {
+      "name": "astral-snake",
+      "description": "\ud835\udc65_func",
+      "evidence": ""
+    },
+    {
+      "name": "astral-punctuation",
+      "description": "\ud835\udc65_func()",
+      "evidence": ""
+    },
+    {
+      "name": "astral-suffix",
+      "description": "new_panel\ud835\udc65",
+      "evidence": ""
+    },
+    {
+      "name": "nel-underscore",
+      "description": "\u0085_func()",
+      "evidence": ""
+    },
+    {
+      "name": "control-underscore",
+      "description": "\u001c_func()",
+      "evidence": ""
+    },
+    {
+      "name": "nel-backticks",
+      "description": "`\u0085_func`",
+      "evidence": ""
+    },
+    {
+      "name": "control-backticks",
+      "description": "`\u001c_func`",
+      "evidence": ""
+    },
+    {
+      "name": "unicode-prose",
+      "description": "\u03a9\u4e2d na\u00efve \ud835\udc65",
+      "evidence": ""
+    },
+    {
+      "name": "unclosed-fence",
+      "description": "```lang\nnew_panel missing_symbol",
+      "evidence": ""
+    },
+    {
+      "name": "unclosed-fence-inline",
+      "description": "```lang\nnew_panel `missing_symbol`",
+      "evidence": ""
+    },
+    {
+      "name": "cross-field-fence",
+      "description": "```lang\nAlphaType",
+      "evidence": "BetaType\n```"
+    },
+    {
+      "name": "multiline-dotall",
+      "description": "```lang\nAlphaType\n\nBetaType\n```",
+      "evidence": ""
+    },
+    {
+      "name": "stripped-underscores",
+      "description": "`...__important_func__...`",
+      "evidence": ""
+    }
+  ]
+}

@@ -1,0 +1,256 @@
+{
+  "repository": {
+    "base": {
+      "lib/panel-run.js": "old_panel();\ncontext_two\ncontext_three\ncontext_four\ncontext_five\ncontext_six\ncontext_seven\ncontext_eight\nstable_anchor();\nstable_tail();\n",
+      "bin/review-next": "important_func get_user_data join method obj path Foo bar\n",
+      "tests/test_review_rules.py": "block_symbol another_symbol inline_symbol AlphaType BetaType\n"
+    },
+    "head": {
+      "lib/panel-run.js": "new_panel();\ncontext_two\ncontext_three\ncontext_four\ncontext_five\ncontext_six\ncontext_seven\ncontext_eight\nstable_anchor();\nstable_tail();\n"
+    }
+  },
+  "findings": [
+    {
+      "id": "removed-valid",
+      "title": "Verify decision parity",
+      "file": "lib/panel-run.js",
+      "line_start": 9,
+      "line_end": 9,
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "severity": "high",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "removed_test": {
+        "id": "0123456789abcdef",
+        "path": "tests/deleted_rules.py",
+        "old_start": 1,
+        "old_end": 2
+      },
+      "origin": "unknown",
+      "agent": "review-rules",
+      "suggestion": "Check the review decision against the recorded evidence."
+    },
+    {
+      "id": "removed-invalid-empty-id",
+      "title": "Verify decision parity",
+      "file": "lib/panel-run.js",
+      "line_start": 9,
+      "line_end": 9,
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "severity": "high",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "removed_test": {
+        "id": "",
+        "path": "tests/deleted_rules.py",
+        "old_start": 1,
+        "old_end": 2
+      },
+      "origin": "unknown",
+      "agent": "review-rules",
+      "suggestion": "Check the review decision against the recorded evidence."
+    },
+    {
+      "id": "removed-invalid-blank-path",
+      "title": "Verify decision parity",
+      "file": "lib/panel-run.js",
+      "line_start": 9,
+      "line_end": 9,
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "severity": "high",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "removed_test": {
+        "id": "0123456789abcdef",
+        "path": " \t\u0085\u001c",
+        "old_start": 1,
+        "old_end": 2
+      },
+      "origin": "unknown",
+      "agent": "review-rules",
+      "suggestion": "Check the review decision against the recorded evidence."
+    },
+    {
+      "id": "removed-invalid-bool-start",
+      "title": "Verify decision parity",
+      "file": "lib/panel-run.js",
+      "line_start": 9,
+      "line_end": 9,
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "severity": "high",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "removed_test": {
+        "id": "0123456789abcdef",
+        "path": "tests/deleted_rules.py",
+        "old_start": true,
+        "old_end": 2
+      },
+      "origin": "unknown",
+      "agent": "review-rules",
+      "suggestion": "Check the review decision against the recorded evidence."
+    },
+    {
+      "id": "removed-invalid-bool-end",
+      "title": "Verify decision parity",
+      "file": "lib/panel-run.js",
+      "line_start": 9,
+      "line_end": 9,
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "severity": "high",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "removed_test": {
+        "id": "0123456789abcdef",
+        "path": "tests/deleted_rules.py",
+        "old_start": 1,
+        "old_end": true
+      },
+      "origin": "unknown",
+      "agent": "review-rules",
+      "suggestion": "Check the review decision against the recorded evidence."
+    },
+    {
+      "id": "removed-invalid-string-start",
+      "title": "Verify decision parity",
+      "file": "lib/panel-run.js",
+      "line_start": 9,
+      "line_end": 9,
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "severity": "high",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "removed_test": {
+        "id": "0123456789abcdef",
+        "path": "tests/deleted_rules.py",
+        "old_start": "1",
+        "old_end": 2
+      },
+      "origin": "unknown",
+      "agent": "review-rules",
+      "suggestion": "Check the review decision against the recorded evidence."
+    },
+    {
+      "id": "removed-invalid-reversed",
+      "title": "Verify decision parity",
+      "file": "lib/panel-run.js",
+      "line_start": 9,
+      "line_end": 9,
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "severity": "high",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "removed_test": {
+        "id": "0123456789abcdef",
+        "path": "tests/deleted_rules.py",
+        "old_start": 3,
+        "old_end": 2
+      },
+      "origin": "unknown",
+      "agent": "review-rules",
+      "suggestion": "Check the review decision against the recorded evidence."
+    },
+    {
+      "id": "removed-invalid-zero-start",
+      "title": "Verify decision parity",
+      "file": "lib/panel-run.js",
+      "line_start": 9,
+      "line_end": 9,
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "severity": "high",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "removed_test": {
+        "id": "0123456789abcdef",
+        "path": "tests/deleted_rules.py",
+        "old_start": 0,
+        "old_end": 2
+      },
+      "origin": "unknown",
+      "agent": "review-rules",
+      "suggestion": "Check the review decision against the recorded evidence."
+    },
+    {
+      "id": "removed-invalid-incomplete",
+      "title": "Verify decision parity",
+      "file": "lib/panel-run.js",
+      "line_start": 9,
+      "line_end": 9,
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "severity": "high",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "removed_test": {
+        "id": "0123456789abcdef",
+        "path": "tests/deleted_rules.py"
+      },
+      "origin": "unknown",
+      "agent": "review-rules",
+      "suggestion": "Check the review decision against the recorded evidence."
+    },
+    {
+      "id": "removed-invalid-array",
+      "title": "Verify decision parity",
+      "file": "lib/panel-run.js",
+      "line_start": 9,
+      "line_end": 9,
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "severity": "high",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "removed_test": [],
+      "origin": "unknown",
+      "agent": "review-rules",
+      "suggestion": "Check the review decision against the recorded evidence."
+    },
+    {
+      "id": "removed-invalid-null",
+      "title": "Verify decision parity",
+      "file": "lib/panel-run.js",
+      "line_start": 9,
+      "line_end": 9,
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "severity": "high",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "removed_test": null,
+      "origin": "unknown",
+      "agent": "review-rules",
+      "suggestion": "Check the review decision against the recorded evidence."
+    },
+    {
+      "id": "removed-valid-with-refs",
+      "title": "Verify decision parity",
+      "file": "lib/panel-run.js",
+      "line_start": 9,
+      "line_end": 9,
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "severity": "high",
+      "confidence": 90,
+      "cross_file_refs": [
+        "x"
+      ],
+      "removed_test": {
+        "id": "0123456789abcdef",
+        "path": "tests/deleted_rules.py",
+        "old_start": 1,
+        "old_end": 2
+      },
+      "origin": "unknown",
+      "agent": "review-rules",
+      "suggestion": "Check the review decision against the recorded evidence."
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "cases": [
+    {
+      "name": "block-inline",
+      "description": "```\nblock_symbol another_symbol\n``` `inline_symbol`",
+      "evidence": ""
+    },
+    {
+      "name": "fenced-identifiers",
+      "description": "```lang\nAlphaType BetaType\n```",
+      "evidence": ""
+    },
+    {
+      "name": "dotted-chained-nested",
+      "description": "`os.path.join` obj.method()",
+      "evidence": ""
+    },
+    {
+      "name": "evidence-only",
+      "description": "",
+      "evidence": "`important_func`"
+    },
+    {
+      "name": "bare-punctuation-snake",
+      "description": "Foo::bar get_user_data",
+      "evidence": ""
+    },
+    {
+      "name": "stopwords-short",
+      "description": "Concrete prose with `self` `None` `print` `x` `ab`",
+      "evidence": ""
+    },
+    {
+      "name": "camelcase-prose",
+      "description": "Potential Regression in ConcreteType ErrorHandler",
+      "evidence": ""
+    },
+    {
+      "name": "empty",
+      "description": "",
+      "evidence": ""
+    },
+    {
+      "name": "existing-inline",
+      "description": "Use `new_panel`.",
+      "evidence": ""
+    },
+    {
+      "name": "missing-inline",
+      "description": "`missing_symbol`",
+      "evidence": ""
+    },
+    {
+      "name": "mixed-existing-missing",
+      "description": "`new_panel`",
+      "evidence": "`missing_symbol`"
+    },
+    {
+      "name": "snake-case",
+      "description": "get_user_data missing_symbol",
+      "evidence": ""
+    }
+  ]
+}

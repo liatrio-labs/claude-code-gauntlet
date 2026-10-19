@@ -1,0 +1,209 @@
+[
+  {
+    "confidence": 72,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "original_confidence": 90,
+      "reason": "referenced symbol(s) not found in codebase: block_symbolanother_symbol",
+      "symbols_checked": 4,
+      "symbols_missing": 1,
+      "verified": false
+    },
+    "id": "block-inline",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 67,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "original_confidence": 90,
+      "reason": "referenced symbol(s) not found in codebase: langAlphaTypeBetaType",
+      "symbols_checked": 3,
+      "symbols_missing": 1,
+      "verified": false
+    },
+    "id": "fenced-identifiers",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "file content and symbols verified",
+      "verified": true
+    },
+    "id": "dotted-chained-nested",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "file content and symbols verified",
+      "verified": true
+    },
+    "id": "evidence-only",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "file content and symbols verified",
+      "verified": true
+    },
+    "id": "bare-punctuation-snake",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "no extractable symbols \u2014 verification skipped",
+      "verified": true
+    },
+    "id": "stopwords-short",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "no extractable symbols \u2014 verification skipped",
+      "verified": true
+    },
+    "id": "camelcase-prose",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "no extractable symbols \u2014 verification skipped",
+      "verified": true
+    },
+    "id": "empty",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 90,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "reason": "file content and symbols verified",
+      "verified": true
+    },
+    "id": "existing-inline",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 30,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "original_confidence": 90,
+      "reason": "referenced symbol(s) not found in codebase: missing_symbol",
+      "symbols_checked": 1,
+      "symbols_missing": 1,
+      "verified": false
+    },
+    "id": "missing-inline",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 55,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "original_confidence": 90,
+      "reason": "referenced symbol(s) not found in codebase: missing_symbol",
+      "symbols_checked": 2,
+      "symbols_missing": 1,
+      "verified": false
+    },
+    "id": "mixed-existing-missing",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  },
+  {
+    "confidence": 55,
+    "diff_validation": {
+      "in_diff": true,
+      "reason": "line 1 found in diff"
+    },
+    "factual_verification": {
+      "code_at_lines": "new_panel();",
+      "original_confidence": 90,
+      "reason": "referenced symbol(s) not found in codebase: missing_symbol",
+      "symbols_checked": 2,
+      "symbols_missing": 1,
+      "verified": false
+    },
+    "id": "snake-case",
+    "origin": "new",
+    "severity": "high",
+    "verified": true
+  }
+]
