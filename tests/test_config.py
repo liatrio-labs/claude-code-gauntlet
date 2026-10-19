@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -267,6 +268,18 @@ def test_cli_shape_identity_and_stderr_block(config_cli, mode):
         == json.dumps(expected, indent=2, ensure_ascii=False) + "\n"
     )
     assert result.stderr.decode() == block + "\n"
+
+
+def test_cli_identity_separates_plugin_and_repository_roots(config_cli, tmp_path):
+    repo = tmp_path / "consumer"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+
+    result = config_cli(cwd=repo)
+    assert result.returncode == 0, result.stderr.decode()
+    identity = json.loads(result.stdout)["identity"]
+    assert identity["repo_root"] == repo.resolve().as_posix()
+    assert identity["plugin_root"] == ROOT.resolve().as_posix()
 
 
 @pytest.mark.parametrize("case", ["usage", "nonrepo"])

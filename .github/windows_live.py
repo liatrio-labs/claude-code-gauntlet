@@ -156,10 +156,9 @@ def assert_run(transcript: Path, output: Path, config: Path) -> LiveReceipt:
     ), paths
     report = Path(terminal["artifactPaths"]["report"])
     assert report.stat().st_size > 0
-    # Agents may quote the host paths they read. The product contract is
-    # disclosure, so every finding carrying a repository-root spelling must be
-    # named by a host-path-text gap, and the report may only carry such text
-    # through those findings.
+    # Disclosure requires every finding carrying a repository-root spelling to
+    # be named in a host-path-text gap; if none carries one, the report must not
+    # name the root.
     report_text = report.read_text(encoding="utf-8").lower()
     spellings = {
         spelling.lower()

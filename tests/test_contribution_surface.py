@@ -1,5 +1,6 @@
 """Smoke checks for contributor tooling and generated contract fences."""
 
+import importlib.util
 import json
 import re
 import shlex
@@ -25,6 +26,16 @@ LABEL_CATEGORIES = {"type", "state", "resolution", "outreach", "topic", "area"}
 
 def _read(path: str) -> str:
     return (REPO / path).read_text(encoding="utf-8")
+
+
+def _load_windows_live():
+    spec = importlib.util.spec_from_file_location(
+        "windows_live", REPO / ".github/windows_live.py"
+    )
+    assert spec is not None and spec.loader is not None
+    live = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(live)
+    return live
 
 
 def _pre_commit_hook_span(text: str, hook_id: str) -> tuple[int, int]:
@@ -530,14 +541,7 @@ def test_documented_and_ci_gate_commands_are_byte_identical_sets() -> None:
     ],
 )
 def test_windows_live_receipt_gate(fault, tmp_path, monkeypatch):
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location(
-        "windows_live", REPO / ".github/windows_live.py"
-    )
-    assert spec is not None and spec.loader is not None
-    live = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(live)
+    live = _load_windows_live()
     output = tmp_path / "artifacts"
     output.mkdir()
     paths = {
@@ -680,14 +684,7 @@ def test_windows_live_receipt_gate(fault, tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("has_token", [False, True])
 def test_windows_live_driver(has_token, tmp_path, monkeypatch, capsys):
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location(
-        "windows_live_driver", REPO / ".github/windows_live.py"
-    )
-    assert spec is not None and spec.loader is not None
-    live = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(live)
+    live = _load_windows_live()
     job = dict(_ci_job_blocks(_read(".github/workflows/ci.yml")))["windows-live"]
     assert "if: github.event_name == 'workflow_dispatch' && inputs.windows_live" in job
     assert "environment: windows-live" in job

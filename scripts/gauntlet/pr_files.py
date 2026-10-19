@@ -101,14 +101,15 @@ def list_git_files(revision_range: str) -> FileListing:
             ["git", "diff", "--name-only", "-z", revision_range], timeout=180
         )
         if result.returncode:
-            raise ValueError(
+            reason = (
                 result.stderr.decode("utf-8", errors="replace").strip()
                 or f"git exited {result.returncode}"
             )
+            return FileListing((), f"file listing failed: {reason}", failed=True)
         # NUL framing preserves newlines and avoids Git's quoted filename format.
         paths = result.stdout.decode("utf-8", errors="surrogateescape").split("\0")
         return FileListing(tuple(paths[:-1]))
-    except (OSError, proc.TimeoutExpired, ValueError) as exc:
+    except (OSError, proc.TimeoutExpired) as exc:
         return FileListing((), f"file listing failed: {exc}", failed=True)
 
 
