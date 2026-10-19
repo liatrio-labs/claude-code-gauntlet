@@ -493,7 +493,7 @@ class GitHub(_ForgeAdapter):
                 "view",
                 str(number),
                 "--json",
-                "state,isDraft,url",
+                "state,isDraft,url,headRefOid",
             ],
             timeout=_FETCH_TIMEOUT_SECONDS,
         )

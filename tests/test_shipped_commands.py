@@ -642,17 +642,6 @@ def test_skill_heredocs_are_never_nested_in_command_substitution() -> None:
     assert offenders == []
 
 
-def test_local_branch_form_uses_the_sha_computed_in_the_same_call() -> None:
-    skill = skill_text(REPO / "skills/code-gauntlet/SKILL.md")
-    line = next(
-        line
-        for line in skill.splitlines()
-        if line.startswith("Local/branch targets: drop")
-    )
-    assert '--head-sha "$HEAD_SHA_SHORT" --unconditional' in line
-    assert "{head_sha_short}" not in line
-
-
 def test_python_programs_in_skills_and_agents_do_not_embed_path_placeholders() -> None:
     offender_paths: list[str] = []
     for path, text in _markdown_sources():
@@ -889,7 +878,7 @@ def test_shipped_file_producer(platform, outcome, tmp_path):
     ]
     assert calls == (
         [
-            ["pr", "view", "7", "--json", "state,isDraft,url"],
+            ["pr", "view", "7", "--json", "state,isDraft,url,headRefOid"],
             [
                 "api",
                 "--hostname",
@@ -939,7 +928,7 @@ def test_shipped_git_file_producer(source, revision_range, outcome, tmp_path):
     commands = [
         body.strip()
         for _, body in _shell_fences(text)
-        if f'--git-range "{revision_range}"' in body
+        if f'--git-range "{revision_range}"' in body and "list_pr_files.py" in body
     ]
     assert len(commands) == 1
     sha = "a" * 40
@@ -1006,6 +995,238 @@ def test_shipped_git_file_producer(source, revision_range, outcome, tmp_path):
             )
             == []
         )
+
+
+def test_skill_and_reference_shell_blocks_have_no_jq():
+    offenders = []
+    root = REPO / "skills/code-gauntlet"
+    for path in [root / "SKILL.md", *(root / "references").glob("*.md")]:
+        for line, body in enumerate(skill_text(path).splitlines(), 1):
+            if re.search(r"\bjq\b", body):
+                offenders.append(f"{path.relative_to(REPO)}:{line}")
+    assert offenders == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["SKILL.md", "references/phase1-preflight.md", "references/phase2-triage.md"],
+)
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+@pytest.mark.parametrize("outcome", ["success", "failure"])
+@POSIX_FAKES
+def test_shipped_forge_status_and_url(source, platform, outcome, tmp_path, monkeypatch):
+    from tests.support.git_diff import patch_repo
+    from tests.support.pr_files import gitlab_view
+
+    _, sha = patch_repo(tmp_path, monkeypatch)
+    text = skill_text(
+        REPO / "skills/code-gauntlet" / source, python=shlex.quote(sys.executable)
+    )
+    bodies = [body for _, body in _shell_fences(text)]
+    status_index = next(
+        index
+        for index, body in enumerate(bodies)
+        if 'echo "=== status ==="' in body
+        and f'pr_status.py" --platform {platform}' in body
+    )
+    status = bodies[status_index]
+    if 'echo "=== pr_url ==="' in status:
+        url = status
+    elif 'echo "=== pr_url ==="' in bodies[status_index + 1]:
+        url = bodies[status_index + 1]
+    else:
+        url = next(body for body in bodies if 'echo "=== pr_url ==="' in body)
+    status = status.split('echo "=== checkout ==="')[0]
+    if 'echo "=== pr_url ==="' in status:
+        status = status.split('echo "=== pr_url ==="')[0]
+    url = url[url.index('echo "=== pr_url ==="') :].split(
+        'echo "=== prior_review ==="'
+    )[0]
+    command = status + "\n" + url + '\nprintf "fields=%s|%s\\n" "$TARGET_SHA" "$PR_URL"'
+    view = (
+        dict(gitlab_view(), sha=sha)
+        if platform == "gitlab"
+        else {"headRefOid": sha, "url": "https://github.com/upstream/project/pull/7"}
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake = fake_bin / ("gh" if platform == "github" else "glab")
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "with open(os.environ['CAPTURE'], 'a', encoding='utf-8') as capture:\n"
+        "    capture.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "print(os.environ['VIEW'])\n"
+        "sys.exit(int(os.environ['FAIL']))\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    command = command.replace("{plugin_root}", REPO.as_posix()).replace(
+        "{pr_number}", "7"
+    )
+    capture = tmp_path / "capture"
+    result = subprocess.run(
+        [bash_executable(), "-c", command],
+        cwd=tmp_path,
+        env=dict(
+            os.environ,
+            PATH=str(fake_bin) + os.pathsep + os.environ["PATH"],
+            VIEW=json.dumps(view),
+            FAIL=str(int(outcome == "failure")),
+            CAPTURE=str(capture),
+        ),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+    )
+    assert json.loads(capture.read_text(encoding="utf-8")) == (
+        ["pr", "view", "7", "--json", "state,isDraft,url,headRefOid"]
+        if platform == "github"
+        else ["mr", "view", "7", "--output", "json"]
+    )
+    if outcome == "failure":
+        assert result.returncode == 1
+        assert result.stdout == "=== status ===\n"
+        assert "pr_status: FAILED:" in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        expected_url = view["url" if platform == "github" else "web_url"]
+        assert result.stdout.endswith(f"fields={sha}|{expected_url}\n")
+        assert result.stderr == ""
+
+
+@pytest.mark.parametrize("source", ["SKILL.md", "references/phase2-triage.md"])
+@pytest.mark.parametrize("mode", ["branch", "local"])
+@pytest.mark.parametrize("outcome", ["success", "empty", "failure"])
+def test_shipped_patch_producer(source, mode, outcome, tmp_path, monkeypatch):
+    from tests.support.git_diff import assert_standard_patch, patch_repo
+
+    base, target = patch_repo(tmp_path, monkeypatch)
+    if outcome == "empty":
+        base = target
+        (tmp_path / "file").write_text("new\n", encoding="utf-8")
+    elif outcome == "failure":
+        base = target = "a" * 40
+        (tmp_path / ".git").rename(tmp_path / "not-git")
+    revision_range = "HEAD" if mode == "local" else "{base_sha}...{target_sha}"
+    bodies = _shell_fences(
+        skill_text(
+            REPO / "skills/code-gauntlet" / source, python=shlex.quote(sys.executable)
+        )
+    )
+    commands = [
+        body.strip()
+        for _, body in bodies
+        if "save_git_diff.py" in body and f'--git-range "{revision_range}"' in body
+    ]
+    assert len(commands) == 1
+    output = tmp_path / "o'brien out"
+    output.mkdir()
+    command = (
+        commands[0]
+        .replace("{plugin_root}", REPO.as_posix())
+        .replace("{base_sha}", base)
+        .replace("{target_sha}", target)
+        .replace("{output_dir}", output.as_posix())
+        .replace("{head_sha_short}", target[:8])
+    )
+    result = subprocess.run(
+        [bash_executable(), "-c", command + "\nprintf 'continued\\n'"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+    )
+    patch = output / f"code-gauntlet-diff-{target[:8]}.patch"
+    if outcome == "success":
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "continued\n"
+        assert_standard_patch(patch.read_bytes())
+    else:
+        assert result.returncode == 1
+        assert result.stdout == "diff: FAILED\n"
+        assert "save_git_diff: " in result.stderr
+        assert not patch.exists()
+
+
+@pytest.mark.parametrize(
+    "outcome", ["checkout", "failure", "headless-match", "headless-mismatch"]
+)
+def test_shipped_branch_composite(outcome, tmp_path, monkeypatch):
+    from tests.support.git_diff import git, patch_repo
+
+    base, target = patch_repo(tmp_path, monkeypatch)
+    (tmp_path / "file").write_text("new\n", encoding="utf-8")
+    branch = "topic/$(id)`id`'end)("
+    git(tmp_path, "branch", branch, target)
+    git(
+        tmp_path,
+        "checkout",
+        "-q",
+        "--detach",
+        target if outcome == "headless-match" else base,
+    )
+    monkeypatch.setenv(
+        "CODE_GAUNTLET_HEADLESS", "1" if outcome.startswith("headless") else ""
+    )
+    bodies = [
+        body
+        for _, body in _shell_fences(
+            skill_text(
+                REPO / "skills/code-gauntlet/SKILL.md",
+                python=shlex.quote(sys.executable),
+            )
+        )
+    ]
+    output = tmp_path / "o'brien out"
+    output.mkdir()
+    stale = output / f"code-gauntlet-report-{target[:8]}.md"
+    stale.write_text("stale", encoding="utf-8")
+
+    def run(body):
+        expanded = (
+            body.replace("{plugin_root}", REPO.as_posix())
+            .replace("<base name exactly as chosen>", base)
+            .replace("<branch name exactly as the user gave it>", branch)
+            .replace("{target_sha}", target)
+            .replace("{output_dir}", output.as_posix())
+        )
+        return subprocess.run(
+            [bash_executable(), "-c", expanded],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+        )
+
+    for marker, sha in [("CODE_GAUNTLET~BASE", base), ("CODE_GAUNTLET~BRANCH", target)]:
+        block = next(
+            body for body in bodies if marker in body and "--checkout" not in body
+        )
+        result = run(block)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == sha + "\n"
+    if outcome == "failure":
+        git(tmp_path, "branch", "-D", branch)
+    composite = next(body for body in bodies if 'resolve_branch.py" --checkout' in body)
+    assert re.search(r"\$\([^\n]*<<", composite) is None
+    result = run(composite)
+    if outcome in {"checkout", "headless-match"}:
+        assert result.returncode == 0, result.stderr
+        assert git(tmp_path, "rev-parse", "HEAD") == target
+        assert f"head_sha_short={target[:8]}\nhead_sha_full={target}\n" in result.stdout
+        assert stale.read_bytes() == b""
+        if outcome == "checkout":
+            assert git(tmp_path, "symbolic-ref", "HEAD") == f"refs/heads/{branch}"
+    else:
+        assert result.returncode == 1
+        assert "=== sha ===" not in result.stdout
+        assert "=== stale_truncate ===" not in result.stdout
+        assert git(tmp_path, "rev-parse", "HEAD") == base
+        assert stale.read_text(encoding="utf-8") == "stale"
 
 
 @pytest.mark.parametrize(

@@ -30,11 +30,30 @@ If detection fails, ask the user.
 
 Before running any diff commands, confirm the local working tree matches the review target. Use the `pr_number` resolved in Phase 1 — never extract PR numbers from branch names (branch names may contain upstream PR numbers that differ from the PR number in the current repo).
 
-**This section is the canonical target-type table.** SKILL.md's "Phase 2 Composite A" `status`/`checkout` sections are one runnable instantiation of it (the PR/MR row, plus the headless row inlined as a real `exit 1`) — do not re-derive the branch/local variants or the checkout-failure message independently there; apply steps 1/3/4 below directly, per SKILL.md's cross-reference.
+**SKILL.md owns the literal Composite A blocks for GitHub, GitLab, and branch targets.** Run those blocks as written; this section explains their target resolution and failure rules.
 
 **1. Resolve the target's head SHA:**
 
-- **PR/MR mode (`pr_number` set):** `gh pr view {pr_number} --json headRefOid --jq '.headRefOid'` (GitHub) / `glab mr view {pr_number} --output json | jq '.sha'` (GitLab)
+**PR/MR mode (`pr_number` set):** use these literal status sections. The producer validates both fields before emitting either.
+
+GitHub:
+
+```bash
+echo "=== status ==="
+PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform github --pr {pr_number}) || exit 1
+TARGET_SHA=${PR_STATUS%%$'\n'*}
+TARGET_SHA=${TARGET_SHA#head_sha=}
+```
+
+GitLab:
+
+```bash
+echo "=== status ==="
+PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform gitlab --pr {pr_number}) || exit 1
+TARGET_SHA=${PR_STATUS%%$'\n'*}
+TARGET_SHA=${TARGET_SHA#head_sha=}
+```
+
 - **Branch comparison:** resolve the target branch with this bare quoted heredoc. Branch names are data, never shell words:
 
 ```bash
@@ -43,7 +62,7 @@ Before running any diff commands, confirm the local working tree matches the rev
 CODE_GAUNTLET~BRANCH
 ```
 
-Resolve the comparison base (the repository's default branch or the user's chosen base) the same way. The resolver looks the name up as a local branch, then a remote-tracking branch (`origin/main`), and refuses a name that is both; a name that is neither, such as a tag, a SHA or `HEAD~1`, resolves as a git revision. If either call exits non-zero, stop and report its one-line error. Otherwise record the printed SHAs as `{target_sha}` and `{base_sha}` and type those hex values into later commands; shell variables do not survive between Bash calls. Never put the heredoc inside `$( )`: bash 3.2 parses its body for parentheses. `~` cannot appear in a git ref name, so no branch name can end the heredoc early.
+Resolve the comparison base (the repository's default branch or the user's chosen base) with SKILL.md's literal `CODE_GAUNTLET~BASE` block in its own Bash call. The resolver looks the name up as a local branch, then a remote-tracking branch (`origin/main`), and refuses a name that is both; a name that is neither, such as a tag, a SHA or `HEAD~1`, resolves as a git revision. If either call exits non-zero, stop and report its one-line error. Otherwise record the printed SHAs as `{target_sha}` and `{base_sha}` and type those hex values into later commands; shell variables do not survive between Bash calls. Never put the heredoc inside `$( )`: bash 3.2 parses its body for parentheses. `~` cannot appear in a git ref name, so no branch name can end the heredoc early.
 
 - **Local changes:** HEAD — no-op, already on correct state
 
@@ -90,7 +109,13 @@ Now that the working tree reflects the review target, compute the short SHA and 
 
 **3. Previously-reviewed gate** (`pr_url` + `prior_review` sections; PR/MR targets only — skip for `local`):
 
-Runs the gate documented in `phase1-preflight.md` → "Previously-Reviewed Gate", which resolves whether this PR/MR was already reviewed and whether the incremental path is safe. Pass the PR's **own URL** to `--pr-url` so the detector uses the base repository and its host. GitLab: `PR_URL=$(glab mr view {pr_number} --output json | jq -r .web_url)`.
+Runs the gate documented in `phase1-preflight.md` → "Previously-Reviewed Gate", which resolves whether this PR/MR was already reviewed and whether the incremental path is safe. Pass the PR's **own URL** to `--pr-url` so the detector uses the base repository and its host. For both forges, the matching status section above already fetched the URL. Use this literal section in the same composite:
+
+```bash
+echo "=== pr_url ==="
+PR_URL=${PR_STATUS#*pr_url=}
+printf '%s\n' "$PR_URL"
+```
 
 This runs **here, not in Phase 1**: the gate compares the last-reviewed commit against the PR head and counts the commits between them, so it needs the working tree at the review target and the PR's objects fetched. Before checkout it would measure whatever branch the session started on. By this point the checkout section has already switched the working tree to the PR; a Skip answer below stops the review but does not revert the checkout — the tree stays checked out on the PR branch.
 
@@ -107,7 +132,7 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 1. **PR/MR mode** (`pr_number` set) — Use `gh pr view {pr_number}`/`glab mr view {pr_number}` + diff commands. Get full SHA: `git rev-parse HEAD`
    - **GitHub (PR):** Gather the file list with `{python} "{plugin_root}/scripts/list_pr_files.py" --platform github --pr {pr_number}`. Gather the full diff with `gh pr diff {pr_number}`.
    - **GitLab (MR):** Gather the file list with `{python} "{plugin_root}/scripts/list_pr_files.py" --platform gitlab --pr {pr_number}` (the Composite B `files` producer in SKILL.md). Gather the full diff with `glab mr diff {pr_number}`.
-2. **Branch comparison** — `git diff {base_sha}...{target_sha}` using 2b's resolved SHAs. Save the changed-file JSON first:
+2. **Branch comparison** - use 2b's resolved SHAs. Save the changed-file JSON first, then the validated patch:
 
    ```bash
    if ! {python} "{plugin_root}/scripts/list_pr_files.py" --git-range "{base_sha}...{target_sha}" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
@@ -117,7 +142,14 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
    command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
    ```
 
-3. **Local changes** — `git diff HEAD`. Save the changed-file JSON first:
+   ```bash
+   if ! {python} "{plugin_root}/scripts/save_git_diff.py" --git-range "{base_sha}...{target_sha}" --output "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"; then
+     echo "diff: FAILED"
+     exit 1
+   fi
+   ```
+
+3. **Local changes** - save the changed-file JSON first, then the validated patch:
 
    ```bash
    if ! {python} "{plugin_root}/scripts/list_pr_files.py" --git-range "HEAD" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
@@ -125,6 +157,13 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
      exit 1
    fi
    command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+   ```
+
+   ```bash
+   if ! {python} "{plugin_root}/scripts/save_git_diff.py" --git-range "HEAD" --output "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"; then
+     echo "diff: FAILED"
+     exit 1
+   fi
    ```
 
 4. **Incremental** (2b-post step 3's gate resolved "Incremental"; PR/MR mode only) — use branch 1's full server file list saved below to bound the diff:
@@ -140,13 +179,13 @@ On `files: FAILED`, stop the handoff and report the stderr reason (headless: non
 **Save the diff and the changed-file list (the workflow has no git access):** Persist both git-derived inputs to disk so the workflow can consume them.
 
 1. **Changed files** → `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file. On the incremental path, this stays branch 1's full server file list unchanged — the same list branch 4 uses to bound the diff, never a narrower incremental-only set. Saved **first**, so branch 4's incremental diff (below) has a file list already on disk to bound against.
-2. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when 2b-post step 3 resolved incremental, branch 4's `incremental_diff.py` command); for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
+2. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when 2b-post step 3 resolved incremental, branch 4's `incremental_diff.py` command); for branch/local targets use `save_git_diff.py` from steps 2/3, which refuses empty or malformed patches. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
 
 **These saves run as SKILL.md's Phase 2 Composite B** — one Bash call. `files` runs first and gates the rest: the incremental diff reads its list, and `numstat` reads the saved patch. See SKILL.md for the exact script.
 
 `changedLines` (threaded into `args.changedLines`, Args Preparation below) is counted from the diff actually saved above — the incremental diff on the incremental path, never branch 1's full-PR diff. The `numstat` section runs `scripts/diff_numstat.py` against that saved patch; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules. Check `binary_files > 0` before treating a low count as no diff. Never run a second `gh pr diff`; the 2k scan reads the same saved patch, never a fresh diff fetch.
 
-Validate the saved diff before relying on it:
+For PR/MR server diffs, validate the saved diff before relying on it. Branch/local validation is enforced by `save_git_diff.py`:
 
 - Non-empty (file size > 0)
 - Starts with `diff --git` (confirms it is a valid unified diff, not an error message)

@@ -16,6 +16,7 @@ from gauntlet.forge import (
     make_forge,
     parse_pr_url,
 )
+from gauntlet.git_diff import require_git_range
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,8 +125,7 @@ def _handle(args: argparse.Namespace) -> int:
     if args.git_range is not None:
         if args.pr is not None:
             raise CliError("--pr cannot be used with --git-range", 2)
-        if re.fullmatch(r"HEAD|[0-9a-f]{40}\.\.\.[0-9a-f]{40}", args.git_range) is None:
-            raise CliError("--git-range must be HEAD or <base_sha>...<target_sha>", 2)
+        require_git_range(args.git_range)
         listing = list_git_files(args.git_range)
     else:
         if args.pr is None:

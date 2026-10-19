@@ -444,13 +444,26 @@ def test_diff(patch, diff, validation, origin, severity):
             ("patch", "", 0),
             "patch",
             "Diff source: git diff -base...HEAD (three-dot), 5 bytes\n",
-            [["git", "diff", "--end-of-options", "-base...HEAD"]],
+            [
+                [
+                    "git",
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-color",
+                    "--src-prefix=a/",
+                    "--dst-prefix=b/",
+                    "--end-of-options",
+                    "-base...HEAD",
+                ]
+            ],
             id="SOURCE-three-dot",
         ),
         pytest.param(
             None,
             lambda argv: (
-                ("", " no merge \n", 1) if len(argv) == 4 else ("patch", "", 0)
+                ("", " no merge \n", 1)
+                if argv[-1].endswith("...HEAD")
+                else ("patch", "", 0)
             ),
             "patch",
             "WARNING: git diff -base...HEAD failed (exit "
@@ -458,15 +471,36 @@ def test_diff(patch, diff, validation, origin, severity):
             "diff -base HEAD (two-dot).\n"
             "Diff source: git diff -base HEAD (two-dot fallback), 5 bytes\n",
             [
-                ["git", "diff", "--end-of-options", "-base...HEAD"],
-                ["git", "diff", "--end-of-options", "-base", "HEAD"],
+                [
+                    "git",
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-color",
+                    "--src-prefix=a/",
+                    "--dst-prefix=b/",
+                    "--end-of-options",
+                    "-base...HEAD",
+                ],
+                [
+                    "git",
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-color",
+                    "--src-prefix=a/",
+                    "--dst-prefix=b/",
+                    "--end-of-options",
+                    "-base",
+                    "HEAD",
+                ],
             ],
             id="SOURCE-two-dot",
         ),
         pytest.param(
             None,
             lambda argv: (
-                ("", " no merge \n", 1) if len(argv) == 4 else ("", " bad -base \n", 2)
+                ("", " no merge \n", 1)
+                if argv[-1].endswith("...HEAD")
+                else ("", " bad -base \n", 2)
             ),
             None,
             "WARNING: git diff -base...HEAD failed (exit "
@@ -476,8 +510,27 @@ def test_diff(patch, diff, validation, origin, severity):
             "(exit 2): bad -base. Diff validation "
             "will be skipped.\n",
             [
-                ["git", "diff", "--end-of-options", "-base...HEAD"],
-                ["git", "diff", "--end-of-options", "-base", "HEAD"],
+                [
+                    "git",
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-color",
+                    "--src-prefix=a/",
+                    "--dst-prefix=b/",
+                    "--end-of-options",
+                    "-base...HEAD",
+                ],
+                [
+                    "git",
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-color",
+                    "--src-prefix=a/",
+                    "--dst-prefix=b/",
+                    "--end-of-options",
+                    "-base",
+                    "HEAD",
+                ],
             ],
             id="SOURCE-both-fail",
         ),
@@ -520,8 +573,27 @@ def test_pipe(tmp_path, monkeypatch, verify_git):
         "reason": "diff validation skipped",
     }
     assert [cmd for cmd, _kwargs in verify_git[0] if cmd[1] == "diff"] == [
-        ["git", "diff", "--end-of-options", "base...HEAD"],
-        ["git", "diff", "--end-of-options", "base", "HEAD"],
+        [
+            "git",
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--end-of-options",
+            "base...HEAD",
+        ],
+        [
+            "git",
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--end-of-options",
+            "base",
+            "HEAD",
+        ],
     ]
 
 

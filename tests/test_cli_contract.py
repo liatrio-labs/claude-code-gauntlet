@@ -390,6 +390,8 @@ MAIN_FAILURE = {
     "capture_policy_env": "",
     "check_eligibility": "--platform github --pr 7",
     "list_pr_files": "--platform github --pr 7",
+    "pr_status": "--platform github --pr 7",
+    "save_git_diff": "--git-range HEAD --output {missing}",
     "assemble_artifacts": "--plan {missing}",
     "await_workflow": "{missing} --timeout-seconds 0 --since-epoch 0 --max-attempts 1",
     "build_style_artifacts": "--repo-root {missing} --check",
@@ -416,6 +418,8 @@ MAIN_FAILURE = {
 BAD_INPUT = {
     "check_eligibility": "--platform github --pr 7",
     "list_pr_files": "--platform github --pr 0",
+    "pr_status": "--platform github --pr 0",
+    "save_git_diff": "--git-range HEAD~1 --output {missing}",
     "assemble_artifacts": "--plan {invalid}",
     "await_workflow": "{missing} --attempt invalid",
     "build_style_artifacts": "--repo-root {invalid} --check",
@@ -440,6 +444,8 @@ SUCCESS = {
     "capture_policy_env": ({}, ""),
     "check_eligibility": ({}, "--platform github --pr 7"),
     "list_pr_files": ({}, "--platform github --pr 7"),
+    "pr_status": ({}, "--platform github --pr 7"),
+    "save_git_diff": ({}, "--git-range HEAD --output {dir}/patch"),
     "build_style_artifacts": ({}, "--repo-root {root} --check"),
     "collect_project_rules": ({}, "--repo-root {dir} --out {dir}/rules.md"),
     "detect_prior_review": (
@@ -621,7 +627,7 @@ def scenario(name, case, tmp_path, *, shell_fixture=False):
     stdin = b"triage\n" if triage else b"{}\n"
     if (name, case) == ("resolve_pr_identity", "success"):
         stdin = b'{"url":"https://github.com/o/r/pull/5"}\n'
-    if name in ("check_eligibility", "list_pr_files"):
+    if name in ("check_eligibility", "list_pr_files", "pr_status"):
         stdin = b'{"mode":"interactive","resolved":{}}\n'
         if case == "bad_input":
             stdin = b"[]\n"
@@ -630,11 +636,17 @@ def scenario(name, case, tmp_path, *, shell_fixture=False):
                 "#!/bin/sh\n"
                 'if [ "$1" = pr ]; then\n'
                 '  printf \'%s\\n\' \'{"state":"OPEN","isDraft":false,'
-                '"url":"https://github.com/upstream/project/pull/7"}\'\n'
+                '"url":"https://github.com/upstream/project/pull/7",'
+                '"headRefOid":"' + FULL + "\"}'\n"
                 "else\n  printf '\"src/code\"\\n'\nfi\n",
                 encoding="utf-8",
             )
             (fake_bin / "gh").chmod(0o755)
+    if name == "save_git_diff" and case == "success":
+        from tests.support.git_diff import patch_repo
+
+        with pytest.MonkeyPatch.context() as patcher:
+            patch_repo(directory, patcher)
     if name == "resolve_branch":
         stdin = b"one\ntwo\n" if case == "bad_input" else b"unknown-ref\n"
         if case == "success":
@@ -800,6 +812,8 @@ def rows():
             "resolve_pr_identity",
             "check_eligibility",
             "list_pr_files",
+            "pr_status",
+            "save_git_diff",
             "detect_prior_review",
             "post_review",
         )
@@ -833,10 +847,17 @@ def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch, forge_factory):
         carrier.chmod(0)
         module = importlib.import_module("gauntlet.style_hook")
         monkeypatch.setattr(module, "CARRIER", str(carrier))
-    if name in ("check_eligibility", "list_pr_files"):
+    if name in ("check_eligibility", "list_pr_files", "pr_status"):
 
         def eligibility_output(command, **kwargs):
-            if command == ["gh", "pr", "view", "7", "--json", "state,isDraft,url"]:
+            if command == [
+                "gh",
+                "pr",
+                "view",
+                "7",
+                "--json",
+                "state,isDraft,url,headRefOid",
+            ]:
                 if case == "failure":
                     return "", "forbidden", 1
                 return (
@@ -845,6 +866,7 @@ def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch, forge_factory):
                             "state": "OPEN",
                             "isDraft": False,
                             "url": "https://github.com/upstream/project/pull/7",
+                            "headRefOid": FULL,
                         }
                     ),
                     "",
@@ -884,7 +906,7 @@ def test_recording_covers_all_entry_files():
 def test_entry_runs_from_foreign_cwd(name, tmp_path):
     if reason := _windows_skip(name, "success"):
         pytest.skip(reason)
-    if os.name == "nt" and name in ("check_eligibility", "list_pr_files"):
+    if os.name == "nt" and name in ("check_eligibility", "list_pr_files", "pr_status"):
         pytest.skip("the fake forge CLIs on PATH are shebang scripts")
     directory, argv, stdin, fake_bin = scenario(
         name, "success", tmp_path, shell_fixture=True

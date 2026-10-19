@@ -479,7 +479,16 @@ def test_base_branch(token, flags, base, invoke, tmp_path, verify_git):
     env = json.loads(receipt(invoke, tmp_path, token, flags).stdout)
     assert env["status"] == "ok"
     assert [cmd for cmd, _ in verify_git[0] if cmd[1] == "diff"] == [
-        ["git", "diff", "--end-of-options", f"{base}...HEAD"]
+        [
+            "git",
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--end-of-options",
+            f"{base}...HEAD",
+        ]
     ]
 
 

@@ -48,7 +48,7 @@ Resolve `plugin_root` from this SKILL.md's path — go up two directories from `
 
 ### Resolve review target
 
-Parse the user's input to determine the review target before eligibility checks — the target type affects every subsequent step. Store `target_type` (`pr`, `mr`, or `local`) and `pr_number` (if applicable). The ARGUMENTS value is the user's explicit input — a bare number (e.g., `1`, `42`) is always a PR/MR number. Resolve it via `gh pr view` before considering any other target type. Do not compare it against the branch name or second-guess it; the branch may track a different upstream PR. See `references/phase1-preflight.md` for resolution logic, validation, and the PR-not-found template. (One case needs its own round trip before the composite below: "review" with no number/URL, resolved via `gh pr view --json number --jq '.number'` for the current branch — the composite needs `pr_number` as an input, so this must run first.)
+Parse the user's input to determine the review target before eligibility checks — the target type affects every subsequent step. Store `target_type` (`pr`, `mr`, or `local`) and `pr_number` (if applicable). The ARGUMENTS value is the user's explicit input — a bare number (e.g., `1`, `42`) is always a PR/MR number. Resolve it via `gh pr view` before considering any other target type. Do not compare it against the branch name or second-guess it; the branch may track a different upstream PR. See `references/phase1-preflight.md` for resolution logic, validation, and the PR-not-found template. (One case needs its own round trip before the composite below: "review" with no number/URL, resolved via the `number` field of `gh pr view --json number` for the current branch — the composite needs `pr_number` as an input, so this must run first.)
 
 ### Phase 1 composite: output dir, plugin confirmation, config, eligibility
 
@@ -163,9 +163,13 @@ One Bash call, but its sections form the **genuine dependency chain** — status
 
 > **Shell hygiene:** user shells commonly alias `ls`/`cp`/`grep` to incompatible replacements (an `ls`→`eza --icons` alias broke a live run's directory listing). In every Bash call, prefer `git ls-files` / `find` for file enumeration, and prefix coreutils with `command` (`command ls`, `command cp`) when you must use them. (Same reminder as Phase 1 — see the duplication rationale there.)
 
+**GitHub PR Composite A:**
+
 ```bash
 echo "=== status ==="
-TARGET_SHA=$(gh pr view {pr_number} --json headRefOid --jq '.headRefOid')
+PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform github --pr {pr_number}) || exit 1
+TARGET_SHA=${PR_STATUS%%$'\n'*}
+TARGET_SHA=${TARGET_SHA#head_sha=}
 CURRENT_SHA=$(git rev-parse HEAD)
 echo "target=$TARGET_SHA current=$CURRENT_SHA"
 
@@ -186,7 +190,7 @@ echo "head_sha_short=$HEAD_SHA_SHORT"
 echo "head_sha_full=$HEAD_SHA_FULL"
 
 echo "=== pr_url ==="
-PR_URL=$(gh pr view {pr_number} --json url --jq .url)
+PR_URL=${PR_STATUS#*pr_url=}
 printf '%s\n' "$PR_URL"
 
 echo "=== prior_review ==="
@@ -199,11 +203,94 @@ printf '%s\n' "$PRIOR_JSON" | {python} "{plugin_root}/scripts/stale_truncate.py"
 
 Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `checkout` section above already handles this branch inline — the `elif` fires before any `gh pr checkout` is attempted and `exit 1`s the whole composite call immediately, so `sha`/`pr_url`/`prior_review`/`stale_truncate` never run against the wrong commit. `CODE_GAUNTLET_HEADLESS` is read directly by the script (not pre-resolved by the model), so this is self-contained regardless of who assembles the call. See `references/headless-mode.md`.
 
-**`status`/`checkout` are owned by `references/phase2-triage.md` 2b.** For branch targets, use 2b's resolver heredoc in `status` and the same heredoc with `resolve_branch.py --checkout` in `checkout`. For local changes, drop both sections. Stop on resolution or checkout failure; use 2b step 4's checkout-failure message with no fallback.
+**GitLab MR Composite A:**
 
-GitLab MR mode: swap `gh pr view`/`gh pr checkout` for `glab mr view`/`glab mr checkout` in the `status`/`checkout` sections; for `pr_url`, use `PR_URL=$(glab mr view {pr_number} --output json | jq -r .web_url)` and pass it unchanged to `--pr-url`.
+```bash
+echo "=== status ==="
+PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform gitlab --pr {pr_number}) || exit 1
+TARGET_SHA=${PR_STATUS%%$'\n'*}
+TARGET_SHA=${TARGET_SHA#head_sha=}
+CURRENT_SHA=$(git rev-parse HEAD)
+echo "target=$TARGET_SHA current=$CURRENT_SHA"
 
-Local/branch targets: drop the `pr_url`/`prior_review` sections entirely (no PR/MR ⇒ no previously-reviewed signal), and replace the `stale_truncate` line with `{python} "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha "$HEAD_SHA_SHORT" --unconditional` — there is no prior-review artifact to protect.
+echo "=== checkout ==="
+if [ "$TARGET_SHA" = "$CURRENT_SHA" ]; then
+  echo "already at target, no checkout needed"
+elif [ "${CODE_GAUNTLET_HEADLESS:-}" = "1" ]; then
+  echo "HEADLESS INPUT ERROR: working tree HEAD $CURRENT_SHA != PR head $TARGET_SHA"
+  exit 1
+else
+  glab mr checkout {pr_number} || { echo "CHECKOUT FAILED: unable to checkout MR {pr_number}"; exit 1; }
+fi
+
+echo "=== sha ==="
+HEAD_SHA_SHORT=$(git rev-parse --short=8 HEAD)
+HEAD_SHA_FULL=$(git rev-parse HEAD)
+echo "head_sha_short=$HEAD_SHA_SHORT"
+echo "head_sha_full=$HEAD_SHA_FULL"
+
+echo "=== pr_url ==="
+PR_URL=${PR_STATUS#*pr_url=}
+printf '%s\n' "$PR_URL"
+
+echo "=== prior_review ==="
+PRIOR_JSON=$({python} "{plugin_root}/scripts/detect_prior_review.py" --platform gitlab --pr-url "$PR_URL" --head-sha "$HEAD_SHA_FULL")
+printf '%s\n' "$PRIOR_JSON"
+
+echo "=== stale_truncate ==="
+printf '%s\n' "$PRIOR_JSON" | {python} "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha "$HEAD_SHA_SHORT"
+```
+
+**Branch Composite A:** first resolve the comparison base in its own Bash call. Type the printed hex into `{base_sha}` in Composite B; shell variables do not survive between calls.
+
+```bash
+{python} "{plugin_root}/scripts/resolve_branch.py" <<'CODE_GAUNTLET~BASE'
+<base name exactly as chosen>
+CODE_GAUNTLET~BASE
+```
+
+Resolve the target separately for the headless comparison. Type its printed hex into `{target_sha}` in the next composite and Composite B. Stop on either resolution failure.
+
+```bash
+{python} "{plugin_root}/scripts/resolve_branch.py" <<'CODE_GAUNTLET~BRANCH'
+<branch name exactly as the user gave it>
+CODE_GAUNTLET~BRANCH
+```
+
+Run this literal branch composite. The checkout heredoc stays outside command substitution so Bash 3.2 treats branch names as data.
+
+```bash
+echo "=== status ==="
+CURRENT_SHA=$(git rev-parse HEAD) || exit 1
+
+echo "=== checkout ==="
+if [ "${CODE_GAUNTLET_HEADLESS:-}" = "1" ]; then
+  if [ "$CURRENT_SHA" != "{target_sha}" ]; then
+    echo "HEADLESS INPUT ERROR: working tree HEAD $CURRENT_SHA != branch head {target_sha}"
+    exit 1
+  fi
+else
+  if ! {python} "{plugin_root}/scripts/resolve_branch.py" --checkout <<'CODE_GAUNTLET~BRANCH'
+<branch name exactly as the user gave it>
+CODE_GAUNTLET~BRANCH
+  then
+    echo "Unable to checkout branch. The review requires the target code to be accessible locally."
+    echo "You can checkout the branch manually and re-run the review."
+    exit 1
+  fi
+fi
+
+echo "=== sha ==="
+HEAD_SHA_SHORT=$(git rev-parse --short=8 HEAD) || exit 1
+HEAD_SHA_FULL=$(git rev-parse HEAD) || exit 1
+echo "head_sha_short=$HEAD_SHA_SHORT"
+echo "head_sha_full=$HEAD_SHA_FULL"
+
+echo "=== stale_truncate ==="
+{python} "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha "$HEAD_SHA_SHORT" --unconditional
+```
+
+**Local Composite A:** run the branch composite's literal `sha` and `stale_truncate` sections, with no checkout or prior-review gate.
 
 **`DEFERRED`:** the current SHA is the one a prior review covered. Run `{python} "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha {head_sha_short} --unconditional` only after a "Yes — review again" answer; a "No — skip" answer stops with the files intact. An exit 2 truncated nothing; resolve it the same way. The gate's rationale and its four outcomes are in `scripts/gauntlet/stale.py`'s docstring.
 
@@ -276,7 +363,7 @@ fi
 command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
 ```
 
-**Branch comparison:** use 2b's resolved SHAs with `git diff {base_sha}...{target_sha}` for `diff`. Replace the `files` producer with:
+**Branch comparison:** replace the `files` and `diff` sections with these pinned blocks using the resolved SHAs:
 
 ```bash
 if ! {python} "{plugin_root}/scripts/list_pr_files.py" --git-range "{base_sha}...{target_sha}" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
@@ -286,7 +373,14 @@ fi
 command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
 ```
 
-**Local changes:** use `git diff HEAD` for `diff`. Replace the `files` producer with:
+```bash
+if ! {python} "{plugin_root}/scripts/save_git_diff.py" --git-range "{base_sha}...{target_sha}" --output "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"; then
+  echo "diff: FAILED"
+  exit 1
+fi
+```
+
+**Local changes:** replace the `files` and `diff` sections with these pinned blocks:
 
 ```bash
 if ! {python} "{plugin_root}/scripts/list_pr_files.py" --git-range "HEAD" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
@@ -294,6 +388,13 @@ if ! {python} "{plugin_root}/scripts/list_pr_files.py" --git-range "HEAD" > "{ou
   exit 1
 fi
 command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+```
+
+```bash
+if ! {python} "{plugin_root}/scripts/save_git_diff.py" --git-range "HEAD" --output "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"; then
+  echo "diff: FAILED"
+  exit 1
+fi
 ```
 
 On `files: FAILED`, stop the handoff and report the stderr reason (headless: non-zero outcome).

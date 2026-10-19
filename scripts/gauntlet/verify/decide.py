@@ -11,6 +11,7 @@ from typing import Any, Literal, TypedDict
 from gauntlet import proc
 from gauntlet.cli import warn
 from gauntlet.diff import DiffFacts, is_line_valid, parse_diff
+from gauntlet.git_diff import DIFF_FLAGS
 from gauntlet.paths import entry
 from gauntlet.registry import SEVERITY_ORDER, VerifySliceFinding
 
@@ -141,7 +142,7 @@ def get_diff(context: VerifyContext, diff_file: str | None = None) -> str | None
             return None
 
     stdout, stderr, rc = proc.output(
-        ["git", "diff", "--end-of-options", f"{base_branch}...HEAD"]
+        ["git", "diff", *DIFF_FLAGS, "--end-of-options", f"{base_branch}...HEAD"]
     )
     if rc == 0:
         print(
@@ -157,7 +158,7 @@ def get_diff(context: VerifyContext, diff_file: str | None = None) -> str | None
     )
 
     stdout, stderr, rc = proc.output(
-        ["git", "diff", "--end-of-options", base_branch, "HEAD"]
+        ["git", "diff", *DIFF_FLAGS, "--end-of-options", base_branch, "HEAD"]
     )
     if rc == 0:
         print(
