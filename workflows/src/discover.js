@@ -1,5 +1,5 @@
 // Summary and discovery stages, finding schemas, and scope flags.
-import { DIMENSIONS, DISPATCH_RESULTS, modelFor, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
+import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISPATCH_RESULTS, modelFor, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { computeLightEligible } from './knobs.js';
 import { LIMIT_DEFAULTS } from './registry.js';
 import { effectiveBucketSize } from './capacity.js';
@@ -201,7 +201,7 @@ export async function discover(ctx, input) {
 
   const specs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
   const inventory = inp.removedTests || { status: 'unavailable', items: [], omitted: 0, reason: 'inventory not supplied' };
-  const auditDispatched = specs.some((spec) => spec.agentType === 'code-gauntlet:test-analyzer');
+  const auditDispatched = specs.some((spec) => spec.agentType === AGENT_TYPE_TEST_ANALYZER);
   let removedTestAudit = inventory.status === 'unavailable'
     ? { status: 'unavailable', reason: inventory.reason }
     : !auditDispatched && inventory.items.length > 0
@@ -233,7 +233,7 @@ export async function discover(ctx, input) {
   results.forEach((res, i) => {
     const spec = specs[i];
     let auditLosses = [];
-    if (spec.agentType === 'code-gauntlet:test-analyzer' && inventory.status === 'available' && res) {
+    if (spec.agentType === AGENT_TYPE_TEST_ANALYZER && inventory.status === 'available' && res) {
       const checked = checkRemovedTestAudit(inventory, res.removed_test_audit, inp.repoRoot);
       removedTestAudit = checked.audit;
       auditLosses = checked.findings;
@@ -331,7 +331,7 @@ function discoverPrompt(inp, spec) {
   const resultFields = DISPATCH_RESULTS[spec.agentType] || {};
   const resultContract = Object.keys(resultFields).length
     ? ` Also return the required dispatch-result fields: ${Object.keys(resultFields).join(', ')}.` : '';
-  const audit = spec.agentType === 'code-gauntlet:test-analyzer'
+  const audit = spec.agentType === AGENT_TYPE_TEST_ANALYZER
     ? ` Audit every removed test item below from the saved diff. Return exactly one removed_test_audit row per id (or [] when unavailable/empty). Loss locations and prose describe surviving behavior; keep deleted paths only in the item reference. Inventory: ${JSON.stringify(inp.removedTests || { status: 'unavailable', items: [] })}` : '';
   return `${base}${spec.promptExtra ? ` ${spec.promptExtra}` : ''}${resultContract}${audit}`;
 }

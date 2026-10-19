@@ -17,6 +17,8 @@ const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and na
 // Scope gating is opt-out so absent flags preserve full review; null flags keep core agents ungateable.
 const DEEP = 'deep';
 
+export const AGENT_TYPE_TEST_ANALYZER = 'code-gauntlet:test-analyzer';
+
 // Share ordered identity checks with validation, rendering, and generated references so their contracts cannot drift.
 export const SHA_FULL_RE = /^[0-9a-f]{40}$/;
 export const WEB_ORIGIN_RE = new RegExp(
@@ -103,22 +105,22 @@ const closedDispatchRow = (properties) => ({
 });
 
 export const DISPATCH_RESULTS = deepFreeze({
-  'code-gauntlet:test-analyzer': {
+  [AGENT_TYPE_TEST_ANALYZER]: {
     removed_test_audit: {
       type: 'array', items: closedDispatchRow({
-        id: { type: 'string' },
-        status: { type: 'string', enum: ['removed_with_code', 'covered_elsewhere', 'lost'] },
+        id: { type: 'string', minLength: 1 },
+        status: { type: 'string', minLength: 1, enum: ['removed_with_code', 'covered_elsewhere', 'lost'] },
         covered_by: { type: 'array', items: closedDispatchRow({
-          file: { type: 'string' }, line: { type: 'integer', minimum: 1 },
-          input: { type: 'string' }, assertion: { type: 'string' },
+          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
+          input: { type: 'string', minLength: 1 }, assertion: { type: 'string', minLength: 1 },
         }) },
         losses: { type: 'array', items: closedDispatchRow({
-          file: { type: 'string' }, line: { type: 'integer', minimum: 1 },
-          title: { type: 'string' }, description: { type: 'string' },
-          severity: { type: 'string', enum: SEVERITY_ORDER },
+          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
+          title: { type: 'string', minLength: 1 }, description: { type: 'string', minLength: 1 },
+          severity: { type: 'string', minLength: 1, enum: SEVERITY_ORDER },
           confidence: { type: 'number', minimum: 0, maximum: 100 },
           criticality: { type: 'number', minimum: 1, maximum: 10 },
-          failure_scenario: { type: 'string' },
+          failure_scenario: { type: 'string', minLength: 1 },
         }) },
       }),
     },
@@ -136,7 +138,7 @@ export const DIMENSIONS = deepFreeze([
   { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
     schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'],
       requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP,
+  { dimension: 'test_coverage', agentType: AGENT_TYPE_TEST_ANALYZER, conditionalFlag: DEEP,
     // Bound the impact scale at dispatch; confidence remains unbounded here because runtime validators adjust it.
     schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
     requiredExtra: ['criticality', 'failure_scenario'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
@@ -185,7 +187,7 @@ export const AGENT_LABELS = deepFreeze({
   'code-gauntlet:bug-detector': 'Correctness & Error Handling',
   'code-gauntlet:security-reviewer': 'Security',
   'code-gauntlet:cross-file-impact': 'Cross-file Impact',
-  'code-gauntlet:test-analyzer': 'Test Coverage',
+  [AGENT_TYPE_TEST_ANALYZER]: 'Test Coverage',
   'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
   'code-gauntlet:type-design-analyzer': 'Type Design',
   'code-gauntlet:code-simplifier': 'Code Simplification',

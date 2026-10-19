@@ -68,9 +68,11 @@ DISPATCH_RESULTS = {
                 "properties": {
                     "id": {
                         "type": "string",
+                        "minLength": 1,
                     },
                     "status": {
                         "type": "string",
+                        "minLength": 1,
                         "enum": ["removed_with_code", "covered_elsewhere", "lost"],
                     },
                     "covered_by": {
@@ -80,6 +82,7 @@ DISPATCH_RESULTS = {
                             "properties": {
                                 "file": {
                                     "type": "string",
+                                    "minLength": 1,
                                 },
                                 "line": {
                                     "type": "integer",
@@ -87,9 +90,11 @@ DISPATCH_RESULTS = {
                                 },
                                 "input": {
                                     "type": "string",
+                                    "minLength": 1,
                                 },
                                 "assertion": {
                                     "type": "string",
+                                    "minLength": 1,
                                 },
                             },
                             "required": ["file", "line", "input", "assertion"],
@@ -103,6 +108,7 @@ DISPATCH_RESULTS = {
                             "properties": {
                                 "file": {
                                     "type": "string",
+                                    "minLength": 1,
                                 },
                                 "line": {
                                     "type": "integer",
@@ -110,12 +116,15 @@ DISPATCH_RESULTS = {
                                 },
                                 "title": {
                                     "type": "string",
+                                    "minLength": 1,
                                 },
                                 "description": {
                                     "type": "string",
+                                    "minLength": 1,
                                 },
                                 "severity": {
                                     "type": "string",
+                                    "minLength": 1,
                                     "enum": ["critical", "high", "medium", "low"],
                                 },
                                 "confidence": {
@@ -130,6 +139,7 @@ DISPATCH_RESULTS = {
                                 },
                                 "failure_scenario": {
                                     "type": "string",
+                                    "minLength": 1,
                                 },
                             },
                             "required": [

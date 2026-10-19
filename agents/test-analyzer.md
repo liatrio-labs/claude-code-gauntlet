@@ -196,10 +196,12 @@ Required dispatch-result fields (alongside findings, complete, total_seen):
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "status": {
             "type": "string",
+            "minLength": 1,
             "enum": [
               "removed_with_code",
               "covered_elsewhere",
@@ -212,17 +214,20 @@ Required dispatch-result fields (alongside findings, complete, total_seen):
               "type": "object",
               "properties": {
                 "file": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
                 "line": {
                   "type": "integer",
                   "minimum": 1
                 },
                 "input": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
                 "assertion": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "required": [
@@ -240,20 +245,24 @@ Required dispatch-result fields (alongside findings, complete, total_seen):
               "type": "object",
               "properties": {
                 "file": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
                 "line": {
                   "type": "integer",
                   "minimum": 1
                 },
                 "title": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
                 "description": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
                 "severity": {
                   "type": "string",
+                  "minLength": 1,
                   "enum": [
                     "critical",
                     "high",
@@ -272,7 +281,8 @@ Required dispatch-result fields (alongside findings, complete, total_seen):
                   "maximum": 10
                 },
                 "failure_scenario": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "required": [

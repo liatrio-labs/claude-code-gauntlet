@@ -1,5 +1,5 @@
 import { fnv1a32, isPlainObject } from './wire.js';
-import { DISPATCH_RESULTS } from './registry.js';
+import { AGENT_TYPE_TEST_ANALYZER, DISPATCH_RESULTS } from './registry.js';
 import { repoRelativeFindingPath } from './paths.js';
 
 const exactKeys = (value, keys) => isPlainObject(value)
@@ -49,7 +49,7 @@ function matchesAuditSchema(value, schema) {
 export function checkRemovedTestAudit(inventory, rows, repoRoot) {
   const findings = [];
   const reasons = new Set();
-  const schema = DISPATCH_RESULTS['code-gauntlet:test-analyzer'].removed_test_audit;
+  const schema = DISPATCH_RESULTS[AGENT_TYPE_TEST_ANALYZER].removed_test_audit;
   if (!Array.isArray(rows)) return { findings, audit: { status: 'gap', reason: 'malformed audit rows' } };
   const items = new Map(inventory.items.map((item) => [item.id, item]));
   const deletedPaths = new Set(inventory.items.filter((item) => item.kind === 'deleted_file').map((item) => item.path));

@@ -42,7 +42,22 @@ test('audit dispatch converts losses and reserves removed_test for code', async 
   const dispatch = ctx.calls.find((call) => call.agentType === 'code-gauntlet:test-analyzer');
   assert.match(dispatch.prompt, /tests\/removed/);
   assert.ok(dispatch.schema.required.includes('removed_test_audit'));
-  assert.equal(dispatch.schema.properties.removed_test_audit.items.additionalProperties, false);
+  const auditRow = dispatch.schema.properties.removed_test_audit.items;
+  assert.equal(auditRow.additionalProperties, false);
+  assert.equal(auditRow.properties.id.minLength, 1);
+  assert.equal(auditRow.properties.status.minLength, 1);
+  const citation = auditRow.properties.covered_by.items.properties;
+  assert.equal(citation.file.minLength, 1);
+  assert.equal(citation.line.minimum, 1);
+  assert.equal(citation.input.minLength, 1);
+  assert.equal(citation.assertion.minLength, 1);
+  const lossSchema = auditRow.properties.losses.items.properties;
+  assert.equal(lossSchema.file.minLength, 1);
+  assert.equal(lossSchema.line.minimum, 1);
+  assert.equal(lossSchema.title.minLength, 1);
+  assert.equal(lossSchema.description.minLength, 1);
+  assert.equal(lossSchema.severity.minLength, 1);
+  assert.equal(lossSchema.failure_scenario.minLength, 1);
   for (const call of ctx.calls) {
     const schema = call.schema.properties.findings.items;
     assert.equal(schema.additionalProperties, false);

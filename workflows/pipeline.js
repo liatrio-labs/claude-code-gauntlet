@@ -206,6 +206,7 @@ const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and na
   'plural/singular or off-by-one naming mismatches (a field, key, or variable named for one ' +
   'thing but holding another).';
 const DEEP = 'deep';
+const AGENT_TYPE_TEST_ANALYZER = 'code-gauntlet:test-analyzer';
 const SHA_FULL_RE = /^[0-9a-f]{40}$/;
 const WEB_ORIGIN_RE = new RegExp(
   "^https?:\\/\\/((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\\.(?:" +
@@ -271,22 +272,22 @@ const closedDispatchRow = (properties) => ({
   type: 'object', properties, required: Object.keys(properties), additionalProperties: false,
 });
 const DISPATCH_RESULTS = deepFreeze({
-  'code-gauntlet:test-analyzer': {
+  [AGENT_TYPE_TEST_ANALYZER]: {
     removed_test_audit: {
       type: 'array', items: closedDispatchRow({
-        id: { type: 'string' },
-        status: { type: 'string', enum: ['removed_with_code', 'covered_elsewhere', 'lost'] },
+        id: { type: 'string', minLength: 1 },
+        status: { type: 'string', minLength: 1, enum: ['removed_with_code', 'covered_elsewhere', 'lost'] },
         covered_by: { type: 'array', items: closedDispatchRow({
-          file: { type: 'string' }, line: { type: 'integer', minimum: 1 },
-          input: { type: 'string' }, assertion: { type: 'string' },
+          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
+          input: { type: 'string', minLength: 1 }, assertion: { type: 'string', minLength: 1 },
         }) },
         losses: { type: 'array', items: closedDispatchRow({
-          file: { type: 'string' }, line: { type: 'integer', minimum: 1 },
-          title: { type: 'string' }, description: { type: 'string' },
-          severity: { type: 'string', enum: SEVERITY_ORDER },
+          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
+          title: { type: 'string', minLength: 1 }, description: { type: 'string', minLength: 1 },
+          severity: { type: 'string', minLength: 1, enum: SEVERITY_ORDER },
           confidence: { type: 'number', minimum: 0, maximum: 100 },
           criticality: { type: 'number', minimum: 1, maximum: 10 },
-          failure_scenario: { type: 'string' },
+          failure_scenario: { type: 'string', minLength: 1 },
         }) },
       }),
     },
@@ -300,7 +301,7 @@ const DIMENSIONS = deepFreeze([
   { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
     schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'],
       requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP,
+  { dimension: 'test_coverage', agentType: AGENT_TYPE_TEST_ANALYZER, conditionalFlag: DEEP,
     schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
     requiredExtra: ['criticality', 'failure_scenario'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
@@ -342,7 +343,7 @@ const AGENT_LABELS = deepFreeze({
   'code-gauntlet:bug-detector': 'Correctness & Error Handling',
   'code-gauntlet:security-reviewer': 'Security',
   'code-gauntlet:cross-file-impact': 'Cross-file Impact',
-  'code-gauntlet:test-analyzer': 'Test Coverage',
+  [AGENT_TYPE_TEST_ANALYZER]: 'Test Coverage',
   'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
   'code-gauntlet:type-design-analyzer': 'Type Design',
   'code-gauntlet:code-simplifier': 'Code Simplification',
@@ -1326,7 +1327,7 @@ function matchesAuditSchema(value, schema) {
 function checkRemovedTestAudit(inventory, rows, repoRoot) {
   const findings = [];
   const reasons = new Set();
-  const schema = DISPATCH_RESULTS['code-gauntlet:test-analyzer'].removed_test_audit;
+  const schema = DISPATCH_RESULTS[AGENT_TYPE_TEST_ANALYZER].removed_test_audit;
   if (!Array.isArray(rows)) return { findings, audit: { status: 'gap', reason: 'malformed audit rows' } };
   const items = new Map(inventory.items.map((item) => [item.id, item]));
   const deletedPaths = new Set(inventory.items.filter((item) => item.kind === 'deleted_file').map((item) => item.path));
@@ -1530,7 +1531,7 @@ async function discover(ctx, input) {
   const discoveryCap = limits.discoveryCap;
   const specs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
   const inventory = inp.removedTests || { status: 'unavailable', items: [], omitted: 0, reason: 'inventory not supplied' };
-  const auditDispatched = specs.some((spec) => spec.agentType === 'code-gauntlet:test-analyzer');
+  const auditDispatched = specs.some((spec) => spec.agentType === AGENT_TYPE_TEST_ANALYZER);
   let removedTestAudit = inventory.status === 'unavailable'
     ? { status: 'unavailable', reason: inventory.reason }
     : !auditDispatched && inventory.items.length > 0
@@ -1555,7 +1556,7 @@ async function discover(ctx, input) {
   results.forEach((res, i) => {
     const spec = specs[i];
     let auditLosses = [];
-    if (spec.agentType === 'code-gauntlet:test-analyzer' && inventory.status === 'available' && res) {
+    if (spec.agentType === AGENT_TYPE_TEST_ANALYZER && inventory.status === 'available' && res) {
       const checked = checkRemovedTestAudit(inventory, res.removed_test_audit, inp.repoRoot);
       removedTestAudit = checked.audit;
       auditLosses = checked.findings;
@@ -1638,7 +1639,7 @@ function discoverPrompt(inp, spec) {
   const resultFields = DISPATCH_RESULTS[spec.agentType] || {};
   const resultContract = Object.keys(resultFields).length
     ? ` Also return the required dispatch-result fields: ${Object.keys(resultFields).join(', ')}.` : '';
-  const audit = spec.agentType === 'code-gauntlet:test-analyzer'
+  const audit = spec.agentType === AGENT_TYPE_TEST_ANALYZER
     ? ` Audit every removed test item below from the saved diff. Return exactly one removed_test_audit row per id (or [] when unavailable/empty). Loss locations and prose describe surviving behavior; keep deleted paths only in the item reference. Inventory: ${JSON.stringify(inp.removedTests || { status: 'unavailable', items: [] })}` : '';
   return `${base}${spec.promptExtra ? ` ${spec.promptExtra}` : ''}${resultContract}${audit}`;
 }
