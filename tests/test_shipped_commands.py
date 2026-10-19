@@ -1105,7 +1105,7 @@ def test_shipped_patch_producer(source, mode, outcome, tmp_path, monkeypatch):
     base, target = patch_repo(tmp_path, monkeypatch)
     if outcome == "empty":
         base = target
-        (tmp_path / "file").write_text("new\n", encoding="utf-8")
+        (tmp_path / "file").write_text("new\n", encoding="utf-8", newline="\n")
     elif outcome == "failure":
         base = target = "a" * 40
         (tmp_path / ".git").rename(tmp_path / "not-git")
@@ -1158,7 +1158,7 @@ def test_shipped_branch_composite(outcome, tmp_path, monkeypatch):
     from tests.support.git_diff import git, patch_repo
 
     base, target = patch_repo(tmp_path, monkeypatch)
-    (tmp_path / "file").write_text("new\n", encoding="utf-8")
+    (tmp_path / "file").write_text("new\n", encoding="utf-8", newline="\n")
     branch = "topic/$(id)`id`'end)("
     git(tmp_path, "branch", branch, target)
     git(

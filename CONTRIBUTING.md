@@ -336,11 +336,11 @@ pre-commit run --all-files
 
 `python -m pytest tests/ -q` runs on Linux, macOS and Windows. Windows requires
 Git for Windows and Python 3.10+ reachable as `python3`, `python`, or `py -3`.
-The manual `windows_live: true` input on CI runs local-changes reviews on
-windows-latest using the `windows-live` environment and subscription token.
-Runtime support must not be claimed until that live job passes on the proposed
-commit. Its verified scope is local changes; Windows CI exercises command
-execution, PR checkout, posting, and forge submission without a live forge review.
+The manual `windows_live: true` input on CI runs a live headless local-changes
+review on windows-latest, using the `windows-live` environment and subscription
+token behind a required reviewer. Windows CI covers command execution and PR
+checkout and posting where tests do not rely on shebang fake CLIs; no live forge
+review runs on Windows.
 The job pins its Claude Code version, so rerun it only for changes to path
 handling, interpreter selection, shell commands, the job itself, or that pin.
 The Node suite (`workflows/test`) and `bench/tests` run in CI on Linux.
