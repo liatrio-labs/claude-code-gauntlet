@@ -112,6 +112,7 @@ export function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
       notes = 'Unverified findings only — see secondary section';
     }
 
+    if (audit && audit.duplicates_dropped) notes += `; ${audit.duplicates_dropped} repeated an audit loss and were dropped`;
     return `| ${label} | ${agentShort} | ${findingsCell} | ${notes} |`;
   });
 

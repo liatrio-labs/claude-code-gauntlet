@@ -65,7 +65,7 @@ test('audit dispatch converts losses and reserves removed_test for code', async 
   }
 });
 
-test('audit losses drop only overlapping ordinary findings from the same dispatch', async () => {
+test('audit losses drop only same-anchor ordinary findings from the same dispatch', async () => {
   const anchor = { ...loss, file: '/repo/bin/seat', line: 545 };
   const ordinary = (id, fields = {}) => makeFinding(id, {
     file: 'bin/seat', line_start: 545, line_end: undefined, dimension: 'test_coverage',
@@ -88,12 +88,14 @@ test('audit losses drop only overlapping ordinary findings from the same dispatc
   } });
   const out = await discover(ctx, { repoRoot: '/repo', removedTests: body });
   assert.deepEqual(out.findings.map((finding) => finding.id), [
-    'other-agent', `removed-test:${item.id}:1`, 'before', 'after', 'other-file',
+    'other-agent', `removed-test:${item.id}:1`, 'range-middle', 'range-end', 'before', 'after', 'other-file',
   ]);
   assert.equal(out.findings[0].agent, 'bug-detector');
   assert.equal(out.findings[1].file, 'bin/seat');
   assert.deepEqual(out.gaps, []);
-  assert.equal(out.removedTestAudit.duplicates_dropped, 4);
+  assert.equal(out.removedTestAudit.duplicates_dropped, 2);
+  const row = dimensionsSummaryTable(out).split('\n').find((line) => line.includes('| test-analyzer |'));
+  assert.match(row, /2 repeated an audit loss and were dropped/);
 });
 
 const badRows = [

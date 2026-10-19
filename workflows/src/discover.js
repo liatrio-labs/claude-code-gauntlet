@@ -258,8 +258,8 @@ export async function discover(ctx, input) {
     for (const f of list) {
       // The audit already represents coverage lost at this anchor within this dispatch.
       const normalized = repoRelativeFindingPath(inp.repoRoot, f.file);
-      if (auditLosses.some((loss) => normalized.file === loss.file
-        && f.line_start <= loss.line_start && (f.line_end ?? f.line_start) >= loss.line_start)) {
+      // Same start line only: a wider range at that anchor may describe a different untested behaviour.
+      if (auditLosses.some((loss) => normalized.file === loss.file && f.line_start === loss.line_start)) {
         droppedAuditOverlaps += 1;
         continue;
       }

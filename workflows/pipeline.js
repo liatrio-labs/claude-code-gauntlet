@@ -1578,8 +1578,7 @@ async function discover(ctx, input) {
     }
     for (const f of list) {
       const normalized = repoRelativeFindingPath(inp.repoRoot, f.file);
-      if (auditLosses.some((loss) => normalized.file === loss.file
-        && f.line_start <= loss.line_start && (f.line_end ?? f.line_start) >= loss.line_start)) {
+      if (auditLosses.some((loss) => normalized.file === loss.file && f.line_start === loss.line_start)) {
         droppedAuditOverlaps += 1;
         continue;
       }
@@ -3471,6 +3470,7 @@ function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
       findingsCell = `0 (+${m} unverified)`;
       notes = 'Unverified findings only — see secondary section';
     }
+    if (audit && audit.duplicates_dropped) notes += `; ${audit.duplicates_dropped} repeated an audit loss and were dropped`;
     return `| ${label} | ${agentShort} | ${findingsCell} | ${notes} |`;
   });
   return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
