@@ -231,7 +231,7 @@ export async function discover(ctx, input) {
   results.forEach((res, i) => {
     const spec = specs[i];
     if (spec.agentType === 'code-gauntlet:test-analyzer' && inventory.status === 'available' && res) {
-      const checked = checkRemovedTestAudit(inventory, res.removed_test_audit);
+      const checked = checkRemovedTestAudit(inventory, res.removed_test_audit, inp.repoRoot);
       removedTestAudit = checked.audit;
       findings.push(...checked.findings);
     }
@@ -252,6 +252,7 @@ export async function discover(ctx, input) {
       return;
     }
     for (const f of list) {
+      delete f.removed_test;
       // Filtering and merge grouping require canonical short agent names, so dispatch prefixes must be stripped.
       f.agent = spec.agentType.split(':').pop();
       findings.push(f);

@@ -46,35 +46,57 @@ function matchesAuditSchema(value, schema) {
     && (schema.maximum === undefined || value <= schema.maximum);
 }
 
-export function checkRemovedTestAudit(inventory, rows) {
+export function checkRemovedTestAudit(inventory, rows, repoRoot) {
   const findings = [];
-  const gap = (reason) => ({ findings: [], audit: { status: 'gap', reason } });
+  const reasons = new Set();
   const schema = DISPATCH_RESULTS['code-gauntlet:test-analyzer'].removed_test_audit;
-  if (!matchesAuditSchema(rows, schema)) return gap('malformed audit rows');
+  if (!Array.isArray(rows)) return { findings, audit: { status: 'gap', reason: 'malformed audit rows' } };
   const items = new Map(inventory.items.map((item) => [item.id, item]));
-  const seen = new Set();
+  const deletedPaths = new Set(inventory.items.filter((item) => item.kind === 'deleted_file').map((item) => item.path));
+  // Count before intake so neither occurrence of a duplicate can claim an inventory item.
+  const counts = new Map();
   for (const row of rows) {
-    if (!items.has(row.id) || seen.has(row.id)) return gap('unknown or duplicate inventory id');
-    seen.add(row.id);
+    if (isPlainObject(row)) counts.set(row.id, (counts.get(row.id) || 0) + 1);
+  }
+  if ([...items.keys()].some((id) => !counts.has(id))) reasons.add('missing inventory ids');
+  for (const row of rows) {
+    if (!matchesAuditSchema(row, schema.items)) {
+      reasons.add('malformed audit rows');
+      continue;
+    }
+    if (!items.has(row.id) || counts.get(row.id) > 1) {
+      reasons.add('unknown or duplicate inventory id');
+      continue;
+    }
     if (row.status === 'covered_elsewhere' && (!row.covered_by.length
-      || row.covered_by.some((cite) => !confinedPath(cite.file)))) return gap('incomplete surviving-test citation');
-    if (row.status === 'lost' ? !row.losses.length : row.losses.length) return gap('losses disagree with audit status');
+      || row.covered_by.some((cite) => {
+        const normalized = repoRelativeFindingPath(repoRoot, cite.file);
+        return normalized.reason || deletedPaths.has(normalized.file);
+      }))) {
+      reasons.add('incomplete surviving-test citation');
+      continue;
+    }
+    if (row.status === 'lost' ? !row.losses.length : row.losses.length) {
+      reasons.add('losses disagree with audit status');
+      continue;
+    }
     const { id, path, old_start, old_end } = items.get(row.id);
+    const rowFindings = [];
     for (const [index, loss] of row.losses.entries()) {
-      if (!confinedPath(loss.file)) return gap('invalid behavior anchor');
-      if (items.get(row.id).kind === 'deleted_file' && loss.file === path) return gap('behavior anchor was deleted');
-      if ([loss.title, loss.description, loss.failure_scenario].some((text) => text.includes(path))) {
-        return gap('deleted test path belongs only in inventory metadata');
+      const normalized = repoRelativeFindingPath(repoRoot, loss.file);
+      if (normalized.reason || deletedPaths.has(normalized.file)) {
+        reasons.add(normalized.reason ? 'invalid behavior anchor' : 'behavior anchor was deleted');
+        break;
       }
-      findings.push({
+      rowFindings.push({
         id: `removed-test:${id}:${index + 1}`, agent: 'test-analyzer', dimension: 'test_coverage',
-        file: loss.file, line_start: loss.line, title: loss.title, description: loss.description,
+        file: normalized.file, line_start: loss.line, title: loss.title, description: loss.description,
         severity: loss.severity, confidence: loss.confidence, criticality: loss.criticality,
         failure_scenario: loss.failure_scenario, removed_test: { id, path, old_start, old_end },
       });
     }
+    if (rowFindings.length === row.losses.length) findings.push(...rowFindings);
   }
-  if (seen.size !== items.size) return gap('missing inventory ids');
-  return { findings, audit: inventory.omitted > 0
+  return { findings, audit: reasons.size > 0 ? { status: 'gap', reason: [...reasons].join('; ') } : inventory.omitted > 0
     ? { status: 'overflow', omitted: inventory.omitted } : { status: 'ran-clean' } };
 }

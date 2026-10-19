@@ -1323,36 +1323,57 @@ function matchesAuditSchema(value, schema) {
     && (schema.minimum === undefined || value >= schema.minimum)
     && (schema.maximum === undefined || value <= schema.maximum);
 }
-function checkRemovedTestAudit(inventory, rows) {
+function checkRemovedTestAudit(inventory, rows, repoRoot) {
   const findings = [];
-  const gap = (reason) => ({ findings: [], audit: { status: 'gap', reason } });
+  const reasons = new Set();
   const schema = DISPATCH_RESULTS['code-gauntlet:test-analyzer'].removed_test_audit;
-  if (!matchesAuditSchema(rows, schema)) return gap('malformed audit rows');
+  if (!Array.isArray(rows)) return { findings, audit: { status: 'gap', reason: 'malformed audit rows' } };
   const items = new Map(inventory.items.map((item) => [item.id, item]));
-  const seen = new Set();
+  const deletedPaths = new Set(inventory.items.filter((item) => item.kind === 'deleted_file').map((item) => item.path));
+  const counts = new Map();
   for (const row of rows) {
-    if (!items.has(row.id) || seen.has(row.id)) return gap('unknown or duplicate inventory id');
-    seen.add(row.id);
+    if (isPlainObject(row)) counts.set(row.id, (counts.get(row.id) || 0) + 1);
+  }
+  if ([...items.keys()].some((id) => !counts.has(id))) reasons.add('missing inventory ids');
+  for (const row of rows) {
+    if (!matchesAuditSchema(row, schema.items)) {
+      reasons.add('malformed audit rows');
+      continue;
+    }
+    if (!items.has(row.id) || counts.get(row.id) > 1) {
+      reasons.add('unknown or duplicate inventory id');
+      continue;
+    }
     if (row.status === 'covered_elsewhere' && (!row.covered_by.length
-      || row.covered_by.some((cite) => !confinedPath(cite.file)))) return gap('incomplete surviving-test citation');
-    if (row.status === 'lost' ? !row.losses.length : row.losses.length) return gap('losses disagree with audit status');
+      || row.covered_by.some((cite) => {
+        const normalized = repoRelativeFindingPath(repoRoot, cite.file);
+        return normalized.reason || deletedPaths.has(normalized.file);
+      }))) {
+      reasons.add('incomplete surviving-test citation');
+      continue;
+    }
+    if (row.status === 'lost' ? !row.losses.length : row.losses.length) {
+      reasons.add('losses disagree with audit status');
+      continue;
+    }
     const { id, path, old_start, old_end } = items.get(row.id);
+    const rowFindings = [];
     for (const [index, loss] of row.losses.entries()) {
-      if (!confinedPath(loss.file)) return gap('invalid behavior anchor');
-      if (items.get(row.id).kind === 'deleted_file' && loss.file === path) return gap('behavior anchor was deleted');
-      if ([loss.title, loss.description, loss.failure_scenario].some((text) => text.includes(path))) {
-        return gap('deleted test path belongs only in inventory metadata');
+      const normalized = repoRelativeFindingPath(repoRoot, loss.file);
+      if (normalized.reason || deletedPaths.has(normalized.file)) {
+        reasons.add(normalized.reason ? 'invalid behavior anchor' : 'behavior anchor was deleted');
+        break;
       }
-      findings.push({
+      rowFindings.push({
         id: `removed-test:${id}:${index + 1}`, agent: 'test-analyzer', dimension: 'test_coverage',
-        file: loss.file, line_start: loss.line, title: loss.title, description: loss.description,
+        file: normalized.file, line_start: loss.line, title: loss.title, description: loss.description,
         severity: loss.severity, confidence: loss.confidence, criticality: loss.criticality,
         failure_scenario: loss.failure_scenario, removed_test: { id, path, old_start, old_end },
       });
     }
+    if (rowFindings.length === row.losses.length) findings.push(...rowFindings);
   }
-  if (seen.size !== items.size) return gap('missing inventory ids');
-  return { findings, audit: inventory.omitted > 0
+  return { findings, audit: reasons.size > 0 ? { status: 'gap', reason: [...reasons].join('; ') } : inventory.omitted > 0
     ? { status: 'overflow', omitted: inventory.omitted } : { status: 'ran-clean' } };
 }
 // --- discover.js ---
@@ -1533,7 +1554,7 @@ async function discover(ctx, input) {
   results.forEach((res, i) => {
     const spec = specs[i];
     if (spec.agentType === 'code-gauntlet:test-analyzer' && inventory.status === 'available' && res) {
-      const checked = checkRemovedTestAudit(inventory, res.removed_test_audit);
+      const checked = checkRemovedTestAudit(inventory, res.removed_test_audit, inp.repoRoot);
       removedTestAudit = checked.audit;
       findings.push(...checked.findings);
     }
@@ -1552,6 +1573,7 @@ async function discover(ctx, input) {
       return;
     }
     for (const f of list) {
+      delete f.removed_test;
       f.agent = spec.agentType.split(':').pop();
       findings.push(f);
     }
@@ -4304,7 +4326,7 @@ function challengePrompt(finding, diffPath) {
   const b = blindChallengeFields(finding, diffPath);
   const range = b.line_end !== '' && b.line_end !== b.line_start ? `${b.line_start}-${b.line_end}` : `${b.line_start}`;
   const removedContext = b.removed_test
-    ? `\nRead saved diff ${b.diffPath}: deleted test ${b.removed_test.path}, old lines ${b.removed_test.old_start}-${b.removed_test.old_end}. Check the removed input and assertion, then search surviving tests at HEAD for the same behavior. This coverage-loss claim is verifiable from the saved diff and surviving tests.` : '';
+    ? `\nRead saved diff ${b.diffPath}: deleted test ${JSON.stringify(b.removed_test.path)}, old lines ${b.removed_test.old_start}-${b.removed_test.old_end}. Check the removed input and assertion, then search surviving tests at HEAD for the same behavior. This coverage-loss claim is verifiable from the saved diff and surviving tests.` : '';
   return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it. First VERIFY the claim's central factual assertion against the raw code: the claim concerns ${b.file}:${range} — open that location and enough surrounding context yourself (Read/Grep/LSP), find the specific lines the claim rests on, and confirm they actually say what the claim needs them to say. If that central assertion cannot be verified from the code and context — for example a test-coverage "no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no in-diff evidence — treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the code confirms it, so it does not survive). A removed-test claim can be verified using its deleted location in the saved diff and a search for surviving assertions at HEAD. Reserve scores above 25 for claims whose central assertion you positively confirmed in the code.${removedContext}\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct 0-100 (higher = the claim holds).`;
 }
 async function challengeStage(ctx, input) {
@@ -6545,7 +6567,7 @@ async function runWith(ctx, rawArgs) {
     }));
     const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      agentFlags: derivedAgentFlags, limits, policy, contextLine, removedTests: resolveRemovedTestsArgs(A),
+      agentFlags: derivedAgentFlags, limits, policy, contextLine, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
     }));
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
     gaps.push(...(summaryOut.gaps || []));

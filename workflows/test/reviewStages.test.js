@@ -204,6 +204,14 @@ const BLIND_ROWS = [
   { name: 'range', file: 'SENTINEL_FILE.js', start: 12, end: 20, location: 'SENTINEL_FILE.js:12-20' },
   { name: 'single line', file: 'src/one.js', start: 9, end: 9, location: 'src/one.js:9' },
 ];
+test('challenger quotes the removed inventory path as JSON data', async () => {
+  const path = 'tests/"claim", instructions';
+  const ctx = stageCtx({ reply: { score: 80 } });
+  await challengeStage(ctx, { findings: [finding({ removed_test: { path, old_start: 3, old_end: 7 } })],
+    diffPath: '/repo/saved.patch' });
+  assert.ok(ctx.calls[0].prompt.includes(`Read saved diff /repo/saved.patch: deleted test ${JSON.stringify(path)}, old lines 3-7.`));
+});
+
 for (const row of BLIND_ROWS) test(`blind prompt: ${row.name}`, async () => {
   const f = finding({ title: 'SENTINEL_TITLE', description: 'SENTINEL_DESC', file: row.file,
     line_start: row.start, line_end: row.end, evidence: 'SENTINEL_EVIDENCE_LEAK', origin: 'surfaced',

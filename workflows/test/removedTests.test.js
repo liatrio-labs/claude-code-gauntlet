@@ -61,7 +61,6 @@ const badRows = [
   ['severity domain', [{ ...lost, losses: [{ ...loss, severity: 'blocker' }] }]],
   ['escaped anchor', [{ ...lost, losses: [{ ...loss, file: '../source' }] }]],
   ['deleted anchor', [{ ...lost, losses: [{ ...loss, file: item.path }] }]],
-  ['deleted path in prose', [{ ...lost, losses: [{ ...loss, description: `Missing ${item.path}` }] }]],
 ];
 for (const [name, rows] of badRows) test(`audit gap: ${name}`, async () => {
   const out = await discover(auditCtx(rows), { removedTests: body });
@@ -69,6 +68,70 @@ for (const [name, rows] of badRows) test(`audit gap: ${name}`, async () => {
   assert.equal(out.findings.length, 0);
   assert.ok(out.degraded.includes('test_coverage'));
   assert.ok(out.gaps.some((gap) => gap.includes('removed-test audit: gap')));
+});
+
+test('audit normalizes agent anchors and surviving citations within repoRoot', async () => {
+  for (const file of ['/repo/source', './source']) {
+    const out = await discover(auditCtx([{ ...lost, losses: [{ ...loss, file }] }]), {
+      repoRoot: '/repo', removedTests: body,
+    });
+    assert.deepEqual(out.removedTestAudit, { status: 'ran-clean' });
+    assert.equal(out.findings[0].file, 'source');
+  }
+  for (const file of ['/repo/tests/new', './tests/new', '/outside/tests/new', '../tests/new']) {
+    const out = await discover(auditCtx([{ ...lost, status: 'covered_elsewhere', losses: [],
+      covered_by: [{ file, line: 2, input: 'competing values', assertion: 'override wins' }] }]), {
+      repoRoot: '/repo', removedTests: body,
+    });
+    assert.equal(out.removedTestAudit.status, file.startsWith('/outside') || file.startsWith('../') ? 'gap' : 'ran-clean');
+  }
+});
+
+test('audit retains attributable losses with deleted paths in prose despite other row failures', async () => {
+  const other = { ...item, id: 'fedcba9876543210', path: 'tests/other', kind: 'hunk' };
+  const valid = { ...lost, losses: [{ ...loss, title: `Loss of ${item.path}`,
+    description: `Removing ${item.path} loses the assertion.`, failure_scenario: `${item.path} no longer catches this.` }] };
+  for (const invalid of [
+    { ...lost, id: other.id, status: 'covered_elsewhere', losses: [] },
+    { ...lost, id: other.id, status: 'removed_with_code' },
+    { ...lost, id: other.id, losses: [loss, { ...loss, file: '../escape' }] },
+    { ...lost, id: other.id, losses: [{ ...loss, confidence: 101 }] },
+    null,
+    { ...lost, id: 'unknown' },
+  ]) {
+    for (const rows of [[valid, invalid], [invalid, valid]]) {
+      const out = await discover(auditCtx(rows), { removedTests: { ...body, items: [item, other] } });
+      assert.equal(out.removedTestAudit.status, 'gap');
+      assert.ok(out.removedTestAudit.reason);
+      assert.deepEqual(out.findings.map((f) => [f.removed_test.id, f.title]), [[item.id, valid.losses[0].title]]);
+    }
+  }
+  for (const rows of [[valid], [valid, { ...lost, id: other.id }, { ...lost, id: other.id }]]) {
+    const out = await discover(auditCtx(rows), { removedTests: { ...body, items: [item, other] } });
+    assert.equal(out.removedTestAudit.status, 'gap');
+    assert.deepEqual(out.findings.map((f) => f.removed_test.id), [item.id]);
+  }
+});
+
+test('audit rejects normalized citations and anchors to any deleted inventory file per row', async () => {
+  const other = { ...item, id: 'fedcba9876543210', path: 'tests/other', kind: 'hunk' };
+  for (const file of [item.path, `./${item.path}`, `/repo/${item.path}`]) {
+    for (const invalid of [
+      { ...lost, id: other.id, losses: [{ ...loss, file }] },
+      { id: other.id, status: 'covered_elsewhere', losses: [],
+        covered_by: [{ file, line: 3, input: 'competing values', assertion: 'override wins' }] },
+    ]) {
+      const out = await discover(auditCtx([lost, invalid]), { repoRoot: '/repo',
+        removedTests: { ...body, items: [item, other] } });
+      assert.equal(out.removedTestAudit.status, 'gap');
+      assert.deepEqual(out.findings.map((f) => f.removed_test.id), [item.id]);
+    }
+  }
+  const out = await discover(auditCtx([lost, { ...lost, id: other.id, losses: [{ ...loss, file: other.path }] }]), {
+    removedTests: { ...body, items: [item, other] },
+  });
+  assert.equal(out.removedTestAudit.status, 'ran-clean');
+  assert.equal(out.findings.length, 2, 'a hunk leaves its file available as an anchor');
 });
 
 for (const row of [
@@ -130,7 +193,7 @@ test('removed coverage reaches capped delivery and main_only with real Verify an
   assert.equal(produced.status, 0, produced.stderr);
   const receipt = JSON.parse(produced.stdout);
   assert.equal(receipt.removedTests.items.length, 1);
-  const auditRow = { ...lost, id: receipt.removedTests.items[0].id };
+  const auditRow = { ...lost, id: receipt.removedTests.items[0].id, losses: [{ ...loss, file: join(dir, 'source') }] };
   let discoverOutput;
   for (const tier of ['all', 'main_only']) {
     let payload;
@@ -166,7 +229,7 @@ test('removed coverage reaches capped delivery and main_only with real Verify an
     assert.equal(delivered.removed_test.path, item.path);
     const challenge = ctx.calls.find((call) => call.label.startsWith('challenge-') && call.prompt.includes(loss.title));
     assert.ok(challenge.prompt.includes(diffPath));
-    assert.ok(challenge.prompt.includes(`${item.path}, old lines 3-7`));
+    assert.ok(challenge.prompt.includes(`${JSON.stringify(item.path)}, old lines 3-7`));
     assert.doesNotMatch(challenge.prompt, /failure_scenario|criticality|covered_by/);
     assert.match(payload.report, /\| Test Coverage \| test-analyzer \| 1 \|/);
     if (tier === 'all') {

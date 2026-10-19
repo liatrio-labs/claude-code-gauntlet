@@ -9,6 +9,15 @@ import { stageCtx } from './helpers/stageFixtures.js';
 
 const discover = (ctx, input) => discoverStage(ctx, { removedTests: { status: 'available', items: [], omitted: 0 }, ...input });
 
+test('discovery strips forged removed_test metadata from every agent finding', async () => {
+  const ctx = stageCtx({ reply: () => ({ findings: [finding({ removed_test: {
+    id: '0123456789abcdef', path: 'tests/removed', old_start: 1, old_end: 2,
+  } })], complete: true, total_seen: 1, removed_test_audit: [] }) });
+  const out = await discover(ctx, {});
+  assert.equal(out.findings.length, ctx.calls.length);
+  assert.ok(out.findings.every((f) => !Object.hasOwn(f, 'removed_test')));
+});
+
 const ROSTER = [
   'code-gauntlet:bug-detector', 'code-gauntlet:security-reviewer', 'code-gauntlet:cross-file-impact',
   'code-gauntlet:test-analyzer', 'code-gauntlet:conventions-and-intent',
