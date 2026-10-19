@@ -377,13 +377,13 @@ const HOST_ROWS = [
     attack_vector: 'See /work/repo/private.txt', suggestion_removal_reason: 'See /work/repo/private.txt',
     secret_host_note: { nested: ['/work/repo/custom.json', null, 42] },
   }, expected: {
-    id: 'SAFE_ID', title: 'finding SAFE_ID',
+    id: '/work/repo/SAFE_ID', title: 'finding SAFE_ID',
     file: 'src/a.js', cross_file_refs: ['src/b.js:2'],
     description: 'The defect in src/a.js affects callers and produces incorrect results under ordinary inputs.',
     evidence: 'See [source](src/a.js:10) and https://example.test/repository.',
     attack_vector: 'See private.txt', suggestion_removal_reason: 'See private.txt',
     secret_host_note: { nested: ['custom.json', null, 42] },
-  }, gaps: [] },
+  }, gaps: ['host-path-text: finding #1 of findings mentions a host path in id - text left unchanged'] },
   { name: 'outside roots, exempt code and object keys', extra: {
     validation_justification: 'See /external/output/private.txt', attack_vector: 'See /plugin/agents/reviewer.md',
     evidence: { '/work/repo/private.txt': ['See /work/repo/src/a.js', '/plugin/private.txt'] },
@@ -419,20 +419,52 @@ for (const row of HOST_ROWS) test(`host text fields: ${row.name}`, async () => {
   }
 });
 
+test('host text walker does not assign unchanged entries', async () => {
+  const note = Object.freeze(JSON.parse('{"__proto__":"ordinary text","note":"/plugin/private.txt"}'));
+  const finding = makeFinding('SAFE_ID', { secret_host_note: note });
+  const args = validArgs({ repoRoot: '/work/repo' });
+  args.checkpoints = { challenge: challengeOutput({ findings: [finding] }) };
+  const { out, payload } = await runAndCapture(args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(payload.findings[0].secret_host_note, note);
+  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), [
+    'host-path-text: finding SAFE_ID mentions a host path in other - text left unchanged',
+  ]);
+});
+
+for (const field of ['id', 'consolidation_key', 'consolidation_primary']) test(`host text identifier exemption: ${field}`, async () => {
+  const identifier = '/work/repo/SAFE_ID';
+  const finding = makeFinding('SAFE_ID', { [field]: identifier, file: 'src/a.js' });
+  const { out, payload } = await runAndCapture(validArgs({ repoRoot: '/work/repo', checkpoints: {
+    challenge: challengeOutput({ eliminated: [finding] }),
+  } }));
+  assert.equal(out.ok, true);
+  assert.equal(payload.checkpoints.phases.challenge.eliminated[0][field], identifier);
+  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), [
+    `host-path-text: finding ${field === 'id' ? '#1 of eliminated' : 'SAFE_ID'} mentions a host path in ${field} - text left unchanged`,
+  ]);
+});
+
 const HOST_RESUME_ROWS = [
-  { name: 'fresh and resumed delivery agree across all buckets' },
+  { name: 'fresh and resumed delivery agree across all buckets', outside: false },
+  { name: 'outside-root disclosure occurs once per delivery', outside: true },
 ];
 for (const row of HOST_RESUME_ROWS) test(`host text resume: ${row.name}`, async () => {
   const summary = 'The change summary cites /work/repo/src/summary.js.';
   const finding = makeFinding('SAFE_ID', { file: 'src/finding.js',
     description: 'The defect at /work/repo/src/finding.js causes incorrect results under ordinary inputs.',
     code: 'const path = "/work/repo/src/finding.js";',
+    ...(row.outside ? { evidence: 'See /plugin/agents/reviewer.md' } : {}),
   });
   const first = await captureRun(validArgs({ repoRoot: '/work/repo' }), { summary, findings: [finding] });
   const resumed = await captureRun(validArgs({ repoRoot: '/work/repo', checkpoints: first.payload.checkpoints }), { summary });
   for (const { out, payload } of [first, resumed]) {
     assert.equal(out.ok, true);
-    assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), []);
+    assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), row.outside ? [
+      'host-path-text: finding SAFE_ID mentions a host path in evidence - text left unchanged',
+    ] : []);
+    assert.deepEqual(payload.checkpoints.phases.challenge.gaps.filter((gap) => gap.startsWith('host-path-text:')), []);
+    if (row.outside) assert.equal(payload.findings[0].evidence, 'See /plugin/agents/reviewer.md');
     assert.equal(payload.findings[0].description, 'The defect at src/finding.js causes incorrect results under ordinary inputs.');
     assert.equal(payload.findings[0].code, 'const path = "src/finding.js";');
     assert.ok(payload.report.includes('The change summary cites src/summary.js.'));

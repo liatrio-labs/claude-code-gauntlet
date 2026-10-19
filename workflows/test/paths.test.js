@@ -15,6 +15,21 @@ const REWRITE_ROWS = [
   ['POSIX case sibling', '/work/repo', '/work/Repo/a.js', '/work/Repo/a.js'],
   ['single segment route', '/app', '/app/settings', '/app/settings'],
   ['single segment private alias', '/app', '/private/app/settings', '/private/app/settings'],
+  ['colon-joined paths', '/Users/u/repo', 'PYTHONPATH=/Users/u/repo/src:/Users/u/repo/tests', 'PYTHONPATH=src:tests'],
+  ...['12', 'L12', '12:3', '12-20', 'L12-L20'].map((suffix) =>
+    [`location-joined paths ${suffix}`, '/Users/u/repo', `/Users/u/repo/a.js:${suffix}:/Users/u/repo/b.js`, `a.js:${suffix}:b.js`]),
+  ['traversal joined to clean path', '/Users/u/repo', '/Users/u/repo/src/../x:/Users/u/repo/tests', '/Users/u/repo/src/../x:tests'],
+  ['following root in token', '/Users/u/repo', '/Users/u/repo/a#/Users/u/repo/b', 'a#b'],
+  ...['D:/Work/repo', String.raw`D:\Work\repo`, '/d/Work/repo'].flatMap((root) => [
+    [`mixed drive separators ${root}`, 'D:/Work/repo', `${root}\\src\\a.js`, 'src/a.js'],
+    [`encoded drive separators ${root}`, 'D:/Work/repo', `${root}%5Csrc%5Ca.js`, 'src%5Ca.js'],
+    [`mixed drive traversal ${root}`, 'D:/Work/repo', `${root}\\src\\..\\..\\secret`, `${root}\\src\\..\\..\\secret`],
+    [`encoded drive traversal ${root}`, 'D:/Work/repo', `${root}%5Csrc%5C..%5C..%5Csecret`, `${root}%5Csrc%5C..%5C..%5Csecret`],
+    [`mixed drive separator runs ${root}`, 'D:/Work/repo', `${root}/\\src\\/a.js`, 'src/a.js'],
+  ]),
+  ['Windows Python traversal', 'C:/Users/u/repo', String.raw`C:/Users/u/repo\src\..\..\secret`, String.raw`C:/Users/u/repo\src\..\..\secret`],
+  ['POSIX tail retains backslashes', '/work/repo', String.raw`/work/repo/src\a.js`, String.raw`src\a.js`],
+  ['POSIX backslash is not a separator', '/work/repo', '/work/repo%5Csrc%5Ca.js', '/work/repo%5Csrc%5Ca.js'],
   ['drive forward', 'D:/Work/repo', 'D:/Work/repo/src/a.js', 'src/a.js'],
   ['drive backslash tail', 'D:/Work/repo', String.raw`D:\Work\repo\src\a.js`, 'src/a.js'],
   ['drive doubled backslashes', 'D:/Work/repo', String.raw`D:\\Work\\repo\\src\\a.js`, 'src/a.js'],
@@ -92,7 +107,9 @@ const REWRITE_ROWS = [
   ['non-string', '/work/repo', null, null],
 ];
 for (const [name, root, input, expected] of REWRITE_ROWS) test(`rewrite repo root: ${name}`, () => {
-  const { roots } = prepareHostRootPatterns([root]);
+  const patterns = prepareHostRootPatterns([root]);
+  const { roots } = patterns;
+  if (name.includes('drive') || name === 'Windows Python traversal') assert.equal(mentionsPreparedHostRoot(input, patterns), true);
   const rewritten = rewritePreparedRepoRoot(input, roots);
   assert.equal(rewritten, expected);
   assert.equal(rewritePreparedRepoRoot(rewritten, roots), expected);
@@ -110,7 +127,7 @@ test('rewrite repo root scans 200000 characters promptly', { timeout: 2000 }, ()
   `], { encoding: 'utf8', timeout: 1000 });
   assert.equal(result.status, 0, `rewrite must complete within one second: ${result.error || result.stderr}`);
   assert.deepEqual(JSON.parse(result.stdout), ['/abc' + '/'.repeat(200000) + 'X', 'a',
-    '/abc/end/x:'.repeat(20000) + '/../escape', 'src%2Fa.js', 'file:'.repeat(39999) + 'a']);
+    'x:'.repeat(20000) + '/../escape', 'src%2Fa.js', 'file:'.repeat(39999) + 'a']);
 });
 
 const HOST_PATH_CASES = [

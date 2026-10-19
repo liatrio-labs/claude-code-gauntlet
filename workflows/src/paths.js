@@ -104,8 +104,8 @@ export function prepareHostRootPatterns(roots) {
     const normalized = normalizeAbsoluteRoot(root);
     if (normalized === null || normalized === '/') continue;
     if (/^[A-Za-z]:\//.test(normalized)) {
-      patterns.roots.push(...driveHostPathPatterns(normalized).map((detect, index) => ({
-        detect, rewrite: new RegExp(detect.source, detect.flags), backslash: index === 1,
+      patterns.roots.push(...driveHostPathPatterns(normalized).map((detect) => ({
+        detect, rewrite: new RegExp(detect.source, detect.flags), backslash: true,
       })));
       const home = normalized.match(/^([A-Za-z]:\/Users\/[^/]+)\//i);
       if (home) derivedHomes.add(home[1]);
@@ -124,8 +124,8 @@ export function prepareHostRootPatterns(roots) {
     if (home) derivedHomes.add(home[0].slice(0, -1));
   }
   for (const home of derivedHomes) {
-    if (/^[A-Za-z]:\//.test(home)) patterns.homes.push(...driveHostPathPatterns(home));
-    else patterns.homes.push(hostPathPattern(home, false));
+    if (/^[A-Za-z]:\//.test(home)) patterns.homes.push(...driveHostPathPatterns(home).map((detect) => ({ detect, backslash: true })));
+    else patterns.homes.push({ detect: hostPathPattern(home, false), backslash: false });
   }
   return patterns;
 }
@@ -185,7 +185,8 @@ function hostPathLeftBoundary(view, start) {
   return hostPathFileSchemePrefix(view, start) !== null;
 }
 
-function hostPathRightBoundary(view, end) {
+function hostPathRightBoundary(view, end, backslash) {
+  if (backslash && view.text[end] === '\\') return true;
   while (view.text[end] === '.' && view.escaped[end] !== true) end += 1;
   return !isPathContinuation(view, end);
 }
@@ -193,11 +194,11 @@ function hostPathRightBoundary(view, end) {
 function mentionsInView(view, patterns) {
   for (let start = 0; start < view.text.length; start += 1) {
     if (view.text[start] !== '/' && !(/^[A-Za-z]:[/\\]/.test(view.text.slice(start, start + 3)))) continue;
-    for (const matcher of patterns) {
+    for (const { detect: matcher, backslash } of patterns) {
       matcher.lastIndex = start;
       // Boundaries run only after a match: the left one rescans its slash run, which is quadratic per candidate.
       if (matcher.exec(view.text) && hostPathLeftBoundary(view, start)
-        && hostPathRightBoundary(view, matcher.lastIndex)) return true;
+        && hostPathRightBoundary(view, matcher.lastIndex, backslash)) return true;
     }
   }
   return false;
@@ -205,7 +206,7 @@ function mentionsInView(view, patterns) {
 
 export function mentionsPreparedHostRoot(text, patterns) {
   if (typeof text !== 'string') return false;
-  const matchers = [...patterns.roots.map((pattern) => pattern.detect), ...patterns.homes];
+  const matchers = [...patterns.roots, ...patterns.homes];
   const raw = { text, escaped: [] };
   if (mentionsInView(raw, matchers)) return true;
   return text.includes('%') && mentionsInView(decodeAsciiEscapes(text), matchers);
@@ -233,13 +234,38 @@ function rawOffset(view, index) {
   return view.offsets?.[index] ?? index;
 }
 
-function rewrittenHostTail(text, view, start, end, backslash) {
+const LOCATION_SUFFIX_START_RE = new RegExp(LOCATION_SUFFIX_RE.source.slice(0, -1), 'y');
+
+function repoRootMatch(view, roots, start) {
+  if (view.text[start] !== '/' && !/^[A-Za-z]:[/\\]/.test(view.text.slice(start, start + 3))) return null;
+  for (const { rewrite, backslash } of roots) {
+    if (!rewrite) continue;
+    rewrite.lastIndex = start;
+    if (!rewrite.exec(view.text) || !rewriteRightBoundary(view, rewrite.lastIndex, backslash)) continue;
+    const schemeStart = hostPathFileSchemePrefix(view, start);
+    if (schemeStart === null && (view.text[start - 1] === '/' || view.text[start - 1] === '\\'
+      || ((rewriteContinuation(view.text, start - 1) || isPathContinuation(view, start - 1))
+        && !hostPathOptionFlag(view, start)))) continue;
+    return { end: rewrite.lastIndex, backslash, schemeStart };
+  }
+  return null;
+}
+
+function rewrittenHostTail(text, view, start, end, backslash, roots) {
   const separator = (char) => char === '/' || (backslash && char === '\\');
   if (!separator(view.text[end])) return { end, replacement: './' };
   let stop = end;
-  while (stop < view.text.length && (view.escaped[stop] === true || !REWRITE_TAIL_END_RE.test(view.text[stop]))) stop += 1;
+  while (stop < view.text.length && (view.escaped[stop] === true || !REWRITE_TAIL_END_RE.test(view.text[stop]))) {
+    if (view.text[stop] === ':') {
+      LOCATION_SUFFIX_START_RE.lastIndex = stop;
+      if (LOCATION_SUFFIX_START_RE.exec(view.text)) stop = LOCATION_SUFFIX_START_RE.lastIndex;
+      break;
+    }
+    if (repoRootMatch(view, roots, stop)) break;
+    stop += 1;
+  }
   let tail = view.text.slice(end, stop);
-  if (backslash) tail = tail.replace(/\\+/g, '/');
+  tail = tail.replace(backslash ? /[/\\]+/g : /\/+/g, '/');
   if (hasDotDotSegment(splitLocationSuffix(tail).path)) return { end: stop, replacement: null };
   const dots = tail.match(/\.+$/)?.[0] || '';
   tail = tail.slice(0, tail.length - dots.length);
@@ -249,7 +275,7 @@ function rewrittenHostTail(text, view, start, end, backslash) {
     const rawTail = text.slice(rawOffset(view, end), rawOffset(view, stop));
     return { end: stop, replacement: /^\.*$/.test(rawTail) ? `./${rawTail}` : rawTail };
   }
-  tail = tail.replace(/\/+/g, '/').slice(1);
+  tail = tail.slice(1);
   return { end: stop, replacement: `${tail || './'}${dots}` };
 }
 
@@ -259,23 +285,14 @@ export function rewritePreparedRepoRoot(text, roots) {
   const view = text.includes('%') ? decodeAsciiEscapes(text) : { text, escaped: [] };
   let copied = 0;
   for (let start = 0; start < view.text.length; start += 1) {
-    if (view.text[start] !== '/' && !/^[A-Za-z]:[/\\]/.test(view.text.slice(start, start + 3))) continue;
-    for (const { rewrite, backslash } of roots) {
-      if (!rewrite) continue;
-      rewrite.lastIndex = start;
-      if (!rewrite.exec(view.text) || !rewriteRightBoundary(view, rewrite.lastIndex, backslash)) continue;
-      const schemeStart = hostPathFileSchemePrefix(view, start);
-      if (schemeStart === null && (view.text[start - 1] === '/' || view.text[start - 1] === '\\'
-        || ((rewriteContinuation(view.text, start - 1) || isPathContinuation(view, start - 1))
-          && !hostPathOptionFlag(view, start)))) continue;
-      const tail = rewrittenHostTail(text, view, start, rewrite.lastIndex, backslash);
-      if (tail.replacement !== null) {
-        chunks.push(text.slice(copied, rawOffset(view, schemeStart ?? start)), tail.replacement);
-        copied = rawOffset(view, tail.end);
-      }
-      start = tail.end - 1;
-      break;
+    const match = repoRootMatch(view, roots, start);
+    if (!match) continue;
+    const tail = rewrittenHostTail(text, view, start, match.end, match.backslash, roots);
+    if (tail.replacement !== null) {
+      chunks.push(text.slice(copied, rawOffset(view, match.schemeStart ?? start)), tail.replacement);
+      copied = rawOffset(view, tail.end);
     }
+    start = tail.end - 1;
   }
   chunks.push(text.slice(copied));
   return chunks.join('');

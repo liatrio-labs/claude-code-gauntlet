@@ -34,7 +34,8 @@ function walkHostPathText(value, transform, field = null, exempt = false) {
   for (const [key, entry] of Object.entries(value)) {
     const name = Array.isArray(value) ? field : field ?? (FINDING_TEXT_FIELD_NAMES.includes(key) ? key : 'other');
     if (!Array.isArray(value)) transform(key, name, true);
-    value[key] = walkHostPathText(entry, transform, name, exempt || FINDING_REWRITE_EXEMPT_FIELDS.includes(key));
+    const rewritten = walkHostPathText(entry, transform, name, exempt || FINDING_REWRITE_EXEMPT_FIELDS.includes(key));
+    if (rewritten !== entry) value[key] = rewritten;
   }
   return value;
 }
