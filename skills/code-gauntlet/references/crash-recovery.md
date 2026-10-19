@@ -54,11 +54,14 @@ changes to the disk JSON's presentation whitespace. Fractional numbers remain va
 - On `checkpoint-shape:`, read the cited phase/field. Do not edit signed checkpoints;
   offer a fresh run interactively, or deliver partial results and gaps headless.
 - On other failures or partial artifacts, offer resume interactively. Headless has a
-  **single retry budget**, including checksum re-copy: auto-resume once when a signed
-  phase map is available, then deliver the partial report plus gaps and stop.
+  **single retry budget**: auto-resume once when a signed phase map is available, then
+  deliver the partial report plus gaps and stop. A checksum re-copy dispatches nothing,
+  so it does not spend that budget.
 - If resume is declined or fails again, deliver any existing report markdown-only
   (path plus a short chat summary) and disclose all gaps. Partial persistence can
-  leave proved findings/report primaries even when derived artifact paths are null.
+  leave proved findings/report primaries even when derived artifact paths are null; deliver
+  them markdown-only and keep the gap. PR comments come only from `artifactPaths.postReview`,
+  never from a salvaged `findings.json`.
 
 ## Rules
 
