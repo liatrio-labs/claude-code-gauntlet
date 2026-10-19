@@ -586,7 +586,11 @@ def test_windows_live_receipt_gate(fault, tmp_path, monkeypatch):
     if fault == "args":
         terminal["gaps"] = ["invalid args"]
     elif fault == "host-path":
-        terminal["gaps"] = ["host-path-text: finding F1"]
+        Path(paths["report"]).write_text("see D:\\repo\\defects.py\n", encoding="utf-8")
+    elif fault is None:
+        terminal["gaps"] = [
+            "host-path-text: finding F1 mentions a host path in challenge_justification"
+        ]
     elif fault == "no-proof":
         terminal["stats"]["inputProof"]["proven"] = 0
     elif fault == "phase":

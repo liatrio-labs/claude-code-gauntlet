@@ -28,6 +28,7 @@ class LiveReceipt(TypedDict):
     inputProof: dict[str, int]
     materialize: MaterializeReceipt
     planted_file_mentioned: bool
+    host_path_gaps: int
 
 
 def json_documents(text: str) -> list[dict[str, Any]]:
@@ -86,6 +87,7 @@ def assert_run(transcript: Path, output: Path, config: Path) -> LiveReceipt:
                 results[block["tool_use_id"]] = block
     launches = [use for use in uses.values() if "Workflow" in use.get("name", "")]
     assert launches, "Workflow was never launched"
+    repo_roots = set()
     for launch in launches:
         args = launch.get("input", {}).get("args", {})
         if isinstance(args, str):
@@ -95,6 +97,7 @@ def assert_run(transcript: Path, output: Path, config: Path) -> LiveReceipt:
             root = args.get(key)
             assert isinstance(root, str) and re.match(r"^[A-Za-z]:/", root), (key, root)
             assert "\\" not in root, (key, root)
+        repo_roots.add(args["repoRoot"])
     awaits = []
     materializations = []
     for ident, use in uses.items():
@@ -124,10 +127,9 @@ def assert_run(transcript: Path, output: Path, config: Path) -> LiveReceipt:
     assert terminal.get("ok") is True, terminal
     assert not terminal.get("failingPhase"), terminal
     gaps = terminal.get("gaps", [])
-    assert not any(
-        "host-path-text" in gap or "invalid args" in gap or "args-rejected" in gap
-        for gap in gaps
-    ), gaps
+    assert not any("invalid args" in gap or "args-rejected" in gap for gap in gaps), (
+        gaps
+    )
     assert terminal.get("stats", {}).get("inputProof", {}).get("proven", 0) >= 1, (
         "no verified inline checksum slice"
     )
@@ -147,6 +149,13 @@ def assert_run(transcript: Path, output: Path, config: Path) -> LiveReceipt:
     ), paths
     report = Path(terminal["artifactPaths"]["report"])
     assert report.stat().st_size > 0
+    # Agents may quote the absolute path they read in internal fields, which the
+    # detector discloses as gaps; the delivered report must not carry it.
+    report_text = report.read_text(encoding="utf-8").lower()
+    for root in repo_roots:
+        spellings = (root, root.replace("/", "\\"), f"/{root[0]}/{root[3:]}")
+        leaked = [s for s in spellings if s.lower() in report_text]
+        assert not leaked, ("report names a host path", leaked)
     source = materialized.get("source")
     assert source and Path(source).stem == target, (target, source)
     observed = tasks.observe(target, tasks.roots_from_environment(os.environ))
@@ -166,7 +175,8 @@ def assert_run(transcript: Path, output: Path, config: Path) -> LiveReceipt:
         "artifactPaths": terminal["artifactPaths"],
         "inputProof": terminal["stats"]["inputProof"],
         "materialize": materialized,
-        "planted_file_mentioned": "defects.py" in report.read_text(encoding="utf-8"),
+        "planted_file_mentioned": "defects.py" in report_text,
+        "host_path_gaps": sum("host-path-text" in gap for gap in gaps),
     }
     (transcript.parent / "assertions.json").write_text(
         json.dumps(receipt, indent=2) + "\n", encoding="utf-8", newline="\n"
