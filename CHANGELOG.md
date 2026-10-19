@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.42.46 (2026-10-19)
+
+### Bug Fixes
+
+- Prove resumed checkpoints against a producer checksum
+  ([#528](https://github.com/liatrio-labs/claude-code-gauntlet/pull/528),
+  [`f442235`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f442235a284dc51fdc6cd6f8b1bb6091e00414a6))
+
+
 ## v3.42.45 (2026-10-19)
 
 ### Bug Fixes
