@@ -25,6 +25,7 @@ from tests.support.pipeline import (
     run_node,
 )
 from tests.support.posting import invoke_posting
+from tests.support.verify_parity import project_findings
 
 READ_INPUT = (
     "let source = ''; for await (const chunk of process.stdin) source += chunk;"
@@ -559,9 +560,11 @@ def test_verify_consumes_pipeline_findings_without_error(
     diff_path = tmp_path / "diff.patch"
     diff_path.write_text(build_gh_diff(findings), encoding="utf-8")
     source = (
-        "import { encodeSliceInline } from './workflows/src/verifyWire.js';"
+        "import { projectVerifySliceFinding, encodeSliceInline } from './workflows/src/verifyWire.js';"
         "let source = ''; for await (const chunk of process.stdin) source += chunk;"
-        "process.stdout.write(encodeSliceInline(JSON.parse(source)));"
+        "const doc = JSON.parse(source);"
+        "doc.findings = doc.findings.map(projectVerifySliceFinding);"
+        "process.stdout.write(encodeSliceInline(doc));"
     )
     token = run_node(
         source, {"findings": findings, "base_branch": "main"}, timeout=60
@@ -622,6 +625,6 @@ def test_verify_consumes_pipeline_findings_without_error(
     }
     saved: dict[str, Any] = json.loads(findings_path.read_text(encoding="utf-8"))
     assert saved == {
-        "findings": findings,
+        "findings": project_findings(findings),
         "base_branch": "main",
     }

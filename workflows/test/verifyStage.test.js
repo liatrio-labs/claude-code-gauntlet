@@ -33,7 +33,7 @@ const TRUSTED_ROWS = [
   { name: 'dispatched slice document carries pinned numerics and no undeclared field',
     findings: [{ id: 'F1', file: 'a.js', line_start: 3.5, confidence: 90.2, origin: 'new', title: 'undeclared', suggestion: 'undeclared' }],
     changes: { line_start: 4, confidence: 90 },
-    inline: '{"findings":[{"id":"F1","file":"a.js","line_start":4,"confidence":90,"origin":"new"}],"base_branch":"main"}' },
+    inline: '{"findings":[{"id":"F1","file":"a.js","line_start":4,"confidence":90}],"base_branch":"main"}' },
   { name: 'reordered deltas preserve dispatched finding order', findings: findingsFor(3),
     options: (f) => ({ deltas: deltasFor(f).reverse() }) },
   { name: 'stamped elimination removes only the eliminated finding', findings: findingsFor(3),
@@ -178,12 +178,12 @@ const LEDGER_ROWS = [
     receipt: (attempt) => attempt === 1 ? { input_checksum: BAD_PROOF } : {},
     trusted: true,
     retriedMismatch: 1,
-    reason: 'slice-input content proof mismatch (receipt fnv1a32:0xdeadbeef, dispatched fnv1a32:0x693ddb36) \u2014 the document the script decoded is not the document this stage dispatched',
+    reason: 'slice-input content proof mismatch (receipt fnv1a32:0xdeadbeef, dispatched fnv1a32:0x969be244) \u2014 the document the script decoded is not the document this stage dispatched',
   },
   { name: 'wrong token proof precedes a wrong content proof',
     receipt: () => ({ inline_checksum: BAD_PROOF, input_checksum: BAD_PROOF }),
     mismatched: 1,
-    reason: 'slice-input token proof mismatch (receipt fnv1a32:0xdeadbeef, dispatched fnv1a32:0xc69f8ec8) \u2014 the token the script decoded is not the token this stage dispatched',
+    reason: 'slice-input token proof mismatch (receipt fnv1a32:0xdeadbeef, dispatched fnv1a32:0x04a4590c) \u2014 the token the script decoded is not the token this stage dispatched',
   },
   { name: 'missing token proof recovers on a fresh attempt',
     receipt: (attempt) => attempt === 1 ? { inline_checksum: null } : {},
@@ -222,7 +222,7 @@ for (const row of LEDGER_ROWS) {
   });
 }
 const bulk = (prefix, length, chars) => Array.from({ length }, (_, i) => ({
-  id: `${prefix}${i}`, file: `f${i}.js`, line_start: 1, line_end: 1, description: 'x'.repeat(chars),
+  id: `${prefix}${i}`, file: 'x'.repeat(chars), line_start: 1, line_end: 1,
   evidence: 'e', severity: 'high', confidence: 90, cross_file_refs: [], origin: 'new',
 }));
 const FANOUT_ROWS = [
@@ -277,7 +277,7 @@ test('shell quoting preserves paths with spaces, apostrophes and special branch 
 
 for (const hostPlatform of ['posix', 'windows']) test(`oversize finding is disclosed without dispatch and leaves the next slice nonce intact: ${hostPlatform}`, async () => {
   const findings = [
-    { id: 'BIG', file: 'a.js', line_start: 1, origin: 'new', cross_file_refs: [], description: 'x'.repeat(hostPlatform === 'windows' ? 31000 : 50000) },
+    { id: 'BIG', file: 'x'.repeat(hostPlatform === 'windows' ? 31000 : 50000), line_start: 1, origin: 'new', cross_file_refs: [] },
     { id: 'OK', file: 'b.js', line_start: 2, origin: 'new', cross_file_refs: [] },
   ];
   const ctx = verifyCtx(() => deltaEnvelope([findings[1]], { nonce: 'n-1.0', n_in: 1 }));
@@ -286,5 +286,5 @@ for (const hostPlatform of ['posix', 'windows']) test(`oversize finding is discl
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1, oversize: 1 });
   assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0']);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['BIG', 'unknown'], ['OK', 'new']]);
-  assert.deepEqual(out.gaps, [`verify: UNVERIFIED \u2014 finding BIG has ${hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length'} ${hostPlatform === 'windows' ? 31156 : 50130}, over VERIFY_INLINE_CHAR_BUDGET=${hostPlatform === 'windows' ? 30442 : 50000}; 1 of 2 finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report`]);
+  assert.deepEqual(out.gaps, [`verify: UNVERIFIED \u2014 finding BIG has ${hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length'} ${hostPlatform === 'windows' ? 31089 : 50073}, over VERIFY_INLINE_CHAR_BUDGET=${hostPlatform === 'windows' ? 30442 : 50000}; 1 of 2 finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report`]);
 });

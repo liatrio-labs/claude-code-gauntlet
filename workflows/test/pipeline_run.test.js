@@ -12,7 +12,7 @@ const PHASES = ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter'
 const PERSIST_WIRING_ROWS = [
   { name: 'Windows runtime waist reaches verify and persist', persist: {},
     over: { python: 'py -3', pluginRoot: 'D:/plugin', verify: { scriptPath: '/untrusted.py' } },
-    findings: ['F1', 'F2'].map((id) => makeFinding(id, { description: 'x'.repeat(18000) })),
+    findings: ['F1', 'F2'].map((id) => makeFinding(id, { file: `${id}-${'x'.repeat(18000)}` })),
     labels: ['artifact-writer', 'assemble-artifacts'], windows: true },
   { name: 'derived assembler under sandbox globals', persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' },
     labels: ['artifact-writer', 'assemble-artifacts'], arrayPayload: true, sandbox: true },

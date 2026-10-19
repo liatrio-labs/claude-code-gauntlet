@@ -14,13 +14,13 @@ the JavaScript encoder for `slice_inline`.
 `review_md_set_checksum` pins ordered REVIEW.md list hashing, including null checksums and the empty list, in both runtimes, recorded by the Python recorder.
 
 `decisions` freezes raw Merge findings and per-finding receipt deltas plus
-`factual_verification` and `diff_validation`, recorded by
-`workflows/test/tools/record_parity.py decisions`. Replay uses the real JS
+`factual_verification` and `diff_validation` from unchanged Python. Replay uses the real JS
 projection and encoder, then `verify_findings.py` in a temporary two-commit repo.
 
 `symbol_extractor` is a frozen, JS-owned port oracle recorded from Python 3.12.13
-by `workflows/test/tools/record_parity.py symbol_extractor`. It includes the six
+before the port. It includes the six
 existing parametrized cases, Unicode and fence hazards, and 320 fuzz cases with
 seed 529. Fuzz characters were restricted to Unicode 3.2 assignments, a subset
 of Unicode 13. Inputs persist the generated text; outputs are sorted symbol lists.
-Keep both families frozen while changing the wire and extractor.
+Both families are frozen Python oracles. The recorder only replays them with
+`--check`; it refuses to overwrite them.

@@ -14,6 +14,7 @@ from gauntlet.registry import VERIFY_SLICE_FIELDS, VerifySliceFinding
 from gauntlet.verify import decide as verify
 from gauntlet.verify import wire
 
+from tests.support.verify_parity import project_findings
 from tests.test_verify_wire import receipt
 
 DASH = "\u2014"
@@ -99,6 +100,7 @@ def test_blame(patch, log, blame, expected, tmp_path, monkeypatch, verify_git, c
         "severity": "high",
         **patch,
     }
+    finding = project_findings([finding])[0]
     original_severity = finding["severity"]
     calls, replies = verify_git
     if log is not None:
@@ -125,77 +127,6 @@ def test_blame(patch, log, blame, expected, tmp_path, monkeypatch, verify_git, c
         expected_commands.append(["git", "blame", "-L1,2", "--", "source"])
     assert calls == [(cmd, {}) for cmd in expected_commands]
     assert capsys.readouterr().err == (f"WARNING: {warning}\n" if warning else "")
-
-
-@pytest.mark.parametrize(
-    ("description", "evidence", "symbols"),
-    [
-        pytest.param(
-            "```\nblock_symbol another_symbol\n``` `inline_symbol`",
-            "",
-            [
-                "another_symbol",
-                "block_symbol",
-                "block_symbolanother_symbol",
-                "inline_symbol",
-            ],
-            id="SYMBOL-block-inline",
-        ),
-        pytest.param(
-            "```lang\nAlphaType BetaType\n```",
-            "",
-            ["AlphaType", "BetaType", "langAlphaTypeBetaType"],
-            id="SYMBOL-fenced-identifiers",
-        ),
-        pytest.param(
-            "`os.path.join` obj.method()",
-            "",
-            ["join", "method", "obj", "path"],
-            id="SYMBOL-dotted-chained-nested",
-        ),
-        pytest.param(
-            "", "`important_func`", ["important_func"], id="SYMBOL-evidence-only"
-        ),
-        pytest.param(
-            "Foo::bar get_user_data",
-            "",
-            ["Foo", "bar", "get_user_data"],
-            id="SYMBOL-bare-punctuation-snake",
-        ),
-        pytest.param(
-            "Concrete prose with `self` `None` `print` `x` `ab`",
-            "",
-            [],
-            id="SYMBOL-stopwords-short",
-        ),
-    ],
-)
-def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_git):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "source").write_text("plain\n", encoding="utf-8")
-    finding = {
-        "file": "source",
-        "line_start": 1,
-        "description": description,
-        "evidence": evidence,
-        "confidence": 80,
-    }
-    assert (
-        verify.verify_factual(finding, verify.VerifyContext(str(tmp_path), "base"))
-        is True
-    )
-    assert finding["confidence"] == 80
-    assert verify_git[0] == [
-        (["git", "grep", "-l", "-e", symbol], {"timeout": 3, "cwd": str(tmp_path)})
-        for symbol in symbols
-    ]
-    assert finding["factual_verification"] == {
-        "verified": True,
-        "reason": "file content and symbols verified"
-        if symbols
-        else f"no extractable symbols {DASH} verification skipped",
-        "code_at_lines": "plain",
-    }
 
 
 @pytest.mark.parametrize(
@@ -319,6 +250,7 @@ def test_fact(
         **metadata,
     }
     finding = {"file": "source", "line_start": 1, "confidence": 80, **patch}
+    finding = project_findings([finding])[0]
     calls, replies = verify_git
     if mode == "read-error":
         original = builtins.open
@@ -629,7 +561,8 @@ def test_pipe_projection(tmp_path, monkeypatch, verify_git):
         }
         for f in findings
     ]
-    for inputs in (findings, extra):
+    for raw in (findings, extra):
+        inputs = project_findings(raw)
         result = verify.run_verification(
             inputs, verify.VerifyContext(str(tmp_path), "base"), "patch"
         )
@@ -695,8 +628,7 @@ def test_context_log_queries(invoke, tmp_path, verify_git):
     calls, replies = verify_git
     token = (
         '{"findings":[{"file":"source","line_start":1,'
-        '"description":"%60remote_symbol%60"},{"file":'
-        '"source","line_start":1}]}'
+        '"symbols":"remote_symbol"},{"file":"source","line_start":1}]}'
     )
     warnings = (
         "WARNING: classify_blame: git log failed for base 'base': bad "
@@ -763,7 +695,6 @@ def foreign_reads(source):
         "validate_input_shape": {"findings"},
         "validate_diff_lines": {"classification"},
         "run_receipt": {"findings", "base_branch", "verified"},
-        "_has_removed_test_location": {"path", "old_start", "old_end"},
     }
     bad = []
     sites = {

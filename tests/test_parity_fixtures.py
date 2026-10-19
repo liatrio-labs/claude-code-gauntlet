@@ -108,6 +108,22 @@ def test_recorder_rejects_unknown_family(mode):
     assert result.stderr.splitlines() == ["unknown recorder family: filter_findings"]
 
 
+@pytest.mark.parametrize("family", ["decisions", "symbol_extractor"])
+def test_recorder_refuses_frozen_oracles(family, tmp_path, monkeypatch, capsys):
+    import importlib
+
+    sys.path.insert(0, str(REPO / "workflows" / "test" / "tools"))
+    recorder = importlib.import_module("record_parity")
+    monkeypatch.setattr(recorder, "FIXTURES", tmp_path)
+    assert recorder.main(["record_parity.py", family]) == 2
+    assert capsys.readouterr().err == (
+        f"{family} is a frozen Python oracle; use --check\n"
+    )
+    with pytest.raises(ValueError, match="frozen Python oracle"):
+        recorder.record(family, tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_check_reports_stale_and_never_writes_into_fixture_tree(tmp_path, monkeypatch):
     import importlib
     import shutil

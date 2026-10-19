@@ -9,6 +9,19 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 
 
+def project_findings(findings):
+    from tests.support.pipeline import run_node
+
+    return json.loads(
+        run_node(
+            "import { projectVerifySliceFinding } from './workflows/src/verifyWire.js';"
+            "let source = ''; for await (const chunk of process.stdin) source += chunk;"
+            "process.stdout.write(JSON.stringify(JSON.parse(source).map(projectVerifySliceFinding)));",
+            findings,
+        ).stdout
+    )
+
+
 def replay_decisions(inp, directory):
     repository = directory / "repo"
     repository.mkdir()

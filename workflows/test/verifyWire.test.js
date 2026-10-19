@@ -38,16 +38,47 @@ test('inline encoder deep-walks keys and values, preserving primitives', () => {
 
 test('projection drops undeclared fields and pins numbers', () => {
   const projected = projectVerifySliceFinding({
-    id: 'F1', file: 'a.js', line_start: 3.5, line_end: 3, description: 'd', evidence: 'e',
+    id: 'F1', file: 'a.js', line_start: 3.5, line_end: 3, description: '`zebra`', evidence: '`alpha` `zebra`',
     severity: 'high', confidence: 90.2, cross_file_refs: [], origin: 'new',
     agent: 'security', dimension: 'security', title: 'title', suggestion: 'fix',
   });
   const expected = {
-    id: 'F1', file: 'a.js', line_start: 4, line_end: 3, description: 'd', evidence: 'e',
-    severity: 'high', confidence: 90, cross_file_refs: [], origin: 'new',
+    id: 'F1', file: 'a.js', line_start: 4, line_end: 3,
+    severity: 'high', confidence: 90, symbols: 'alpha zebra',
   };
   assert.deepEqual(projected, expected);
   assert.deepEqual(Object.keys(projected), Object.keys(expected));
+});
+
+test('projection caches each finding object and preserves absent versus null scalars', () => {
+  const finding = { id: 'F1', line_start: null, line_end: undefined };
+  const projected = projectVerifySliceFinding(finding);
+  assert.deepEqual(projected, { id: 'F1', line_start: null });
+  assert.equal(projectVerifySliceFinding(finding), projected);
+  assert.notEqual(projectVerifySliceFinding({ ...finding }), projected);
+  assert.deepEqual(projectVerifySliceFinding(null), {});
+});
+
+test('projection emits decision flags only for valid references and removed-test locations', () => {
+  for (const refs of [undefined, null, [], '', 'x', {}, { length: 1 }, ['x']]) {
+    assert.deepEqual(projectVerifySliceFinding({ cross_file_refs: refs }), Array.isArray(refs) && refs.length
+      ? { has_cross_file_refs: true } : {});
+  }
+  const valid = { id: 'loss', path: 'tests/old', old_start: 1, old_end: 2 };
+  const rows = [
+    [valid, true], [{ ...valid, extra: 'ignored' }, true],
+    [{ ...valid, id: '\uFEFF', path: '\u0085\u001Ctests/old' }, true],
+    [{ ...valid, old_start: 2 ** 54, old_end: 2 ** 55 }, true],
+    ...[null, [], '', { ...valid, id: '' }, { ...valid, id: '\u0085\u001C' },
+      { ...valid, path: '\u001C' }, { ...valid, path: 42 }, { ...valid, id: 42 },
+      { ...valid, old_start: true }, { ...valid, old_end: false },
+      { ...valid, old_start: '1' }, { ...valid, old_start: 1.5 },
+      { ...valid, old_start: 0 }, { ...valid, old_start: 3 }, { ...valid, old_end: undefined },
+    ].map((value) => [value, false]),
+  ];
+  for (const [removed_test, expected] of rows) {
+    assert.deepEqual(projectVerifySliceFinding({ removed_test }), expected ? { has_removed_test_location: true } : {});
+  }
 });
 
 test('join pins numerics when the delta omits confidence', () => {

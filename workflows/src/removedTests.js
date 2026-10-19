@@ -1,6 +1,16 @@
 import { fnv1a32, isPlainObject } from './wire.js';
 import { AGENT_TYPE_TEST_ANALYZER, DISPATCH_RESULTS } from './registry.js';
 import { repoRelativeFindingPath } from './paths.js';
+import { stripPythonWhitespace } from './verifySymbols.js';
+
+export function hasRemovedTestLocation(finding) {
+  const location = finding?.removed_test;
+  return isPlainObject(location)
+    && typeof location.id === 'string' && stripPythonWhitespace(location.id).length > 0
+    && typeof location.path === 'string' && stripPythonWhitespace(location.path).length > 0
+    && Number.isInteger(location.old_start) && Number.isInteger(location.old_end)
+    && 1 <= location.old_start && location.old_start <= location.old_end;
+}
 
 const exactKeys = (value, keys) => isPlainObject(value)
   && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));

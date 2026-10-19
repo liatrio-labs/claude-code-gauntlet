@@ -9,7 +9,7 @@ import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyInlineCost, verify
 const VERIFY_SCHEMA = {
   type: 'object',
   properties: {
-    status: { type: 'string' }, // 'ok' | 'failed'
+    status: { type: 'string' },
     receipt: {
       type: 'object',
       properties: {
@@ -45,15 +45,14 @@ const VERIFY_SCHEMA = {
     exitCode: { type: 'number' },
     stderr: { type: 'string' },
   },
-  required: ['status'], // discriminated union: receipt/result only present on status:'ok'
+  required: ['status'],
 };
 
 // Small slices can repair transcription failures; disclose fan-out instead of
 // flooring the operator's chosen size.
 const VERIFY_FANOUT_DISCLOSE_THRESHOLD = 5;
 
-// Slices dispatch one at a time (never parallel()) so each envelope pairs to its slice by
-// order. Join against held findings so an untrusted echo cannot replace their content.
+// Sequential dispatch pairs receipts to slices; held findings prevent echo substitution.
 export async function verifyStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
