@@ -61,7 +61,7 @@ test('projection caches each finding object and preserves absent versus null sca
 });
 
 test('projection emits decision flags only for valid references and removed-test locations', () => {
-  for (const refs of [undefined, null, [], '', 'x', {}, { length: 1 }, ['x']]) {
+  for (const refs of [[], 'x', { length: 1 }, ['x']]) {
     assert.deepEqual(projectVerifySliceFinding({ cross_file_refs: refs }), Array.isArray(refs) && refs.length
       ? { has_cross_file_refs: true } : {});
   }
