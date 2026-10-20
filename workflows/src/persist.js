@@ -1,13 +1,8 @@
-import { appendMeasurement } from './measurementTrace.js';
 import { pathEscapeReason, persistPlanPath, plannedArtifactPaths, requireAbsoluteOutputDir } from './outputPaths.js';
 import { hardenEscapeRuns, persistDerivable, persistPlan, persistPrimaries, writerPayload } from './persistPlan.js';
 import { trustedScriptPath } from './paths.js';
 import { modelFor, TRUSTED_SCRIPT_BASENAMES } from './registry.js';
 import { RETURN_CHAR_BUDGET, pythonArgv, shellWord } from './wire.js';
-
-export function withMeasurement(envelope, trace, args) {
-  return appendMeasurement(envelope, trace, args);
-}
 
 const WRITER_SCHEMA = {
   type: 'object',

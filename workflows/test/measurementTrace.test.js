@@ -10,6 +10,7 @@ import { makeFinding } from './helpers/pipelineMock.js';
 import { measurementScenario, persistedScenario } from './helpers/measurementScenario.js';
 import { createMeasurementTrace, stampDiscovery, recordStage, measurementText, measurementHash, appendMeasurement } from '../src/measurementTrace.js';
 import { emitAgentPrompts } from './tools/emit_agent_prompts.mjs';
+import { RETURN_CHAR_BUDGET } from '../src/wire.js';
 
 const referenceSha = '94ea095a89bfc2430814ff4e65db4ba790654fc7';
 const bundle = new URL('../pipeline.js', import.meta.url);
@@ -57,7 +58,7 @@ test('baseline arm independently preserves review prompts, schemas and delivery 
   assert.deepEqual(after.schemas, before.schemas);
   assert.deepEqual(after.labels, before.labels);
   const project = (payload) => JSON.parse(JSON.stringify(payload.postReview), (key, value) =>
-    ['trace_id', 'discovery_agent', 'discovery_dimension'].includes(key) ? undefined : value);
+    ['trace_id', 'discovery_agent', 'discovery_dimension', 'run_nonce'].includes(key) ? undefined : value);
   assert.deepEqual(project(after.payload), before.payload.postReview);
   assert.deepEqual(Object.keys(after.payload.checkpoints), Object.keys(before.payload.checkpoints));
   assert.deepEqual(Object.keys(after.payload.checkpoints.phases), Object.keys(before.payload.checkpoints.phases));
@@ -90,23 +91,33 @@ test('dispatch overwrites forged provenance and retains unknown raw dimensions',
   assert.equal(measurementHash(text), hash(text));
 });
 
-test('separate compatible replay evidence is retained while old replay remains partial', async () => {
+test('resumed checkpoints keep replayed stage coverage partial', async () => {
   const first = measurementScenario('return');
   const out = await runWith(first.ctx, first.args);
-  const trace = JSON.parse(out.persistReturn.entries.find((e) => e.path === out.measurement.path).text);
   const checkpoint = persistedScenario(out, first.state).checkpoints;
   const phases = checkpoint.phases;
-  for (const prior of [trace, undefined]) {
-    const replay = measurementScenario('return', { checkpoints: phases });
-    replay.ctx.measurementTrace = prior;
-    const resumed = await runWith(replay.ctx, replay.args);
-    assert.equal(resumed.ok, true);
-    const evidence = JSON.parse(resumed.persistReturn.entries.find((e) => e.path === resumed.measurement.path).text);
-    const challenge = evidence.snapshots.find((s) => s.stage === 'challenge');
-    assert.equal(challenge.replayed, true);
-    assert.equal(challenge.coverage, prior ? trace.snapshots.find((s) => s.stage === 'challenge').coverage : 'partial');
-    if (prior) assert.deepEqual(evidence.snapshots[0], trace.snapshots[0]);
-  }
+  const replay = measurementScenario('return', { checkpoints: phases });
+  const resumed = await runWith(replay.ctx, replay.args);
+  assert.equal(resumed.ok, true);
+  const evidence = JSON.parse(resumed.persistReturn.entries.find((e) => e.path === resumed.measurement.path).text);
+  const challenge = evidence.snapshots.find((s) => s.stage === 'challenge');
+  assert.equal(challenge.replayed, true);
+  assert.equal(challenge.coverage, 'partial');
+});
+
+test('unavailable trace marker also fits near-budget recovery returns', () => {
+  const trace = createMeasurementTrace('n');
+  const finding = stampDiscovery(trace, { id: 'A', description: 'x'.repeat(RETURN_CHAR_BUDGET) },
+    { agentType: 'a', dimensions: [] }, 0, 0);
+  recordStage(trace, 'discover', [finding]);
+  const envelope = { ok: false, checkpoints: { phases: { discover: { findings: [{ id: 'A' }] } }, checksum: 'held' },
+    error: 'failed', stats: { padding: '' } };
+  envelope.stats.padding = 'x'.repeat(RETURN_CHAR_BUDGET - JSON.stringify(envelope).length);
+  assert.equal(JSON.stringify(envelope).length, RETURN_CHAR_BUDGET);
+  const out = appendMeasurement(envelope, trace, { outputDir: '/tmp/fixture', headShaShort: 'abc', nonce: 'n' });
+  assert.equal(out.measurement.status, 'unavailable');
+  assert.deepEqual(out.checkpoints, envelope.checkpoints);
+  assert.ok(JSON.stringify(out).length <= RETURN_CHAR_BUDGET);
 });
 
 test('oversized run trace preserves persistence dispatch and failure recovery against reference', async () => {

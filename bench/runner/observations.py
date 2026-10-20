@@ -598,13 +598,17 @@ class FrozenArray:
     items: tuple[FrozenJson, ...]
 
 
-def freeze_json(value: JsonValue) -> FrozenJson:
+def freeze_json(value: object) -> FrozenJson:
     if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("JSON object keys must be strings")
         return FrozenObject(
             tuple((k, freeze_json(v)) for k, v in sorted(value.items()))
         )
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return FrozenArray(tuple(freeze_json(v) for v in value))
+    if value is not None and not isinstance(value, (bool, int, float, str)):
+        raise ValueError("unsupported JSON value")
     canonical(value)
     return value
 

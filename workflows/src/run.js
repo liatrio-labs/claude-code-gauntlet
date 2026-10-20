@@ -1,5 +1,5 @@
 // Pipeline sequencing, replay, diagnostics, and return envelopes.
-import { createMeasurementTrace, recordStage, finishMeasurementTrace, traceDecision, traceModels, eliminationDecisions } from './measurementTrace.js';
+import { appendMeasurement, createMeasurementTrace, recordStage, finishMeasurementTrace, traceDecision, traceModels, eliminationDecisions } from './measurementTrace.js';
 import { setupContext } from './contextPlan.js';
 import { coarsenLimits } from './capacity.js';
 import { summarize, deriveAgentFlags, discover, allActiveDimensionsDegraded } from './discover.js';
@@ -14,7 +14,7 @@ import { entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from './entry.
 import { computeLightEligible, configEchoValue } from './knobs.js';
 import { scopeMatchesFile } from './reviewConfig.js';
 import { renderReport, renderSummaryBody } from './renderReport.js';
-import { writeArtifacts, withMeasurement } from './persist.js';
+import { writeArtifacts } from './persist.js';
 import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
 import { checkpointChecksumErrors, checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
 import { holdBackIncomplete } from './holdBackIncomplete.js';
@@ -153,10 +153,10 @@ export async function runWith(ctx, rawArgs) {
   const gaps = [...nullArgGaps, ...contextSizeGap, ...discardGap];
   const completed = [];
   const phaseOutputs = {};
-  const measurementTrace = createMeasurementTrace(A.nonce, c.measurementTrace);
+  const measurementTrace = createMeasurementTrace(A.nonce);
   traceModels(measurementTrace, policy);
   let discoveryDecisions = [];
-  const measured = (envelope) => withMeasurement(envelope, measurementTrace, A);
+  const measured = (envelope) => appendMeasurement(envelope, measurementTrace, A);
   let phaseReached = 'start';
   // Track the attempted phase separately so a failure names the phase that threw.
   let phaseAttempting = null;

@@ -303,10 +303,16 @@ behavior compared against reference
 The merge SHA is pending the orchestrator commit and merge.
 The historical mini baseline remains a separate captured run.
 Instrumentation versions are measurement trace `1` and stage matcher `1`.
-The stage2 equivalence receipt is `../../reports/stage2-equivalence.json`.
-It records both bundle hashes and exact review prompt, schema, ordered GitHub and
-GitLab comment-byte equality, without forge access or measurement model calls.
-The orchestrator must retain that receipt and record the actual merge SHA here.
+The reference bundle SHA256 is
+`966bd2e29926a0d632d151ee83ffc5ae1ff08c15db71c2ec636cdc05f79b653f`.
+The instrumented bundle SHA256 is
+`959f92cb29da616e4d65eaf39f9b6ff3285d7c9c1238c434b97e1ba4a996c45e`.
+The in-tree test
+`bench/tests/test_provenance.py::test_reference_bundle_preserves_review_dispatches_and_rendered_delivered_bytes`
+compares review prompts, schemas, dispatch order and ordered GitHub and GitLab
+comment bytes without forge access or measurement model calls.
+The PR body retains the equivalence receipt.
+The orchestrator records the actual merge SHA here after merge.
 
 Workflow capture is automatic and generic.
 Its `code-gauntlet-measurement-<sha>.json` artifact travels through
@@ -314,9 +320,13 @@ Its `code-gauntlet-measurement-<sha>.json` artifact travels through
 checkpoint.
 Primary persistence and recovery budgets take priority.
 An oversized trace is unavailable and cannot select a different persistence fallback.
-Old checkpoints without compatible separate evidence give partial stage coverage.
-Collection binds trace bytes and Workflow record hashes to the captured attempt.
-Superseded artifacts are excluded from scoring.
+Replayed checkpoints give partial stage coverage.
+The post-review wrapper carries `run_nonce`, including for an empty delivery.
+Collection selects the successful Workflow return matching that nonce before
+binding trace bytes and the Workflow record hash to the captured attempt.
+Earlier records remain forensic evidence and do not invalidate the selected trace.
+Cap-hit counts count distinct PR attempts with a stage cap hit, including discovery,
+independently of bug-level terminal losses.
 
 Stage judging is off by default.
 Use `python3 bench/run.py --score-only RUN_ID --golden-epoch EPOCH_ID

@@ -407,29 +407,14 @@ const REPORT_PLACED_FIELDS = deepFreeze([
 const MEASUREMENT_TRACE_VERSION = '1';
 const traceState = new WeakMap();
 const traceHistory = new WeakMap();
-const replaySnapshots = new WeakMap();
 const stageDecisions = new WeakMap();
 const stageCapacity = new WeakMap();
 const thresholdEvidence = new WeakMap();
-function createMeasurementTrace(nonce, previous = null) {
+function createMeasurementTrace(nonce) {
   const trace = { schema_version: 1, trace_version: MEASUREMENT_TRACE_VERSION, run_nonce: nonce,
     versions: [], snapshots: [], resolved_models: {}, complete: false };
   const states = new Map();
   const history = new Map();
-  if (previous?.schema_version === 1 && previous.trace_version === MEASUREMENT_TRACE_VERSION && previous.run_nonce === nonce) {
-    const held = deepClone(previous);
-    const byVersion = new Map();
-    for (const version of held.versions) {
-      const finding = version.finding || { ...byVersion.get(version.base_version_id), ...version.set_fields };
-      for (const key of version.unset_fields) delete finding[key];
-      byVersion.set(version.version_id, finding);
-      states.set(version.trace_id, { version_id: version.version_id, finding });
-      history.set(JSON.stringify(finding), version.version_id);
-    }
-    trace.versions = held.versions;
-    replaySnapshots.set(trace, held.snapshots);
-    trace.resolved_models = held.resolved_models;
-  }
   traceState.set(trace, states);
   traceHistory.set(trace, history);
   return trace;
@@ -494,11 +479,6 @@ function traceVersion(trace, finding) {
 }
 function recordStage(trace, stage, output, details = {}) {
   details = { ...(stageCapacity.get(output) || {}), ...details };
-  const prior = replaySnapshots.get(trace)?.find((s) => s.stage === stage);
-  if (details.replayed && prior) {
-    trace.snapshots.push({ ...deepClone(prior), sequence: trace.snapshots.length, replayed: true });
-    return;
-  }
   const existing = trace.snapshots.findIndex((s) => s.stage === stage);
   if (existing >= 0 && details.replayed) { trace.snapshots[existing].replayed = true; return; }
   if (existing >= 0) trace.snapshots = trace.snapshots.slice(0, existing);
@@ -567,7 +547,13 @@ function appendMeasurement(envelope, trace, args) {
   const candidate = { ...primary, measurement: { status: 'available', path: entry.path, sha256: entry.sha256 },
     persistReturn: { ...channel, entries: [...channel.entries, entry] } };
   if (JSON.stringify(candidate).length > RETURN_CHAR_BUDGET) {
-    return { ...envelope, measurement: { status: 'unavailable', reason: 'return_budget' } };
+    const fallback = { ...envelope, measurement: { status: 'unavailable', reason: 'return_budget' } };
+    if (JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET) return fallback;
+    for (const field of ['stats', 'gaps', 'resolvedPolicy', 'error']) {
+      delete fallback[field];
+      if (JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET) return fallback;
+    }
+    return envelope;
   }
   return candidate;
 }
@@ -5950,7 +5936,7 @@ function toV2Aliased(f) {
   }
   return out;
 }
-function postReviewWrapper(id, reviewBody) {
+function postReviewWrapper(id, reviewBody, nonce) {
   return {
     owner: id.owner,
     repo: id.repo,
@@ -5959,6 +5945,7 @@ function postReviewWrapper(id, reviewBody) {
     platform: id.platform,
     web_origin: id.web_origin,
     review_body: typeof reviewBody === 'string' ? reviewBody : '',
+    ...(nonce ? { run_nonce: nonce } : {}),
   };
 }
 function writerPayload(inp) {
@@ -5967,7 +5954,7 @@ function writerPayload(inp) {
   return {
     findings: (inp.findings || []).map(toV2Aliased),
     postReview: id
-      ? { ...postReviewWrapper(id, inp.reviewBody), findings: postReviewSet }
+      ? { ...postReviewWrapper(id, inp.reviewBody, inp.nonce), findings: postReviewSet }
       : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
@@ -6016,7 +6003,7 @@ function persistPlan(inp, paths) {
       path: paths.postReview,
       source: paths.findings,
       ids: (inp.postReview || []).map((f) => f && f.id),
-      wrapper: id ? postReviewWrapper(id, inp.reviewBody) : null,
+      wrapper: id ? postReviewWrapper(id, inp.reviewBody, inp.nonce) : null,
     },
     checkpoint: {
       path: paths.checkpoints,
@@ -6078,9 +6065,6 @@ function persistDerivable(inp) {
   return { ok: true };
 }
 // --- persist.js ---
-function withMeasurement(envelope, trace, args) {
-  return appendMeasurement(envelope, trace, args);
-}
 const WRITER_SCHEMA = {
   type: 'object',
   properties: { artifactPaths: { type: 'object', properties: {} } },
@@ -6871,10 +6855,10 @@ async function runWith(ctx, rawArgs) {
   const gaps = [...nullArgGaps, ...contextSizeGap, ...discardGap];
   const completed = [];
   const phaseOutputs = {};
-  const measurementTrace = createMeasurementTrace(A.nonce, c.measurementTrace);
+  const measurementTrace = createMeasurementTrace(A.nonce);
   traceModels(measurementTrace, policy);
   let discoveryDecisions = [];
-  const measured = (envelope) => withMeasurement(envelope, measurementTrace, A);
+  const measured = (envelope) => appendMeasurement(envelope, measurementTrace, A);
   let phaseReached = 'start';
   let phaseAttempting = null;
   const runPhase = async (name, thunk) => {

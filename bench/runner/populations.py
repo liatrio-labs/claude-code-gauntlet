@@ -181,7 +181,7 @@ def prepare_leak_manifest_v2(
     manifest = read_json(source)
     _validate_source(manifest, epoch)
     raw_root, stems, files = _raw_snapshot(golden_source, epoch)
-    comments = []
+    comments: list[ExcludedCommentReceiptWire] = []
     for key in manifest["excluded_comments"]:
         parts = key.split(":")
         if len(parts) != 4:
@@ -385,7 +385,7 @@ def resolve_population(
 ) -> Population:
     if name not in get_args(PopulationName):
         raise ValueError("unknown or sealed holdout population")
-    entries = ()
+    entries: tuple[ContaminationEntry, ...] = ()
     if name != "gate":
         entries = contamination_entries(contamination, epoch)
         pool, selected = _dev_sets(epoch, subsets)

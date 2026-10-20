@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, TypedDict, get_args
 
 from bench.runner.epochs import JsonValue, canonical, digest, file_hash, read_json
 from bench.runner.observations import (
+    BugObservation,
+    Candidate,
     Coverage,
     Decision,
     Dimension,
@@ -204,6 +207,7 @@ class StageBugObservationWire(TypedDict):
     matched_version_ids: list[str]
     loss: LossWire | None
     coverage: Coverage
+    cap_hit: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +221,7 @@ class StageBugObservation:
     matched_version_ids: tuple[str, ...]
     loss: Loss | None
     coverage: Coverage
+    cap_hit: bool = False
 
 
 class FunnelReportWire(TypedDict):
@@ -733,6 +738,7 @@ def evaluate_stages(
                     matched.get(stage, ()),
                     loss if stage == "deliver" else None,
                     snapshot.coverage if snapshot else "unavailable",
+                    snapshot.cap_hit if snapshot else False,
                 )
             )
     if hasattr(matcher, "matches"):
@@ -755,6 +761,13 @@ def loss_funnel(observations, *, population) -> FunnelReport:
     survivors = dict.fromkeys(get_args(Stage), 0)
     unjudged = dict.fromkeys(get_args(Stage), 0)
     caps = dict.fromkeys(get_args(Stage), 0)
+    capped_attempts = {
+        (row.score_ref, row.attempt_id, row.pr_url, row.stage)
+        for row in observations
+        if row.bug_id in members and row.cap_hit
+    }
+    for _, _, _, stage in capped_attempts:
+        caps[stage] += 1
     delivered = discovered = unavailable = disagreements = 0
     for rows in cells.values():
         for stage in get_args(Stage):
@@ -772,8 +785,6 @@ def loss_funnel(observations, *, population) -> FunnelReport:
             )
         elif final and final.loss and final.loss.status == "established":
             losses[final.loss.stage] += 1
-            if final.loss.stage == "cap":
-                caps[final.loss.physical_stage] += 1
         else:
             unavailable += 1
     denominator = len(members) * max(1, len({key[0] for key in cells}))
@@ -1179,6 +1190,32 @@ def capture_score(
     return tuple(rows), tuple(session.matches), capture, tuple(session.journal)
 
 
+def credited_dimensions(
+    bug: BugObservation,
+    candidates: Sequence[Candidate],
+    matched_versions: Iterable[FindingVersion],
+) -> tuple[Dimension, ...]:
+    """Credit only the matched discovery claims that sourced a delivered match."""
+    matched_candidates = {m.candidate_id for m in bug.matches}
+    delivered_sources = {
+        tid
+        for candidate in candidates
+        if candidate.candidate_id in matched_candidates
+        and candidate.pr_url == bug.pr_url
+        and candidate.provenance_status == "complete"
+        for tid in candidate.source_trace_ids
+    }
+    return tuple(
+        sorted(
+            {
+                version.discovery_dimension
+                for version in matched_versions
+                if version.trace_id in delivered_sources
+            }
+        )
+    )
+
+
 def dimension_metrics(candidates, bugs, stage_rows, profile, traces):
     from bench.runner.epochs import PROFILE_CATEGORIES
 
@@ -1187,18 +1224,16 @@ def dimension_metrics(candidates, bugs, stage_rows, profile, traces):
         for b in bugs
         if b.category is None or b.category in PROFILE_CATEGORIES[profile]
     ]
-    lookup = {c.candidate_id: c for c in candidates}
     # A delivered match alone establishes no source-claim match, so opt-out has no dimension recall.
-    dimensions_by_version = {
-        (url, v.version_id): v.discovery_dimension
+    versions = {
+        (url, v.version_id): v
         for url, (_, trace) in traces.items()
         for v in trace.versions
     }
     evidence = {
-        (r.bug_id, r.score_ref): {
-            dimensions_by_version.get((r.pr_url, vid), "unknown")
-            for vid in r.matched_version_ids
-        }
+        (r.bug_id, r.score_ref): tuple(
+            versions[(r.pr_url, vid)] for vid in r.matched_version_ids
+        )
         for r in stage_rows
         if r.stage == "discover" and r.survives
     }
@@ -1216,26 +1251,28 @@ def dimension_metrics(candidates, bugs, stage_rows, profile, traces):
         ):
             continue
         delivered = sum(
-            any(
-                m.candidate_id in lookup
-                and dimension in lookup[m.candidate_id].discovery_dimensions
-                for m in b.matches
+            dimension
+            in credited_dimensions(
+                b, candidates, evidence.get((b.bug_id, b.score_ref), ())
             )
-            and dimension in evidence.get((b.bug_id, b.score_ref), ())
             for b in population
         )
         discovered = sum(
-            dimension in evidence.get((b.bug_id, b.score_ref), ()) for b in population
+            any(
+                v.discovery_dimension == dimension
+                for v in evidence.get((b.bug_id, b.score_ref), ())
+            )
+            for b in population
         )
         judged = {
-            r.bug_id
+            (r.bug_id, r.score_ref)
             for r in stage_rows
             if r.stage == "discover"
             and r.survives is not None
             and r.coverage == "complete"
         }
         full_discovery = bool(population) and all(
-            b.bug_id in judged for b in population
+            (b.bug_id, b.score_ref) in judged for b in population
         )
         out[dimension] = {
             "dimension": dimension,
@@ -1314,13 +1351,34 @@ def collect_trace(pr_dir: Path) -> CollectedTraceWire | None:
     from gauntlet import tasks
 
     pr_dir = Path(pr_dir)
-    found: list[CollectedTraceWire] = []
+    delivered = list(pr_dir.glob("code-gauntlet-post-review-*.json"))
+    if not delivered:
+        return None
+    if len(delivered) != 1 or delivered[0].is_symlink():
+        raise ValueError("delivered post-review artifact is ambiguous or a symlink")
+    payload = read_json(delivered[0])
+    findings = payload.get("findings", []) if isinstance(payload, dict) else payload
+    nonces = {f["trace_id"].split(":", 1)[0] for f in findings if f.get("trace_id")}
+    if isinstance(payload, dict) and payload.get("run_nonce"):
+        nonces.add(payload["run_nonce"])
+    if len(nonces) != 1:
+        return None
+    delivered_nonce = nonces.pop()
+    current = []
     for record in sorted((pr_dir / "workflows").glob("wf_*.json")):
         if record.is_symlink():
             raise ValueError("workflow trace record is a symlink")
         terminal, _, _ = tasks.find_terminal(tasks.read_task(str(record)))
-        if not isinstance(terminal, dict):
-            continue
+        if (
+            isinstance(terminal, dict)
+            and terminal.get("ok") is True
+            and (terminal.get("persistReturn") or {}).get("nonce") == delivered_nonce
+        ):
+            current.append((record, terminal))
+    if len(current) > 1:
+        raise ValueError("multiple successful Workflow records for delivered nonce")
+    found: list[CollectedTraceWire] = []
+    for record, terminal in current:
         measurement = terminal.get("measurement") or {}
         if measurement.get("status") != "available":
             continue
@@ -1365,8 +1423,6 @@ def collect_trace(pr_dir: Path) -> CollectedTraceWire | None:
                 "workflow_sha256": file_hash(record),
             }
         )
-    if len(found) > 1:
-        raise ValueError("multiple current measurement traces")
     if found:
         from bench.runner.observations import exclusive_json
 
@@ -1497,6 +1553,14 @@ def validate_packet_evidence(path, packet, bugs, candidates):
         _require(
             row["survives"] is None or type(row["survives"]) is bool, "survival bit"
         )
+        _require(type(row.get("cap_hit", False)) is bool, "stage cap flag")
+        if row.get("cap_hit"):
+            trace = traces.get(row["pr_url"])
+            _require(
+                trace is not None
+                and any(s.stage == row["stage"] and s.cap_hit for s in trace.snapshots),
+                "stage cap evidence",
+            )
         _require(
             all(
                 v in known_versions.get(row["pr_url"], ())

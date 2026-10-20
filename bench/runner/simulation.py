@@ -289,7 +289,9 @@ class PRCorrelation:
     reason: str
 
 
-def calibrate_sensitivity(library, initial_runs):
+def calibrate_sensitivity(
+    library, initial_runs
+) -> tuple[tuple[SensitivityBug, ...], tuple[PRCorrelation, ...]]:
     if initial_runs < 2:
         raise ValueError("beta_pr_sensitivity requires initial K>=2")
     n = len(library.vectors)
@@ -585,7 +587,7 @@ def simulate_rule(
         raise ValueError(
             "invalid simulation grid; both generators and 0/+5/+10 are required"
         )
-    groups = {}
+    groups: dict[str, set[float]] = {}
     for rule in config.rules:
         groups.setdefault(_group(rule), set()).add(rule.groundedness_margin_pp)
     if any(
@@ -615,7 +617,7 @@ def simulate_rule(
         assumption = (
             "no-change groundedness; shared baseline-audit beta-binomial latent rate"
         )
-        correct = sum(f.correct for f in audit.baseline)
+        correct = sum(f.correct is True for f in audit.baseline)
         incorrect = len(audit.baseline) - correct
     elif config.groundedness_model == "conditional_pass":
         assumption = "conditional on groundedness passing; unconditional full-rule power unavailable"
@@ -660,7 +662,8 @@ def simulate_rule(
     )
     for generator in sorted(config.generators):
         for rule in sorted(config.rules, key=lambda r: r.rule_id):
-            parameters, correlations = (), ()
+            parameters: tuple[SensitivityBug, ...] = ()
+            correlations: tuple[PRCorrelation, ...] = ()
             calibration_error = None
             if generator == "beta_pr_sensitivity":
                 try:
@@ -768,7 +771,12 @@ def simulate_rule(
                             raise ValueError("additional extension look refused")
                     final.append(decision)
                     by_name = {p.population: p for p in report.population_reports}
-                    gains.append(by_name["uncontaminated"].difference * 100)
+                    difference = by_name["uncontaminated"].difference
+                    if difference is None:
+                        raise ValueError(
+                            "simulation requires a nonempty primary population"
+                        )
+                    gains.append(difference * 100)
                     nonmini_gains.append(
                         by_name["non-mini"].difference * 100
                         if by_name["non-mini"].difference is not None
@@ -786,7 +794,7 @@ def simulate_rule(
                     else None
                 )
 
-                def count(ds, verdict):
+                def count_decisions(ds, verdict):
                     return sum(d.verdict == verdict for d in ds)
 
                 calibration = {
@@ -812,13 +820,13 @@ def simulate_rule(
                         GENERATOR_VERSION,
                         config.seed,
                         config.trials,
-                        count(initial, "pass"),
-                        count(initial, "fail"),
-                        count(initial, "inconclusive"),
+                        count_decisions(initial, "pass"),
+                        count_decisions(initial, "fail"),
+                        count_decisions(initial, "inconclusive"),
                         extensions,
-                        count(final, "pass"),
-                        count(final, "fail"),
-                        count(final, "inconclusive"),
+                        count_decisions(final, "pass"),
+                        count_decisions(final, "fail"),
+                        count_decisions(final, "inconclusive"),
                         rate,
                         math.sqrt(rate * (1 - rate) / config.trials)
                         if rate is not None
@@ -829,7 +837,7 @@ def simulate_rule(
                         else None,
                         effect if computed else None,
                         sum(gains) / config.trials if computed else None,
-                        sum(nonmini_gains) / config.trials
+                        sum(g for g in nonmini_gains if g is not None) / config.trials
                         if computed and all(g is not None for g in nonmini_gains)
                         else None,
                         assumption,

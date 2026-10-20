@@ -3,6 +3,7 @@
 import json
 import subprocess
 from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -246,15 +247,44 @@ def test_estimate_refusal_and_retry_reservations_bound_entire_score(tmp_path):
     assert any(j["retry"] == 1 for j in journal)
 
 
-def test_collection_binds_return_bytes_and_ignores_superseded_records(tmp_path):
+@pytest.mark.parametrize("earlier_ok", [False, True])
+@pytest.mark.parametrize("empty_delivery", [False, True])
+def test_collection_binds_delivered_nonce_and_ignores_earlier_records(
+    tmp_path, earlier_ok, empty_delivery
+):
     trace, path, receipt = emit_trace(tmp_path)
     pr = tmp_path / "pr"
     (pr / "workflows/superseded").mkdir(parents=True)
     record = {"result": receipt["out"]}
+    selected = receipt["payload"]["postReview"]
+    if empty_delivery:
+        selected["findings"] = []
+    (pr / "code-gauntlet-post-review-abc1234.json").write_text(
+        json.dumps(selected), encoding="utf-8"
+    )
+    earlier = json.loads(json.dumps(record).replace("nonce-xyz", "earlier"))
+    earlier["result"]["ok"] = earlier_ok
+    entry = next(
+        e
+        for e in earlier["result"]["persistReturn"]["entries"]
+        if e["path"] == earlier["result"]["measurement"]["path"]
+    )
+    if not earlier_ok:
+        earlier["result"]["persistReturn"]["nonce"] = trace.run_nonce
+        failed_trace = json.loads(entry["text"].replace("earlier", trace.run_nonce))
+        failed_trace["complete"] = False
+        entry["text"] = json.dumps(failed_trace)
+    entry["sha256"] = sha256(entry["text"].encode("utf-8")).hexdigest()
+    earlier["result"]["measurement"]["sha256"] = entry["sha256"]
+    (pr / "workflows/wf_0_earlier.json").write_text(
+        json.dumps(earlier), encoding="utf-8"
+    )
     (pr / "workflows/wf_current.json").write_text(json.dumps(record), encoding="utf-8")
     (pr / "workflows/superseded/wf_old.json").write_text(
         json.dumps(record), encoding="utf-8"
     )
+    # Phase 8 can materialize the delivered trace before bench collection starts.
+    (pr / "code-gauntlet-measurement-abc1234.json").write_bytes(path.read_bytes())
     binding = stages.collect_trace(pr)
     assert binding["run_nonce"] == trace.run_nonce
     collected = pr / binding["path"]
@@ -264,6 +294,100 @@ def test_collection_binds_return_bytes_and_ignores_superseded_records(tmp_path):
     collected.write_text("corrupt", encoding="utf-8")
     with pytest.raises(ValueError, match="differs"):
         stages.collect_trace(pr)
+
+
+def test_discovery_cap_counts_attempts_independently_of_terminal_losses(tmp_path):
+    trace, epoch, bugs, _ = loss_case(tmp_path)
+    trace = replace(
+        trace,
+        snapshots=tuple(
+            replace(s, cap_hit=True, coverage="partial") if s.stage == "discover" else s
+            for s in trace.snapshots
+        ),
+    )
+    rows = stages.evaluate_stages(
+        trace,
+        epoch,
+        delivered_observations=bugs,
+        matcher=lambda golden, claim: {"match": golden in claim},
+        stage_cost_cap_usd=10,
+        price_estimator=lambda *args: 0.001,
+    )
+    funnel = stages.loss_funnel(rows, population=[b.bug_id for b in bugs])
+    assert dict(funnel.cap_hit_counts)["discover"] == 1
+    assert dict(funnel.losses)["not_found"] == 1
+    repeated = stages.loss_funnel(
+        rows
+        + tuple(
+            replace(r, score_ref=replace(r.score_ref, score_id="repeat")) for r in rows
+        ),
+        population=[b.bug_id for b in bugs],
+    )
+    assert dict(repeated.cap_hit_counts)["discover"] == 2
+    assert repeated.coverage == "partial"
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("FILTER", set()),
+        ("GROUP", {"bug"}),
+        ("CORROBORATOR", {"intent"}),
+    ],
+)
+def test_dimension_credit_requires_the_matched_source_claim(tmp_path, source, expected):
+    trace, _, _ = emit_trace(tmp_path)
+    discovery = trace.snapshots[0]
+    versions = {v.version_id: v for v in trace.versions}
+    intake = [versions[vid] for vid in discovery.finding_version_ids]
+    matched = next(v for v in intake if v.model_finding_id == source)
+    delivered = [v for v in intake if v.model_finding_id in ("GROUP", "CORROBORATOR")]
+    ref = observations.ScoreRef("r", "e616e84-v1", "s")
+    candidate = observations.Candidate(
+        "c",
+        "url",
+        "attempt",
+        0,
+        "claim",
+        "a.py",
+        1,
+        tuple(v.trace_id for v in delivered),
+        ("bug", "intent"),
+        "dedup",
+        "complete",
+    )
+    bug = observations.BugObservation(
+        1,
+        ref,
+        "url",
+        "attempt",
+        "bug",
+        "bug",
+        "matched",
+        (observations.Match("c", 1.0, None, "direct"),),
+        (),
+        None,
+    )
+    row = stages.StageBugObservation(
+        ref,
+        "attempt",
+        "url",
+        "bug",
+        "discover",
+        True,
+        (matched.version_id,),
+        None,
+        "complete",
+    )
+    metrics = stages.dimension_metrics(
+        (candidate,),
+        (bug,),
+        (row,),
+        "all",
+        {"url": (tmp_path / "trace-return.json", trace)},
+    )
+    assert {d for d, m in metrics.items() if m["delivered_bug_hits"]} == expected
+    assert metrics[matched.discovery_dimension]["discovery_bug_hits"] == 1
 
 
 def test_score_packet_carries_source_attribution_and_bounded_stage_matches(

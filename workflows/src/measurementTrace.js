@@ -4,30 +4,15 @@ import { resolvedDispatchModels } from './registry.js';
 export const MEASUREMENT_TRACE_VERSION = '1';
 const traceState = new WeakMap();
 const traceHistory = new WeakMap();
-const replaySnapshots = new WeakMap();
 const stageDecisions = new WeakMap();
 const stageCapacity = new WeakMap();
 const thresholdEvidence = new WeakMap();
 
-export function createMeasurementTrace(nonce, previous = null) {
+export function createMeasurementTrace(nonce) {
   const trace = { schema_version: 1, trace_version: MEASUREMENT_TRACE_VERSION, run_nonce: nonce,
     versions: [], snapshots: [], resolved_models: {}, complete: false };
   const states = new Map();
   const history = new Map();
-  if (previous?.schema_version === 1 && previous.trace_version === MEASUREMENT_TRACE_VERSION && previous.run_nonce === nonce) {
-    const held = deepClone(previous);
-    const byVersion = new Map();
-    for (const version of held.versions) {
-      const finding = version.finding || { ...byVersion.get(version.base_version_id), ...version.set_fields };
-      for (const key of version.unset_fields) delete finding[key];
-      byVersion.set(version.version_id, finding);
-      states.set(version.trace_id, { version_id: version.version_id, finding });
-      history.set(JSON.stringify(finding), version.version_id);
-    }
-    trace.versions = held.versions;
-    replaySnapshots.set(trace, held.snapshots);
-    trace.resolved_models = held.resolved_models;
-  }
   traceState.set(trace, states);
   traceHistory.set(trace, history);
   return trace;
@@ -100,11 +85,6 @@ function traceVersion(trace, finding) {
 
 export function recordStage(trace, stage, output, details = {}) {
   details = { ...(stageCapacity.get(output) || {}), ...details };
-  const prior = replaySnapshots.get(trace)?.find((s) => s.stage === stage);
-  if (details.replayed && prior) {
-    trace.snapshots.push({ ...deepClone(prior), sequence: trace.snapshots.length, replayed: true });
-    return;
-  }
   const existing = trace.snapshots.findIndex((s) => s.stage === stage);
   if (existing >= 0 && details.replayed) { trace.snapshots[existing].replayed = true; return; }
   if (existing >= 0) trace.snapshots = trace.snapshots.slice(0, existing);
@@ -180,7 +160,16 @@ export function appendMeasurement(envelope, trace, args) {
   const candidate = { ...primary, measurement: { status: 'available', path: entry.path, sha256: entry.sha256 },
     persistReturn: { ...channel, entries: [...channel.entries, entry] } };
   if (JSON.stringify(candidate).length > RETURN_CHAR_BUDGET) {
-    return { ...envelope, measurement: { status: 'unavailable', reason: 'return_budget' } };
+    const fallback = { ...envelope, measurement: { status: 'unavailable', reason: 'return_budget' } };
+    if (JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET) return fallback;
+    // Diagnostics are optional; signed resume phases and primary persistence bytes take priority.
+    for (const field of ['stats', 'gaps', 'resolvedPolicy', 'error']) {
+      delete fallback[field];
+      if (JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET) return fallback;
+    }
+    // A full checkpoint can consume the entire budget on its own. In that case the
+    // optional measurement marker must be absent rather than displacing recovery.
+    return envelope;
   }
   return candidate;
 }

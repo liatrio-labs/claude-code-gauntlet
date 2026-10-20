@@ -17,10 +17,6 @@ def tracked_paths(root: Path, pathspecs: Sequence[str] = ()) -> list[str]:
 
 def copy_generator_tree(root: Path, destination: Path, targets: Iterable[str]) -> None:
     paths = set(targets) | set(tracked_paths(root, ("scripts/", "workflows/src/")))
-    # Build consumes the working source graph, including modules awaiting staging.
-    paths.update(
-        str(path.relative_to(root)) for path in (root / "workflows/src").glob("*.js")
-    )
     for relative in sorted(paths):
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)

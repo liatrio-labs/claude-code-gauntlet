@@ -25,10 +25,19 @@ from bench.runner.epochs import (  # noqa: E402
     load_epoch,
     read_json,
 )
-from bench.runner.observations import ScoreRef, ScoreRefWire, freeze_json, thaw_json  # noqa: E402
+from bench.runner.observations import (  # noqa: E402
+    ScoreRef,
+    ScoreRefWire,
+    freeze_json,
+    thaw_json,
+)
 from bench.runner.observations import wire_record as wire  # noqa: E402
 from bench.runner.populations import Population, PopulationName  # noqa: E402
-from bench.runner.validity import CellSelection, CompleteMatrix, MatrixObservation  # noqa: E402
+from bench.runner.validity import (  # noqa: E402
+    CellSelection,
+    CompleteMatrix,
+    MatrixObservation,
+)
 
 Look = Literal["initial", "extended", "descriptive"]
 Verdict = Literal["pass", "fail", "inconclusive"]
@@ -207,7 +216,7 @@ def load_audit(path):
     return audit_from_wire(read_json(Path(path)))
 
 
-def audit_from_wire(value):
+def audit_from_wire(value) -> GroundednessAudit:
     value = dict(value)
     for arm in ("baseline", "candidate"):
         value[arm] = tuple(
@@ -489,7 +498,7 @@ def quantile(values, q):
 def cluster_bootstrap(
     bugs: Sequence[BugComparison], config: BootstrapConfig
 ) -> Interval:
-    clusters = {}
+    clusters: dict[str, list[float]] = {}
     for bug in sorted(bugs, key=lambda b: (b.pr_url, b.bug_id)):
         clusters.setdefault(bug.pr_url, []).append(bug.difference)
     packed = [(sum(v), len(v)) for _, v in sorted(clusters.items())]
@@ -681,33 +690,36 @@ def compare_matrix(matrix: CompleteMatrix, spec: ComparisonSpec) -> ComparisonRe
                     else None,
                 }
             )
-        dimensions = []
+        dimension_rows = []
         for d in get_args(observations.Dimension):
             for arm in names:
-                rows = [
+                population_rows = [
                     r
                     for r in matrix.observations
                     if r.arm == arm and r.bug_id in pop.bug_ids
                 ]
-                dimensions.append(
+                dimension_rows.append(
                     {
                         "dimension": d,
                         "arm": arm,
                         "denominator": denominator,
                         "delivered_recall": sum(
-                            r.detected and d in r.delivered_dimensions for r in rows
+                            r.detected and d in r.delivered_dimensions
+                            for r in population_rows
                         )
                         / (counts[arm] * denominator)
-                        if denominator and all(r.provenance_available for r in rows)
+                        if denominator
+                        and all(r.provenance_available for r in population_rows)
                         else None,
                         "discovery_recall": sum(
-                            d in r.discovery_dimensions for r in rows
+                            d in r.discovery_dimensions for r in population_rows
                         )
                         / (counts[arm] * denominator)
-                        if denominator and all(r.provenance_available for r in rows)
+                        if denominator
+                        and all(r.provenance_available for r in population_rows)
                         else None,
                         "known_provenance_cells": sum(
-                            r.provenance_available for r in rows
+                            r.provenance_available for r in population_rows
                         ),
                         "overlap": True,
                     }
@@ -725,7 +737,9 @@ def compare_matrix(matrix: CompleteMatrix, spec: ComparisonSpec) -> ComparisonRe
                 terminal = [
                     s for s in sr if s.stage == "deliver" and s.bug_id in pop.bug_ids
                 ]
-                physical, causal, drilldown = {}, {}, {}
+                physical: dict[str, int] = {}
+                causal: dict[str, int] = {}
+                drilldown: dict[str, list[str]] = {}
                 for cell in terminal:
                     if cell.loss and cell.loss.status == "established":
                         physical[cell.loss.physical_stage or "unknown"] = (
@@ -776,7 +790,7 @@ def compare_matrix(matrix: CompleteMatrix, spec: ComparisonSpec) -> ComparisonRe
                 ),
                 members,
                 freeze_json(categories),
-                freeze_json(dimensions),
+                freeze_json(dimension_rows),
                 freeze_json(
                     {
                         "status": "unavailable",
@@ -820,16 +834,25 @@ def compare_matrix(matrix: CompleteMatrix, spec: ComparisonSpec) -> ComparisonRe
     )
 
 
-def evaluate_promotion(report, audit, rule) -> PromotionDecision:
+def evaluate_promotion(
+    report: ComparisonReport, audit: GroundednessAudit | None, rule: PromotionRule
+) -> PromotionDecision:
     populations_by_name = {p.population: p for p in report.population_reports}
-    guards = []
-    for guard, name, margin in (
+    guards: list[tuple[GuardName, Guard]] = []
+    verdict: Verdict
+    recall_guards: tuple[tuple[GuardName, PopulationName, float], ...] = (
         ("primary_recall", "uncontaminated", rule.margin_pp),
         ("non-mini", "non-mini", rule.nonmini_margin_pp),
-    ):
+    )
+    for guard, name, margin in recall_guards:
         pop = populations_by_name.get(name)
         interval = pop.interval if pop else None
-        if not interval or interval.status != "estimated":
+        if (
+            not interval
+            or interval.status != "estimated"
+            or interval.lower is None
+            or interval.upper is None
+        ):
             guards.append(
                 (
                     guard,
@@ -883,8 +906,8 @@ def evaluate_promotion(report, audit, rule) -> PromotionDecision:
         )
         if resolved:
             difference = (
-                sum(v.correct for v in audit.candidate)
-                - sum(v.correct for v in audit.baseline)
+                sum(v.correct is True for v in audit.candidate)
+                - sum(v.correct is True for v in audit.baseline)
             ) / size
             verdict = (
                 "pass" if difference >= rule.groundedness_margin_pp / 100 else "fail"
@@ -1023,10 +1046,14 @@ def compare_arms(
         )
     if not operational and (spec.rule is not None or not spec.descriptive_pr_urls):
         raise ValueError("descriptive comparison requires explicit scope and rule=null")
-    window = validity.load_window(Path(spec.window_path)) if operational else None
+    window = (
+        validity.load_window(Path(spec.window_path))
+        if operational and spec.window_path is not None
+        else None
+    )
     epoch = load_epoch(spec.epoch_id, root=DEFAULT_ROOT)
     subsets = read_json(DEFAULT_ROOT / "subsets.json")
-    scope = tuple(window.pr_urls if window else spec.descriptive_pr_urls)
+    scope = window.pr_urls if window else (spec.descriptive_pr_urls or ())
     if (
         len(scope) != len(set(scope))
         or set(scope) & set(subsets["holdout"])
@@ -1090,6 +1117,7 @@ def compare_arms(
             index = run.get("run_index") if operational else order
             indices.append(index)
             if operational:
+                assert window is not None and spec.window_path is not None
                 if (
                     run.get("provenance") != window.expected.wire()
                     or run.get("window_id") != window.window_id
@@ -1132,7 +1160,7 @@ def compare_arms(
                     "Historical review identity missing/differing; descriptive scores cannot repair provenance."
                 )
             sr = _stage_rows(packet)
-            dimensions_by_version = {}
+            versions_by_id: dict[tuple[str, str], stages.FindingVersion] = {}
             bindings_path = packet.root / "stage_trace_bindings.json"
             if bindings_path.is_file():
                 for url, binding in read_json(bindings_path).items():
@@ -1140,11 +1168,8 @@ def compare_arms(
                         observations.confined(packet.root, binding["trace_path"]),
                         expected_sha256=binding["trace_sha256"],
                     )
-                    dimensions_by_version.update(
-                        {
-                            (url, v.version_id): v.discovery_dimension
-                            for v in trace.versions
-                        }
+                    versions_by_id.update(
+                        {(url, v.version_id): v for v in trace.versions}
                     )
             stage_rows.extend(sr)
             selected_attempts = dict(packet.manifest.selected_attempts)
@@ -1180,6 +1205,11 @@ def compare_arms(
                     )
                 per_stage = [s for s in sr if s.bug_id == b.bug_id]
                 discovery = next((s for s in per_stage if s.stage == "discover"), None)
+                matched_versions = tuple(
+                    versions_by_id[(b.pr_url, vid)]
+                    for vid in (discovery.matched_version_ids if discovery else ())
+                    if (b.pr_url, vid) in versions_by_id
+                )
                 cells.append(
                     MatrixObservation(
                         arm.name,
@@ -1189,42 +1219,11 @@ def compare_arms(
                         b.outcome == "matched",
                         ref.run_id,
                         b.attempt_id,
-                        tuple(
-                            sorted(
-                                {
-                                    dimensions_by_version.get(
-                                        (b.pr_url, vid), "unknown"
-                                    )
-                                    for vid in (
-                                        discovery.matched_version_ids
-                                        if discovery
-                                        else ()
-                                    )
-                                }
-                                & {
-                                    d
-                                    for c in packet.candidates
-                                    if any(
-                                        m.candidate_id == c.candidate_id
-                                        for m in b.matches
-                                    )
-                                    for d in c.discovery_dimensions
-                                }
-                            )
+                        stages.credited_dimensions(
+                            b, packet.candidates, matched_versions
                         ),
                         tuple(
-                            sorted(
-                                {
-                                    dimensions_by_version.get(
-                                        (b.pr_url, vid), "unknown"
-                                    )
-                                    for vid in (
-                                        discovery.matched_version_ids
-                                        if discovery
-                                        else ()
-                                    )
-                                }
-                            )
+                            sorted({v.discovery_dimension for v in matched_versions})
                         ),
                         tuple((s.stage, s.survives) for s in per_stage),
                         bool(
@@ -1251,6 +1250,7 @@ def compare_arms(
             raise ValueError("duplicate run index")
         run_index_map.append((arm.name, tuple(sorted(indices))))
     if operational:
+        assert spec.rule is not None and window is not None
         count = spec.rule.initial_runs + (
             spec.rule.extension_runs if spec.look == "extended" else 0
         )
@@ -1295,11 +1295,13 @@ def compare_arms(
                 matrix, replace(supplemental_spec, resolved_populations=supplemental)
             ).population_reports,
         )
+    identity_hashes = thaw_json(report.identity_hashes)
+    assert isinstance(identity_hashes, dict) and identity is not None
     report = replace(
         report,
         identity_hashes=freeze_json(
             {
-                **thaw_json(report.identity_hashes),
+                **identity_hashes,
                 "epoch_hashes": observations.epoch_hashes(epoch),
                 "evaluator": asdict(identity),
                 "population_hashes": {p.name: p.content_sha256 for p in pops},
@@ -1308,7 +1310,7 @@ def compare_arms(
                 ),
                 "populations_sha256": digest(read_json(Path(spec.populations_path))),
                 "window_sha256": validity.file_hash(Path(spec.window_path))
-                if window
+                if window and spec.window_path is not None
                 else None,
                 "fingerprint": window.expected.wire() if window else None,
                 "instrumentation_version": instrumentation,
@@ -1332,6 +1334,7 @@ def compare_arms(
         ),
     )
     if operational:
+        assert spec.rule is not None and window is not None
         audit = (
             load_audit(spec.groundedness_audit_path)
             if spec.groundedness_audit_path

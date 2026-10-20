@@ -12,7 +12,7 @@ import subprocess
 import sys
 import uuid
 from contextlib import suppress
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, TypedDict, get_args
@@ -133,13 +133,22 @@ class RunFingerprint:
     bench_policy_sha256: str
 
     def wire(self) -> RunFingerprintWire:
-        value = asdict(self)
-        value.update(
-            resolved_models=dict(self.resolved_models),
-            effort_env=dict(self.effort_env),
-            allowed_auxiliary_model_ids=list(self.allowed_auxiliary_model_ids),
-        )
-        return value
+        return {
+            "cli_version": self.cli_version,
+            "cli_realpath": self.cli_realpath,
+            "cli_sha256": self.cli_sha256,
+            "resolved_models": dict(self.resolved_models),
+            "allowed_auxiliary_model_ids": list(self.allowed_auxiliary_model_ids),
+            "effort_env": dict(self.effort_env),
+            "frontmatter_effort_sha256": self.frontmatter_effort_sha256,
+            "judge_pin": self.judge_pin,
+            "adjudicator_pin": self.adjudicator_pin,
+            "golden_epoch_id": self.golden_epoch_id,
+            "golden_sha256": self.golden_sha256,
+            "scorer_sha256": self.scorer_sha256,
+            "auth_mode": self.auth_mode,
+            "bench_policy_sha256": self.bench_policy_sha256,
+        }
 
 
 def fingerprint_from_wire(value) -> RunFingerprint:
@@ -195,10 +204,14 @@ class MeasurementWindow:
 
     def wire(self) -> MeasurementWindowWire:
         return {
-            **asdict(self),
+            "schema_version": self.schema_version,
+            "window_id": self.window_id,
+            "opens_at": self.opens_at,
+            "closes_at": self.closes_at,
             "expected": self.expected.wire(),
             "pr_urls": list(self.pr_urls),
             "planned_run_indices": list(self.planned_run_indices),
+            "max_parallel_prs": self.max_parallel_prs,
         }
 
 
@@ -220,7 +233,7 @@ def load_window(path: Path) -> MeasurementWindow:
     return window_from_wire(read_json(Path(path)))
 
 
-def window_from_wire(value):
+def window_from_wire(value) -> MeasurementWindow:
     result = MeasurementWindow(
         **{
             **value,
@@ -274,11 +287,17 @@ class Validity:
 
     def wire(self) -> ValidityWire:
         return {
-            **asdict(self),
+            "state": self.state,
+            "window_id": self.window_id,
             "observed": self.observed.wire() if self.observed else None,
             "reasons": list(self.reasons),
             "evidence_refs": list(self.evidence_refs),
             "limitations": list(self.limitations),
+            "retry_not_before": self.retry_not_before,
+            "retry_of": self.retry_of,
+            "confirmed_reset_at": self.confirmed_reset_at,
+            "failure_fingerprint": self.failure_fingerprint,
+            "retryable": self.retryable,
         }
 
 
@@ -577,7 +596,15 @@ class AttemptRecord:
 
     def wire(self) -> AttemptWire:
         return {
-            **asdict(self),
+            "schema_version": self.schema_version,
+            "attempt_id": self.attempt_id,
+            "run_id": self.run_id,
+            "pr_url": self.pr_url,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "checkpoint_status": self.checkpoint_status,
+            "checkpoint_reason": self.checkpoint_reason,
+            "sequence": self.sequence,
             "validity": self.validity.wire(),
             "source_artifact_hashes": dict(self.source_artifact_hashes),
             "requested_models": dict(self.requested_models),

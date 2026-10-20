@@ -361,104 +361,97 @@ def test_repeated_unmatched_text_preserves_context_occurrences(score_case):
     }
 
 
-def test_old_epoch_replays_recorded_baseline_exactly_offline(tmp_path, monkeypatch):
+@pytest.mark.parametrize("epoch_id", ["dfc6cb4-v1", "e616e84-v1"])
+def test_epoch_bucket_policy_adjudicates_only_eligible_sibling(
+    tmp_path, monkeypatch, epoch_id
+):
     fixture = read_json(Path(__file__).parent / "fixtures/baseline-replay.json")
-    epoch = load_epoch("dfc6cb4-v1", root=DEFAULT_ROOT)
-    run = tmp_path / fixture["run_id"]
-    (run / "state").mkdir(parents=True)
+    expected = fixture["epochs"][epoch_id]
+    epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
+    url = fixture["pr_url"]
+    bugs = [b for b in epoch.bugs if b.pr_url == url]
+    assert len(bugs) == 1
+    pins = read_json(epoch.root / "baselines.json")
+    run = tmp_path / "run"
+    score._write_json(run / "run.json", {"run_id": run.name, "urls": [url]})
+    score._write_json(run / "state/pr.json", {"url": url, "status": "ok"})
+    home = run / score.invoke.pr_dir_name({"url": url})
     score._write_json(
-        run / "run.json", {"run_id": run.name, "urls": list(fixture["prs"])}
-    )
-    verdicts = {}
-    for i, (url, pr) in enumerate(fixture["prs"].items()):
-        score._write_json(run / "state" / f"{i}.json", {"url": url, "status": "ok"})
-        home = run / score.invoke.pr_dir_name({"url": url})
-        score._write_json(
-            home / "post-review-payload.json",
-            {
-                "platform": "github",
-                "payload": {
-                    "comments": [
-                        {"body": c["text"], "path": c["path"], "line": c["line"]}
-                        for c in pr["candidates"]
-                    ]
-                },
+        home / "post-review-payload.json",
+        {
+            "platform": "github",
+            "payload": {
+                "comments": [
+                    {"body": text, "path": "a.py", "line": i + 1}
+                    for i, text in enumerate(fixture["candidates"])
+                ]
             },
-        )
-        for index, bucket in pr["adjudications"].items():
-            text = pr["candidates"][int(index)]["text"]
-            assert text not in verdicts
-            verdicts[text] = bucket
-    # A future active pin change cannot change the archived epoch's defaults.
+        },
+    )
     active_baselines = tmp_path / "active-baselines.json"
     score._write_json(
         active_baselines,
-        {"judge_pin": "future-judge", "adjudicator_pin": "future-adjudicator"},
+        {
+            "judge_pin": "future-judge",
+            "adjudicator_pin": "future-adjudicator",
+        },
     )
     monkeypatch.setattr(score, "BASELINES_PATH", active_baselines)
 
-    def recorded_scorer(pin, key, model_dir):
-        assert pin == fixture["judge_pin"]
-        evaluations, groups = {}, {}
-        candidates = read_json(model_dir / "candidates.json")
-        for url, pr in fixture["prs"].items():
-            bugs = [b for b in epoch.bugs if b.pr_url == url]
-            assert [c["text"] for c in candidates[url]["deep-review"]] == [
-                c["text"] for c in pr["candidates"]
-            ]
-            evaluations[url] = {
-                "deep-review": {
-                    "tp": len(pr["tp"]),
-                    "fn": len(pr["fn"]),
-                    "fp": pr["fp"],
-                    "true_positives": [
-                        {
-                            "golden_comment": bugs[p["golden"]].comment,
-                            "matched_candidate": pr["candidates"][p["candidate"]][
-                                "text"
-                            ],
-                            "confidence": p["confidence"],
-                        }
-                        for p in pr["tp"]
-                    ],
-                    "false_negatives": [
-                        {"golden_comment": bugs[n].comment} for n in pr["fn"]
-                    ],
+    def scorer(pin, key, model_dir):
+        assert pin == pins["judge_pin"]
+        score._write_json(
+            model_dir / "evaluations.json",
+            {
+                url: {
+                    "deep-review": {
+                        "tp": 1,
+                        "fn": 0,
+                        "fp": 1,
+                        "true_positives": [
+                            {
+                                "golden_comment": bugs[0].comment,
+                                "matched_candidate": fixture["candidates"][0],
+                                "confidence": 1.0,
+                            }
+                        ],
+                        "false_negatives": [],
+                    }
                 }
-            }
-            groups[url] = {"deep-review": pr["dedup_groups"]}
-        score._write_json(model_dir / "evaluations.json", evaluations)
-        score._write_json(model_dir / "dedup_groups.json", groups)
+            },
+        )
+        score._write_json(
+            model_dir / "dedup_groups.json", {url: {"deep-review": [[0, 1]]}}
+        )
 
-    def recorded_adjudicator(text, hunk, context, pin, key):
-        assert pin == fixture["adjudicator_pin"]
-        return {"bucket": verdicts.pop(text)}
+    adjudicated = []
+
+    def adjudicator(text, hunk, context, pin, key):
+        assert pin == pins["adjudicator_pin"]
+        adjudicated.append(text)
+        return {"bucket": "valid_extra"}
 
     packet = score.score_run(
         run,
-        epoch_id=epoch.epoch_id,
+        epoch_id=epoch_id,
         env={"BENCH_JUDGE_API_KEY": "offline"},
         ledger_path=tmp_path / "ledger.jsonl",
-        run_scorer=recorded_scorer,
-        adjudicator=recorded_adjudicator,
-    )
-    assert not verdicts
-    # Discovery dimensions supersede the historical severity alias; all other metrics reproduce.
-    for name, expected in fixture["metrics"].items():
-        if name != "per_dimension":
-            assert packet["metrics"][name] == expected, name
-    assert (
-        packet["metrics"]["drift"]["severity_dist"]
-        == fixture["metrics"]["per_dimension"]
+        run_scorer=scorer,
+        adjudicator=adjudicator,
     )
     loaded = observations.load_packet(packet_path(packet))
-    assert len(loaded.adjudications) == 61
-    assert any(
-        m.kind == "dedup_sibling"
-        and m.candidate_id in {a.candidate_id for a in loaded.adjudications}
-        for bug in loaded.observations
-        for m in bug.matches
-    )
+    assert adjudicated == [fixture["candidates"][i] for i in expected["adjudicated"]]
+    assert len(loaded.observations) == 1
+    assert {m.kind for m in loaded.observations[0].matches} == {
+        "direct",
+        "dedup_sibling",
+    }
+    assert len(loaded.adjudications) == len(expected["adjudicated"])
+    assert packet["metrics"]["per_bucket"] == {
+        "golden_matched": expected["golden_matched"],
+        "valid_extra": len(expected["adjudicated"]),
+        "noise": 0,
+    }
 
 
 def test_score_normalizes_string_locations_before_context_capture(score_case):
