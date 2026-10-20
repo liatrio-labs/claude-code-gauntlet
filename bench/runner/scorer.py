@@ -8,6 +8,7 @@ from pathlib import Path
 
 from bench.runner.epochs import read_json
 from bench.runner.observations import ScoreRequest, ScorerOutputs, exclusive_json
+from bench.runner.scorer_source import scorer_source
 
 VENDOR_ENV = Path(__file__).resolve().parents[1] / "vendor/code-review-benchmark"
 BASE_URL = "https://api.anthropic.com/v1/"
@@ -51,49 +52,50 @@ def execute(
     model_dir = Path(model_dir).resolve()
     work_dir = model_dir.parent.parent
     run_env = dict(os.environ if env is None else env)
-    run_env.update(
-        MARTIAN_MODEL=pin,
-        MARTIAN_API_KEY=api_key,
-        MARTIAN_BASE_URL=base_url,
-        PYTHONPATH=str((epoch.root / "scorer").resolve()),
-    )
-    logs = []
-    for stage, module in (
-        ("dedup", "step2_5_dedup_candidates"),
-        ("judge", "step3_judge_comments"),
-    ):
-        command = [
-            "uv",
-            "run",
-            "--project",
-            str(VENDOR_ENV.resolve()),
-            "--no-sync",
-            "python",
-            "-m",
-            "code_review_benchmark." + module,
-        ]
-        if stage == "judge":
-            command += ["--dedup-groups", str(model_dir / "dedup_groups.json")]
-        if tool:
-            command += ["--tool", tool]
-        result = executor(
-            command,
-            cwd=str(work_dir),
-            env=run_env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
+    with scorer_source(epoch) as source:
+        run_env.update(
+            MARTIAN_MODEL=pin,
+            MARTIAN_API_KEY=api_key,
+            MARTIAN_BASE_URL=base_url,
+            PYTHONPATH=str(source.resolve()),
         )
-        log = work_dir / (stage + ".log")
-        with log.open("x", encoding="utf-8") as stream:
-            stream.write((result.stdout or "") + (result.stderr or ""))
-        logs.append((stage, log))
-        if result.returncode:
-            tail = (result.stderr or result.stdout or "").strip()[-2000:]
-            raise RuntimeError(
-                f"scorer stage {stage!r} failed (exit {result.returncode}): {tail}"
+        logs = []
+        for stage, module in (
+            ("dedup", "step2_5_dedup_candidates"),
+            ("judge", "step3_judge_comments"),
+        ):
+            command = [
+                "uv",
+                "run",
+                "--project",
+                str(VENDOR_ENV.resolve()),
+                "--no-sync",
+                "python",
+                "-m",
+                "code_review_benchmark." + module,
+            ]
+            if stage == "judge":
+                command += ["--dedup-groups", str(model_dir / "dedup_groups.json")]
+            if tool:
+                command += ["--tool", tool]
+            result = executor(
+                command,
+                cwd=str(work_dir),
+                env=run_env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
             )
-    return tuple(logs)
+            log = work_dir / (stage + ".log")
+            with log.open("x", encoding="utf-8") as stream:
+                stream.write((result.stdout or "") + (result.stderr or ""))
+            logs.append((stage, log))
+            if result.returncode:
+                tail = (result.stderr or result.stdout or "").strip()[-2000:]
+                raise RuntimeError(
+                    f"scorer stage {stage!r} failed (exit {result.returncode}): {tail}"
+                )
+        return tuple(logs)
 
 
 def run_stages(

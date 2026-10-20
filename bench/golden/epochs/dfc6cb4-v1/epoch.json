@@ -33,16 +33,19 @@
     "golden_comments/keycloak.json": "a77fe83c5efbe50555d18083e58a65130882a293070c7fb79d1734223d6dcdc7",
     "golden_comments/sentry.json": "76027172aa33185222b963f66c74b9772321566f4faa4cfa6a2e32a63ec81f3c",
     "pr_labels.json": "329c92affaa10be0e404e8837258252ce9b6c2f0a7f3e1084ca742f3e2aa7b5c",
-    "scorer/.gitignore": "016cd107f189324f0843f867ca82e0579585a12a8641b0960eb2d7faa00ebedb",
-    "scorer/LICENSE": "3d0f7aacf358c3578c1e541bdd297b675d76805e6bf3dddaf89b6d2b45e3afad",
-    "scorer/code_review_benchmark/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "scorer/code_review_benchmark/step2_5_dedup_candidates.py": "5438ffb2a487129bd0f85d5a8c43020efe5027ec2d1d51e599b9c1d9f743cd4c",
-    "scorer/code_review_benchmark/step3_judge_comments.py": "95c639bc46ff27ef97299ad0f8d2e3cd71c002feee727f4ccb2371830b6994d3",
-    "scorer/pyproject.toml": "2550697c0c98c3423bd4b9e89fc4d29d1fdb9d5b8d29e3a3e8b56005dac7c65b",
-    "scorer/tests/conftest.py": "d1bbb2c35e1b08cc33f320daacf6071a08cc8be28629e9f9f0aecfdf09e0bffc",
-    "scorer/tests/test_step3.py": "9c0a696ad3971708bfc2a8dfab259ba744365a235c176003078c9bdf3cbe9d0b",
-    "scorer/uv.lock": "de8fc717fd49b90497fc3e27cec9b05483e4818d70f5c5d92168bf5d6cdcda04",
     "experiments.jsonl": "da717feb6fb56000c5c6338ffef2ff6f3ed0bbfed9fc7ab1a143e2fb4a643ba1",
     "prompt-hashes.json": "83143d5bc58d90f5cd8ba3e92e11f402d2a23ccc09c83b91c88aee60063df17f"
+  },
+  "scorer_commit": "94ea095a89bfc2430814ff4e65db4ba790654fc7",
+  "scorer_file_hashes": {
+    ".gitignore": "016cd107f189324f0843f867ca82e0579585a12a8641b0960eb2d7faa00ebedb",
+    "LICENSE": "3d0f7aacf358c3578c1e541bdd297b675d76805e6bf3dddaf89b6d2b45e3afad",
+    "code_review_benchmark/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "code_review_benchmark/step2_5_dedup_candidates.py": "5438ffb2a487129bd0f85d5a8c43020efe5027ec2d1d51e599b9c1d9f743cd4c",
+    "code_review_benchmark/step3_judge_comments.py": "95c639bc46ff27ef97299ad0f8d2e3cd71c002feee727f4ccb2371830b6994d3",
+    "pyproject.toml": "2550697c0c98c3423bd4b9e89fc4d29d1fdb9d5b8d29e3a3e8b56005dac7c65b",
+    "tests/conftest.py": "d1bbb2c35e1b08cc33f320daacf6071a08cc8be28629e9f9f0aecfdf09e0bffc",
+    "tests/test_step3.py": "9c0a696ad3971708bfc2a8dfab259ba744365a235c176003078c9bdf3cbe9d0b",
+    "uv.lock": "de8fc717fd49b90497fc3e27cec9b05483e4818d70f5c5d92168bf5d6cdcda04"
   }
 }

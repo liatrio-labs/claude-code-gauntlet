@@ -24,9 +24,23 @@ pending. No leaderboard rows were adopted.
 
 `bench/golden/epochs/index.json` names the active epoch and pins manifest bytes.
 Each epoch directory contains its manifest, authoritative lean corpus, raw goldens,
-bug identities, labels, baselines and kept scorer sources with their MIT license.
+bug identities, labels and baselines. Epochs contain no scorer code.
+Each manifest records `scorer_commit`, the repository commit containing its
+`bench/vendor/code-review-benchmark` tree, and `scorer_file_hashes`, the SHA-256
+of every kept file, including the MIT license and environment metadata.
 Manifest content hashes validate the corpus, bugs, labels and scorer modules;
-byte hashes additionally protect all archived files.
+byte hashes additionally protect all archived data files.
+
+The old scorer lives in repository commit
+`94ea095a89bfc2430814ff4e65db4ba790654fc7`; the new scorer lives in
+`964606399df5bb066fa1d80e8da71bccb226de42` and the active vendor tree.
+These repository commits are distinct from the upstream `scorer_sha` identities.
+Active scoring verifies the vendor files. For a non-active epoch, the tooling
+uses read-only `git archive` to materialize that commit's vendor tree in a
+temporary directory, checks the complete file inventory and every SHA-256,
+and refuses a mismatch before either scoring stage executes. Temporary source
+is removed on success or failure. Git history containing the referenced commit
+must be available for archived rescoring.
 
 `dfc6cb4-v1` preserves the old upstream/scorer commit
 `dfc6cb427b5d0d7492a8d875ee9447744b7de3d1`. Its raw goldens contain 136 claims;
@@ -42,7 +56,7 @@ The older label taxonomy never supplies the new category field.
 
 ## Kept scorer source
 
-The active vendor and each epoch snapshot contain:
+The active vendor tree contains:
 
 - `code_review_benchmark/__init__.py`, `step2_5_dedup_candidates.py` and
   `step3_judge_comments.py`.
@@ -66,7 +80,13 @@ No upstream code or dependency installation was executed during this migration.
 
 `python3 -m bench.runner.migrate_epoch prepare --source PATH --upstream-sha SHA --out PATH`
 reads upstream JSON and source bytes as data and emits an inactive, complete copy
-proposal. It performs no git operations or dependency installation.
+proposal. It reads the old scorer from git history and verifies the prepared
+scorer against a repository vendor commit without executing upstream code or
+installing dependencies. `--scorer-commit COMMIT` selects that full repository
+commit; it defaults to the active epoch's commit. The selected vendor tree must
+already contain the proposed source bytes. The epoch proposal contains only
+scorer references and hashes; source copy operations target the active vendor
+tree alone.
 Use `archive-run` before live rescoring, then explicit epoch scoring for continuity.
 The never-scored repeat records scores_absent rather than inventing legacy scores.
 Paid rescoring, anchor rejudging, calibration and post-commit protected tree hashes

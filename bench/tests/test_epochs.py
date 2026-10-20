@@ -15,6 +15,7 @@ from bench.runner.epochs import (
     read_json,
 )
 from bench.runner.migrate_epoch import prepare
+from bench.runner.scorer_source import scorer_source
 
 
 def test_archive_preserves_old_discrepancy_and_inputs():
@@ -42,7 +43,6 @@ def test_archive_preserves_old_discrepancy_and_inputs():
         "benchmark_data.min.json",
         "pr_labels.json",
         "bugs.json",
-        "scorer/code_review_benchmark/step3_judge_comments.py",
         "epoch.json",
         "golden_comments/sentry.json",
     ],
@@ -51,21 +51,16 @@ def test_loader_rejects_tampered_epoch(tmp_path, target):
     root = tmp_path / "golden"
     shutil.copytree(DEFAULT_ROOT, root)
     file = root / "epochs/e616e84-v1" / target
-    if file.suffix == ".py":
-        file.write_text(
-            file.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8"
-        )
+    value = read_json(file)
+    if target == "epoch.json":
+        value["golden_sha256"] = "0" * 64
+    elif target == "benchmark_data.min.json":
+        next(iter(value.values()))["golden_comments"][0]["category"] = "style"
+    elif isinstance(value, dict):
+        value["tamper"] = True
     else:
-        value = read_json(file)
-        if target == "epoch.json":
-            value["golden_sha256"] = "0" * 64
-        elif target == "benchmark_data.min.json":
-            next(iter(value.values()))["golden_comments"][0]["category"] = "style"
-        elif isinstance(value, dict):
-            value["tamper"] = True
-        else:
-            value.append({"tamper": True})
-        file.write_text(json.dumps(value), encoding="utf-8")
+        value.append({"tamper": True})
+    file.write_text(json.dumps(value), encoding="utf-8")
     with pytest.raises((ValueError, KeyError, TypeError)):
         load_epoch(root=root)
 
@@ -143,10 +138,11 @@ def test_prepare_emits_complete_inactive_proposal_without_execution(tmp_path):
     source.mkdir()
     epoch = load_epoch(root=DEFAULT_ROOT)
     shutil.copytree(epoch.root / "golden_comments", source / "golden_comments")
-    shutil.copytree(
-        epoch.root / "scorer/code_review_benchmark", source / "code_review_benchmark"
-    )
-    shutil.copytree(epoch.root / "scorer/tests", source / "tests")
+    with scorer_source(epoch) as scorer:
+        shutil.copytree(
+            scorer / "code_review_benchmark", source / "code_review_benchmark"
+        )
+        shutil.copytree(scorer / "tests", source / "tests")
     (source / "results").mkdir()
     shutil.copyfile(
         epoch.root / "benchmark_data.min.json", source / "results/benchmark_data.json"
@@ -154,6 +150,9 @@ def test_prepare_emits_complete_inactive_proposal_without_execution(tmp_path):
     old_index = (DEFAULT_ROOT / "epochs/index.json").read_bytes()
     result = prepare(source, epoch.upstream_sha, tmp_path / "proposal")
     assert result["golden_sha256"] == epoch.golden_sha256
+    assert result["scorer_commit"] == epoch.scorer_commit
+    assert result["scorer_file_hashes"] == dict(epoch.scorer_file_hashes)
+    assert not (tmp_path / "proposal/e616e84-v1/scorer").exists()
     assert (tmp_path / "proposal/copy-manifest.json").is_file()
     from bench.runner.epochs import file_hash
 
@@ -162,6 +161,7 @@ def test_prepare_emits_complete_inactive_proposal_without_execution(tmp_path):
         file_hash(tmp_path / "proposal" / item["source"]) == item["sha256"]
         for item in proposal["copies"]
     )
+    assert not any("/scorer/" in item["destination"] for item in proposal["copies"])
     assert not any(
         item["destination"].endswith(
             ("subsets.json", "shas.json", "anchors/candidates.json")
@@ -172,6 +172,13 @@ def test_prepare_emits_complete_inactive_proposal_without_execution(tmp_path):
     assert read_json(tmp_path / "proposal/e616e84-v1/bugs.json") == [
         asdict(b) for b in epoch.bugs
     ]
+    with pytest.raises(ValueError, match="scorer file hash mismatch"):
+        prepare(
+            source,
+            epoch.upstream_sha,
+            tmp_path / "mismatched-proposal",
+            scorer_commit=load_epoch("dfc6cb4-v1", root=DEFAULT_ROOT).scorer_commit,
+        )
 
 
 def test_fixed_candidate_calibration_keeps_baselines_and_uses_explicit_epoch(

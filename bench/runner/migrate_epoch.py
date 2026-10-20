@@ -12,6 +12,7 @@ from typing import Literal, TypedDict
 
 from bench.runner.epochs import (
     DEFAULT_ROOT,
+    KEPT_FILES,
     GoldenPRWire,
     Profile,
     build_bug_index,
@@ -29,18 +30,7 @@ from bench.runner.observations import (
     ScoreRef,
     freeze_json,
 )
-
-KEPT_FILES = (
-    "LICENSE",
-    "pyproject.toml",
-    "uv.lock",
-    ".gitignore",
-    "code_review_benchmark/__init__.py",
-    "code_review_benchmark/step2_5_dedup_candidates.py",
-    "code_review_benchmark/step3_judge_comments.py",
-    "tests/conftest.py",
-    "tests/test_step3.py",
-)
+from bench.runner.scorer_source import materialize_scorer, scorer_source
 
 
 class EpochCopyWire(TypedDict):
@@ -73,16 +63,17 @@ def freeze_epoch(
     upstream_sha: str,
     profiles,
     primary,
+    *,
+    scorer_commit: str,
 ):
+    scorer_files = {name: file_hash(scorer / name) for name in KEPT_FILES}
+    with materialize_scorer(scorer_commit, scorer_files):
+        pass
     out.mkdir(parents=True, exist_ok=False)
     for name in ("benchmark_data.min.json", "pr_labels.json"):
         shutil.copyfile(golden / name, out / name)
     shutil.copytree(golden / "golden_comments", out / "golden_comments")
     shutil.copyfile(baselines, out / "baselines.json")
-    for name in KEPT_FILES:
-        target = out / "scorer" / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(scorer / name, target)
     data = read_json(out / "benchmark_data.min.json")
     bugs = build_bug_index(data)
     write_json(out / "bugs.json", [asdict(b) for b in bugs])
@@ -91,8 +82,10 @@ def freeze_epoch(
         "epoch_id": epoch_id,
         "upstream_sha": upstream_sha,
         "scorer_sha": upstream_sha,
+        "scorer_commit": scorer_commit,
+        "scorer_file_hashes": scorer_files,
         "golden_sha256": digest(data),
-        "scorer_sha256": scorer_hash(out / "scorer"),
+        "scorer_sha256": scorer_hash(scorer),
         "bugs_sha256": digest([asdict(b) for b in bugs]),
         "labels_sha256": digest(read_json(out / "pr_labels.json")),
         "primary_profile": primary,
@@ -112,7 +105,14 @@ def freeze_epoch(
     return manifest
 
 
-def prepare(source: Path, upstream_sha: str, out: Path, *, root: Path = DEFAULT_ROOT):
+def prepare(
+    source: Path,
+    upstream_sha: str,
+    out: Path,
+    *,
+    root: Path = DEFAULT_ROOT,
+    scorer_commit: str | None = None,
+):
     """Read upstream data/source bytes only; emit an inactive copy proposal."""
     if upstream_sha != "e616e849755441da38f18bf3adba2c9583b03803":
         raise ValueError("preparation requires the pinned upstream revision")
@@ -183,7 +183,8 @@ def prepare(source: Path, upstream_sha: str, out: Path, *, root: Path = DEFAULT_
     write_json(golden / "pr_labels.json", labels)
     shutil.copyfile(root / "subsets.json", golden / "subsets.json")
     scorer = out / "kept-source"
-    shutil.copytree(root / "epochs/dfc6cb4-v1/scorer", scorer)
+    with scorer_source(load_epoch("dfc6cb4-v1", root=root)) as archived_source:
+        shutil.copytree(archived_source, scorer)
     for name in (
         "code_review_benchmark/step3_judge_comments.py",
         "tests/test_step3.py",
@@ -213,6 +214,7 @@ def prepare(source: Path, upstream_sha: str, out: Path, *, root: Path = DEFAULT_
         upstream_sha,
         ["core", "all", "strict"],
         "core",
+        scorer_commit=scorer_commit or load_epoch(root=root).scorer_commit,
     )
     files = {
         p.relative_to(out).as_posix(): file_hash(p)
@@ -319,6 +321,7 @@ def main(argv=None):
     prep = commands.add_parser("prepare")
     for option in ("source", "upstream-sha", "out"):
         prep.add_argument("--" + option, required=True)
+    prep.add_argument("--scorer-commit")
     for name in ("archive-run", "rescore", "anchors", "calibrate"):
         cmd = commands.add_parser(name)
         cmd.add_argument("--epoch", required=True)
@@ -330,7 +333,12 @@ def main(argv=None):
             cmd.add_argument("--passes", required=True, type=int)
     args = parser.parse_args(argv)
     if args.command == "prepare":
-        prepare(Path(args.source), args.upstream_sha, Path(args.out))
+        prepare(
+            Path(args.source),
+            args.upstream_sha,
+            Path(args.out),
+            scorer_commit=args.scorer_commit,
+        )
     else:
         epoch = load_epoch(args.epoch, root=DEFAULT_ROOT)
         if args.command == "archive-run":

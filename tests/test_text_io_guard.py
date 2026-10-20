@@ -21,8 +21,6 @@ EXCLUDED_ROOTS = (
     "bench/vendor/",
     "bench/workspace/",
     "tests/fixtures/",
-    "bench/golden/epochs/dfc6cb4-v1/scorer/",
-    "bench/golden/epochs/e616e84-v1/scorer/",
 )
 NEWLINE_ROOTS = ("scripts/", "workflows/test/tools/", "tests/tools/")
 NON_TEXT_OPEN_RECEIVERS = frozenset({"os", "tarfile", "zipfile", "webbrowser"})
