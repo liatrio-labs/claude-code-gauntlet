@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from bench.runner import ledger, observations
+from bench.runner import ledger, observations, score
 from bench.runner.epochs import file_hash, read_json
 
 
@@ -23,7 +23,12 @@ def test_score_packet_buckets_costs_and_replay_are_derived_once(score_case):
         and "profiles" not in stored
         and not (path / "manifest.json").exists()
     )
-    assert stored["costs"] == {"dedup": None, "judge": None, "adjudicator": None}
+    assert stored["costs"] == {
+        "dedup": None,
+        "judge": None,
+        "adjudicator": None,
+        "attribution": None,
+    }
     assert len(loaded.observations) == packet["profiles"]["all"]["denominator"]
     assert packet["metrics"]["per_bucket"] == {
         "golden_matched": 2,
@@ -73,7 +78,7 @@ def test_invalid_scorer_output_cannot_become_a_packet(
             (model / "candidates.json").write_text("{}", encoding="utf-8")
         else:
             ev.clear()
-        (model / "evaluations.json").write_text(json.dumps(ev), encoding="utf-8")
+        score._write_json(model / "evaluations.json", ev)
 
     monkeypatch.setattr(type(score_case), "scorer", corrupt)
     with pytest.raises(ValueError):
@@ -100,11 +105,11 @@ def test_reader_rechecks_joins_beyond_byte_hashes(score_case, field):
         data["contexts"][0]["hunk"] = "forged bytes"
     elif field == "source":
         data["candidates"][0]["source_trace_ids"] = ["made-up"]
-    (path / "scores.json").write_text(json.dumps(data), encoding="utf-8")
+    score._write_json(path / "scores.json", data)
     if field != "hash":
         complete = read_json(path / "complete.json")
         complete["files"]["scores.json"] = file_hash(path / "scores.json")
-        (path / "complete.json").write_text(json.dumps(complete), encoding="utf-8")
+        score._write_json(path / "complete.json", complete)
     with pytest.raises(ValueError):
         observations.load_packet(path)
 

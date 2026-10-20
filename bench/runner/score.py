@@ -19,6 +19,7 @@ from bench.runner.epochs import (
     digest,
     file_hash,
     load_epoch,
+    read_json,
 )
 from bench.runner.invoke import _is_superseded
 from bench.runner.ledger import manifest_auth_mode, replay_packet, review_attempt_costs
@@ -29,15 +30,10 @@ from bench.runner.observations import (
     ScoreRef,
     ScoreRequest,
 )
-
-__all__ = [
-    "compute_metrics",
-    "score_run",
-]
+from bench.runner.scoring_costs import read_costs, total_cost
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCH_DIR = REPO_ROOT / "bench"
-BASELINES_PATH = BENCH_DIR / "baselines.json"
 LEDGER_PATH = BENCH_DIR / "experiments.jsonl"
 
 TOOL = "deep-review"
@@ -46,32 +42,12 @@ _SEVERITY_RE = re.compile(r"\[(CRITICAL|HIGH|MEDIUM|LOW)\]", re.IGNORECASE)
 _PULL_RE = re.compile(r"github\.com/([^/]+)/([^/]+)/pull/(\d+)")
 
 
-def _load_json(path):
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
-
-
 def _write_json(path, data):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
-
-
-def _load_baselines(baselines_path=None):
-    path = Path(baselines_path) if baselines_path else BASELINES_PATH
-    if not path.exists():
-        return {
-            "judge_pin": None,
-            "adjudicator_pin": None,
-            "scorer_sha": None,
-            "anchors": {},
-            "judge_sd": None,
-            "delta_noise": None,
-            "notes": {},
-        }
-    return _load_json(path)
 
 
 def _judge_api_key(env=None):
@@ -226,66 +202,6 @@ def _severity_of(text):
     return m.group(1).upper() if m else "UNKNOWN"
 
 
-def compute_metrics(evaluations, candidates, buckets, adjudications, tool=TOOL):
-    """Historical all-category arithmetic; per_dimension means severity here."""
-    tp = fp = fn = 0
-    for _url, ev_tools in evaluations.items():
-        ev = ev_tools.get(tool)
-        if not ev or ev.get("skipped"):
-            continue
-        tp += ev.get("tp", 0)
-        fp += ev.get("fp", 0)
-        fn += ev.get("fn", 0)
-
-    golden_recall = tp / (tp + fn) if (tp + fn) else 0.0
-    precision_strict = tp / (tp + fp) if (tp + fp) else 0.0
-    if precision_strict + golden_recall:
-        f1_strict = (
-            2 * precision_strict * golden_recall / (precision_strict + golden_recall)
-        )
-    else:
-        f1_strict = 0.0
-
-    total_candidates = sum(len(tools.get(tool, [])) for tools in candidates.values())
-    n_golden_matched = sum(len(split["golden_matched"]) for split in buckets.values())
-    n_valid_extra = sum(1 for v in adjudications if v.get("bucket") == "valid_extra")
-    n_noise = sum(1 for v in adjudications if v.get("bucket") == "noise")
-
-    valid_extra_rate = n_valid_extra / total_candidates if total_candidates else 0.0
-    noise_rate = n_noise / total_candidates if total_candidates else 0.0
-
-    texts = [c["text"] for tools in candidates.values() for c in tools.get(tool, [])]
-    desc_len_mean = sum(len(t or "") for t in texts) / len(texts) if texts else 0.0
-    severity_dist: dict[str, int] = {}
-    per_dimension: dict[str, int] = {}
-    for tools in candidates.values():
-        for cand in tools.get(tool, []):
-            sev = _severity_of(cand.get("text"))
-            severity_dist[sev] = severity_dist.get(sev, 0) + 1
-            per_dimension.setdefault(sev, 0)
-            per_dimension[sev] += 1
-
-    return {
-        "golden_recall": golden_recall,
-        "valid_extra_rate": valid_extra_rate,
-        "noise_rate": noise_rate,
-        "precision_strict": precision_strict,
-        "f1_strict": f1_strict,
-        "tp": tp,
-        "fp": fp,
-        "fn": fn,
-        "total_candidates": total_candidates,
-        "n_prs": len(candidates),
-        "per_bucket": {
-            "golden_matched": n_golden_matched,
-            "valid_extra": n_valid_extra,
-            "noise": n_noise,
-        },
-        "per_dimension": per_dimension,
-        "drift": {"desc_len_mean": desc_len_mean, "severity_dist": severity_dist},
-    }
-
-
 def _now():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -324,7 +240,7 @@ def _tool_label(manifest):
 def _read_run_manifest(run_dir):
     path = Path(run_dir) / "run.json"
     if path.is_file():
-        return _load_json(path)
+        return read_json(path)
     return {}
 
 
@@ -430,6 +346,7 @@ def evaluator_for(epoch, pin, adjudicator_pin):
         for n in (
             "score",
             "scorer",
+            "scoring_costs",
             "observations",
             "profiles",
             "epochs",
@@ -464,13 +381,6 @@ def _candidate_context(info, candidate):
     )
     path = candidate.get("path")
     line = candidate.get("line")
-    if type(line) is not int:
-        try:
-            line = (
-                int(line) if not isinstance(line, bool) and line is not None else None
-            )
-        except (ValueError, TypeError):
-            line = None
     hunk = ctx = ""
     if diff and path and line:
         with suppress(ValueError, TypeError):
@@ -478,27 +388,30 @@ def _candidate_context(info, candidate):
         lines = _head_file_lines(info, path)
         ctx = file_context(lines, line) if lines else ""
     status = "head_and_hunk" if hunk and ctx else "hunk_only" if hunk else "missing"
-    return hunk, ctx, status
+    return hunk, ctx, status, False
 
 
-def _capture_adjudications(request, buckets, per_pr, api_key, adjudicator):
-    contexts, verdicts, charges = [], [], []
+def _capture_adjudications(
+    request, matched, per_pr, api_key, adjudicator, context_builder=_candidate_context
+):
+    contexts, verdicts, usage = [], [], []
+    pin = request.evaluator.adjudicator_pin
     for c in request.candidates:
-        if c.text not in buckets[c.pr_url]["adjudicator"]:
+        if c.candidate_id in matched:
             continue
-        hunk, ctx, status = _candidate_context(per_pr[c.pr_url], asdict(c))
-        context_hash = digest([hunk, ctx, status, False])
+        hunk, ctx, status, truncated = context_builder(per_pr[c.pr_url], asdict(c))
+        context_hash = digest([hunk, ctx, status, truncated])
         contexts.append(
-            AdjudicationContext(c.candidate_id, hunk, ctx, status, False, context_hash)
+            AdjudicationContext(
+                c.candidate_id, hunk, ctx, status, truncated, context_hash
+            )
         )
-        verdict = adjudicator(
-            c.text, hunk, ctx, request.evaluator.adjudicator_pin, api_key
-        )
+        verdict = adjudicator(c.text, hunk, ctx, pin, api_key)
         if verdict.get("bucket") not in ("valid_extra", "noise") or verdict.get(
             "error"
         ):
             raise ValueError("invalid adjudicator result")
-        charges.append(verdict.get("cost_usd"))
+        usage.extend(verdict.get("usage", [{"model": pin, "usage": None}]))
         verdicts.append(
             Adjudication(
                 c.candidate_id,
@@ -507,21 +420,17 @@ def _capture_adjudications(request, buckets, per_pr, api_key, adjudicator):
                 verdict.get("reason"),
                 request.evaluator.evaluator_id,
                 context_hash,
-                status,
-                None,
             )
         )
-    return (
-        tuple(verdicts),
-        tuple(contexts),
-        sum(charges) if all(c is not None for c in charges) else None,
+    observations.exclusive_json(
+        request.work_dir / (request.tool + "-adjudicator-usage.json"), usage
     )
+    return tuple(verdicts), tuple(contexts), total_cost(usage)
 
 
 def score_run(
     run_dir,
     env=None,
-    baselines_path=None,
     ledger_path=None,
     run_scorer=None,
     adjudicator=None,
@@ -529,28 +438,15 @@ def score_run(
     epoch_id=None,
     score_id=None,
     attempt_selection=None,
+    attribution=False,
 ):
     """Execute a fresh score; failures retain a pending diagnostic packet."""
     run_dir = Path(run_dir).resolve()
     env = os.environ if env is None else env
     epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
-    epoch_baselines = _load_baselines()
-    baselines = _load_baselines(baselines_path) if baselines_path else epoch_baselines
-    pin = baselines.get("judge_pin")
-    if not pin:
-        raise RuntimeError(
-            "baselines.json judge_pin is null; set the epoch judge pin before scoring"
-        )
+    pin, adjudicator_pin = epoch.judge_pin, epoch.adjudicator_pin
     if env.get("MARTIAN_MODEL") and env["MARTIAN_MODEL"] != pin:
-        raise RuntimeError(
-            "MARTIAN_MODEL disagrees with baselines judge_pin; refusing to score"
-        )
-    adjudicator_pin = baselines.get("adjudicator_pin") or pin
-    if (pin, adjudicator_pin) != (
-        epoch.judge_pin,
-        epoch_baselines.get("adjudicator_pin") or epoch.judge_pin,
-    ):
-        raise ValueError(f"baseline pin override disagrees with epoch {epoch.epoch_id}")
+        raise RuntimeError("MARTIAN_MODEL disagrees with epoch judge_pin")
     records = _run_pr_records(run_dir)
     if not records:
         raise RuntimeError(
@@ -572,7 +468,7 @@ def score_run(
         checkpoint_attempts = {
             state["url"]: state.get("detail", {}).get("attempt_id")
             for path in (run_dir / "state").glob("*.json")
-            if (state := _load_json(path)).get("detail", {}).get("attempt_id")
+            if (state := read_json(path)).get("detail", {}).get("attempt_id")
         }
         if checkpoint_attempts:
             attempt_selection = checkpoint_attempts
@@ -629,13 +525,29 @@ def score_run(
             if url in selected
             else str(_resolve_pr_dir(run_dir, url)),
         }
-    traces, trace_errors = {}, {}
+    traces, trace_errors, collection = {}, {}, {}
     for url, info in per_pr.items():
+        collection[url] = stages.TraceCollection(
+            "unavailable", "collection not recorded"
+        )
         if url in failures:
+            collection[url] = stages.TraceCollection(
+                "unavailable", "operational failure"
+            )
             trace_errors[url] = "operational failure"
             continue
         try:
             pr_dir = Path(info["pr_dir"])
+            for name in ("measurement-collection.json", "measurement-unavailable.json"):
+                if (pr_dir / name).is_file():
+                    collection[url] = stages.decode(
+                        stages.TraceCollection, read_json(pr_dir / name)
+                    )
+                    if collection[url].status == "unavailable":
+                        trace_errors[url] = (
+                            collection[url].reason or "collection failed"
+                        )
+                    break
             paths = [
                 p
                 for p in pr_dir.rglob("code-gauntlet-measurement-*.json")
@@ -643,23 +555,27 @@ def score_run(
             ]
             if len(paths) > 1:
                 raise ValueError("ambiguous measurement artifacts")
-            if paths:
+            if not paths and collection[url].status == "available":
+                raise ValueError("collected measurement artifact missing")
+            if paths and url not in trace_errors:
                 path = paths[0]
                 if path.is_symlink() or not path.resolve().is_relative_to(run_dir):
                     raise ValueError("measurement artifact escapes selected run")
                 receipt = pr_dir / "measurement-artifact.json"
                 binding = (
-                    _load_json(receipt)
+                    read_json(receipt)
                     if receipt.is_file()
                     else {"path": path.name, "sha256": file_hash(path)}
                 )
                 if binding["path"] != path.name:
                     raise ValueError("measurement artifact binding mismatch")
+                collection[url] = stages.TraceCollection("available", None)
                 traces[url] = (
                     path,
                     stages.load_trace(path, expected_sha256=binding["sha256"]),
                 )
         except (ValueError, KeyError, TypeError, OSError) as exc:
+            collection[url] = stages.TraceCollection("unavailable", str(exc))
             trace_errors[url] = str(exc)
     source_hashes = {}
     sources = [run_dir / "run.json", *sorted((run_dir / "state").glob("*.json"))]
@@ -681,6 +597,8 @@ def score_run(
                 "result.json",
                 "costs.json",
                 "measurement-artifact.json",
+                "measurement-collection.json",
+                "measurement-unavailable.json",
             )
         ]
         if info.get("payload_path"):
@@ -705,7 +623,7 @@ def score_run(
     state_names = {
         read_json_path["url"]: str(p.relative_to(run_dir))
         for p in (run_dir / "state").glob("*.json")
-        if (read_json_path := _load_json(p)).get("url")
+        if (read_json_path := read_json(p)).get("url")
     }
     attempts = {
         url: "legacy-"
@@ -747,20 +665,20 @@ def score_run(
             trace_errors[url] = "ambiguous selected findings"
             continue
         try:
+            inputs = dict(
+                selected_path=selected_paths[0],
+                payload_path=Path(info["payload_path"]),
+                diff_path=diff_path,
+            )
             bound_trace, mapped = provenance.trace_delivery(
                 trace,
-                _load_json(selected_paths[0]),
-                _load_json(info["payload_path"]),
-                diff_path.read_text(encoding="utf-8"),
+                read_json(inputs["selected_path"]),
+                read_json(inputs["payload_path"]),
+                inputs["diff_path"].read_text(encoding="utf-8"),
             )
             delivery_bindings[url] = {
-                "selected_path": str(
-                    Path("sources") / selected_paths[0].relative_to(run_dir)
-                ),
-                "payload_path": str(
-                    Path("sources") / Path(info["payload_path"]).relative_to(run_dir)
-                ),
-                "diff_path": str(Path("sources") / diff_path.relative_to(run_dir)),
+                key: str(Path("sources") / p.relative_to(run_dir))
+                for key, p in inputs.items()
             }
             traces[url] = path, bound_trace
             bound = provenance.bind_candidates(
@@ -813,20 +731,17 @@ def score_run(
         or env.get("ANTHROPIC_API_KEY")
         else None
     )
-    discovery = stages.discovery_inputs(traces, trace_errors)
-    combined = {
-        url: {**tools, **discovery.get(url, {})} for url, tools in candidates.items()
-    }
-    model_dir = scorer.stage_inputs(epoch, combined, pin, pending / "work/delivered")
+    discovery = stages.discovery_inputs(traces, trace_errors) if attribution else {}
+    model_dir = scorer.stage_inputs(epoch, candidates, pin, pending / "work/delivered")
     if run_scorer is None:
         scorer.execute(epoch, pin, api_key, model_dir, env=env)
     else:
         run_scorer(pin, api_key, model_dir)
     for name in ("candidates.json", "dedup_groups.json", "evaluations.json"):
         observations.copy_exclusive(model_dir / name, pending / name)
-    evaluations = _load_json(pending / "evaluations.json")
+    evaluations = read_json(pending / "evaluations.json")
     groups = observations.dedup_groups(
-        _load_json(pending / "dedup_groups.json"), candidate_map
+        read_json(pending / "dedup_groups.json"), candidate_map
     )
     group_ids = {cid: group.group_id for group in groups for cid in group.candidate_ids}
     candidate_map = tuple(
@@ -837,32 +752,46 @@ def score_run(
         request, evaluations, groups, failures=frozenset(failures)
     )
     matched = observations.bucket_candidate_ids(bugs)
-    buckets = {
-        url: {
-            "golden_matched": [
-                c.text
-                for c in candidate_map
-                if c.pr_url == url and c.candidate_id in matched
-            ],
-            "adjudicator": [
-                c.text
-                for c in candidate_map
-                if c.pr_url == url and c.candidate_id not in matched
-            ],
-        }
-        for url in urls
-    }
     adjudications, contexts, adjudicator_cost = _capture_adjudications(
-        request, buckets, per_pr, api_key, adjudicator or _adjudicate
+        request, matched, per_pr, api_key, adjudicator or _adjudicate
     )
-    stage_rows = stages.capture_score(
-        traces,
-        bugs,
-        request,
-        evaluations,
-        _load_json(pending / "dedup_groups.json"),
-        discovery,
-        trace_errors,
+    attribution_cost = None
+    stage_evaluations = stage_groups = {}
+    if any(discovery.values()):
+        attribution_dir = scorer.stage_inputs(
+            epoch, discovery, pin, pending / "work/attribution"
+        )
+        try:
+            if run_scorer is None:
+                scorer.execute(epoch, pin, api_key, attribution_dir, env=env)
+            else:
+                run_scorer(pin, api_key, attribution_dir)
+            stage_evaluations = read_json(attribution_dir / "evaluations.json")
+            stage_groups = read_json(attribution_dir / "dedup_groups.json")
+        except (RuntimeError, ValueError, OSError) as exc:
+            trace_errors.update(
+                {u: "attribution scoring failed: " + str(exc) for u in discovery}
+            )
+        charges = read_costs(attribution_dir)
+        attribution_cost = (
+            sum(charges.values())
+            if all(v is not None for v in charges.values())
+            else None
+        )
+    elif attribution:
+        attribution_cost = 0.0
+    stage_rows = (
+        stages.capture_score(
+            traces,
+            bugs,
+            request,
+            stage_evaluations,
+            stage_groups,
+            discovery,
+            trace_errors,
+        )
+        if attribution
+        else ()
     )
     terminal_losses = {
         (row.pr_url, row.bug_id): row.loss
@@ -870,13 +799,10 @@ def score_run(
         if row.stage == "deliver" and row.loss is not None
     }
     bugs = tuple(
-        replace(
-            bug,
-            loss=asdict(terminal_losses[bug.pr_url, bug.bug_id]),
-        )
-        if (bug.pr_url, bug.bug_id) in terminal_losses
-        else bug
-        for bug in bugs
+        replace(b, loss=asdict(terminal_losses[b.pr_url, b.bug_id]))
+        if (b.pr_url, b.bug_id) in terminal_losses
+        else b
+        for b in bugs
     )
     costs = _read_run_costs(
         run_dir, pr_dirs=[Path(info["pr_dir"]) for info in per_pr.values()]
@@ -895,11 +821,6 @@ def score_run(
         validity_state=("operational_failure" if failures else "valid")
         if selected_records
         and manifest.get("provenance", {}).get("status") != "non_record"
-        and manifest.get("provenance", {}).get("golden_epoch_id") == epoch.epoch_id
-        and all(
-            r.validity.state in ("valid", "operational_failure")
-            for r in selected_records.values()
-        )
         else "historical_descriptive",
         population_sha256=digest(urls),
         packet_path=str(packet_dir),
@@ -915,27 +836,16 @@ def score_run(
         ),
         adjudicator_calls=len(adjudications),
     )
-    score_manifest = {
-        "schema_version": 2,
-        "score_ref": asdict(ref),
-        "created_at": _now(),
-        "epoch_hashes": observations.epoch_hashes(epoch),
-        "evaluator": asdict(evaluator),
-        "requested_pr_urls": list(urls),
-        "selected_attempts": attempts,
-        "source_artifact_hashes": source_hashes,
-        "run_validity_ref": "run-provenance.json"
-        if manifest.get("provenance")
-        else None,
-        "provenance_status": "ambiguous"
-        if trace_errors
-        else "complete"
-        if all(c.provenance_status == "complete" for c in candidate_map)
-        and not trace_errors
-        and len(traces) == len(urls)
-        else "legacy_unknown",
-    }
-    packet = {"manifest": score_manifest, "ledger_row": row}
+    score_manifest = observations.ScoreManifest(
+        attribution=attribution,
+        trace_collection=collection,
+        score_ref=ref,
+        epoch_hashes=observations.epoch_hashes(epoch),
+        evaluator=evaluator,
+        requested_pr_urls=urls,
+        selected_attempts=attempts,
+        source_artifact_hashes=source_hashes,
+    )
     observations.exclusive_json(
         pending / "stage_trace_bindings.json",
         {
@@ -959,14 +869,17 @@ def score_run(
     observations.exclusive_json(pending / "provenance_errors.json", trace_errors)
     observations.write_packet(
         request,
-        packet=packet,
+        manifest=score_manifest,
+        metadata=row,
         observations=bugs,
-        candidates=candidate_map,
-        groups=groups,
         adjudications=adjudications,
         contexts=contexts,
         stage_observations=stage_rows,
-        costs={**scorer.read_costs(model_dir), "adjudicator": adjudicator_cost},
+        costs={
+            **read_costs(model_dir),
+            "adjudicator": adjudicator_cost,
+            "attribution": attribution_cost,
+        },
     )
     pointer = run_dir / (".latest-score-" + sid + ".json")
     observations.exclusive_json(pointer, asdict(ref))

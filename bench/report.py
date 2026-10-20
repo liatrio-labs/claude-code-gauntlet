@@ -2426,6 +2426,10 @@ def spend_totals(rows):
 
 
 def render_html(rows, baselines, sha, generated):
+    from bench.runner.epochs import load_epoch
+
+    active = "measurement_status" in baselines
+    epoch = load_epoch()
     historical = [r for r in rows if r.get("schema_version", 1) == 1]
     unknown = [r for r in historical if score_identity(r).epoch_id is None]
     historical_epoch = next(
@@ -2433,7 +2437,7 @@ def render_html(rows, baselines, sha, generated):
         score_identity(baselines).epoch_id,
     )
     archived_baselines = baselines
-    if baselines.get("epoch_id") and historical_epoch:
+    if (active or baselines.get("epoch_id")) and historical_epoch:
         historical = [
             r for r in historical if score_identity(r).epoch_id == historical_epoch
         ]
@@ -2441,7 +2445,9 @@ def render_html(rows, baselines, sha, generated):
             BENCH_DIR / "golden/historical_baselines.json"
         )
     active_label = html.escape(
-        f"{baselines.get('epoch_id') or historical_epoch or 'unversioned'} / {baselines.get('profile', 'all')}"
+        f"{epoch.epoch_id} / {epoch.primary_profile}"
+        if active
+        else f"{baselines.get('epoch_id') or historical_epoch or 'unversioned'} / {baselines.get('profile', 'all')}"
     )
     historical_label = html.escape(
         f"{historical_epoch or 'unversioned'} / {archived_baselines.get('profile', 'all')}"

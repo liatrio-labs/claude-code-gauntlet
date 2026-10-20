@@ -40,7 +40,7 @@ Disposition = Literal[
 DERIVATION_VERSION = "distinctive-project-symbol-spans-v5-literals"
 ROOT = Path(__file__).resolve().parents[2]
 ALLOWANCE_CEILING_SHA256 = (
-    "0dfc6da648c0545bc0af2985e9b99fd0153e8d38fee291fb636a5729d04c979c"
+    "38e6955e8d167877517954ccc3170ba9ee2a24bf1b44e8a59cc1a8e67f3309d7"
 )
 # These standard modules print output, run site customization, or launch a browser on import.
 STDLIB_IMPORT_SIDE_EFFECTS = frozenset(
@@ -1105,7 +1105,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         ceiling = load_ceiling(root)
         epoch = load_epoch(args.epoch, root=root / "bench/golden")
-        membership = frozenset(read_json(root / "bench/golden/subsets.json")["holdout"])
+        membership = frozenset(epoch.subsets["holdout"])
         derived = derive_identifiers(
             epoch, holdout_pr_urls=membership, holdout_salt=ceiling["holdout_salt"]
         )

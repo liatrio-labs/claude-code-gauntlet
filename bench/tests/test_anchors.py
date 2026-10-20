@@ -1,6 +1,7 @@
 """Anchor rejudging shares the active scorer and reuses only intact evidence."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,16 @@ from bench.runner import anchors
 from bench.runner.epochs import load_epoch
 
 
-def test_anchors_use_active_profiles_context_and_cache(score_case, tmp_path):
+def test_anchors_use_active_profiles_context_and_cache(
+    score_case, tmp_path, monkeypatch
+):
     epoch = load_epoch()
-    source, subsets = tmp_path / "anchors.json", tmp_path / "subsets.json"
+    source = tmp_path / "anchors.json"
+    monkeypatch.setattr(
+        anchors,
+        "load_epoch",
+        lambda *a, **k: replace(epoch, subsets={"gate": (score_case.url,)}),
+    )
     source.write_text(
         json.dumps(
             {
@@ -25,7 +33,6 @@ def test_anchors_use_active_profiles_context_and_cache(score_case, tmp_path):
         ),
         encoding="utf-8",
     )
-    subsets.write_text(json.dumps({"gate": [score_case.url]}), encoding="utf-8")
     calls = []
 
     def scorer(pin, key, base_url, dedup_path, env=None):
@@ -38,7 +45,6 @@ def test_anchors_use_active_profiles_context_and_cache(score_case, tmp_path):
             tools=["claude"],
             epoch_id=epoch.epoch_id,
             anchors_path=source,
-            subsets_path=subsets,
             cache_dir=tmp_path / "cache",
             run_scorer=scorer,
             diffs=diffs,

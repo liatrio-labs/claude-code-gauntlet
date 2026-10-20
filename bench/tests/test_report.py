@@ -631,8 +631,13 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def test_new_score_identities_do_not_collapse_into_historical_release_rows(score_case):
+def test_new_score_identities_do_not_collapse_into_historical_release_rows(
+    score_case, monkeypatch
+):
+    from dataclasses import replace
+
     from bench import report
+    from bench.runner import epochs
     from bench.runner.epochs import DEFAULT_ROOT, read_json
 
     first = score_case.execute()
@@ -657,15 +662,14 @@ def test_new_score_identities_do_not_collapse_into_historical_release_rows(score
     )
     assert "Historical epoch dfc6cb4-v1 / all" in doc
     assert "Active epoch e616e84-v1 / core" in doc
+    epoch = epochs.load_epoch()
+    monkeypatch.setattr(
+        epochs,
+        "load_epoch",
+        lambda: replace(epoch, epoch_id="future<epoch>", primary_profile="strict"),
+    )
     next_doc = report.render_html(
-        rows,
-        {
-            **read_json(DEFAULT_ROOT.parent / "baselines.json"),
-            "epoch_id": "future<epoch>",
-            "profile": "strict",
-        },
-        "sha",
-        "date",
+        rows, read_json(DEFAULT_ROOT.parent / "baselines.json"), "sha", "date"
     )
     assert "Active epoch future&lt;epoch&gt; / strict" in next_doc
     assert "Active epoch e616e84-v1" not in next_doc

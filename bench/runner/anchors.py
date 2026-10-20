@@ -1,6 +1,7 @@
 """Epoch-scoped anchor rejudging with content-addressed cache inputs."""
 
 import uuid
+from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 
@@ -9,16 +10,12 @@ from bench.adjudicator.adjudicate import slice_hunk
 from bench.runner import observations, score, scorer
 from bench.runner.epochs import DEFAULT_ROOT, digest, file_hash, load_epoch, read_json
 from bench.runner.observations import (
-    Adjudication,
-    AdjudicationContext,
     ScoreRef,
     ScoreRequest,
 )
 from bench.runner.profiles import profile_metrics
 from bench.runner.score import (
     _judge_api_key,
-    _load_json,
-    compute_metrics,
 )
 
 __all__ = ["ANCHOR_TOOLS", "rejudge_anchors", "spot_check"]
@@ -26,7 +23,6 @@ __all__ = ["ANCHOR_TOOLS", "rejudge_anchors", "spot_check"]
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCH_DIR = REPO_ROOT / "bench"
 ANCHORS_CANDIDATES = BENCH_DIR / "golden" / "anchors" / "candidates.json"
-SUBSETS_PATH = BENCH_DIR / "golden" / "subsets.json"
 WORKSPACE = BENCH_DIR / "workspace"
 
 MARTIAN_BASE_URL = scorer.BASE_URL
@@ -110,7 +106,7 @@ def spot_check(
     drift is larger. ``run_scorer`` is injectable so tests run with no network.
     """
     epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
-    anchors = _load_json(anchors_path or ANCHORS_CANDIDATES)
+    anchors = read_json(anchors_path or ANCHORS_CANDIDATES)
     if pr_url not in anchors:
         raise ValueError(f"pr_url not in anchor candidates: {pr_url!r}")
     tools_map = anchors[pr_url]
@@ -141,14 +137,15 @@ def spot_check(
             env=env,
         )
 
-    evaluations = _load_json(model_dir / "evaluations.json")
-    upstream = _load_json(upstream_eval_path or UPSTREAM_EVAL)
+    evaluations = read_json(model_dir / "evaluations.json")
+    upstream = read_json(upstream_eval_path or UPSTREAM_EVAL)
 
     per_tool = {}
     overall_pass = True
     n_judge_calls = 0
     n_dedup_calls = 0
-    n_golden = len(epoch.claims_by_pr.get(pr_url, ()))
+    entry = epoch.scorer_input.get(pr_url)
+    n_golden = len(entry["golden_comments"]) if entry else 0
     for t in tools:
         ours_ev = (evaluations.get(pr_url) or {}).get(t)
         theirs_ev = (upstream.get(pr_url) or {}).get(t)
@@ -219,60 +216,16 @@ def _capped_diff(diff_text, cap=_MAX_DIFF_CHARS):
     return diff_text[:cap] + f"\n... [diff truncated at {cap} chars]"
 
 
-def _adjudicate_anchor_bucket(
-    buckets,
-    candidates,
-    tool,
-    pin,
-    api_key,
-    adjudicator,
-    diffs,
-    *,
-    context_records=None,
-    candidate_ids=None,
-):
-    """Unlocated anchor comments need the capped full diff for grounding."""
-    verdicts = []
-    for url, split in buckets.items():
-        adj_texts = set(split["adjudicator"])
-        diff_text = (diffs or {}).get(url, "")
-        full = _capped_diff(diff_text) if diff_text else ""
-        for index, cand in enumerate(candidates.get(url, {}).get(tool, [])):
-            text = cand.get("text")
-            if text not in adj_texts:
-                continue
-            path = cand.get("path")
-            line = cand.get("line")
-            hunk = full  # default: the whole (capped) PR diff for anchor comments
-            ctx = ""
-            if diff_text and path and line:
-                try:
-                    hunk = slice_hunk(diff_text, path, line)
-                except ValueError:
-                    hunk = full
-            status = (
-                "full_diff"
-                if full and hunk == full
-                else "hunk_only"
-                if hunk
-                else "missing"
-            )
-            truncated = status == "full_diff" and len(diff_text) > _MAX_DIFF_CHARS
-            context_hash = digest([hunk, ctx, status, truncated])
-            verdict = dict(adjudicator(text, hunk, ctx, pin, api_key))
-            if context_records is not None:
-                cid = candidate_ids[url, index]
-                context_records.append(
-                    AdjudicationContext(cid, hunk, ctx, status, truncated, context_hash)
-                )
-                verdict.update(
-                    candidate_id=cid, context_sha256=context_hash, context_status=status
-                )
-            verdict["url"] = url
-            verdict["tool"] = tool
-            verdict["candidate"] = text
-            verdicts.append(verdict)
-    return verdicts
+def _anchor_context(diff, candidate):
+    full = _capped_diff(diff) if diff else ""
+    hunk = full
+    if diff and candidate["path"] and candidate["line"]:
+        with suppress(ValueError):
+            hunk = slice_hunk(diff, candidate["path"], candidate["line"])
+    status = (
+        "full_diff" if full and hunk == full else "hunk_only" if hunk else "missing"
+    )
+    return hunk, "", status, status == "full_diff" and len(diff) > _MAX_DIFF_CHARS
 
 
 def rejudge_anchors(
@@ -280,7 +233,6 @@ def rejudge_anchors(
     tools=ANCHOR_TOOLS,
     subset="gate",
     anchors_path=None,
-    subsets_path=None,
     cache_dir=None,
     api_key=None,
     env=None,
@@ -296,8 +248,8 @@ def rejudge_anchors(
     tools = list(tools)
     base_url = base_url or MARTIAN_BASE_URL
     anchors_file = Path(anchors_path or ANCHORS_CANDIDATES)
-    anchors = _load_json(anchors_file)
-    subs = _load_json(subsets_path or SUBSETS_PATH)
+    anchors = read_json(anchors_file)
+    subs = epoch.subsets
     if subset not in subs:
         raise ValueError(f"unknown subset {subset!r}")
     candidates = _subset_candidates(anchors, subs[subset], tools)
@@ -305,8 +257,7 @@ def rejudge_anchors(
         set(t) != set(tools) for t in candidates.values()
     ):
         raise ValueError("incomplete anchor candidate matrix")
-    baselines = read_json(BENCH_DIR / "baselines.json")
-    adj_pin = baselines.get("adjudicator_pin") or judge_pin
+    adj_pin = epoch.adjudicator_pin
     evaluator = score.evaluator_for(epoch, judge_pin, adj_pin)
     key = digest(
         {
@@ -323,7 +274,7 @@ def rejudge_anchors(
     cache_dir = Path(cache_dir) if cache_dir else WORKSPACE / "anchor-cache"
     cache_file = cache_dir / (key + ".json")
     if cache_file.is_file():
-        cached = _load_json(cache_file)
+        cached = read_json(cache_file)
         work_dir = Path(cached["work_dir"])
         if cached != read_json(work_dir / "result.json") or cached["cache_key"] != key:
             raise ValueError("anchor cache projection mismatch")
@@ -348,8 +299,8 @@ def rejudge_anchors(
         run_scorer(
             judge_pin, key_api, base_url, str(model_dir / "dedup_groups.json"), env=env
         )
-    evaluations = _load_json(model_dir / "evaluations.json")
-    raw_groups = _load_json(model_dir / "dedup_groups.json")
+    evaluations = read_json(model_dir / "evaluations.json")
+    raw_groups = read_json(model_dir / "dedup_groups.json")
     per_tool = {}
     for tool in tools:
         tool_candidates = {u: {tool: t[tool]} for u, t in candidates.items()}
@@ -370,62 +321,25 @@ def rejudge_anchors(
         groups = observations.dedup_groups(raw_groups, candidate_map, tool)
         bugs = observations.build_observations(request, evaluations, groups)
         matched = observations.bucket_candidate_ids(bugs)
-        buckets = {
-            u: {
-                "golden_matched": [
-                    c.text
-                    for c in candidate_map
-                    if c.pr_url == u and c.candidate_id in matched
-                ],
-                "adjudicator": [
-                    c.text
-                    for c in candidate_map
-                    if c.pr_url == u and c.candidate_id not in matched
-                ],
-            }
-            for u in tool_candidates
-        }
-        contexts: list[AdjudicationContext] = []
-        adjudications = _adjudicate_anchor_bucket(
-            buckets,
-            tool_candidates,
-            tool,
-            adj_pin,
+        verdict_records, contexts, _ = score._capture_adjudications(
+            request,
+            matched,
+            {u: (diffs or {}).get(u, "") for u in tool_candidates},
             key_api,
             adjudicator or _adjudicate,
-            diffs,
-            context_records=contexts,
-            candidate_ids={(c.pr_url, c.index): c.candidate_id for c in candidate_map},
+            _anchor_context,
         )
-        if any(a.get("bucket") not in ("noise", "valid_extra") for a in adjudications):
-            raise ValueError("invalid anchor adjudication")
         for ctx in contexts:
             observations.exclusive_json(
                 work_dir / "contexts" / tool / (ctx.candidate_id + ".json"), asdict(ctx)
             )
-        verdict_records = [
-            Adjudication(
-                a["candidate_id"],
-                a["url"],
-                a["bucket"],
-                a.get("reason"),
-                evaluator.evaluator_id,
-                a["context_sha256"],
-                a["context_status"],
-                None,
-            )
-            for a in adjudications
-        ]
-        metrics = compute_metrics(
-            evaluations, tool_candidates, buckets, adjudications, tool=tool
-        )
         fp = sum(evaluations[u][tool]["fp"] for u in tool_candidates)
         profiles = {
-            p: profile_metrics(bugs, fp, p).to_wire() for p in epoch.supported_profiles
+            p: asdict(profile_metrics(bugs, fp, p)) for p in epoch.supported_profiles
         }
         primary = profiles[epoch.primary_profile]
         per_tool[tool] = {
-            **metrics,
+            **observations.bucket_metrics(candidate_map, bugs, verdict_records),
             **primary,
             "recall": primary["recall"],
             "golden_recall": primary["recall"],

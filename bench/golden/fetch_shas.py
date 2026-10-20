@@ -114,7 +114,7 @@ def main():
     sys.path.insert(0, str(GOLDEN.parents[1]))
     from bench.runner.epochs import load_epoch
 
-    golden_urls = sorted(load_epoch(root=GOLDEN).claims_by_pr)
+    golden_urls = sorted(load_epoch(root=GOLDEN).scorer_input)
     out = {}
     missing = []
     for url in golden_urls:

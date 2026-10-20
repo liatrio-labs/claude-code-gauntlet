@@ -21,9 +21,6 @@ class RenderedDelivery:
     line: int
     members: tuple[dict[str, JsonValue], ...]
 
-    def triplet(self) -> tuple[str, str, int]:
-        return self.body, self.path, self.line
-
 
 @dataclass(frozen=True, slots=True)
 class DeliveryOmission:
@@ -38,7 +35,7 @@ class DeliveryReconstruction:
     omissions: tuple[DeliveryOmission, ...]
 
 
-def _reconstruct_delivery(selected_findings, diff_text, *, platform):
+def reconstruct_delivery(selected_findings, diff_text, *, platform):
     """Reproduce initial dry-run delivery ordering, folding and patch demotion."""
     findings = []
     for original in selected_findings:
@@ -109,30 +106,20 @@ def _reconstruct_delivery(selected_findings, diff_text, *, platform):
     return DeliveryReconstruction(tuple(rendered), tuple(omissions))
 
 
-def render_delivery(selected_findings, diff_text, *, platform):
-    return _reconstruct_delivery(selected_findings, diff_text, platform=platform).groups
-
-
-def delivery_omissions(selected_findings, diff_text, *, platform):
-    return _reconstruct_delivery(
-        selected_findings, diff_text, platform=platform
-    ).omissions
-
-
-def map_delivery(
-    payload, selected_findings, diff_text, *, renderer=render_delivery
-) -> tuple[Candidate, ...]:
+def map_delivery(payload, selected_findings, diff_text) -> tuple[Candidate, ...]:
     """Attach provenance only after exact ordered body/path/line equality."""
     actual = tuple(_iter_comments(payload))
-    planned = renderer(selected_findings, diff_text, platform=payload.get("platform"))
-    if actual != tuple(row.triplet() for row in planned):
+    planned = reconstruct_delivery(
+        selected_findings, diff_text, platform=payload.get("platform")
+    ).groups
+    if actual != tuple((r.body, r.path, r.line) for r in planned):
         raise ValueError("delivered payload differs from pure delivery plan")
     all_ids = [f.get("trace_id") for row in planned for f in row.members]
     if len(all_ids) != len(set(all_ids)):
         raise ValueError("ambiguous delivery occurrence identity")
     out = []
     for index, row in enumerate(planned):
-        text, path, line = row.triplet()
+        text, path, line = row.body, row.path, row.line
         members = row.members
         ids = tuple(f.get("trace_id") for f in members)
         if any(not isinstance(tid, str) for tid in ids) or len(set(ids)) != len(ids):
@@ -193,5 +180,7 @@ def trace_delivery(trace, selected, payload, diff):
     ):
         raise ValueError("selected findings disagree with trace")
     mapped = map_delivery(payload, selected, diff)
-    omissions = delivery_omissions(selected, diff, platform=payload["platform"])
+    omissions = reconstruct_delivery(
+        selected, diff, platform=payload["platform"]
+    ).omissions
     return bind_delivery_trace(trace, mapped, omissions=omissions), mapped

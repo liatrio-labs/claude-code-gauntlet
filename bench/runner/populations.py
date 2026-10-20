@@ -129,7 +129,7 @@ def _raw_snapshot(source, epoch):
     source = Path(source).resolve()
     if (source / "offline").is_dir():
         source = source / "offline"
-    stems, raw, files = {}, {}, {}
+    stems, raw, files, projects = {}, {}, {}, {}
     for path in sorted((source / "golden_comments").glob("*.json")):
         files[str(path.relative_to(source))] = file_hash(path)
         records = read_json(path)
@@ -138,7 +138,11 @@ def _raw_snapshot(source, epoch):
             if pr["url"] in raw:
                 raise ValueError("duplicate raw PR")
             raw[pr["url"]] = tuple(pr["comments"])
-    if raw != epoch.claims_by_pr:
+            projects[pr["url"]] = path.stem
+    if (
+        raw != {u: tuple(p["golden_comments"]) for u, p in epoch.scorer_input.items()}
+        or projects != epoch.project_by_pr
+    ):
         raise ValueError("raw canonical lean golden hash mismatch")
     return source, stems, files
 
@@ -322,9 +326,7 @@ def freeze_contamination(
         raise ValueError("generated prompts differ from the baseline emitter")
     derived = leaks.derive_identifiers(
         epoch,
-        holdout_pr_urls=frozenset(
-            read_json(root / "bench/golden/subsets.json")["holdout"]
-        ),
+        holdout_pr_urls=frozenset(epoch.subsets["holdout"]),
         holdout_salt=ceiling["holdout_salt"],
     )
     report = leaks._scan_with_ceiling(

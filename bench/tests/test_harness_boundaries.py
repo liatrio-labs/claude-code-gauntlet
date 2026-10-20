@@ -347,15 +347,13 @@ def test_current_bash_receipt_classifies_and_retries_pre_workflow_stop(
 def test_retry_failed_retries_free_setup_failures_but_not_sha_or_drift(
     harness, monkeypatch
 ):
-    load = run._load_json
-    shas = load(run.GOLDEN_DIR / "shas.json")
+    from dataclasses import replace
+
+    epoch = run.load_epoch(root=run.GOLDEN_DIR)
+    shas = {u: dict(meta) for u, meta in epoch.shas.items()}
     urls = list(shas)[:4]
     shas[urls[1]]["head_sha"] = "missing"
-    monkeypatch.setattr(
-        run,
-        "_load_json",
-        lambda path: shas if Path(path) == run.GOLDEN_DIR / "shas.json" else load(path),
-    )
+    monkeypatch.setattr(run, "load_epoch", lambda *a, **k: replace(epoch, shas=shas))
     calls = []
 
     def ensure(*args):

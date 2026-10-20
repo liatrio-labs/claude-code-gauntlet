@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Literal, TypeAlias, TypedDict, get_args
 
@@ -27,20 +27,13 @@ Category = Literal[
     "test_gap",
 ]
 PROFILE_CATEGORIES = {
-    "strict": frozenset(("api", "bug", "concurrency", "data", "security")),
-    "core": frozenset(
-        (
-            "api",
-            "bug",
-            "concurrency",
-            "data",
-            "security",
-            "doc_defect",
-            "perf",
-            "test_gap",
-        )
-    ),
+    "strict": frozenset(["api", "bug", "concurrency", "data", "security"]),
     "all": frozenset(get_args(Category)),
+}
+PROFILE_CATEGORIES["core"] = PROFILE_CATEGORIES["strict"] | {
+    "doc_defect",
+    "perf",
+    "test_gap",
 }
 DEFAULT_ROOT = Path(__file__).resolve().parents[1] / "golden"
 
@@ -68,6 +61,8 @@ class EpochSpec:
     upstream_sha: str
     scorer_tree: str
     judge_pin: str
+    adjudicator_pin: str
+    golden_sha256: str
     supported_profiles: tuple[Profile, ...]
     primary_profile: Profile
 
@@ -87,19 +82,15 @@ class GoldenBug:
     comment: str
     severity: str
     category: Category | None
-    content_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
 class GoldenEpoch(EpochSpec):
     bugs: tuple[GoldenBug, ...]
-    claims_by_pr: dict[
-        str, tuple[GoldenCommentWire | CategorizedGoldenCommentWire, ...]
-    ]
     scorer_input: dict[str, GoldenPRWire]
     project_by_pr: dict[str, str]
-    profile_denominators: dict[Profile, dict[str, int]]
-    golden_sha256: str
+    subsets: dict[str, tuple[str, ...]]
+    shas: dict[str, dict[str, JsonValue]]
 
 
 def canonical(value: object) -> bytes:
@@ -117,9 +108,6 @@ def file_hash(path: Path) -> str:
 
 
 def read_json(path: Path):
-    def invalid(value):
-        raise ValueError(f"non-finite JSON: {value}")
-
     def unique(pairs):
         result = {}
         for key, value in pairs:
@@ -129,8 +117,8 @@ def read_json(path: Path):
         return result
 
     return json.loads(
-        path.read_text(encoding="utf-8"),
-        parse_constant=invalid,
+        Path(path).read_text(encoding="utf-8"),
+        parse_constant=int,  # Reject non-finite spellings before decoding.
         object_pairs_hook=unique,
     )
 
@@ -150,7 +138,7 @@ def build_bug_index(data: dict[str, GoldenPRWire]) -> tuple[GoldenBug, ...]:
         seen = set()
         for ordinal, claim in enumerate(pr["golden_comments"]):
             record = decode(GoldenClaim, claim)
-            text, severity, category = record.comment, record.severity, record.category
+            text, severity = record.comment, record.severity
             if not text or text in seen:
                 raise ValueError("empty or duplicate golden text within PR")
             seen.add(text)
@@ -160,10 +148,7 @@ def build_bug_index(data: dict[str, GoldenPRWire]) -> tuple[GoldenBug, ...]:
                     "g:" + content,
                     url,
                     ordinal,
-                    text,
-                    severity,
-                    category,
-                    content,
+                    **asdict(record),
                 )
             )
     return tuple(bugs)
@@ -175,30 +160,47 @@ def included_bugs(
     if profile not in epoch.supported_profiles:
         raise ValueError(f"unsupported profile {profile!r} for {epoch.epoch_id}")
     return tuple(
-        b
-        for b in epoch.bugs
-        if b.pr_url in pr_urls
-        and (profile == "all" or b.category in PROFILE_CATEGORIES[profile])
+        b for b in epoch.bugs if b.pr_url in pr_urls and in_profile(b.category, profile)
     )
 
 
-def denominators(bugs, profiles, subsets):
+def in_profile(category, profile):
+    return (category is None and profile == "all") or category in PROFILE_CATEGORIES[
+        profile
+    ]
+
+
+def epoch_context(epoch):
     return {
-        p: {
-            name: sum(
-                b.pr_url in urls and (p == "all" or b.category in PROFILE_CATEGORIES[p])
-                for b in bugs
-            )
-            for name, urls in {"full": {b.pr_url for b in bugs}, **subsets}.items()
-        }
-        for p in profiles
+        "spec": {f.name: getattr(epoch, f.name) for f in fields(EpochSpec)},
+        **{
+            k: getattr(epoch, k)
+            for k in ("scorer_input", "project_by_pr", "subsets", "shas")
+        },
     }
+
+
+def from_context(context) -> GoldenEpoch:
+    spec = decode(EpochSpec, context["spec"])
+    data, projects = context["scorer_input"], context["project_by_pr"]
+    if digest([data, projects]) != spec.golden_sha256 or set(data) != set(projects):
+        raise ValueError("golden digest mismatch")
+    bugs = build_bug_index(data)
+    if any(b.category is None for b in bugs):
+        raise ValueError("active golden requires categories")
+    return GoldenEpoch(
+        **asdict(spec),
+        bugs=bugs,
+        scorer_input=data,
+        project_by_pr=projects,
+        subsets={k: tuple(v) for k, v in context["subsets"].items()},
+        shas=context["shas"],
+    )
 
 
 def load_epoch(
     epoch_id: str | None = None, *, root: Path = DEFAULT_ROOT
 ) -> GoldenEpoch:
-    root = Path(root)
     spec = decode(EpochSpec, read_json(root / "epoch.json"))
     if epoch_id is not None and epoch_id != spec.epoch_id:
         raise ValueError("only the active golden epoch is runnable")
@@ -225,21 +227,12 @@ def load_epoch(
             }
     if not data:
         raise ValueError("empty golden population")
-    bugs = build_bug_index(data)
-    if any(b.category is None for b in bugs):
-        raise ValueError("active golden requires categories")
-    subsets = read_json(root / "subsets.json")
-    return GoldenEpoch(
-        spec.epoch_id,
-        spec.upstream_sha,
-        spec.scorer_tree,
-        spec.judge_pin,
-        spec.supported_profiles,
-        spec.primary_profile,
-        bugs,
-        {u: tuple(p["golden_comments"]) for u, p in data.items()},
-        data,
-        projects,
-        denominators(bugs, spec.supported_profiles, subsets),
-        digest(data),
+    return from_context(
+        {
+            "spec": asdict(spec),
+            "scorer_input": data,
+            "project_by_pr": projects,
+            "subsets": read_json(root / "subsets.json"),
+            "shas": read_json(root / "shas.json"),
+        }
     )

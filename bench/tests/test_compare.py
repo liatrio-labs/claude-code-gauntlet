@@ -447,7 +447,7 @@ def operational_case(population_case, score_case, tmp_path, request, monkeypatch
     populations_path.write_text(json.dumps(manifest), encoding="utf-8")
     binary = tmp_path / "claude"
     binary.write_text("synthetic binary", encoding="utf-8")
-    pins = read_json(DEFAULT_ROOT.parent / "baselines.json")
+    pins = read_json(DEFAULT_ROOT / "epoch.json")
     fp = validity.capture_fingerprint(
         cli_path=binary,
         child_model="claude-session-1",
@@ -462,6 +462,15 @@ def operational_case(population_case, score_case, tmp_path, request, monkeypatch
             "code-gauntlet:bug-detector": "claude-agent-1"
         },
     )
+    if getattr(request, "param", None) == "corrected":
+        fp = replace(
+            fp,
+            golden_epoch_id="original-review-epoch",
+            golden_sha256="a" * 64,
+            judge_pin="original-judge",
+            adjudicator_pin="original-adjudicator",
+            scorer_tree="b" * 40,
+        )
     window = validity.MeasurementWindow(
         1,
         "operational",
@@ -506,8 +515,8 @@ def operational_case(population_case, score_case, tmp_path, request, monkeypatch
                 "measurement_window": str(active_path),
                 "run_index": r,
                 "arm": arm,
-                "epoch_id": epoch.epoch_id,
-                "golden_sha256": epoch.golden_sha256,
+                "epoch_id": active_fp.golden_epoch_id,
+                "golden_sha256": active_fp.golden_sha256,
                 "instrumentation_version": "stage-trace-v1",
                 "git_sha": arm,
                 "treatment_git_sha": arm,
@@ -632,10 +641,14 @@ def test_operational_compare_refuses_stale_contamination_before_reading_packets(
         )
 
 
+@pytest.mark.parametrize("operational_case", [None, "corrected"], indirect=True)
 def test_operational_compare_complete_matrix_and_extension_prefix_refusal(
     operational_case, tmp_path
 ):
     spec, packets, window = operational_case
+    for packet in packets.values():
+        assert c._packet_run(packet)["provenance"] == window.expected.wire()
+        assert observations.load_packet(packet.root).score_ref == packet.score_ref
     report = c.compare_arms(spec, packet_loader=packets.__getitem__)
     assert report.promotion.verdict == "pass"
     assert (

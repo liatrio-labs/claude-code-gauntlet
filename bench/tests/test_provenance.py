@@ -17,17 +17,10 @@ def captured_diff(findings):
 
 
 def payload_for(findings, diff, platform):
-    rendered = provenance.render_delivery(findings, diff, platform=platform)
+    rendered = provenance.reconstruct_delivery(findings, diff, platform=platform).groups
     if platform == "github":
-        return {
-            "platform": platform,
-            "payload": {
-                "comments": [
-                    {"body": row.body, "path": row.path, "line": row.line}
-                    for row in rendered
-                ]
-            },
-        }
+        comments = [dict(body=r.body, path=r.path, line=r.line) for r in rendered]
+        return {"platform": platform, "payload": {"comments": comments}}
     return {
         "platform": platform,
         "discussions": [
@@ -88,7 +81,9 @@ def test_unanchored_selected_group_is_a_delivery_omission(tmp_path):
     overlay = stages.bind_delivery_trace(
         trace,
         (),
-        omissions=provenance.delivery_omissions(selected, "", platform="github"),
+        omissions=provenance.reconstruct_delivery(
+            selected, "", platform="github"
+        ).omissions,
     )
     assert overlay.snapshots[-1].finding_version_ids == ()
     assert {d.reason_code for d in overlay.snapshots[-1].decisions} == {"unanchored"}
@@ -100,18 +95,10 @@ def test_independent_producer_payload_preserves_patch_demotion_and_order(platfor
 
     from bench.tests import test_adapter as producer
 
-    if platform == "github":
-        findings, diff, fixture = (
-            producer.GH_OVERLAP_FINDINGS,
-            producer.GH_DIFF_OVERLAP,
-            producer.GITHUB_OVERLAP_DEMOTION_FIXTURE,
-        )
-    else:
-        findings, diff, fixture = (
-            producer.GL_OVERLAP_FINDINGS,
-            producer.GL_DIFF_OVERLAP,
-            producer.GITLAB_OVERLAP_DEMOTION_FIXTURE,
-        )
+    prefix = "GH" if platform == "github" else "GL"
+    findings = getattr(producer, prefix + "_OVERLAP_FINDINGS")
+    diff = getattr(producer, prefix + "_DIFF_OVERLAP")
+    fixture = getattr(producer, platform.upper() + "_OVERLAP_DEMOTION_FIXTURE")
     stamped = [
         {
             **f,

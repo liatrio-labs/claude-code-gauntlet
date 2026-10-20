@@ -32,7 +32,6 @@ from bench.runner.epochs import (  # noqa: E402
 )
 from bench.runner.observations import (  # noqa: E402
     ScoreRef,
-    ScoreRefWire,
     artifact_allowed,
     copy_exclusive,
     exclusive_json,
@@ -913,7 +912,7 @@ class CellSelectionWire(TypedDict):
     run_index: int
     pr_url: str
     attempt_id: str
-    score_ref: ScoreRefWire | None
+    score_ref: dict[str, str] | None
     failure_confirmation_ref: str | None
 
 
@@ -1159,7 +1158,7 @@ class CompleteMatrix:
     stage_observations: tuple = ()
 
 
-def validate_matrix(selections, window, population, *, expected_run_indices):
+def validate_matrix(selections, window, population, *, epoch, expected_run_indices):
     selections = tuple(selections)
     arms = tuple(sorted({s.arm for s in selections}))
     if (
@@ -1175,7 +1174,6 @@ def validate_matrix(selections, window, population, *, expected_run_indices):
     if len(actual) != len(set(actual)) or set(actual) != expected:
         raise ValueError("incomplete or duplicate PR/run matrix")
     run_ids = {}
-    epoch = load_epoch(window.expected.golden_epoch_id, root=DEFAULT_ROOT)
     expected_bugs = {
         p: {b.bug_id for b in epoch.bugs if b.pr_url == p} for p in window.pr_urls
     }
@@ -1311,7 +1309,6 @@ def run_provenance(
     *, child_model, child_auth, timeout_s, epoch_id=None, window=None, root=ROOT
 ):
     epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
-    pins = read_json(Path(__file__).resolve().parents[1] / "baselines.json")
     policy = benchmark_policy(timeout_s, resolve_limits=window is not None)
     cli = window.expected.cli_realpath if window else shutil.which("claude")
     try:
@@ -1320,8 +1317,8 @@ def run_provenance(
             child_model=child_model,
             auth_mode=child_auth,
             epoch=epoch,
-            judge_pin=pins["judge_pin"],
-            adjudicator_pin=pins.get("adjudicator_pin") or pins["judge_pin"],
+            judge_pin=epoch.judge_pin,
+            adjudicator_pin=epoch.adjudicator_pin,
             env=os.environ,
             policy=policy,
             root=root,
@@ -1354,8 +1351,8 @@ def run_provenance(
                 "DISABLE_AUTOUPDATER": "1",
             },
             "frontmatter_effort_sha256": frontmatter_effort(root),
-            "judge_pin": pins.get("judge_pin"),
-            "adjudicator_pin": pins.get("adjudicator_pin") or pins.get("judge_pin"),
+            "judge_pin": epoch.judge_pin,
+            "adjudicator_pin": epoch.adjudicator_pin,
             "golden_epoch_id": epoch.epoch_id,
             "golden_sha256": epoch.golden_sha256,
             "scorer_tree": epoch.scorer_tree,

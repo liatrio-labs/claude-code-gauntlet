@@ -49,7 +49,6 @@ def forge_factory(monkeypatch, request):
 
 @pytest.fixture
 def score_case(tmp_path):
-    import json
     from dataclasses import dataclass
     from pathlib import Path
 
@@ -63,6 +62,7 @@ def score_case(tmp_path):
         url: str
         payload: Path
         calls: list
+        hits: dict
 
         def execute(self, **kwargs):
             adjudicator = kwargs.pop(
@@ -70,7 +70,7 @@ def score_case(tmp_path):
             )
             return score.score_run(
                 self.run,
-                env={"BENCH_JUDGE_API_KEY": "synthetic"},
+                env=kwargs.pop("env", {"BENCH_JUDGE_API_KEY": "synthetic"}),
                 ledger_path=self.ledger,
                 run_scorer=self.scorer,
                 adjudicator=adjudicator,
@@ -85,14 +85,24 @@ def score_case(tmp_path):
             for url, tools in candidates.items():
                 for tool, entries in tools.items():
                     claims = golden[url]["golden_comments"]
+                    hits = (
+                        self.hits.get(tool, self.hits.get("*", (0, 1)))
+                        if entries
+                        else ()
+                    )
                     tp = [
                         {
                             "golden_comment": c["comment"],
                             "matched_candidate": entries[0]["text"],
                         }
-                        for c in (claims[:2] if entries else [])
+                        for i, c in enumerate(claims)
+                        if i in hits
                     ]
-                    fn = [{"golden_comment": c["comment"]} for c in claims[len(tp) :]]
+                    fn = [
+                        {"golden_comment": c["comment"]}
+                        for i, c in enumerate(claims)
+                        if i not in hits
+                    ]
                     evaluations.setdefault(url, {})[tool] = {
                         "true_positives": tp,
                         "false_negatives": fn,
@@ -102,47 +112,32 @@ def score_case(tmp_path):
                         "errors": [],
                     }
                     groups.setdefault(url, {})[tool] = (
-                        [[0, 1]] if len(entries) >= 2 else []
+                        [[0, 1]] if len(entries) >= 2 and not self.hits else []
                     )
             for name, value in (
                 ("evaluations.json", evaluations),
                 ("dedup_groups.json", groups),
             ):
-                (model_dir / name).write_text(json.dumps(value), encoding="utf-8")
+                score._write_json(model_dir / name, value)
 
     epoch = load_epoch(root=DEFAULT_ROOT)
     gate = read_json(DEFAULT_ROOT / "subsets.json")["gate"]
     url = next(u for u in gate if sum(b.pr_url == u for b in epoch.bugs) >= 3)
     run = tmp_path / "run"
     (run / "state").mkdir(parents=True)
-    (run / "state/a.json").write_text(
-        json.dumps({"url": url, "status": "ok"}), encoding="utf-8"
-    )
+    score._write_json(run / "state/a.json", dict(url=url, status="ok"))
     pr = run / score.invoke.pr_dir_name({"url": url})
     pr.mkdir()
     payload = pr / "post-review-payload.json"
-    score._write_json(
-        payload,
-        {
-            "platform": "github",
-            "payload": {
-                "comments": [
-                    {"body": text, "path": "a.py", "line": i}
-                    for i, text in enumerate(
-                        ("matched candidate", "dedup sibling", "extra candidate"), 1
-                    )
-                ]
-            },
-        },
-    )
+    texts = ("matched candidate", "dedup sibling", "extra candidate")
+    comments = [dict(body=t, path="a.py", line=i) for i, t in enumerate(texts, 1)]
+    score._write_json(payload, dict(platform="github", payload={"comments": comments}))
     (pr / "diff.patch").write_text(
         "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1,3 @@\n+one\n+two\n+three\n",
         encoding="utf-8",
     )
-    (run / "run.json").write_text(
-        json.dumps({"run_id": "run", "urls": [url]}), encoding="utf-8"
-    )
-    return ScoreCase(run, tmp_path / "ledger.jsonl", url, payload, [])
+    score._write_json(run / "run.json", dict(run_id="run", urls=[url]))
+    return ScoreCase(run, tmp_path / "ledger.jsonl", url, payload, [], {})
 
 
 @pytest.fixture

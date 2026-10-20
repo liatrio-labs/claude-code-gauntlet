@@ -8,5 +8,7 @@
     "strict"
   ],
   "primary_profile": "core",
-  "judge_pin": "claude-opus-4-5-20251101"
+  "judge_pin": "claude-opus-4-5-20251101",
+  "adjudicator_pin": "claude-opus-4-5-20251101",
+  "golden_sha256": "e5dead9466a98dcaba86316fe63a05fe90af926b8290c74dd6956ef99b4f18a5"
 }

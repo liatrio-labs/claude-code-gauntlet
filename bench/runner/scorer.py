@@ -7,9 +7,9 @@ import os
 import subprocess
 from pathlib import Path
 
-from bench.runner.epochs import read_json
 from bench.runner.observations import exclusive_json
 from bench.runner.scorer_source import scorer_source
+from bench.runner.scoring_costs import recording_proxy
 
 VENDOR_ENV = Path(__file__).resolve().parents[1] / "vendor/code-review-benchmark"
 BASE_URL = "https://api.anthropic.com/v1/"
@@ -79,14 +79,18 @@ def execute(
                 command += ["--dedup-groups", str(model_dir / "dedup_groups.json")]
             if tool:
                 command += ["--tool", tool]
-            result = executor(
-                command,
-                cwd=str(work_dir),
-                env=run_env,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-            )
+            with recording_proxy(
+                base_url, pin, model_dir / (stage + "-usage.json")
+            ) as url:
+                run_env["MARTIAN_BASE_URL"] = url
+                result = executor(
+                    command,
+                    cwd=str(work_dir),
+                    env=run_env,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                )
             log = work_dir / (stage + ".log")
             with log.open("x", encoding="utf-8") as stream:
                 stream.write((result.stdout or "") + (result.stderr or ""))
@@ -97,18 +101,3 @@ def execute(
                     f"scorer stage {stage!r} failed (exit {result.returncode}): {tail}"
                 )
         return tuple(logs)
-
-
-def read_costs(model_dir):
-    """A scorer without a measured charge receipt leaves the charge unknown."""
-    from typing import Literal
-
-    from bench.runner.decode import decode
-
-    path = Path(model_dir) / "scoring-costs.json"
-    costs = (
-        decode(dict[Literal["dedup", "judge"], float | None], read_json(path))
-        if path.is_file()
-        else {}
-    )
-    return {stage: costs.get(stage) for stage in ("dedup", "judge")}

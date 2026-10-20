@@ -1,10 +1,10 @@
 """Profile arithmetic over complete, Boolean per-golden observations."""
 
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from bench.runner.epochs import PROFILE_CATEGORIES, Profile
+from bench.runner.epochs import PROFILE_CATEGORIES, Profile, in_profile
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,20 +20,13 @@ class ProfileMetrics:
     f2_strict: float
     status: Literal["scored", "empty"]
 
-    def to_wire(self):
-        return asdict(self)
-
 
 def profile_metrics(
     observations: Sequence["BugObservation"], fp: int, profile: Profile
 ) -> ProfileMetrics:
     if profile not in PROFILE_CATEGORIES or type(fp) is not int or fp < 0:
         raise ValueError("invalid profile or false-positive count")
-    selected = [
-        o
-        for o in observations
-        if profile == "all" or o.category in PROFILE_CATEGORIES[profile]
-    ]
+    selected = [o for o in observations if in_profile(o.category, profile)]
     if any(o.outcome == "unavailable" or o.errors for o in selected):
         raise ValueError("incomplete/error observations cannot produce metrics")
     tp = sum(o.outcome == "matched" for o in selected)

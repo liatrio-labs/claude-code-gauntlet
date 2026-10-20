@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import random
 import sys
@@ -27,7 +26,6 @@ from bench.runner.epochs import (  # noqa: E402
 )
 from bench.runner.observations import (  # noqa: E402
     ScoreRef,
-    ScoreRefWire,
     freeze_json,
     thaw_json,
 )
@@ -153,7 +151,7 @@ def rule_from_wire(value):
 
 class ArmWire(TypedDict):
     name: str
-    scores: list[ScoreRefWire]
+    scores: list[dict[str, str]]
     treatment_git_sha: str
     agent_read_sha256: str
 
@@ -168,7 +166,7 @@ class Arm:
 
 class GroundednessFindingWire(TypedDict):
     sample_id: str
-    score_ref: ScoreRefWire
+    score_ref: dict[str, str]
     candidate_id: str
     pr_url: str
     correct: bool | None
@@ -452,7 +450,7 @@ class ComparisonReportWire(TypedDict):
     status: Literal["computed", "refused"]
     refusal_codes: list[str]
     details: list[str]
-    input_score_refs: list[ScoreRefWire]
+    input_score_refs: list[dict[str, str]]
     identity_hashes: object
     population_reports: list[PopulationComparisonWire]
     rule: PromotionRuleWire | None
@@ -559,7 +557,7 @@ def resolved_populations(spec):
     if spec.resolved_populations:
         return spec.resolved_populations, ()
     epoch = load_epoch(spec.epoch_id, root=DEFAULT_ROOT)
-    subsets = read_json(DEFAULT_ROOT / "subsets.json")
+    subsets = epoch.subsets
     contamination, manifest = (
         read_json(Path(spec.contamination_path)),
         read_json(Path(spec.populations_path)),
@@ -1005,30 +1003,7 @@ def load_selected_attempt(packet, url, aid):
 
 
 def _stage_rows(packet):
-    if not packet.stages_path:
-        return ()
-    return tuple(
-        stages.StageBugObservation(
-            **{
-                **v,
-                "score_ref": ScoreRef(**v["score_ref"]),
-                "matched_version_ids": tuple(v["matched_version_ids"]),
-                "loss": stages.Loss(
-                    **{
-                        **v["loss"],
-                        "trace_ids": tuple(v["loss"]["trace_ids"]),
-                        "evidence_refs": tuple(v["loss"]["evidence_refs"]),
-                    }
-                )
-                if v["loss"]
-                else None,
-            }
-        )
-        for line in (packet.root / packet.stages_path)
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if (v := json.loads(line))
-    )
+    return stages.read_rows(packet.root)
 
 
 def compare_arms(
@@ -1052,7 +1027,7 @@ def compare_arms(
         else None
     )
     epoch = load_epoch(spec.epoch_id, root=DEFAULT_ROOT)
-    subsets = read_json(DEFAULT_ROOT / "subsets.json")
+    subsets = epoch.subsets
     scope = window.pr_urls if window else (spec.descriptive_pr_urls or ())
     if (
         len(scope) != len(set(scope))
@@ -1129,22 +1104,13 @@ def compare_arms(
                     or run.get("window_sha256")
                     != validity.file_hash(Path(spec.window_path))
                     or run.get("arm") != arm.name
-                    or run.get("epoch_id") != epoch.epoch_id
-                    or run.get("golden_sha256") != epoch.golden_sha256
                     or not run.get("instrumentation_version")
                     or run.get("treatment_git_sha", run.get("git_sha"))
                     != arm.treatment_git_sha
                     or run.get("agent_read_sha256") != arm.agent_read_sha256
-                    or run.get("pr_identities")
-                    != {u: read_json(DEFAULT_ROOT / "shas.json")[u] for u in scope}
+                    or run.get("pr_identities") != {u: epoch.shas[u] for u in scope}
                 ):
                     raise ValueError("review window/treatment/PR identity mismatch")
-                if (
-                    evaluator.judge_pin != window.expected.judge_pin
-                    or evaluator.adjudicator_pin != window.expected.adjudicator_pin
-                    or evaluator.scorer_tree != window.expected.scorer_tree
-                ):
-                    raise ValueError("review/score evaluator mismatch")
                 if arm == spec.baseline:
                     receipt = run.get("baseline_equivalence_receipt")
                     if (
@@ -1224,9 +1190,7 @@ def compare_arms(
                         b.outcome == "matched",
                         ref.run_id,
                         b.attempt_id,
-                        stages.credited_dimensions(
-                            b, packet.candidates, matched_versions
-                        ),
+                        stages.credited_dimensions(b, packet.candidates),
                         tuple(
                             sorted({v.discovery_dimension for v in matched_versions})
                         ),
@@ -1242,8 +1206,8 @@ def compare_arms(
                 {
                     "score_ref": asdict(ref),
                     "review_attempts": selected_attempts,
-                    "review_cost_usd": dict(packet.ledger_row).get("cost_usd"),
-                    "duration_s": dict(packet.ledger_row).get("duration_s"),
+                    "review_cost_usd": packet.metadata.get("cost_usd"),
+                    "duration_s": packet.metadata.get("duration_s"),
                     "judge_diagnostics": {
                         "buckets": packet.projection()["metrics"]["per_bucket"],
                         "noise_rate": packet.projection()["metrics"]["noise_rate"],
@@ -1276,7 +1240,7 @@ def compare_arms(
             for s in selections
         ]
         matrix = validity.validate_matrix(
-            selections, window, pops, expected_run_indices=prefix
+            selections, window, pops, epoch=epoch, expected_run_indices=prefix
         )
         if any(len(indices) != count for _, indices in run_index_map):
             raise ValueError("unexpected initial/extended run count")

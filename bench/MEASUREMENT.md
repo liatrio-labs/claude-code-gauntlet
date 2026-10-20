@@ -340,14 +340,18 @@ Earlier records remain forensic evidence and do not invalidate the selected trac
 Cap-hit counts count distinct PR attempts with a stage cap hit, including discovery,
 independently of bug-level terminal losses.
 
-Scoring evaluates discovery-stage finding versions as pseudo-tools in the same
-vendored scorer pass as delivered candidates. A matched discovery version credits
-its discovery dimension, including for delivered hits. A discovery hit missing in
+With `--attribution`, scoring evaluates only eliminated discovery versions as
+pseudo-tools in a separate vendored scorer pass. Delivered hits credit their
+discovery dimensions through candidate-to-trace provenance without additional calls. A discovery hit missing in
 delivery is a loss; trace snapshots supply its eliminating stage and reason.
 Missing or unreadable traces leave attribution unavailable and preserve delivered recall.
 Raw evaluator receipts, candidate provenance and observations remain in the immutable
 score packet. Summaries are derived on read. Per-run dedup, judge and adjudicator
-charges are recorded when available; unknown charges remain null.
+charges are priced from response usage with one pinned price table; unknown charges
+remain null. Attribution costs are separate and never enter promotion inputs.
+Packets retain their scoring epoch, digest, pins and scorer tree independently of
+the original immutable review provenance, so both arms can be rescored after a
+golden correction. Comparisons refuse mixed scoring contexts.
 Severity describes drift and is not a discovery dimension.
 
 The required known-loss smoke demonstration and measured trace-materialization

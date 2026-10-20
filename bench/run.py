@@ -142,8 +142,8 @@ def _target_urls(tier, explicit=None):
         if explicit
         else _resolve_tier(
             tier,
-            _load_json(GOLDEN_DIR / "subsets.json"),
-            _load_json(GOLDEN_DIR / "shas.json"),
+            load_epoch(root=GOLDEN_DIR).subsets,
+            load_epoch(root=GOLDEN_DIR).shas,
         )
     )
 
@@ -892,19 +892,9 @@ def _run_prs(
             _collect_artifacts(output_dir, pr_dir)
             if not is_naive:
                 invoke.collect_workflow_records(claude_home, pr_dir, wf_baseline)
-                from bench.runner.stages import TraceUnavailableWire, collect_trace
+                from bench.runner.stages import collect_trace
 
-                try:
-                    collect_trace(pr_dir)
-                except (OSError, ValueError, KeyError, TypeError) as exc:
-                    diagnostic: TraceUnavailableWire = {
-                        "status": "unavailable",
-                        "reason": str(exc),
-                    }
-                    (pr_dir / "measurement-unavailable.json").write_text(
-                        json.dumps(diagnostic),
-                        encoding="utf-8",
-                    )
+                collect_trace(pr_dir)
         except Exception as exc:  # noqa: BLE001 - fail only this PR and continue
             # PR-granular progress: an unexpected error (bad JSON, an OSError during
             # collection, a plain bug) must fail only this PR and let the tier continue --
@@ -1090,7 +1080,7 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         arm=getattr(args, "arm", None),
         instrumentation_version="stage-trace-v1",
         agent_read_sha256=validity.agent_read_hash(),
-        pr_identities={u: _load_json(GOLDEN_DIR / "shas.json")[u] for u in urls},
+        pr_identities={u: load_epoch(root=GOLDEN_DIR).shas[u] for u in urls},
     )
     manifest["treatment_git_sha"] = _git_full_sha()
     manifest["requested_models"] = {
@@ -1149,8 +1139,8 @@ def _exit_code(final, urls):
 
 
 def _new_run(args):
-    subsets = _load_json(GOLDEN_DIR / "subsets.json")
-    shas = _load_json(GOLDEN_DIR / "shas.json")
+    subsets = load_epoch(root=GOLDEN_DIR).subsets
+    shas = load_epoch(root=GOLDEN_DIR).shas
     bench_data = load_epoch(root=GOLDEN_DIR).scorer_input
     # An explicit --prs list overrides --tier's subset resolution and labels the run
     # "custom"; the URLs were validated against shas.json at parse time.
@@ -1194,8 +1184,8 @@ def _resume(run_id, args, retry):
     manifest_path = run_dir / "run.json"
     manifest = _load_json(manifest_path) if manifest_path.exists() else {}
     tier = manifest.get("tier") or run_id.split("-", 1)[0]
-    subsets = _load_json(GOLDEN_DIR / "subsets.json")
-    shas = _load_json(GOLDEN_DIR / "shas.json")
+    subsets = load_epoch(root=GOLDEN_DIR).subsets
+    shas = load_epoch(root=GOLDEN_DIR).shas
     bench_data = load_epoch(root=GOLDEN_DIR).scorer_input
     urls = _target_urls(tier, manifest.get("pr_urls"))
     fixture_urls = set(subsets.get("review_md_fixtures", []))
@@ -1294,7 +1284,7 @@ def _resume(run_id, args, retry):
     return _exit_code(final, urls)
 
 
-def _score_only(run_id, *, epoch_id=None):
+def _score_only(run_id, *, epoch_id=None, attribution=False):
     run_dir = RUNS_ROOT / run_id
     try:
         from bench.runner import score
@@ -1310,6 +1300,8 @@ def _score_only(run_id, *, epoch_id=None):
         return 2
     try:
         options = {"epoch_id": epoch_id}
+        if attribution:
+            options["attribution"] = True
         result = score.score_run(str(run_dir), **options)
     except (ValueError, RuntimeError) as exc:
         print(f"--score-only failed for {run_id}: {exc}", file=sys.stderr)
@@ -1394,6 +1386,11 @@ def parse_args(argv=None):
         dest="retry_failed",
         help="re-run the timeout+failed PRs of RUN_ID",
     )
+    parser.add_argument(
+        "--attribution",
+        action="store_true",
+        help="score eliminated discovery claims for stage attribution",
+    )
     parser.add_argument("--timeout-mins", type=int, default=45, dest="timeout_mins")
     parser.add_argument(
         "--anchor", choices=["naive"], help="bare single-pass anchor review"
@@ -1457,9 +1454,9 @@ def parse_args(argv=None):
         if not urls:
             parser.error("--prs was given but parsed no URLs")
         if urls == ["mini"]:
-            subsets = _load_json(GOLDEN_DIR / "subsets.json")
+            subsets = load_epoch(root=GOLDEN_DIR).subsets
             urls = list(subsets["mini"])
-        shas = _load_json(GOLDEN_DIR / "shas.json")
+        shas = load_epoch(root=GOLDEN_DIR).shas
         unknown = [u for u in urls if u not in shas]
         if unknown:
             parser.error(
@@ -1488,9 +1485,12 @@ def main(argv=None):
     # --score-only / --check have different prerequisites (no claude/gh invocation) and
     # are handled before the run prereq checks.
     if args.score_only:
-        if args.golden_epoch is None:
-            return _score_only(args.score_only)
-        return _score_only(args.score_only, epoch_id=args.golden_epoch)
+        options = {}
+        if args.golden_epoch is not None:
+            options["epoch_id"] = args.golden_epoch
+        if args.attribution:
+            options["attribution"] = True
+        return _score_only(args.score_only, **options)
     if args.check:
         # --check inspects an existing run; combining it with new-run flags is always a
         # mistake (the flags would be silently ignored). Fail loud.
@@ -1501,7 +1501,7 @@ def main(argv=None):
         # passing one is redundant rather than contradictory, and neither mode invokes
         # claude, so nothing is spent on the wrong credential. Adding them here would also
         # break `--check` for anyone who keeps the flags in a shell alias.
-        if args.tier or args.prs or args.anchor or args.runs != 1:
+        if args.tier or args.prs or args.anchor or args.runs != 1 or args.attribution:
             print(
                 "--check does not accept --tier / --prs / --anchor / --runs "
                 "(pass only --check RUN_ID).",
@@ -1509,6 +1509,10 @@ def main(argv=None):
             )
             return 2
         return _check_only(args.check)
+
+    if args.attribution:
+        print("--attribution requires --score-only", file=sys.stderr)
+        return 2
 
     child_auth = _child_auth_for(args)
     # Only reachable on a resume, where the run's own recorded mode wins: for a new run

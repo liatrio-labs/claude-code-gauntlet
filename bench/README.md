@@ -381,22 +381,23 @@ Committed:
   `review_md_fixture.md`
 - `bench/vendor/` — pinned MIT-licensed scorer subset plus
   [`VENDORED.md`](vendor/VENDORED.md) (upstream commit, citation, file list)
-- `bench/baselines.json` — judge/adjudicator pins, scorer SHA, anchor table,
-  judge noise SD, `delta_noise` (read-only to any optimizing loop)
+- `bench/baselines.json` - anchor table, judge noise SD and `delta_noise`
+  (read-only to any optimizing loop). Both scoring pins live in `golden/epoch.json`.
 - `bench/experiments.jsonl` — the append-only scoring ledger
 
-Scoring automatically evaluates captured discovery versions alongside delivered findings:
+Stage attribution is opt-in and evaluates only discovery versions eliminated before delivery:
 
 ```bash
-python3 bench/run.py --score-only RUN_ID --golden-epoch e616e84-v1
+python3 bench/run.py --score-only RUN_ID --golden-epoch e616e84-v1 --attribution
 ```
 
 Workflow traces are separate artifacts with attempt-bound byte hashes.
-Delivered candidates retain their actual posted text. Discovery matches can credit
-a dimension even when the bug was delivered. Snapshots identify losses between
+Delivered candidates retain their actual posted text and credit discovery dimensions
+through trace provenance without additional judging. Snapshots identify losses between
 discovery and delivery. Missing or unreadable traces leave attribution unavailable
-and preserve delivered recall. Scoring records dedup, judge and adjudicator charges;
-unmeasured charges remain null. See [MEASUREMENT.md](MEASUREMENT.md).
+and preserve delivered recall. Collection status and its reason remain in the score packet.
+Scoring records dedup, judge and adjudicator costs from response usage with pinned prices.
+Attribution cost is separate; unknown costs remain null. See [MEASUREMENT.md](MEASUREMENT.md).
 
 ## Measurement windows and comparisons
 

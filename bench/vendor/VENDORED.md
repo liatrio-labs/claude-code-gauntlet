@@ -23,8 +23,10 @@ shallow clone. Judge and adjudicator use `claude-opus-4-5-20251101`, temperature
 Only dedup, judging, their tests, license and environment metadata are vendored.
 Online extraction, dashboards and label generation are excluded.
 The vendor environment requires Python >=3.11 with openai/tqdm; harness code is
-Python 3.10 stdlib-only. Discovery trace versions are evaluated as pseudo-tools
-in the same scorer pass. Every matched dedup sibling leaves adjudication.
+Python 3.10 stdlib-only. Opt-in attribution scores only eliminated discovery versions as pseudo-tools
+in a separate scorer pass. Delivered dimension credit uses trace provenance.
+A local recording proxy captures only response model and token counts, with no
+vendored scorer changes. Every matched dedup sibling leaves adjudication.
 
 The old epoch `dfc6cb4-v1` is available only in git history. Its recorded ledger
 rows and baseline scores retain that epoch and are never compared with active

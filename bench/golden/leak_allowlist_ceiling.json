@@ -2,7 +2,7 @@
   "schema_version": 3,
   "derivation_version": "distinctive-project-symbol-spans-v5-literals",
   "epoch_id": "e616e84-v1",
-  "golden_sha256": "a6edc0e159ac0c5f62d470a4d8bdf1c2006710606c48110818a2ec527f0d37c2",
+  "golden_sha256": "e5dead9466a98dcaba86316fe63a05fe90af926b8290c74dd6956ef99b4f18a5",
   "holdout_salt": "8511c869475fb31b3c006cd86eda7c56c6d31b485bc02747fe55688a68317abf",
   "entries": [
     {

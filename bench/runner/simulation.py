@@ -34,7 +34,7 @@ from bench.runner.epochs import (  # noqa: E402
     load_epoch,
     read_json,
 )
-from bench.runner.observations import ScoreRef, ScoreRefWire, freeze_json  # noqa: E402
+from bench.runner.observations import ScoreRef, freeze_json  # noqa: E402
 from bench.runner.observations import wire_record as wire  # noqa: E402
 from bench.runner.populations import Population  # noqa: E402
 from bench.runner.validity import CompleteMatrix, MatrixObservation  # noqa: E402
@@ -54,7 +54,7 @@ LIMITATIONS = (
 
 class SimulationSpecWire(TypedDict):
     schema_version: Literal[1]
-    baseline_scores: list[ScoreRefWire]
+    baseline_scores: list[dict[str, str]]
     epoch_id: str
     profile: Profile
     contamination_path: str
@@ -920,7 +920,7 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
     epoch = load_epoch(value["epoch_id"], root=DEFAULT_ROOT)
     contamination = read_json(path.parent / value["contamination_path"])
     manifest = read_json(path.parent / value["populations_path"])
-    subsets = read_json(DEFAULT_ROOT / "subsets.json")
+    subsets = epoch.subsets
     pops = tuple(
         populations.resolve_population(
             name, epoch, value["profile"], subsets, contamination, manifest
@@ -952,8 +952,6 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
             or run.get("run_index") not in window.planned_run_indices
             or packet.score_ref != ref
             or run.get("child_auth") != window.expected.auth_mode
-            or window.expected.golden_epoch_id != epoch.epoch_id
-            or window.expected.golden_sha256 != epoch.golden_sha256
         ):
             raise ValueError("invalid simulation source window/run identity")
         fp = window.expected.wire()
@@ -969,14 +967,10 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
             "instrumentation_version": run["instrumentation_version"],
             "pr_identities": run.get("pr_identities"),
         }
-        if (
-            dict(packet.manifest.epoch_hashes) != observations.epoch_hashes(epoch)
-            or not validity.same_pr_set(
-                packet.manifest.requested_pr_urls, window.pr_urls
-            )
-            or packet.judge_pin != window.expected.judge_pin
-            or packet.adjudicator_pin != window.expected.adjudicator_pin
-            or packet.manifest.evaluator.scorer_tree != window.expected.scorer_tree
+        if dict(packet.manifest.epoch_hashes) != observations.epoch_hashes(
+            epoch
+        ) or not validity.same_pr_set(
+            packet.manifest.requested_pr_urls, window.pr_urls
         ):
             raise ValueError("simulation evaluator/epoch mismatch")
         if identity is None:
@@ -988,7 +982,7 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
         if set(bug_map) != expected or len(bug_map) != len(packet.observations):
             raise ValueError("incomplete simulation vector")
         attempts = []
-        for url, aid in packet.manifest.selected_attempts:
+        for url, aid in packet.manifest.selected_attempts.items():
             attempt = compare.load_selected_attempt(packet, url, aid)
             if (
                 attempt.run_id != ref.run_id
