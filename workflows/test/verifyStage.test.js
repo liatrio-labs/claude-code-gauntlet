@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyStage } from '../src/verifyStage.js';
-import { deltaEnvelope, deltasFor, ELIMINATION_STAMP, verifyCtx, verifyInput } from './helpers/verifyDelta.js';
+import { deltaContentProof } from '../src/verifyWire.js';
+import { deltaEnvelope, deltasFor, ELIMINATION_STAMP, verifyCtx, verifyInput, dispatchedFindings, sliceInputRecorder } from './helpers/verifyDelta.js';
 import { outsideSingleQuotes, shellSplit } from './helpers/shellWords.js';
 
 const BASE = [
@@ -16,6 +17,7 @@ const findingsFor = (n) => Array.from({ length: n }, (_, k) => ({
 const ZERO = {
   slices: 0, proven: 0, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,
   retried: 0, retriedMismatch: 0, retriedMissing: 0,
+  localised: 0, retriedFindings: 0, degradedFindings: 0,
 };
 const commandOf = (call) => call.prompt.split('\n').pop();
 const argvOf = (call) => shellSplit(commandOf(call));
@@ -67,10 +69,6 @@ const degradedGap = (reason, first = reason, slice, affected, total) =>
   + `${affected} of ${total} finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report`;
 
 const UNTRUSTED_ROWS = [
-  { name: 'omitted id keeps the uncovered finding', count: 3,
-    options: (f) => ({ deltas: deltasFor(f).slice(0, 2), ids: ['F0', 'F1'] }),
-    reason: 'delta does not cover 1 of 3 dispatched finding(s) (first: F2)',
-  },
   { name: 'origin drift rejects the original script proof',
     options: (f) => ({ deltas: deltasFor(f, { F0: { origin: 'surfaced' } }), checksum: 'fnv1a32:0xc35f3d60' }),
     reason: 'delta content proof mismatch (receipt fnv1a32:0xc35f3d60, recomputed fnv1a32:0x151174e3) \u2014 the echoed values are not the ones the script wrote',
@@ -96,17 +94,13 @@ const UNTRUSTED_ROWS = [
     options: () => ({ sha: 'wrong' }),
     reason: 'receipt sha mismatch (got wrong)',
   },
-  { name: 'wrong receipt input count is untrusted',
-    options: () => ({ n_in: 1 }),
-    reason: 'receipt n_in mismatch (got 1, expected 2)',
-  },
   { name: 'executor throw is retried and disclosed',
     envelope: () => { throw new Error('boom'); },
     reason: 'executor threw (boom)',
   },
   { name: 'wrong nonce degrades only its slice and retries once', count: 5, over: { limits: { verifySliceSize: 2 } },
     envelope: (findings, index) => deltaEnvelope(findings.slice(index * 2, index * 2 + 2), { nonce: ['n-1.0', 'WRONG', 'n-1.2'][index] }),
-    origins: ['new', 'new', 'unknown', 'unknown', 'new'], ledger: { ...ZERO, slices: 3, proven: 2 },
+    origins: ['new', 'new', 'unknown', 'unknown', 'new'], ledger: { ...ZERO, slices: 3, proven: 2, retriedFindings: 2, degradedFindings: 2 },
     labels: ['verify-slice-0', 'verify-slice-1', 'verify-slice-1-retry', 'verify-slice-2'],
     nonces: ['n-1.0', 'n-1.1', 'n-1.1.r1', 'n-1.2'],
     inputs: [
@@ -136,7 +130,7 @@ for (const row of UNTRUSTED_ROWS) {
     assert.equal(out.verified, false);
     assert.deepEqual(out.findings, findings.map((f, i) => ({ ...f, origin: row.origins?.[i] || 'unknown' })));
     assert.deepEqual(ctx.calls.map((call) => call.label), row.labels || ['verify-slice-0', 'verify-slice-0-retry']);
-    assert.deepEqual(out.inputProof, row.ledger || { ...ZERO, slices: 1 });
+    assert.deepEqual(out.inputProof, row.ledger || { ...ZERO, slices: 1, retriedFindings: findings.length, degradedFindings: findings.length });
     if (row.nonces) assert.deepEqual(ctx.calls.map((call) => { const argv = argvOf(call); return argv[argv.indexOf('--nonce') + 1]; }),
       row.nonces);
     if (row.inputs) assert.deepEqual(ctx.calls.map((call) => { const argv = argvOf(call); return argv[argv.indexOf('--input') + 1]; }),
@@ -146,7 +140,7 @@ for (const row of UNTRUSTED_ROWS) {
       assert.deepEqual(outputs, row.outputs);
       assert.equal(outputs[2], outputs[1], 'retry reuses the first attempt output path');
     }
-    assert.deepEqual(out.gaps, [degradedGap(row.reason, row.firstReason, row.slice || 0, row.origins ? 2 : findings.length, findings.length)]);
+    assert.deepEqual(out.gaps, [degradedGap(row.reason, row.firstReason, row.slice || 0, row.origins ? 2 : findings.length, row.origins ? 2 : findings.length)]);
   });
 }
 
@@ -160,7 +154,7 @@ test('missing id degrades without dispatch', async () => {
   assert.equal(out.verified, false);
   assert.deepEqual(ctx.calls, []);
   assert.deepEqual(out.findings, findings.map((f) => ({ ...f, origin: 'unknown' })));
-  assert.deepEqual(out.inputProof, { ...ZERO, slices: 1 });
+  assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, degradedFindings: 2 });
   assert.deepEqual(out.gaps, [
     'verify: UNVERIFIED \u2014 slice 0: a dispatched finding has no usable id \u2014 the delta echo is keyed by '
       + 'id, so this slice cannot be verified; 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report'
@@ -168,59 +162,158 @@ test('missing id degrades without dispatch', async () => {
 });
 
 const BAD_PROOF = 'fnv1a32:0xdeadbeef';
-const LEDGER_ROWS = [
-  { name: 'missing content proof degrades after the fresh retry',
-    receipt: () => ({ input_checksum: null }),
-    missing: 1,
-    reason: 'input content proof missing from receipt',
-  },
-  { name: 'wrong content proof recovers on a fresh attempt',
-    receipt: (attempt) => attempt === 1 ? { input_checksum: BAD_PROOF } : {},
-    trusted: true,
-    retriedMismatch: 1,
-    reason: 'slice-input content proof mismatch (receipt fnv1a32:0xdeadbeef, dispatched fnv1a32:0x969be244) \u2014 the document the script decoded is not the document this stage dispatched',
-  },
-  { name: 'wrong token proof precedes a wrong content proof',
-    receipt: () => ({ inline_checksum: BAD_PROOF, input_checksum: BAD_PROOF }),
-    mismatched: 1,
-    reason: 'slice-input token proof mismatch (receipt fnv1a32:0xdeadbeef, dispatched fnv1a32:0x04a4590c) \u2014 the token the script decoded is not the token this stage dispatched',
-  },
-  { name: 'missing token proof recovers on a fresh attempt',
-    receipt: (attempt) => attempt === 1 ? { inline_checksum: null } : {},
-    trusted: true,
-    retriedMissing: 1,
-    reason: 'inline token proof missing from receipt',
-  },
-  { name: 'empty input emits the complete zero ledger', empty: true },
-  { name: 'wrong delta proof recovers with literal retry nonce',
-    deltaFault: true,
-    trusted: true,
-    reason: 'delta content proof mismatch (receipt fnv1a32:0xdeadbeef, recomputed fnv1a32:0xdca84eaa) \u2014 the echoed values are not the ones the script wrote',
-  },
-];
-for (const row of LEDGER_ROWS) {
-  test(`input-proof ledger: ${row.name}`, async () => {
-    const ctx = verifyCtx((_index, attempt) => {
-      if (row.empty) throw new Error('must not dispatch');
-      const env = deltaEnvelope(BASE, { nonce: attempt === 1 ? 'n-1.0' : 'n-1.0.r1',
-        ...(row.deltaFault && attempt === 1 ? { checksum: BAD_PROOF } : {}) });
-      Object.assign(env.receipt, row.receipt?.(attempt));
-      return env;
-    });
-    const out = await verifyStage(ctx, verifyInput(row.empty ? [] : BASE));
-    assert.equal(out.verified, !!row.trusted || !!row.empty);
-    assert.deepEqual(out.findings, row.empty ? [] : BASE.map((f) => ({ ...f, origin: row.trusted ? 'new' : 'unknown' })));
-    assert.deepEqual(out.inputProof, row.empty ? ZERO : {
-      ...ZERO, slices: 1, proven: row.trusted ? 1 : 0,
-      missing: row.missing || 0, mismatched: row.mismatched || 0, retried: row.trusted ? 1 : 0,
-      retriedMissing: row.retriedMissing || 0, retriedMismatch: row.retriedMismatch || 0,
-    });
-    assert.deepEqual(ctx.calls.map((call) => call.label), row.empty ? [] : ['verify-slice-0', 'verify-slice-0-retry']);
-    assert.deepEqual(out.gaps, row.empty ? [] : [row.trusted
-      ? `verify-slice-retry: slice 0's first executor dispatch was untrusted (${row.reason}); a second dispatch was trusted and this slice's verified findings are from that attempt`
-      : degradedGap(row.reason, undefined, 0, 2, 2)]);
+const envelopeForCall = (call, attempt) => sliceInputRecorder(deltaEnvelope(dispatchedFindings(call.prompt), {
+  nonce: attempt === 1 ? 'n-1.0' : 'n-1.0.r1',
+}), call.prompt);
+
+test('received record order binds the delta proof while held order and exact ids survive', async () => {
+  const findings = findingsFor(3);
+  findings[1].id = ' F0 ';
+  const ctx = verifyCtx((_index, attempt, call) => {
+    const env = envelopeForCall(call, attempt);
+    env.receipt.record_proofs.reverse();
+    env.receipt.deltas_checksum = deltaContentProof(env.receipt.record_proofs.map((p) => p.id), env.result.deltas);
+    env.receipt.inline_checksum = BAD_PROOF;
+    env.receipt.input_checksum = BAD_PROOF;
+    return env;
   });
-}
+  const out = await verifyStage(ctx, verifyInput(findings));
+  assert.equal(ctx.calls.length, 1);
+  assert.equal(out.verified, true);
+  assert.deepEqual(out.findings, findings);
+});
+
+const LOCAL_ROWS = [
+  { name: 'mixed proof repairs only the mistyped record', bad: ['F1'], repaired: true },
+  { name: 'failed retry degrades only the mistyped record', bad: ['F1'], failed: true },
+  { name: 'retry partly succeeds and preserves original order', bad: ['F1', 'F2'], retryBad: ['F2'] },
+  { name: 'mistyped input cannot eliminate its finding', bad: ['F1'], eliminate: true, failed: true },
+  { name: 'missing record row and delta localise an input omission', bad: ['F1'], omit: true, missing: true },
+  { name: 'single foreign id is ignored and its expected id is retried', bad: ['F1'], foreign: true, missing: true },
+  { name: 'trusted elimination survives a subset retry', bad: ['F1'], acceptedElimination: true, repaired: true },
+];
+for (const row of LOCAL_ROWS) test(`per-record recovery: ${row.name}`, async () => {
+  const findings = findingsFor(3);
+  const ctx = verifyCtx((_index, attempt, call) => {
+    if (attempt === 2 && row.failed) return { status: 'failed', stderr: 'retry failed' };
+    const env = envelopeForCall(call, attempt);
+    const bad = attempt === 1 ? row.bad : (row.retryBad || []);
+    for (const proof of env.receipt.record_proofs) if (bad.includes(proof.id)) proof.checksum = BAD_PROOF;
+    if (attempt === 1) {
+      if (row.omit) {
+        env.receipt.record_proofs = env.receipt.record_proofs.filter((p) => !bad.includes(p.id));
+        env.result.deltas = env.result.deltas.filter((d) => !bad.includes(d.id));
+        env.receipt.n_in -= bad.length;
+      }
+      if (row.foreign) {
+        env.receipt.record_proofs.find((p) => p.id === 'F1').id = 'FOREIGN';
+        env.result.deltas.find((d) => d.id === 'F1').id = 'FOREIGN';
+      }
+      if (row.eliminate || row.acceptedElimination) {
+        const d = env.result.deltas.find((d) => d.id === (row.eliminate ? 'F1' : 'F0'));
+        Object.assign(d, { verified: false, elimination_reason: ELIMINATION_STAMP });
+      }
+    }
+    env.receipt.deltas_checksum = deltaContentProof(env.receipt.record_proofs.map((p) => p.id), env.result.deltas);
+    env.result.deltas.reverse();
+    return env;
+  });
+  const out = await verifyStage(ctx, verifyInput(findings));
+  assert.equal(ctx.calls.length, 2);
+  assert.deepEqual(dispatchedFindings(ctx.calls[1].prompt).map((f) => f.id), row.bad);
+  assert.ok(inlineOf(ctx.calls[1]).length < inlineOf(ctx.calls[0]).length);
+  assert.equal(argvOf(ctx.calls[1])[argvOf(ctx.calls[1]).indexOf('--nonce') + 1], 'n-1.0.r1');
+  const degraded = row.failed ? row.bad : (row.retryBad || []);
+  assert.equal(out.verified, degraded.length === 0);
+  assert.deepEqual(out.findings, findings.filter((f) => !(row.acceptedElimination && f.id === 'F0'))
+    .map((f) => ({ ...f, origin: degraded.includes(f.id) ? 'unknown' : 'new' })));
+  assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, localised: 3 - row.bad.length,
+    retriedFindings: row.bad.length, degradedFindings: degraded.length,
+    ...(degraded.length ? { mismatched: 1 } : { retried: 1, [row.missing ? 'retriedMissing' : 'retriedMismatch']: 1 }),
+  });
+  if (degraded.length) assert.match(out.gaps[0], new RegExp(`${degraded.length} of 3 finding`));
+});
+
+for (const field of ['deltas_checksum', 'record_proofs']) test(`whole-attempt recovery: missing ${field} retries the full slice`, async () => {
+  const findings = findingsFor(2);
+  const ctx = verifyCtx((_index, attempt, call) => {
+    const env = envelopeForCall(call, attempt);
+    if (attempt === 1) env.receipt[field] = undefined;
+    return env;
+  });
+  const out = await verifyStage(ctx, verifyInput(findings));
+  assert.equal(out.verified, true);
+  assert.deepEqual(out.findings, findings);
+  assert.deepEqual(ctx.calls.map((call) => dispatchedFindings(call.prompt).map((f) => f.id)), [['F0', 'F1'], ['F0', 'F1']]);
+  assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1, retried: 1, retriedFindings: 2,
+    retriedMissing: field === 'record_proofs' ? 1 : 0 });
+});
+
+for (const [name, mutate] of [
+  ['context mismatch with matching record proofs', (env) => { env.receipt.base_branch = 'other'; }],
+  ['missing record_proofs', (env) => { env.receipt.record_proofs = undefined; }],
+  ['malformed record_proofs', (env) => { env.receipt.record_proofs = [{ id: 'F0' }]; }],
+  ['duplicate record proof', (env) => { env.receipt.record_proofs.push(env.receipt.record_proofs[0]); }],
+  ['duplicate delta', (env) => { env.result.deltas.push(env.result.deltas[0]); }],
+  ['proof and delta id sets differ', (env) => { env.receipt.record_proofs.pop(); }],
+  ['two foreign ids', (env) => {
+    for (let i = 0; i < 2; i += 1) {
+      env.receipt.record_proofs[i].id = `OTHER${i}`;
+      env.result.deltas[i].id = `OTHER${i}`;
+    }
+    env.receipt.deltas_checksum = deltaContentProof(env.receipt.record_proofs.map((p) => p.id), env.result.deltas);
+  }],
+]) test(`whole-attempt gate: ${name}`, async () => {
+  const findings = findingsFor(3);
+  const ctx = verifyCtx((_index, attempt, call) => {
+    const env = envelopeForCall(call, attempt);
+    mutate(env);
+    return env;
+  });
+  const out = await verifyStage(ctx, verifyInput(findings));
+  assert.equal(out.verified, false);
+  assert.deepEqual(ctx.calls.map((call) => dispatchedFindings(call.prompt).map((f) => f.id)), [
+    ['F0', 'F1', 'F2'], ['F0', 'F1', 'F2'],
+  ]);
+  assert.deepEqual(out.findings, findings.map((f) => ({ ...f, origin: 'unknown' })));
+});
+
+test('unprovable expected record falls back to the whole-slice token gate', async () => {
+  const findings = findingsFor(2);
+  findings[0].line_start = Number.MAX_SAFE_INTEGER + 1;
+  const ctx = verifyCtx((_index, attempt, call) => {
+    const env = envelopeForCall(call, attempt);
+    env.receipt.inline_checksum = BAD_PROOF;
+    return env;
+  });
+  const out = await verifyStage(ctx, verifyInput(findings));
+  assert.equal(out.verified, false);
+  assert.deepEqual(out.findings.map((f) => f.origin), ['unknown', 'unknown']);
+});
+
+for (const [name, receipt, fault] of [
+  ['missing content proof', { input_checksum: null }, 'missing'],
+  ['wrong content proof', { input_checksum: BAD_PROOF }, 'mismatched'],
+  ['wrong token proof', { inline_checksum: BAD_PROOF, input_checksum: BAD_PROOF }, 'mismatched'],
+  ['missing token proof', { inline_checksum: null }, 'missing'],
+  ['wrong count', { n_in: 1 }, 'mismatched'],
+]) test(`aggregate diagnostic: ${name} accepts matching records without retry`, async () => {
+  const ctx = verifyCtx(() => {
+    const env = deltaEnvelope(BASE, { nonce: 'n-1.0' });
+    Object.assign(env.receipt, receipt);
+    return env;
+  });
+  const out = await verifyStage(ctx, verifyInput(BASE));
+  assert.equal(out.verified, true);
+  assert.deepEqual(out.findings, BASE);
+  assert.equal(ctx.calls.length, 1);
+  assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, [fault]: 1 });
+});
+test('empty input emits the complete zero ledger', async () => {
+  const ctx = verifyCtx(() => { throw new Error('must not dispatch'); });
+  assert.deepEqual(await verifyStage(ctx, verifyInput([])), { findings: [], verified: true, gaps: [], inputProof: ZERO });
+});
+
 const bulk = (prefix, length, chars) => Array.from({ length }, (_, i) => ({
   id: `${prefix}${i}`, file: 'x'.repeat(chars), line_start: 1, line_end: 1,
   evidence: 'e', severity: 'high', confidence: 90, cross_file_refs: [], origin: 'new',
@@ -254,8 +347,7 @@ test('sibling-slice substitution keeps every finding and degrades only the subst
   const out = await verifyStage(ctx, verifyInput(findings, { limits: { verifySliceSize: 2 } }));
   assert.equal(out.verified, false);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['F0', 'unknown'], ['F1', 'unknown'], ['F2', 'new'], ['F3', 'new']]);
-  assert.deepEqual(out.gaps, [('verify: UNVERIFIED \u2014 slice 0: delta names a finding this slice did not dispatch '
-    + '(F2) \u2014 retried once after the first attempt failed (status=failed (transient)); 2 of 4 finding(s) marked '
+  assert.deepEqual(out.gaps, [('verify: UNVERIFIED \u2014 slice 0: record_proofs ids differ from delta ids \u2014 retried once after the first attempt failed (status=failed (transient)); 2 of 2 finding(s) marked '
     + 'origin=unknown, surfaced-classification skipped, held back to the report')]);
 });
 
@@ -283,7 +375,7 @@ for (const hostPlatform of ['posix', 'windows']) test(`oversize finding is discl
   const ctx = verifyCtx(() => deltaEnvelope([findings[1]], { nonce: 'n-1.0', n_in: 1 }));
   const out = await verifyStage(ctx, verifyInput(findings, { repoRoot: hostPlatform === 'windows' ? 'D:/repo' : '/repo', limits: { verifySliceSize: 2 } }));
   assert.equal(out.verified, false);
-  assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1, oversize: 1 });
+  assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1, oversize: 1, degradedFindings: 1 });
   assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0']);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['BIG', 'unknown'], ['OK', 'new']]);
   assert.deepEqual(out.gaps, [`verify: UNVERIFIED \u2014 finding BIG has ${hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length'} ${hostPlatform === 'windows' ? 31089 : 50073}, over VERIFY_INLINE_CHAR_BUDGET=${hostPlatform === 'windows' ? 30442 : 50000}; 1 of 2 finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report`]);

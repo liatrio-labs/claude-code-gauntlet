@@ -20,6 +20,8 @@ EMPTY_BYTES = b"""{
     "nonce": "cli",
     "deltas_checksum": "fnv1a32:0x741638a5",
     "inline_checksum": "fnv1a32:0x8c59538c",
+    "base_branch": "main",
+    "record_proofs": [],
     "input_checksum": "fnv1a32:0x2eb50aa0"
   },
   "result": {
@@ -235,6 +237,8 @@ def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
         "nonce": "cli",
         "deltas_checksum": "fnv1a32:0xc9ca61b0",
         "inline_checksum": "fnv1a32:0x17c759ec",
+        "base_branch": "main",
+        "record_proofs": [{"id": "a", "checksum": "fnv1a32:0x2fc424e8"}],
         "input_checksum": "fnv1a32:0x6754b4b8",
     }
     assert (tmp_path / "slice.json").read_bytes() == (
@@ -305,6 +309,8 @@ def test_receipt_fallback(invoke, tmp_path, verify_git):
         "nonce",
         "deltas_checksum",
         "inline_checksum",
+        "base_branch",
+        "record_proofs",
     ]
     assert env["receipt"]["deltas_checksum"] == "fnv1a32:0x741638a5"
     assert (
@@ -329,6 +335,8 @@ def test_receipt_surrogate_ascii(invoke, tmp_path, verify_git):
         "nonce": "cli",
         "deltas_checksum": "fnv1a32:0x877e5b9a",
         "inline_checksum": "fnv1a32:0xc771c3d9",
+        "base_branch": "main",
+        "record_proofs": [{"id": "\udcff", "checksum": "fnv1a32:0x09a08d9b"}],
         "input_checksum": "fnv1a32:0xefcb2f8b",
     }
     assert (tmp_path / "slice.json").read_bytes() == (
@@ -517,6 +525,8 @@ def test_receipt_defaults(head_reply, invoke, tmp_path, verify_git):
         "nonce": None,
         "deltas_checksum": "fnv1a32:0x741638a5",
         "inline_checksum": "fnv1a32:0x8c59538c",
+        "base_branch": "main",
+        "record_proofs": [],
         "input_checksum": "fnv1a32:0x2eb50aa0",
     }
     assert verify_git[0] == [

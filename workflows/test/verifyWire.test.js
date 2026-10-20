@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { joinVerifyDeltas, deltaContentProof, encodeInlineString, encodeSliceInline, sliceInputChecksum, sliceTokenChecksum, projectVerifySliceFinding } from '../src/verifyWire.js';
+import { joinVerifyDeltas, deltaContentProof, encodeInlineString, encodeSliceInline, recordProof, sliceInputChecksum, sliceTokenChecksum, projectVerifySliceFinding } from '../src/verifyWire.js';
 import { fnv1a32, normalizeReviewText } from '../src/wire.js';
 import { reviewMdSetChecksum } from '../src/args.js';
 import { loadCases } from './helpers/goldenCases.js';
@@ -20,6 +20,9 @@ for (const c of loadCases('slice_input_proof')) {
     assert.equal(sliceInputChecksum(c.input.doc), c.expected.checksum);
   });
 }
+for (const c of loadCases('record_proof')) test(`record_proof parity: ${c.name}`, () => {
+  assert.equal(recordProof(c.input.record), c.expected.checksum);
+});
 for (const c of loadCases('slice_inline')) {
   test(`slice_inline parity: ${c.name}`, () => {
     assert.equal(encodeSliceInline(c.input.doc), c.expected.encoded);
