@@ -1318,8 +1318,8 @@ const input = { python, pluginRoot: root, nonce: 'n-1', headShaShort: 'abc123',
   verify: { scriptPath: '/untrusted.py', inputPathBase: `${outputDir}/input`, outputPathBase: `${outputDir}/verified` } };
 const finding = { id: 'F1', file: 'source.py', line_start: 1, origin: 'new', description: '' };
 const budget = verifyInlineBudget(input);
-// The projected description costs one code unit per x, so fill to just below admission.
-finding.description = 'x'.repeat(budget - 200);
+// A long path survives projection and fills the Windows argv budget.
+finding.file = 'x'.repeat(budget - 200);
 const ctx = verifyCtx(() => deltaEnvelope([finding], { nonce: 'n-1.0' }));
 await verifyStage(ctx, verifyInput([finding], input));
 const verify = ctx.calls[0].prompt.split('\n').at(-1);

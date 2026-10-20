@@ -11,7 +11,7 @@ import { randomFindings, stageCtx } from './helpers/stageFixtures.js';
 const BASIC = [
   { id: 'A', file: 'a.js', line_start: 1, origin: 'new', cross_file_refs: [] },
   { id: 'B', file: 'b.js', line_start: 2, origin: 'new', cross_file_refs: [] },
-  { id: 'C', file: 'c.js', line_start: 3, origin: 'new', cross_file_refs: [], description: 'z'.repeat(100) },
+  { id: 'C', file: 'z'.repeat(100), line_start: 3, origin: 'new', cross_file_refs: [] },
 ];
 const PLAN_GOLDEN = { slices: [['A', 'B'], ['C']], oversize: [], closeReasons: ['count', null] };
 
@@ -20,8 +20,8 @@ for (const key of ['repoRoot', 'outputDir', 'pluginRoot']) test(`Windows budget 
   assert.equal(verifyInlineBudget({ [key]: '/work/repo' }), 50000);
 });
 const PLAN_ROWS = [
-  { name: 'Windows quoted JSON budget', size: 25, budget: 220, hostPlatform: 'windows', length: 249,
-    input: Array.from({ length: 4 }, (_, i) => ({ id: `F${i}`, file: 'a', description: '' })),
+  { name: 'Windows quoted JSON budget', size: 25, budget: 250, hostPlatform: 'windows', length: 281,
+    input: Array.from({ length: 4 }, (_, i) => ({ id: `F${i}`, file: 'a'.repeat(30) })),
     expected: { slices: [['F0', 'F1', 'F2'], ['F3']], oversize: [], closeReasons: ['budget', null] } },
   { name: 'count closes a slice', input: BASIC, size: 2, budget: 100000 },
   { name: 'single finding exceeds budget', input: [BASIC[0]], size: 2, budget: 10,
@@ -30,13 +30,13 @@ const PLAN_ROWS = [
     expected: { slices: [['A', 'B'], ['C']], oversize: [], closeReasons: ['budget', null] } },
   { name: 'oversize flushes preceding slice', size: 2, budget: 50000,
     input: [{ id: 'A', origin: 'new', cross_file_refs: [] },
-      { id: 'BIG', origin: 'new', cross_file_refs: [], description: 'x'.repeat(50000) },
+      { id: 'BIG', origin: 'new', cross_file_refs: [], file: 'x'.repeat(50000) },
       { id: 'C', origin: 'new', cross_file_refs: [] }],
     expected: { slices: [['A'], ['C']], oversize: ['BIG'], closeReasons: ['oversize', null] } },
-  { name: 'exact long-branch equality fits', size: 2, budget: 1425, branch: 'b'.repeat(1000), length: 1425,
+  { name: 'exact long-branch equality fits', size: 2, budget: 1311, branch: 'b'.repeat(1000), length: 1311,
     input: [
-      { id: 'fit-a', file: 'a.js', line_start: 1, origin: 'new', cross_file_refs: [], description: 'x'.repeat(100) },
-      { id: 'fit-b', file: 'b.js', line_start: 2, origin: 'new', cross_file_refs: [], description: 'y'.repeat(100) },
+      { id: 'fit-a', file: 'x'.repeat(100), line_start: 1, origin: 'new', cross_file_refs: [] },
+      { id: 'fit-b', file: 'y'.repeat(100), line_start: 2, origin: 'new', cross_file_refs: [] },
     ], expected: { slices: [['fit-a', 'fit-b']], oversize: [], closeReasons: [null] } },
 ];
 for (const row of PLAN_ROWS) test(`slice planning: ${row.name}`, () => {
@@ -52,10 +52,10 @@ for (const row of PLAN_ROWS) test(`slice planning: ${row.name}`, () => {
   if (row.length) assert.equal(predictVerifySliceInlineLength(input, row.branch, row.hostPlatform), row.length);
 });
 const COST_ROWS = [
-  { branch: 'b', lengths: [3952, 4102, 3863, 3420, 4037, 851] },
-  { branch: 'main', lengths: [3955, 4105, 3866, 3423, 4040, 854] },
-  { branch: `feature/${'b'.repeat(99)}`, lengths: [4058, 4208, 3969, 3526, 4143, 957] },
-  { branch: 'b'.repeat(1000), lengths: [4951, 4562, 4999, 4419, 4848, 2440] },
+  { branch: 'b', lengths: [1043, 970, 1072, 1073, 1122, 279] },
+  { branch: 'main', lengths: [1046, 973, 1075, 1076, 1125, 282] },
+  { branch: `feature/${'b'.repeat(99)}`, lengths: [1149, 1076, 1178, 1179, 1228, 385] },
+  { branch: 'b'.repeat(1000), lengths: [2042, 1969, 2071, 2072, 2121, 1278] },
 ];
 for (const row of COST_ROWS) test(`encoder costs: branch length ${row.branch.length}`, () => {
   const plan = planVerifySlices(randomFindings(275, 37), 7, 5000, row.branch);
@@ -78,7 +78,7 @@ const COUNT_ROWS = [
     files: 200, findings: 100, count: 63 },
   { name: 'numeric estimate ignores wire split', limits: COUNT_GOLDEN, files: 0, findings: 2, count: 15 },
   { name: 'array wire split includes its retry', limits: COUNT_GOLDEN, files: 0,
-    findings: [{ id: 'A', description: 'x'.repeat(30000) }, { id: 'B', description: 'y'.repeat(30000) }], count: 17 },
+    findings: [{ id: 'A', file: 'x'.repeat(30000) }, { id: 'B', file: 'y'.repeat(30000) }], count: 17 },
 ];
 for (const row of COUNT_ROWS) test(`agent count: ${row.name}`, () => {
   assert.equal(worstCaseAgentCount(row.limits, row.files, row.findings), row.count);
@@ -99,7 +99,7 @@ const COARSEN_ROWS = [
     expected: { summarizeBucketSize: 80, challengeCap: 625 }, count: 888 },
   { name: 'wire-bound term stops making progress',
     limits: { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 5, verifySliceSize: 1 }, files: 0,
-    findings: Array.from({ length: 1000 }, (_, i) => ({ id: `F${i}`, description: 'x'.repeat(22000) })),
+    findings: Array.from({ length: 1000 }, (_, i) => ({ id: `F${i}`, file: 'x'.repeat(22000) })),
     expected: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 5, verifySliceSize: 4 }, count: 1016 },
 ];
 for (const row of COARSEN_ROWS) test(`coarsening: ${row.name}`, () => {
@@ -119,7 +119,7 @@ const BRANCH_ROWS = [
     coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 5, verifySliceSize: 50 } },
 ];
 for (const row of BRANCH_ROWS) test(`array guard branch: ${row.name}`, () => {
-  const findings = Array.from({ length: 800 }, (_, i) => ({ id: `F${i}`, description: (i % 2 ? 'y' : 'x').repeat(24500) }));
+  const findings = Array.from({ length: 800 }, (_, i) => ({ id: `F${i}`, file: (i % 2 ? 'y' : 'x').repeat(24500) }));
   const limits = { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 };
   assert.equal(planVerifySlices(findings, 25, verifyInlineBudget(row.input), row.branch).slices.length, row.slices);
   assert.equal(worstCaseAgentCount(limits, 0, findings, row.branch, row.input), row.count);
@@ -128,7 +128,7 @@ for (const row of BRANCH_ROWS) test(`array guard branch: ${row.name}`, () => {
 });
 const EMPTY_BRANCH_ROWS = [undefined, null, '', 'main'];
 for (const [index, branch] of EMPTY_BRANCH_ROWS.entries()) test(`empty branch normalization: ${index}`, () => {
-  const findings = Array.from({ length: 4 }, (_, i) => ({ id: `F${i}`, description: 'x'.repeat(100) }));
+  const findings = Array.from({ length: 4 }, (_, i) => ({ id: `F${i}`, file: 'x'.repeat(100) }));
   assert.equal(effectiveVerifyBaseBranch(branch), 'main');
   assert.deepEqual(planVerifySlices(findings, 25, 352, branch).slices.map((slice) => slice.map((f) => f.id)),
     [['F0', 'F1'], ['F2', 'F3']]);

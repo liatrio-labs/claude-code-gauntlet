@@ -155,6 +155,9 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+const PYTHON_SPACE = '[\\t-\\r\\x1C-\\x20\\x85\\xA0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]+';
+const PYTHON_STRIP_RE = new RegExp(`^${PYTHON_SPACE}|${PYTHON_SPACE}$`, 'g');
+const stripPythonWhitespace = (value) => value.replace(PYTHON_STRIP_RE, '');
 function asText(value) {
   return typeof value === 'string' ? value : '';
 }
@@ -455,130 +458,6 @@ const REPORT_PLACED_FIELDS = deepFreeze([
   'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
   'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
 ]);
-// --- verifyWire.js ---
-const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
-const VERIFY_INLINE_HEX = '0123456789ABCDEF';
-const VERIFY_INLINE_PRINTABLE_RE = /^[\x20-\x26\x28-\x7E]*$/;
-function appendInlineByte(out, byte) {
-  out.push(`%${VERIFY_INLINE_HEX[(byte >> 4) & 0x0F]}${VERIFY_INLINE_HEX[byte & 0x0F]}`);
-}
-function appendInlineUtf8(out, codePoint) {
-  if (codePoint <= 0x7F) {
-    appendInlineByte(out, codePoint);
-  } else if (codePoint <= 0x7FF) {
-    appendInlineByte(out, 0xC0 | (codePoint >> 6));
-    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
-  } else if (codePoint <= 0xFFFF) {
-    appendInlineByte(out, 0xE0 | (codePoint >> 12));
-    appendInlineByte(out, 0x80 | ((codePoint >> 6) & 0x3F));
-    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
-  } else {
-    appendInlineByte(out, 0xF0 | (codePoint >> 18));
-    appendInlineByte(out, 0x80 | ((codePoint >> 12) & 0x3F));
-    appendInlineByte(out, 0x80 | ((codePoint >> 6) & 0x3F));
-    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
-  }
-}
-function encodeInlineString(s) {
-  const text = String(s);
-  const out = [];
-  for (let i = 0; i < text.length; i += 1) {
-    const unit = text.charCodeAt(i);
-    const ch = text[i];
-    if (VERIFY_INLINE_SAFE.includes(ch)) {
-      out.push(ch);
-      continue;
-    }
-    if (unit >= 0xD800 && unit <= 0xDFFF) {
-      const next = text.charCodeAt(i + 1);
-      if (unit <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) {
-        appendInlineUtf8(out, 0x10000 + ((unit - 0xD800) << 10) + (next - 0xDC00));
-        i += 1;
-        continue;
-      }
-      out.push(`%u${unit.toString(16).toUpperCase().padStart(4, '0')}`);
-      continue;
-    }
-    appendInlineUtf8(out, unit);
-  }
-  return out.join('');
-}
-function encodeInlineValue(value) {
-  if (typeof value === 'string') return encodeInlineString(value);
-  if (Array.isArray(value)) return value.map(encodeInlineValue);
-  if (value && typeof value === 'object') {
-    const out = Object.create(null);
-    for (const [key, child] of Object.entries(value)) {
-      out[encodeInlineString(key)] = encodeInlineValue(child);
-    }
-    return out;
-  }
-  return value;
-}
-function encodeSliceInline(content) {
-  const encoded = JSON.stringify(encodeInlineValue(content));
-  if (typeof encoded !== 'string' || !VERIFY_INLINE_PRINTABLE_RE.test(encoded)) {
-    throw new Error('encodeSliceInline produced a non-printable or quoted payload');
-  }
-  return encoded;
-}
-const VERIFY_INLINE_CHAR_BUDGET = 50000;
-const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
-const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
-const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
-function deltasById(deltas) {
-  const byId = new Map();
-  for (const d of Array.isArray(deltas) ? deltas : []) {
-    if (d && typeof d.id === 'string') byId.set(d.id, d);
-  }
-  return byId;
-}
-function joinVerifyDeltas(slice, deltas) {
-  const byId = deltasById(deltas);
-  const out = [];
-  for (const f of slice) {
-    const delta = byId.get(f.id);
-    if (!delta || delta.verified === false) continue;
-    const joined = pinNumericFields(f);
-    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
-    out.push(joined);
-  }
-  return out;
-}
-const VERIFY_NUMERIC_FIELDS = ['line_start', 'line_end', 'line', 'end_line', 'confidence'];
-function pinNumericFields(finding) {
-  const out = { ...finding };
-  for (const k of VERIFY_NUMERIC_FIELDS) {
-    const n = coerceInt(out[k], INT_POLICY.verify);
-    if (n !== null) out[k] = n;
-  }
-  return out;
-}
-const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'line_end', 'description', 'evidence', 'severity', 'confidence', 'cross_file_refs', 'origin', 'removed_test'];
-function projectVerifySliceFinding(finding) {
-  const projected = {};
-  for (const k of VERIFY_SLICE_FIELDS) {
-    if (finding && Object.hasOwn(finding, k) && finding[k] !== undefined) projected[k] = finding[k];
-  }
-  return pinNumericFields(projected);
-}
-function sliceInputChecksum(content) {
-  return fnv1a32(JSON.stringify(content, null, 2));
-}
-function sliceTokenChecksum(payload) {
-  return fnv1a32(String(payload));
-}
-function canonicalDeltas(ids, byId) {
-  return ids.map((id) => {
-    const src = byId.get(id) || {};
-    const out = {};
-    for (const k of DELTA_KEYS) if (deltaHas(src, k)) out[k] = src[k];
-    return out;
-  });
-}
-function deltaContentProof(ids, deltas) {
-  return fnv1a32(JSON.stringify(canonicalDeltas(ids || [], deltasById(deltas)), null, 2));
-}
 // --- paths.js ---
 function collapseDotSlash(path) {
   let out = path;
@@ -926,6 +805,272 @@ function trustedScriptPath(pluginRoot, basename) {
   const root = normalizeAbsoluteRoot(pluginRoot);
   if (root === null) throw new Error('pluginRoot must be an absolute confined root');
   return `${rootPrefix(root)}scripts/${basename}`;
+}
+// --- removedTests.js ---
+function hasRemovedTestLocation(finding) {
+  const location = finding?.removed_test;
+  return isPlainObject(location)
+    && typeof location.id === 'string' && stripPythonWhitespace(location.id).length > 0
+    && typeof location.path === 'string' && stripPythonWhitespace(location.path).length > 0
+    && Number.isInteger(location.old_start) && Number.isInteger(location.old_end)
+    && 1 <= location.old_start && location.old_start <= location.old_end;
+}
+const exactKeys = (value, keys) => isPlainObject(value)
+  && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+const nonempty = (value) => typeof value === 'string' && value.trim().length > 0;
+const removedTestLine = (value) => Number.isSafeInteger(value) && value > 0;
+const confinedPath = (value) => nonempty(value)
+  && !value.includes('\\')
+  && repoRelativeFindingPath(null, value).file === value;
+function validateRemovedTests(value) {
+  const unavailable = (reason) => ({ status: 'unavailable', items: [], omitted: 0, reason });
+  if (value === undefined || value === null) return unavailable('inventory not supplied');
+  if (!exactKeys(value, ['status', 'items', 'omitted', 'checksum'])
+    || !['available', 'unavailable'].includes(value.status)
+    || !Array.isArray(value.items) || value.items.length > 60
+    || !Number.isSafeInteger(value.omitted) || value.omitted < 0
+    || (value.status === 'unavailable' && (value.items.length || value.omitted))) {
+    return unavailable('invalid inventory shape');
+  }
+  const ids = new Set();
+  for (const item of value.items) {
+    if (!exactKeys(item, ['id', 'path', 'old_start', 'old_end', 'kind'])
+      || typeof item.id !== 'string' || !/^[a-f0-9]{16}$/.test(item.id) || ids.has(item.id)
+      || !confinedPath(item.path) || !removedTestLine(item.old_start)
+      || !removedTestLine(item.old_end) || item.old_end < item.old_start
+      || !['deleted_file', 'hunk'].includes(item.kind)) return unavailable('invalid inventory item');
+    ids.add(item.id);
+  }
+  const body = { status: value.status, items: value.items, omitted: value.omitted };
+  if (fnv1a32(JSON.stringify(body, null, 2)) !== value.checksum) return unavailable('inventory checksum mismatch');
+  return value.status === 'unavailable' ? unavailable('saved diff structure unavailable') : body;
+}
+function matchesAuditSchema(value, schema) {
+  if (schema.type === 'object') return exactKeys(value, Object.keys(schema.properties))
+    && Object.entries(schema.properties).every(([key, child]) => matchesAuditSchema(value[key], child));
+  if (schema.type === 'array') return Array.isArray(value) && value.every((entry) => matchesAuditSchema(entry, schema.items));
+  if (schema.type === 'string') return nonempty(value) && (!schema.enum || schema.enum.includes(value));
+  return typeof value === 'number' && Number.isFinite(value)
+    && (schema.type !== 'integer' || Number.isSafeInteger(value))
+    && (schema.minimum === undefined || value >= schema.minimum)
+    && (schema.maximum === undefined || value <= schema.maximum);
+}
+function checkRemovedTestAudit(inventory, rows, repoRoot) {
+  const findings = [];
+  const reasons = new Set();
+  const schema = DISPATCH_RESULTS[AGENT_TYPE_TEST_ANALYZER].removed_test_audit;
+  if (!Array.isArray(rows)) return { findings, audit: { status: 'gap', reason: 'malformed audit rows' } };
+  const items = new Map(inventory.items.map((item) => [item.id, item]));
+  const deletedPaths = new Set(inventory.items.filter((item) => item.kind === 'deleted_file').map((item) => item.path));
+  const counts = new Map();
+  for (const row of rows) {
+    if (isPlainObject(row)) counts.set(row.id, (counts.get(row.id) || 0) + 1);
+  }
+  if ([...items.keys()].some((id) => !counts.has(id))) reasons.add('missing inventory ids');
+  for (const row of rows) {
+    if (!matchesAuditSchema(row, schema.items)) {
+      reasons.add('malformed audit rows');
+      continue;
+    }
+    if (!items.has(row.id) || counts.get(row.id) > 1) {
+      reasons.add('unknown or duplicate inventory id');
+      continue;
+    }
+    if (row.status === 'covered_elsewhere' && (!row.covered_by.length
+      || row.covered_by.some((cite) => {
+        const normalized = repoRelativeFindingPath(repoRoot, cite.file);
+        return normalized.reason || deletedPaths.has(normalized.file);
+      }))) {
+      reasons.add('incomplete surviving-test citation');
+      continue;
+    }
+    if (row.status === 'lost' ? !row.losses.length : row.losses.length) {
+      reasons.add('losses disagree with audit status');
+      continue;
+    }
+    const { id, path, old_start, old_end } = items.get(row.id);
+    const rowFindings = [];
+    for (const [index, loss] of row.losses.entries()) {
+      const normalized = repoRelativeFindingPath(repoRoot, loss.file);
+      if (normalized.reason || deletedPaths.has(normalized.file)) {
+        reasons.add(normalized.reason ? 'invalid behavior anchor' : 'behavior anchor was deleted');
+        break;
+      }
+      rowFindings.push({
+        id: `removed-test:${id}:${index + 1}`, agent: 'test-analyzer', dimension: 'test_coverage',
+        file: normalized.file, line_start: loss.line, title: loss.title, description: loss.description,
+        severity: loss.severity, confidence: loss.confidence, criticality: loss.criticality,
+        failure_scenario: loss.failure_scenario, removed_test: { id, path, old_start, old_end },
+      });
+    }
+    if (rowFindings.length === row.losses.length) findings.push(...rowFindings);
+  }
+  return { findings, audit: reasons.size > 0 ? { status: 'gap', reason: [...reasons].join('; ') } : inventory.omitted > 0
+    ? { status: 'overflow', omitted: inventory.omitted } : { status: 'ran-clean' } };
+}
+// --- verifySymbols.js ---
+const VERIFY_SKIP_SYMBOLS = new Set(('the this that with from import class def for not and its but are was were '
+  + 'can should would could also will has have been when then else elif True '
+  + 'False None self return raise pass break continue lambda yield async await '
+  + 'print isinstance len str int list dict set tuple type super object '
+  + 'Exception ValueError TypeError KeyError AttributeError IndexError '
+  + 'RuntimeError StopIteration OSError IOError FileNotFoundError '
+  + 'NotImplementedError AssertionError OverflowError ZeroDivisionError').split(' '));
+const VERIFY_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+function extractSymbols(description, evidence) {
+  const text = `${asText(description)}\n${asText(evidence)}`;
+  const symbols = new Set();
+  for (const block of text.matchAll(/```[^\n]*\n(.*?)```/gs)) {
+    for (const identifier of block[1].matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) symbols.add(identifier[0]);
+  }
+  for (const span of text.matchAll(/`([^`]+)`/g)) {
+    for (const part of stripPythonWhitespace(span[1]).replace(/^[._]+|[._]+$/g, '').split('.')) {
+      const clean = part.replace(/[^A-Za-z0-9_]/g, '');
+      if (VERIFY_IDENT_RE.test(clean)) symbols.add(clean);
+    }
+  }
+  for (const match of text.matchAll(/(?<![\p{L}\p{N}_])([A-Za-z_][A-Za-z0-9_]*(?:[.()\[\]#]|::|->)[A-Za-z0-9_.()#\[\]:>-]*)/gu)) {
+    for (const part of match[1].split(/[.()\[\]#:>-]+/)) {
+      if (VERIFY_IDENT_RE.test(part)) symbols.add(part);
+    }
+  }
+  for (const match of text.matchAll(/(?<![\p{L}\p{N}_])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?![\p{L}\p{N}_])/gu)) symbols.add(match[1]);
+  return new Set([...symbols].filter((symbol) => symbol.length > 2 && !VERIFY_SKIP_SYMBOLS.has(symbol)));
+}
+// --- verifyWire.js ---
+const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
+const VERIFY_INLINE_HEX = '0123456789ABCDEF';
+const VERIFY_INLINE_PRINTABLE_RE = /^[\x20-\x26\x28-\x7E]*$/;
+function appendInlineByte(out, byte) {
+  out.push(`%${VERIFY_INLINE_HEX[(byte >> 4) & 0x0F]}${VERIFY_INLINE_HEX[byte & 0x0F]}`);
+}
+function appendInlineUtf8(out, codePoint) {
+  if (codePoint <= 0x7F) {
+    appendInlineByte(out, codePoint);
+  } else if (codePoint <= 0x7FF) {
+    appendInlineByte(out, 0xC0 | (codePoint >> 6));
+    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
+  } else if (codePoint <= 0xFFFF) {
+    appendInlineByte(out, 0xE0 | (codePoint >> 12));
+    appendInlineByte(out, 0x80 | ((codePoint >> 6) & 0x3F));
+    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
+  } else {
+    appendInlineByte(out, 0xF0 | (codePoint >> 18));
+    appendInlineByte(out, 0x80 | ((codePoint >> 12) & 0x3F));
+    appendInlineByte(out, 0x80 | ((codePoint >> 6) & 0x3F));
+    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
+  }
+}
+function encodeInlineString(s) {
+  const text = String(s);
+  const out = [];
+  for (let i = 0; i < text.length; i += 1) {
+    const unit = text.charCodeAt(i);
+    const ch = text[i];
+    if (VERIFY_INLINE_SAFE.includes(ch)) {
+      out.push(ch);
+      continue;
+    }
+    if (unit >= 0xD800 && unit <= 0xDFFF) {
+      const next = text.charCodeAt(i + 1);
+      if (unit <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) {
+        appendInlineUtf8(out, 0x10000 + ((unit - 0xD800) << 10) + (next - 0xDC00));
+        i += 1;
+        continue;
+      }
+      out.push(`%u${unit.toString(16).toUpperCase().padStart(4, '0')}`);
+      continue;
+    }
+    appendInlineUtf8(out, unit);
+  }
+  return out.join('');
+}
+function encodeInlineValue(value) {
+  if (typeof value === 'string') return encodeInlineString(value);
+  if (Array.isArray(value)) return value.map(encodeInlineValue);
+  if (value && typeof value === 'object') {
+    const out = Object.create(null);
+    for (const [key, child] of Object.entries(value)) {
+      out[encodeInlineString(key)] = encodeInlineValue(child);
+    }
+    return out;
+  }
+  return value;
+}
+function encodeSliceInline(content) {
+  const encoded = JSON.stringify(encodeInlineValue(content));
+  if (typeof encoded !== 'string' || !VERIFY_INLINE_PRINTABLE_RE.test(encoded)) {
+    throw new Error('encodeSliceInline produced a non-printable or quoted payload');
+  }
+  return encoded;
+}
+const VERIFY_INLINE_CHAR_BUDGET = 50000;
+const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
+const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
+const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
+function deltasById(deltas) {
+  const byId = new Map();
+  for (const d of Array.isArray(deltas) ? deltas : []) {
+    if (d && typeof d.id === 'string') byId.set(d.id, d);
+  }
+  return byId;
+}
+function joinVerifyDeltas(slice, deltas) {
+  const byId = deltasById(deltas);
+  const out = [];
+  for (const f of slice) {
+    const delta = byId.get(f.id);
+    if (!delta || delta.verified === false) continue;
+    const joined = pinNumericFields(f);
+    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
+    out.push(joined);
+  }
+  return out;
+}
+const VERIFY_NUMERIC_FIELDS = ['line_start', 'line_end', 'line', 'end_line', 'confidence'];
+function pinNumericFields(finding) {
+  const out = { ...finding };
+  for (const k of VERIFY_NUMERIC_FIELDS) {
+    const n = coerceInt(out[k], INT_POLICY.verify);
+    if (n !== null) out[k] = n;
+  }
+  return out;
+}
+const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'severity', 'confidence'];
+const VERIFY_SLICE_FIELDS = [...VERIFY_SLICE_SCALAR_FIELDS, 'has_cross_file_refs', 'has_removed_test_location', 'symbols'];
+const verifyProjectionCache = new WeakMap();
+function projectFinding(finding) {
+  const projected = {};
+  for (const k of VERIFY_SLICE_SCALAR_FIELDS) {
+    if (Object.hasOwn(finding, k) && finding[k] !== undefined) projected[k] = finding[k];
+  }
+  if (Array.isArray(finding.cross_file_refs) && finding.cross_file_refs.length > 0) projected.has_cross_file_refs = true;
+  if (hasRemovedTestLocation(finding)) projected.has_removed_test_location = true;
+  const symbols = [...extractSymbols(finding.description, finding.evidence)].sort().join(' ');
+  if (symbols) projected.symbols = symbols;
+  return pinNumericFields(projected);
+}
+function projectVerifySliceFinding(finding) {
+  if (!finding || typeof finding !== 'object') return {};
+  if (!verifyProjectionCache.has(finding)) verifyProjectionCache.set(finding, projectFinding(finding));
+  return verifyProjectionCache.get(finding);
+}
+function sliceInputChecksum(content) {
+  return fnv1a32(JSON.stringify(content, null, 2));
+}
+function sliceTokenChecksum(payload) {
+  return fnv1a32(String(payload));
+}
+function canonicalDeltas(ids, byId) {
+  return ids.map((id) => {
+    const src = byId.get(id) || {};
+    const out = {};
+    for (const k of DELTA_KEYS) if (deltaHas(src, k)) out[k] = src[k];
+    return out;
+  });
+}
+function deltaContentProof(ids, deltas) {
+  return fnv1a32(JSON.stringify(canonicalDeltas(ids || [], deltasById(deltas)), null, 2));
 }
 // --- capacity.js ---
 function verifyCommand(inp, i, sliceNonce, inlinePayload) {
@@ -1282,100 +1427,6 @@ function validateConfigEcho(args, errors, table = KNOB_REGISTRY) {
       errors.push(`configEcho.${descriptor.key}.source is invalid for ${mode}`);
     }
   }
-}
-// --- removedTests.js ---
-const exactKeys = (value, keys) => isPlainObject(value)
-  && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
-const nonempty = (value) => typeof value === 'string' && value.trim().length > 0;
-const removedTestLine = (value) => Number.isSafeInteger(value) && value > 0;
-const confinedPath = (value) => nonempty(value)
-  && !value.includes('\\')
-  && repoRelativeFindingPath(null, value).file === value;
-function validateRemovedTests(value) {
-  const unavailable = (reason) => ({ status: 'unavailable', items: [], omitted: 0, reason });
-  if (value === undefined || value === null) return unavailable('inventory not supplied');
-  if (!exactKeys(value, ['status', 'items', 'omitted', 'checksum'])
-    || !['available', 'unavailable'].includes(value.status)
-    || !Array.isArray(value.items) || value.items.length > 60
-    || !Number.isSafeInteger(value.omitted) || value.omitted < 0
-    || (value.status === 'unavailable' && (value.items.length || value.omitted))) {
-    return unavailable('invalid inventory shape');
-  }
-  const ids = new Set();
-  for (const item of value.items) {
-    if (!exactKeys(item, ['id', 'path', 'old_start', 'old_end', 'kind'])
-      || typeof item.id !== 'string' || !/^[a-f0-9]{16}$/.test(item.id) || ids.has(item.id)
-      || !confinedPath(item.path) || !removedTestLine(item.old_start)
-      || !removedTestLine(item.old_end) || item.old_end < item.old_start
-      || !['deleted_file', 'hunk'].includes(item.kind)) return unavailable('invalid inventory item');
-    ids.add(item.id);
-  }
-  const body = { status: value.status, items: value.items, omitted: value.omitted };
-  if (fnv1a32(JSON.stringify(body, null, 2)) !== value.checksum) return unavailable('inventory checksum mismatch');
-  return value.status === 'unavailable' ? unavailable('saved diff structure unavailable') : body;
-}
-function matchesAuditSchema(value, schema) {
-  if (schema.type === 'object') return exactKeys(value, Object.keys(schema.properties))
-    && Object.entries(schema.properties).every(([key, child]) => matchesAuditSchema(value[key], child));
-  if (schema.type === 'array') return Array.isArray(value) && value.every((entry) => matchesAuditSchema(entry, schema.items));
-  if (schema.type === 'string') return nonempty(value) && (!schema.enum || schema.enum.includes(value));
-  return typeof value === 'number' && Number.isFinite(value)
-    && (schema.type !== 'integer' || Number.isSafeInteger(value))
-    && (schema.minimum === undefined || value >= schema.minimum)
-    && (schema.maximum === undefined || value <= schema.maximum);
-}
-function checkRemovedTestAudit(inventory, rows, repoRoot) {
-  const findings = [];
-  const reasons = new Set();
-  const schema = DISPATCH_RESULTS[AGENT_TYPE_TEST_ANALYZER].removed_test_audit;
-  if (!Array.isArray(rows)) return { findings, audit: { status: 'gap', reason: 'malformed audit rows' } };
-  const items = new Map(inventory.items.map((item) => [item.id, item]));
-  const deletedPaths = new Set(inventory.items.filter((item) => item.kind === 'deleted_file').map((item) => item.path));
-  const counts = new Map();
-  for (const row of rows) {
-    if (isPlainObject(row)) counts.set(row.id, (counts.get(row.id) || 0) + 1);
-  }
-  if ([...items.keys()].some((id) => !counts.has(id))) reasons.add('missing inventory ids');
-  for (const row of rows) {
-    if (!matchesAuditSchema(row, schema.items)) {
-      reasons.add('malformed audit rows');
-      continue;
-    }
-    if (!items.has(row.id) || counts.get(row.id) > 1) {
-      reasons.add('unknown or duplicate inventory id');
-      continue;
-    }
-    if (row.status === 'covered_elsewhere' && (!row.covered_by.length
-      || row.covered_by.some((cite) => {
-        const normalized = repoRelativeFindingPath(repoRoot, cite.file);
-        return normalized.reason || deletedPaths.has(normalized.file);
-      }))) {
-      reasons.add('incomplete surviving-test citation');
-      continue;
-    }
-    if (row.status === 'lost' ? !row.losses.length : row.losses.length) {
-      reasons.add('losses disagree with audit status');
-      continue;
-    }
-    const { id, path, old_start, old_end } = items.get(row.id);
-    const rowFindings = [];
-    for (const [index, loss] of row.losses.entries()) {
-      const normalized = repoRelativeFindingPath(repoRoot, loss.file);
-      if (normalized.reason || deletedPaths.has(normalized.file)) {
-        reasons.add(normalized.reason ? 'invalid behavior anchor' : 'behavior anchor was deleted');
-        break;
-      }
-      rowFindings.push({
-        id: `removed-test:${id}:${index + 1}`, agent: 'test-analyzer', dimension: 'test_coverage',
-        file: normalized.file, line_start: loss.line, title: loss.title, description: loss.description,
-        severity: loss.severity, confidence: loss.confidence, criticality: loss.criticality,
-        failure_scenario: loss.failure_scenario, removed_test: { id, path, old_start, old_end },
-      });
-    }
-    if (rowFindings.length === row.losses.length) findings.push(...rowFindings);
-  }
-  return { findings, audit: reasons.size > 0 ? { status: 'gap', reason: [...reasons].join('; ') } : inventory.omitted > 0
-    ? { status: 'overflow', omitted: inventory.omitted } : { status: 'ran-clean' } };
 }
 // --- discover.js ---
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
@@ -4602,7 +4653,7 @@ function dedupById(findings) {
 const VERIFY_SCHEMA = {
   type: 'object',
   properties: {
-    status: { type: 'string' }, // 'ok' | 'failed'
+    status: { type: 'string' },
     receipt: {
       type: 'object',
       properties: {
@@ -4637,7 +4688,7 @@ const VERIFY_SCHEMA = {
     exitCode: { type: 'number' },
     stderr: { type: 'string' },
   },
-  required: ['status'], // discriminated union: receipt/result only present on status:'ok'
+  required: ['status'],
 };
 const VERIFY_FANOUT_DISCLOSE_THRESHOLD = 5;
 async function verifyStage(ctx, input) {

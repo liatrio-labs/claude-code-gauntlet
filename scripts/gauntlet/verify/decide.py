@@ -45,6 +45,7 @@ class DiffValidation(TypedDict):
 class FindingWire(VerifySliceFinding, total=False):
     line: object
     end_line: object
+    origin: Origin
     blame_metadata: BlameMetadata
     factual_verification: FactualVerification
     diff_validation: DiffValidation
@@ -67,44 +68,12 @@ class VerificationResult(TypedDict):
 _SEVERITY_DOWNGRADE = dict(
     zip(SEVERITY_ORDER, (*SEVERITY_ORDER[1:], SEVERITY_ORDER[-1]), strict=True)
 )
-_SKIP_SYMBOLS = frozenset(
-    (  # noqa: SIM905 - keep the stopword vocabulary compact
-        "the this that with from import class def for not and its but are was were "
-        "can should would could also will has have been when then else elif True "
-        "False None self return raise pass break continue lambda yield async await "
-        "print isinstance len str int list dict set tuple type super object "
-        "Exception ValueError TypeError KeyError AttributeError IndexError "
-        "RuntimeError StopIteration OSError IOError FileNotFoundError "
-        "NotImplementedError AssertionError OverflowError ZeroDivisionError"
-    ).split()
-)
 
 
 def _downgrade_severity(finding: FindingWire) -> None:
     severity = finding.get("severity", "")
     if severity in _SEVERITY_DOWNGRADE:
         finding["severity"] = _SEVERITY_DOWNGRADE[severity]
-
-
-def _has_removed_test_location(finding: FindingWire) -> bool:
-    location = finding.get("removed_test")
-    if not isinstance(location, dict):
-        return False
-    identifier = location.get("id")
-    path = location.get("path")
-    old_start = location.get("old_start")
-    old_end = location.get("old_end")
-    return (
-        isinstance(identifier, str)
-        and bool(identifier.strip())
-        and isinstance(path, str)
-        and bool(path.strip())
-        and isinstance(old_start, int)
-        and not isinstance(old_start, bool)
-        and isinstance(old_end, int)
-        and not isinstance(old_end, bool)
-        and 1 <= old_start <= old_end
-    )
 
 
 # Lazy caching keeps empty and ineligible slices from querying git log.
@@ -214,8 +183,7 @@ def _stamp_blame(
 
 
 def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
-    """Classify blame and downgrade surfaced severity in place."""
-    if _has_removed_test_location(finding):
+    if finding.get("has_removed_test_location", False):
         return _stamp_blame(finding, "new", finding.get("severity", ""))
     base_branch = context.base_branch
 
@@ -223,9 +191,7 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
     line_start = finding.get("line_start", 1)
     line_end = finding.get("line_end") or line_start
     original_severity = finding.get("severity", "")
-    cross_file_refs = finding.get("cross_file_refs") or []
-
-    if cross_file_refs:
+    if finding.get("has_cross_file_refs", False):
         _downgrade_severity(finding)
         return _stamp_blame(finding, "surfaced", original_severity)
 
@@ -303,51 +269,11 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
     )
 
 
-_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_CODE_BLOCK_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
-_BACKTICK_SPAN_RE = re.compile(r"`([^`]+)`")
-_CODE_PUNCTUATION_RE = re.compile(
-    r"\b([A-Za-z_][A-Za-z0-9_]*"
-    r"(?:[.()\[\]#]|::|->)"
-    r"[A-Za-z0-9_.()#\[\]:>-]*)"
-)
-_SNAKE_CASE_RE = re.compile(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b")
-_SPLIT_PUNCTUATION_RE = re.compile(r"[.()\[\]#:>-]+")
-
-
-def _extract_symbols(description: str, evidence: str) -> set[str]:
-    """Extract definite code tokens, excluding ambiguous bare CamelCase prose."""
-    combined_text = description + "\n" + evidence
-    raw_symbols: set[str] = set()
-
-    for block_m in _CODE_BLOCK_RE.finditer(combined_text):
-        raw_symbols.update(m.group(0) for m in _IDENT_RE.finditer(block_m.group(1)))
-
-    for span_m in _BACKTICK_SPAN_RE.finditer(combined_text):
-        for part in span_m.group(1).strip().strip("._").split("."):
-            clean = re.sub(r"[^A-Za-z0-9_]", "", part)
-            if _IDENT_RE.fullmatch(clean):
-                raw_symbols.add(clean)
-
-    for m in _CODE_PUNCTUATION_RE.finditer(combined_text):
-        for part in _SPLIT_PUNCTUATION_RE.split(m.group(1)):
-            if len(part) > 2 and _IDENT_RE.fullmatch(part):
-                raw_symbols.add(part)
-
-    raw_symbols.update(m.group(1) for m in _SNAKE_CASE_RE.finditer(combined_text))
-
-    # Bare CamelCase may be English prose; treating it as code kills true positives.
-    return {s for s in raw_symbols if s not in _SKIP_SYMBOLS and len(s) > 2}
-
-
 def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
-    """Check file ranges and symbols, degrading plausible findings conservatively."""
-    has_removed_test_location = _has_removed_test_location(finding)
+    has_removed_test_location = finding.get("has_removed_test_location", False)
     filepath = finding.get("file", "")
     line_start = finding.get("line_start")
     line_end: Any = finding.get("line_end") or line_start
-    description = finding.get("description", "") or ""
-    evidence = finding.get("evidence", "") or ""
 
     if not line_start and not has_removed_test_location:
         finding["factual_verification"] = {
@@ -406,7 +332,9 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
 
     # Removed test identifiers need not exist at HEAD; the anchor still must.
     symbols_to_check = (
-        set() if has_removed_test_location else _extract_symbols(description, evidence)
+        set()
+        if has_removed_test_location
+        else set((finding.get("symbols") or "").split())
     )
 
     if not symbols_to_check:
@@ -473,7 +401,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
 
 def validate_diff_lines(finding: FindingWire, facts: DiffFacts | None) -> bool:
     """Keep off-diff findings as surfaced context instead of eliminating them."""
-    if _has_removed_test_location(finding):
+    if finding.get("has_removed_test_location", False):
         finding["diff_validation"] = {
             "in_diff": True,
             "reason": "removed test inventory anchors a new coverage loss",

@@ -7,6 +7,7 @@ Usage: python3 workflows/test/tools/record_parity.py [--check] [<script>] [<case
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
@@ -85,7 +86,20 @@ def _review_md_set_checksum(inp):
     return {"checksum": review_md_set_checksum(inp["entries"])}
 
 
+def _decisions(inp):
+    from pytest import MonkeyPatch
+
+    from tests.support.verify_parity import replay_decisions
+
+    with (
+        tempfile.TemporaryDirectory(prefix="verify-decisions-") as directory,
+        MonkeyPatch.context() as monkeypatch,
+    ):
+        return replay_decisions(inp, Path(directory), monkeypatch)
+
+
 RECORDERS = {
+    "decisions": _decisions,
     "review_md_set_checksum": _review_md_set_checksum,
     "review_text_checksum": _review_text_checksum,
     "verify_deltas": _verify_deltas,
@@ -170,7 +184,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+    sys.path.insert(0, str(REPO))
+    sys.path.insert(0, str(REPO / "scripts"))
     from gauntlet.cli import utf8_stdio
 
     utf8_stdio()

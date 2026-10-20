@@ -1,0 +1,124 @@
+{
+  "findings": [
+    {
+      "agent": "review-rules",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "description": "`new_panel`",
+      "evidence": "",
+      "file": "lib/panel-run.js",
+      "id": "refs-empty",
+      "line_end": 1,
+      "line_start": 1,
+      "origin": "unknown",
+      "removed_test": null,
+      "severity": "high",
+      "suggestion": "Check the review decision against the recorded evidence.",
+      "title": "Verify decision parity"
+    },
+    {
+      "agent": "review-rules",
+      "confidence": 90,
+      "cross_file_refs": [
+        "lib/panel-run.js",
+        "bin/review-next",
+        "tests/test_review_rules.py"
+      ],
+      "description": "The `new_panel` receipt disagrees with `important_func` and the review rules.",
+      "evidence": "```js\nnew_panel();\n```\nThe `get_user_data` decision reaches `missing_symbol`.",
+      "file": "lib/panel-run.js",
+      "id": "three-cross-file-paths",
+      "line_end": 1,
+      "line_start": 1,
+      "origin": "unknown",
+      "removed_test": null,
+      "severity": "high",
+      "suggestion": "Check the review decision against the recorded evidence.",
+      "title": "Cross-file review decision reaches the wrong receipt"
+    },
+    {
+      "agent": "review-rules",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "file": "lib/panel-run.js",
+      "id": "removed-valid",
+      "line_end": 9,
+      "line_start": 9,
+      "origin": "unknown",
+      "removed_test": {
+        "id": "0123456789abcdef",
+        "old_end": 2,
+        "old_start": 1,
+        "path": "tests/deleted_rules.py"
+      },
+      "severity": "high",
+      "suggestion": "Check the review decision against the recorded evidence.",
+      "title": "Verify decision parity"
+    },
+    {
+      "agent": "review-rules",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "description": "Deleted `test_deleted_rule` assertions.",
+      "evidence": "",
+      "file": "lib/panel-run.js",
+      "id": "removed-invalid-empty-id",
+      "line_end": 9,
+      "line_start": 9,
+      "origin": "unknown",
+      "removed_test": {
+        "id": "",
+        "old_end": 2,
+        "old_start": 1,
+        "path": "tests/deleted_rules.py"
+      },
+      "severity": "high",
+      "suggestion": "Check the review decision against the recorded evidence.",
+      "title": "Verify decision parity"
+    },
+    {
+      "agent": "review-rules",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "description": "`missing_symbol`",
+      "evidence": "",
+      "file": "lib/panel-run.js",
+      "id": "missing-inline",
+      "line_end": 1,
+      "line_start": 1,
+      "origin": "unknown",
+      "removed_test": null,
+      "severity": "high",
+      "suggestion": "Check the review decision against the recorded evidence.",
+      "title": "Verify decision parity"
+    },
+    {
+      "agent": "review-rules",
+      "confidence": 90,
+      "cross_file_refs": [],
+      "description": "Potential Regression in ConcreteType ErrorHandler",
+      "evidence": "",
+      "file": "lib/panel-run.js",
+      "id": "camelcase-prose",
+      "line_end": 1,
+      "line_start": 1,
+      "origin": "unknown",
+      "removed_test": null,
+      "severity": "high",
+      "suggestion": "Check the review decision against the recorded evidence.",
+      "title": "Verify decision parity"
+    }
+  ],
+  "repository": {
+    "base": {
+      "bin/review-next": "important_func get_user_data join method obj path Foo bar\n",
+      "lib/panel-run.js": "old_panel();\ncontext_two\ncontext_three\ncontext_four\ncontext_five\ncontext_six\ncontext_seven\ncontext_eight\nstable_anchor();\nstable_tail();\n",
+      "tests/test_review_rules.py": "block_symbol another_symbol inline_symbol AlphaType BetaType\n"
+    },
+    "head": {
+      "lib/panel-run.js": "new_panel();\ncontext_two\ncontext_three\ncontext_four\ncontext_five\ncontext_six\ncontext_seven\ncontext_eight\nstable_anchor();\nstable_tail();\n"
+    }
+  }
+}

@@ -1,4 +1,3 @@
-// Verify slice capacity and dispatch limits shared by stages and the agent-count guard.
 import { AGENTS, TRUSTED_SCRIPT_BASENAMES } from './registry.js';
 import { LIMIT_DEFAULTS } from './registry.js';
 import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding } from './verifyWire.js';
@@ -41,13 +40,12 @@ export function verifyInlineCost(token, hostPlatform) {
   return token.length + (hostPlatform === 'windows' ? (token.match(/["\\]/g) || []).length : 0);
 }
 
-// Exact wire cost includes the empty envelope and commas between findings.
 const verifySliceLengthFromCosts = (envelopeLength, findingCost, findingCount) =>
   envelopeLength + findingCost + Math.max(0, findingCount - 1);
 const projectedVerifyFindingInlineLength = (finding, hostPlatform) =>
   verifyInlineCost(encodeSliceInline(projectVerifySliceFinding(finding)), hostPlatform);
 
-// Prediction and admission share a cost primitive so dispatch assertions cannot disagree with planning.
+// Planning and dispatch must agree on wire cost.
 export function predictVerifySliceInlineLength(slice, baseBranch, hostPlatform) {
   const branch = effectiveVerifyBaseBranch(baseBranch);
   const envelopeLength = verifyInlineCost(encodeSliceInline({ findings: [], base_branch: branch }), hostPlatform);
@@ -115,8 +113,7 @@ const CHALLENGE_CAP_FLOOR = 5;
 
 const ceilDiv = (n, d) => Math.ceil(Math.max(0, n) / Math.max(1, d));
 
-// Shared accessors prevent the guard from undercounting stage fan-out, including callers that bypass argument normalization.
-// An absent challenge cap permits all findings, while zero must remain a real cap.
+// Zero caps must remain distinct from absent caps.
 export const effectiveChallengeCap = (L, findings) =>
   Math.max(0, L.challengeCap != null ? L.challengeCap : findings);
 

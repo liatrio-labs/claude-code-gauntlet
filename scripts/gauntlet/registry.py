@@ -50,13 +50,11 @@ VERIFY_SLICE_FIELDS: tuple[str, ...] = (
     "file",
     "line_start",
     "line_end",
-    "description",
-    "evidence",
     "severity",
     "confidence",
-    "cross_file_refs",
-    "origin",
-    "removed_test",
+    "has_cross_file_refs",
+    "has_removed_test_location",
+    "symbols",
 )
 
 DISPATCH_RESULTS = {
@@ -469,13 +467,11 @@ class VerifySliceFinding(TypedDict, total=False):
     file: Any
     line_start: Any
     line_end: Any
-    description: Any
-    evidence: Any
     severity: Any
     confidence: Any
-    cross_file_refs: Any
-    origin: Any
-    removed_test: Any
+    has_cross_file_refs: Any
+    has_removed_test_location: Any
+    symbols: Any
 
 
 ARTIFACT_PATH_TEMPLATES = MappingProxyType(

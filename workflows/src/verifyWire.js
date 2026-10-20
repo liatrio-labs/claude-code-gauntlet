@@ -1,4 +1,6 @@
 import { INT_POLICY, coerceInt, fnv1a32 } from './wire.js';
+import { hasRemovedTestLocation } from './removedTests.js';
+import { extractSymbols } from './verifySymbols.js';
 
 // A narrower alphabet than shellWord keeps encoded strings free of shell syntax.
 export const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
@@ -79,9 +81,7 @@ export function encodeSliceInline(content) {
 // above it is unmeasured. The rest of the command adds about 300 chars.
 export const VERIFY_INLINE_CHAR_BUDGET = 50000;
 
-// Python delta generation and JS checksum/join share this order. Only script-written
-// fields belong here; held findings retain merge-added fields such as agent. The generator
-// projects this list into Python, but VERIFY_SCHEMA is written beside it by hand.
+// Generated into Python; this order also governs the delta checksum.
 export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
 
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
@@ -124,18 +124,29 @@ export function pinNumericFields(finding) {
   return out;
 }
 
-// Fixed order makes the wire deterministic. The generator projects this list into
-// gauntlet.registry; classify_blame overwrites origin before reading it.
-export const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'line_end', 'description', 'evidence', 'severity', 'confidence', 'cross_file_refs', 'origin', 'removed_test'];
+const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'severity', 'confidence'];
+// Fixed order is shared with the generated Python wire type.
+export const VERIFY_SLICE_FIELDS = [...VERIFY_SLICE_SCALAR_FIELDS, 'has_cross_file_refs', 'has_removed_test_location', 'symbols'];
+const verifyProjectionCache = new WeakMap();
 
-// Absent and null differ under Python .get() defaults. The join restores fields
-// omitted here from the held finding.
-export function projectVerifySliceFinding(finding) {
+function projectFinding(finding) {
   const projected = {};
-  for (const k of VERIFY_SLICE_FIELDS) {
-    if (finding && Object.hasOwn(finding, k) && finding[k] !== undefined) projected[k] = finding[k];
+  // Absent and null differ under Python .get() defaults.
+  for (const k of VERIFY_SLICE_SCALAR_FIELDS) {
+    if (Object.hasOwn(finding, k) && finding[k] !== undefined) projected[k] = finding[k];
   }
+  if (Array.isArray(finding.cross_file_refs) && finding.cross_file_refs.length > 0) projected.has_cross_file_refs = true;
+  if (hasRemovedTestLocation(finding)) projected.has_removed_test_location = true;
+  const symbols = [...extractSymbols(finding.description, finding.evidence)].sort().join(' ');
+  if (symbols) projected.symbols = symbols;
   return pinNumericFields(projected);
+}
+
+// Findings stay fixed between planning and dispatch; cache the extraction across both.
+export function projectVerifySliceFinding(finding) {
+  if (!finding || typeof finding !== 'object') return {};
+  if (!verifyProjectionCache.has(finding)) verifyProjectionCache.set(finding, projectFinding(finding));
+  return verifyProjectionCache.get(finding);
 }
 
 // Twin of gauntlet.jsjson.checksum_or_none. Preserve key order to detect an executor

@@ -8,6 +8,7 @@ from gauntlet.removed_tests import removed_tests
 from gauntlet.verify.decide import VerifyContext, run_verification
 
 from tests.support.phase2 import SHA, write_context_inputs
+from tests.support.verify_parity import project_findings
 
 
 def deletion(path, text="assert override\nassert INVALID_TABLE"):
@@ -172,6 +173,7 @@ def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
         0,
     )
     verify_git[1]["grep"] = ("", "", 1)
+    finding = project_findings([finding])[0]
     result = run_verification(
         [finding], VerifyContext(str(tmp_path), "base"), str(patch)
     )
@@ -196,6 +198,7 @@ def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
             "old_end": 2,
         },
     }
+    malformed = project_findings([malformed])[0]
     malformed_result = run_verification(
         [malformed], VerifyContext(str(tmp_path), "base"), str(patch)
     )

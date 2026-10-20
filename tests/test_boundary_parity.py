@@ -25,6 +25,7 @@ from tests.support.pipeline import (
     run_node,
 )
 from tests.support.posting import invoke_posting
+from tests.support.verify_parity import project_findings, run_verify_slice
 
 READ_INPUT = (
     "let source = ''; for await (const chunk of process.stdin) source += chunk;"
@@ -551,47 +552,20 @@ def test_identity_payload_crosses_args_waist() -> None:
 
 
 def test_verify_consumes_pipeline_findings_without_error(
-    tmp_path: Path, pipeline_payload: PersistedPayload
+    tmp_path: Path, pipeline_payload: PersistedPayload, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     findings = pipeline_payload["findings"]
-    findings_path = tmp_path / "findings.json"
-    out_path = tmp_path / "out.json"
     diff_path = tmp_path / "diff.patch"
     diff_path.write_text(build_gh_diff(findings), encoding="utf-8")
-    source = (
-        "import { encodeSliceInline } from './workflows/src/verifyWire.js';"
-        "let source = ''; for await (const chunk of process.stdin) source += chunk;"
-        "process.stdout.write(encodeSliceInline(JSON.parse(source)));"
+    monkeypatch.chdir(REPO)
+    envelope, result = run_verify_slice(
+        {"findings": findings, "base_branch": "main"},
+        tmp_path,
+        head_sha="abcd",
+        nonce="boundary",
+        diff_file=diff_path,
     )
-    token = run_node(
-        source, {"findings": findings, "base_branch": "main"}, timeout=60
-    ).stdout
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(REPO / "scripts/verify_findings.py"),
-            "--input",
-            str(findings_path),
-            "--input-inline",
-            token,
-            "--head-sha",
-            "abcd",
-            "--nonce",
-            "boundary",
-            "--diff-file",
-            str(diff_path),
-            "--output",
-            str(out_path),
-        ],
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=60,
-    )
-    assert result.returncode == 0, result.stderr
     assert result.stdout == ""
-    envelope: dict[str, Any] = json.loads(out_path.read_text(encoding="utf-8"))
     assert list(envelope) == ["status", "receipt", "result"]
     assert envelope["status"] == "ok"
     assert list(envelope["receipt"]) == [
@@ -620,8 +594,10 @@ def test_verify_consumes_pipeline_findings_without_error(
         "surfaced": 0,
         "eliminated": 2,
     }
-    saved: dict[str, Any] = json.loads(findings_path.read_text(encoding="utf-8"))
+    saved: dict[str, Any] = json.loads(
+        (tmp_path / "slice.json").read_text(encoding="utf-8")
+    )
     assert saved == {
-        "findings": findings,
+        "findings": project_findings(findings),
         "base_branch": "main",
     }

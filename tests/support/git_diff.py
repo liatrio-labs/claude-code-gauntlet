@@ -12,10 +12,14 @@ def git(directory, *args):
         check=True,
         text=True,
         encoding="utf-8",
+        timeout=30,
     ).stdout.strip()
 
 
-def patch_repo(directory, monkeypatch, config="external"):
+def init_git_repo(directory, monkeypatch):
+    # Inherited GIT_* variables (a pre-commit hook sets several) redirect git elsewhere.
+    for key in [key for key in os.environ if key.startswith("GIT_")]:
+        monkeypatch.delenv(key)
     for key, value in {
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_SYSTEM": os.devnull,
@@ -25,9 +29,17 @@ def patch_repo(directory, monkeypatch, config="external"):
         "GIT_COMMITTER_EMAIL": "test@example.invalid",
     }.items():
         monkeypatch.setenv(key, value)
-    git(directory, "init", "-q")
-    git(directory, "config", "commit.gpgsign", "false")
-    git(directory, "config", "core.hooksPath", os.devnull)
+    git(directory, "init", "-q", "--template=", "--initial-branch=main")
+    for key, value in (
+        ("commit.gpgsign", "false"),
+        ("core.hooksPath", os.devnull),
+        ("core.autocrlf", "false"),
+    ):
+        git(directory, "config", key, value)
+
+
+def patch_repo(directory, monkeypatch, config="external"):
+    init_git_repo(directory, monkeypatch)
     source = directory / "file"
     source.write_text("old\n", encoding="utf-8", newline="\n")
     git(directory, "add", "file")
