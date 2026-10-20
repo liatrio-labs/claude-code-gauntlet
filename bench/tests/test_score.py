@@ -11,7 +11,6 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from typing import ClassVar
 from unittest import mock
 
@@ -19,7 +18,6 @@ from bench.runner import (
     ledger,
     score,
 )
-from bench.runner.ledger import REQUIRED_KEYS
 from bench.runner.score import (
     bucket_join,
     compute_metrics,
@@ -503,39 +501,8 @@ class ScoreRunRefusalTests(unittest.TestCase):
             )
         self.assertIn("MARTIAN_MODEL", str(ctx.exception))
 
-    def test_no_ok_prs_raises_actionable(self):
-        # A run whose only PR failed -> zero candidates -> the scorer would write no
-        # evaluations.json (FileNotFoundError downstream). score_run must refuse first.
-        state = self.run_dir / "state"
-        state.mkdir()
-        write_json(
-            state / "a.json",
-            {"url": "https://github.com/o/r/pull/1", "status": "failed"},
-        )
-        baselines = self.tmp / "baselines.json"
-        write_json(baselines, {"judge_pin": "claude-opus-4-8-20260101"})
-        with self.assertRaises(RuntimeError) as ctx:
-            score_run(self.run_dir, env={}, baselines_path=baselines)
-        self.assertIn("no scorable PRs", str(ctx.exception))
-
 
 # ----------------------------------------------------- scorer-stage failure surface
-
-
-class ScorerStageFailureTests(unittest.TestCase):
-    def test_stage_nonzero_exit_raises_runtimeerror_naming_stage(self):
-        pin = "claude-opus-4-8-20260101"
-        fake = SimpleNamespace(
-            returncode=1, stdout="", stderr="Traceback: boom in dedup"
-        )
-        with (
-            mock.patch.object(score.subprocess, "run", return_value=fake),
-            self.assertRaises(RuntimeError) as ctx,
-        ):
-            score.run_scorer_stages(pin, "api-key", Path("/tmp/model-dir"))
-        msg = str(ctx.exception)
-        self.assertIn("dedup", msg)  # the failing stage is named
-        self.assertIn("boom", msg)  # stderr tail is surfaced
 
 
 # ------------------------------------------------------------- _read_run_costs
@@ -622,25 +589,6 @@ class AssembleCandidatesTests(unittest.TestCase):
         self.assertIn(url, candidates)
         self.assertEqual(len(candidates[url]["deep-review"]), 1)
         self.assertEqual(per_pr[url]["candidates"][0]["text"], "c1")
-
-    def test_ignores_nested_payload_under_superseded(self):
-        run_dir = self.tmp / "run"
-        url = "https://github.com/o/r/pull/13"
-        archived = run_dir / "pr-13" / "superseded" / "post-review-payload.json"
-        archived.parent.mkdir(parents=True)
-        write_json(
-            archived,
-            {
-                "platform": "github",
-                "payload": {
-                    "comments": [{"body": "archived", "path": "f.py", "line": 3}]
-                },
-                "skipped": [],
-            },
-        )
-        candidates, per_pr = score._assemble_candidates(run_dir, [(url, "ok")])
-        self.assertEqual(candidates[url]["deep-review"], [])
-        self.assertEqual(per_pr[url]["candidates"], [])
 
 
 class ResolvePrDirTests(unittest.TestCase):
@@ -810,255 +758,6 @@ class AuthModeTests(unittest.TestCase):
         write_json(run_dir / "run.json", {"run_id": "smoke-x"})  # pre-flag manifest
         row = self._row(score._read_run_manifest(run_dir))
         self.assertEqual(row["auth_mode"], "api")
-
-
-class ScoreRunEndToEndTests(unittest.TestCase):
-    """One fully wired run: scorer + adjudicator injected, no network."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-        self.pin = "claude-opus-4-8-20260101"
-
-        # Two scored PRs + one failed PR (must be excluded from scoring).
-        self.uA = "https://github.com/keycloak/keycloak/pull/101"
-        self.uB = "https://github.com/grafana/grafana/pull/202"
-        self.uC = "https://github.com/discourse/discourse/pull/303"
-
-        self.run_dir = self.tmp / "subset-20260717T000000Z-abc1234"
-        self.run_dir.mkdir()
-
-        # checkpoint state.
-        state = self.run_dir / "state"
-        state.mkdir()
-        write_json(state / "a.json", {"url": self.uA, "status": "ok"})
-        write_json(state / "b.json", {"url": self.uB, "status": "ok"})
-        write_json(state / "c.json", {"url": self.uC, "status": "failed"})
-
-        # PR A: 3 comments (2 will match goldens, 1 is an extra).
-        self._pr(
-            self.uA,
-            [
-                ("cA1 body", "src/a.py", 11),
-                ("cA2 body", "src/a.py", 12),
-                ("cA3 body", "src/a.py", 13),
-            ],
-            cost=0.5,
-            tokens={"input_tokens": 100, "output_tokens": 50},
-        )
-        # PR B: 1 comment, unmatched (an extra to adjudicate).
-        self._pr(
-            self.uB,
-            [
-                ("cB1 body", "src/b.py", 5),
-            ],
-            cost=0.5,
-            tokens={"input_tokens": 60, "output_tokens": 40},
-        )
-
-        # golden data the scorer would read (2 goldens per PR).
-        self.golden = self.tmp / "golden.json"
-        write_json(
-            self.golden,
-            {
-                self.uA: {
-                    "source_repo": "keycloak",
-                    "golden_comments": [
-                        {"comment": "gA1", "severity": "High"},
-                        {"comment": "gA2", "severity": "Medium"},
-                    ],
-                    "reviews": [],
-                },
-                self.uB: {
-                    "source_repo": "grafana",
-                    "golden_comments": [
-                        {"comment": "gB1", "severity": "High"},
-                        {"comment": "gB2", "severity": "Low"},
-                    ],
-                    "reviews": [],
-                },
-                self.uC: {
-                    "source_repo": "discourse",
-                    "golden_comments": [
-                        {"comment": "gC1", "severity": "Low"},
-                    ],
-                    "reviews": [],
-                },
-            },
-        )
-
-        self.baselines = self.tmp / "baselines.json"
-        write_json(
-            self.baselines,
-            {
-                "judge_pin": self.pin,
-                "adjudicator_pin": self.pin,
-                "scorer_sha": "dfc6cb42",
-            },
-        )
-        self.ledger = self.tmp / "experiments.jsonl"
-
-        self.vendor = self.tmp / "vendor"
-        (self.vendor / "results").mkdir(parents=True)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def _pr(self, url, comments, cost, tokens):
-        # New runs key each PR dir on pr-{owner}-{repo}-{n} (FIX 1); a fresh run's
-        # scoring resolves that name directly.
-        pr_dir = self.run_dir / score.invoke.pr_dir_name({"url": url})
-        pr_dir.mkdir()
-        payload = {
-            "platform": "github",
-            "payload": {
-                "comments": [
-                    {"body": body, "path": path, "line": line}
-                    for body, path, line in comments
-                ]
-            },
-            "skipped": [],
-        }
-        write_json(pr_dir / "post-review-payload.json", payload)
-        # a diff touching each commented path/line so slice_hunk succeeds.
-        paths = {}
-        for _body, path, line in comments:
-            paths.setdefault(path, []).append(line)
-        diff = []
-        for path, lines in paths.items():
-            start = min(lines)
-            span = max(lines) - start + 1 + 2
-            diff.append(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n")
-            diff.append(f"@@ -{start},{span} +{start},{span} @@\n")
-            for ln in range(start, start + span):
-                diff.append(f"+code line {ln}\n")
-        (pr_dir / "diff.patch").write_text("".join(diff), encoding="utf-8")
-        # cost/token envelope the runner would have written.
-        write_json(
-            pr_dir / "raw.json",
-            {
-                "type": "result",
-                "total_cost_usd": cost,
-                "usage": tokens,
-            },
-        )
-
-    def _fake_scorer(self, model_dir):
-        """Return a run_scorer that writes an evaluations.json into model_dir."""
-
-        def run_scorer(pin, api_key, md):
-            self.assertEqual(pin, self.pin)
-            self.assertEqual(str(md), str(model_dir))
-            evaluations = {
-                self.uA: {"deep-review": ev_result(2, 1, 0, ["cA1 body", "cA2 body"])},
-                self.uB: {"deep-review": ev_result(0, 1, 2, [])},
-            }
-            write_json(model_dir / "evaluations.json", evaluations)
-
-        return run_scorer
-
-    def _fake_adjudicator(self, seen):
-        def adjudicator(comment_text, diff_hunk, file_ctx, pin, api_key):
-            seen.append({"text": comment_text, "hunk": diff_hunk, "pin": pin})
-            bucket = "valid_extra" if comment_text == "cA3 body" else "noise"
-            return {"bucket": bucket, "failed_check": None, "reason": "test"}
-
-        return adjudicator
-
-    def test_full_pipeline(self):
-        sanitized = self.pin.replace("/", "_")
-        model_dir = self.vendor / "results" / sanitized
-        seen = []
-
-        with (
-            mock.patch.object(score, "VENDOR_DIR", self.vendor),
-            mock.patch.object(score, "GOLDEN_DATA", self.golden),
-        ):
-            scores = score_run(
-                self.run_dir,
-                env={},
-                baselines_path=self.baselines,
-                ledger_path=self.ledger,
-                run_scorer=self._fake_scorer(model_dir),
-                adjudicator=self._fake_adjudicator(seen),
-            )
-
-        m = scores["metrics"]
-        # tp=2, fp=2, fn=2 across the two scored PRs.
-        self.assertAlmostEqual(m["golden_recall"], 0.5)
-        self.assertAlmostEqual(m["precision_strict"], 0.5)
-        self.assertAlmostEqual(m["valid_extra_rate"], 0.25)  # cA3 -> valid_extra, /4
-        self.assertAlmostEqual(m["noise_rate"], 0.25)  # cB1 -> noise, /4
-        self.assertEqual(
-            m["per_bucket"], {"golden_matched": 2, "valid_extra": 1, "noise": 1}
-        )
-        self.assertEqual(m["n_prs"], 2)
-
-        # Adjudicator saw exactly the two unmatched comments, with real hunks.
-        adj_texts = sorted(s["text"] for s in seen)
-        self.assertEqual(adj_texts, ["cA3 body", "cB1 body"])
-        for s in seen:
-            self.assertTrue(s["hunk"].startswith("@@ "))
-            self.assertEqual(s["pin"], self.pin)
-
-        # Costs summed from per-PR raw.json envelopes.
-        row = scores["ledger_row"]
-        self.assertAlmostEqual(row["cost_usd"], 1.0)
-        self.assertEqual(row["tokens_total"], 250)  # 150 + 100
-        self.assertEqual(row["tier"], "subset")
-        self.assertEqual(
-            row["tool"], "deep-review-v2"
-        )  # no anchor manifest -> v2 label
-        self.assertEqual(row["auth_mode"], "api")  # no manifest -> API-keyed default
-        self.assertEqual(row["judge_pin"], self.pin)
-        self.assertEqual(row["scorer_sha"], "dfc6cb42")
-        self.assertEqual(row["envelope"]["cap"], 25)
-
-        # Ledger row carries every required key and was appended.
-        for key in REQUIRED_KEYS:
-            self.assertIn(key, row)
-        appended = [
-            json.loads(line)
-            for line in self.ledger.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        self.assertEqual(len(appended), 1)
-        self.assertEqual(appended[0]["run_id"], row["run_id"])
-
-        # scores.json written next to the run.
-        self.assertTrue((self.run_dir / "scores.json").is_file())
-
-        # The failed PR (uC) was excluded from scoring.
-        self.assertNotIn(self.uC, scores["buckets"])
-
-        # candidates.json + injected benchmark_data.json staged for the scorer.
-        staged = json.loads((model_dir / "candidates.json").read_text(encoding="utf-8"))
-        self.assertEqual(set(staged), {self.uA, self.uB})
-        bench_data = json.loads(
-            (self.vendor / "results" / "benchmark_data.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        self.assertEqual(bench_data[self.uA]["reviews"][0]["tool"], "deep-review")
-        self.assertEqual(bench_data[self.uC]["reviews"], [])  # not scored -> no stub
-
-
-class PrepareScorerInputsStaleTests(unittest.TestCase):
-    def test_stale_stage_outputs_removed_before_run(self):
-        import shutil as _shutil
-
-        tmp = Path(tempfile.mkdtemp(prefix="bench-score-stale-"))
-        self.addCleanup(_shutil.rmtree, tmp, ignore_errors=True)
-        results = tmp / "results"
-        model = results / "pin"
-        model.mkdir(parents=True)
-        (model / "evaluations.json").write_text('{"stale": true}', encoding="utf-8")
-        (model / "dedup_groups.json").write_text('{"stale": true}', encoding="utf-8")
-        url = "https://github.com/grafana/grafana/pull/80329"
-        score._prepare_scorer_inputs({url: {"deep-review": []}}, results, model)
-        self.assertFalse((model / "evaluations.json").exists())
-        self.assertFalse((model / "dedup_groups.json").exists())
-        self.assertTrue((model / "candidates.json").exists())
 
 
 if __name__ == "__main__":

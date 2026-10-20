@@ -30,7 +30,12 @@ REPO_ROOT = BENCH_DIR.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.runner.ledger import cost_is_billable, row_auth_mode  # noqa: E402
+from bench.runner.ledger import (  # noqa: E402
+    cost_is_billable,
+    read_rows,
+    row_auth_mode,
+    score_identity,
+)
 
 # Section break inside a tooltip / aria string. U+2028 (LINE SEPARATOR) renders as
 # a hard break in the browser but is NOT a "\n", so it survives _normalize() on one
@@ -216,14 +221,7 @@ ANCHOR_METRICS = (
 # Loading
 # ---------------------------------------------------------------------------
 def load_ledger(path):
-    """Parse the NDJSON ledger into a list of row dicts (blank lines skipped)."""
-    rows = []
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    return rows
+    return read_rows(path)
 
 
 def load_baselines(path):
@@ -355,7 +353,7 @@ def deep_review_points(rows):
     for r in rows:
         if r.get("tool") != "deep-review-v2":
             continue
-        rid = r.get("run_id")
+        rid = _row_key(r)
         if rid not in groups:
             groups[rid] = []
             order.append(rid)
@@ -366,7 +364,7 @@ def deep_review_points(rows):
         rep = sorted(grp, key=lambda r: r.get("ts", ""))[0]
         points.append(
             {
-                "run_id": rid,
+                "run_id": rep.get("run_id"),
                 "row": rep,
                 "count": len(grp),
                 "identical": len({_metric_signature(r) for r in grp}) == 1,
@@ -388,7 +386,8 @@ def latest_subset_row(rows):
     subset = [
         r
         for r in rows
-        if str(r.get("tool", "")).startswith("deep-review")
+        if r.get("schema_version", 1) == 1
+        and str(r.get("tool", "")).startswith("deep-review")
         and r.get("tier") == "subset"
     ]
     if not subset:
@@ -402,7 +401,9 @@ def row_by_run_id(rows, run_id):
     Earliest ts wins on a k=5 re-score (byte-identical per judge_sd=0), matching
     the "representative row" convention used everywhere else in this module.
     """
-    cands = [r for r in rows if r.get("run_id") == run_id]
+    cands = [
+        r for r in rows if r.get("run_id") == run_id and r.get("schema_version", 1) == 1
+    ]
     return sorted(cands, key=lambda r: r.get("ts", ""))[0] if cands else None
 
 
@@ -423,7 +424,7 @@ def ledger_groups(rows):
     groups = {}
     order = []
     for r in rows:
-        key = (r.get("run_id"), r.get("tool"))
+        key = (_row_key(r), r.get("tool"))
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -452,6 +453,12 @@ def classify(row, top_anchor, ceiling):
     bars (recall must clear the top anchor, noise must stay under the ceiling);
     smoke runs are judged by whether their experiment stuck.
     """
+    if row.get("schema_version") == 2:
+        return (
+            "base",
+            "?",
+            "descriptive score; measurement validity and calibration pending",
+        )
     tool = str(row.get("tool", "") or "")
     tier = row.get("tier")
     change = str(row.get("change") or "")
@@ -537,7 +544,7 @@ def scored_run_points(rows, top_anchor, ceiling):
     for r in rows:
         if r.get("tool") not in TRACKED_TOOLS:
             continue
-        key = (r.get("run_id"), r.get("tool"))
+        key = (_row_key(r), r.get("tool"))
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -1076,6 +1083,7 @@ def subset_comparison(rows, baselines):
 
     Returns ``(v2_row, v3_row, n_goldens)`` or ``(None, None, n)`` when either
     side is missing (e.g. the offline test fixture with no v3 subset)."""
+    rows = [r for r in rows if r.get("schema_version", 1) == 1]
     bv2 = baselines.get("baseline_v2", {})
     n_goldens = bv2.get("n_goldens")
     v2_row = next(
@@ -2245,7 +2253,7 @@ def _thresholds(baselines):
     return top_anchor, v2_base, ceiling
 
 
-def render_html(rows, baselines, sha, generated):
+def _render_historical_html(rows, baselines, sha, generated):
     top_anchor, v2_base, ceiling = _thresholds(baselines)
     points = scored_run_points(rows, top_anchor, ceiling)
     groups = ledger_groups(rows)
@@ -2364,6 +2372,114 @@ def render_html(rows, baselines, sha, generated):
         "</html>",
     ]
     return "\n".join(doc)
+
+
+def _row_key(row):
+    if row.get("schema_version") == 2:
+        return (
+            row.get("epoch_id"),
+            row.get("profile"),
+            row.get("population_sha256"),
+            score_identity(row),
+        )
+    identity = score_identity(row)
+    return (
+        identity.epoch_id or "legacy_unknown",
+        "all",
+        row.get("run_id"),
+        row.get("scorer_sha"),
+    )
+
+
+def spend_totals(rows):
+    seen_attempts, seen_scores = set(), set()
+    review = 0.0
+    judge = 0.0
+    unmeasured = 0
+    for row in rows:
+        if row.get("schema_version") == 2:
+            identity = score_identity(row)
+            attempts = row.get("review_attempt_costs", {})
+        else:
+            identity = (row.get("run_id"),)
+            attempts = {
+                "legacy-run:" + str(row.get("run_id")): row.get("cost_usd") or 0
+            }
+        for attempt_id, amount in attempts.items():
+            key = (row.get("run_id"), attempt_id)
+            if key not in seen_attempts and cost_is_billable(row):
+                review += amount
+            seen_attempts.add(key)
+        if identity not in seen_scores:
+            for field in ("judge_cost_usd", "adjudicator_cost_usd"):
+                amount = row.get(field)
+                if amount is None:
+                    unmeasured += 1
+                else:
+                    judge += amount
+        seen_scores.add(identity)
+    return {
+        "review_cost_usd": review,
+        "measured_judging_cost_usd": judge if not unmeasured else None,
+        "unmeasured_judging_entries": unmeasured,
+    }
+
+
+def render_html(rows, baselines, sha, generated):
+    historical = [r for r in rows if r.get("schema_version", 1) == 1]
+    unknown = [r for r in historical if score_identity(r).epoch_id is None]
+    archived_baselines = baselines
+    if baselines.get("epoch_id"):
+        historical = [
+            r for r in historical if score_identity(r).epoch_id == "dfc6cb4-v1"
+        ]
+        archived_baselines = load_baselines(
+            BENCH_DIR / "golden/epochs/dfc6cb4-v1/baselines.json"
+        )
+    doc = _render_historical_html(historical, archived_baselines, sha, generated)
+    sections = [
+        '<section id="epoch-scores"><h2>Active epoch e616e84-v1 / core</h2>',
+        "<p>Measurement and calibration pending. Historical benchmark and cost claims below use dfc6cb4-v1 / all.</p>",
+    ]
+    if unknown:
+        sections.append(
+            "<h3>Legacy unknown</h3><p>Unverified scorer identity; descriptive history only: "
+            + html.escape(", ".join(str(r.get("run_id")) for r in unknown))
+            + "</p>"
+        )
+    versioned = [r for r in rows if r.get("schema_version") == 2]
+    if versioned:
+        costs = spend_totals(versioned)
+        sections.append(
+            "<p>Review spend counted once per selected attempt: "
+            + fmt_money(costs["review_cost_usd"])
+            + "; judging spend: "
+            + fmt_money(costs["measured_judging_cost_usd"])
+            + "; unmeasured judging entries: "
+            + str(costs["unmeasured_judging_entries"])
+            + "</p>"
+        )
+    for group in ledger_groups(versioned):
+        row = group["row"]
+        label = " / ".join(
+            str(row.get(k, ""))
+            for k in ("epoch_id", "profile", "population_sha256", "run_id", "score_id")
+        )
+        sections.append(
+            "<article><h3>"
+            + html.escape(label)
+            + "</h3><p>Denominator: "
+            + html.escape(str(row.get("denominator")))
+            + "; recall: "
+            + fmt_pct(row.get("golden_recall"))
+            + "; descriptive score; no verdict.</p></article>"
+        )
+    sections.append("</section><h2>Historical epoch dfc6cb4-v1 / all</h2>")
+    return doc.replace(
+        "<h2>Release progression</h2>",
+        "\n".join(sections) + "<h2>Release progression</h2>",
+        1,
+    )
 
 
 def _normalize(text):

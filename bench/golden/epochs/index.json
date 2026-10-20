@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "active_epoch_id": "e616e84-v1",
+  "epochs": {
+    "dfc6cb4-v1": "epochs/dfc6cb4-v1/epoch.json",
+    "e616e84-v1": "epochs/e616e84-v1/epoch.json"
+  },
+  "manifest_sha256": {
+    "dfc6cb4-v1": "e162e7e0f1ce063eb1b37b52f8201c7be8a9065a2770369138be3ce6e1970b43",
+    "e616e84-v1": "87a036e33967848272b11fabb75c971585c70db7f24461a197d7b8c1c81275f5"
+  }
+}

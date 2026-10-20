@@ -1,142 +1,73 @@
 # Vendored upstream assets
 
-This directory and `bench/golden/` contain assets derived from an external,
-MIT-licensed benchmark. All derivations are pinned to a single upstream commit
-so the harness is reproducible offline.
+The MIT-licensed benchmark comes from
+[withmartian/code-review-benchmark](https://github.com/withmartian/code-review-benchmark).
+Copyright (c) 2025 Martian (withmartian.com).
 
-## Upstream
+## Active revision
 
-- **Repository:** https://github.com/withmartian/code-review-benchmark
-- **Pinned commit:** `dfc6cb427b5d0d7492a8d875ee9447744b7de3d1`
-- **License:** MIT — Copyright (c) 2025 Martian (withmartian.com)
-- **All benchmark assets live under `offline/`** in the upstream tree
-  (`offline/golden_comments/`, `offline/results/`, `offline/code_review_benchmark/`).
-  The upstream `online/` tree is unrelated and is not vendored.
+The active epoch is `e616e84-v1`, upstream/scorer commit
+`e616e849755441da38f18bf3adba2c9583b03803`.
+The five `bench/golden/golden_comments/*.json` files are verbatim upstream data.
+`benchmark_data.min.json` retains only PR title, original URL, source repository,
+golden comments including severity/category, and empty reviews from
+`offline/results/benchmark_data.json`. It has 173 bugs across the same 50 PRs.
+Raw and lean goldens agree. Subsets, SHAs, adapter and frozen anchor candidates
+retain their original bytes.
 
-The clone used to produce these assets lives at `bench/workspace/upstream/`
-(gitignored, not committed). Re-pin by re-cloning at the commit above.
+The primary profile is core (158 full / 66 gate). Strict contains 139 full / 58
+gate, and all contains 173 full / 73 gate. Scoring keeps upstream false positives
+unchanged when excluding golden categories. New anchors and calibration remain
+pending. No leaderboard rows were adopted.
 
-## Citation
+## Immutable epochs
 
-```bibtex
-@misc{code_review_benchmark,
-  title   = {Code Review Bench},
-  author  = {Aleksandr Zverianskii and Ashley Zhang and Jacob Clyne and Antía Garcia and Fazl Barez and Shriyash Upadhyay},
-  url     = {https://github.com/withmartian/code-review-benchmark},
-  year    = {2026},
-  license = {MIT}
-}
-```
+`bench/golden/epochs/index.json` names the active epoch and pins manifest bytes.
+Each epoch directory contains its manifest, authoritative lean corpus, raw goldens,
+bug identities, labels, baselines and kept scorer sources with their MIT license.
+Manifest content hashes validate the corpus, bugs, labels and scorer modules;
+byte hashes additionally protect all archived files.
 
-## What is vendored from this pin (golden data — Task 5)
+`dfc6cb4-v1` preserves the old upstream/scorer commit
+`dfc6cb427b5d0d7492a8d875ee9447744b7de3d1`. Its raw goldens contain 136 claims;
+its scorer-authoritative input contains 137, including the additional Sentry
+paginator import claim. It supports all only, with no manufactured categories.
+Its original baselines, ledger bytes and adjudicator prompt hashes are archived.
+Historical results apply to that epoch only.
 
-Copied into `bench/golden/`:
+PR-level labels retain the old source epoch in metadata. Derived count/severity
+labels are refreshed. New comment labels join byte-identical claims to old raw
+positional labels by stable bug identity; unmatched claims are not_relabelled.
+The older label taxonomy never supplies the new category field.
 
-- `golden_comments/{keycloak,grafana,discourse,sentry,cal_dot_com}.json` — the 5
-  upstream golden-comment files, verbatim, covering 50 PRs. (From
-  `offline/golden_comments/`.)
-- `pr_labels.json` — upstream `offline/results/pr_labels.json` with the single
-  stray non-PR entry `https://example/pr` removed (51 → 50 entries).
-- `benchmark_data.min.json` — a lean, scorer-compatible reconstruction of
-  upstream `offline/results/benchmark_data.json` (20 MB, deliberately **not**
-  vendored): for each of the 50 golden `url`s we keep only
-  `{pr_title, original_url, source_repo, golden_comments, reviews: []}`. The 41
-  tools' raw `reviews` are dropped (empty list) — the scorer reads goldens from
-  this shape and takes candidates from our adapter instead.
-- `subsets.json` — the gate (15) / holdout (10) / smoke (3) / review_md_fixtures
-  (2) membership from spec H4, keyed by full golden `url` values.
+## Kept scorer source
 
-### Golden-count note (upstream inconsistency — 136 vs 137)
+The active vendor and each epoch snapshot contain:
 
-Upstream is internally inconsistent by one golden comment:
+- `code_review_benchmark/__init__.py`, `step2_5_dedup_candidates.py` and
+  `step3_judge_comments.py`.
+- `tests/test_step3.py`, the trimmed path-bootstrap-only `tests/conftest.py`.
+- Existing trimmed `pyproject.toml`, environment lock, `.gitignore` and `LICENSE`.
 
-- `offline/golden_comments/sentry.json` lists **3** comments for
-  `sentry-greptile/pull/1`, so the 5 raw golden-comment files sum to **136**
-  goldens across 50 PRs.
-- `offline/results/benchmark_data.json` (the file the scorer's `step3` actually
-  reads) lists **4** goldens for that same PR, summing to **137** across 50 PRs,
-  which matches spec H4 (gate PR `sentry-greptile#1` annotated `4g`).
+Only step3 and its corresponding test changed at the new revision. Step2_5,
+trimmed metadata and conftest retain their bytes. Online extraction, dashboards,
+label generation, other stages and their dependencies are excluded.
+The vendor environment requires Python >=3.11 and its existing openai/tqdm
+packages; new harness code remains Python 3.10 stdlib-only.
 
-`benchmark_data.min.json` is reconstructed from `benchmark_data.json`, so it
-carries the scorer-authoritative **137**. The verbatim `golden_comments/*.json`
-copies are preserved as-is (**136**) for provenance; do not hand-edit them to
-reconcile. Recall denominators come from `benchmark_data.min.json`.
+The harness never imports vendor modules. Each execution uses a private results
+tree and the named epoch's source on PYTHONPATH, through the already-provisioned
+vendor environment with `uv run --project <absolute vendor path> --no-sync`.
+Dedup groups are passed explicitly. Judge and adjudicator remain
+`claude-opus-4-5-20251101`, temperature 0.
+No upstream code or dependency installation was executed during this migration.
 
-## Scorer (Task 7)
+## Preparation and measurement
 
-A minimal, runnable subset of the upstream Python package is vendored under
-`bench/vendor/code-review-benchmark/`, pinned to the **same** upstream commit
-`dfc6cb427b5d0d7492a8d875ee9447744b7de3d1` (from `offline/`). It provides only
-the two pipeline stages the harness invokes — dedup (step2_5) and judge (step3) —
-plus their test.
-
-### Files vendored (paths relative to `bench/vendor/code-review-benchmark/`)
-
-- `code_review_benchmark/__init__.py` — empty package marker (verbatim).
-- `code_review_benchmark/step2_5_dedup_candidates.py` — dedup stage (verbatim).
-- `code_review_benchmark/step3_judge_comments.py` — LLM-judge stage (verbatim).
-- `tests/test_step3.py` — the only upstream test covering the kept modules
-  (verbatim). It exercises `step3` (candidate selection, match/metric arithmetic,
-  `EvaluationState` round-trip, batch processing, `main()` write path) fully
-  mocked — no network, no keys.
-- `tests/conftest.py` — **trimmed**: keeps only the `sys.path` bootstrap. The
-  upstream copy also installed an `openpyxl` stub for the pruned xlsx/label steps;
-  that stub is dropped since no vendored module imports `openpyxl`.
-- `pyproject.toml` — **trimmed** (see deps below).
-- `uv.lock` — **regenerated** by `uv lock` against the trimmed deps.
-- `LICENSE` — upstream MIT license, copied verbatim for attribution.
-- `.gitignore` — excludes `.venv/`, caches, and the scorer's runtime `results/`.
-
-### Transitive imports
-
-`step2_5` and `step3` import **no other `code_review_benchmark` modules** — each
-redefines its own `load_dotenv` / `sanitize_model_name` / `get_model_dir` /
-`process_batch`. Third-party imports across both files reduce to `openai`
-(`AsyncOpenAI`) and `tqdm` only. `openai`'s async client uses `httpx`, so
-`aiohttp` is **not** needed despite being an upstream declared dep.
-
-### Pruned (and why)
-
-- `step0_fork_prs.py`, `step1_download_prs.py`, `step2_extract_comments.py`,
-  `step4_export_by_tool.py`, `step5_label_prs.py` — pipeline stages the harness
-  does not run (extraction is skipped: deep-review comments are atomic and enter
-  at dedup→judge per spec H5).
-- `step_speed_analysis.py`, `summary_table.py`, `analysis/`, dashboard — reporting
-  / xlsx paths; `step_speed_analysis` and the dashboard carry the **undeclared
-  `openpyxl`** import path flagged in the plan. None are vendored.
-- `tests/test_step0/1/2/4/5.py` — tests for the pruned stages; the `openpyxl`
-  conftest stub existed only for these.
-- Deps `aiohttp`, `matplotlib`, `requests`, and dev `ruff` (plus the `[tool.ruff]`
-  config and the `[project.scripts]` entries for pruned steps) — unused by the
-  kept modules. Trimmed deps: runtime `openai>=1.10.0`, `tqdm>=4.66.0`; dev
-  `pytest>=8.0.0`. `uv lock` resolved 23 packages (openai/tqdm/pytest + transitive).
-
-### Judge env convention
-
-The scorer's judge/dedup LLM client is configured entirely by environment (a
-plain OpenAI-SDK client — **no Batch API**):
-
-- `MARTIAN_API_KEY` — **required**; both `DedupLLM` and `LLMJudge` raise
-  `ValueError("MARTIAN_API_KEY environment variable required")` if unset.
-- `MARTIAN_BASE_URL` — OpenAI-compatible base URL (upstream default
-  `https://api.withmartian.com/v1`; the harness sets
-  `https://api.anthropic.com/v1/`).
-- `MARTIAN_MODEL` — model id (upstream default `openai/gpt-4o-mini`; the harness
-  pins the resolved Opus 4.8 dated snapshot). Sanitized (`/`→`_`) into the results
-  dir name.
-
-Per-model outputs are written under `results/{sanitized_model}/`
-(`candidates.json` in, `dedup_groups.json` from step2_5, `evaluations.json` from
-step3). `step3` reads golden data from `results/benchmark_data.json` by default
-(`BENCHMARK_DATA_FILE`); the harness points this at the vendored
-`benchmark_data.min.json`. Temperature is 0.0 throughout.
-
-### Verification
-
-`cd bench/vendor/code-review-benchmark && uv sync --dev && uv run pytest tests/ -q`
-→ **7 passed**, with `MARTIAN_*` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` unset
-(no network, no keys). Python floor `>=3.11` (uv selected CPython 3.11).
-
-There is **no dedicated `step2_5` test upstream**; `test_step3.py` is the only
-test that references the kept modules. The dedup module is covered indirectly by
-its consumer (`step3`'s `dedup_groups` path) and by runtime use in the harness.
+`python3 -m bench.runner.migrate_epoch prepare --source PATH --upstream-sha SHA --out PATH`
+reads upstream JSON and source bytes as data and emits an inactive, complete copy
+proposal. It performs no git operations or dependency installation.
+Use `archive-run` before live rescoring, then explicit epoch scoring for continuity.
+The never-scored repeat records scores_absent rather than inventing legacy scores.
+Paid rescoring, anchor rejudging, calibration and post-commit protected tree hashes
+belong to the orchestrator. No new measurement is claimed here.

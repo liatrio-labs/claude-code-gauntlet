@@ -8,6 +8,30 @@ Maintainer work-queue items link here rather than restating the tiers — see
 bench measurement." Paired measurements are rare, expensive, owner-triggered
 events — not the default gate for every change.
 
+## Epoch migration status
+
+The active corpus/scorer is `e616e84-v1`, primary core. Baselines, anchors,
+judge variability and diagnostic noise thresholds are pending measurement.
+`judge_sd` and `delta_noise` remain null until calibration is recorded.
+All numeric benchmark and cost claims below are historical `dfc6cb4-v1 / all`
+measurements and cannot be used as new-epoch verdict thresholds.
+
+Before rescoring, archive the available score and review artifacts of
+`mini-20261020-030509-839b1886` and `mini-20261020-140911-94ea095a` with
+`python3 -m bench.runner.migrate_epoch archive-run --run-dir PATH --epoch dfc6cb4-v1`.
+The latter run was never scored; preserve its reviews and record scores_absent.
+Then score identical frozen review bytes under old/all and new/all/core/strict,
+rejudge the three gate anchors and run fixed-candidate calibration. Commands
+`rescore`, `anchors` and `calibrate` take explicit epoch identities and never
+rewrite committed baselines. No live result is asserted by the code migration.
+Recompute protected git-tree hashes after the orchestrator commits.
+
+Stage trace, complete attempt/window validity, comparisons, simulation and leak
+coverage are subsequent code stages. No real trusted usage-limit/reset fixture
+exists; synthetic detector fixtures and an empty positive-signature registry
+are required in the validity stage. Live migration smoke and a known-loss trace
+remain external acceptance. Holdout reviews are excluded from migration tuning.
+
 ## Tier ladder
 
 Every cost below is `auth_mode=api` spend; see

@@ -7,11 +7,8 @@ plumbing spot-check that makes API spend lives outside the test suite.
 """
 
 import json
-import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
-from unittest import mock
 
 from bench.runner import anchors, score
 from bench.runner.anchors import (
@@ -95,391 +92,7 @@ class AnchorCandidatesFileTests(unittest.TestCase):
 # ---------------------------------------------- Step 2: spot_check (mocked)
 
 
-class SpotCheckTests(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-        self.url = "https://github.com/o/r/pull/1"
-        self.judge = "claude-opus-4-5-20251101"
-
-        # anchor candidates fixture: claude (2), coderabbit (3).
-        self.anchors_path = self.tmp / "anchors.json"
-        write_json(
-            self.anchors_path,
-            {
-                self.url: {
-                    "claude": [
-                        {
-                            "text": "c-match",
-                            "path": None,
-                            "line": None,
-                            "source": "extracted",
-                        },
-                        {
-                            "text": "c-extra",
-                            "path": None,
-                            "line": None,
-                            "source": "extracted",
-                        },
-                    ],
-                    "coderabbit": [
-                        {
-                            "text": "r-match",
-                            "path": None,
-                            "line": None,
-                            "source": "extracted",
-                        },
-                        {
-                            "text": "r-x1",
-                            "path": None,
-                            "line": None,
-                            "source": "extracted",
-                        },
-                        {
-                            "text": "r-x2",
-                            "path": None,
-                            "line": None,
-                            "source": "extracted",
-                        },
-                    ],
-                }
-            },
-        )
-        # golden fixture (3 goldens) so n_golden and staging resolve.
-        self.golden_path = self.tmp / "golden.json"
-        write_json(
-            self.golden_path,
-            {
-                self.url: {
-                    "source_repo": "r",
-                    "golden_comments": [
-                        {"comment": "g1", "severity": "High"},
-                        {"comment": "g2", "severity": "Low"},
-                        {"comment": "g3", "severity": "Medium"},
-                    ],
-                    "reviews": [],
-                }
-            },
-        )
-        self.results_dir = self.tmp / "results"
-        self.diff_out = self.tmp / "spot-check-diff.json"
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def _fake_scorer(self, our_eval):
-        model_dir = self.results_dir / self.judge.replace("/", "_")
-
-        def run_scorer(model, key, base_url, dedup_rel, env=None):
-            self.assertEqual(model, self.judge)
-            model_dir.mkdir(parents=True, exist_ok=True)
-            write_json(model_dir / "evaluations.json", our_eval)
-
-        return run_scorer
-
-    def _ev(self, tp, fp, fn, matched, fps):
-        return {
-            "tp": tp,
-            "fp": fp,
-            "fn": fn,
-            "true_positives": [{"matched_candidate": t} for t in matched],
-            "false_positives": [{"candidate": t} for t in fps],
-        }
-
-    def _upstream(self, path, claude, coderabbit):
-        write_json(path, {self.url: {"claude": claude, "coderabbit": coderabbit}})
-
-    def _run(self, our_eval, upstream_eval):
-        up_path = self.tmp / "upstream_eval.json"
-        write_json(up_path, upstream_eval)
-        with mock.patch.object(anchors, "GOLDEN_DATA", self.golden_path):
-            return spot_check(
-                self.url,
-                judge_model=self.judge,
-                api_key="example-key",
-                anchors_path=self.anchors_path,
-                upstream_eval_path=up_path,
-                results_dir=self.results_dir,
-                run_scorer=self._fake_scorer(our_eval),
-                diff_out=self.diff_out,
-            )
-
-    def test_exact_and_within_tolerance_passes(self):
-        our = {
-            self.url: {
-                "claude": self._ev(1, 1, 2, ["c-match"], ["c-extra"]),
-                "coderabbit": self._ev(2, 2, 1, ["r-match", "r-x1"], ["r-x2"]),
-            }
-        }
-        upstream = {
-            self.url: {
-                "claude": self._ev(1, 1, 2, ["c-match"], ["c-extra"]),  # exact
-                "coderabbit": self._ev(2, 1, 1, ["r-match", "r-x1"], ["r-x2"]),  # fp +1
-            }
-        }
-        report = self._run(our, upstream)
-        self.assertTrue(report["pass"])
-        self.assertTrue(report["per_tool"]["claude"]["within_tolerance"])
-        self.assertTrue(report["per_tool"]["coderabbit"]["within_tolerance"])
-        self.assertEqual(report["per_tool"]["coderabbit"]["deltas"]["fp"], 1)
-        # diff file always written.
-        self.assertTrue(self.diff_out.is_file())
-        self.assertEqual(
-            json.loads(self.diff_out.read_text(encoding="utf-8"))["pr_url"], self.url
-        )
-
-    def test_drift_beyond_tolerance_fails_and_captures_diff(self):
-        our = {
-            self.url: {
-                "claude": self._ev(1, 1, 2, ["c-match"], ["c-extra"]),
-                "coderabbit": self._ev(2, 4, 1, ["r-match", "r-x1"], ["r-x2"]),  # fp +3
-            }
-        }
-        upstream = {
-            self.url: {
-                "claude": self._ev(1, 1, 2, ["c-match"], ["c-extra"]),
-                "coderabbit": self._ev(2, 1, 1, ["r-match", "r-x1"], ["r-x2"]),
-            }
-        }
-        report = self._run(our, upstream)
-        self.assertFalse(report["pass"])
-        self.assertTrue(report["per_tool"]["claude"]["within_tolerance"])
-        self.assertFalse(report["per_tool"]["coderabbit"]["within_tolerance"])
-        self.assertEqual(report["per_tool"]["coderabbit"]["deltas"]["fp"], 3)
-        # full per-comment comparison persisted for verbatim inspection.
-        saved = json.loads(self.diff_out.read_text(encoding="utf-8"))
-        self.assertIn("fp_ours", saved["per_tool"]["coderabbit"])
-        self.assertIn("matched_upstream", saved["per_tool"]["coderabbit"])
-
-    def test_unknown_pr_url_raises(self):
-        with self.assertRaises(ValueError):
-            spot_check(
-                "https://github.com/o/r/pull/999",
-                api_key="k",
-                anchors_path=self.anchors_path,
-                run_scorer=lambda *a, **k: None,
-            )
-
-    def test_spend_estimate_counts_calls(self):
-        our = {
-            self.url: {
-                "claude": self._ev(0, 2, 3, [], ["c-match", "c-extra"]),
-                "coderabbit": self._ev(0, 3, 3, [], ["r-match", "r-x1", "r-x2"]),
-            }
-        }
-        report = self._run(our, our)
-        # judge calls = golden(3) * (claude 2 + coderabbit 3) = 15; both tools >=2
-        # candidates -> 2 dedup calls.
-        self.assertEqual(report["spend_estimate"]["judge_calls"], 15)
-        self.assertEqual(report["spend_estimate"]["dedup_calls"], 2)
-
-
 # ------------------------------------------- Step 2: rejudge_anchors (mocked)
-
-
-class RejudgeAnchorsTests(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-        self.u1 = "https://github.com/o/r/pull/1"
-        self.pin = "claude-opus-4-8-20260101"
-        self.tools = ["claude", "coderabbit"]
-
-        self.anchors_path = self.tmp / "anchors.json"
-        write_json(
-            self.anchors_path,
-            {
-                self.u1: {
-                    "claude": [
-                        {
-                            "text": "c-match",
-                            "path": None,
-                            "line": None,
-                            "source": "extracted",
-                        },
-                        {
-                            "text": "c-extra",
-                            "path": None,
-                            "line": None,
-                            "source": "extracted",
-                        },
-                    ],
-                    "coderabbit": [
-                        {
-                            "text": "r-match",
-                            "path": None,
-                            "line": None,
-                            "source": "extracted",
-                        },
-                        {
-                            "text": "r-x1",
-                            "path": None,
-                            "line": None,
-                            "source": "extracted",
-                        },
-                        {
-                            "text": "r-x2",
-                            "path": None,
-                            "line": None,
-                            "source": "extracted",
-                        },
-                    ],
-                }
-            },
-        )
-        self.subsets_path = self.tmp / "subsets.json"
-        write_json(self.subsets_path, {"gate": [self.u1], "holdout": [], "smoke": []})
-        self.golden_path = self.tmp / "golden.json"
-        write_json(
-            self.golden_path,
-            {
-                self.u1: {
-                    "source_repo": "r",
-                    "golden_comments": [
-                        {"comment": "g1", "severity": "High"},
-                        {"comment": "g2", "severity": "Low"},
-                    ],
-                    "reviews": [],
-                }
-            },
-        )
-        self.results_dir = self.tmp / "results"
-        self.cache_dir = self.tmp / "cache"
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def _evaluations(self):
-        def ev(tp, fp, fn, matched, fps):
-            return {
-                "tp": tp,
-                "fp": fp,
-                "fn": fn,
-                "true_positives": [{"matched_candidate": t} for t in matched],
-                "false_positives": [{"candidate": t} for t in fps],
-            }
-
-        return {
-            self.u1: {
-                "claude": ev(1, 1, 1, ["c-match"], ["c-extra"]),
-                "coderabbit": ev(1, 2, 1, ["r-match"], ["r-x1", "r-x2"]),
-            }
-        }
-
-    def _scorer(self, counter, model_pin=None):
-        pin = model_pin or self.pin
-        model_dir = self.results_dir / pin.replace("/", "_")
-
-        def run_scorer(model, key, base_url, dedup_rel, env=None):
-            counter.append(model)
-            model_dir.mkdir(parents=True, exist_ok=True)
-            write_json(model_dir / "evaluations.json", self._evaluations())
-
-        return run_scorer
-
-    def _adjudicator(self):
-        def adj(text, hunk, ctx, pin, api_key):
-            bucket = "valid_extra" if text == "c-extra" else "noise"
-            return {"bucket": bucket, "failed_check": None, "reason": "test"}
-
-        return adj
-
-    def _call(self, counter, pin=None):
-        pin = pin or self.pin
-        with mock.patch.object(anchors, "GOLDEN_DATA", self.golden_path):
-            return rejudge_anchors(
-                pin,
-                tools=self.tools,
-                subset="gate",
-                anchors_path=self.anchors_path,
-                subsets_path=self.subsets_path,
-                cache_dir=self.cache_dir,
-                api_key="k",
-                results_dir=self.results_dir,
-                run_scorer=self._scorer(counter, pin),
-                adjudicator=self._adjudicator(),
-            )
-
-    def test_per_tool_metrics_computed(self):
-        counter = []
-        result = self._call(counter)
-        self.assertEqual(counter, [self.pin])
-        self.assertFalse(result["cache_hit"])
-
-        claude = result["per_tool"]["claude"]
-        self.assertAlmostEqual(claude["recall"], 0.5)  # tp1/(tp1+fn1)
-        self.assertAlmostEqual(claude["precision_strict"], 0.5)  # tp1/(tp1+fp1)
-        self.assertAlmostEqual(claude["valid_extra_rate"], 0.5)  # c-extra valid / 2
-        self.assertAlmostEqual(claude["noise_rate"], 0.0)
-        self.assertEqual(
-            claude["per_bucket"], {"golden_matched": 1, "valid_extra": 1, "noise": 0}
-        )
-
-        rabbit = result["per_tool"]["coderabbit"]
-        self.assertAlmostEqual(rabbit["recall"], 0.5)
-        self.assertAlmostEqual(rabbit["precision_strict"], 1 / 3)
-        self.assertAlmostEqual(rabbit["noise_rate"], 2 / 3)  # r-x1,r-x2 noise / 3
-        self.assertEqual(
-            rabbit["per_bucket"], {"golden_matched": 1, "valid_extra": 0, "noise": 2}
-        )
-
-    def test_cache_hit_skips_scorer(self):
-        counter = []
-        first = self._call(counter)
-        second = self._call(counter)
-        # scorer ran exactly once; the second call was served from cache.
-        self.assertEqual(counter, [self.pin])
-        self.assertFalse(first["cache_hit"])
-        self.assertTrue(second["cache_hit"])
-        self.assertEqual(first["per_tool"], second["per_tool"])
-
-    def test_cache_key_changes_with_pin(self):
-        counter = []
-        self._call(counter, pin=self.pin)
-        other = "claude-opus-4-8-20260202"
-        self._call(counter, pin=other)
-        # a different pin is a different cache key -> scorer runs again.
-        self.assertEqual(counter, [self.pin, other])
-        files = sorted(p.name for p in self.cache_dir.glob("*.json"))
-        self.assertEqual(len(files), 2)
-
-    def test_unknown_subset_raises(self):
-        with self.assertRaises(ValueError):
-            rejudge_anchors(
-                self.pin,
-                tools=self.tools,
-                subset="nope",
-                anchors_path=self.anchors_path,
-                subsets_path=self.subsets_path,
-                cache_dir=self.cache_dir,
-                api_key="k",
-                run_scorer=lambda *a, **k: None,
-                adjudicator=self._adjudicator(),
-            )
-
-
-class AnchorScorerStageFailureTests(unittest.TestCase):
-    """The anchor path delegates to score.run_scorer_stages, so a non-zero scorer
-    stage now surfaces a stage-named RuntimeError (score behavior) instead of the bare
-    CalledProcessError the old duplicated runner raised."""
-
-    def test_stage_failure_surfaces_stage_named_runtimeerror(self):
-        fake = SimpleNamespace(
-            returncode=1, stdout="", stderr="Traceback: boom in dedup"
-        )
-        with (
-            mock.patch.object(score.subprocess, "run", return_value=fake),
-            self.assertRaises(RuntimeError) as ctx,
-        ):
-            anchors._run_scorer_stages(
-                "claude-opus-4-8-20260101",
-                "api-key",
-                anchors.MARTIAN_BASE_URL,
-                "results/claude-opus-4-8-20260101/dedup_groups.json",
-            )
-        msg = str(ctx.exception)
-        self.assertIn("dedup", msg)  # the failing stage is named
-        self.assertIn("boom", msg)  # stderr tail is surfaced
 
 
 class AdjudicatorContextTests(unittest.TestCase):
@@ -566,3 +179,169 @@ class AdjudicatorContextTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_rejudge_cache_is_epoch_corpus_context_and_evaluator_scoped(
+    score_case, tmp_path, monkeypatch
+):
+    from dataclasses import replace
+
+    import pytest
+
+    from bench.runner.epochs import DEFAULT_ROOT, load_epoch, read_json
+
+    epoch = load_epoch(root=DEFAULT_ROOT)
+    url = score_case.url
+    anchor_file = tmp_path / "anchors.json"
+    anchor_file.write_text(
+        json.dumps(
+            {
+                url: {
+                    "claude": [
+                        {"text": "candidate", "path": None, "line": None},
+                        {"text": "extra", "path": None, "line": None},
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    subsets_file = tmp_path / "subsets.json"
+    subsets_file.write_text(json.dumps({"gate": [url]}), encoding="utf-8")
+    calls = []
+
+    def fake(pin, key, base_url, dedup_path, env=None):
+        model = Path(dedup_path).parent
+        calls.append(model)
+        golden = read_json(model.parent / "benchmark_data.json")[url]["golden_comments"]
+        ev = {
+            "true_positives": [
+                {
+                    "golden_comment": golden[0]["comment"],
+                    "matched_candidate": "candidate",
+                    "confidence": 1.0,
+                }
+            ],
+            "false_negatives": [{"golden_comment": g["comment"]} for g in golden[1:]],
+            "tp": 1,
+            "fp": 1,
+            "fn": len(golden) - 1,
+            "errors": [],
+        }
+        write_json(model / "evaluations.json", {url: {"claude": ev}})
+        write_json(model / "dedup_groups.json", {})
+
+    def call(epoch_id=epoch.epoch_id, diffs=None, pin="claude-opus-4-5-20251101"):
+        return rejudge_anchors(
+            pin,
+            tools=["claude"],
+            epoch_id=epoch_id,
+            anchors_path=anchor_file,
+            subsets_path=subsets_file,
+            cache_dir=tmp_path / "cache",
+            run_scorer=fake,
+            diffs=diffs,
+            adjudicator=lambda *args: {"bucket": "noise"},
+        )
+
+    first = call()
+    assert not first["cache_hit"] and call()["cache_hit"]
+    primary = first["per_tool"]["claude"]
+    assert primary["profile"] == "core" and primary["fp"] == 1
+    bugs = [b for b in epoch.bugs if b.pr_url == url]
+    core = [b for b in bugs if b.category not in ("style", "speculative")]
+    assert primary["recall"] == int(bugs[0] in core) / len(core)
+    context = read_json(
+        next((Path(first["work_dir"]) / "contexts/claude").glob("*.json"))
+    )
+    assert context["context_status"] == "missing" and context["hunk"] == ""
+
+    assert not call(diffs={url: "changed context"})["cache_hit"]
+    assert not call("dfc6cb4-v1")["cache_hit"]
+    original = anchors.load_epoch
+    with monkeypatch.context() as m:
+        m.setattr(
+            anchors,
+            "load_epoch",
+            lambda *args, **kwargs: replace(
+                original(*args, **kwargs), golden_sha256="changed"
+            ),
+        )
+        assert not call()["cache_hit"]
+    with monkeypatch.context() as m:
+        m.setattr(
+            anchors,
+            "load_epoch",
+            lambda *args, **kwargs: replace(
+                original(*args, **kwargs), scorer_sha256="changed"
+            ),
+        )
+        assert not call()["cache_hit"]
+    with monkeypatch.context() as m:
+        m.setattr(anchors, "_MAX_DIFF_CHARS", 10)
+        assert not call()["cache_hit"]
+    assert len(set(calls)) == 6
+    # A changed evaluator cannot reuse an earlier cache even with unchanged corpus.
+    evaluator_for = score.evaluator_for
+    with monkeypatch.context() as m:
+        m.setattr(
+            score,
+            "evaluator_for",
+            lambda *args: replace(
+                evaluator_for(*args), adjudicator_prompt_sha256="changed"
+            ),
+        )
+        assert not call()["cache_hit"]
+    assert len(calls) == 7
+    assert not call(pin="claude-opus-4-5-20251102")["cache_hit"]
+    assert len(calls) == 8
+    with pytest.raises(ValueError, match="unknown subset"):
+        rejudge_anchors(
+            "j", epoch_id=epoch.epoch_id, subset="unknown", subsets_path=subsets_file
+        )
+
+
+def test_spot_check_uses_named_epoch_and_private_results(score_case, tmp_path):
+    import pytest
+
+    from bench.runner.epochs import DEFAULT_ROOT, load_epoch
+
+    url = score_case.url
+    anchor_file = tmp_path / "anchors.json"
+    write_json(
+        anchor_file, {url: {"claude": [{"text": "c", "path": None, "line": None}]}}
+    )
+    upstream = tmp_path / "upstream.json"
+    ev = {url: {"claude": {"tp": 1, "fp": 0, "fn": 1}}}
+    write_json(upstream, ev)
+    calls = []
+
+    def fake(model, key, base_url, dedup_path, env=None):
+        calls.append(Path(dedup_path).parent)
+        write_json(Path(dedup_path).parent / "evaluations.json", ev)
+
+    kwargs = dict(
+        epoch_id="dfc6cb4-v1",
+        anchors_path=anchor_file,
+        upstream_eval_path=upstream,
+        results_dir=tmp_path / "work",
+        diff_out=tmp_path / "diff.json",
+        run_scorer=fake,
+        api_key="test",
+    )
+    result = spot_check(url, **kwargs)
+    assert result["pass"] and result["n_golden"] == sum(
+        b.pr_url == url for b in load_epoch("dfc6cb4-v1", root=DEFAULT_ROOT).bugs
+    )
+    assert result["spend_estimate"] == {
+        "judge_calls": result["n_golden"],
+        "dedup_calls": 0,
+    }
+    assert Path(result["diff_path"]).is_file()
+    write_json(upstream, {url: {"claude": {"tp": 2, "fp": 0, "fn": 1}}})
+    assert spot_check(url, **kwargs)["pass"]
+    assert len(set(calls)) == 2
+    with pytest.raises(ValueError, match="not in anchor"):
+        spot_check("unknown", **kwargs)
+    write_json(upstream, {url: {"claude": {"tp": 10, "fp": 0, "fn": 1}}})
+    assert not spot_check(url, **kwargs)["pass"]

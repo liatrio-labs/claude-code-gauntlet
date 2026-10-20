@@ -1,0 +1,10 @@
+# Golden-epoch manifests pin file contents by SHA-256; a digest beside a file named
+# after a vendor (sentry, keycloak) reads to the default rules like an access token.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "SHA-256 content digests in golden-epoch manifests"
+paths = ['''^bench/golden/epochs/[^/]+/epoch\.json$''']
+regexTarget = "match"
+regexes = ['''"[0-9a-f]{64}"''']

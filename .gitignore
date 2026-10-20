@@ -21,8 +21,10 @@ Thumbs.db
 __pycache__/
 *.pyc
 
-# uv resolver lockfile (CI tooling only; removed once already in #213)
+# Local tooling resolver state.
 uv.lock
+!bench/golden/epochs/dfc6cb4-v1/scorer/uv.lock
+!bench/golden/epochs/e616e84-v1/scorer/uv.lock
 
 # Coverage data + reports (CI/dev only; see pyproject.toml [tool.coverage])
 .coverage

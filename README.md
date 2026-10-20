@@ -42,7 +42,7 @@ There is nothing to `pip install`.
 The pipeline pins the review agents' models, so your own session's model and effort do not change them.
 We recommend Sonnet at low effort for that session.
 
-Full reviews took 16 to 22 minutes per PR in our [benchmark runs](bench/MEASUREMENT.md#ledger-sourced-costs).
+Historical full reviews took 16 to 22 minutes per PR in our [benchmark runs](bench/MEASUREMENT.md#ledger-sourced-costs).
 The v3.0 measurement used 20.9 million tokens across 15 PRs, about 1.4 million per PR ([results](#benchmark-results)).
 
 ## How it reviews
@@ -129,6 +129,9 @@ No `REVIEW.md` is required. See the [configuration reference](skills/code-gauntl
 
 ## Benchmark results
 
+Historical scores below use dfc6cb4-v1 / all. The active e616e84-v1 / core
+epoch awaits new baseline and calibration measurements.
+
 Scores come from the MIT-licensed [Martian benchmark](https://github.com/withmartian/code-review-benchmark), pinned at commit `dfc6cb4`.
 A pinned judge, `claude-opus-4-5-20251101`, scores each review without knowing which tool wrote it.
 Recall is the share of reference findings the review catches, and noise is the share of reported findings the same pinned model rejects as ungrounded, vague, or incoherent.
@@ -156,7 +159,7 @@ The judge and plugin use Anthropic models, and same-vendor bias has not been mea
 &dagger; Anchors use stored upstream comments, not fresh tool runs.
 Those comments lack file and line anchors, so they receive different scoring context, which can inflate anchor noise by an unmeasured amount.
 Their noise rates are therefore not comparable. Recall is the comparable column.
-See `adjudicator_context_note` in [bench/baselines.json](bench/baselines.json).
+See `adjudicator_context_note` in the [archived baselines](bench/golden/epochs/dfc6cb4-v1/baselines.json).
 
 ## Contributing
 

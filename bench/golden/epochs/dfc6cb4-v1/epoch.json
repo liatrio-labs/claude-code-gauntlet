@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "epoch_id": "dfc6cb4-v1",
+  "upstream_sha": "dfc6cb427b5d0d7492a8d875ee9447744b7de3d1",
+  "scorer_sha": "dfc6cb427b5d0d7492a8d875ee9447744b7de3d1",
+  "golden_sha256": "7989ba0f44049367237aac6a9bcd41b0160e9db8e2ef49b79f03efd189ae6618",
+  "scorer_sha256": "f677e49985905c3c8e264049ca751daf75b070d65641b66d022f60025f4f5414",
+  "bugs_sha256": "1915ccac961a3ce4c10f8d0e5657c845281e94ac82c25a320852ca418182efd9",
+  "labels_sha256": "83589e491410aeb81aa40dfd6a9c203b79fad05595c0d7fa45db0aef61b4e06a",
+  "primary_profile": "all",
+  "supported_profiles": [
+    "all"
+  ],
+  "pr_count": 50,
+  "profile_denominators": {
+    "all": {
+      "full": 137,
+      "gate": 59,
+      "holdout": 27,
+      "smoke": 4,
+      "mini": 30,
+      "review_md_fixtures": 8
+    }
+  },
+  "static_label_source_epoch": "dfc6cb4-v1",
+  "file_hashes": {
+    "baselines.json": "053926e7a75a51a817826890b6c2174ac0695bcb0b36dd35b8bda77946410a80",
+    "benchmark_data.min.json": "aba7ca71cd0a95ebb95dfea7da84a49f1d1ca56d660364b890dc5a62b903f8db",
+    "bugs.json": "b92258b45784a3fab794e2aa5c12c4b535dfb3ffa79780c584432461f34e78d3",
+    "golden_comments/cal_dot_com.json": "a1361509202cdaea0842838cd03253b82345c85fde320480ef874084ab2af470",
+    "golden_comments/discourse.json": "e18c62708f72066e5dc99eba05caf61572b73f93bdfa4c14374e56b44a1265a5",
+    "golden_comments/grafana.json": "15055ffefa1714d60cd18aab46612497087240ae99f93170e91b226696bc8182",
+    "golden_comments/keycloak.json": "a77fe83c5efbe50555d18083e58a65130882a293070c7fb79d1734223d6dcdc7",
+    "golden_comments/sentry.json": "76027172aa33185222b963f66c74b9772321566f4faa4cfa6a2e32a63ec81f3c",
+    "pr_labels.json": "329c92affaa10be0e404e8837258252ce9b6c2f0a7f3e1084ca742f3e2aa7b5c",
+    "scorer/.gitignore": "016cd107f189324f0843f867ca82e0579585a12a8641b0960eb2d7faa00ebedb",
+    "scorer/LICENSE": "3d0f7aacf358c3578c1e541bdd297b675d76805e6bf3dddaf89b6d2b45e3afad",
+    "scorer/code_review_benchmark/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scorer/code_review_benchmark/step2_5_dedup_candidates.py": "5438ffb2a487129bd0f85d5a8c43020efe5027ec2d1d51e599b9c1d9f743cd4c",
+    "scorer/code_review_benchmark/step3_judge_comments.py": "95c639bc46ff27ef97299ad0f8d2e3cd71c002feee727f4ccb2371830b6994d3",
+    "scorer/pyproject.toml": "2550697c0c98c3423bd4b9e89fc4d29d1fdb9d5b8d29e3a3e8b56005dac7c65b",
+    "scorer/tests/conftest.py": "d1bbb2c35e1b08cc33f320daacf6071a08cc8be28629e9f9f0aecfdf09e0bffc",
+    "scorer/tests/test_step3.py": "9c0a696ad3971708bfc2a8dfab259ba744365a235c176003078c9bdf3cbe9d0b",
+    "scorer/uv.lock": "de8fc717fd49b90497fc3e27cec9b05483e4818d70f5c5d92168bf5d6cdcda04",
+    "experiments.jsonl": "da717feb6fb56000c5c6338ffef2ff6f3ed0bbfed9fc7ab1a143e2fb4a643ba1",
+    "prompt-hashes.json": "83143d5bc58d90f5cd8ba3e92e11f402d2a23ccc09c83b91c88aee60063df17f"
+  }
+}

@@ -344,7 +344,9 @@ class TestReleaseProgression(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.rows = report.load_ledger(REAL_LEDGER)
-        cls.baselines = report.load_baselines(REAL_BASELINES)
+        cls.baselines = report.load_baselines(
+            BENCH_DIR / "golden/epochs/dfc6cb4-v1/baselines.json"
+        )
 
     def test_row_by_run_id_finds_exact_match(self):
         row = report.row_by_run_id(self.rows, "custom-20260723-102149-381e9ff")
@@ -627,3 +629,64 @@ class TestVoidRunsAndMilestones(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_new_score_identities_do_not_collapse_into_historical_release_rows(score_case):
+    from bench import report
+    from bench.runner.epochs import DEFAULT_ROOT, load_epoch, read_json
+
+    first = score_case.execute()
+    second = score_case.execute()
+    old_baselines = read_json(
+        load_epoch("dfc6cb4-v1", root=DEFAULT_ROOT).root / "baselines.json"
+    )
+    first_row = first["ledger_row"]
+    historical = {
+        **first_row,
+        "schema_version": 1,
+        "scorer_sha": "dfc6cb4",
+        "golden_recall": 0.25,
+    }
+    for key in ("score_id", "epoch_id", "profile", "population_sha256"):
+        historical.pop(key, None)
+    rows = [historical, first_row, second["ledger_row"]]
+    assert len(report.ledger_groups(rows)) == 3
+    assert len(report.deep_review_points(rows)) == 3
+    assert report.row_by_run_id(rows, "run") == historical
+    assert report.classify(first_row, 0, 1)[0] != "gate"
+    doc = report.render_html(
+        rows, read_json(DEFAULT_ROOT.parent / "baselines.json"), "sha", "date"
+    )
+    assert "Historical epoch dfc6cb4-v1 / all" in doc
+    assert "Active epoch e616e84-v1 / core" in doc
+    assert (
+        first["score_ref"]["score_id"] in doc and second["score_ref"]["score_id"] in doc
+    )
+    v2, v3, _ = report.subset_comparison(
+        [first_row, second["ledger_row"]], old_baselines
+    )
+    assert v2 is None and v3 is None
+
+
+def test_report_counts_review_once_and_scoring_per_execution(score_case):
+    from bench import report
+
+    first = score_case.execute()["ledger_row"]
+    second = score_case.execute()["ledger_row"]
+    first.update(
+        cost_usd=2.0,
+        judge_cost_usd=0.4,
+        adjudicator_cost_usd=0.1,
+        review_attempt_costs={"attempt": 2.0},
+    )
+    second.update(
+        cost_usd=2.0,
+        judge_cost_usd=0.4,
+        adjudicator_cost_usd=0.1,
+        review_attempt_costs={"attempt": 2.0},
+    )
+    totals = report.spend_totals([first, second])
+    assert totals["review_cost_usd"] == 2.0
+    assert totals["measured_judging_cost_usd"] == 1.0
+    second["judge_cost_usd"] = None
+    assert report.spend_totals([first, second])["measured_judging_cost_usd"] is None

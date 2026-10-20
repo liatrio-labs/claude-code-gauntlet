@@ -2,10 +2,10 @@
   "https://github.com/keycloak/keycloak/pull/37429": {
     "derived": {
       "language": "Java",
-      "num_golden_comments": 4,
+      "num_golden_comments": 5,
       "severity_mix": {
-        "Medium": 2,
-        "Low": 2
+        "Low": 3,
+        "Medium": 2
       },
       "num_files_touched": 4
     },
@@ -24,24 +24,27 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:57bcfe695da62393f3586cf6e14bbeaa59e3d1361d963037f0144c7121f040ca": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment identifies that a translation string contains the wrong language (Italian instead of Lithuanian), which is an incorrect value for the locale-specific properties file."
       },
-      {
+      "g:e18270307d99191ce883122228df135a49f5b9e8ca6fa2105d2a878496436f7e": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment identifies that a translation value is using the wrong locale variant (Traditional Chinese instead of Simplified Chinese), which is an incorrect value for the zh_CN locale file."
       },
-      {
+      "g:85eba1edc6cab5973b512abe1f2448102334f03c76561f4e80868e5a2e5b5700": {
         "bug_type": "missing_validation",
         "reasoning": "The comment describes a validation gap where the code doesn't properly check if translated text has more anchor tags than English text, leading to incorrect validation results due to missing input validation."
       },
-      {
+      "g:06681a7ad87541fd2cf14b9d31ff923b57c2e1cecfac59622036f554258fe204": {
         "bug_type": "other",
         "reasoning": "This is a typo/spelling error in a method name ('santize' should be 'sanitize'). It's not a functional bug but a naming convention issue that affects code readability and maintainability."
+      },
+      "g:edbc7c0c3b89e5c4a63453122afab34d81fa2f5ace028aeef5f7d1215070156c": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/keycloak/keycloak/pull/37634": {
     "derived": {
@@ -69,32 +72,31 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "incorrect_value",
-        "reasoning": "The comment indicates that the wrong variable (grantType) is being used in a null check instead of the correct variable (rawTokenId). This is a case of using an incorrect value/variable in a validation check."
+    "comment_bug_types_by_bug_id": {
+      "g:2c55b14f61a326463db6d1aa3318f7827426d57f0cd4316584a2faf1c92b6c97": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:1c6439563bc2ad27011065b0bcf0bd9385383ddffea3c5b96fa698352569fee0": {
         "bug_type": "logic_error",
         "reasoning": "The comment describes inverted logic where a substring check and equality comparison are backwards - a match should return true but returns false instead. This is a classic logic error involving incorrect boolean/conditional logic."
       },
-      {
+      "g:deec05c69cc7b2c04cffd7c207cfbc560a10893b496982afaf29561b3dcfe4c9": {
         "bug_type": "other",
         "reasoning": "This is a documentation inconsistency issue where the Javadoc description doesn't accurately reflect the actual implementation patterns. It's not a code bug but rather a documentation maintenance issue."
       },
-      {
+      "g:66178bb82532f2afc4a804fa754d455268427fcc5d399ef9a0825eaccf2a7a06": {
         "bug_type": "api_misuse",
         "reasoning": "The comment addresses catching too broad an exception type (RuntimeException) when a more specific exception (IllegalArgumentException) should be caught. This is about proper exception handling patterns and API usage rather than a logic error or missing validation."
       }
-    ]
+    }
   },
   "https://github.com/keycloak/keycloak/pull/38446": {
     "derived": {
       "language": "Java",
       "num_golden_comments": 2,
       "severity_mix": {
-        "Medium": 1,
-        "Low": 1
+        "Low": 1,
+        "Medium": 1
       },
       "num_files_touched": 6
     },
@@ -112,22 +114,23 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:8d2bfdf7a0a94496bbd82d91740ab4ff2ca62129989c2a825a7ee386e75e93a0": {
         "bug_type": "null_reference",
         "reasoning": "The comment describes calling Optional.get() without first checking isPresent(), which can throw NoSuchElementException when the Optional is empty. This is essentially a null reference issue where the code assumes a value exists without proper validation."
       },
-      {
+      "g:4b1b44d979d4c4d394603f89a7673d34d753cb7945791f084e8db22d12809e9d": {
         "bug_type": "null_reference",
         "reasoning": "The comment identifies that getId() will return null because the id field is never set after creating the credential model. This null value will cause downstream operations like removeStoredCredentialById to fail when they try to use the null id."
       }
-    ]
+    }
   },
   "https://github.com/keycloak/keycloak/pull/36882": {
     "derived": {
       "language": "Java",
-      "num_golden_comments": 1,
+      "num_golden_comments": 2,
       "severity_mix": {
+        "Low": 1,
         "Medium": 1
       },
       "num_files_touched": 4
@@ -145,19 +148,23 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:1a1b4a7aee6eace77ee8572d0dcecd8f1c750580b3cac2908fce11ec14d1e857": {
         "bug_type": "api_misuse",
         "reasoning": "The comment identifies incorrect usage of the picocli.exit() method, noting that it calls System.exit() directly which is problematic. This is a case of using an API method incorrectly or inappropriately for the intended purpose."
+      },
+      "g:b1274545e4d30e7149c6c9c0ebf245d3507465c7c1e48dff1e29cbdb260803f6": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/keycloak/keycloak/pull/36880": {
     "derived": {
       "language": "Java",
-      "num_golden_comments": 3,
+      "num_golden_comments": 5,
       "severity_mix": {
-        "High": 3
+        "High": 4,
+        "Low": 1
       },
       "num_files_touched": 4
     },
@@ -176,20 +183,26 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:01a5f6d01078f3bc98b6da4349a293910cfdd39d4e2297df31478633214d4625": {
         "bug_type": "logic_error",
         "reasoning": "The bug is about inconsistent feature flag checking where the wrong flag (V1 instead of V2) is used to guard permission cleanup logic, causing the cleanup to not execute under certain feature flag configurations. This is a logical error in the conditional branching based on feature flags."
       },
-      {
+      "g:51501b4e0eb7183e272c5307a75575fd5d57aa47215afc0c824d34ab6ca498cb": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment describes a mismatch between how resources are created (with owner set to resourceServer.getClientId()) and how they are looked up (using client.getId() and server.getId() as parameters). This incorrect parameter value in the lookup causes it to never find the intended resources, leading to wrong behavior where client-specific permissions are ignored."
       },
-      {
+      "g:6022efc5bcb8309247b9efc467947d4ccb83b9f7517a85e5f59c112f1a358e41": {
         "bug_type": "incorrect_value",
         "reasoning": "The code returns resource names instead of actual client IDs that the calling method expects. This is a semantic mismatch where the wrong values are being returned - the type-level resource name 'Clients' instead of individual client IDs, leading to incorrect behavior when the caller tries to use these values with realm.getClientById."
+      },
+      "g:dc6e80b21dcaef0f8f10e74b4e4124c37d34d6536d1c3a4a2d410eff637c6587": {
+        "label_status": "not_relabelled"
+      },
+      "g:4b7b65f00c199a555d4e193121335233cb0abdbd3771ad5354134827b1557610": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/keycloak/keycloak/pull/37038": {
     "derived": {
@@ -214,24 +227,24 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "security",
-        "reasoning": "The comment explicitly mentions an incorrect permission check in a method called 'canManage()', which is a security-related function for access control. Incorrect permission checks are a classic security vulnerability that could allow unauthorized access."
+    "comment_bug_types_by_bug_id": {
+      "g:9e0e4fb08bef55fd346bd10f64fcd54ea2260482028b92d048e7d174fdf6a503": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:3afb54867aeb6bf8157e443b82d53c8c194033d0aa58c1656c48811302700b3d": {
         "bug_type": "api_misuse",
         "reasoning": "The comment describes a mismatch between how hasPermission resolves resources (by name/group id) versus how the code is calling it (with groupResource.getId()). This is an API contract violation where the method is being called with the wrong type of identifier, causing the permission evaluation to not work as intended with the JPA queries and interface contract."
       }
-    ]
+    }
   },
   "https://github.com/keycloak/keycloak/pull/33832": {
     "derived": {
       "language": "Java",
-      "num_golden_comments": 2,
+      "num_golden_comments": 4,
       "severity_mix": {
         "High": 1,
-        "Low": 1
+        "Low": 2,
+        "Medium": 1
       },
       "num_files_touched": 5
     },
@@ -249,16 +262,22 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:daed9ed4878f23b1c0d5cf0621ef044d037716551386402f28c7cdc149e4d64f": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment indicates that the wrong cryptographic provider is being returned - the default keystore provider instead of the intended BouncyCastle provider. This is a case of returning an incorrect value rather than a logic error in the algorithm itself."
       },
-      {
+      "g:ea5dc9728e43a22df43c503b201cf59536aff47343b1422d5d02b1c4b0e0aada": {
         "bug_type": "dead_code",
         "reasoning": "The comment explicitly describes dead code where ASN1Encoder instances are created and their results discarded, with the actual work being done by new instances in the return statement, making the earlier operations useless."
+      },
+      "g:b02eab8faca00fa21e12ecce6598e18f3c168f39ce1fb5592676d41c41665ff3": {
+        "label_status": "not_relabelled"
+      },
+      "g:9db9b92b4171e2f1406afdbb99a07e4e44513fd693e447a1115c169d5731c9f2": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/keycloak/keycloak/pull/40940": {
     "derived": {
@@ -284,16 +303,16 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:1be04df367661ac246d408cedd2729c85819239c67c9219dc226507a74bc04fc": {
         "bug_type": "null_reference",
         "reasoning": "The comment identifies that returning null violates a contract that guarantees non-null returns, which will cause NullPointerExceptions in callers expecting a non-null value."
       },
-      {
+      "g:3342205f03844539c5125c906273cc85b664f318f39097cd2e9137242e408e46": {
         "bug_type": "race_condition",
         "reasoning": "The comment explicitly describes a race condition where the reader thread isn't properly synchronized with the main thread. The flag change and assertion can race with exceptions being added, causing test flakiness due to concurrent access without proper synchronization."
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/keycloak-greptile/pull/1": {
     "derived": {
@@ -318,25 +337,24 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "api_misuse",
-        "reasoning": "The comment indicates that a function ConditionalPasskeysEnabled() is being called without a required UserModel parameter, which is incorrect API usage - the function signature expects a parameter that is not being provided."
+    "comment_bug_types_by_bug_id": {
+      "g:be9de8f71a43978f3cc2d4c5dee41ec84e13ee7e92d2513acbd346c0c353e735": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:185f942fddcd77993931c03d1ea6c502ebc80103b72fd2b77dae1f1005e23b3a": {
         "bug_type": "logic_error",
         "reasoning": "The comment describes a logical flaw where the null check on user prevents conditional passkey UI from being set up during initial login when no user is selected yet. This breaks ID-less passkey authentication functionality because the condition is too restrictive, not because of a null reference crash but because of incorrect business logic flow."
       }
-    ]
+    }
   },
   "https://github.com/getsentry/sentry/pull/93824": {
     "derived": {
       "language": "Python",
       "num_golden_comments": 5,
       "severity_mix": {
-        "Medium": 3,
+        "High": 1,
         "Low": 1,
-        "High": 1
+        "Medium": 3
       },
       "num_files_touched": 3
     },
@@ -356,36 +374,35 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "incorrect_value",
-        "reasoning": "The comment points out inconsistent naming between 'shard' and 'shards' in metric tags, which is an incorrect value/naming issue that could cause problems with metric aggregation and querying."
+    "comment_bug_types_by_bug_id": {
+      "g:b1d2b73d9fb63f07d56acd5d0a64ffec08f4929cd428e01f5ca7f9c576471d04": {
+        "label_status": "not_relabelled"
       },
-      {
-        "bug_type": "race_condition",
-        "reasoning": "The comment addresses timing-related flakiness in tests caused by fixed sleep durations. Using condition-based waiting instead of fixed sleeps is a standard solution for race conditions where the timing of concurrent operations is unpredictable."
+      "g:df25a46d83451395840ba6a37456151a690be5e2892f68ce623c641c93ac3d78": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:b364950483e1cd8a653f9d02fb94e394a6d2532403473e1b7ce7c133993f8a7a": {
         "bug_type": "type_error",
         "reasoning": "The comment describes an isinstance check that fails because SpawnProcess (created via multiprocessing.get_context('spawn').Process) is not a subclass of multiprocessing.Process on POSIX systems. This is a type checking error where the wrong type is being checked, causing the condition to always be false."
       },
-      {
+      "g:ee186d5dc868febb5940761a013983e3b0612aa6a1ffee122a16a4784c2c19fc": {
         "bug_type": "api_misuse",
         "reasoning": "The comment identifies that time.sleep was monkeypatched earlier in the test, so calling time.sleep() won't actually wait as intended. This is incorrect usage of the mocked API - the test author didn't account for the mock affecting their synchronization logic."
       },
-      {
+      "g:76b7467f658ed41e4f0230f56716c4735f71cc30b9c0fbfc7c844f384280f8fc": {
         "bug_type": "logic_error",
         "reasoning": "The comment describes a control flow issue where breaking out of a loop early due to deadline expiration causes incomplete cleanup - remaining flusher processes won't be terminated. This is a logic error in the shutdown sequence that could leave resources in an inconsistent state."
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/5": {
     "derived": {
       "language": "Python",
-      "num_golden_comments": 3,
+      "num_golden_comments": 6,
       "severity_mix": {
-        "Medium": 2,
-        "Low": 1
+        "High": 1,
+        "Low": 1,
+        "Medium": 4
       },
       "num_files_touched": 13
     },
@@ -404,28 +421,35 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "api_misuse",
-        "reasoning": "The comment refers to breaking changes in error response format, which is about API contract violations - changing the expected interface/response structure that consumers depend on."
+    "comment_bug_types_by_bug_id": {
+      "g:50cb58c6d3204d5620673a7c118d2cd4624eb8f18e9a60b51fde472574957672": {
+        "label_status": "not_relabelled"
       },
-      {
-        "bug_type": "incorrect_value",
-        "reasoning": "The comment indicates that a wrong key is being used when updating a type in the detector validator, which is a case of using an incorrect value (wrong key) in the code logic."
+      "g:89e7e7c7cd1bc36cec4b4cb34e3cb03a9ba7fb4ed4f8a0c6e9aa0509cd0de5c7": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:66ea1e1a9be6b96c5eb31555de9ad3717f2768ab06a296607a9ba58f7a97a5bf": {
         "bug_type": "api_misuse",
         "reasoning": "The comment describes incorrect usage of dict.values() with zip(), assuming order preservation that isn't guaranteed by the dict API. This is a misunderstanding of how dictionary ordering works and improper pairing of data structures."
+      },
+      "g:dea2d4390c2a33fa0da59041d995c69d840b6708b57d8a9c6de858546ece0f8c": {
+        "label_status": "not_relabelled"
+      },
+      "g:42a8ae86738c8bed0aa3041a050bd909fdce9d6889c236db2f9986f36485f378": {
+        "label_status": "not_relabelled"
+      },
+      "g:b7b23eb2962f2b58b4280578abad62fc8b12b3a9bb1a94224b3247c5b287c221": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1": {
     "derived": {
       "language": "Python",
       "num_golden_comments": 4,
       "severity_mix": {
-        "Low": 1,
-        "High": 3
+        "High": 3,
+        "Low": 1
       },
       "num_files_touched": 3
     },
@@ -445,24 +469,20 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "api_misuse",
-        "reasoning": "The comment indicates importing a class or module that doesn't exist (OptimizedCursorPaginator), which is an incorrect usage of the import/module API that will cause an ImportError at runtime."
+    "comment_bug_types_by_bug_id": {
+      "g:c881f31498a4db1551a0afe75bbfb5d00ad51ee63f3432ad96c76a85ca19e00c": {
+        "label_status": "not_relabelled"
       },
-      {
-        "bug_type": "api_misuse",
-        "reasoning": "The comment points out incorrect usage of Django's queryset API - attempting to use negative slicing which is not supported by the framework, indicating misuse of the Django ORM API."
+      "g:5cf5339e7aa0f4d5a125fc29e507942745c9b1462bb0cd51dd47714585a071cf": {
+        "label_status": "not_relabelled"
       },
-      {
-        "bug_type": "null_reference",
-        "reasoning": "The comment describes an AttributeError crash caused by accessing .has_global_access on organization_context.member when member is None. This is a classic null reference error where code attempts to access a property on a null/None object without first checking if the object exists."
+      "g:286327bc6b6b8d0c34b05a7fac2e80e3af2ce0d2c853e491734e46c9d0e2d0e7": {
+        "label_status": "not_relabelled"
       },
-      {
-        "bug_type": "type_error",
-        "reasoning": "The comment explicitly describes a TypeError that will be raised when math.floor/ceil is called on a datetime object instead of a numeric value, which is a classic type mismatch error."
+      "g:bd2f57195217da1b1f840db26b84aaf2d06f815d9d7d6e38ee5da13804fe41d8": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/grafana/grafana/pull/97529": {
     "derived": {
@@ -486,24 +506,25 @@
       "requires_context": "cross_file",
       "primary_concern": "reliability"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:6fe8f2f6a94033ce8b454b89e8ff7a3a7aee5bc26abeb8a206b7339427d0c526": {
         "bug_type": "race_condition",
         "reasoning": "The comment explicitly identifies a race condition where multiple goroutines can concurrently build the same index due to improper mutex lock placement, allowing concurrent access to shared resources."
       },
-      {
+      "g:60ac016f8706a818bc9c9befbcd0a4f3eb3d5309bb1d9969c1d227fd7846a635": {
         "bug_type": "race_condition",
         "reasoning": "The comment explicitly describes a race condition where TotalDocs() iterates a map without synchronization while a concurrent goroutine could be writing to the same map, potentially causing a concurrent map read/write panic."
       }
-    ]
+    }
   },
   "https://github.com/getsentry/sentry/pull/80168": {
     "derived": {
       "language": "Python",
-      "num_golden_comments": 2,
+      "num_golden_comments": 3,
       "severity_mix": {
         "High": 1,
-        "Low": 1
+        "Low": 1,
+        "Medium": 1
       },
       "num_files_touched": 3
     },
@@ -521,16 +542,19 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:4063ff31b001a0d57430419144273c4f4cc31accb268780bf443d25b03756a63": {
         "bug_type": "api_misuse",
         "reasoning": "The class inherits from an abstract base class but fails to implement required abstract methods, which is improper use of the inheritance API and will cause TypeError at runtime when instantiated."
       },
-      {
+      "g:4859eb05dc8ae497cd4f1f60a6b3fe8d7278bc4c45ef119a78464e925e657367": {
         "bug_type": "other",
         "reasoning": "This is a documentation issue where the docstring doesn't match the actual return type of the method. It's not a code bug but rather outdated/incorrect documentation that needs to be updated."
+      },
+      "g:a752efacf02b9f65cca9cb54ffe71906f8dc9244d19401900c599d38a50a856a": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/getsentry/sentry/pull/80528": {
     "derived": {
@@ -556,24 +580,24 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:8034dcf774135f987edb96f81d0dfbfd1aab8563730323d959a8111b549b198c": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment describes a bug where modifications are made to a local variable but the function returns a different, unmodified value instead. This is returning an incorrect value rather than the intended modified result."
       },
-      {
+      "g:038e6f1aece6088cddf59c102b4dc3ff9c74841ee37d6b24efe09214b1932f9b": {
         "bug_type": "other",
         "reasoning": "This is a performance issue where the code makes redundant database queries instead of using already available data. It's not a logic error per se, but an inefficiency/optimization issue that doesn't fit the other specific categories."
       }
-    ]
+    }
   },
   "https://github.com/getsentry/sentry/pull/77754": {
     "derived": {
       "language": "Python",
       "num_golden_comments": 4,
       "severity_mix": {
-        "Medium": 2,
-        "Low": 2
+        "Low": 2,
+        "Medium": 2
       },
       "num_files_touched": 4
     },
@@ -592,31 +616,29 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "api_misuse",
-        "reasoning": "Shared mutable default in dataclass is a common Python pitfall where mutable default arguments (like lists or datetime.now()) are shared across all instances. This is an API misuse of Python's dataclass feature, not a logic error in the algorithm itself."
+    "comment_bug_types_by_bug_id": {
+      "g:8c8d4c38339f5339b141d6749c7e782a1cbdfa39d9540064523daa7dc47b6190": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:9ec2afb48970216450b6dcd7eab301fe9ac62cabe6500a27b8689637fa31adfc": {
         "bug_type": "other",
         "reasoning": "This is a typo in a method name ('inalid' should be 'invalid'), which is a naming/spelling issue rather than a functional bug category. It doesn't affect logic, types, security, or validation - it's purely a cosmetic/readability issue."
       },
-      {
+      "g:b0c44e79affed8457ab6948575220554fe4196b0821976f46f7f3832c480411e": {
         "bug_type": "other",
         "reasoning": "This is a naming/documentation issue where the method name doesn't match what it actually tests. It's about code clarity and maintainability rather than a functional bug."
       },
-      {
+      "g:d99026badfc7b559b07fbb83d0b0621d422b7faf9ba0c8b2b66e944f44753e5b": {
         "bug_type": "type_error",
         "reasoning": "The comment identifies that a datetime object is being returned where a JSON-serializable type is expected, causing serialization failures. This is a type mismatch issue where the wrong data type (datetime) is being used in a context that requires a different type (JSON-serializable)."
       }
-    ]
+    }
   },
   "https://github.com/getsentry/sentry/pull/95633": {
     "derived": {
       "language": "Python",
-      "num_golden_comments": 3,
+      "num_golden_comments": 2,
       "severity_mix": {
-        "High": 1,
         "Low": 2
       },
       "num_files_touched": 4
@@ -636,28 +658,24 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "api_misuse",
-        "reasoning": "The comment identifies incorrect usage of the Python queue module API - calling a shutdown() method with parameters that may not exist in the standard library, which would cause an AttributeError at runtime."
-      },
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:7f93c2d6a19d8da0a1f94b7bb177feebdbfab2664eb1f3baf39a659f7e6b6199": {
         "bug_type": "other",
         "reasoning": "This comment is about code style and maintainability - suggesting extraction of a magic number into a named constant. It's not identifying a bug but rather a code quality improvement suggestion."
       },
-      {
+      "g:d16a139010ae22c04707edf649897f2072d75309a8c4d3dbcaa5ea66198125a6": {
         "bug_type": "other",
         "reasoning": "This is a documentation issue where the test's docstring doesn't accurately describe what the test actually does. It's not a code bug but rather a documentation/comment mismatch issue."
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/2": {
     "derived": {
       "language": "Python",
-      "num_golden_comments": 3,
+      "num_golden_comments": 4,
       "severity_mix": {
         "Critical": 1,
-        "High": 2
+        "High": 3
       },
       "num_files_touched": 4
     },
@@ -676,20 +694,21 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "incorrect_value",
-        "reasoning": "The comment describes a bug where a negative offset is being used incorrectly to slice a QuerySet, resulting in an incorrect index value being passed. This is an incorrect value/calculation issue rather than a logic flow problem."
+    "comment_bug_types_by_bug_id": {
+      "g:4273beed4425924a05979906b7e91313b6e6d54aa23940253cde460913244be0": {
+        "label_status": "not_relabelled"
       },
-      {
-        "bug_type": "incorrect_value",
-        "reasoning": "The comment describes a bug where a negative offset value is being used to slice a QuerySet, which would produce incorrect results. This is an incorrect value being passed to the slice operation, not a validation issue (the value exists but is wrong) or API misuse (slicing itself is valid, just with wrong parameters)."
+      "g:c8e9e907cfc73355a0874b9f53491ea31806a8a1cf64336f5249aaaac99e1d17": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:bcde34c0c41971ca11dc49fc97e8123e8c30de7a9f0d161556a6137683bc7819": {
         "bug_type": "type_error",
         "reasoning": "The comment explicitly describes a TypeError occurring when floor/ceil mathematical operations are applied to a datetime object, which is an incompatible type for those operations."
+      },
+      "g:aa480a686d486427efc254152debdaadfe48fcadb5bd885fd9b85ada8d49a231": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/3": {
     "derived": {
@@ -716,28 +735,28 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "logic_error",
-        "reasoning": "The comment points out that using a falsy check on sample_rate would incorrectly skip the value 0.0, which is a valid sample rate. This is a logic error where the condition doesn't properly handle edge cases of valid input values."
+    "comment_bug_types_by_bug_id": {
+      "g:4e48ccad194685601584bf3eeec56981970aac0bf285fc6f8ccd2391ec2bb7d8": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:e84c21f2463ad8dc0be114c61af9a43b0228bb921accd7024fda0a7211b0043a": {
         "bug_type": "api_misuse",
         "reasoning": "The comment identifies incorrect usage of Python's hash() function for cache keys, which has non-deterministic behavior across processes due to hash randomization. This is a misuse of the hash() API for a purpose it's not suitable for (cross-process cache key generation)."
       },
-      {
+      "g:c9d86db5d9c05ce066543a4fb33a37088ba76ac403b4fb6f509c99540cc547eb": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment describes passing the wrong variable (outer dataset instead of actual dataset used by scoped_dataset) to a function, which causes incorrect behavior in the upsampling eligibility check. This is a case of using an incorrect value/variable rather than a logic error in the algorithm itself."
       }
-    ]
+    }
   },
   "https://github.com/grafana/grafana/pull/103633": {
     "derived": {
       "language": "Go",
-      "num_golden_comments": 2,
+      "num_golden_comments": 3,
       "severity_mix": {
         "High": 1,
-        "Low": 1
+        "Low": 1,
+        "Medium": 1
       },
       "num_files_touched": 3
     },
@@ -756,24 +775,27 @@
       "requires_context": "cross_file",
       "primary_concern": "security"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:3bac8e98d86284c7e7d44cf7c381ae7309366df7b41a1d5036163194158654e1": {
         "bug_type": "security",
         "reasoning": "The comment explicitly identifies a security risk where asymmetric cache handling allows stale cached permission grants to provide unauthorized access to revoked resources. This is a security vulnerability related to improper cache invalidation for access control."
       },
-      {
+      "g:586048bb784a75f7267e354d34534b2ad4e55a635219351a0b20df1f6e620983": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment points out a mismatch between what the test comment claims (permissions 'allow access') and what the code actually does (stores false, meaning access is not allowed). This is an incorrect value being set in the test data that contradicts the test's documented intent."
+      },
+      "g:e70c69a0a636b88790ce76dacb4458d88cc0476f5fb657cb7c4e854261b83caf": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/getsentry/sentry/pull/67876": {
     "derived": {
       "language": "Python",
       "num_golden_comments": 3,
       "severity_mix": {
-        "Medium": 2,
-        "High": 1
+        "High": 1,
+        "Medium": 2
       },
       "num_files_touched": 2
     },
@@ -792,20 +814,20 @@
       "requires_context": "cross_file",
       "primary_concern": "security"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:2e5d085d6cc6cee20f395d08893568208322ebe56e179284a74cfa0c439be299": {
         "bug_type": "null_reference",
         "reasoning": "The comment explicitly identifies a null reference issue that occurs when the 'github_authenticated_user' state is missing, which would cause a null/undefined reference error when trying to access it."
       },
-      {
+      "g:c21cecbfe69eaa9706584d7823e4c84f0ccc4896bb46c3ee2a9b3bb268f52c7e": {
         "bug_type": "security",
         "reasoning": "OAuth state parameter should be a unique random value per request to prevent CSRF attacks. Using a static value (pipeline.signature) instead of a per-request random value is a security vulnerability that could allow attackers to forge authentication requests."
       },
-      {
+      "g:c82c34abfcb1c07d24f1d33c98aa5eb3b370d539284076a91a3e1238d7c279d7": {
         "bug_type": "missing_validation",
         "reasoning": "The comment describes missing validation/checking for the existence of a key before accessing it in a dictionary, which would cause a KeyError. This is a validation issue where the code should check if the 'sender' key exists before attempting to access it."
       }
-    ]
+    }
   },
   "https://github.com/keycloak/keycloak/pull/32918": {
     "derived": {
@@ -831,16 +853,15 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "api_misuse",
-        "reasoning": "The comment indicates that a caching method is incorrectly calling itself recursively using 'session' instead of properly delegating to another component ('delegate'). This is an incorrect usage of the API/method call pattern, where the wrong object is being used to make the call."
+    "comment_bug_types_by_bug_id": {
+      "g:8f76031b401bc2619768fda849e31ef736bf9aac541c0dacbbc332726a0c9253": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:29901d2f9c715c4f37c39da91657305f00fa215bd5a541694fb46350ab9f49db": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment identifies that a wrong value ('alias') is being used instead of the correct dynamically constructed value ('idp-alias-' + i). This is a case of using an incorrect hardcoded value instead of the proper computed reference."
       }
-    ]
+    }
   },
   "https://github.com/grafana/grafana/pull/94942": {
     "derived": {
@@ -866,24 +887,23 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:2a3c49578bb0b77844e3b097ed432f08a0b819b593000d4298c3a43a93320a45": {
         "bug_type": "logic_error",
         "reasoning": "The comment describes a function with flawed logic that always returns false regardless of intended conditions, which is a classic logic error where the control flow doesn't match the intended behavior."
       },
-      {
-        "bug_type": "dead_code",
-        "reasoning": "The comment points out that several methods return 'not implemented', indicating stub or placeholder code that doesn't actually perform its intended function. This is essentially dead/incomplete code that needs to be implemented."
+      "g:6e1a3e2614afd518e7558e82d1edf6abb07366347be3b087ffdf477f8b925759": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/grafana/grafana/pull/90939": {
     "derived": {
       "language": "Go",
       "num_golden_comments": 2,
       "severity_mix": {
-        "Medium": 1,
-        "High": 1
+        "High": 1,
+        "Medium": 1
       },
       "num_files_touched": 1
     },
@@ -902,23 +922,23 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:b8b68cde1bfcd63e24aab6b0aece887b3e436ec097259c7a91a76cf70d03dc8d": {
         "bug_type": "race_condition",
         "reasoning": "The comment describes a classic double-checked locking pattern issue where the code fails to re-verify the condition after acquiring a write lock, which could lead to race conditions when multiple goroutines attempt to populate the cache simultaneously."
       },
-      {
+      "g:884f52035beb5316d2c7b1c8ce4f41bf7c510447908729ff3de082cd2b1c59dc": {
         "bug_type": "null_reference",
         "reasoning": "The comment describes a flaw where a nil value from a failed fetch operation overwrites valid cache data, which is fundamentally a null reference issue - the code fails to check for nil before assignment, leading to null values being stored and potentially used later."
       }
-    ]
+    }
   },
   "https://github.com/grafana/grafana/pull/80329": {
     "derived": {
       "language": "Go",
-      "num_golden_comments": 1,
+      "num_golden_comments": 2,
       "severity_mix": {
-        "Low": 1
+        "Low": 2
       },
       "num_files_touched": 3
     },
@@ -935,20 +955,23 @@
       "requires_context": "local",
       "primary_concern": "maintainability"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:83d41bb78a69fa7e75b6b6a82ac2c70efd0d1dfa05014b5acc9b3c3e1d2cf748": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment identifies that the wrong log level (Error) is being used when Debug or Info would be more appropriate. This is an incorrect value/configuration issue where the severity level parameter is set incorrectly for the type of information being logged."
+      },
+      "g:8ba058c2b765994aeabd5e11b447fd3c94c503a4863cf4d90c5b09fdf0ea13bb": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/grafana/grafana/pull/90045": {
     "derived": {
       "language": "Go",
       "num_golden_comments": 3,
       "severity_mix": {
-        "Medium": 2,
-        "High": 1
+        "High": 1,
+        "Medium": 2
       },
       "num_files_touched": 4
     },
@@ -967,28 +990,27 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:e39532d13cc2189a1a90db97f7937fc37f4ae0c57e32260f6817f9ad9d65eb4d": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment describes using the wrong variable (d.Log instead of log) which causes context values to not be propagated. This is passing an incorrect value/variable to a function, resulting in missing expected data in the logging context."
       },
-      {
-        "bug_type": "incorrect_value",
-        "reasoning": "The comment identifies that the wrong method/function is being called - recordLegacyDuration is used when recordStorageDuration should be called instead. This is an incorrect value/identifier being used in the code."
+      "g:ab1268b33b2303df8942fa415f8d9b33037a9fa0a44360b59a5307c1218ebed9": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:5778aeefc32147cc4814373c76f9deeae7c4a5e2103f3d5774d5f72e66e7042e": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment points out that the wrong variable (name instead of options.Kind) is being used for metrics recording, which is inconsistent with other methods. This is an incorrect value being passed to a function."
       }
-    ]
+    }
   },
   "https://github.com/grafana/grafana/pull/106778": {
     "derived": {
       "language": "Go",
       "num_golden_comments": 2,
       "severity_mix": {
-        "Medium": 1,
-        "High": 1
+        "High": 1,
+        "Medium": 1
       },
       "num_files_touched": 6
     },
@@ -1006,16 +1028,16 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:53dce497cceb3a51804bf50868a4acf3a359705e19755475493fc071dae22a21": {
         "bug_type": "api_misuse",
         "reasoning": "Missing the required 'key' prop for React list items is a misuse of the React API. React requires unique keys for list items to properly track and reconcile elements during re-renders."
       },
-      {
+      "g:52108176ca1d6379a3da8944845d1261e8658d2e5bc829f6b758920561c2d831": {
         "bug_type": "logic_error",
         "reasoning": "The comment describes a logical inconsistency where the UI shows a 'Silence notifications' option based on one condition (Grafana Prom abilities), but the actual drawer rendering depends on a different condition (Grafana Ruler rule being present). This mismatch causes the menu action to have no visible effect, which is a logic error in the component's conditional rendering flow."
       }
-    ]
+    }
   },
   "https://github.com/grafana/grafana/pull/107534": {
     "derived": {
@@ -1040,21 +1062,21 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:6bbb7132ac4484321b5a1ba34346e472eaa51c7351e9ae66867fe06ddd960db3": {
         "bug_type": "other",
         "reasoning": "This comment is about a test setup issue where a parameter passed to a method is not being properly tested/mocked. It's a test coverage/quality concern rather than a bug in the production code itself."
       }
-    ]
+    }
   },
   "https://github.com/grafana/grafana/pull/79265": {
     "derived": {
       "language": "Go",
       "num_golden_comments": 5,
       "severity_mix": {
-        "High": 1,
-        "Medium": 2,
-        "Low": 2
+        "High": 2,
+        "Low": 2,
+        "Medium": 1
       },
       "num_files_touched": 7
     },
@@ -1074,28 +1096,26 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:9e85395a9fa1d166866b90db2dcac0128e509c1dc5e9c1bf16431062ae82a3f8": {
         "bug_type": "race_condition",
         "reasoning": "The comment explicitly identifies a race condition where concurrent requests can bypass the device count check, allowing creation of devices beyond the intended limit due to lack of proper synchronization."
       },
-      {
+      "g:0f6c7597226b3930ee197acd74f37d60336537614e115b9f4a708a9d02652829": {
         "bug_type": "logic_error",
         "reasoning": "The comment describes a behavioral change where authentication now fails entirely due to a device limit check that was previously non-blocking. This is a logic error because the control flow was changed in a way that introduces blocking behavior where it didn't exist before, potentially breaking expected functionality for anonymous users."
       },
-      {
-        "bug_type": "type_error",
-        "reasoning": "The comment describes a type mismatch where a []interface{} is being passed to a function that expects a string as its first parameter. This is a compilation error due to incorrect type usage when calling the Exec method."
+      "g:a12e3c967a9b5ddb13b01483e541c024c5e1807737cc17c14ebc734b2dcd3353": {
+        "label_status": "not_relabelled"
       },
-      {
-        "bug_type": "incorrect_value",
-        "reasoning": "The comment points out that the wrong error value is being returned - ErrDeviceLimitReached is returned when the actual cause could be that the device doesn't exist, making the error message misleading and incorrect for the actual situation."
-      },
-      {
+      "g:47537e4fcec5334710c1a1de8aeb5f3479cd96dbc6b3167a33c54a4dddf3bffd": {
         "bug_type": "logic_error",
         "reasoning": "The comment identifies an inconsistency in time window calculation where UTC() is applied inconsistently - to one time value but not another. This is a logic error in the time comparison that could lead to incorrect behavior."
+      },
+      "g:8ae63e78250a4bfc9927664b96ffd256921a80ef9dd8909042922568a2e3c874": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/9": {
     "derived": {
@@ -1120,23 +1140,22 @@
       "requires_context": "file",
       "primary_concern": "reliability"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "race_condition",
-        "reasoning": "The comment explicitly mentions 'Thread-safety issue' with a lazy-loaded variable (@loaded_locales), which indicates a race condition where multiple threads could potentially access or modify the shared state concurrently without proper synchronization."
+    "comment_bug_types_by_bug_id": {
+      "g:07876fbecfe152dec3c133620502f1b2886d9401d5b12430057f8999c7ce2231": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:6747cec6acdf3e26929a81ffc4b4b975f24eee13aba6287d62ac3c1779ea5f8c": {
         "bug_type": "missing_validation",
         "reasoning": "The comment suggests normalizing input locale to prevent double-loading when the same locale is passed in different formats (String vs Symbol). This is about validating/normalizing input to ensure consistent behavior and avoid redundant operations."
       }
-    ]
+    }
   },
   "https://github.com/grafana/grafana/pull/76186": {
     "derived": {
       "language": "Go",
-      "num_golden_comments": 2,
+      "num_golden_comments": 3,
       "severity_mix": {
-        "High": 1,
+        "High": 2,
         "Low": 1
       },
       "num_files_touched": 2
@@ -1155,25 +1174,28 @@
       "requires_context": "cross_file",
       "primary_concern": "reliability"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:86ab750cd4725616889c0761907b9c80ecbaa61870a3c10a0a30aa6fc8906309": {
         "bug_type": "null_reference",
         "reasoning": "The comment describes a null pointer dereference issue where methods panic when accessing req.PluginContext on a nil request object without first checking if req is nil."
       },
-      {
+      "g:e0354dbf05e7bb4f56d7118a0039e5b1c56e64ff9ccc80dd6d4a1b6ca719a7ba": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment describes a regression where traceID logging was accidentally removed during refactoring. The new middleware doesn't include the traceID information that was previously present, resulting in missing/incorrect log output. This is about missing expected data in the output rather than a logic error in computation."
+      },
+      "g:69fe43af1981c9333952b58910d7a81b2634eb08deff7e8b9a37037a26d9dd7b": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/10": {
     "derived": {
       "language": "Ruby",
-      "num_golden_comments": 4,
+      "num_golden_comments": 7,
       "severity_mix": {
-        "Critical": 1,
-        "Medium": 2,
-        "High": 1
+        "Critical": 2,
+        "High": 3,
+        "Medium": 2
       },
       "num_files_touched": 15
     },
@@ -1193,31 +1215,40 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "null_reference",
-        "reasoning": "NoMethodError typically occurs in Ruby when calling a method on a nil object. The comment indicates a NoMethodError is happening in the before_validation callback of EmbeddableHost, which suggests an attempt to call a method on a null/nil reference."
+    "comment_bug_types_by_bug_id": {
+      "g:763897a23d0a2b9460949b7bfa2d194a18b3bac834a65edd64d9c017f3557172": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:7f320fae6047233b7d5bb2dcbd11d58bf9a56a3aa9b0590f3600625db481d46d": {
         "bug_type": "null_reference",
         "reasoning": "The comment describes a scenario where a database query returns nil and subsequent method calls on that nil object will cause a NoMethodError. This is a classic null reference error where the code fails to check if the retrieved record exists before operating on it."
       },
-      {
+      "g:1005a489170c716c5d590f68d8b72e405e011e80c355d30cf2474f03356c0412": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment describes a case sensitivity mismatch where the database query uses lower(host) but the parameter passed to it is not normalized to lowercase, causing incorrect comparison results for mixed-case inputs."
       },
-      {
+      "g:7d1f88812b60e6743d1f9960d5cc5cfcd6fc585d400814e02728c331f36a01bb": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment identifies that migrated data won't be normalized to match the expected format for host lookups, causing a mismatch between old and new data formats. This is about data being stored in an incorrect/inconsistent format that will cause lookup failures."
+      },
+      "g:056f31c19d7a06894b117b8de1beac8eae9d5be478cfc9ccca55b874597a49af": {
+        "label_status": "not_relabelled"
+      },
+      "g:e3ec7ebd54619da0203d0a0a5333b4d834ff7ade489348c26612d0e7b33742ea": {
+        "label_status": "not_relabelled"
+      },
+      "g:b23b985d97880661549dc9a044507e2a44a7e981cac01626687ee94332785d36": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/7": {
     "derived": {
       "language": "Ruby",
-      "num_golden_comments": 3,
+      "num_golden_comments": 5,
       "severity_mix": {
-        "Low": 3
+        "Low": 3,
+        "Medium": 2
       },
       "num_files_touched": 6
     },
@@ -1234,28 +1265,34 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:fda9786b98e1cd8b3f2f056c5aebaea6d1a626918a43e4ad77220f2d1008adc0": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment identifies that a CSS lightness value was changed from 30% to 70%, which is described as a 'dramatic inversion'. This suggests the new value may be incorrect or unintended, making it an incorrect value issue in the styling."
       },
-      {
+      "g:e86f207aef5635da206553ddb60f7e3bb48604fcffd6ffd8e58eacbff04c529e": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment points out an inconsistency in how color values are being changed - specifically that $primary is being changed from 30% to 50% for light theme while other changes preserve the original value. This is flagging a potentially incorrect value that doesn't follow the established pattern."
       },
-      {
+      "g:edd58847fbc7eec1036eae3b6bde283f17cac244bfbf5fe170965d368a57e822": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment identifies that a CSS variable value was changed from 70% to 30% lightness, which is an incorrect value that makes text darker than the intended design specification."
+      },
+      "g:c78891156d236f183ac08bdd898aafa3de999ae17b467f4829a17490e4ea85d8": {
+        "label_status": "not_relabelled"
+      },
+      "g:74e374e6d5b4479d7e06e001a483b789a2e403c356950ac3943c266f60050d92": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/8": {
     "derived": {
       "language": "Ruby",
-      "num_golden_comments": 3,
+      "num_golden_comments": 6,
       "severity_mix": {
-        "High": 1,
-        "Medium": 2
+        "High": 2,
+        "Medium": 4
       },
       "num_files_touched": 8
     },
@@ -1274,26 +1311,35 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:7f480ade380f5deeba16f2a0a56750c71c376d0677a646ddc10832daefc3b8aa": {
         "bug_type": "race_condition",
         "reasoning": "The comment explicitly identifies a race condition where an asynchronous call (findMembers()) is unhandled, meaning the controller may try to access member data before it's available, creating a timing-dependent bug."
       },
-      {
+      "g:90a8c938f8b71c3adb0c501f9fcb15e892ff1040f2d3058032bc3d0e0bdcd95b": {
         "bug_type": "logic_error",
         "reasoning": "The comment describes a boundary condition issue where capping the offset at user_count can result in an empty page being displayed when the total equals the limit. This is a logic error in the pagination calculation that produces incorrect/confusing behavior at edge cases."
       },
-      {
-        "bug_type": "api_misuse",
-        "reasoning": "The comment identifies an HTTP method mismatch where a test uses PUT but the API endpoint expects DELETE. This is a classic case of incorrect API usage - using the wrong HTTP verb to call an endpoint."
+      "g:5326218bc74035485a428690156e8fea3a3292c473eee7e51ef066d7c325bda1": {
+        "label_status": "not_relabelled"
+      },
+      "g:b51fce70f850ca3a6be8f1b98643af242b9311b0c8aa31bc0c567fc316ffe5da": {
+        "label_status": "not_relabelled"
+      },
+      "g:90497d3f4f6091648c8d52177c5a31ad112e4bebd8ac41af8220b75d8e0d5100": {
+        "label_status": "not_relabelled"
+      },
+      "g:391b13da472bb60c1d0d0d9de97ac545cf5db9eaaa1a02b3a144c40c9a3354a6": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/3": {
     "derived": {
       "language": "Ruby",
-      "num_golden_comments": 2,
+      "num_golden_comments": 3,
       "severity_mix": {
+        "Critical": 1,
         "Medium": 2
       },
       "num_files_touched": 4
@@ -1313,23 +1359,26 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:51ed24c4cab0c6e5eb70b9e12574f026ed989d22ff7138c6771d7e5a4f960b42": {
         "bug_type": "race_condition",
         "reasoning": "The comment explicitly mentions race conditions in concurrent environments as a concern, where a read operation (checking if email should be blocked) has side effects (updating statistics) that could cause data races when multiple threads access it simultaneously."
       },
-      {
-        "bug_type": "security",
-        "reasoning": "The comment describes a security vulnerability where the regex pattern for domain whitelisting is too permissive, allowing subdomain bypass attacks (e.g., evil.example.com matching example.com). This is a security issue that could allow unauthorized domains to pass validation."
+      "g:7498c5fb7a8d23d5ed141579035ff0717598f579c03ba0bac66559f88b6a99a5": {
+        "label_status": "not_relabelled"
+      },
+      "g:b3088aa3d8be66cb07ffd8a43f0f62c085175883d8e26c80f704c6816fafd136": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/5": {
     "derived": {
       "language": "Ruby",
-      "num_golden_comments": 2,
+      "num_golden_comments": 3,
       "severity_mix": {
-        "Low": 2
+        "Low": 2,
+        "Medium": 1
       },
       "num_files_touched": 3
     },
@@ -1347,16 +1396,19 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:1a868ee0f0160ac34e28156629f866a676d4de708533759898a22bf395cef13c": {
         "bug_type": "api_misuse",
         "reasoning": "The comment describes incorrect usage of CSS layout systems - mixing float with flexbox causes conflicts. This is a misuse of CSS APIs/properties where the combination of different layout mechanisms creates unintended behavior, specifically breaking the right-alignment of the login panel in certain contexts."
       },
-      {
+      "g:b0c566e52ae5d4293f68112a31bf7360016dd2ff8f0762244c11c1161e4a0e7b": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment points out that an incorrect CSS vendor prefix property name is being used. '-ms-align-items' is not a valid property - the correct property for IE/Edge compatibility is '-ms-flex-align'. This is an incorrect value/property name issue."
+      },
+      "g:ed5d031a9a083b59b7b4677fce1a850585fc3ffd8108921d2edae755f6b842c4": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/6": {
     "derived": {
@@ -1381,19 +1433,20 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:b3c3bcd7b9412737c6c5501400ca34537acc66a7d558c388c267e7cb691bc6c7": {
         "bug_type": "api_misuse",
         "reasoning": "The comment identifies that the method is missing the required '?' suffix that Rails serializers expect for conditional attribute inclusion methods. This is a violation of the Rails serializer API convention, making it an API misuse issue."
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/4": {
     "derived": {
       "language": "Ruby",
-      "num_golden_comments": 6,
+      "num_golden_comments": 8,
       "severity_mix": {
-        "Critical": 1,
+        "Critical": 2,
+        "High": 1,
         "Medium": 5
       },
       "num_files_touched": 12
@@ -1414,40 +1467,45 @@
       "requires_context": "cross_file",
       "primary_concern": "security"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "security",
-        "reasoning": "SSRF (Server-Side Request Forgery) is a security vulnerability where an attacker can make the server perform requests to unintended locations. Using open(url) without validation allows attackers to access internal resources or make malicious requests."
+    "comment_bug_types_by_bug_id": {
+      "g:711335b855bb418a26e3ce9b8c11e4603b407bcca4755c8231a330d06310eead": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:d86c28c2e350f8c749d6c743f8fe2ed506e2ba8cb7eca9de307ac203d90c49fe": {
         "bug_type": "security",
         "reasoning": "The comment describes a security vulnerability where origin validation using indexOf can be bypassed by attackers using malicious domains that contain the legitimate domain as a substring, allowing unauthorized access."
       },
-      {
+      "g:879261fc7f791027f99bf1ad13f7605b870eb98d019215d551829ed1e40b216d": {
         "bug_type": "api_misuse",
         "reasoning": "The comment describes incorrect usage of the postMessage API - specifically passing a full referrer URL instead of just the origin (scheme+host+port) for the targetOrigin parameter, which will cause the API call to fail silently."
       },
-      {
+      "g:395e263f3d6112ace9e3bcc1fa0f7c8f43a5f6d3e92eac45cbc66ba0cc049027": {
         "bug_type": "security",
         "reasoning": "The comment describes multiple security vulnerabilities: disabled clickjacking protection via X-Frame-Options: ALLOWALL, bypassable referer validation (security headers can be spoofed), and masking of validation failures. These are all security-related issues that could allow attacks like clickjacking."
       },
-      {
+      "g:7431d1dab519161cb4b4fe4846d035555e1c88ffa9ab1aa447accf94d3011f9c": {
         "bug_type": "security",
         "reasoning": "The comment identifies two issues: a NoMethodError from nil contents (null reference) and an XSS vulnerability from unescaped URL interpolation. Since XSS is explicitly mentioned as a security vulnerability and security issues typically take precedence in classification, this should be categorized as security."
       },
-      {
+      "g:044784ae2b355a7e9f7ebb68be10113def39cc1817590071b54c054d4ddb6d48": {
         "bug_type": "logic_error",
         "reasoning": "The comment identifies invalid Ruby/ERB syntax where 'end if' is used instead of 'end' to close an if block. This is a syntax/logic error that will cause the template to fail at render time."
+      },
+      "g:3f38029546d13d76ceb43989769e11b9f2ff939272a299771262d9beaf5a5db9": {
+        "label_status": "not_relabelled"
+      },
+      "g:cedbf50cff120fdc5d168bb883556edb98d72d98431d301b1bc0a6b0d1bd003d": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/1": {
     "derived": {
       "language": "Ruby",
-      "num_golden_comments": 3,
+      "num_golden_comments": 4,
       "severity_mix": {
-        "Medium": 2,
-        "Low": 1
+        "Low": 1,
+        "Medium": 3
       },
       "num_files_touched": 3
     },
@@ -1466,20 +1524,23 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:17dc94e7e65c1e24a6c99f92b920c12d131663b338b993551174a63b69a6e106": {
         "bug_type": "dead_code",
         "reasoning": "The comment describes a method being defined twice, where the second definition overrides the first, making the original method unreachable. This is a classic dead code scenario where the first method definition becomes inaccessible."
       },
-      {
+      "g:fd7f31636bd3203806948fd599d05f4d1ebdb4417697a687d8f72967cdd1700a": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment points out that a hardcoded value (10 * 1024) is being used instead of reading from the proper configuration settings, which causes the client-side limit to be incorrect compared to server-side settings. This is a case of using an incorrect/hardcoded value rather than the proper dynamic configuration value."
       },
-      {
+      "g:f2377d28f6a21185a9d4882ecae28437e1df0e702035c06a3890fbac409ea7d8": {
         "bug_type": "api_misuse",
         "reasoning": "The comment describes passing a percentage value (80%) to gifsicle's --resize-fit option which expects WxH geometry format, not percentages. This is incorrect usage of the gifsicle API/command-line interface."
+      },
+      "g:3e416c5771711e4429429ab54535e39443243490b0ba26ef7aa848e1f0acf203": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/2": {
     "derived": {
@@ -1505,24 +1566,25 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:792965a0a6408a291d0c9233fee2792d0ea239a4fc8d0f111e4d4a4f649bbd9e": {
         "bug_type": "null_reference",
         "reasoning": "The comment explicitly identifies a nil pointer exception scenario where 'tu' could be nil if no TopicUser record exists, and calling methods on a nil object would cause a crash."
       },
-      {
+      "g:110d69880e01612ea03212fde2d6212628046ff7965b883377b582f0dc37baff": {
         "bug_type": "incorrect_value",
         "reasoning": "This is a typo in a property name where 'stopNotificiationsText' should be 'stopNotificationsText'. This represents an incorrect string value that could cause property lookup failures or inconsistencies."
       }
-    ]
+    }
   },
   "https://github.com/calcom/cal.com/pull/22532": {
     "derived": {
       "language": "TypeScript",
-      "num_golden_comments": 2,
+      "num_golden_comments": 4,
       "severity_mix": {
-        "Medium": 1,
-        "Low": 1
+        "High": 1,
+        "Low": 1,
+        "Medium": 2
       },
       "num_files_touched": 11
     },
@@ -1540,16 +1602,22 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:0dd3510e6bba7cd9029c1334dd4bceceb07ebbde10d277c67103b398573a94cb": {
         "bug_type": "api_misuse",
         "reasoning": "The comment describes incorrect usage of Prisma's API - passing an empty data object prevents the @updatedAt decorator from working as expected. This is a misunderstanding of how the Prisma ORM API should be used to trigger automatic timestamp updates."
       },
-      {
+      "g:0cff63acf3e2c5bec2a4c37ec638423f868fe6bd2f5a16f558c3fe5c01987e66": {
         "bug_type": "api_misuse",
         "reasoning": "The comment identifies incorrect usage of the sed command - using macOS-specific syntax (-i with empty string) that won't work on Linux systems. This is a platform-specific API/command misuse issue."
+      },
+      "g:5268353f2fa73842a260f6e4b8e66c8d903920c9c69c9e488aba936f0091900f": {
+        "label_status": "not_relabelled"
+      },
+      "g:81343a6ad49a22c29b977584efec5254cf388e9ff6bf2e95c39d667333361f5e": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/calcom/cal.com/pull/8330": {
     "derived": {
@@ -1574,16 +1642,16 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:2c0a90a221687dd5e788e95597e529cf20334f8c23f8e820479948866f0c2dac": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment describes using the wrong variable (slotStartTime instead of slotEndTime) for calculating end time, which is a classic incorrect value/wrong variable usage bug."
       },
-      {
+      "g:662434b9a5e8e47a8c46ee83d84bedf221650d7f5f607d8008039a2082b33111": {
         "bug_type": "api_misuse",
         "reasoning": "The comment identifies incorrect usage of the dayjs library API - using === for object comparison instead of the proper .isSame() method that dayjs provides for comparing date values."
       }
-    ]
+    }
   },
   "https://github.com/calcom/cal.com/pull/14943": {
     "derived": {
@@ -1608,16 +1676,16 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:690706c6d9fb6df9e58b56233fbdadf9f29e06068ca48c6a7d93ef84452b9112": {
         "bug_type": "race_condition",
         "reasoning": "The comment explicitly identifies a race condition where reading and incrementing retryCount non-atomically can lose increments under concurrent execution, and recommends using atomic increment operations to fix it."
       },
-      {
+      "g:4e7553e54f967bf6e6e88033d5ca4f9bb8ed835cddb94b738bbcb0f9b8959fd2": {
         "bug_type": "logic_error",
         "reasoning": "The bug is a logical error in the deletion condition where the retryCount filter is missing a required method type constraint (WorkflowMethods.SMS), causing the deletion to incorrectly apply to all reminder types instead of only SMS reminders as intended."
       }
-    ]
+    }
   },
   "https://github.com/calcom/cal.com/pull/22345": {
     "derived": {
@@ -1643,23 +1711,24 @@
       "requires_context": "file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:0d2209b6063614617981f983138eed658d42dc17e1fb2c0a05a33403e023213c": {
         "bug_type": "dead_code",
         "reasoning": "The comment explicitly identifies unreachable code branches - the else if and final else conditions can never be executed because authConditions is always truthy, making those code paths dead code."
       },
-      {
+      "g:c6cdfab63babd533f3f98837a0a9495e4a30f5c9cdacf0586de9e4f4909eedf2": {
         "bug_type": "logic_error",
         "reasoning": "The comment describes a conditional logic flaw where the guard condition (teamsFromOrg.length > 0) incorrectly excludes valid cases - specifically org-level members for organizations without child teams. This is a logical error in the business logic that causes incorrect behavior for certain valid scenarios."
       }
-    ]
+    }
   },
   "https://github.com/calcom/cal.com/pull/11059": {
     "derived": {
       "language": "TypeScript",
-      "num_golden_comments": 5,
+      "num_golden_comments": 9,
       "severity_mix": {
-        "High": 5
+        "High": 8,
+        "Medium": 1
       },
       "num_files_touched": 9
     },
@@ -1678,36 +1747,47 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:8e6edaa65be4be81ff67a8ccca26cbdf3d0caef5482b5b7cf125887b9253cc5d": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment describes a hardcoded string 'refresh_token' being assigned instead of the actual refresh token value from the response. This is an incorrect value assignment that breaks the authentication flow."
       },
-      {
-        "bug_type": "api_misuse",
-        "reasoning": "The comment describes incorrect usage of the Zod validation library API - using computed property keys in a way that's not supported by Zod's object schema syntax, which will cause runtime errors."
+      "g:0ef0af69418b7f78d873d517d9e8a5e8b8ab59e4a812247df88b1ecf25d4b3b4": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:5dd495d6e5979cda5c58f9a8e5ebaf9c09e08f5af303a3270c40411807dbb945": {
         "bug_type": "api_misuse",
         "reasoning": "The code incorrectly uses the Zod safeParse result object directly instead of extracting the parsed data from it. This is a misuse of the Zod parsing API where the developer should access .data from the result rather than storing the entire wrapper object."
       },
-      {
+      "g:445c4b77b05b83105edb7199ecba191770e038be0fd9932789d693c597501d62": {
         "bug_type": "type_error",
         "reasoning": "The comment describes a type mismatch where a function returns a Response object but callers expect integration-specific token objects (res.data, HubspotToken). This is a classic type error where the return type doesn't match what consumers expect, causing runtime errors."
       },
-      {
+      "g:fc20349480578fecc1f1ae1761fdf557b32174292d2238155c6d18e71173423a": {
         "bug_type": "type_error",
         "reasoning": "The comment describes a type mismatch where res is expected to have a .data property but when using the sync endpoint, res is a fetch Response object which doesn't have .data, causing a runtime error when accessing token.access_token. This is a type/interface inconsistency issue."
+      },
+      "g:b23e1531e815d61aa4f5ee19a51e6ac54333376818851f925ef10a51e3cf6d9c": {
+        "label_status": "not_relabelled"
+      },
+      "g:20cc8a991310e2f8f765083e9aeed513834ec59432c49767a8b5882cb2cd940e": {
+        "label_status": "not_relabelled"
+      },
+      "g:181baf105313fb993ce4f88b6b7a9f0f0be0a2aabae0bc4bf8b10ca9817def75": {
+        "label_status": "not_relabelled"
+      },
+      "g:f5b876b86d60f2952bf5a18e09977981751be0f2ab262f48da67df5093c2ba57": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/calcom/cal.com/pull/7232": {
     "derived": {
       "language": "TypeScript",
-      "num_golden_comments": 2,
+      "num_golden_comments": 3,
       "severity_mix": {
-        "Medium": 1,
-        "High": 1
+        "High": 1,
+        "Medium": 2
       },
       "num_files_touched": 9
     },
@@ -1726,26 +1806,29 @@
       "requires_context": "cross_file",
       "primary_concern": "reliability"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:9efb1ffdf5d6ea73450288a02eace40954d56f2e9cd51ccb2d51f322848aa82c": {
         "bug_type": "race_condition",
         "reasoning": "The comment describes async functions being called without await in forEach loops, which means the deletions may not complete before the code continues. This is a classic race condition where the timing of async operations is not properly controlled, potentially leaving scheduled reminders active when they should be cancelled."
       },
-      {
+      "g:3e232b0845440da696f3dd7c07029c89360f8f72488ca7f124ebd5db42193e4b": {
         "bug_type": "logic_error",
         "reasoning": "The comment describes a logical flaw where the immediateDelete=true code path fails to perform necessary cleanup operations (deleting database records and calling SendGrid DELETE API) that should logically occur, creating inconsistency with the other code path and leaving orphaned data."
+      },
+      "g:6fe1aea2db8587dadc37ac99f11d47a9b1e3df0e650de0a3c8726066ebc0f0e4": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/calcom/cal.com/pull/14740": {
     "derived": {
       "language": "TypeScript",
-      "num_golden_comments": 5,
+      "num_golden_comments": 6,
       "severity_mix": {
-        "High": 1,
         "Critical": 1,
-        "Medium": 2,
-        "Low": 1
+        "High": 1,
+        "Low": 1,
+        "Medium": 3
       },
       "num_files_touched": 6
     },
@@ -1765,37 +1848,38 @@
       "requires_context": "cross_file",
       "primary_concern": "security"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "security",
-        "reasoning": "Case sensitivity bypass in email blacklist is a security vulnerability that allows attackers to circumvent security controls by using different letter cases (e.g., 'SPAM@evil.com' bypassing a blacklist for 'spam@evil.com')"
+    "comment_bug_types_by_bug_id": {
+      "g:0cd64b33ea8da836bb622bc752b14720caeb3a70e14c305b1ba1040c9c77d52d": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:560dc2c4023e92470b5b29b9023c5f311fa9088afa8324f91230304a180a3ef5": {
         "bug_type": "logic_error",
         "reasoning": "The comment describes an incorrect boolean operator being used (AND instead of OR) in a permission check condition, which is a classic logic error where the conditional logic doesn't match the intended behavior."
       },
-      {
-        "bug_type": "incorrect_value",
-        "reasoning": "The comment describes passing the wrong data (original guests instead of filtered/processed guests) to the email sender function, causing existing attendees to incorrectly receive 'new attendee' notifications. This is passing an incorrect value to a function."
+      "g:ba2350db8baad2e943e5f84344c03b83cf8f96d54a71f4b51f8e8c4e4c9e5cf4": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:68ffd42832d390f706a05646abf16a65f1c7695c2f0e4cd0d7aa922778fe9b4a": {
         "bug_type": "missing_validation",
         "reasoning": "The comment identifies that the code fails to validate/deduplicate duplicate entries within the input array itself, allowing duplicate attendee rows to be inserted when the client submits repeated emails."
       },
-      {
+      "g:9fbbda4da5dec6cf6149d398af7470e97953524347bc515e24be3487043c966e": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment points out that initializing an array with an empty string [''] instead of an empty array [] is an incorrect initial value that could cause validation issues downstream."
+      },
+      "g:a654992dee64f6762bf130f55fc959ddb95569b822a8993436cd8429f674231a": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/calcom/cal.com/pull/10600": {
     "derived": {
       "language": "TypeScript",
-      "num_golden_comments": 4,
+      "num_golden_comments": 5,
       "severity_mix": {
-        "Low": 2,
-        "Medium": 1,
-        "High": 1
+        "High": 1,
+        "Low": 3,
+        "Medium": 1
       },
       "num_files_touched": 7
     },
@@ -1815,31 +1899,34 @@
       "requires_context": "cross_file",
       "primary_concern": "security"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:5cb14228490b8a545fced1612d0de8358ff2c0616e3caf2ff36163dfcb83ab6f": {
         "bug_type": "other",
         "reasoning": "This is a naming convention/consistency issue where the exported function name (TwoFactor) doesn't match the file name (BackupCode.tsx) or the actual functionality (backup codes). This is a code organization/naming issue, not a functional bug."
       },
-      {
+      "g:55db5b79b95751ea710069fac3afa95816ffb12f375340b08c6d54767f02b0b3": {
         "bug_type": "incorrect_value",
         "reasoning": "The error message string contains incorrect text - it references 'backup code login' when the actual operation is disabling backup codes. This is an incorrect string value that doesn't match the actual functionality."
       },
-      {
+      "g:61316c36c48355460f9f4676a938c1691fad6244fb07b48bda956ee5b8ca9878": {
         "bug_type": "incorrect_value",
         "reasoning": "The comment describes a case-sensitivity issue where indexOf() doesn't handle uppercase/lowercase hex characters properly, leading to incorrect validation results. This is about producing wrong comparison results due to not normalizing the input values."
       },
-      {
+      "g:7b582b302da7c4767cb2f038159b18be8e5bc242ce93ea388fd6e4da47a28318": {
         "bug_type": "race_condition",
         "reasoning": "The comment explicitly describes a race condition where two concurrent login requests can both pass the backup code check before either updates the state, allowing a one-time-use code to be used multiple times."
+      },
+      "g:e3eea3b13b15caf11ffd82e3fa38530957771f857eb24f31a61d70fe8fd08cf3": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/calcom/cal.com/pull/10967": {
     "derived": {
       "language": "TypeScript",
-      "num_golden_comments": 5,
+      "num_golden_comments": 6,
       "severity_mix": {
-        "High": 2,
+        "High": 3,
         "Low": 2,
         "Medium": 1
       },
@@ -1861,36 +1948,38 @@
       "requires_context": "cross_file",
       "primary_concern": "correctness"
     },
-    "comment_bug_types": [
-      {
-        "bug_type": "null_reference",
-        "reasoning": "The comment explicitly mentions 'Potential null reference' when mainHostDestinationCalendar could be undefined due to evt.destinationCalendar being null or an empty array, which is a classic null/undefined reference issue."
+    "comment_bug_types_by_bug_id": {
+      "g:f6c5b7a2d735c6f22c6cbe4d6e2885c83922e4708088b1c0d4a9bd644886e65a": {
+        "label_status": "not_relabelled"
       },
-      {
+      "g:f261d478ad186c3c3c716e9b984a6979f470a80422a9919d715741f6e326f211": {
         "bug_type": "dead_code",
         "reasoning": "The optional chaining (?.) is unnecessary/redundant because the variable is already checked in the ternary condition, making the null-safety operator dead/superfluous code."
       },
-      {
+      "g:24d14d682cdc82cb2d8c3bc640a75850b87641b526b156327e3463d07ccfebdf": {
         "bug_type": "logic_error",
         "reasoning": "The comment describes a logical flaw where the search condition is incorrectly comparing a value to itself (externalId === externalCalendarId), which will always fail to find the intended calendar. This is a clear logic error in the search/filtering logic."
       },
-      {
+      "g:5bd5f7d107404a8545871dfec0780330e17e4f492e5f7a3843874c3f3ac6065f": {
         "bug_type": "logic_error",
         "reasoning": "The comment describes a logic inversion where a conditional check was flipped from checking when IS_TEAM_BILLING_ENABLED is false to when it's true, causing incorrect behavior in both enabled and disabled states. This is a classic logic error involving inverted boolean conditions."
       },
-      {
+      "g:74abebbfbfa8804a2fa3f49e2669e341638a0594170124ae54bb2cc96e8b5467": {
         "bug_type": "api_misuse",
         "reasoning": "The comment describes implementations that don't conform to an interface contract - some implementations have the wrong method signature (missing credentialId parameter). This is a violation of the interface/API contract, which falls under api_misuse."
+      },
+      "g:8b5ee137088ad6c70b0928f7c3a22afc8f730a14560f5033c8bbe7e1092a20d1": {
+        "label_status": "not_relabelled"
       }
-    ]
+    }
   },
   "https://github.com/calcom/cal.com/pull/8087": {
     "derived": {
       "language": "TypeScript",
       "num_golden_comments": 2,
       "severity_mix": {
-        "Low": 1,
-        "Critical": 1
+        "Critical": 1,
+        "Low": 1
       },
       "num_files_touched": 5
     },
@@ -1908,15 +1997,15 @@
       "requires_context": "cross_file",
       "primary_concern": "reliability"
     },
-    "comment_bug_types": [
-      {
+    "comment_bug_types_by_bug_id": {
+      "g:e5d67f9cf46df767ce54f85cbcc7620221b4509989bfcc99d6b7d979a3008985": {
         "bug_type": "missing_validation",
         "reasoning": "The comment suggests adding error handling (try-catch) around an async import operation to handle potential failures. This is about validating/handling error cases that could occur during the import, which falls under missing validation/error handling."
       },
-      {
+      "g:0d577c54dab878fe24b3888a47deec75bdf7201c52833c9d83d46b4e0ea9c75c": {
         "bug_type": "race_condition",
         "reasoning": "The comment explicitly identifies race conditions as a consequence of using forEach with async callbacks, where asynchronous operations run concurrently without proper awaiting, leading to unhandled promise rejections and incomplete cleanup due to the 'fire-and-forget' behavior."
       }
-    ]
+    }
   }
 }

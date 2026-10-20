@@ -1089,7 +1089,7 @@ def _resume(run_id, args, retry):
     return _exit_code(final, urls)
 
 
-def _score_only(run_id):
+def _score_only(run_id, *, epoch_id=None):
     run_dir = RUNS_ROOT / run_id
     try:
         from bench.runner import score
@@ -1104,11 +1104,11 @@ def _score_only(run_id):
         print(f"No run dir at {run_dir} to score.", file=sys.stderr)
         return 2
     try:
-        score.score_run(str(run_dir))
+        result = score.score_run(str(run_dir), epoch_id=epoch_id)
     except (ValueError, RuntimeError) as exc:
         print(f"--score-only failed for {run_id}: {exc}", file=sys.stderr)
         return 2
-    print("Scored {}: wrote {}".format(run_id, run_dir / "scores.json"))
+    print("Scored {}: {}".format(run_id, result["score_ref"]))
     return 0
 
 
@@ -1224,6 +1224,7 @@ def parse_args(argv=None):
         "or the operator's Claude subscription via CLAUDE_CODE_OAUTH_TOKEN",
     )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
+    parser.add_argument("--golden-epoch", metavar="EPOCH_ID")
     parser.add_argument(
         "--check",
         metavar="RUN_ID",
@@ -1278,7 +1279,9 @@ def main(argv=None):
     # --score-only / --check have different prerequisites (no claude/gh invocation) and
     # are handled before the run prereq checks.
     if args.score_only:
-        return _score_only(args.score_only)
+        if args.golden_epoch is None:
+            return _score_only(args.score_only)
+        return _score_only(args.score_only, epoch_id=args.golden_epoch)
     if args.check:
         # --check inspects an existing run; combining it with new-run flags is always a
         # mistake (the flags would be silently ignored). Fail loud.

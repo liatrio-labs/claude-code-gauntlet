@@ -16,6 +16,37 @@ owner options.
 `profile_run.py`, which turns a recorded `code-gauntlet` workflow run (record JSON +
 subagent transcripts + orchestrator session) into a stage/critical-path/cost profile.
 
+## Golden epochs and immutable scores
+
+The active epoch is `e616e84-v1`: 173 bugs over the fixed 50 PRs, with core
+primary (158 full / 66 gate). All (173 / 73) and strict (139 / 58) are also
+reported. The archived `dfc6cb4-v1` epoch supports all only and retains its
+scorer-authoritative 137 bugs despite the 136-claim raw files.
+All benchmark and cost claims in the historical sections below describe the
+old epoch. New baseline, anchor, variability and diagnostic noise measurements
+are pending; old ceilings do not apply to the new epoch.
+
+```bash
+python3 -m bench.runner.migrate_epoch archive-run --run-dir PATH --epoch dfc6cb4-v1
+python3 bench/run.py --score-only RUN_ID --golden-epoch e616e84-v1
+```
+
+Scoring writes a fresh UUID packet at `scores/<epoch-id>/<score-id>/`, retaining
+raw candidates, dedup groups, evaluations, exact adjudication contexts, per-bug
+observations and every supported profile. A complete marker protects every file
+hash. Failed transactions remain under `.pending-*` and cannot be read as scores.
+Existing packets and legacy `scores.json` are preserved. A top-level score file
+is created only when absent, labelled as a first-score snapshot; later scores
+use packet paths. `latest-score.json` is a convenience pointer, never an official
+comparison selector. Explicit `(run_id, epoch_id, score_id)` identities survive
+rescoring. `bench.runner.ledger.replay_packet` recovers a completed packet after
+a failed ledger append without judging again.
+
+Historical captured reviews are descriptive rescoring inputs with unresolved
+provenance. Scoring cannot make those runs valid measurement records. Live
+attempt validity and stage capture are separate integrations.
+See [vendoring](vendor/VENDORED.md) for offline preparation and archived inputs.
+
 ## Quickstart
 
 ```bash
