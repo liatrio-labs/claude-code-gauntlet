@@ -913,6 +913,44 @@ def _echo_in_text(text):
     return True
 
 
+def _transcript_records(path):
+    """Yield the type and content blocks of assistant and user session records."""
+    try:
+        with path.open(encoding="utf-8", errors="replace") as transcript:
+            for line in transcript:
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                record_type = record.get("type")
+                if record_type not in ("assistant", "user"):
+                    continue
+                message = record.get("message")
+                blocks = message.get("content") if isinstance(message, dict) else None
+                if isinstance(blocks, list):
+                    yield record_type, blocks
+    except OSError:
+        return
+
+
+def _tool_result_text(block):
+    """Flatten textual content from a tool_result block."""
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
+    return "\n".join(
+        part["text"]
+        for part in content
+        if isinstance(part, dict)
+        and part.get("type") == "text"
+        and isinstance(part.get("text"), str)
+    )
+
+
 def _transcript_bash_results(config_dir, worktree, envelope):
     """Read only this session's Bash results, excluding prompts and API records."""
     session_id = envelope.get("session_id") if isinstance(envelope, dict) else None
@@ -923,51 +961,26 @@ def _transcript_bash_results(config_dir, worktree, envelope):
     project_slug = re.sub(r"[^A-Za-z0-9]", "-", str(Path(worktree).resolve()))
     path = Path(config_dir) / "projects" / project_slug / f"{session_id}.jsonl"
     bash_ids = set()
-    try:
-        with path.open(encoding="utf-8", errors="replace") as transcript:
-            for line in transcript:
-                try:
-                    record = json.loads(line)
-                except ValueError:
+    for record_type, blocks in _transcript_records(path):
+        if record_type == "assistant":
+            for block in blocks:
+                if not isinstance(block, dict):
                     continue
-                if not isinstance(record, dict) or record.get("type") not in (
-                    "assistant",
-                    "user",
-                ):
+                if block.get("type") != "tool_use" or block.get("name") != "Bash":
                     continue
-                message = record.get("message")
-                blocks = message.get("content") if isinstance(message, dict) else None
-                if not isinstance(blocks, list):
-                    continue
-                for block in blocks:
-                    if not isinstance(block, dict):
-                        continue
-                    if record["type"] == "assistant":
-                        if (
-                            block.get("type") == "tool_use"
-                            and block.get("name") == "Bash"
-                        ):
-                            tool_id = block.get("id")
-                            if isinstance(tool_id, str):
-                                bash_ids.add(tool_id)
-                    elif (
-                        block.get("type") == "tool_result"
-                        and isinstance(block.get("tool_use_id"), str)
-                        and block["tool_use_id"] in bash_ids
-                    ):
-                        content = block.get("content")
-                        if isinstance(content, str):
-                            yield content
-                        elif isinstance(content, list):
-                            yield "\n".join(
-                                part["text"]
-                                for part in content
-                                if isinstance(part, dict)
-                                and part.get("type") == "text"
-                                and isinstance(part.get("text"), str)
-                            )
-    except OSError:
-        return
+                tool_id = block.get("id")
+                if isinstance(tool_id, str):
+                    bash_ids.add(tool_id)
+            continue
+        for block in blocks:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            tool_use_id = block.get("tool_use_id")
+            if not isinstance(tool_use_id, str) or tool_use_id not in bash_ids:
+                continue
+            content = _tool_result_text(block)
+            if content is not None:
+                yield content
 
 
 def _is_superseded(path):
