@@ -150,7 +150,7 @@ def test_prepare_emits_complete_inactive_proposal_without_execution(tmp_path):
     old_index = (DEFAULT_ROOT / "epochs/index.json").read_bytes()
     result = prepare(source, epoch.upstream_sha, tmp_path / "proposal")
     assert result["golden_sha256"] == epoch.golden_sha256
-    assert result["scorer_commit"] == epoch.scorer_commit
+    assert result["scorer_tree"] == epoch.scorer_tree
     assert result["scorer_file_hashes"] == dict(epoch.scorer_file_hashes)
     assert not (tmp_path / "proposal/e616e84-v1/scorer").exists()
     assert (tmp_path / "proposal/copy-manifest.json").is_file()
@@ -177,7 +177,7 @@ def test_prepare_emits_complete_inactive_proposal_without_execution(tmp_path):
             source,
             epoch.upstream_sha,
             tmp_path / "mismatched-proposal",
-            scorer_commit=load_epoch("dfc6cb4-v1", root=DEFAULT_ROOT).scorer_commit,
+            scorer_tree=load_epoch("dfc6cb4-v1", root=DEFAULT_ROOT).scorer_tree,
         )
 
 

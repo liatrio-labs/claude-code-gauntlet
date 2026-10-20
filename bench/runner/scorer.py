@@ -6,7 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from bench.runner.epochs import read_json
+from bench.runner.epochs import file_hash, read_json
 from bench.runner.observations import ScoreRequest, ScorerOutputs, exclusive_json
 from bench.runner.scorer_source import scorer_source
 
@@ -49,6 +49,14 @@ def execute(
 ):
     if not api_key:
         raise RuntimeError("no judge API key available to run the scorer")
+    hashes = dict(epoch.scorer_file_hashes)
+    for name in ("pyproject.toml", "uv.lock"):
+        path = VENDOR_ENV / name
+        if not path.is_file() or file_hash(path) != hashes[name]:
+            raise ValueError(
+                f"scorer file hash mismatch: provisioned environment {name} "
+                f"differs from epoch {epoch.epoch_id}"
+            )
     model_dir = Path(model_dir).resolve()
     work_dir = model_dir.parent.parent
     run_env = dict(os.environ if env is None else env)

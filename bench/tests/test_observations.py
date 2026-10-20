@@ -3,6 +3,7 @@
 import json
 import shutil
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -262,6 +263,8 @@ def test_dedup_siblings_and_multi_bug_match_do_not_become_noise(score_case):
         "noise": 1,
     }
     assert packet["metrics"]["per_dimension"] == {}
+    assert packet["manifest"]["provenance_status"] == "legacy_unknown"
+    assert all(c.discovery_dimensions == ("unknown",) for c in loaded.candidates)
     assert len(loaded.adjudications) == 1
     context = read_json(
         packet_path(packet)
@@ -280,11 +283,177 @@ def test_repeated_unmatched_text_preserves_context_occurrences(score_case):
         {"body": "extra candidate", "path": "b.py", "line": 10}
     ]
     score_case.payload.write_text(json.dumps(payload), encoding="utf-8")
-    packet = score_case.execute()
+    diff = score_case.payload.parent / "diff.patch"
+    diff.write_text(
+        diff.read_text(encoding="utf-8")
+        + "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -9,1 +9,2 @@\n context\n+distinct hunk\n",
+        encoding="utf-8",
+    )
+    seen = []
+
+    def adjudicate(text, hunk, context, pin, key):
+        seen.append(hunk)
+        return {"bucket": "valid_extra" if "distinct hunk" in hunk else "noise"}
+
+    packet = score_case.execute(adjudicator=adjudicate)
     loaded = observations.load_packet(packet_path(packet))
     assert len(loaded.adjudications) == 2
     assert len({a.candidate_id for a in loaded.adjudications}) == 2
     assert len({a.context_sha256 for a in loaded.adjudications}) == 2
+    assert len(seen) == 2 and seen[0] != seen[1]
+    assert {a.bucket for a in loaded.adjudications} == {"valid_extra", "noise"}
+    assert packet["metrics"]["per_bucket"] == {
+        "golden_matched": 2,
+        "valid_extra": 1,
+        "noise": 1,
+    }
+
+
+def test_old_epoch_replays_recorded_baseline_exactly_offline(tmp_path, monkeypatch):
+    fixture = read_json(Path(__file__).parent / "fixtures/baseline-replay.json")
+    epoch = load_epoch("dfc6cb4-v1", root=DEFAULT_ROOT)
+    run = tmp_path / fixture["run_id"]
+    (run / "state").mkdir(parents=True)
+    score._write_json(
+        run / "run.json", {"run_id": run.name, "urls": list(fixture["prs"])}
+    )
+    verdicts = {}
+    for i, (url, pr) in enumerate(fixture["prs"].items()):
+        score._write_json(run / "state" / f"{i}.json", {"url": url, "status": "ok"})
+        home = run / score.invoke.pr_dir_name({"url": url})
+        score._write_json(
+            home / "post-review-payload.json",
+            {
+                "platform": "github",
+                "payload": {
+                    "comments": [
+                        {"body": c["text"], "path": c["path"], "line": c["line"]}
+                        for c in pr["candidates"]
+                    ]
+                },
+            },
+        )
+        for index, bucket in pr["adjudications"].items():
+            text = pr["candidates"][int(index)]["text"]
+            assert text not in verdicts
+            verdicts[text] = bucket
+    # A future active pin change cannot change the archived epoch's defaults.
+    active_baselines = tmp_path / "active-baselines.json"
+    score._write_json(
+        active_baselines,
+        {"judge_pin": "future-judge", "adjudicator_pin": "future-adjudicator"},
+    )
+    monkeypatch.setattr(score, "BASELINES_PATH", active_baselines)
+
+    def recorded_scorer(pin, key, model_dir):
+        assert pin == fixture["judge_pin"]
+        evaluations, groups = {}, {}
+        candidates = read_json(model_dir / "candidates.json")
+        for url, pr in fixture["prs"].items():
+            bugs = [b for b in epoch.bugs if b.pr_url == url]
+            assert [c["text"] for c in candidates[url]["deep-review"]] == [
+                c["text"] for c in pr["candidates"]
+            ]
+            evaluations[url] = {
+                "deep-review": {
+                    "tp": len(pr["tp"]),
+                    "fn": len(pr["fn"]),
+                    "fp": pr["fp"],
+                    "true_positives": [
+                        {
+                            "golden_comment": bugs[p["golden"]].comment,
+                            "matched_candidate": pr["candidates"][p["candidate"]][
+                                "text"
+                            ],
+                            "confidence": p["confidence"],
+                        }
+                        for p in pr["tp"]
+                    ],
+                    "false_negatives": [
+                        {"golden_comment": bugs[n].comment} for n in pr["fn"]
+                    ],
+                }
+            }
+            groups[url] = {"deep-review": pr["dedup_groups"]}
+        score._write_json(model_dir / "evaluations.json", evaluations)
+        score._write_json(model_dir / "dedup_groups.json", groups)
+
+    def recorded_adjudicator(text, hunk, context, pin, key):
+        assert pin == fixture["adjudicator_pin"]
+        return {"bucket": verdicts.pop(text)}
+
+    packet = score.score_run(
+        run,
+        epoch_id=epoch.epoch_id,
+        env={"BENCH_JUDGE_API_KEY": "offline"},
+        ledger_path=tmp_path / "ledger.jsonl",
+        run_scorer=recorded_scorer,
+        adjudicator=recorded_adjudicator,
+    )
+    assert not verdicts
+    # Discovery dimensions supersede the historical severity alias; all other metrics reproduce.
+    for name, expected in fixture["metrics"].items():
+        if name != "per_dimension":
+            assert packet["metrics"][name] == expected, name
+    assert (
+        packet["metrics"]["drift"]["severity_dist"]
+        == fixture["metrics"]["per_dimension"]
+    )
+    loaded = observations.load_packet(packet_path(packet))
+    assert len(loaded.adjudications) == 61
+    assert any(
+        m.kind == "dedup_sibling"
+        and m.candidate_id in {a.candidate_id for a in loaded.adjudications}
+        for bug in loaded.observations
+        for m in bug.matches
+    )
+
+
+def test_score_normalizes_string_locations_before_context_capture(score_case):
+    payload = read_json(score_case.payload)
+    payload["payload"]["comments"][2]["line"] = "3"
+    payload["payload"]["comments"].append(
+        {"body": "invalid location", "path": "a.py", "line": "n/a"}
+    )
+    score._write_json(score_case.payload, payload)
+    seen = {}
+
+    def adjudicate(text, hunk, context, pin, key):
+        seen[text] = hunk
+        return {"bucket": "noise"}
+
+    loaded = observations.load_packet(
+        packet_path(score_case.execute(adjudicator=adjudicate))
+    )
+    assert seen["extra candidate"]
+    assert seen["invalid location"] == ""
+    assert [c.line for c in loaded.candidates][-2:] == [3, None]
+
+
+@pytest.mark.parametrize("field", ["judge_pin", "adjudicator_pin"])
+def test_epoch_refuses_explicit_pin_override_before_dispatch(
+    score_case, tmp_path, field
+):
+    baseline = read_json(load_epoch(root=DEFAULT_ROOT).root / "baselines.json")
+    baseline[field] = "different-pin"
+    path = tmp_path / "baselines.json"
+    score._write_json(path, baseline)
+    with pytest.raises(ValueError, match=r"pin override.*epoch"):
+        score_case.execute(baselines_path=path)
+    assert not score_case.calls
+
+
+def test_new_runs_never_acquire_a_legacy_archive(score_case):
+    score_case.execute()
+    score_case.execute(epoch_id="dfc6cb4-v1")
+    assert not (score_case.run / "legacy").exists()
+
+
+def test_scoring_archives_a_preexisting_legacy_score_before_rescore(score_case):
+    legacy = b'{"scorer_sha":"dfc6cb4","metrics":{}}\n'
+    (score_case.run / "scores.json").write_bytes(legacy)
+    score_case.execute()
+    assert (score_case.run / "legacy/dfc6cb4-v1/scores.json").read_bytes() == legacy
 
 
 def test_legacy_archive_preserves_score_bytes_and_unscored_reviews(score_case):

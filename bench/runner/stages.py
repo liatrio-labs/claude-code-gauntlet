@@ -265,8 +265,9 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
     )
     _require(isinstance(raw.get("run_nonce"), str) and raw["run_nonce"], "nonce")
     _require(type(raw.get("complete")) is bool, "completion flag")
-    versions, by_id = [], {}
-    identities = {}
+    versions: list[FindingVersion] = []
+    by_id: dict[str, FindingVersion] = {}
+    identities: dict[str, tuple[str, Dimension]] = {}
     for row in raw["versions"]:
         vid, tid, base = row["version_id"], row["trace_id"], row["base_version_id"]
         _require(isinstance(vid, str) and vid not in by_id, "duplicate version")
@@ -348,7 +349,7 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
         )
         versions.append(version)
         by_id[vid] = version
-    snapshots = []
+    snapshots: list[StageSnapshot] = []
     for row in raw["snapshots"]:
         _require(
             row["sequence"] == len(snapshots) and row["stage"] in get_args(Stage),
@@ -629,7 +630,8 @@ def evaluate_stages(
     print(
         f"Stage pairs: {len(requests)}; estimated USD: {estimate}; cap USD: {stage_cost_cap_usd}"
     )
-    status, reason = "complete", None
+    status: Literal["complete", "refused", "capped"] = "complete"
+    reason = None
     if not available or estimate > stage_cost_cap_usd or (matcher is None and requests):
         status, reason = (
             "refused",
@@ -740,7 +742,7 @@ def evaluate_stages(
 
 def loss_funnel(observations, *, population) -> FunnelReport:
     members = set(population)
-    cells = {}
+    cells: dict[tuple[ScoreRef, str, str, str], dict[Stage, StageBugObservation]] = {}
     for row in observations:
         if row.bug_id not in members:
             continue

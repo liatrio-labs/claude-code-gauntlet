@@ -1,5 +1,6 @@
 """Verify private vendor execution without importing or running vendor code."""
 
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ from bench.runner import scorer
 from bench.runner.epochs import DEFAULT_ROOT, file_hash, load_epoch
 from bench.runner.observations import ScoreRef, ScoreRequest, candidate_records
 from bench.runner.score import evaluator_for
+from bench.runner.scorer_source import materialize_scorer
 
 
 @pytest.mark.parametrize("stage_error", [None, "dedup", "judge"])
@@ -71,6 +73,13 @@ def test_execute_materializes_git_source_and_refuses_every_file_hash(
     epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
     assert not (epoch.root / "scorer").exists()
     assert not any("/scorer/" in p.as_posix() for p in epoch.root.rglob("*"))
+    with materialize_scorer(
+        epoch.scorer_tree, dict(epoch.scorer_file_hashes)
+    ) as archived:
+        assert all(
+            file_hash(archived / name) == expected
+            for name, expected in epoch.scorer_file_hashes
+        )
     calls = []
     sources = []
 
@@ -102,12 +111,11 @@ def test_execute_materializes_git_source_and_refuses_every_file_hash(
         assert not sources[0].exists()
     calls.clear()
     if epoch_id == "dfc6cb4-v1":
-        changed = replace(
-            epoch, scorer_commit=load_epoch(root=DEFAULT_ROOT).scorer_commit
-        )
+        changed = replace(epoch, scorer_tree=load_epoch(root=DEFAULT_ROOT).scorer_tree)
         with pytest.raises(ValueError, match="scorer file hash mismatch"):
             scorer.execute(changed, "judge", "synthetic", model_dir, executor=execute)
         assert not calls
+
     for index, (name, _) in enumerate(epoch.scorer_file_hashes):
         hashes = dict(epoch.scorer_file_hashes)
         hashes[name] = "0" * 64
@@ -118,3 +126,52 @@ def test_execute_materializes_git_source_and_refuses_every_file_hash(
         with pytest.raises(ValueError, match="scorer file hash mismatch"):
             scorer.execute(changed, "judge", "synthetic", model_dir, executor=execute)
         assert not calls
+
+
+def test_execute_refuses_missing_tree_with_fetch_instruction_and_commit_objects(
+    tmp_path,
+):
+    epoch = load_epoch("dfc6cb4-v1", root=DEFAULT_ROOT)
+    calls = []
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True, encoding="utf-8"
+    ).strip()
+    for tree, message in (
+        ("0" * 40, "git fetch.*--unshallow"),
+        (commit, "git tree object"),
+    ):
+        changed = replace(epoch, scorer_tree=tree)
+        with pytest.raises(ValueError, match=tree + ".*" + message):
+            scorer.execute(
+                changed,
+                "judge",
+                "offline",
+                tmp_path,
+                executor=lambda *a, **k: calls.append(a),
+            )
+    assert not calls
+
+
+@pytest.mark.parametrize("name", ["pyproject.toml", "uv.lock"])
+def test_execute_refuses_environment_dependency_drift_before_dispatch(
+    tmp_path, monkeypatch, name
+):
+    epoch = load_epoch("dfc6cb4-v1", root=DEFAULT_ROOT)
+    provisioned = tmp_path / "environment"
+    provisioned.mkdir()
+    for metadata in ("pyproject.toml", "uv.lock"):
+        content = (scorer.VENDOR_ENV / metadata).read_bytes()
+        (provisioned / metadata).write_bytes(
+            content + (b"\n" if metadata == name else b"")
+        )
+    monkeypatch.setattr(scorer, "VENDOR_ENV", provisioned)
+    calls = []
+    with pytest.raises(ValueError, match="provisioned environment " + name):
+        scorer.execute(
+            epoch,
+            "judge",
+            "offline",
+            tmp_path,
+            executor=lambda *a, **k: calls.append(a),
+        )
+    assert not calls

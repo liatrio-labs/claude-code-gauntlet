@@ -36,7 +36,6 @@
     "experiments.jsonl": "da717feb6fb56000c5c6338ffef2ff6f3ed0bbfed9fc7ab1a143e2fb4a643ba1",
     "prompt-hashes.json": "83143d5bc58d90f5cd8ba3e92e11f402d2a23ccc09c83b91c88aee60063df17f"
   },
-  "scorer_commit": "94ea095a89bfc2430814ff4e65db4ba790654fc7",
   "scorer_file_hashes": {
     ".gitignore": "016cd107f189324f0843f867ca82e0579585a12a8641b0960eb2d7faa00ebedb",
     "LICENSE": "3d0f7aacf358c3578c1e541bdd297b675d76805e6bf3dddaf89b6d2b45e3afad",
@@ -47,5 +46,7 @@
     "tests/conftest.py": "d1bbb2c35e1b08cc33f320daacf6071a08cc8be28629e9f9f0aecfdf09e0bffc",
     "tests/test_step3.py": "9c0a696ad3971708bfc2a8dfab259ba744365a235c176003078c9bdf3cbe9d0b",
     "uv.lock": "de8fc717fd49b90497fc3e27cec9b05483e4818d70f5c5d92168bf5d6cdcda04"
-  }
+  },
+  "scorer_tree": "1b63af9917874ac20d2f9b3740718a3e8ab1ca5e",
+  "bucket_policy": "direct"
 }

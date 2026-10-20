@@ -78,7 +78,7 @@ class AnchorCandidatesFileTests(unittest.TestCase):
                     self.assertIn("source", c)
 
     def test_no_duplicate_candidate_text_within_a_tool(self):
-        # bucket_join requires unambiguous candidate texts per (url, tool).
+        # Winning matches require unambiguous candidate texts per (url, tool).
         for url, tools in self.anchors.items():
             for tool, cands in tools.items():
                 texts = [c["text"] for c in cands]
@@ -146,7 +146,7 @@ class AdjudicatorContextTests(unittest.TestCase):
     def test_duplicate_text_candidates_get_distinct_contexts(self):
         # Two same-body comments at different located path/line must each be
         # adjudicated with their OWN sliced hunk, not collapsed to one context by
-        # a text-keyed dict. Mirrors score._adjudicate_bucket's record iteration.
+        # a text-keyed dict.
         buckets = {"u": {"golden_matched": [], "adjudicator": ["dup", "dup"]}}
         candidates = {
             "u": {
@@ -325,7 +325,6 @@ def test_spot_check_uses_named_epoch_and_private_results(score_case, tmp_path):
         anchors_path=anchor_file,
         upstream_eval_path=upstream,
         results_dir=tmp_path / "work",
-        diff_out=tmp_path / "diff.json",
         run_scorer=fake,
         api_key="test",
     )
@@ -339,8 +338,15 @@ def test_spot_check_uses_named_epoch_and_private_results(score_case, tmp_path):
     }
     assert Path(result["diff_path"]).is_file()
     write_json(upstream, {url: {"claude": {"tp": 2, "fp": 0, "fn": 1}}})
-    assert spot_check(url, **kwargs)["pass"]
-    assert len(set(calls)) == 2
+    first_bytes = Path(result["diff_path"]).read_bytes()
+    second = spot_check(url, **kwargs)
+    assert second["pass"]
+    assert second["diff_path"] != result["diff_path"]
+    assert "dfc6cb4-v1" in second["diff_path"]
+    assert Path(result["diff_path"]).read_bytes() == first_bytes
+    with pytest.raises(FileExistsError):
+        spot_check(url, diff_out=result["diff_path"], **kwargs)
+    assert len(set(calls)) == 3
     with pytest.raises(ValueError, match="not in anchor"):
         spot_check("unknown", **kwargs)
     write_json(upstream, {url: {"claude": {"tp": 10, "fp": 0, "fn": 1}}})

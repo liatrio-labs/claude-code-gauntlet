@@ -18,7 +18,6 @@ from bench.runner.profiles import profile_metrics
 from bench.runner.score import (
     _judge_api_key,
     _load_json,
-    _write_json,
     compute_metrics,
 )
 
@@ -31,7 +30,7 @@ ANCHORS_CANDIDATES = BENCH_DIR / "golden" / "anchors" / "candidates.json"
 SUBSETS_PATH = BENCH_DIR / "golden" / "subsets.json"
 WORKSPACE = BENCH_DIR / "workspace"
 
-MARTIAN_BASE_URL = score.MARTIAN_BASE_URL
+MARTIAN_BASE_URL = scorer.BASE_URL
 
 # The judge whose committed evaluations the spot-check reproduces.
 UPSTREAM_JUDGE = "claude-opus-4-5-20251101"
@@ -111,7 +110,7 @@ def spot_check(
     committed ``evaluations.json`` for that same judge. Returns a report dict
     with ``pass`` True iff every tool's counts are within ±1 of upstream. Always
     writes the full per-comment comparison to ``diff_out`` (default
-    ``bench/workspace/spot-check-diff.json``) for verbatim inspection when the
+    a unique file in the private epoch work directory) for inspection when the
     drift is larger. ``run_scorer`` is injectable so tests run with no network.
     """
     epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
@@ -130,8 +129,10 @@ def spot_check(
         )
 
     work_dir = (
-        Path(results_dir) if results_dir else WORKSPACE / "spot-checks"
-    ) / uuid.uuid4().hex
+        (Path(results_dir) if results_dir else WORKSPACE / "spot-checks")
+        / epoch.epoch_id
+        / uuid.uuid4().hex
+    )
     model_dir = scorer.stage_inputs(epoch, candidates_by_url, judge_model, work_dir)
     if run_scorer is None:
         scorer.execute(epoch, judge_model, key, model_dir, tool=None, env=env)
@@ -202,8 +203,8 @@ def spot_check(
         },
     }
 
-    out_path = Path(diff_out) if diff_out else (WORKSPACE / "spot-check-diff.json")
-    _write_json(out_path, report)
+    out_path = Path(diff_out) if diff_out else work_dir / "spot-check-diff.json"
+    observations.exclusive_json(out_path, report)
     report["diff_path"] = str(out_path)
     return report
 
@@ -379,7 +380,7 @@ def rejudge_anchors(
         )
         groups = observations.dedup_groups(raw_groups, candidate_map, tool)
         bugs = observations.build_observations(request, evaluations, groups)
-        matched = {m.candidate_id for b in bugs for m in b.matches}
+        matched = observations.bucket_candidate_ids(epoch, bugs)
         buckets = {
             u: {
                 "golden_matched": [

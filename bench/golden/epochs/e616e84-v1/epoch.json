@@ -52,7 +52,6 @@
     "golden_comments/sentry.json": "02342962b0d11a9ba190401e066a2c4e5d58c5ca561ca10d812194069b4a7d01",
     "pr_labels.json": "d006f76ef00b719039ded5925edd90e65042e4123e33950b0d671bbcec353eab"
   },
-  "scorer_commit": "964606399df5bb066fa1d80e8da71bccb226de42",
   "scorer_file_hashes": {
     ".gitignore": "016cd107f189324f0843f867ca82e0579585a12a8641b0960eb2d7faa00ebedb",
     "LICENSE": "3d0f7aacf358c3578c1e541bdd297b675d76805e6bf3dddaf89b6d2b45e3afad",
@@ -63,5 +62,7 @@
     "tests/conftest.py": "d1bbb2c35e1b08cc33f320daacf6071a08cc8be28629e9f9f0aecfdf09e0bffc",
     "tests/test_step3.py": "47ac90cdc37cb1726a5b8351000e535fd3e64c49c022a0bf758590d30143783c",
     "uv.lock": "de8fc717fd49b90497fc3e27cec9b05483e4818d70f5c5d92168bf5d6cdcda04"
-  }
+  },
+  "scorer_tree": "9bbfc71b865731a7d48a803d5f0ebedd54d85803",
+  "bucket_policy": "dedup_expanded"
 }

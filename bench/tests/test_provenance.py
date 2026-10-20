@@ -133,6 +133,7 @@ def test_reference_bundle_preserves_review_dispatches_and_rendered_delivered_byt
                 capture_output=True,
                 check=True,
                 text=True,
+                encoding="utf-8",
             ).stdout
         )
         for path in (reference_path, current_path)
@@ -182,7 +183,7 @@ def test_independent_producer_payload_preserves_patch_demotion_and_order(platfor
         }
         for i, f in enumerate(findings)
     ]
-    actual = json.loads(fixture.read_text())
+    actual = json.loads(fixture.read_text(encoding="utf-8"))
     mapped = provenance.map_delivery(actual, stamped, diff)
     assert len(mapped) == len(tuple(provenance._iter_comments(actual)))
     assert any("```suggestion" in c.text for c in mapped)

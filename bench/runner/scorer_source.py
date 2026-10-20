@@ -30,15 +30,28 @@ def verify_source(root, hashes):
 
 
 @contextmanager
-def materialize_scorer(commit, hashes, *, repo=REPO_ROOT):
+def materialize_scorer(tree, hashes, *, repo=REPO_ROOT):
     """Read only git objects, reject unexpected entries, and clean up on failure."""
-    validate_source(commit, hashes)
+    validate_source(tree, hashes)
+    kind = subprocess.run(
+        ["git", "cat-file", "-t", tree], cwd=repo, capture_output=True
+    )
+    if kind.returncode:
+        raise ValueError(
+            f"scorer tree {tree} is missing; fetch the history containing this tree "
+            "with git fetch origin (git fetch --unshallow origin for a shallow clone)"
+        )
+    if kind.stdout.strip() != b"tree":
+        raise ValueError(f"scorer tree {tree} must name a git tree object")
     result = subprocess.run(
-        ["git", "archive", "--format=tar", f"{commit}:{VENDOR_PATH}"],
+        ["git", "archive", "--format=tar", tree],
         cwd=repo,
         capture_output=True,
-        check=True,
     )
+    if result.returncode:
+        raise ValueError(
+            f"cannot archive scorer tree {tree}: {result.stderr.decode('utf-8', errors='replace').strip()}"
+        )
     with TemporaryDirectory(prefix="gauntlet-scorer-") as temporary:
         root = Path(temporary)
         seen = set()
@@ -69,7 +82,7 @@ def materialize_scorer(commit, hashes, *, repo=REPO_ROOT):
 @contextmanager
 def scorer_source(epoch):
     hashes = dict(epoch.scorer_file_hashes)
-    validate_source(epoch.scorer_commit, hashes)
+    validate_source(epoch.scorer_tree, hashes)
     index = read_json(REPO_ROOT / "bench/golden/epochs/index.json")
     if epoch.epoch_id == index["active_epoch_id"]:
         root = REPO_ROOT / VENDOR_PATH
@@ -78,7 +91,7 @@ def scorer_source(epoch):
             raise ValueError("scorer content hash mismatch")
         yield root
     else:
-        with materialize_scorer(epoch.scorer_commit, hashes) as root:
+        with materialize_scorer(epoch.scorer_tree, hashes) as root:
             if scorer_hash(root) != epoch.scorer_sha256:
                 raise ValueError("scorer content hash mismatch")
             yield root

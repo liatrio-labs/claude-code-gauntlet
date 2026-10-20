@@ -43,7 +43,6 @@ from bench.runner.observations import (
 from bench.runner.profiles import profile_metrics
 
 __all__ = [
-    "bucket_join",
     "compute_metrics",
     "resolve_judge_pin",
     "score_run",
@@ -57,7 +56,6 @@ LEDGER_PATH = BENCH_DIR / "experiments.jsonl"
 
 MODELS_URL = "https://api.anthropic.com/v1/models"
 ANTHROPIC_VERSION = "2023-06-01"
-MARTIAN_BASE_URL = "https://api.anthropic.com/v1/"
 
 TOOL = "deep-review"
 
@@ -313,82 +311,6 @@ def _assemble_candidates(run_dir, pr_records):
     return merged, per_pr
 
 
-def _sanitize_model_name(model):
-    return model.strip().replace("/", "_")
-
-
-def run_scorer_stages(
-    pin, api_key, model_dir=None, *, tool=TOOL, base_url=None, env=None, epoch_id=None
-):
-    if model_dir is None:
-        raise ValueError("private scorer model_dir is required")
-    epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
-    return scorer.execute(
-        epoch,
-        pin,
-        api_key,
-        model_dir,
-        tool=tool,
-        base_url=base_url or MARTIAN_BASE_URL,
-        env=env,
-        executor=subprocess.run,
-    )
-
-
-# --------------------------------------------------------------------- bucket join
-
-
-def bucket_join(candidates, evaluations, tool=TOOL):
-    """Split each PR's candidates into golden-matched vs adjudicator buckets.
-
-    Golden-matched = candidates whose exact text is a ``matched_candidate`` in
-    the judge's ``true_positives``; everything else goes to the adjudicator. The
-    join is by exact text and asserts a bijection: a matched text that is not one
-    of our submitted candidates raises ``ValueError`` (a plumbing/identity bug),
-    and an ambiguous candidate text (submitted more than once for the same PR)
-    raises too, because the split would be ill-defined. Returns
-    ``{golden_url: {"golden_matched": [text...], "adjudicator": [text...]}}``.
-    """
-    result = {}
-    for url, tools in candidates.items():
-        cand_texts = [c["text"] for c in tools.get(tool, [])]
-        counts = {}
-        for text in cand_texts:
-            counts[text] = counts.get(text, 0) + 1
-
-        ev = (evaluations.get(url) or {}).get(tool)
-        if ev is None:
-            if cand_texts:
-                raise ValueError(
-                    f"bucket join: {url} submitted {len(cand_texts)} candidate(s) but has no "
-                    f"evaluation for tool {tool!r}"
-                )
-            result[url] = {"golden_matched": [], "adjudicator": []}
-            continue
-
-        matched_texts = [
-            tp.get("matched_candidate") for tp in ev.get("true_positives", [])
-        ]
-        cand_set = set(cand_texts)
-        for text in matched_texts:
-            if text not in cand_set:
-                raise ValueError(
-                    f"bucket join bijection violation for {url}: matched_candidate "
-                    f"is not one of the submitted candidates: {text!r}"
-                )
-            if counts.get(text, 0) != 1:
-                raise ValueError(
-                    f"bucket join for {url}: candidate text is ambiguous (submitted "
-                    f"{counts.get(text, 0)} times): {text!r}"
-                )
-
-        matched_set = set(matched_texts)
-        golden_matched = [t for t in cand_texts if t in matched_set]
-        adjudicator = [t for t in cand_texts if t not in matched_set]
-        result[url] = {"golden_matched": golden_matched, "adjudicator": adjudicator}
-    return result
-
-
 # ----------------------------------------------------------------- adjudication
 
 
@@ -413,24 +335,6 @@ def _head_file_lines(pr_info, path):
         except OSError:
             return []
     return []
-
-
-def _adjudicate_bucket(buckets, per_pr, pin, api_key, adjudicator):
-    """Retain distinct occurrences when unmatched comments have equal text."""
-    verdicts = []
-    for url, split in buckets.items():
-        info = per_pr.get(url, {})
-        adj_texts = set(split["adjudicator"])
-        for cand in info.get("candidates", []):
-            text = cand.get("text")
-            if text not in adj_texts:
-                continue
-            hunk, ctx, _status = _candidate_context(info, cand)
-            verdict = dict(adjudicator(text, hunk, ctx, pin, api_key))
-            verdict["url"] = url
-            verdict["candidate"] = text
-            verdicts.append(verdict)
-    return verdicts
 
 
 # ---------------------------------------------------------------------- metrics
@@ -666,6 +570,7 @@ def evaluator_for(epoch, pin, adjudicator_pin):
             "scorer",
             "observations",
             "profiles",
+            "epochs",
             "stages",
             "provenance",
         )
@@ -685,7 +590,7 @@ def evaluator_for(epoch, pin, adjudicator_pin):
         ),
         "adjudicator_code_sha256": file_hash(BENCH_DIR / "adjudicator/adjudicate.py"),
         "adjudicator_prompt_sha256": file_hash(BENCH_DIR / "adjudicator/prompt.txt"),
-        "profile_policy_version": PROFILE_POLICY_VERSION,
+        "profile_policy_version": PROFILE_POLICY_VERSION + ":" + epoch.bucket_policy,
         "stage_matcher_version": stages.STAGE_MATCHER_VERSION,
         "temperature": 0.0,
     }
@@ -769,7 +674,9 @@ def score_run(
     """Execute a fresh score; failures retain a pending diagnostic packet."""
     run_dir = Path(run_dir).resolve()
     env = os.environ if env is None else env
-    baselines = _load_baselines(baselines_path)
+    epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
+    epoch_baselines = _load_baselines(epoch.root / "baselines.json")
+    baselines = _load_baselines(baselines_path) if baselines_path else epoch_baselines
     pin = baselines.get("judge_pin")
     if not pin:
         raise RuntimeError(
@@ -781,8 +688,12 @@ def score_run(
         )
     if capture_stages:
         stages.validate_cap(stage_cost_cap_usd)
-    epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
     adjudicator_pin = baselines.get("adjudicator_pin") or pin
+    if (pin, adjudicator_pin) != (
+        epoch_baselines.get("judge_pin"),
+        epoch_baselines.get("adjudicator_pin") or epoch_baselines.get("judge_pin"),
+    ):
+        raise ValueError(f"baseline pin override disagrees with epoch {epoch.epoch_id}")
     records = _run_pr_records(run_dir)
     if not records:
         raise RuntimeError(
@@ -947,8 +858,13 @@ def score_run(
     }
     if attempt_selection is not None:
         attempts = dict(attempt_selection)
-    old = load_epoch("dfc6cb4-v1", root=DEFAULT_ROOT)
-    observations.import_legacy(run_dir, old)
+    legacy_score = run_dir / "scores.json"
+    if (
+        legacy_score.is_file()
+        and _load_json(legacy_score).get("schema_version", 1) == 1
+        and not (run_dir / "scores").exists()
+    ):
+        observations.import_legacy(run_dir, load_epoch("dfc6cb4-v1", root=DEFAULT_ROOT))
     sid, pending = observations.begin_packet(run_dir, epoch, score_id)
     ref = ScoreRef(manifest.get("run_id") or run_dir.name, epoch.epoch_id, sid)
     evaluator = evaluator_for(epoch, pin, adjudicator_pin)
@@ -1088,7 +1004,7 @@ def score_run(
     bugs = observations.build_observations(
         request, evaluations, groups, failures=frozenset(failures)
     )
-    matched = {m.candidate_id for bug in bugs for m in bug.matches}
+    matched = observations.bucket_candidate_ids(epoch, bugs)
     buckets = {
         url: {
             "golden_matched": [

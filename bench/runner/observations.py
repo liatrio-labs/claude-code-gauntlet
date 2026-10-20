@@ -656,6 +656,16 @@ def publish_packet(pending: Path, final: Path):
     pending.rename(final)
 
 
+def bucket_candidate_ids(epoch, bugs):
+    """The epoch decides whether matched siblings also leave adjudication."""
+    return {
+        m.candidate_id
+        for bug in bugs
+        for m in bug.matches
+        if epoch.bucket_policy == "dedup_expanded" or m.kind == "direct"
+    }
+
+
 def candidate_records(
     candidates, attempts, tool="deep-review"
 ) -> tuple[Candidate, ...]:
@@ -1063,7 +1073,7 @@ def _load_packet(path: Path, epoch=None, *, allow_pending=False) -> ScorePacket:
         for a in adjudications
     ):
         raise ValueError("invalid adjudicator candidate identity")
-    matched = {m.candidate_id for o in observations for m in o.matches}
+    matched = bucket_candidate_ids(epoch, observations)
     if (
         len(adjudications) != len(ids - matched)
         or {a.candidate_id for a in adjudications} != ids - matched

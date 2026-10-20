@@ -64,10 +64,11 @@ def freeze_epoch(
     profiles,
     primary,
     *,
-    scorer_commit: str,
+    scorer_tree: str,
+    bucket_policy="dedup_expanded",
 ):
     scorer_files = {name: file_hash(scorer / name) for name in KEPT_FILES}
-    with materialize_scorer(scorer_commit, scorer_files):
+    with materialize_scorer(scorer_tree, scorer_files):
         pass
     out.mkdir(parents=True, exist_ok=False)
     for name in ("benchmark_data.min.json", "pr_labels.json"):
@@ -82,7 +83,8 @@ def freeze_epoch(
         "epoch_id": epoch_id,
         "upstream_sha": upstream_sha,
         "scorer_sha": upstream_sha,
-        "scorer_commit": scorer_commit,
+        "scorer_tree": scorer_tree,
+        "bucket_policy": bucket_policy,
         "scorer_file_hashes": scorer_files,
         "golden_sha256": digest(data),
         "scorer_sha256": scorer_hash(scorer),
@@ -111,7 +113,7 @@ def prepare(
     out: Path,
     *,
     root: Path = DEFAULT_ROOT,
-    scorer_commit: str | None = None,
+    scorer_tree: str | None = None,
 ):
     """Read upstream data/source bytes only; emit an inactive copy proposal."""
     if upstream_sha != "e616e849755441da38f18bf3adba2c9583b03803":
@@ -214,7 +216,7 @@ def prepare(
         upstream_sha,
         ["core", "all", "strict"],
         "core",
-        scorer_commit=scorer_commit or load_epoch(root=root).scorer_commit,
+        scorer_tree=scorer_tree or load_epoch(root=root).scorer_tree,
     )
     files = {
         p.relative_to(out).as_posix(): file_hash(p)
@@ -321,7 +323,7 @@ def main(argv=None):
     prep = commands.add_parser("prepare")
     for option in ("source", "upstream-sha", "out"):
         prep.add_argument("--" + option, required=True)
-    prep.add_argument("--scorer-commit")
+    prep.add_argument("--scorer-tree")
     for name in ("archive-run", "rescore", "anchors", "calibrate"):
         cmd = commands.add_parser(name)
         cmd.add_argument("--epoch", required=True)
@@ -337,7 +339,7 @@ def main(argv=None):
             Path(args.source),
             args.upstream_sha,
             Path(args.out),
-            scorer_commit=args.scorer_commit,
+            scorer_tree=args.scorer_tree,
         )
     else:
         epoch = load_epoch(args.epoch, root=DEFAULT_ROOT)

@@ -13,6 +13,7 @@ JsonValue: TypeAlias = (
     "bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None"
 )
 Profile = Literal["core", "all", "strict"]
+BucketPolicy = Literal["direct", "dedup_expanded"]
 Category = Literal[
     "api",
     "bug",
@@ -88,7 +89,8 @@ class EpochWire(TypedDict):
     epoch_id: str
     upstream_sha: str
     scorer_sha: str
-    scorer_commit: str
+    scorer_tree: str
+    bucket_policy: BucketPolicy
     scorer_file_hashes: dict[str, str]
     golden_sha256: str
     scorer_sha256: str
@@ -127,7 +129,8 @@ class GoldenEpoch:
     epoch_id: str
     upstream_sha: str
     scorer_sha: str
-    scorer_commit: str
+    scorer_tree: str
+    bucket_policy: BucketPolicy
     scorer_file_hashes: tuple[tuple[str, str], ...]
     golden_sha256: str
     scorer_sha256: str
@@ -191,9 +194,9 @@ def scorer_hash(root: Path) -> str:
     )
 
 
-def validate_source(commit, hashes):
-    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
-        raise ValueError("scorer requires a full repository commit")
+def validate_source(tree, hashes):
+    if not isinstance(tree, str) or not re.fullmatch(r"[0-9a-f]{40}", tree):
+        raise ValueError("scorer requires a full git tree id")
     if set(hashes) != set(KEPT_FILES) or any(
         not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
         for value in hashes.values()
@@ -271,7 +274,9 @@ def load_epoch(epoch_id: str | None = None, *, root: Path) -> GoldenEpoch:
     archive = manifest_path.parent
     if manifest["schema_version"] != 1 or manifest["epoch_id"] != identity:
         raise ValueError("epoch manifest identity/schema mismatch")
-    validate_source(manifest["scorer_commit"], manifest["scorer_file_hashes"])
+    validate_source(manifest["scorer_tree"], manifest["scorer_file_hashes"])
+    if manifest["bucket_policy"] not in get_args(BucketPolicy):
+        raise ValueError("invalid epoch bucket policy")
     profiles = manifest["supported_profiles"]
     if (
         not profiles

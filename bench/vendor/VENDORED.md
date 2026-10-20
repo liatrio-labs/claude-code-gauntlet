@@ -25,22 +25,33 @@ pending. No leaderboard rows were adopted.
 `bench/golden/epochs/index.json` names the active epoch and pins manifest bytes.
 Each epoch directory contains its manifest, authoritative lean corpus, raw goldens,
 bug identities, labels and baselines. Epochs contain no scorer code.
-Each manifest records `scorer_commit`, the repository commit containing its
-`bench/vendor/code-review-benchmark` tree, and `scorer_file_hashes`, the SHA-256
+Each manifest records `scorer_tree`, the git tree id of
+`bench/vendor/code-review-benchmark`, and `scorer_file_hashes`, the SHA-256
 of every kept file, including the MIT license and environment metadata.
 Manifest content hashes validate the corpus, bugs, labels and scorer modules;
 byte hashes additionally protect all archived data files.
 
-The old scorer lives in repository commit
-`94ea095a89bfc2430814ff4e65db4ba790654fc7`; the new scorer lives in
-`964606399df5bb066fa1d80e8da71bccb226de42` and the active vendor tree.
-These repository commits are distinct from the upstream `scorer_sha` identities.
-Active scoring verifies the vendor files. For a non-active epoch, the tooling
-uses read-only `git archive` to materialize that commit's vendor tree in a
-temporary directory, checks the complete file inventory and every SHA-256,
-and refuses a mismatch before either scoring stage executes. Temporary source
-is removed on success or failure. Git history containing the referenced commit
-must be available for archived rescoring.
+The old scorer tree is `1b63af9917874ac20d2f9b3740718a3e8ab1ca5e`.
+The new scorer tree is `9bbfc71b865731a7d48a803d5f0ebedd54d85803`.
+These content identities survive squash merges that preserve the vendor bytes.
+The upstream `scorer_sha` remains separate provenance.
+Active scoring verifies the vendor files. For a non-active epoch, read-only
+`git archive TREE_ID` materializes the tree in a temporary directory, checks
+its complete inventory and every SHA-256, and refuses a mismatch before dispatch.
+Temporary source is removed on success or failure. Missing trees raise a
+`ValueError` naming the object and needed fetch. Fetch the history containing
+that tree with `git fetch origin`, or `git fetch --unshallow origin` in a shallow
+clone. The bench CI checkout uses `fetch-depth: 0`.
+Both epochs also require the provisioned environment's `pyproject.toml` and
+`uv.lock` to match their pinned hashes before any scorer subprocess runs.
+
+Epoch manifests pin `bucket_policy` and archived baselines pin the judge and
+adjudicator. `dfc6cb4-v1` uses direct winning matches for buckets, so matched
+dedup siblings still receive adjudication. `e616e84-v1` expands buckets through
+dedup siblings. Explicit baseline pin overrides refuse. An offline replay of
+`mini-20261020-030509-839b1886` preserves its recorded scoring and drift metrics.
+Discovery dimensions require captured provenance; historical severity counts
+remain available as `drift.severity_dist`.
 
 `dfc6cb4-v1` preserves the old upstream/scorer commit
 `dfc6cb427b5d0d7492a8d875ee9447744b7de3d1`. Its raw goldens contain 136 claims;
@@ -81,9 +92,9 @@ No upstream code or dependency installation was executed during this migration.
 `python3 -m bench.runner.migrate_epoch prepare --source PATH --upstream-sha SHA --out PATH`
 reads upstream JSON and source bytes as data and emits an inactive, complete copy
 proposal. It reads the old scorer from git history and verifies the prepared
-scorer against a repository vendor commit without executing upstream code or
-installing dependencies. `--scorer-commit COMMIT` selects that full repository
-commit; it defaults to the active epoch's commit. The selected vendor tree must
+scorer against a git tree without executing upstream code or
+installing dependencies. `--scorer-tree TREE_ID` selects that content identity;
+it defaults to the active epoch's tree. The selected vendor tree must
 already contain the proposed source bytes. The epoch proposal contains only
 scorer references and hashes; source copy operations target the active vendor
 tree alone.

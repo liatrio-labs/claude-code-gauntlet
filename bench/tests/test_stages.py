@@ -26,8 +26,11 @@ def emit_trace(tmp_path, mode="return"):
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
-    receipt = json.loads(path.with_suffix(".json.receipt.json").read_text())
+    receipt = json.loads(
+        path.with_suffix(".json.receipt.json").read_text(encoding="utf-8")
+    )
     return stages.load_trace(path, expected_sha256=receipt["sha256"]), path, receipt
 
 
@@ -158,7 +161,7 @@ def test_known_loss_funnel_uses_trusted_transitions_and_preserves_coalesced_hit(
 )
 def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
     _, path, receipt = emit_trace(tmp_path)
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     if mutation == "hash":
         expected = "0" * 64
     else:
@@ -176,7 +179,7 @@ def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
             raw["snapshots"][0]["executed"] = 1
         else:
             raw["versions"][0]["finding"]["confidence"] = float("nan")
-        path.write_text(json.dumps(raw))
+        path.write_text(json.dumps(raw), encoding="utf-8")
         expected = file_hash(path)
     with pytest.raises((ValueError, KeyError, TypeError)):
         stages.load_trace(path, expected_sha256=expected)
@@ -248,15 +251,17 @@ def test_collection_binds_return_bytes_and_ignores_superseded_records(tmp_path):
     pr = tmp_path / "pr"
     (pr / "workflows/superseded").mkdir(parents=True)
     record = {"result": receipt["out"]}
-    (pr / "workflows/wf_current.json").write_text(json.dumps(record))
-    (pr / "workflows/superseded/wf_old.json").write_text(json.dumps(record))
+    (pr / "workflows/wf_current.json").write_text(json.dumps(record), encoding="utf-8")
+    (pr / "workflows/superseded/wf_old.json").write_text(
+        json.dumps(record), encoding="utf-8"
+    )
     binding = stages.collect_trace(pr)
     assert binding["run_nonce"] == trace.run_nonce
     collected = pr / binding["path"]
     assert collected.read_bytes() == path.read_bytes()
     assert binding["sha256"] == file_hash(collected)
     assert stages.collect_trace(pr) == binding
-    collected.write_text("corrupt")
+    collected.write_text("corrupt", encoding="utf-8")
     with pytest.raises(ValueError, match="differs"):
         stages.collect_trace(pr)
 
@@ -271,11 +276,13 @@ def test_score_packet_carries_source_attribution_and_bounded_stage_matches(
     (pr / "code-gauntlet-measurement-abc1234.json").write_bytes(path.read_bytes())
     selected = receipt["payload"]["postReview"]["findings"]
     (pr / "code-gauntlet-post-review-abc1234.json").write_text(
-        json.dumps(receipt["payload"]["postReview"])
+        json.dumps(receipt["payload"]["postReview"]), encoding="utf-8"
     )
     diff = captured_diff(selected)
-    (pr / "diff.patch").write_text(diff)
-    score_case.payload.write_text(json.dumps(payload_for(selected, diff, "github")))
+    (pr / "diff.patch").write_text(diff, encoding="utf-8")
+    score_case.payload.write_text(
+        json.dumps(payload_for(selected, diff, "github")), encoding="utf-8"
+    )
     calls = []
 
     def matcher(*pair):
@@ -307,16 +314,22 @@ def test_score_packet_carries_source_attribution_and_bounded_stage_matches(
         for m in packet["metrics"]["per_dimension"].values()
     )
     assert (packet_dir / "stage_matches.jsonl").stat().st_size > 0
-    assert len(json.loads((packet_dir / "stage_calls.json").read_text())) == len(calls)
+    assert len(
+        json.loads((packet_dir / "stage_calls.json").read_text(encoding="utf-8"))
+    ) == len(calls)
     raw_rows = [
         json.loads(line)
-        for line in (packet_dir / "stages.jsonl").read_text().splitlines()
+        for line in (packet_dir / "stages.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
     ]
     assert len(raw_rows) == len(loaded.observations) * 9
     matched_bugs = {b.bug_id for b in loaded.observations if b.outcome == "matched"}
     assert not any(
         json.loads(line)["bug_id"] in matched_bugs
-        for line in (packet_dir / "stage_matches.jsonl").read_text().splitlines()
+        for line in (packet_dir / "stage_matches.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
     )
     old_hashes = {
         p.relative_to(packet_dir): file_hash(p)
@@ -403,7 +416,7 @@ def test_real_materializer_writes_separate_attempt_bound_trace(tmp_path, mode):
     output = Path(receipt["out"]["measurement"]["path"]).parent
     output.mkdir()
     task = tmp_path / "task.output"
-    task.write_text(json.dumps({"result": receipt["out"]}))
+    task.write_text(json.dumps({"result": receipt["out"]}), encoding="utf-8")
     materialized = materialize.materialize(
         str(task), trace.run_nonce, str(output), tasks.TaskRoots((str(tmp_path),), None)
     )
@@ -413,7 +426,9 @@ def test_real_materializer_writes_separate_attempt_bound_trace(tmp_path, mode):
     assert stages.load_trace(artifact, expected_sha256=receipt["sha256"]) == trace
     if mode == "return":
         checkpoint = json.loads(
-            (output / "code-gauntlet-checkpoint-all-abc1234.json").read_text()
+            (output / "code-gauntlet-checkpoint-all-abc1234.json").read_text(
+                encoding="utf-8"
+            )
         )
         assert "measurement" not in checkpoint
         assert set(checkpoint["phases"]) == {"challenge"}
@@ -451,14 +466,16 @@ def test_corrupt_optional_trace_is_a_provenance_error_and_preserves_delivered_re
 ):
     first = score_case.execute()
     (score_case.payload.parent / "code-gauntlet-measurement-abc1234.json").write_text(
-        "[]"
+        "[]", encoding="utf-8"
     )
     second = score_case.execute(capture_stages=True, stage_cost_cap_usd=0)
     assert second["profiles"] == first["profiles"]
     assert second["stage_capture"]["status"] == "unavailable"
     assert second["manifest"]["provenance_status"] == "ambiguous"
     path = Path(second["ledger_row"]["packet_path"])
-    assert score_case.url in json.loads((path / "provenance_errors.json").read_text())
+    assert score_case.url in json.loads(
+        (path / "provenance_errors.json").read_text(encoding="utf-8")
+    )
     assert (
         observations.load_packet(path).metrics.golden_recall
         == second["metrics"]["golden_recall"]

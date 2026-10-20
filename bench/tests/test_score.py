@@ -2,9 +2,8 @@
 
 No network, no keys, no ``uv`` subprocess: the models API, the vendored scorer,
 and the adjudicator are all injected or monkeypatched. Covers judge-pin
-resolution + idempotency, the pin-mismatch/null refusals, the bucket-join
-bijection (including its raise paths), metric arithmetic on a hand-built
-evaluations fixture, and one fully wired ``score_run`` over a fabricated run dir.
+resolution + idempotency, the pin-mismatch/null refusals, historical metric arithmetic and legacy
+artifact handling. Packet-boundary join and context cases live in test_observations.
 """
 
 import json
@@ -19,7 +18,6 @@ from bench.runner import (
     score,
 )
 from bench.runner.score import (
-    bucket_join,
     compute_metrics,
     resolve_judge_pin,
     score_run,
@@ -189,51 +187,6 @@ class ResolveJudgePinTests(unittest.TestCase):
         )
 
 
-# ------------------------------------------------------------- bucket join
-
-
-class BucketJoinTests(unittest.TestCase):
-    def test_partitions_matched_and_unmatched(self):
-        candidates = {
-            "u": {
-                "deep-review": [
-                    {"text": "m1"},
-                    {"text": "m2"},
-                    {"text": "extra"},
-                ]
-            }
-        }
-        evaluations = {"u": {"deep-review": ev_result(2, 1, 0, ["m1", "m2"])}}
-        out = bucket_join(candidates, evaluations)
-        self.assertEqual(out["u"]["golden_matched"], ["m1", "m2"])
-        self.assertEqual(out["u"]["adjudicator"], ["extra"])
-
-    def test_matched_text_not_in_candidates_raises(self):
-        candidates = {"u": {"deep-review": [{"text": "a"}, {"text": "b"}]}}
-        # TP references a candidate we never submitted -> bijection violation.
-        evaluations = {"u": {"deep-review": ev_result(1, 1, 0, ["ghost"])}}
-        with self.assertRaises(ValueError) as ctx:
-            bucket_join(candidates, evaluations)
-        self.assertIn("bijection", str(ctx.exception))
-
-    def test_ambiguous_duplicate_candidate_text_raises(self):
-        candidates = {"u": {"deep-review": [{"text": "dup"}, {"text": "dup"}]}}
-        evaluations = {"u": {"deep-review": ev_result(1, 1, 0, ["dup"])}}
-        with self.assertRaises(ValueError) as ctx:
-            bucket_join(candidates, evaluations)
-        self.assertIn("ambiguous", str(ctx.exception))
-
-    def test_candidates_without_evaluation_raises(self):
-        candidates = {"u": {"deep-review": [{"text": "a"}]}}
-        with self.assertRaises(ValueError):
-            bucket_join(candidates, {})
-
-    def test_empty_candidates_without_evaluation_is_empty_buckets(self):
-        candidates = {"u": {"deep-review": []}}
-        out = bucket_join(candidates, {})
-        self.assertEqual(out["u"], {"golden_matched": [], "adjudicator": []})
-
-
 # ---------------------------------------------------------------- metrics
 
 
@@ -254,7 +207,12 @@ class ComputeMetricsTests(unittest.TestCase):
         evaluations = {
             "u": {"deep-review": ev_result(2, 2, 1, ["[HIGH] m1", "[MEDIUM] m2"])}
         }
-        buckets = bucket_join(candidates, evaluations)
+        buckets = {
+            "u": {
+                "golden_matched": ["[HIGH] m1", "[MEDIUM] m2"],
+                "adjudicator": ["[LOW] e1", "[HIGH] e2"],
+            }
+        }
         adjudications = [
             {"bucket": "valid_extra", "candidate": "[LOW] e1"},
             {"bucket": "noise", "candidate": "[HIGH] e2"},
@@ -290,7 +248,12 @@ class ComputeMetricsTests(unittest.TestCase):
             }
         }
         evaluations = {"u": {"deep-review": ev_result(0, 3, 0, [])}}
-        buckets = bucket_join(candidates, evaluations)
+        buckets = {
+            "u": {
+                "golden_matched": [],
+                "adjudicator": [c["text"] for c in candidates["u"]["deep-review"]],
+            }
+        }
         adjudications = [
             {"bucket": "noise", "candidate": c["text"]}
             for c in candidates["u"]["deep-review"]
@@ -300,174 +263,62 @@ class ComputeMetricsTests(unittest.TestCase):
         self.assertAlmostEqual(m["drift"]["desc_len_mean"], (11 + 11 + 6) / 3)
 
 
-# ----------------------------------------------------------- adjudicate identity
+# ----------------------------------------------------------- ledger invocation
 
 
-class AdjudicateBucketIdentityTests(unittest.TestCase):
-    """Duplicate unmatched candidate texts are adjudicated per-candidate.
-
-    bucket_join permits duplicate UNMATCHED texts (only matched texts must be
-    unique). Each such candidate must be adjudicated with ITS OWN path/line
-    context, not collapsed to a single text-keyed record, so two same-body
-    comments at different locations get separate calls and independent verdicts.
-    """
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def test_duplicate_texts_get_distinct_contexts_and_verdicts(self):
-        url = "https://github.com/o/r/pull/1"
-        pr_dir = self.tmp / "pr-1"
-        pr_dir.mkdir()
-        # Two files/hunks so each location slices to a distinct hunk.
-        diff = (
-            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
-            "@@ -1,3 +1,3 @@\n line1\n+AAA marker\n line3\n"
-            "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n"
-            "@@ -9,3 +9,3 @@\n line9\n+BBB marker\n line11\n"
-        )
-        (pr_dir / "diff.patch").write_text(diff, encoding="utf-8")
-
-        # Same body text, different locations.
-        candidates = [
-            {"text": "same body", "path": "a.py", "line": 2, "source": "extracted"},
-            {"text": "same body", "path": "b.py", "line": 10, "source": "extracted"},
-        ]
-        per_pr = {url: {"pr_dir": str(pr_dir), "number": 1, "candidates": candidates}}
-        # bucket_join emits the unmatched text once per candidate occurrence.
-        buckets = {
-            url: {"golden_matched": [], "adjudicator": ["same body", "same body"]}
-        }
-
-        seen = []
-
-        def adjudicator(text, hunk, ctx, pin, api_key):
-            seen.append({"text": text, "hunk": hunk})
-            return {
-                "bucket": "valid_extra" if "AAA" in hunk else "noise",
-                "failed_check": None,
-                "reason": "t",
-            }
-
-        verdicts = score._adjudicate_bucket(buckets, per_pr, "pin", "key", adjudicator)
-
-        # One call per candidate, each with its own (distinct) hunk.
-        self.assertEqual(len(seen), 2)
-        self.assertTrue(any("AAA" in s["hunk"] for s in seen))
-        self.assertTrue(any("BBB" in s["hunk"] for s in seen))
-        self.assertNotEqual(seen[0]["hunk"], seen[1]["hunk"])
-        # Independent verdicts: the two locations bucket differently.
-        self.assertEqual(
-            sorted(v["bucket"] for v in verdicts), ["noise", "valid_extra"]
-        )
-
-        # Metrics tally per candidate: 2 candidates -> 1 valid_extra + 1 noise.
-        candidates_map = {url: {"deep-review": candidates}}
-        evaluations = {url: {"deep-review": ev_result(0, 2, 0, [])}}
-        m = compute_metrics(evaluations, candidates_map, buckets, verdicts)
-        self.assertEqual(m["total_candidates"], 2)
-        self.assertEqual(
-            m["per_bucket"], {"golden_matched": 0, "valid_extra": 1, "noise": 1}
-        )
-        self.assertAlmostEqual(m["valid_extra_rate"], 0.5)
-        self.assertAlmostEqual(m["noise_rate"], 0.5)
-
-    def test_ledger_invocation_labels_naive_and_skill(self):
-        metrics = {
-            "n_prs": 1,
-            "golden_recall": 0.0,
-            "valid_extra_rate": 0.0,
-            "noise_rate": 0.0,
-            "precision_strict": 0.0,
-            "f1_strict": 0.0,
-            "per_bucket": {},
-            "per_dimension": {},
-            "drift": {},
-        }
-        costs = {"tokens_total": 0, "cost_usd": 0.0, "per_model": {}}
-        # Explicit manifest invocation wins.
-        row = score._build_ledger_row(
-            "/tmp/r",
-            metrics,
-            costs,
-            {
-                "run_id": "r",
-                "tier": "smoke",
-                "git_sha": "abc",
-                "invocation": "naive:single-pass max-turns=40",
-                "anchor": "naive",
-            },
-            "pin",
-            "pin",
-            "sha",
-        )
-        self.assertEqual(
-            row["envelope"]["invocation"], "naive:single-pass max-turns=40"
-        )
-        # Legacy naive manifest without invocation falls back by anchor.
-        row = score._build_ledger_row(
-            "/tmp/r",
-            metrics,
-            costs,
-            {"run_id": "r", "tier": "smoke", "git_sha": "abc", "anchor": "naive"},
-            "pin",
-            "pin",
-            "sha",
-        )
-        self.assertEqual(row["envelope"]["invocation"], "naive:single-pass")
-        self.assertEqual(row["tool"], "naive-anchor")
-        # Skill run keeps the headless label.
-        row = score._build_ledger_row(
-            "/tmp/r",
-            metrics,
-            costs,
-            {"run_id": "r", "tier": "smoke", "git_sha": "abc", "anchor": None},
-            "pin",
-            "pin",
-            "sha",
-        )
-        self.assertEqual(row["envelope"]["invocation"], "headless:/code-gauntlet")
-
-    def test_string_line_is_normalized_not_crashing(self):
-        url = "https://github.com/o/r/pull/1"
-        pr_dir = self.tmp / "pr-1"
-        pr_dir.mkdir()
-        diff = (
-            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
-            "@@ -1,3 +1,3 @@\n line1\n+AAA marker\n line3\n"
-        )
-        (pr_dir / "diff.patch").write_text(diff, encoding="utf-8")
-        # A rendered comment can carry a string line (copied end_line) or garbage.
-        candidates = [
-            {"text": "numeric-ish", "path": "a.py", "line": "2", "source": "extracted"},
-            {
-                "text": "garbage-line",
-                "path": "a.py",
-                "line": "n/a",
-                "source": "extracted",
-            },
-        ]
-        per_pr = {url: {"pr_dir": str(pr_dir), "number": 1, "candidates": candidates}}
-        buckets = {
-            url: {"golden_matched": [], "adjudicator": ["numeric-ish", "garbage-line"]}
-        }
-
-        seen = []
-
-        def adjudicator(text, hunk, ctx, pin, api_key):
-            seen.append({"text": text, "hunk": hunk})
-            return {"bucket": "noise", "failed_check": 1, "reason": "t"}
-
-        verdicts = score._adjudicate_bucket(buckets, per_pr, "pin", "key", adjudicator)
-        self.assertEqual(len(verdicts), 2)
-        by_text = {s["text"]: s for s in seen}
-        # "2" normalizes to int 2 -> hunk sliced; "n/a" drops context, no crash.
-        self.assertIn("AAA", by_text["numeric-ish"]["hunk"])
-        self.assertEqual(by_text["garbage-line"]["hunk"], "")
+def test_ledger_invocation_labels_naive_and_skill():
+    metrics = {
+        "n_prs": 1,
+        "golden_recall": 0.0,
+        "valid_extra_rate": 0.0,
+        "noise_rate": 0.0,
+        "precision_strict": 0.0,
+        "f1_strict": 0.0,
+        "per_bucket": {},
+        "per_dimension": {},
+        "drift": {},
+    }
+    costs = {"tokens_total": 0, "cost_usd": 0.0, "per_model": {}}
+    # Explicit manifest invocation wins.
+    row = score._build_ledger_row(
+        "/tmp/r",
+        metrics,
+        costs,
+        {
+            "run_id": "r",
+            "tier": "smoke",
+            "git_sha": "abc",
+            "invocation": "naive:single-pass max-turns=40",
+            "anchor": "naive",
+        },
+        "pin",
+        "pin",
+        "sha",
+    )
+    assert row["envelope"]["invocation"] == "naive:single-pass max-turns=40"
+    # Legacy naive manifest without invocation falls back by anchor.
+    row = score._build_ledger_row(
+        "/tmp/r",
+        metrics,
+        costs,
+        {"run_id": "r", "tier": "smoke", "git_sha": "abc", "anchor": "naive"},
+        "pin",
+        "pin",
+        "sha",
+    )
+    assert row["envelope"]["invocation"] == "naive:single-pass"
+    assert row["tool"] == "naive-anchor"
+    # Skill run keeps the headless label.
+    row = score._build_ledger_row(
+        "/tmp/r",
+        metrics,
+        costs,
+        {"run_id": "r", "tier": "smoke", "git_sha": "abc", "anchor": None},
+        "pin",
+        "pin",
+        "sha",
+    )
+    assert row["envelope"]["invocation"] == "headless:/code-gauntlet"
 
 
 # --------------------------------------------------------------- score_run

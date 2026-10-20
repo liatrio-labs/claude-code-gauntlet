@@ -2428,18 +2428,28 @@ def spend_totals(rows):
 def render_html(rows, baselines, sha, generated):
     historical = [r for r in rows if r.get("schema_version", 1) == 1]
     unknown = [r for r in historical if score_identity(r).epoch_id is None]
+    historical_epoch = next(
+        (score_identity(r).epoch_id for r in historical if score_identity(r).epoch_id),
+        score_identity(baselines).epoch_id,
+    )
     archived_baselines = baselines
-    if baselines.get("epoch_id"):
+    if baselines.get("epoch_id") and historical_epoch:
         historical = [
-            r for r in historical if score_identity(r).epoch_id == "dfc6cb4-v1"
+            r for r in historical if score_identity(r).epoch_id == historical_epoch
         ]
         archived_baselines = load_baselines(
-            BENCH_DIR / "golden/epochs/dfc6cb4-v1/baselines.json"
+            BENCH_DIR / "golden/epochs" / historical_epoch / "baselines.json"
         )
+    active_label = html.escape(
+        f"{baselines.get('epoch_id') or historical_epoch or 'unversioned'} / {baselines.get('profile', 'all')}"
+    )
+    historical_label = html.escape(
+        f"{historical_epoch or 'unversioned'} / {archived_baselines.get('profile', 'all')}"
+    )
     doc = _render_historical_html(historical, archived_baselines, sha, generated)
     sections = [
-        '<section id="epoch-scores"><h2>Active epoch e616e84-v1 / core</h2>',
-        "<p>Measurement and calibration pending. Historical benchmark and cost claims below use dfc6cb4-v1 / all.</p>",
+        f'<section id="epoch-scores"><h2>Active epoch {active_label}</h2>',
+        f"<p>Measurement and calibration pending. Historical benchmark and cost claims below use {historical_label}.</p>",
     ]
     if unknown:
         sections.append(
@@ -2474,7 +2484,7 @@ def render_html(rows, baselines, sha, generated):
             + fmt_pct(row.get("golden_recall"))
             + "; descriptive score; no verdict.</p></article>"
         )
-    sections.append("</section><h2>Historical epoch dfc6cb4-v1 / all</h2>")
+    sections.append(f"</section><h2>Historical epoch {historical_label}</h2>")
     return doc.replace(
         "<h2>Release progression</h2>",
         "\n".join(sections) + "<h2>Release progression</h2>",

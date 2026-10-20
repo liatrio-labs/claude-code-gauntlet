@@ -659,6 +659,18 @@ def test_new_score_identities_do_not_collapse_into_historical_release_rows(score
     )
     assert "Historical epoch dfc6cb4-v1 / all" in doc
     assert "Active epoch e616e84-v1 / core" in doc
+    next_doc = report.render_html(
+        rows,
+        {
+            **read_json(DEFAULT_ROOT.parent / "baselines.json"),
+            "epoch_id": "future<epoch>",
+            "profile": "strict",
+        },
+        "sha",
+        "date",
+    )
+    assert "Active epoch future&lt;epoch&gt; / strict" in next_doc
+    assert "Active epoch e616e84-v1" not in next_doc
     assert (
         first["score_ref"]["score_id"] in doc and second["score_ref"]["score_id"] in doc
     )
