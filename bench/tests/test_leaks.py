@@ -193,6 +193,178 @@ def test_maintainer_files_metadata_and_code_are_not_agent_read(tmp_path, corpus)
     assert leaks.collect_surfaces(tmp_path, ()) == ()
 
 
+@pytest.mark.parametrize(
+    "module", sorted(p.name for p in (leaks.ROOT / "workflows/src").glob("*.js"))
+)
+def test_every_workflow_module_scans_literals_in_unexecuted_branches(
+    tmp_path, corpus, module
+):
+    _, derived, _ = corpus
+    token = public_token(derived)
+    path = tmp_path / "workflows/src" / module
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        f"const {token} = 1; // {token}\n"
+        f"const pattern = /{token}/;\n"
+        f"if (false) {{ const body = '{token}'; const tpl = `prefix ${{{token}}} {token}`; }}\n",
+        encoding="utf-8",
+    )
+    surfaces = leaks.collect_surfaces(tmp_path, ())
+    assert [s.text for s in surfaces] == [token, "prefix ", " " + token]
+    report = leaks._scan_with_ceiling(
+        derived,
+        surfaces,
+        empty_allowlist(derived),
+        ceiling=ceiling_for(derived, empty_allowlist(derived)),
+    )
+    assert len(report.unallowed_hits) == 2
+    assert all(h.line == 3 for h in report.unallowed_hits)
+
+
+def test_literal_parser_handles_nested_templates_escapes_and_fails_closed(tmp_path):
+    path = tmp_path / "workflows/src/new.js"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        r"const x = `outer ${codeName + `inner ${otherName} tail`} end`; const y = 'esc\u0061ped';",
+        encoding="utf-8",
+    )
+    texts = {s.text for s in leaks.collect_surfaces(tmp_path, ())}
+    assert texts == {"outer ", "inner ", " tail", " end", "escaped"}
+    path.write_text("const invalid = 'unterminated", encoding="utf-8")
+    with pytest.raises(subprocess.CalledProcessError):
+        leaks.collect_surfaces(tmp_path, ())
+
+
+def test_squashed_issuance_and_retirement_use_complete_real_ancestry(git_repo, corpus):
+    root, git = git_repo
+    _, derived, _ = corpus
+    path = root / "bench/golden/leak_allowlist.json"
+    ceiling_path = root / "bench/golden/leak_allowlist_ceiling.json"
+    (root / "base.txt").write_text("main", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-qm", "base")
+    base = git("rev-parse", "HEAD")
+    git("checkout", "-qb", "feature")
+    allowed = empty_allowlist(derived)
+    cue = surface(public_token(derived))
+    ceiling = ceiling_for(derived, allowed)
+    hit = leaks._scan_with_ceiling(derived, (cue,), allowed, ceiling=ceiling).hits[0]
+    allowed["entries"] = [allowance(hit, 2)]
+    ceiling = ceiling_for(derived, allowed)
+    path.parent.mkdir(parents=True)
+    for target, data in (
+        (path, allowed),
+        (ceiling_path, dict(ceiling, derivation_version="old")),
+    ):
+        target.write_text(json.dumps(data), encoding="utf-8")
+    git("add", ".")
+    git("commit", "-qm", "intermediate issuance")
+    ceiling_path.write_text(json.dumps(ceiling), encoding="utf-8")
+    git("add", ".")
+    git("commit", "-qm", "final issuance")
+    tip = git("rev-parse", "HEAD")
+    git("checkout", "-q", "main")
+    git("merge", "--squash", "feature")
+    git("commit", "-qm", "squashed feature")
+    assert git("rev-parse", "HEAD^") == base
+    assert git("rev-parse", "HEAD^{tree}") == git("rev-parse", tip + "^{tree}")
+    history = leaks._committed_allowlists(root, ceiling)
+    assert len(history) == 1
+    leaks._check_ceiling(derived, (), allowed, ceiling, history)
+    lower = json.loads(json.dumps(allowed))
+    lower["entries"][0]["expected_count"] = 1
+    for retired in (lower, empty_allowlist(derived)):
+        path.write_text(json.dumps(retired), encoding="utf-8")
+        git("add", ".")
+        git("commit", "-qm", "retirement")
+        with pytest.raises(ValueError, match="restored or widened"):
+            leaks._check_ceiling(
+                derived,
+                (),
+                allowed,
+                ceiling,
+                leaks._committed_allowlists(root, ceiling),
+            )
+    # Git still has the base objects; marking the tip shallow must refuse anyway.
+    (root / ".git/shallow").write_text(
+        git("rev-parse", "HEAD") + "\n", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="incomplete allowance history"):
+        leaks._committed_allowlists(root, ceiling)
+
+
+@pytest.mark.parametrize("mutation", [None, "baseline", "report", "prompts"])
+def test_freeze_contamination_binds_baseline_to_recomputed_scan(
+    tmp_path, corpus, generated, monkeypatch, mutation
+):
+    from bench.runner import populations, validity
+
+    epoch, derived, _ = corpus
+    prompts = tmp_path / "prompts.json"
+    rows = [
+        {k: getattr(s, k) for k in ("surface_id", "producer_path", "scenario", "text")}
+        for s in generated
+    ]
+    prompts.write_text(json.dumps(rows), encoding="utf-8")
+    report = leaks.scan(
+        derived,
+        leaks.collect_surfaces(leaks.ROOT, generated),
+        read_json(DEFAULT_ROOT / "leak_allowlist.json"),
+    )
+    report_path = tmp_path / "report.json"
+    report_path.write_bytes(canonical(asdict(report)))
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "epoch_id": epoch.epoch_id,
+                "golden_sha256": epoch.golden_sha256,
+                "status": "unfrozen",
+                "criterion_version": "reviewed-lens-v1",
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    baseline = validity.treatment_sha()
+    monkeypatch.setattr(validity, "require_clean_treatment", lambda *args: None)
+    if mutation == "report":
+        report_path.write_text("{}", encoding="utf-8")
+    elif mutation == "prompts":
+        rows[0]["text"] += "stale text"
+        prompts.write_text(json.dumps(rows), encoding="utf-8")
+    args = [
+        "freeze-contamination",
+        "--epoch",
+        epoch.epoch_id,
+        "--manifest",
+        str(manifest),
+        "--baseline-treatment-sha",
+        "wrong" if mutation == "baseline" else baseline,
+        "--generated-prompts",
+        str(prompts),
+        "--leak-report",
+        str(report_path),
+        "--frozen-at",
+        "2026-10-20T00:00:00Z",
+        "--out",
+        str(tmp_path / "frozen.json"),
+    ]
+    if mutation:
+        with pytest.raises(SystemExit) as exc:
+            populations.main(args)
+        assert exc.value.code == 2
+        assert not (tmp_path / "frozen.json").exists()
+    else:
+        assert populations.main(args) == 0
+        frozen = read_json(tmp_path / "frozen.json")
+        assert frozen["agent_read_sha256"] == validity.agent_read_hash()
+        assert frozen["baseline_treatment_sha"] == baseline
+        assert frozen["leak_report_sha256"] == digest(asdict(report))
+        populations.contamination_entries(frozen, epoch)
+
+
 def copy_workflow(root):
     for directory in (
         "workflows/src",
@@ -232,7 +404,7 @@ def test_assembled_dispatch_prompt_and_schema_are_scanned(
             "id: { type: 'string', description: " + fragment + " }, file:",
         )
     path.write_text(text, encoding="utf-8")
-    assert leaks.collect_surfaces(tmp_path, ()) == ()
+    assert all(s.scenario == "literal" for s in leaks.collect_surfaces(tmp_path, ()))
     result = subprocess.run(
         ["node", "workflows/test/tools/emit_agent_prompts.mjs"],
         cwd=tmp_path,
@@ -265,6 +437,7 @@ def test_shared_context_scans_emitted_template_and_keeps_stable_id(tmp_path, cor
         shutil.copyfile(path, target)
     path = tmp_path / "scripts/gauntlet/shared_context.py"
     original = leaks.collect_surfaces(tmp_path, ())
+    assert original == leaks.collect_surfaces(tmp_path, ())
     text = path.read_text(encoding="utf-8").replace(
         'b"\\n## Risk classification',
         'b"\\n' + public_token(derived) + " ## Risk classification",
@@ -567,6 +740,12 @@ def test_committed_history_preserves_retirement_across_ceiling_repin(
     ]
 
     def git(args, **kwargs):
+        if args[1] == "rev-parse":
+            return subprocess.CompletedProcess(args, 0, "false\n")
+        if args[1] == "rev-list":
+            return subprocess.CompletedProcess(args, 0, "migration parent\n")
+        if args[1] == "ls-tree":
+            return subprocess.CompletedProcess(args, 0, "existing receipt\n")
         if args[1] == "log":
             return subprocess.CompletedProcess(
                 args, 0, "restore\nremove\nissued\nmigration\n"
@@ -625,7 +804,7 @@ def test_api_key_member_rule_and_example_are_known_cues_alongside_security_sweep
     for token, count in (
         ("organization_context", 2),
         (member.token, 2),
-        ("postMessage", 8),
+        ("postMessage", 9),
     ):
         identifier = next(i for i in derived.identifiers if i.token == token)
         entries = [

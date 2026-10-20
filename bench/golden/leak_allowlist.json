@@ -202,6 +202,16 @@
       "expected_count": 1,
       "reason": "Ordinary technical vocabulary; not a leak.",
       "disposition": "generic_vocabulary"
+    },
+    {
+      "identifier_id": "3b5b4e184695eae694d9910ddbcaa33af3c32401aefc03573db7a96c77cae2bb",
+      "surface_id": "workflow-literals/workflows/src/registry.js/4",
+      "source_path": "workflows/src/registry.js",
+      "excerpt_sha256": "12bf9674985e7f5693c3103dd9c5ebab2535536ef24f2a706ecb209e3a3d3430",
+      "expected_count": 1,
+      "reason": "Existing explicit postMessage security sweep; remove in Wave 2a.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
     }
   ],
   "passages": [

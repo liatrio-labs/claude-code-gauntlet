@@ -7,6 +7,39 @@ from tests.support.forge import install_forge_factory
 
 
 @pytest.fixture
+def git_repo(tmp_path):
+    """A disposable local history, including real index and squash semantics."""
+    import subprocess
+
+    root = tmp_path / "git-fixture"
+    root.mkdir()
+
+    def git(*args):
+        return subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                *args,
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        ).stdout.strip()
+
+    git("init", "-q", "-b", "main")
+    return root, git
+
+
+@pytest.fixture
 def forge_factory(monkeypatch, request):
     factory = install_forge_factory(monkeypatch, post)
     if request.instance is not None:
@@ -142,7 +175,9 @@ def population_case(tmp_path):
     contamination = populations.ingest_leak_manifest_v2(receipt, epoch)
     contamination.update(
         status="frozen",
-        agent_read_sha256="synthetic-reviewed-content",
+        agent_read_sha256="baseline",
+        baseline_treatment_sha="baseline",
+        leak_report_sha256="synthetic-report-digest",
         frozen_at="2026-10-20T00:00:00Z",
     )
     subsets = read_json(DEFAULT_ROOT / "subsets.json")

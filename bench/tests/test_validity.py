@@ -19,6 +19,7 @@ NOW = "2026-10-20T12:00:00Z"
 @pytest.fixture(autouse=True)
 def fixed_clock(monkeypatch):
     monkeypatch.setattr(v, "utc_now", lambda: NOW)
+    monkeypatch.setattr(v, "require_clean_treatment", lambda *args: None)
 
 
 @pytest.fixture

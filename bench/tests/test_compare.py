@@ -5,6 +5,7 @@ import json
 import random
 import shutil
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -608,6 +609,27 @@ def operational_case(population_case, score_case, tmp_path, request, monkeypatch
         "initial",
     )
     return spec, packets, window
+
+
+@pytest.mark.parametrize(
+    "field", ["agent_read_sha256", "baseline_treatment_sha", "leak_report_sha256"]
+)
+def test_operational_compare_refuses_stale_contamination_before_reading_packets(
+    operational_case, field
+):
+    spec, _, _ = operational_case
+    path = Path(spec.contamination_path)
+    manifest = read_json(path)
+    manifest[field] = "" if field == "leak_report_sha256" else "different-baseline"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    populations_path = Path(spec.populations_path)
+    population_manifest = read_json(populations_path)
+    population_manifest["contamination_sha256"] = digest(manifest)
+    populations_path.write_text(json.dumps(population_manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="contamination baseline"):
+        c.compare_arms(
+            spec, packet_loader=lambda ref: pytest.fail("loaded stale-bound packets")
+        )
 
 
 def test_operational_compare_complete_matrix_and_extension_prefix_refusal(

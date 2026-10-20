@@ -1062,6 +1062,12 @@ def compare_arms(
         raise ValueError("invalid or sealed requested scope")
     if operational and set(scope) != set(subsets["gate"]):
         raise ValueError("operational looks require the full 15-PR gate")
+    if operational:
+        populations.check_baseline_binding(
+            read_json(Path(spec.contamination_path)),
+            spec.baseline.treatment_git_sha,
+            spec.baseline.agent_read_sha256,
+        )
     if not operational and len(scope) == 6 and set(scope) != set(subsets["mini"]):
         raise ValueError("six-PR descriptive scope must be the declared mini")
     pops, limitations = resolved_populations(spec)

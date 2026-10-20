@@ -753,6 +753,8 @@ def _run_prs(
     for url in urls:
         if manifest.get("measurement_window"):
             try:
+                validity.refuse_ambient_model_overrides(os.environ)
+                validity.require_clean_treatment()
                 observed = validity.run_provenance(
                     child_model=child_model,
                     child_auth=child_auth,
@@ -1545,6 +1547,8 @@ def main(argv=None):
             else None
         )
         if args.measurement_window:
+            validity.refuse_ambient_model_overrides(os.environ)
+            validity.require_clean_treatment()
             args.measurement_window = str(Path(args.measurement_window).resolve())
         recorded_window = (prior_manifest or {}).get("measurement_window")
         if recorded_window and args.measurement_window != recorded_window:

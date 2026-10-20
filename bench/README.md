@@ -418,7 +418,9 @@ python3 -m bench.runner.validity freeze-window --out window.json \
 
 The policy JSON must equal `validity.benchmark_policy(timeout_seconds)`. The local
 workflow registry resolves every dispatch model. Effort environment controls retain
-absent values as null. The window pins the CLI real path, version, bytes, epoch,
+absent values as null. Measurement preflight refuses ambient model and effort overrides,
+including `CLAUDE_CODE_SUBAGENT_MODEL`, before mirror work or dispatch.
+The window pins the CLI real path, version, bytes, epoch,
 evaluators, model map, auxiliary model allowlist, effort fields and benchmark policy.
 The orchestrator must verify the installed CLI honors the auto-update control.
 
@@ -427,6 +429,9 @@ Start with `python3 bench/run.py --tier subset --measurement-window window.json
 that same window. Every child rechecks its binary before dispatch. A baseline run also
 accepts `--baseline-equivalence-receipt PATH`; its reviewed JSON binds `release_sha`
 (`94ea095a`), `merge_sha` and `evidence_refs` to the instrumented Wave 0a merge.
+Tracked files must be clean at entry and before each PR. Treatment identity hashes
+the index entries under `.claude-plugin`, `agents`, `skills`, `workflows` and `scripts`,
+including the shipped bundle and gauntlet helpers.
 
 Attempts are immutable under `attempts/<pr-key>/<attempt-id>/`. Checkpoints select the
 latest scheduling outcome. Retrying preserves raw output, payloads, workflow records,
@@ -445,6 +450,12 @@ python3 -m bench.runner.populations prepare-leak-manifest --source leak-manifest
   --golden-source /path/to/pinned/upstream/offline --epoch e616e84-v1 --out prepared.json
 python3 -m bench.runner.populations ingest-leak-manifest --prepared prepared.json \
   --epoch e616e84-v1 --out contamination-proposal.json
+node workflows/test/tools/emit_agent_prompts.mjs > generated-prompts.json
+python3 -m bench.runner.leaks --generated-prompts generated-prompts.json --out leak-report.json
+python3 -m bench.runner.populations freeze-contamination --epoch e616e84-v1 \
+  --manifest contamination-proposal.json --baseline-treatment-sha BASELINE_FULL_SHA \
+  --generated-prompts generated-prompts.json --leak-report leak-report.json \
+  --frozen-at ISO_TIMESTAMP --out contamination-frozen.json
 python3 -m bench.runner.compare compare --spec comparison.json --out comparison-report.json
 python3 -m bench.runner.compare simulate --spec simulation.json --out simulation-report.json
 ```
@@ -453,6 +464,14 @@ Preparation records raw file hashes and exact golden text hashes without storing
 Ingestion emits an unfrozen proposal. Semantic dispositions, content hashes and owner
 review are still required before `freeze_populations`. Never infer uncontamination
 from an empty lexical scan. Comparisons never consume sealed holdout populations.
+Freeze contamination at the clean baseline treatment SHA after semantic review.
+The command reruns the emitter and scan, records the plugin index hash and leak
+report digest, and refuses stale inputs. Operational comparisons and simulation
+sources must match that baseline binding.
+
+Failed discovery, verification, validation or challenge execution invalidates an
+attempt even when its optional trace is absent. Declared challenge caps, repaired
+verification retries and checkpoint replay remain separate reported disclosures.
 
 Descriptive comparisons require explicit PR scope, complete score packets and
 `rule: null`. A windowless mini uses exactly the declared six PRs and produces no

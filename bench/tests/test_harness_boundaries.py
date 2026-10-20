@@ -84,6 +84,12 @@ class Harness:
             return subprocess.CompletedProcess(argv, 0, "2.1.154 (Claude Code)", "")
         if argv == ["git", "status", "--porcelain"]:
             return subprocess.CompletedProcess(argv, 0, "", "")
+        if argv == ["git", "status", "--porcelain", "--untracked-files=no"]:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if argv[:3] == ["git", "ls-files", "--stage"]:
+            return subprocess.CompletedProcess(
+                argv, 0, b"100644 fixture 0\tworkflows/pipeline.js\0", b""
+            )
         raise AssertionError(f"unexpected subprocess: {argv}")
 
     def popen(self, argv, **kwargs):

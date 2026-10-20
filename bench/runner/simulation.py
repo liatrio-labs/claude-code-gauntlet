@@ -932,6 +932,11 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
         ref = ScoreRef(**ref_wire)
         packet = packet_loader(ref)
         run = compare._packet_run(packet)
+        populations.check_baseline_binding(
+            contamination,
+            run.get("treatment_git_sha", run.get("git_sha")),
+            run.get("agent_read_sha256"),
+        )
         if not run.get("measurement_window"):
             raise ValueError("simulation source run lacks its auth-specific window")
         window = validity.load_window(Path(run["measurement_window"]))

@@ -65,6 +65,22 @@ EFFORT_KEYS = (
     "CLAUDE_CODE_SUBAGENT_EFFORT",
     "MAX_THINKING_TOKENS",
 )
+MODEL_OVERRIDE_KEYS = (
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+    "CLAUDE_CODE_SUBAGENT_EFFORT_LEVEL",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+)
+
+
+def refuse_ambient_model_overrides(env):
+    if any(key in env for key in (*MODEL_OVERRIDE_KEYS, *EFFORT_KEYS)):
+        raise ValueError("measurement refuses ambient model/effort overrides")
+
+
 LIMITATIONS = (
     "No real usage-limit/reset fixture exists; production positive-signature recognition is disabled.",
     "Auto-update control and effective effort behavior require installed-CLI verification.",
@@ -381,6 +397,7 @@ def capture_fingerprint(
     cli_probe=cli_probe,
     model_probe=model_probe,
 ):
+    refuse_ambient_model_overrides(env)
     if any(
         env.get(key) and env[key].lower() not in ("0", "false")
         for key in (
@@ -739,6 +756,12 @@ def load_attempt(path):
             or file_hash(confined(path.parent, name)) != expected
         ):
             raise ValueError("attempt artifact hash mismatch")
+    if result.validity.state in ("valid", "operational_failure"):
+        from bench.runner.check import workflow_stage_outcomes
+
+        failures, _ = workflow_stage_outcomes(path.parent / "artifacts")
+        if failures:
+            raise ValueError("invalid selected attempt: " + "; ".join(failures))
     if result.validity.state == "operational_failure":
         originals = list(
             path.parents[3].glob(f"attempts/*/{result.validity.retry_of}/attempt.json")
@@ -1101,6 +1124,12 @@ def selected_attempt(path):
         or load_attempt(sources[0]) != retry
     ):
         raise ValueError("failure confirmation source changed")
+    from bench.runner.check import workflow_stage_outcomes
+
+    for source in (path, sources[0]):
+        failures, _ = workflow_stage_outcomes(source.parent / "artifacts")
+        if failures:
+            raise ValueError("invalid selected attempt: " + "; ".join(failures))
     return confirm_failure(
         original, retry, reset_evidence=receipt["reset_evidence_refs"]
     ).attempt
@@ -1238,19 +1267,44 @@ def benchmark_policy(timeout_s, *, resolve_limits=True):
     }
 
 
-def agent_read_hash(root=ROOT):
-    paths = [
-        *Path(root).glob("agents/*.md"),
-        *Path(root).glob("skills/**/*.md"),
-        *Path(root).glob("workflows/src/*.js"),
-    ]
-    return digest(
-        [
-            (str(p.relative_to(root)), file_hash(p))
-            for p in sorted(paths)
-            if artifact_allowed(p)
-        ]
+PLUGIN_PATHS = (".claude-plugin", "agents", "skills", "workflows", "scripts")
+
+
+def require_clean_treatment(root=ROOT):
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
     )
+    if status.stdout.strip():
+        raise ValueError("input_drift: measurement requires clean tracked files")
+
+
+def treatment_sha(root=ROOT):
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.strip()
+
+
+def agent_read_hash(root=ROOT):
+    # The index records names, modes and blob ids for the entire loaded plugin tree.
+    entries = subprocess.run(
+        ["git", "ls-files", "--stage", "-z", "--", *PLUGIN_PATHS],
+        cwd=root,
+        capture_output=True,
+        check=True,
+    ).stdout.split(b"\0")
+    if not entries or entries == [b""]:
+        raise ValueError("missing plugin index tree")
+    return digest(sorted(row.decode("utf-8") for row in entries if row))
 
 
 def run_provenance(
@@ -1375,11 +1429,35 @@ def collect_attempt(
                 reasons=tuple(sorted({*value.reasons, *reasons})),
                 retryable=False,
             )
+    stage_errors = ()
+    if manifest.get("anchor") != "naive":
+        try:
+            stage_failures, disclosures = check.workflow_stage_outcomes(pr_dir)
+            value = replace(value, limitations=(*value.limitations, *disclosures))
+            if stage_failures:
+                stage_errors = ("pipeline_degraded",)
+                value = replace(
+                    value, evidence_refs=(*value.evidence_refs, *stage_failures)
+                )
+        except (ValueError, TypeError, KeyError, OSError, AttributeError):
+            stage_errors = ("pipeline_degraded",)
+        if stage_errors:
+            value = replace(
+                value,
+                state="invalid",
+                reasons=tuple(sorted({*value.reasons, *stage_errors})),
+                retryable=False,
+            )
     if result.status == "ok":
         errors = (
-            check.check_attempt(Path(pr_dir), naive=manifest.get("anchor") == "naive")
-            if fp
-            else ()
+            *stage_errors,
+            *(
+                check.check_attempt(
+                    Path(pr_dir), naive=manifest.get("anchor") == "naive"
+                )
+                if fp
+                else ()
+            ),
         )
         if not result.payload_path or not Path(result.payload_path).is_file():
             errors = (*errors, "artifact_missing")

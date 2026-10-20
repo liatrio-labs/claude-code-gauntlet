@@ -37,10 +37,10 @@ Disposition = Literal[
     "generic_vocabulary",
     "delete",
 ]
-DERIVATION_VERSION = "distinctive-project-symbol-spans-v4"
+DERIVATION_VERSION = "distinctive-project-symbol-spans-v5-literals"
 ROOT = Path(__file__).resolve().parents[2]
 ALLOWANCE_CEILING_SHA256 = (
-    "53359fe8e425fcbe7bc455a16a5f76921499507291ba907e0ce588f3f5ee1ec4"
+    "0dfc6da648c0545bc0af2985e9b99fd0153e8d38fee291fb636a5729d04c979c"
 )
 # These standard modules print output, run site customization, or launch a browser on import.
 STDLIB_IMPORT_SIDE_EFFECTS = frozenset(
@@ -558,6 +558,7 @@ def collect_surfaces(
             )
         )
     surfaces.extend(_shared_context_surfaces(root))
+    surfaces.extend(_workflow_literal_surfaces(root))
     for surface in generated_prompts:
         if (
             not _safe(root, root / surface.producer_path)
@@ -568,6 +569,33 @@ def collect_surfaces(
     if len({s.surface_id for s in surfaces}) != len(surfaces):
         raise ValueError("duplicate prompt surface id")
     return tuple(sorted(surfaces, key=lambda s: s.surface_id))
+
+
+def _workflow_literal_surfaces(root: Path) -> tuple[PromptSurface, ...]:
+    modules = [
+        {
+            "path": path.relative_to(root).as_posix(),
+            "text": path.read_text(encoding="utf-8"),
+        }
+        for path in _walk(root, root / "workflows/src")
+        if path.parent == root / "workflows/src" and path.suffix == ".js"
+    ]
+    if not modules:
+        return ()
+    result = subprocess.run(
+        [
+            "node",
+            "--expose-internals",
+            str(ROOT / "workflows/test/tools/emit_workflow_literals.mjs"),
+        ],
+        input=json.dumps(modules),
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    return tuple(PromptSurface(**row) for row in json.loads(result.stdout))
 
 
 def _shared_context_surfaces(root: Path) -> tuple[PromptSurface, ...]:
@@ -591,6 +619,10 @@ def _shared_context_surfaces(root: Path) -> tuple[PromptSurface, ...]:
         subprocess.run(
             [
                 sys.executable,
+                "-c",
+                # The fixture's framing nonce is synthetic input, not treatment text.
+                "import runpy,secrets,sys; secrets.token_hex=lambda n: 'a'*(2*n); "
+                "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')",
                 str(entry),
                 "--output-dir",
                 directory,
@@ -736,8 +768,18 @@ def _committed_allowlists(
         "bench/golden/leak_allowlist.json",
         "bench/golden/leak_allowlist_ceiling.json",
     ]
+    shallow = subprocess.run(
+        ["git", "rev-parse", "--is-shallow-repository"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.strip()
+    if shallow != "false":
+        raise ValueError("incomplete allowance history; fetch complete ancestry")
     history = subprocess.run(
-        ["git", "log", "--format=%H", "--", *paths],
+        ["git", "log", "--full-history", "--format=%H", "--", *paths],
         cwd=root,
         capture_output=True,
         text=True,
@@ -775,6 +817,28 @@ def _committed_allowlists(
             boundary_seen = True
             break
         accepted.append(previous)
+    if not boundary_seen and history:
+        # A squash can introduce only the final receipt. Complete ancestry plus
+        # absence in every parent proves issuance without an intermediate receipt.
+        parents = subprocess.run(
+            ["git", "rev-list", "--parents", "-n", "1", history[-1]],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        ).stdout.split()[1:]
+        boundary_seen = all(
+            not subprocess.run(
+                ["git", "ls-tree", parent, "--", *paths],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=True,
+            ).stdout.strip()
+            for parent in parents
+        )
     if not boundary_seen:
         raise ValueError(
             "incomplete allowance history; fetch history through the ceiling re-issue"

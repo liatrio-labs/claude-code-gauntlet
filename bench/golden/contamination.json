@@ -4,6 +4,8 @@
   "golden_sha256": "a6edc0e159ac0c5f62d470a4d8bdf1c2006710606c48110818a2ec527f0d37c2",
   "status": "unfrozen",
   "agent_read_sha256": "",
+  "baseline_treatment_sha": "",
+  "leak_report_sha256": "",
   "criterion_version": "",
   "entries": [],
   "frozen_at": null

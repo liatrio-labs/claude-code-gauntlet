@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal, TypedDict, get_args
 
@@ -47,6 +49,8 @@ class ContaminationManifestWire(TypedDict):
     golden_sha256: str
     status: FreezeStatus
     agent_read_sha256: str
+    baseline_treatment_sha: str
+    leak_report_sha256: str
     criterion_version: str
     entries: list[ContaminationEntryWire]
     frozen_at: str | None
@@ -296,6 +300,8 @@ def ingest_leak_manifest_v2(prepared, epoch, out=None) -> ContaminationManifestW
         "golden_sha256": epoch.golden_sha256,
         "status": "unfrozen",
         "agent_read_sha256": "",
+        "baseline_treatment_sha": "",
+        "leak_report_sha256": "",
         "criterion_version": "leak-manifest-v2",
         "entries": entries,
         "frozen_at": None,
@@ -303,6 +309,76 @@ def ingest_leak_manifest_v2(prepared, epoch, out=None) -> ContaminationManifestW
     if out is not None:
         exclusive_json(Path(out), result)
     return result
+
+
+def freeze_contamination(
+    manifest,
+    epoch,
+    *,
+    baseline_treatment_sha,
+    generated_prompts,
+    leak_report,
+    out,
+    frozen_at,
+    root=ROOT,
+):
+    from bench.runner import leaks, validity
+
+    validity.require_clean_treatment(root)
+    if validity.treatment_sha(root) != baseline_treatment_sha:
+        raise ValueError("contamination freeze requires the baseline treatment SHA")
+    contamination_entries(manifest, epoch, require_frozen=False)
+    if manifest["status"] != "unfrozen" or not frozen_at:
+        raise ValueError("contamination must be unfrozen with a freeze timestamp")
+    ceiling = leaks.load_ceiling(root)
+    generated = subprocess.run(
+        ["node", "workflows/test/tools/emit_agent_prompts.mjs"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    if digest(json.loads(generated.stdout)) != digest(read_json(generated_prompts)):
+        raise ValueError("generated prompts differ from the baseline emitter")
+    derived = leaks.derive_identifiers(
+        epoch,
+        holdout_pr_urls=frozenset(
+            read_json(root / "bench/golden/subsets.json")["holdout"]
+        ),
+        holdout_salt=ceiling["holdout_salt"],
+    )
+    report = leaks._scan_with_ceiling(
+        derived,
+        leaks.collect_surfaces(root, leaks.load_generated(generated_prompts)),
+        read_json(root / "bench/golden/leak_allowlist.json"),
+        ceiling=ceiling,
+        previous=leaks._committed_allowlists(root, ceiling),
+    )
+    if not report.passed or digest(asdict(report)) != digest(read_json(leak_report)):
+        raise ValueError("leak report does not match the passing baseline scan")
+    result = {
+        **manifest,
+        "status": "frozen",
+        "frozen_at": frozen_at,
+        "baseline_treatment_sha": baseline_treatment_sha,
+        "agent_read_sha256": validity.agent_read_hash(root),
+        "leak_report_sha256": digest(asdict(report)),
+    }
+    validity.require_clean_treatment(root)
+    if validity.treatment_sha(root) != baseline_treatment_sha:
+        raise ValueError("baseline treatment changed during contamination freeze")
+    exclusive_json(Path(out), result)
+    return result
+
+
+def check_baseline_binding(manifest, treatment_sha, agent_read_sha256):
+    if (
+        manifest.get("baseline_treatment_sha") != treatment_sha
+        or manifest.get("agent_read_sha256") != agent_read_sha256
+        or not manifest.get("leak_report_sha256")
+    ):
+        raise ValueError("contamination baseline treatment/hash/report mismatch")
 
 
 def contamination_entries(manifest, epoch, *, require_frozen=True):
@@ -316,6 +392,8 @@ def contamination_entries(manifest, epoch, *, require_frozen=True):
         manifest["status"] != "frozen"
         or not manifest["frozen_at"]
         or not manifest["agent_read_sha256"]
+        or not manifest.get("baseline_treatment_sha")
+        or not manifest.get("leak_report_sha256")
         or not manifest["criterion_version"]
     ):
         raise ValueError("contamination dispositions are unfrozen")
@@ -445,6 +523,14 @@ def resolve_population(
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    freeze = sub.add_parser("freeze-contamination")
+    freeze.add_argument("--epoch", required=True)
+    freeze.add_argument("--manifest", type=Path, required=True)
+    freeze.add_argument("--baseline-treatment-sha", required=True)
+    freeze.add_argument("--generated-prompts", type=Path, required=True)
+    freeze.add_argument("--leak-report", type=Path, required=True)
+    freeze.add_argument("--frozen-at", required=True)
+    freeze.add_argument("--out", type=Path, required=True)
     for command in ("prepare-leak-manifest", "ingest-leak-manifest"):
         p = sub.add_parser(command)
         p.add_argument("--epoch", required=True)
@@ -457,11 +543,27 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         epoch = load_epoch(args.epoch, root=DEFAULT_ROOT)
-        if args.command.startswith("prepare"):
+        if args.command == "freeze-contamination":
+            freeze_contamination(
+                read_json(args.manifest),
+                epoch,
+                baseline_treatment_sha=args.baseline_treatment_sha,
+                generated_prompts=args.generated_prompts,
+                leak_report=args.leak_report,
+                out=args.out,
+                frozen_at=args.frozen_at,
+            )
+        elif args.command.startswith("prepare"):
             prepare_leak_manifest_v2(args.source, args.golden_source, epoch, args.out)
         else:
             ingest_leak_manifest_v2(args.prepared, epoch, args.out)
-    except (ValueError, OSError, KeyError, TypeError) as exc:
+    except (
+        ValueError,
+        OSError,
+        KeyError,
+        TypeError,
+        subprocess.SubprocessError,
+    ) as exc:
         parser.exit(2, str(exc) + "\n")
     return 0
 

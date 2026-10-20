@@ -36,6 +36,7 @@ from gauntlet.registry import ARTIFACT_BASENAMES
 
 from bench.runner import citations
 from bench.runner.invoke import (
+    PIPELINE_META_NAME,
     extract_identity_receipt,
     parse_result_envelope,
     pipeline_bundle_sha256,
@@ -530,6 +531,87 @@ def _finding_identity(finding):
     return json.dumps(key, sort_keys=True)
 
 
+def workflow_stage_outcomes(pr_dir):
+    """Read execution outcomes from Workflow returns, independently of optional traces."""
+    failures, disclosures = set(), set()
+    reports = []
+    phases = []
+    for path in (Path(pr_dir) / "workflows").glob("*.json"):
+        try:
+            record = _load_json(path)
+        except json.JSONDecodeError:
+            # Legacy smoke artifacts can carry only a recoverable scriptPath.
+            # Identity and writer gates still inspect those raw carriers.
+            continue
+        script_path, name, _ = workflow_record_fields(record)
+        # Collection proves bundle identity. Archived outcomes must remain readable
+        # after the operator switches to the other treatment's bundle bytes.
+        if name != PIPELINE_META_NAME and not (
+            isinstance(script_path, str)
+            and script_path_matches_repo(
+                script_path, Path(__file__).resolve().parents[2]
+            )
+        ):
+            continue
+        out = record.get("result")
+        if not isinstance(out, dict):
+            continue
+        reports.append(out)
+        phases.append((out.get("checkpoints") or {}).get("phases") or {})
+        holder = record.get("args") or {}
+        if isinstance(holder, str):
+            holder = json.loads(holder)
+        if isinstance(holder, dict) and holder.get("checkpoints"):
+            disclosures.add(
+                "Checkpoint replay used; recorded stage failures remain invalid."
+            )
+    for path in Path(pr_dir).glob("code-gauntlet-checkpoint-all-*.json"):
+        try:
+            checkpoint = _load_json(path)
+        except json.JSONDecodeError:
+            continue
+        phases.append(checkpoint.get("phases") or {})
+    for phase in phases:
+        discover, verify = phase.get("discover") or {}, phase.get("verify") or {}
+        reports.append(
+            {
+                "stats": {
+                    "degraded": discover.get("degraded"),
+                    "verified": verify.get("verified"),
+                    "inputProof": verify.get("inputProof"),
+                    "validate": (phase.get("validate") or {}).get("stats"),
+                    "challenge": (phase.get("challenge") or {}).get("stats"),
+                }
+            }
+        )
+    for out in reports:
+        stats = out.get("stats") or {}
+        if out.get("ok") is False:
+            failures.add("workflow execution failed")
+        if stats.get("degraded"):
+            failures.add("discovery execution failed")
+        if (
+            stats.get("verified") is False
+            or (stats.get("inputProof") or {}).get("degradedFindings", 0) > 0
+        ):
+            failures.add("verify execution failed")
+        validation = stats.get("validate") or {}
+        if validation.get("skipped", 0) > 0 or validation.get(
+            "batches_completed", 0
+        ) < validation.get("batches_dispatched", 0):
+            failures.add("validate execution failed")
+        challenge = stats.get("challenge") or {}
+        failed = challenge.get("dispatched", 0) - challenge.get("completed", 0)
+        if failed > 0:
+            failures.add("challenge execution failed")
+        capped = challenge.get("skipped", 0) - max(0, failed)
+        if capped > 0:
+            disclosures.add(f"Permitted challenge cap: {capped} findings held back.")
+        if (stats.get("inputProof") or {}).get("retried", 0):
+            disclosures.add("Verification repaired by retry.")
+    return tuple(sorted(failures)), tuple(sorted(disclosures))
+
+
 def check_attempt(pr_dir, *, naive=False):
     """Apply artifact and identity gates without the smoke-only nonempty-review gate."""
     payload = pr_dir / "post-review-payload.json"
@@ -538,6 +620,8 @@ def check_attempt(pr_dir, *, naive=False):
     try:
         failures = _validate_payload_fields(_load_json(payload), pr_dir.name)
         if not naive:
+            stage_failures, _ = workflow_stage_outcomes(pr_dir)
+            failures.extend(stage_failures)
             artifacts, _ = _check_artifact_completeness(pr_dir, pr_dir.name)
             identity, identity_ok = _check_echo_identity(
                 pr_dir, Path(__file__).resolve().parents[2], pr_dir.name
@@ -548,7 +632,7 @@ def check_attempt(pr_dir, *, naive=False):
                 failures.append("missing identity")
             if _scan_degrade_text(pr_dir):
                 failures.append("pipeline degraded")
-    except (ValueError, TypeError, KeyError, OSError):
+    except (ValueError, TypeError, KeyError, OSError, AttributeError):
         return ("artifact_missing",)
     return ("pipeline_degraded",) if failures else ()
 
@@ -574,6 +658,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         "workflow_records": 0,
     }
     stats["citation_boilerplate"] = citations.measure_run(run_dir)
+    stats["stage_disclosures"] = []
 
     if not run_dir.is_dir():
         return {
@@ -641,6 +726,14 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
 
     for pr_dir in pr_dirs:
         label = pr_dir.name
+        try:
+            stage_failures, disclosures = workflow_stage_outcomes(pr_dir)
+            stats["stage_disclosures"].extend(
+                f"{label}: {text}" for text in disclosures
+            )
+            failures.extend(f"{label}: {failure}" for failure in stage_failures)
+        except (ValueError, TypeError, KeyError, OSError, AttributeError):
+            failures.append(f"{label}: unreadable workflow stage outcomes")
 
         # --- G2: payload ---
         payload_path = pr_dir / "post-review-payload.json"

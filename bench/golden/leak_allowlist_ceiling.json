@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "derivation_version": "distinctive-project-symbol-spans-v4",
+  "derivation_version": "distinctive-project-symbol-spans-v5-literals",
   "epoch_id": "e616e84-v1",
   "golden_sha256": "a6edc0e159ac0c5f62d470a4d8bdf1c2006710606c48110818a2ec527f0d37c2",
   "holdout_salt": "8511c869475fb31b3c006cd86eda7c56c6d31b485bc02747fe55688a68317abf",
@@ -124,6 +124,16 @@
       "reason": "Ordinary technical vocabulary; not a leak.",
       "source_path": "skills/code-gauntlet/references/delivery-guide.md",
       "expected_count": 1
+    },
+    {
+      "identifier_id": "3b5b4e184695eae694d9910ddbcaa33af3c32401aefc03573db7a96c77cae2bb",
+      "surface_id": "workflow-literals/workflows/src/registry.js/4",
+      "source_path": "workflows/src/registry.js",
+      "excerpt_sha256": "12bf9674985e7f5693c3103dd9c5ebab2535536ef24f2a706ecb209e3a3d3430",
+      "expected_count": 1,
+      "reason": "Existing explicit postMessage security sweep; remove in Wave 2a.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
     }
   ],
   "passages": [
