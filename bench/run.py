@@ -1,26 +1,8 @@
 #!/usr/bin/env python3
-"""The one-command bench harness runner (spec H3).
+"""Run sequential, checkpointed benchmark reviews and preserve immutable attempts.
 
-``python3 bench/run.py --tier smoke|mini|subset|holdout|full [flags]`` drives the skill
-over a tier's golden PRs: for each PR it ensures a cached bare mirror, cuts a detached
-worktree at the pinned head SHA (with the SHA input-drift guard), writes the REVIEW.md
-fixture for designated fixture PRs, invokes the headless review under the pinned
-isolated context, collects the dry-run payload + report artifacts into the per-PR dir,
-saves the PR diff, removes the worktree, and checkpoints the outcome. PR-granular
-checkpointing makes a run resumable; a killed pass loses at most the single PR that was
-mid-flight.
-
-This runner does NOT write ledger rows -- scoring (Task 13) does. run.py records per-PR
-invoke metadata (status, cost, duration) into the checkpoint detail and a run.json
-manifest (run_id, tier, git_sha, start ts, env fingerprint).
-
-``--check RUN_ID`` runs the mechanical functional-smoke checker (Issue #28) against a
-completed run directory — payload/schema, no silent degrade, plugin scriptPath identity,
-and ≥1 delivered comment. It never invokes the judge.
-
-Stdlib-only. The vendored scorer keeps its own deps behind ``uv`` and is
-never imported here; ``--score-only`` lazily imports the (Task 13) score module and errors
-cleanly if it is not present yet. ``--check`` imports ``bench.runner.check`` only.
+Mechanical checks and historical scoring are separate entry modes. Measurement runs
+pin their window before mirror work and recheck identity before every review child.
 """
 
 import argparse
@@ -31,7 +13,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import time
 import traceback
 from collections import defaultdict
 from contextlib import contextmanager, suppress
@@ -43,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.runner import checkpoint, invoke, ledger, mirrors  # noqa: E402
+from bench.runner import checkpoint, invoke, ledger, mirrors, validity  # noqa: E402
 from bench.runner.costs import parse_costs  # noqa: E402
 
 # Workspace layout (all under bench/workspace/, gitignored). Referenced as module
@@ -91,6 +72,16 @@ def _git_short_sha():
     if result.returncode != 0:
         return "nogit"
     return result.stdout.strip() or "nogit"
+
+
+def _git_full_sha():
+    result = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return result.stdout.strip() if result.returncode == 0 else "nogit"
 
 
 def _utc_stamp():
@@ -563,7 +554,9 @@ def _invoke_naive(
     pr_dir.mkdir(parents=True, exist_ok=True)
     raw_path = pr_dir / "raw-naive.json"
 
-    claude_bin = shutil.which("claude", path=env.get("PATH") or os.environ.get("PATH"))
+    claude_bin = invoke.pinned_cli(run_dir) or shutil.which(
+        "claude", path=env.get("PATH") or os.environ.get("PATH")
+    )
     if not claude_bin:
         return invoke.InvokeResult(
             "failed", raw_json_path=str(raw_path), reason="claude_not_found"
@@ -578,6 +571,16 @@ def _invoke_naive(
         "--max-turns",
         str(NAIVE_MAX_TURNS),
     ]
+    manifest = (
+        _load_json(Path(run_dir) / "run.json")
+        if (Path(run_dir) / "run.json").is_file()
+        else {}
+    )
+    requested_model = (manifest.get("requested_models") or {}).get(
+        "orchestrator"
+    ) or manifest.get("child_model")
+    if requested_model not in (None, "inherit"):
+        cmd += ["--model", requested_model]
     prompt = _naive_prompt(pr, diff_text, bench_entry)
 
     proc = subprocess.Popen(
@@ -647,6 +650,72 @@ def _invoke_naive(
 # ------------------------------------------------------------------------- per-PR flow
 
 
+def _checkpoint_attempt(
+    run_dir,
+    pr_dir,
+    cp,
+    url,
+    result,
+    started_at,
+    manifest,
+    *,
+    payload_path=None,
+    checkpoint_status=None,
+    extra=None,
+):
+    from dataclasses import replace
+
+    result = replace(result, payload_path=payload_path or result.payload_path)
+    prior_ref = cp.detail(url).get("attempt_ref")
+    prior = (
+        validity.load_attempt(validity.confined(run_dir, prior_ref))
+        if prior_ref
+        else None
+    )
+    reset_path = Path(run_dir) / "reset-evidence.json"
+    reset = _load_json(reset_path) if reset_path.is_file() else {}
+    attempt = validity.collect_attempt(
+        run_dir,
+        pr_dir,
+        url=url,
+        result=result,
+        started_at=started_at,
+        manifest=manifest,
+        prior=prior,
+        reset_at=reset.get("confirmed_at"),
+        reset_ref=reset.get("sha256"),
+    )
+    attempt_ref = str(
+        next(
+            (Path(run_dir) / "attempts").glob(f"*/{attempt.attempt_id}/attempt.json")
+        ).relative_to(run_dir)
+    )
+    cp.mark(
+        url,
+        checkpoint_status or attempt.checkpoint_status,
+        detail={
+            "status": result.status,
+            "cost_usd": result.cost_usd,
+            "duration_s": max(
+                0,
+                (
+                    validity.timestamp(attempt.completed_at)
+                    - validity.timestamp(started_at)
+                ).total_seconds(),
+            ),
+            "reason": result.reason or ",".join(attempt.validity.reasons) or None,
+            "payload_path": result.payload_path,
+            "attempt_id": attempt.attempt_id,
+            "attempt_ref": attempt_ref,
+            "validity": attempt.validity.wire(),
+            "countable_operational_failure": attempt.validity.state
+            == "operational_failure",
+            **(extra or {}),
+        },
+    )
+    return attempt
+
+
 def _run_prs(
     run_dir,
     urls,
@@ -660,18 +729,7 @@ def _run_prs(
     child_model="inherit",
     child_auth=ledger.API_AUTH_MODE,
 ):
-    """Execute the per-PR flow for ``urls`` (already filtered to the todo set).
-
-    ``tool`` selects the skill pipeline (deep-review-v2|v3) and is forwarded to
-    ``invoke.invoke_review`` so v3 can preflight the child CLI version; it is ignored on
-    the ``--anchor naive`` path, which does not run the skill. ``child_model`` is the
-    resolved child-session model pin, likewise forwarded to the skill path only.
-    ``child_auth`` goes to BOTH paths -- the naive anchor shells out to ``claude`` through
-    the same ``build_env``, so it spends whichever credential the mode selects.
-
-    Returns ``{"counts": {status: n}, "drifted": [(url, reason), ...]}``. A DriftError
-    marks the PR ``drifted`` (never scored) and the run continues to the next PR.
-    """
+    """Execute only scheduled URLs; preserve failed setup and review attempts alike."""
     run_dir = Path(run_dir)
     output_dir = run_dir / "output"
     fixture_text = (
@@ -679,17 +737,54 @@ def _run_prs(
     )
     counts = defaultdict(int)
     drifted = []
+    manifest_path = run_dir / "run.json"
+    manifest = (
+        _load_json(manifest_path)
+        if manifest_path.is_file()
+        else {"run_id": run_dir.name}
+    )
 
     # A scorable entry has each key present, truthy, and not the fetch_shas "missing"
     # sentinel (owner/repo are needed to build the clone URL; the SHAs/ref to check out).
     required = ("owner", "repo", "head_sha", "base_sha", "base_ref", "pr_number")
 
     for url in urls:
+        if manifest.get("measurement_window"):
+            try:
+                observed = validity.run_provenance(
+                    child_model=child_model,
+                    child_auth=child_auth,
+                    timeout_s=timeout_s,
+                    epoch_id=manifest["epoch_id"],
+                    window=validity.load_window(Path(manifest["measurement_window"])),
+                )
+                if observed != manifest["provenance"]:
+                    raise ValueError(
+                        "window_mismatch: immutable run fingerprint changed"
+                    )
+                if (
+                    manifest.get("treatment_git_sha") != _git_full_sha()
+                    or manifest.get("agent_read_sha256") != validity.agent_read_hash()
+                ):
+                    raise ValueError("input_drift: treatment changed within this run")
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                print(str(exc), file=sys.stderr)
+                raise ValueError(
+                    "measurement preflight refused before mirror/child"
+                ) from exc
         meta = shas.get(url)
         if not meta or not all(
             meta.get(k) and meta.get(k) != "missing" for k in required
         ):
-            cp.mark(url, "failed", detail={"reason": "incomplete_sha_entry"})
+            _checkpoint_attempt(
+                run_dir,
+                run_dir / invoke.pr_dir_name({"url": url}),
+                cp,
+                url,
+                invoke.InvokeResult("failed", reason="incomplete_sha_entry"),
+                validity.utc_now(),
+                manifest,
+            )
             counts["failed"] += 1
             continue
 
@@ -703,6 +798,7 @@ def _run_prs(
         pr_dir = run_dir / invoke.pr_dir_name(pr)
         pr_dir.mkdir(parents=True, exist_ok=True)
         worktree = pr_dir / "worktree"
+        started_at = validity.utc_now()
 
         # Mirror clone/fetch is per-PR: a single bad repo must fail only its own PR,
         # never abort the tier. Input drift (make_worktree) is a distinct outcome.
@@ -717,25 +813,35 @@ def _run_prs(
                 pr_number=number,
             )
         except mirrors.DriftError as exc:
-            cp.mark(url, "drifted", detail={"reason": str(exc)})
+            _checkpoint_attempt(
+                run_dir,
+                pr_dir,
+                cp,
+                url,
+                invoke.InvokeResult("invalid", reason="input_drift:" + str(exc)),
+                started_at,
+                manifest,
+                checkpoint_status="drifted",
+            )
             drifted.append((url, str(exc)))
             counts["drifted"] += 1
             continue
         except (subprocess.CalledProcessError, OSError) as exc:
             # OSError covers e.g. shutil.rmtree failing during stale-worktree
             # cleanup -- same containment as a clone/fetch failure.
-            cp.mark(
+            _checkpoint_attempt(
+                run_dir,
+                pr_dir,
+                cp,
                 url,
-                "failed",
-                detail={
-                    "reason": "mirror_error",
-                    "error": f"{type(exc).__name__}: {str(exc)[:200]}",
-                },
+                invoke.InvokeResult("failed", reason="mirror_error"),
+                started_at,
+                manifest,
+                extra={"error": f"{type(exc).__name__}: {str(exc)[:200]}"},
             )
             counts["failed"] += 1
             continue
 
-        start = time.monotonic()
         try:
             if url in fixture_urls:
                 (worktree / "REVIEW.md").write_text(fixture_text, encoding="utf-8")
@@ -800,10 +906,15 @@ def _run_prs(
                 f"!! {url} failed unexpectedly ({reason}) -- continuing to next PR",
                 file=sys.stderr,
             )
-            cp.mark(
+            _checkpoint_attempt(
+                run_dir,
+                pr_dir,
+                cp,
                 url,
-                "failed",
-                detail={"reason": reason, "traceback": traceback.format_exc()},
+                invoke.InvokeResult("failed", reason=reason),
+                started_at,
+                manifest,
+                extra={"traceback": traceback.format_exc()},
             )
             counts["failed"] += 1
             continue
@@ -819,18 +930,17 @@ def _run_prs(
                 )
 
         payload_path = _relocate_payload(result.payload_path, pr_dir)
-        cp.mark(
+        _checkpoint_attempt(
+            run_dir,
+            pr_dir,
+            cp,
             url,
-            result.status,
-            detail={
-                "status": result.status,
-                "cost_usd": result.cost_usd,
-                "duration_s": round(time.monotonic() - start, 3),
-                "reason": result.reason,
-                "payload_path": payload_path,
-            },
+            result,
+            started_at,
+            manifest,
+            payload_path=payload_path,
         )
-        counts[result.status] += 1
+        counts[cp.status(url)] += 1
 
     return {"counts": dict(counts), "drifted": drifted}
 
@@ -944,9 +1054,40 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         # is "custom" and pr_urls carries the same URLs, so resume works from the manifest.
         "prs": list(args.prs) if getattr(args, "prs", None) else None,
     }
-    (Path(run_dir) / "run.json").write_text(
-        json.dumps(manifest, indent=2), encoding="utf-8"
+    provenance = getattr(args, "_provenance", None) or validity.run_provenance(
+        child_model=_resolve_child_model(args.tool, args.child_model),
+        child_auth=child_auth,
+        timeout_s=timeout_s,
+        epoch_id=getattr(args, "golden_epoch", None),
     )
+    manifest.update(
+        provenance=provenance,
+        epoch_id=provenance["golden_epoch_id"],
+        golden_sha256=provenance["golden_sha256"],
+        measurement_window=getattr(args, "measurement_window", None),
+        window_id=getattr(args, "_window", None).window_id
+        if getattr(args, "_window", None)
+        else None,
+        window_sha256=validity.file_hash(Path(args.measurement_window))
+        if getattr(args, "measurement_window", None)
+        else None,
+        run_index=getattr(args, "run_index", None),
+        arm=getattr(args, "arm", None),
+        instrumentation_version="stage-trace-v1",
+        agent_read_sha256=validity.agent_read_hash(),
+        pr_identities={u: _load_json(GOLDEN_DIR / "shas.json")[u] for u in urls},
+    )
+    manifest["treatment_git_sha"] = _git_full_sha()
+    manifest["requested_models"] = {
+        "orchestrator": _resolve_child_model(args.tool, args.child_model)
+    }
+    if getattr(args, "baseline_equivalence_receipt", None):
+        manifest["baseline_equivalence_receipt"] = _load_json(
+            args.baseline_equivalence_receipt
+        )
+    if getattr(args, "measurement_window", None):
+        manifest["child_model"] = _resolve_child_model(args.tool, args.child_model)
+    validity.exclusive_json(Path(run_dir) / "run.json", manifest)
 
 
 def _write_child_auth_stub(manifest_path, run_id, child_auth):
@@ -1053,8 +1194,10 @@ def _resume(run_id, args, retry):
     # Same precedence for the child-model pin: the manifest value wins so a resume re-runs
     # the same model it began with; fall back to the per-tool default for pre-child_model
     # run.json files (or a naive run, whose None value is unused by the anchor path).
-    child_model = manifest.get("child_model") or _resolve_child_model(
-        args.tool, args.child_model
+    child_model = (
+        (manifest.get("requested_models") or {}).get("orchestrator")
+        or manifest.get("child_model")
+        or _resolve_child_model(args.tool, args.child_model)
     )
     # And again for the credential mode, where the stakes are higher than a label: letting
     # a flag override the recorded mode would bill half a run's PRs one way and half the
@@ -1074,6 +1217,38 @@ def _resume(run_id, args, retry):
 
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.failed(urls) if retry else cp.pending(urls)
+    if retry:
+        for url in todo:
+            detail = cp.detail(url)
+            if detail.get("attempt_ref"):
+                original = validity.load_attempt(run_dir / detail["attempt_ref"])
+                validity.check_retry(
+                    original,
+                    now=validity.utc_now(),
+                    reset_evidence=args.reset_evidence,
+                    reset_confirmed_at=args.reset_confirmed_at,
+                )
+            elif child_auth == "subscription":
+                raise ValueError(
+                    "reset_not_confirmed: legacy subscription failure has no immutable attempt evidence"
+                )
+        if args.reset_evidence:
+            evidence = Path(args.reset_evidence)
+            if not validity.artifact_allowed(evidence):
+                raise ValueError("denied reset evidence")
+            copy = run_dir / (
+                "reset-evidence-" + validity.file_hash(evidence) + ".json"
+            )
+            if not copy.exists():
+                validity.copy_exclusive(evidence, copy)
+            validity.atomic_json(
+                run_dir / "reset-evidence.json",
+                {
+                    "confirmed_at": args.reset_confirmed_at,
+                    "sha256": validity.file_hash(evidence),
+                    "path": copy.name,
+                },
+            )
     # Archive every todo PR's prior wf records and deliverables before re-invoke so
     # the checker gates the current attempt only, for every deliverable, not just wf
     # records (#85, #165). Meaning is "superseded", not "retry succeeded" — a second
@@ -1208,8 +1383,6 @@ def parse_args(argv=None):
         dest="retry_failed",
         help="re-run the timeout+failed PRs of RUN_ID",
     )
-    # Default calibrated from the Task 16 smoke shakedown: full-skill reviews ran
-    # 971-1345s, peaking at 75% of the original 30-min budget (plan threshold: >50%).
     parser.add_argument("--timeout-mins", type=int, default=45, dest="timeout_mins")
     parser.add_argument(
         "--anchor", choices=["naive"], help="bare single-pass anchor review"
@@ -1225,7 +1398,6 @@ def parse_args(argv=None):
     # told apart from the default and the manifest value can win on resume.
     parser.add_argument(
         "--child-model",
-        choices=["sonnet", "sonnet[1m]", "opus", "opus[1m]", "inherit"],
         default=None,
         dest="child_model",
         help="model for the child orchestrator session "
@@ -1261,6 +1433,12 @@ def parse_args(argv=None):
         "resolution and labels the run 'custom'. Every URL must exist in shas.json. "
         "The alias 'mini' expands to the pre-registered 6-PR mini subset.",
     )
+    parser.add_argument("--measurement-window", metavar="PATH")
+    parser.add_argument("--run-index", type=int)
+    parser.add_argument("--arm")
+    parser.add_argument("--reset-confirmed-at")
+    parser.add_argument("--reset-evidence")
+    parser.add_argument("--baseline-equivalence-receipt")
     args = parser.parse_args(argv)
     if (
         args.capture_stages or args.stage_cost_cap_usd is not None
@@ -1347,6 +1525,66 @@ def main(argv=None):
         )
         return 2
 
+    try:
+        prior_manifest = (
+            _read_run_manifest(args.resume or args.retry_failed)
+            if (args.resume or args.retry_failed)
+            else None
+        )
+        if args.measurement_window:
+            args.measurement_window = str(Path(args.measurement_window).resolve())
+        recorded_window = (prior_manifest or {}).get("measurement_window")
+        if recorded_window and args.measurement_window != recorded_window:
+            raise ValueError(
+                "resume/retry requires the original --measurement-window path"
+            )
+        if args.measurement_window:
+            args.measurement_window = str(Path(args.measurement_window).resolve())
+            window = validity.load_window(Path(args.measurement_window))
+            args._window = window
+            model = (prior_manifest or {}).get("child_model") or _resolve_child_model(
+                args.tool, args.child_model
+            )
+            timeout_s = ((prior_manifest or {}).get("env_fingerprint") or {}).get(
+                "timeout_s", args.timeout_mins * 60
+            )
+            args._provenance = validity.run_provenance(
+                child_model=model,
+                child_auth=child_auth,
+                timeout_s=timeout_s,
+                epoch_id=args.golden_epoch,
+                window=window,
+            )
+            urls = (prior_manifest or {}).get("pr_urls") or _target_urls(
+                args.tier, args.prs
+            )
+            if set(urls) != set(window.pr_urls) or len(urls) != len(set(urls)):
+                raise ValueError("window requested PR matrix mismatch")
+            if prior_manifest:
+                if prior_manifest.get(
+                    "provenance"
+                ) != args._provenance or prior_manifest.get(
+                    "window_sha256"
+                ) != validity.file_hash(Path(args.measurement_window)):
+                    raise ValueError("immutable run/window provenance mismatch")
+            elif (
+                args.run_index not in window.planned_run_indices
+                or not args.arm
+                or args.run_index + args.runs - 1 not in window.planned_run_indices
+            ):
+                raise ValueError(
+                    "measurement requires a planned --run-index and explicit --arm"
+                )
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        subprocess.SubprocessError,
+    ) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
     runtime_env = dict(os.environ)
     failures = check_prereqs(
         child_auth=child_auth, env=runtime_env, gh_pr=_first_target_pr(args)
@@ -1365,10 +1603,16 @@ def main(argv=None):
         if note:
             print(note, file=sys.stderr)
 
-        if args.resume:
-            return _resume(args.resume, args, retry=False)
-        if args.retry_failed:
-            return _resume(args.retry_failed, args, retry=True)
+        if args.resume or args.retry_failed:
+            try:
+                return _resume(
+                    args.resume or args.retry_failed,
+                    args,
+                    retry=bool(args.retry_failed),
+                )
+            except (ValueError, OSError) as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
 
         if not args.tier and not args.prs:
             print(
@@ -1380,7 +1624,13 @@ def main(argv=None):
 
         rc = 0
         for _ in range(max(1, args.runs)):
-            rc = _new_run(args) or rc
+            try:
+                rc = _new_run(args) or rc
+            except (ValueError, OSError) as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
+            if args.run_index is not None:
+                args.run_index += 1
         return rc
 
 

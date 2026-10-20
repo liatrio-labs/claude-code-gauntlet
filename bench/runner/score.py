@@ -24,7 +24,7 @@ from bench.runner.epochs import (
     load_epoch,
 )
 from bench.runner.invoke import _is_superseded
-from bench.runner.ledger import manifest_auth_mode, replay_packet
+from bench.runner.ledger import manifest_auth_mode, replay_packet, review_attempt_costs
 from bench.runner.observations import (
     Adjudication,
     AdjudicationContext,
@@ -706,7 +706,19 @@ def score_run(
     requested = manifest.get("urls", manifest.get("pr_urls", urls))
     if set(requested) != set(urls):
         raise ValueError("requested PR matrix is incomplete")
+    from bench.runner import validity
+
     selected = {}
+    selected_records = {}
+    if attempt_selection is None:
+        checkpoint_attempts = {
+            state["url"]: state.get("detail", {}).get("attempt_id")
+            for path in (run_dir / "state").glob("*.json")
+            if (state := _load_json(path)).get("detail", {}).get("attempt_id")
+        }
+        if checkpoint_attempts:
+            attempt_selection = checkpoint_attempts
+    failures = set()
     if attempt_selection is not None:
         if set(attempt_selection) != set(urls):
             raise ValueError("attempt selection must cover the requested PR matrix")
@@ -715,64 +727,59 @@ def score_run(
             aid = attempt_selection[url]
             if not isinstance(aid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", aid):
                 raise ValueError("invalid selected attempt identity")
-            matches = []
-            for path in (run_dir / "attempts").glob(f"*/{aid}/attempt.json"):
-                if not path.resolve().is_relative_to(run_dir):
-                    raise ValueError("attempt escapes run directory")
-                record = _load_json(path)
-                if record.get("pr_url") == url:
-                    matches.append((path, record))
-            if len(matches) != 1:
+            paths = list((run_dir / "attempts").glob(f"*/{aid}/attempt.json"))
+            if len(paths) != 1 or not paths[0].resolve().is_relative_to(run_dir):
                 raise ValueError("selected attempt is missing or ambiguous")
-            path, record = matches[0]
-            if record.get("attempt_id") != aid or record.get("run_id") != (
+            path = paths[0]
+            record = validity.selected_attempt(path)
+            if record.pr_url != url or record.run_id != (
                 manifest.get("run_id") or run_dir.name
             ):
                 raise ValueError("selected attempt identity mismatch")
-            status = record.get("checkpoint_status", record.get("status"))
-            if status != "ok":
-                raise ValueError(
-                    "selected attempt is not successful; operational failure needs validity integration"
-                )
-            artifact_hashes = record.get("source_artifact_hashes")
-            if not artifact_hashes:
-                raise ValueError("selected attempt lacks immutable artifact hashes")
-            for name, expected in artifact_hashes.items():
-                if not observations.artifact_allowed(Path(name)):
-                    raise ValueError("selected attempt contains a denied artifact")
-                artifact = observations.confined(path.parent, name)
-                if file_hash(artifact) != expected:
-                    raise ValueError("selected attempt artifact hash mismatch")
+            value = record.validity
+            if value.state == "operational_failure":
+                if (
+                    not validity.failure_confirmation_ref(record)
+                    or not value.failure_fingerprint
+                ):
+                    raise ValueError("unconfirmed operational failure")
+                failures.add(url)
+            elif record.checkpoint_status != "ok" or value.state == "invalid":
+                raise ValueError("selected attempt is invalid; retry before scoring")
             artifacts = path.parent / "artifacts"
-            payloads = [
-                p
-                for p in artifacts.rglob("post-review-payload.json")
-                if not _is_superseded(p)
-            ]
-            if len(payloads) != 1:
+            payloads = list(artifacts.rglob("post-review-payload.json"))
+            if url not in failures and len(payloads) != 1:
                 raise ValueError("missing or ambiguous payload in selected attempt")
             selected[url] = path
-            records.append((url, status, str(payloads[0])))
-    failures = set()
-    for url, status, _hint in records:
-        if status != "ok":
-            state = next(
-                read
-                for p in (run_dir / "state").glob("*.json")
-                if (read := _load_json(p)).get("url") == url
+            selected_records[url] = record
+            records.append(
+                (
+                    url,
+                    "failed" if url in failures else "ok",
+                    str(payloads[0]) if payloads else None,
+                )
             )
-            if not (state.get("detail") or {}).get("countable_operational_failure"):
+    else:
+        for _url, status, _hint in records:
+            if status != "ok":
                 raise RuntimeError(
                     "no scorable PRs: unresolved/invalid PR; re-run or --retry-failed"
                 )
-            failures.add(url)
     candidates, per_pr = _assemble_candidates(run_dir, records)
     for url in failures:
         candidates[url] = {TOOL: []}
-        per_pr[url] = {"candidates": [], "pr_dir": str(_resolve_pr_dir(run_dir, url))}
+        per_pr[url] = {
+            "candidates": [],
+            "pr_dir": str(selected[url].parent / "artifacts")
+            if url in selected
+            else str(_resolve_pr_dir(run_dir, url)),
+        }
     traces = {}
     trace_errors = {}
     for url, info in per_pr.items():
+        if url in failures:
+            trace_errors[url] = "operational_failure: funnel evidence unavailable"
+            continue
         pr_dir = Path(info["pr_dir"])
         try:
             if (pr_dir / "measurement-unavailable.json").is_file():
@@ -801,6 +808,12 @@ def score_run(
     source_hashes = {}
     sources = [run_dir / "run.json", *sorted((run_dir / "state").glob("*.json"))]
     sources.extend(selected.values())
+    confirmation_paths = {
+        url: run_dir / "failure-confirmations" / (record.attempt_id + ".json")
+        for url, record in selected_records.items()
+        if (run_dir / "failure-confirmations" / (record.attempt_id + ".json")).is_file()
+    }
+    sources.extend(confirmation_paths.values())
     for info in per_pr.values():
         pr_dir = Path(info["pr_dir"])
         sources += [
@@ -1090,12 +1103,21 @@ def score_run(
         profile=epoch.primary_profile,
         denominator=metrics["denominator"],
         evaluator_id=evaluator.evaluator_id,
-        validity_state="historical_descriptive",
+        validity_state=("operational_failure" if failures else "valid")
+        if selected_records
+        and manifest.get("provenance", {}).get("status") != "non_record"
+        and manifest.get("provenance", {}).get("golden_epoch_id") == epoch.epoch_id
+        and all(
+            r.validity.state in ("valid", "operational_failure")
+            for r in selected_records.values()
+        )
+        else "historical_descriptive",
         population_sha256=digest(urls),
         packet_path=str(packet_dir),
         packet_sha256=None,
         selected_attempts=attempts,
-        review_attempt_costs={
+        review_attempt_costs=review_attempt_costs(run_dir)
+        or {
             attempts[url]: _read_pr_costs(Path(info["pr_dir"]))["cost_usd"]
             for url, info in per_pr.items()
         },
@@ -1118,7 +1140,9 @@ def score_run(
         "requested_pr_urls": list(urls),
         "selected_attempts": attempts,
         "source_artifact_hashes": source_hashes,
-        "run_validity_ref": None,
+        "run_validity_ref": "run-provenance.json"
+        if manifest.get("provenance")
+        else None,
         "provenance_status": "ambiguous"
         if trace_errors
         else "complete"
@@ -1162,6 +1186,14 @@ def score_run(
             for url, (path, trace) in traces.items()
         },
     )
+    if manifest.get("provenance"):
+        observations.exclusive_json(pending / "run-provenance.json", manifest)
+    for record in selected_records.values():
+        observations.exclusive_json(
+            pending / "attempts" / (record.attempt_id + ".json"), record.wire()
+        )
+    for path in confirmation_paths.values():
+        observations.copy_exclusive(path, pending / "failure-confirmations" / path.name)
     observations.exclusive_json(pending / "provenance_errors.json", trace_errors)
     observations.exclusive_json(pending / "stage_calls.json", list(stage_calls))
     observations.write_packet(

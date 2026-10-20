@@ -211,7 +211,7 @@ export const RULE_SOURCE_LABELS = deepFreeze({
 export const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 
 export const STAGE_DEFAULTS = deepFreeze({
-  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
+  'change-summarizer': 'sonnet', validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
 });
 
@@ -244,6 +244,11 @@ export function modelFor(agentType, policy, dimensions = DIMENSIONS) {
   return resolvePolicy(agentType, {
     subagentModelEnv: policy.subagentModel, provider: policy.provider, mappedAliases: policy.mappedAliases,
   }, dimensions).model;
+}
+
+export function resolvedDispatchModels(policy) {
+  const types = [...new Set([...AGENTS, ...Object.keys(STAGE_DEFAULTS).map((name) => `code-gauntlet:${name}`)])];
+  return Object.fromEntries(types.map((type) => [type, modelFor(type, policy)]));
 }
 
 export const REQUIRED = deepFreeze(['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles',

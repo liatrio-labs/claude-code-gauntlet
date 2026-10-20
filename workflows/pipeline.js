@@ -306,7 +306,7 @@ const RULE_SOURCE_LABELS = deepFreeze({
 });
 const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 const STAGE_DEFAULTS = deepFreeze({
-  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
+  'change-summarizer': 'sonnet', validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
 });
 const MODEL_IDS = deepFreeze({ sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' });
@@ -330,6 +330,10 @@ function modelFor(agentType, policy, dimensions = DIMENSIONS) {
   return resolvePolicy(agentType, {
     subagentModelEnv: policy.subagentModel, provider: policy.provider, mappedAliases: policy.mappedAliases,
   }, dimensions).model;
+}
+function resolvedDispatchModels(policy) {
+  const types = [...new Set([...AGENTS, ...Object.keys(STAGE_DEFAULTS).map((name) => `code-gauntlet:${name}`)])];
+  return Object.fromEntries(types.map((type) => [type, modelFor(type, policy)]));
 }
 const REQUIRED = deepFreeze(['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles',
   'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope']);
@@ -514,10 +518,7 @@ function finishMeasurementTrace(trace, selection) {
   return deepClone(trace);
 }
 function traceModels(trace, policy) {
-  for (const spec of DIMENSIONS) trace.resolved_models[spec.agentType] = modelFor(spec.agentType, policy);
-  for (const agentType of ['code-gauntlet:executor', 'code-gauntlet:validator', 'code-gauntlet:challenger']) {
-    trace.resolved_models[agentType] = modelFor(agentType, policy);
-  }
+  trace.resolved_models = resolvedDispatchModels(policy);
 }
 function measurementText(trace) {
   return JSON.stringify(trace).replace(/[\u007f-\uffff]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
@@ -4284,10 +4285,10 @@ function methodologyRows(input, rawFindings) {
   if (pinsModelIds(provider) && policy.mappedAliases?.length) {
     rows.push(['User tier mapping', policy.mappedAliases.map((alias) => inline(alias)).join(', ')]);
   }
-  const stageTypes = [
+  const stageTypes = [...new Set([
     'change-summarizer', ...AGENTS.map((agentType) => agentType.split(':').pop()),
     ...Object.keys(STAGE_DEFAULTS),
-  ];
+  ])];
   const models = stageTypes.map((agentType) => {
     const model = resolvePolicy(`code-gauntlet:${agentType}`, {
       subagentModelEnv: policy.subagentModel,
@@ -6819,6 +6820,7 @@ function resolvedPolicyEnvelope(policy) {
     gateway: !!policy.gateway,
     mappedAliases: policy.mappedAliases || [],
     conditionalSchema: conditionalSchemaActive(policy),
+    resolvedModels: resolvedDispatchModels(policy),
   };
 }
 const METHODOLOGY_COUNT_ONLY_FIELDS = ['truncation_warnings', 'validation_warnings'];

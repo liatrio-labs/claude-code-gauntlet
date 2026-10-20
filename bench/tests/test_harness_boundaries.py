@@ -192,6 +192,7 @@ def harness(tmp_path, monkeypatch):
     monkeypatch.setattr(run, "_read_env_key", lambda *args: "synthetic-api-key")
     monkeypatch.setattr(invoke, "_load_dotenv_key", lambda *args: None)
     monkeypatch.setattr(run, "_git_short_sha", lambda: "deadbeef")
+    monkeypatch.setattr(run, "_git_full_sha", lambda: "deadbeef" * 5)
     monkeypatch.setattr(run, "_compute_diff", lambda *args: "")
     monkeypatch.setattr(run, "_free_gb", lambda *args: 100)
     monkeypatch.setattr(invoke, "_plugin_dirty_paths", lambda *args: frozenset())

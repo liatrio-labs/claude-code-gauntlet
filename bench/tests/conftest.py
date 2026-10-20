@@ -122,3 +122,35 @@ def score_case(tmp_path):
         json.dumps({"run_id": "run", "urls": [url]}), encoding="utf-8"
     )
     return ScoreCase(run, tmp_path / "ledger.jsonl", url, payload, [])
+
+
+@pytest.fixture
+def population_case(tmp_path):
+    from pathlib import Path
+
+    from bench.runner import populations
+    from bench.runner.epochs import DEFAULT_ROOT, load_epoch, read_json
+
+    epoch = load_epoch(root=DEFAULT_ROOT)
+    receipt = tmp_path / "receipt.json"
+    populations.prepare_leak_manifest_v2(
+        Path(__file__).parent / "fixtures/leak-manifest-v2.json",
+        epoch.root,
+        epoch,
+        receipt,
+    )
+    contamination = populations.ingest_leak_manifest_v2(receipt, epoch)
+    contamination.update(
+        status="frozen",
+        agent_read_sha256="synthetic-reviewed-content",
+        frozen_at="2026-10-20T00:00:00Z",
+    )
+    subsets = read_json(DEFAULT_ROOT / "subsets.json")
+    manifest = populations.freeze_populations(
+        epoch,
+        subsets,
+        contamination,
+        out=tmp_path / "populations.json",
+        frozen_at="2026-10-20T00:00:00Z",
+    )
+    return epoch, subsets, contamination, manifest, receipt

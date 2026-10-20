@@ -343,3 +343,40 @@ Severity continues to describe drift and is not a discovery dimension.
 The required post-merge known-loss smoke demonstration, capped paid stage matching
 and measured trace-materialization overhead remain unverified.
 Synthetic code tests do not replace that live acceptance receipt.
+
+## Window validity and planning status
+
+No real usage-limit/reset fixture exists. Production positive-signature recognition
+is disabled. Every validity record prints this limitation. Unknown subscription fast
+exits, timeouts and non-ok outcomes remain invalid and need explicit public reset
+evidence. Quoted quota notices, tool text and evaluator errors are never quota evidence.
+A single API overload remains invalid. Only the same structured code, phase and
+normalized diagnostic fingerprint recurring on a separate admissible attempt can
+be counted as an operational failure. Its full PR denominator remains present.
+
+CLI auto-update control, effective effort behavior and provider snapshot availability
+remain UNVERIFIED until the orchestrator checks the installed CLI. New non-record runs
+retain available CLI/effort/epoch provenance but cannot acquire official validity by
+rescoring. Historical review-time identity and score-time evaluator identity remain
+separate. Missing optional traces disable funnel and dimension evidence, not recall.
+
+Simulation is planning only. Both empirical run-vector and beta PR sensitivity rows
+are required. Each row reports library size, auth counts, the empirical `(n-1)/n`
+variance factor and its inverse, variance-floor calibration, guard counts, sole failures,
+co-failures, extension use, Monte Carlo uncertainty and a recall-only diagnostic.
+Auth-mixed libraries assume comparable review distributions and validate each source
+against its own auth-specific window. Operational comparisons retain auth equality.
+
+Groundedness comes from resolved blinded repository-backed audit labels. Judge noise
+buckets cannot supply it. Without that audit, callers must explicitly choose
+`conditional_pass`; every output then says it is conditional on groundedness passing,
+and unconditional full-rule power remains unavailable. Matched proposed rules must
+include groundedness margins of zero and a negative tolerance. No power target,
+promotion margin, run count, extension count or frozen selection is invented here.
+The checked-in promotion-rule template has null parameters and cannot issue a verdict.
+
+Both generators can miss unseen failures and stable-loss risk. The sensitivity adds
+Jeffreys uncertainty and a calibrated nonnegative within-PR shared effect; it does not
+model negative or cross-PR dependence. Bernoulli miss flips describe diffuse gains,
+not a particular prompt's effects. Actual auditor behavior and positive-effect power
+remain UNVERIFIED. The owner fixes policy only after reviewing this table in Wave 0b.

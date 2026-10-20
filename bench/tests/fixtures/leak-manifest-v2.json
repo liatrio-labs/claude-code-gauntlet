@@ -1,0 +1,73 @@
+{
+ "schema_version": 2,
+ "golden_epoch": "e616e849755441da38f18bf3adba2c9583b03803",
+ "plugin_commit": "94ea095a89bfc2430814ff4e65db4ba790654fc7",
+ "criterion": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens.",
+ "excluded_prs": [
+  {
+   "pr_url": "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/4",
+   "subsets": [
+    "mini",
+    "gate"
+   ],
+   "trigger_passages": [
+    "P008",
+    "P009"
+   ]
+  },
+  {
+   "pr_url": "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1",
+   "subsets": [
+    "gate"
+   ],
+   "trigger_passages": [
+    "P002",
+    "P003"
+   ]
+  },
+  {
+   "pr_url": "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/2",
+   "subsets": [
+    "dev"
+   ],
+   "trigger_passages": [
+    "P002",
+    "P003"
+   ]
+  },
+  {
+   "pr_url": "https://github.com/keycloak/keycloak/pull/32918",
+   "subsets": [
+    "dev"
+   ],
+   "trigger_passages": [
+    "P001"
+   ]
+  }
+ ],
+ "excluded_comments": [
+  "cal_dot_com:cal.com:10600:1",
+  "cal_dot_com:cal.com:10600:3",
+  "cal_dot_com:cal.com:14740:1",
+  "discourse:discourse-graphite:10:3",
+  "discourse:discourse-graphite:2:2",
+  "discourse:discourse-graphite:3:2",
+  "discourse:discourse-graphite:3:3",
+  "discourse:discourse-graphite:4:1",
+  "discourse:discourse-graphite:4:4",
+  "keycloak:keycloak:37429:4",
+  "sentry:sentry:77754:2",
+  "sentry:sentry:77754:3",
+  "sentry:sentry:93824:1"
+ ],
+ "sweep_passages": [
+  "P010",
+  "P011",
+  "P012",
+  "P013",
+  "P014",
+  "P015"
+ ],
+ "holdout_rule": "passages matching a holdout golden are delete-only; holdout goldens and rewrites are withheld from build briefs",
+ "derived_from": "leak-manifest.json v1 (generic-class exclusions dropped by owner-approved refinement of the plan criterion)"
+}

@@ -6,7 +6,7 @@ import json
 import os
 import shutil
 import uuid
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from pathlib import Path
 from typing import Literal, TypeAlias, TypedDict, cast
 
@@ -617,6 +617,25 @@ def thaw_json(value: FrozenJson) -> JsonValue:
     return value
 
 
+def wire_record(value):
+    """Serialize frozen records without turning declared wire maps into pair arrays."""
+    if isinstance(value, (FrozenObject, FrozenArray)):
+        return thaw_json(value)
+    if is_dataclass(value):
+        result = {}
+        for field in fields(value):
+            item = getattr(value, field.name)
+            result[field.name] = (
+                {k: wire_record(v) for k, v in item}
+                if field.metadata.get("wire_mapping")
+                else wire_record(item)
+            )
+        return result
+    if isinstance(value, tuple):
+        return [wire_record(v) for v in value]
+    return value
+
+
 def freeze(value):
     if isinstance(value, dict):
         return tuple((k, freeze(v)) for k, v in sorted(value.items()))
@@ -930,6 +949,25 @@ def _load_packet(path: Path, epoch=None, *, allow_pending=False) -> ScorePacket:
         raise ValueError("packet identity mismatch")
     if any(key not in packet for key in ScorePacketWire.__annotations__):
         raise ValueError("incomplete packet schema")
+    if manifest["run_validity_ref"] is not None:
+        from bench.runner.validity import attempt_from_wire
+
+        if manifest["run_validity_ref"] != "run-provenance.json":
+            raise ValueError("unknown run validity reference")
+        run = read_json(confined(path, manifest["run_validity_ref"]))
+        if run.get("run_id") != ref.run_id or not run.get("provenance"):
+            raise ValueError("score packet lost original run provenance")
+        for url, aid in manifest["selected_attempts"].items():
+            attempt = attempt_from_wire(
+                read_json(confined(path, f"attempts/{aid}.json"))
+            )
+            if (
+                attempt.attempt_id != aid
+                or attempt.run_id != ref.run_id
+                or attempt.pr_url != url
+                or attempt.validity.state == "invalid"
+            ):
+                raise ValueError("score packet selected an invalid attempt")
     evaluator = dict(manifest["evaluator"])
     eid = evaluator.pop("evaluator_id")
     if eid != digest(evaluator):

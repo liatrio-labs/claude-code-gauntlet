@@ -1,5 +1,5 @@
 import { deepClone, RETURN_CHAR_BUDGET } from './wire.js';
-import { modelFor, DIMENSIONS } from './registry.js';
+import { resolvedDispatchModels } from './registry.js';
 
 export const MEASUREMENT_TRACE_VERSION = '1';
 const traceState = new WeakMap();
@@ -127,10 +127,7 @@ export function finishMeasurementTrace(trace, selection) {
 }
 
 export function traceModels(trace, policy) {
-  for (const spec of DIMENSIONS) trace.resolved_models[spec.agentType] = modelFor(spec.agentType, policy);
-  for (const agentType of ['code-gauntlet:executor', 'code-gauntlet:validator', 'code-gauntlet:challenger']) {
-    trace.resolved_models[agentType] = modelFor(agentType, policy);
-  }
+  trace.resolved_models = resolvedDispatchModels(policy);
 }
 
 // JSON is escaped to ASCII so byte hashes need no host text encoder.

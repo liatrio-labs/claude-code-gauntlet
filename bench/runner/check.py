@@ -530,6 +530,29 @@ def _finding_identity(finding):
     return json.dumps(key, sort_keys=True)
 
 
+def check_attempt(pr_dir, *, naive=False):
+    """Apply artifact and identity gates without the smoke-only nonempty-review gate."""
+    payload = pr_dir / "post-review-payload.json"
+    if not payload.is_file():
+        return ("artifact_missing",)
+    try:
+        failures = _validate_payload_fields(_load_json(payload), pr_dir.name)
+        if not naive:
+            artifacts, _ = _check_artifact_completeness(pr_dir, pr_dir.name)
+            identity, identity_ok = _check_echo_identity(
+                pr_dir, Path(__file__).resolve().parents[2], pr_dir.name
+            )
+            failures.extend(artifacts)
+            failures.extend(identity)
+            if not identity_ok:
+                failures.append("missing identity")
+            if _scan_degrade_text(pr_dir):
+                failures.append("pipeline degraded")
+    except (ValueError, TypeError, KeyError, OSError):
+        return ("artifact_missing",)
+    return ("pipeline_degraded",) if failures else ()
+
+
 def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
     """Run functional smoke gates against ``run_dir``.
 

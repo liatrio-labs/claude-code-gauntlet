@@ -168,12 +168,64 @@ def test_countable_failure_has_full_zero_denominator_and_unresolved_pr_refuses(
     with pytest.raises(RuntimeError, match="unresolved/invalid"):
         score_case.execute()
     assert not score_case.calls
+    from bench.runner import validity
+    from bench.runner.invoke import InvokeResult
+
+    raw = score_case.payload.parent / "raw.json"
+    raw.write_text(
+        json.dumps(
+            {
+                "type": "result",
+                "is_error": True,
+                "error": {
+                    "code": "review_failed",
+                    "phase": "review",
+                    "message": "same",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = InvokeResult(
+        "failed", reason="same review failure", raw_json_path=str(raw)
+    )
+    original = validity.snapshot_attempt(
+        score_case.run,
+        score_case.payload.parent,
+        run_id="run",
+        pr_url=score_case.url,
+        result=result,
+        validity=validity.classify_attempt(
+            result,
+            auth_mode="api",
+            trusted_events=[
+                {
+                    "source": "child_result",
+                    "authenticated": True,
+                    "code": "review_failed",
+                    "phase": "review",
+                    "diagnostic_sha256": digest("same"),
+                }
+            ],
+        ),
+        started_at=validity.utc_now(),
+    )
+    confirmed = validity.collect_attempt(
+        score_case.run,
+        score_case.payload.parent,
+        url=score_case.url,
+        result=result,
+        started_at=validity.utc_now(),
+        manifest={"run_id": "run", "child_auth": "api"},
+        prior=original,
+    )
+    assert confirmed.validity.state == "operational_failure"
     state.write_text(
         json.dumps(
             {
                 "url": score_case.url,
                 "status": "failed",
-                "detail": {"countable_operational_failure": True},
+                "detail": {"attempt_id": confirmed.attempt_id},
             }
         ),
         encoding="utf-8",
@@ -502,35 +554,27 @@ def test_evaluator_id_tracks_scoring_code_and_legacy_identity_is_never_active():
 def test_explicit_attempt_selection_reads_frozen_payload_instead_of_current_pr(
     score_case,
 ):
-    attempt = score_case.run / "attempts/cell/frozen"
-    artifacts = attempt / "artifacts"
-    artifacts.mkdir(parents=True)
-    (attempt / "attempt.json").write_text(
-        json.dumps(
-            {
-                "attempt_id": "frozen",
-                "run_id": "run",
-                "pr_url": score_case.url,
-                "checkpoint_status": "ok",
-            }
-        ),
-        encoding="utf-8",
+    from bench.runner import validity
+    from bench.runner.invoke import InvokeResult
+
+    record = validity.snapshot_attempt(
+        score_case.run,
+        score_case.payload.parent,
+        run_id="run",
+        pr_url=score_case.url,
+        result=InvokeResult("ok", payload_path=str(score_case.payload)),
+        validity=validity.Validity("pending"),
+        started_at=validity.utc_now(),
     )
-    shutil.copyfile(score_case.payload, artifacts / "post-review-payload.json")
-    record = read_json(attempt / "attempt.json")
-    record["source_artifact_hashes"] = {
-        "artifacts/post-review-payload.json": file_hash(
-            artifacts / "post-review-payload.json"
-        )
-    }
-    (attempt / "attempt.json").write_text(json.dumps(record), encoding="utf-8")
     score_case.payload.write_text(
         json.dumps({"platform": "github", "payload": {"comments": []}}),
         encoding="utf-8",
     )
-    packet = score_case.execute(attempt_selection={score_case.url: "frozen"})
+    packet = score_case.execute(attempt_selection={score_case.url: record.attempt_id})
     assert packet["metrics"]["total_candidates"] == 3
-    assert packet["manifest"]["selected_attempts"] == {score_case.url: "frozen"}
+    assert packet["manifest"]["selected_attempts"] == {
+        score_case.url: record.attempt_id
+    }
     assert packet["ledger_row"]["validity_state"] == "historical_descriptive"
     with pytest.raises(ValueError, match="missing or ambiguous"):
         score_case.execute(attempt_selection={score_case.url: "absent"})
@@ -600,3 +644,161 @@ def test_reader_rejects_semantic_corruption_even_with_rehashed_files(
     (path / "complete.json").write_text(json.dumps(marker), encoding="utf-8")
     with pytest.raises(ValueError):
         observations.load_packet(path)
+
+
+def test_cross_auth_confirmation_preserves_subscription_identity_and_counts_full_pr(
+    score_case, tmp_path
+):
+    from dataclasses import replace
+
+    from bench.runner import validity
+    from bench.runner.invoke import InvokeResult
+
+    epoch = load_epoch(root=DEFAULT_ROOT)
+    binary = tmp_path / "synthetic-cli"
+    binary.write_text("binary", encoding="utf-8")
+    fp = validity.capture_fingerprint(
+        cli_path=binary,
+        child_model="claude-session-1",
+        auth_mode="subscription",
+        epoch=epoch,
+        judge_pin="judge",
+        adjudicator_pin="judge",
+        env={},
+        policy={},
+        cli_probe=lambda path: "test-version",
+        model_probe=lambda root, policy: {
+            "code-gauntlet:bug-detector": "claude-agent-1"
+        },
+    )
+    result = InvokeResult("failed", reason="review failed", cost_usd=0.2)
+    event = {
+        "source": "child_result",
+        "authenticated": True,
+        "code": "review_failed",
+        "phase": "review",
+        "diagnostic_sha256": "same",
+    }
+    value = validity.classify_attempt(
+        result, auth_mode="subscription", trusted_events=[event]
+    )
+    first = validity.snapshot_attempt(
+        score_case.run,
+        score_case.payload.parent,
+        run_id="run",
+        pr_url=score_case.url,
+        result=result,
+        validity=replace(value, observed=fp, window_id="subscription-window"),
+        started_at=validity.utc_now(),
+    )
+    original_path = next(
+        (score_case.run / "attempts").glob(f"*/{first.attempt_id}/attempt.json")
+    )
+    original_bytes = original_path.read_bytes()
+    api_run = score_case.run.parent / "api-confirmation"
+    api_pr = api_run / "pr"
+    api_pr.mkdir(parents=True)
+    reset_at = validity.utc_now()
+    retry = validity.snapshot_attempt(
+        api_run,
+        api_pr,
+        run_id=api_run.name,
+        pr_url=score_case.url,
+        result=replace(result, cost_usd=0.3),
+        validity=replace(
+            value,
+            observed=replace(fp, auth_mode="api"),
+            window_id="api-window",
+            retry_of=first.attempt_id,
+            confirmed_reset_at=reset_at,
+        ),
+        started_at=validity.utc_now(),
+    )
+    retry_path = next((api_run / "attempts").glob(f"*/{retry.attempt_id}/attempt.json"))
+    (score_case.run / "state/a.json").unlink()
+    selection = validity.record_failure_confirmation(
+        original_path, retry_path, reset_evidence=("public-reset-receipt",)
+    )
+    assert selection.attempt.validity.observed.auth_mode == "subscription"
+    assert selection.failure_confirmation_ref == f"api-confirmation/{retry.attempt_id}"
+    assert original_path.read_bytes() == original_bytes
+    packet = score_case.execute()
+    assert packet["profiles"]["all"]["tp"] == 0
+    assert packet["profiles"]["all"]["fn"] == sum(
+        b.pr_url == score_case.url for b in epoch.bugs
+    )
+    assert packet["manifest"]["selected_attempts"] == {score_case.url: first.attempt_id}
+    assert list((packet_path(packet) / "failure-confirmations").glob("*.json"))
+    assert (
+        observations.load_packet(packet_path(packet)).observations[0].outcome
+        == "operational_failure"
+    )
+
+
+@pytest.mark.parametrize(
+    "auth,mode",
+    [("subscription", "failed"), ("subscription", "timeout"), ("api", "overloaded")],
+)
+def test_first_unconfirmed_attempt_cannot_score(score_case, auth, mode):
+    from bench.runner import validity
+    from bench.runner.invoke import InvokeResult
+
+    result = InvokeResult(
+        "timeout" if mode == "timeout" else "failed", reason="unconfirmed"
+    )
+    events = (
+        [
+            {
+                "source": "child_result",
+                "authenticated": True,
+                "code": "overloaded",
+                "phase": "review",
+                "diagnostic_sha256": "same",
+            }
+        ]
+        if mode == "overloaded"
+        else []
+    )
+    attempt = validity.snapshot_attempt(
+        score_case.run,
+        score_case.payload.parent,
+        run_id="run",
+        pr_url=score_case.url,
+        result=result,
+        validity=validity.classify_attempt(
+            result, auth_mode=auth, trusted_events=events
+        ),
+        started_at=validity.utc_now(),
+    )
+    (score_case.run / "state/a.json").write_text(
+        json.dumps(
+            {
+                "url": score_case.url,
+                "status": "failed",
+                "detail": {
+                    "attempt_id": attempt.attempt_id,
+                    "countable_operational_failure": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="invalid"):
+        score_case.execute()
+    assert not score_case.calls
+
+
+def test_unattested_checkpoint_flag_is_not_failure_confirmation(score_case):
+    (score_case.run / "state/a.json").write_text(
+        json.dumps(
+            {
+                "url": score_case.url,
+                "status": "failed",
+                "detail": {"countable_operational_failure": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="unresolved/invalid"):
+        score_case.execute()
+    assert not score_case.calls

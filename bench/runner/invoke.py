@@ -23,9 +23,14 @@ import shutil
 import signal
 import subprocess
 import sys
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal, TypedDict
+
+if TYPE_CHECKING:
+    from bench.runner.validity import Validity
 
 from gauntlet.config import (
     ResolverError,
@@ -206,15 +211,67 @@ _OUTRANKING_CREDENTIAL_VARS = (
 OAUTH_TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
 
 
-@dataclass
+InvokeStatus = Literal["ok", "timeout", "invalid", "failed"]
+
+
+class ModelUsageWire(TypedDict):
+    tokens: int
+    cost_usd: float
+
+
+@dataclass(frozen=True, slots=True)
+class ModelUsage:
+    model_id: str
+    tokens: int
+    cost_usd: float
+
+
+@dataclass(frozen=True, slots=True)
+class ModelUsageMap(Mapping):
+    entries: tuple[ModelUsage, ...] = ()
+
+    def __iter__(self):
+        return (m.model_id for m in self.entries)
+
+    def __len__(self):
+        return len(self.entries)
+
+    def __getitem__(self, key):
+        for record in self.entries:
+            if record.model_id == key:
+                return record
+        raise KeyError(key)
+
+
+@dataclass(frozen=True, slots=True)
 class InvokeResult:
-    status: str  # ok | timeout | invalid | failed
+    status: InvokeStatus
     cost_usd: float = 0.0
-    per_model: dict = field(default_factory=dict)
+    per_model: ModelUsageMap = field(default_factory=ModelUsageMap)
     echo_ok: bool = False
     payload_path: str | None = None
     raw_json_path: str | None = None
     reason: str | None = None
+    validity: "Validity | None" = None
+
+    def __post_init__(self):
+        if isinstance(self.per_model, dict):
+            object.__setattr__(
+                self,
+                "per_model",
+                ModelUsageMap(
+                    tuple(
+                        ModelUsage(k, v["tokens"], v["cost_usd"])
+                        for k, v in sorted(self.per_model.items())
+                    )
+                ),
+            )
+
+    def model_usage_wire(self) -> dict[str, ModelUsageWire]:
+        return {
+            m.model_id: {"tokens": m.tokens, "cost_usd": m.cost_usd}
+            for m in self.per_model.entries
+        }
 
 
 # --------------------------------------------------------------------------- env
@@ -723,6 +780,7 @@ def build_env(pr, run_dir, base_env, child_auth=API_AUTH_MODE):
     for alias in (*MODEL_ALIASES, "fable"):
         env.pop(f"ANTHROPIC_DEFAULT_{alias.upper()}_MODEL", None)
     env.update(BENCH_ENV)
+    env["DISABLE_AUTOUPDATER"] = "1"
     auth_updates, auth_removals = _claude_auth_env(base_env, child_auth)
     for name in auth_removals:
         env.pop(name, None)
@@ -1490,6 +1548,19 @@ def _v3_preflight(claude_bin):
     return None
 
 
+def pinned_cli(run_dir):
+    """Use the manifest pin after rechecking it at the final spend boundary."""
+    from bench.runner.validity import fingerprint_from_wire, recheck_cli
+
+    path = Path(run_dir) / "run.json"
+    manifest = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    if manifest.get("measurement_window"):
+        fingerprint = fingerprint_from_wire(manifest["provenance"])
+        recheck_cli(fingerprint)
+        return fingerprint.cli_realpath
+    return None
+
+
 def invoke_review(
     worktree,
     pr,
@@ -1532,7 +1603,9 @@ def invoke_review(
     pr_dir.mkdir(parents=True, exist_ok=True)
     raw_path = pr_dir / "raw.json"
 
-    claude_bin = shutil.which("claude", path=env.get("PATH") or os.environ.get("PATH"))
+    claude_bin = pinned_cli(run_dir) or shutil.which(
+        "claude", path=env.get("PATH") or os.environ.get("PATH")
+    )
     if not claude_bin:
         return InvokeResult(
             "failed", raw_json_path=str(raw_path), reason="claude_not_found"

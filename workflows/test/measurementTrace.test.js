@@ -159,3 +159,15 @@ test('discovery trace retains rejected paths and shapes outside sanitized checkp
   const payload = persistedScenario(out, scenario.state);
   assert.equal(JSON.stringify(payload.checkpoints).includes('../outside.js'), false);
 });
+
+test('runWith result retains resolved service IDs independently of the optional trace', async () => {
+  const { args, ctx } = measurementScenario('return');
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.equal(out.resolvedPolicy.resolvedModels['code-gauntlet:security-reviewer'], 'claude-opus-5-5');
+  assert.equal(out.resolvedPolicy.resolvedModels['code-gauntlet:validator'], 'claude-sonnet-5-5');
+  const entry = out.persistReturn.entries.find((e) => e.path === out.measurement.path);
+  assert.deepEqual(out.resolvedPolicy.resolvedModels, JSON.parse(entry.text).resolved_models);
+  delete out.measurement;
+  assert.ok(Object.keys(out.resolvedPolicy.resolvedModels).length >= 10);
+});

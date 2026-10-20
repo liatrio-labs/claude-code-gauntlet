@@ -352,6 +352,20 @@ def main():
         time.sleep(60)
         return
 
+    if mode in ("fast_exit", "provider_overload", "quoted_overload"):
+        envelope = _envelope([], "overloaded 503 quoted in review text")
+        envelope["is_error"] = True
+        envelope["subtype"] = "error_during_execution"
+        if mode == "provider_overload":
+            envelope["error"] = {
+                "code": os.environ.get("FAKE_CLAUDE_FAILURE_CODE", "overloaded"),
+                "phase": "review",
+                "message": "synthetic provider failure",
+            }
+        if mode != "fast_exit":
+            print(json.dumps(envelope))
+        raise SystemExit(1)
+
     if mode == "wrong_plugin_echo":
         ECHO_LINES = echo_lines(
             plugin_root="/stale/plugin/cache/code-gauntlet",

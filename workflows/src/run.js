@@ -6,7 +6,7 @@ import { summarize, deriveAgentFlags, discover, allActiveDimensionsDegraded } fr
 import { validateStage, filterStage, challengeStage, selectDelivery } from './reviewStages.js';
 import { mergeStage } from './mergeFindings.js';
 import { verifyStage } from './verifyStage.js';
-import { FINDING_TEXT_FIELD_NAMES, FINDING_REWRITE_EXEMPT_FIELDS, conditionalSchemaActive } from './registry.js';
+import { FINDING_TEXT_FIELD_NAMES, FINDING_REWRITE_EXEMPT_FIELDS, conditionalSchemaActive, resolvedDispatchModels } from './registry.js';
 import { mentionsPreparedHostRoot, prepareHostRootPatterns, rewritePreparedRepoRoot, safeFindingLabel } from './paths.js';
 import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs } from './args.js';
 import { resolveReviewConfig, resolveRemovedTestsArgs } from './args.js';
@@ -89,6 +89,7 @@ function resolvedPolicyEnvelope(policy) {
     gateway: !!policy.gateway,
     mappedAliases: policy.mappedAliases || [],
     conditionalSchema: conditionalSchemaActive(policy),
+    resolvedModels: resolvedDispatchModels(policy),
   };
 }
 

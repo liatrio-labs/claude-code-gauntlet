@@ -20,6 +20,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
         pytest.param(("-c", "import bench.runner.check"), False, id="check"),
         pytest.param(("-c", "import bench.runner.invoke"), False, id="invoke"),
         pytest.param(("-c", "import bench.runner.anchors"), False, id="anchors"),
+        *[
+            pytest.param(
+                ("-m", "bench.runner." + name, "--help"), False, id=name + "-module"
+            )
+            for name in ("validity", "populations", "compare", "simulation")
+        ],
+        *[
+            pytest.param(
+                (str(REPO_ROOT / "bench/runner" / (name + ".py")), "--help"),
+                True,
+                id=name + "-file",
+            )
+            for name in ("validity", "populations", "compare", "simulation")
+        ],
         pytest.param(
             ("-m", "bench.runner.citations", "--help"),
             False,

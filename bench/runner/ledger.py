@@ -14,6 +14,20 @@ SUBSCRIPTION_AUTH_MODE = "subscription"
 AUTH_MODES = (API_AUTH_MODE, SUBSCRIPTION_AUTH_MODE)
 DEFAULT_AUTH_MODE = API_AUTH_MODE
 
+
+def review_attempt_costs(run_dir):
+    """Retain failed-attempt consumption even when a successful retry is selected."""
+    from bench.runner.validity import load_attempt
+
+    result = {}
+    for path in sorted((Path(run_dir) / "attempts").glob("*/*/attempt.json")):
+        attempt = load_attempt(path)
+        receipt = path.parent / "artifacts/attempt-result.json"
+        if receipt.is_file():
+            result[attempt.attempt_id] = read_json(receipt)["cost_usd"]
+    return result
+
+
 # Required keys from spec H8's ledger row schema. Missing any -> ValueError.
 # ``auth_mode`` is deliberately absent: the ledger is append-only, and every row
 # written before the field existed must stay valid forever.

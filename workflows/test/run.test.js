@@ -655,7 +655,11 @@ for (const row of DEGRADED_ROWS) test(`degradation envelope: ${row.name}`, async
     assert.deepEqual(Object.keys(out.checkpoints.phases), ['summarize']);
     await replayProducedCheckpoint(validArgs(), out.checkpoints);
     assert.equal(ctx.calls.some((call) => /validate-batch-|challenge-|artifact-writer/.test(call.label)), false);
-    if (row.resolved) assert.deepEqual(out.resolvedPolicy, row.resolved);
+    if (row.resolved) {
+      const { resolvedModels, ...policy } = out.resolvedPolicy;
+      assert.deepEqual(policy, row.resolved);
+      assert.deepEqual([...new Set(Object.values(resolvedModels))], ['claude-x']);
+    }
   } else {
     assert.equal(out.gaps.some((gap) => gap.startsWith('all-degraded:')), false);
     assert.deepEqual(out.stats.degraded, row.degraded);
@@ -805,7 +809,9 @@ const POLICY_ROWS = [
 for (const row of POLICY_ROWS) test(`policy wiring: ${row.name}`, async () => {
   const { out, ctx } = await runAndCapture(validArgs({ policy: row.policy }));
   assert.equal(out.ok, true);
-  assert.deepEqual(out.resolvedPolicy, row.expected);
+  const { resolvedModels, ...policy } = out.resolvedPolicy;
+  assert.deepEqual(policy, row.expected);
+  for (const call of ctx.calls) assert.equal(resolvedModels[call.agentType], call.model);
   assert.deepEqual([...new Set(ctx.calls.map((call) => call.model))].sort(), row.models);
   const items = ctx.calls.find((call) => call.agentType === 'code-gauntlet:conventions-and-intent').schema.properties.findings.items;
   if (row.conditional) assert.equal(Array.isArray(items.allOf), true);

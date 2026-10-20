@@ -402,3 +402,70 @@ pinned prices and an explicit finite nonnegative cap.
 Missing evidence or refused stage spending preserves delivered recall and marks the
 funnel or dimension coverage unavailable.
 See [MEASUREMENT.md](MEASUREMENT.md) for price inputs and baseline-arm receipts.
+
+## Measurement windows and comparisons
+
+Operational runs require a reviewed window and explicit service model IDs. Freeze a
+window without invoking a review:
+
+```sh
+python3 -m bench.runner.validity freeze-window --out window.json \
+  --cli-path /absolute/path/to/claude --child-model claude-opus-5-5 \
+  --judge-pin JUDGE_ID --adjudicator-pin ADJUDICATOR_ID --epoch e616e84-v1 \
+  --opens-at ISO_TIMESTAMP --closes-at ISO_TIMESTAMP --window-id WINDOW_ID \
+  --policy policy.json --pr-urls gate-urls.json --run-indices 0,1,2,3 --auth-mode api
+```
+
+The policy JSON must equal `validity.benchmark_policy(timeout_seconds)`. The local
+workflow registry resolves every dispatch model. Effort environment controls retain
+absent values as null. The window pins the CLI real path, version, bytes, epoch,
+evaluators, model map, auxiliary model allowlist, effort fields and benchmark policy.
+The orchestrator must verify the installed CLI honors the auto-update control.
+
+Start with `python3 bench/run.py --tier subset --measurement-window window.json
+--child-model claude-opus-5-5 --arm baseline --run-index 0`. Resume and retry require
+that same window. Every child rechecks its binary before dispatch. A baseline run also
+accepts `--baseline-equivalence-receipt PATH`; its reviewed JSON binds `release_sha`
+(`94ea095a`), `merge_sha` and `evidence_refs` to the instrumented Wave 0a merge.
+
+Attempts are immutable under `attempts/<pr-key>/<attempt-id>/`. Checkpoints select the
+latest scheduling outcome. Retrying preserves raw output, payloads, workflow records,
+model provenance, hashes and consumption from every prior attempt. Subscription
+stalls require `--retry-failed RUN --measurement-window window.json
+--reset-confirmed-at ISO_TIMESTAMP --reset-evidence public-reset.json`. API transients
+honor their structured backoff. An initial non-ok attempt never becomes recall misses.
+Only a repeated normalized review failure on a separate admissible confirmation can
+produce a full zero cell. Generic watchdog timeouts cannot establish that fingerprint.
+
+Contamination and population manifests ship unfrozen. The supplied v2 leak manifest
+must be prepared against pinned upstream data, then ingested into the epoch:
+
+```sh
+python3 -m bench.runner.populations prepare-leak-manifest --source leak-manifest-v2.json \
+  --golden-source /path/to/pinned/upstream/offline --epoch e616e84-v1 --out prepared.json
+python3 -m bench.runner.populations ingest-leak-manifest --prepared prepared.json \
+  --epoch e616e84-v1 --out contamination-proposal.json
+python3 -m bench.runner.compare compare --spec comparison.json --out comparison-report.json
+python3 -m bench.runner.compare simulate --spec simulation.json --out simulation-report.json
+```
+
+Preparation records raw file hashes and exact golden text hashes without storing text.
+Ingestion emits an unfrozen proposal. Semantic dispositions, content hashes and owner
+review are still required before `freeze_populations`. Never infer uncontamination
+from an empty lexical scan. Comparisons never consume sealed holdout populations.
+
+Descriptive comparisons require explicit PR scope, complete score packets and
+`rule: null`. A windowless mini uses exactly the declared six PRs and produces no
+promotion verdict. Operational looks require the entire 15-PR matrix, a frozen rule,
+frozen populations, matching evaluator/review identities and independent review runs.
+The only optional extended look requires `initial_report_path`, preserves its exact
+initial score prefix and recomputes the initial decision before permitting extension.
+Exit 0 means a report was computed, including a quality fail or inconclusive result.
+Exit 2 writes a structured input refusal.
+
+For a separate API confirmation of a subscription review failure, call
+`validity.record_failure_confirmation(original_attempt_path, api_attempt_path,
+reset_evidence=(public_receipt_ref,))` after capturing the API attempt under its own
+window. This publishes an immutable confirmation receipt and updates the scheduling
+selection. It preserves both original attempt records and keeps the selected cell's
+subscription fingerprint. The scorer checks both source attempts and the receipt.

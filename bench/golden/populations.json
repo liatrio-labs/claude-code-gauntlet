@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "epoch_id": "e616e84-v1",
+  "status": "unfrozen",
+  "contamination_sha256": "",
+  "dev_pool_pr_urls": [],
+  "dev_slice_pr_urls": [],
+  "slice_selection_profile": "core",
+  "slice_tiebreak": "canonical_pr_url",
+  "frozen_at": null
+}
