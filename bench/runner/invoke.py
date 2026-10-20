@@ -561,26 +561,58 @@ def _seed_trust(config_dir, worktree):
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def resolve_gh_token(base_env):
+    """Resolve once in the operator environment; never expose gh diagnostics."""
+    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+        if base_env.get(name):
+            return base_env[name]
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "token", "--hostname", "github.com"],
+            env=base_env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def preflight_gh(pr, workspace_dir, base_env, child_auth=API_AUTH_MODE):
+    """Probe PR access with the same isolated environment the review children use."""
+    token = resolve_gh_token(base_env)
+    if not token:
+        return None
+    runtime_env = dict(base_env, GH_TOKEN=token)
+    try:
+        child_env = build_env(
+            pr, Path(workspace_dir) / "runs" / "preflight", runtime_env, child_auth
+        )
+        result = subprocess.run(
+            [
+                "gh",
+                "api",
+                "--hostname",
+                "github.com",
+                f"repos/{_owner(pr)}/{_repo(pr)}/pulls/{_pr_number(pr)}",
+            ],
+            env=child_env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return token if result.returncode == 0 else None
+
+
 def _gh_auth_env(base_env):
-    """Return the ``gh`` auth env vars to carry across the ``HOME`` override.
-
-    ``build_env`` overrides ``HOME``/``CLAUDE_CONFIG_DIR`` to isolate the *claude*
-    binary's settings/plugins (the S7 isolation boundary). But the skill's child
-    processes also shell out to ``gh`` (``gh pr view/diff``), and on machines where
-    ``gh`` keeps its token in a config file (the common Linux case) that token lives
-    under the REAL home -- ``$GH_CONFIG_DIR`` if set, else ``$XDG_CONFIG_HOME/gh``,
-    else ``$HOME/.config/gh``. The moved ``HOME`` would strand it, so re-point ``gh``
-    back at the real dir. This does NOT weaken the claude-config isolation: ``gh``
-    auth is an ambient prerequisite (references/headless-mode.md, validated by
-    ``check_prereqs``'s ``gh auth status``), not a claude setting.
-
-    - ``GH_CONFIG_DIR``: an explicit value in ``base_env`` wins untouched; otherwise
-      derive it from the ORIGINAL base ``HOME`` (XDG-aware) and set it only when that
-      dir actually exists -- keychain / env-token setups keep no such dir and need no
-      pointer, so setting nothing there is harmless.
-    - ``GH_TOKEN`` / ``GITHUB_TOKEN``: passed through when present; in CI they may be
-      the only auth (no config dir, no keychain).
-    """
+    """Keep token overrides and the operator's gh config pointer across HOME isolation."""
     result = {}
     for name in ("GH_TOKEN", "GITHUB_TOKEN"):
         value = base_env.get(name)
@@ -696,22 +728,13 @@ def build_env(pr, run_dir, base_env, child_auth=API_AUTH_MODE):
     env.update(auth_updates)
     env["CODE_GAUNTLET_OUTPUT_DIR"] = str(run_dir / "output")
     env["GH_REPO"] = f"{_owner(pr)}/{_repo(pr)}"
-    # Uncap the CLI's "background tasks at exit" wait. A ``-p`` run blocks on any background
-    # task still running when the main turn ends, but only up to CLAUDE_CODE_PRINT_BG_WAIT_
-    # CEILING_MS (default 600000 = 600s since v2.1.182; docs: code.claude.com/docs/en/headless
-    # "Background tasks at exit"). The Phase 3 review Workflow can run detached and legitimately
-    # exceed 600s, so the default ceiling terminates it before Phase 8 delivers -- the whole run
-    # in smoke-20260719-190902-a14b4cc failed this way (all 3 PRs "workflow_backgrounded"). "0"
-    # waits without limit; the per-PR watchdog (invoke_review's timeout_s -> _kill_group) remains
-    # the sole time bound, so an unbounded wait cannot hang the run past that budget.
+    # Let the watchdog own the time bound; the CLI ceiling can kill a detached Workflow.
     env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
 
     claude_home = _claude_home(run_dir, base_env)
     config_dir = claude_home / "config"
     env["HOME"] = str(claude_home)
     env["CLAUDE_CONFIG_DIR"] = str(config_dir)
-    # Re-point gh at its real auth AFTER the HOME override (derived from the original
-    # base HOME), so child `gh pr view/diff` stays authenticated despite the isolation.
     env.update(_gh_auth_env(base_env))
 
     _seed_trust(config_dir, _worktree_dir(run_dir, pr))
@@ -888,6 +911,63 @@ def _echo_in_text(text):
         if not re.search(pattern, text):
             return False
     return True
+
+
+def _transcript_bash_results(config_dir, worktree, envelope):
+    """Read only this session's Bash results, excluding prompts and API records."""
+    session_id = envelope.get("session_id") if isinstance(envelope, dict) else None
+    if not isinstance(session_id, str) or not re.fullmatch(
+        r"[A-Za-z0-9_-]+", session_id
+    ):
+        return
+    project_slug = re.sub(r"[^A-Za-z0-9]", "-", str(Path(worktree).resolve()))
+    path = Path(config_dir) / "projects" / project_slug / f"{session_id}.jsonl"
+    bash_ids = set()
+    try:
+        with path.open(encoding="utf-8", errors="replace") as transcript:
+            for line in transcript:
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(record, dict) or record.get("type") not in (
+                    "assistant",
+                    "user",
+                ):
+                    continue
+                message = record.get("message")
+                blocks = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(blocks, list):
+                    continue
+                for block in blocks:
+                    if not isinstance(block, dict):
+                        continue
+                    if record["type"] == "assistant":
+                        if (
+                            block.get("type") == "tool_use"
+                            and block.get("name") == "Bash"
+                        ):
+                            tool_id = block.get("id")
+                            if isinstance(tool_id, str):
+                                bash_ids.add(tool_id)
+                    elif (
+                        block.get("type") == "tool_result"
+                        and isinstance(block.get("tool_use_id"), str)
+                        and block["tool_use_id"] in bash_ids
+                    ):
+                        content = block.get("content")
+                        if isinstance(content, str):
+                            yield content
+                        elif isinstance(content, list):
+                            yield "\n".join(
+                                part["text"]
+                                for part in content
+                                if isinstance(part, dict)
+                                and part.get("type") == "text"
+                                and isinstance(part.get("text"), str)
+                            )
+    except OSError:
+        return
 
 
 def _is_superseded(path):
@@ -1271,13 +1351,7 @@ def _workflow_failure(
     return None if success else failure
 
 
-def _check_plugin_identity(
-    raw_text, envelope, report_dirs, claude_home, wf_baseline, repo_root, records=None
-):
-    """Return None if identity is clean, else a human reason fragment for stderr."""
-    receipt = extract_identity_receipt(raw_text, envelope, report_dirs)
-    if not receipt:
-        return "missing pipeline_version/plugin_root identity receipt"
+def _identity_mismatch(receipt, repo_root):
     expected_ver = read_pipeline_version(repo_root)
     if not expected_ver:
         return "cannot read expected PIPELINE_VERSION from workflows/pipeline.js"
@@ -1288,10 +1362,23 @@ def _check_plugin_identity(
     try:
         got_root = Path(receipt["plugin_root"]).resolve()
         exp_root = Path(repo_root).resolve()
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         return f"plugin_root resolve failed: {exc}"
     if got_root != exp_root:
         return f"plugin_root {str(got_root)!r} != expected {str(exp_root)!r}"
+    return None
+
+
+def _check_plugin_identity(
+    raw_text, envelope, report_dirs, claude_home, wf_baseline, repo_root, records=None
+):
+    """Return None if identity is clean, else a human reason fragment for stderr."""
+    receipt = extract_identity_receipt(raw_text, envelope, report_dirs)
+    if not receipt:
+        return "missing pipeline_version/plugin_root identity receipt"
+    identity_err = _identity_mismatch(receipt, repo_root)
+    if identity_err:
+        return identity_err
     if records is None:
         records = list(_iter_new_wf_records(claude_home, wf_baseline))
     expected_pipeline = Path(repo_root) / "workflows" / "pipeline.js"
@@ -1590,6 +1677,24 @@ def invoke_review(
 
     # 3) Config receipt (accepted from stdout, the .result envelope, or a report .md).
     echo_ok = _echo_ok(raw_text, envelope, report_dirs)
+    if not echo_ok and not any(
+        _iter_new_wf_paths(Path(env["CLAUDE_CONFIG_DIR"]), wf_baseline)
+    ):
+        for receipt_text in _transcript_bash_results(
+            env["CLAUDE_CONFIG_DIR"], worktree, envelope
+        ):
+            if not _echo_ok(receipt_text):
+                continue
+            receipt = extract_identity_receipt(receipt_text)
+            if receipt and not _identity_mismatch(receipt, REPO_ROOT):
+                return InvokeResult(
+                    "failed",
+                    cost_usd=cost_usd,
+                    per_model=per_model,
+                    echo_ok=True,
+                    raw_json_path=str(raw_path),
+                    reason="pre_workflow_stop",
+                )
     if not echo_ok:
         return InvokeResult(
             "invalid",

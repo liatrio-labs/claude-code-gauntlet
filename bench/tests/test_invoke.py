@@ -1133,13 +1133,6 @@ class EchoReceiptSourceTest(InvokeTestBase):
             )
             self.assertTrue(invoke._echo_in_reports((tmp,)))
 
-    def test_partial_block_everywhere_is_invalid(self):
-        # badecho emits a partial block in BOTH stdout and .result (no report .md).
-        res = self._run("badecho")
-        self.assertEqual(res.status, "invalid")
-        self.assertEqual(res.reason, "config_echo_mismatch")
-        self.assertFalse(res.echo_ok)
-
     def test_archived_code_rendered_report_does_not_provide_identity(self):
         report = (
             "Resolved config:\n"

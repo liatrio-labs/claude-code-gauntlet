@@ -57,7 +57,7 @@ children on an existing Pro/Max plan instead, at no marginal cost — see
 actionable line and the whole list is shown at once (exit code 2):
 
 - `claude` CLI on `PATH`, with a parseable `--version`
-- `gh` CLI on `PATH`, authenticated (`gh auth status` passing)
+- `gh` CLI on `PATH`, with a credential that can read the first target PR
 - the review children's credential, which depends on `--child-auth`:
   - `api` (default) — `bench/.env` present with a non-empty `ANTHROPIC_API_KEY`
   - `subscription` — a non-empty `CLAUDE_CODE_OAUTH_TOKEN` (in `bench/.env` or
@@ -66,6 +66,16 @@ actionable line and the whole list is shown at once (exit code 2):
 - `uv` on `PATH` (runs the vendored scorer in its own isolated environment)
 - at least 10 GB free on the partition holding `bench/workspace/` (bare
   mirrors are large — see above)
+
+GitHub authentication is resolved once per `run.py` invocation, before any review
+child starts: nonempty `GH_TOKEN`, then `GITHUB_TOKEN`, then the operator's
+`gh auth token --hostname github.com`. The selected credential is held in memory
+and forwarded as `GH_TOKEN` across the isolated HOME boundary. A bounded
+`gh api repos/OWNER/REPO/pulls/N` read of the first target PR probes that exact
+credential under the child environment, including for resumes and retries.
+An explicit credential that is rejected fails preflight (exit 2); it never falls
+back to another account. Probe diagnostics and token values are never logged or
+written to run manifests or checkpoints.
 
 `--score-only` skips these entirely — it re-scores an already-completed
 run's captured candidates and needs no `claude`/`gh`/disk headroom.
@@ -271,6 +281,13 @@ like `invalid`; the difference is retry eligibility, since `failed` is included
 in `--retry-failed` while `invalid` is not. An `all_degraded` child is
 self-describing and often transient, so retrying it after the underlying service
 recovers is appropriate.
+
+A child that stops before any Workflow record exists is `failed` with reason
+`pre_workflow_stop` when its own session transcript contains a Bash tool result
+with the full pinned config and matching plugin root and pipeline version.
+This outcome is unscored and eligible for `--retry-failed`. Prompt text, model
+prose, and receipts from other sessions cannot establish it. Missing or mismatched
+receipts remain `invalid`.
 
 ### Recommended usage, and scope
 
