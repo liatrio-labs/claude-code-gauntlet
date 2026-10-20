@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v3.42.48 (2026-10-20)
+
+### Bug Fixes
+
+- Send verify slices as decision inputs the executor cannot reorder
+  ([#531](https://github.com/liatrio-labs/claude-code-gauntlet/pull/531),
+  [`b5f74e6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b5f74e64f90a63935261effd2e5145e0ec3a5182))
+
+- The verify slice carries only decision inputs, so an executor copy cannot reorder an unordered
+  list ([#531](https://github.com/liatrio-labs/claude-code-gauntlet/pull/531),
+  [`b5f74e6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b5f74e64f90a63935261effd2e5145e0ec3a5182))
+
+
 ## v3.42.47 (2026-10-19)
 
 ### Bug Fixes
