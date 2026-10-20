@@ -1,3 +1,4 @@
+import { measurementThreshold } from './measurementTrace.js';
 import { INT_POLICY, coerceInt, asText, asConfidence, deepFreeze } from './wire.js';
 import { FIELD_RENAMES, SEVERITY_ORDER, INJECTION_STRIPPED_PROSE_FIELDS, AGENT_BUG_DETECTOR } from './registry.js';
 import { AGENT_TEST_ANALYZER, AGENT_SECURITY_REVIEWER, AGENT_CONVENTIONS } from './registry.js';
@@ -117,11 +118,11 @@ export function applyThresholdFilter(findings, config, severityOrder = SEVERITY_
     }
 
     if (!isContested && confidence < effectiveThreshold) {
-      eliminated.push({
+      eliminated.push(measurementThreshold({
         ...finding,
         eliminated_by: 'threshold',
         elimination_reason: `confidence ${confidence} < threshold ${effectiveThreshold}`,
-      });
+      }, 'confidence', effectiveThreshold));
       continue;
     }
 

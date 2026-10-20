@@ -318,14 +318,14 @@ export function stripEliminatedList(list) {
 }
 
 // Replayed findings need the same path validation as fresh output.
-export function normalizePhaseFindings(name, out, replayed, args) {
+export function normalizePhaseFindings(name, out, replayed, args, decisions = []) {
   if (!out || typeof out !== 'object') return;
   const warnings = [];
   let rejected = 0;
   let pathRewrites = 0;
   for (const [, field] of checkpointFindingListsForPhase(name)) {
     if (!Array.isArray(out[field])) continue;
-    const normalized = normalizeFindingPaths(out[field], args.repoRoot);
+    const normalized = normalizeFindingPaths(out[field], args.repoRoot, decisions);
     rejected += out[field].length - normalized.valid.length;
     pathRewrites += normalized.path_rewrites;
     out[field] = normalized.valid;

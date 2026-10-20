@@ -387,3 +387,18 @@ Committed:
 - `bench/baselines.json` — judge/adjudicator pins, scorer SHA, anchor table,
   judge noise SD, `delta_noise` (read-only to any optimizing loop)
 - `bench/experiments.jsonl` — the append-only scoring ledger
+
+Stage diagnostics are optional when rescoring:
+
+```bash
+python3 bench/run.py --score-only RUN_ID --golden-epoch EPOCH_ID \
+  --capture-stages --stage-cost-cap-usd AMOUNT
+```
+
+Workflow traces are separate artifacts with attempt-bound byte hashes.
+Delivered candidates always retain their actual posted text.
+Stage judging schedules only missed-golden pairs after delivered scoring and requires
+pinned prices and an explicit finite nonnegative cap.
+Missing evidence or refused stage spending preserves delivered recall and marks the
+funnel or dimension coverage unavailable.
+See [MEASUREMENT.md](MEASUREMENT.md) for price inputs and baseline-arm receipts.

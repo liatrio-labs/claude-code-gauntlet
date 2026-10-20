@@ -14,7 +14,7 @@ from typing import cast
 from bench.adapter.adapt import merge_candidates, payload_to_candidates
 from bench.adjudicator.adjudicate import adjudicate as _adjudicate
 from bench.adjudicator.adjudicate import file_context, slice_hunk
-from bench.runner import invoke, observations, scorer
+from bench.runner import invoke, observations, provenance, scorer, stages
 from bench.runner.costs import parse_costs
 from bench.runner.epochs import (
     DEFAULT_ROOT,
@@ -686,7 +686,7 @@ def evaluator_for(epoch, pin, adjudicator_pin):
         "adjudicator_code_sha256": file_hash(BENCH_DIR / "adjudicator/adjudicate.py"),
         "adjudicator_prompt_sha256": file_hash(BENCH_DIR / "adjudicator/prompt.txt"),
         "profile_policy_version": PROFILE_POLICY_VERSION,
-        "stage_matcher_version": "unavailable",
+        "stage_matcher_version": stages.STAGE_MATCHER_VERSION,
         "temperature": 0.0,
     }
     return Evaluator(evaluator_id=digest(fields), **fields)
@@ -763,6 +763,8 @@ def score_run(
     attempt_selection=None,
     capture_stages=False,
     stage_cost_cap_usd=None,
+    stage_matcher=None,
+    stage_price_estimator=None,
 ) -> ScorePacketWire:
     """Execute a fresh score; failures retain a pending diagnostic packet."""
     run_dir = Path(run_dir).resolve()
@@ -778,13 +780,7 @@ def score_run(
             "MARTIAN_MODEL disagrees with baselines judge_pin; refusing to score"
         )
     if capture_stages:
-        if (
-            stage_cost_cap_usd is None
-            or not isinstance(stage_cost_cap_usd, (int, float))
-            or not 0 < stage_cost_cap_usd < float("inf")
-        ):
-            raise ValueError("capture_stages requires a positive finite stage cost cap")
-        raise ValueError("stage capture is unavailable until stage trace integration")
+        stages.validate_cap(stage_cost_cap_usd)
     epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
     adjudicator_pin = baselines.get("adjudicator_pin") or pin
     records = _run_pr_records(run_dir)
@@ -863,6 +859,34 @@ def score_run(
     for url in failures:
         candidates[url] = {TOOL: []}
         per_pr[url] = {"candidates": [], "pr_dir": str(_resolve_pr_dir(run_dir, url))}
+    traces = {}
+    trace_errors = {}
+    for url, info in per_pr.items():
+        pr_dir = Path(info["pr_dir"])
+        try:
+            if (pr_dir / "measurement-unavailable.json").is_file():
+                trace_errors[url] = _load_json(
+                    pr_dir / "measurement-unavailable.json"
+                ).get("reason", "trace collection unavailable")
+            paths = [
+                p
+                for p in pr_dir.rglob("code-gauntlet-measurement-*.json")
+                if not _is_superseded(p)
+            ]
+            if len(paths) == 1:
+                path = paths[0]
+                if path.is_symlink() or not path.resolve().is_relative_to(run_dir):
+                    raise ValueError("measurement artifact escapes selected run")
+                receipt = pr_dir / "measurement-artifact.json"
+                binding = _load_json(receipt) if receipt.is_file() else None
+                expected = binding["sha256"] if binding else file_hash(path)
+                if binding and binding.get("path") != path.name:
+                    raise ValueError("measurement artifact binding mismatch")
+                traces[url] = (path, stages.load_trace(path, expected_sha256=expected))
+            elif paths:
+                raise ValueError("ambiguous measurement artifacts")
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            trace_errors[url] = str(exc)
     source_hashes = {}
     sources = [run_dir / "run.json", *sorted((run_dir / "state").glob("*.json"))]
     sources.extend(selected.values())
@@ -876,10 +900,17 @@ def score_run(
                 "raw-naive.json",
                 "result.json",
                 "costs.json",
+                "measurement-artifact.json",
+                "measurement-unavailable.json",
             )
         ]
         if info.get("payload_path"):
             sources.append(Path(info["payload_path"]))
+        for pattern in (
+            "code-gauntlet-measurement-*.json",
+            "code-gauntlet-post-review-*.json",
+        ):
+            sources.extend(p for p in pr_dir.rglob(pattern) if not _is_superseded(p))
         for c in info["candidates"]:
             if c.get("path"):
                 head = pr_dir / "worktree" / c["path"]
@@ -922,6 +953,91 @@ def score_run(
     ref = ScoreRef(manifest.get("run_id") or run_dir.name, epoch.epoch_id, sid)
     evaluator = evaluator_for(epoch, pin, adjudicator_pin)
     candidate_map = observations.candidate_records(candidates, attempts)
+    delivery_bindings = {}
+    for url, (path, trace) in traces.items():
+        info = per_pr[url]
+        pr_dir = Path(info["pr_dir"])
+        diff_path = pr_dir / "diff.patch"
+        selected_paths = [
+            p
+            for p in pr_dir.rglob("code-gauntlet-post-review-*.json")
+            if not _is_superseded(p)
+        ]
+        if not selected_paths or not diff_path.is_file():
+            trace_errors[url] = "selected findings or captured diff unavailable"
+            continue
+        if len(selected_paths) != 1:
+            trace_errors[url] = "ambiguous selected findings"
+            continue
+        try:
+            selected_data = _load_json(selected_paths[0])
+            selected_findings = (
+                selected_data.get("findings", [])
+                if isinstance(selected_data, dict)
+                else selected_data
+            )
+            selected_snapshot = next(
+                (s for s in trace.snapshots if s.stage == "select"), None
+            )
+            versions = {v.version_id: v for v in trace.versions}
+            trace_findings = (
+                [
+                    versions[v].projection()
+                    for v in selected_snapshot.finding_version_ids
+                ]
+                if selected_snapshot
+                else []
+            )
+            if [f.get("trace_id") for f in selected_findings] != [
+                f.get("trace_id") for f in trace_findings
+            ]:
+                raise ValueError("selected findings disagree with trace")
+            # Persisted aliases are accepted, while every producer field must agree.
+            if any(
+                any(f.get(k) != v for k, v in original.items())
+                for f, original in zip(selected_findings, trace_findings, strict=True)
+            ):
+                raise ValueError("selected finding content disagrees with trace")
+            mapped = provenance.map_delivery(
+                _load_json(info["payload_path"]),
+                selected_findings,
+                diff_path.read_text(encoding="utf-8"),
+            )
+            delivery_bindings[url] = {
+                "selected_path": str(
+                    Path("sources") / selected_paths[0].relative_to(run_dir)
+                ),
+                "payload_path": str(
+                    Path("sources") / Path(info["payload_path"]).relative_to(run_dir)
+                ),
+                "diff_path": str(Path("sources") / diff_path.relative_to(run_dir)),
+            }
+            omissions = provenance.delivery_omissions(
+                selected_findings,
+                diff_path.read_text(encoding="utf-8"),
+                platform=_load_json(info["payload_path"])["platform"],
+            )
+            traces[url] = (
+                path,
+                stages.bind_delivery_trace(trace, mapped, omissions=omissions),
+            )
+            bound = provenance.bind_candidates(
+                tuple(c for c in candidate_map if c.pr_url == url), mapped
+            )
+            candidate_map = tuple(c for c in candidate_map if c.pr_url != url) + bound
+        except (ValueError, KeyError, TypeError) as exc:
+            trace_errors[url] = str(exc)
+    candidate_map = tuple(
+        sorted(
+            (
+                replace(c, provenance_status="ambiguous")
+                if c.pr_url in trace_errors
+                else c
+                for c in candidate_map
+            ),
+            key=lambda c: (c.pr_url, c.index),
+        )
+    )
     request = ScoreRequest(
         ref,
         epoch,
@@ -991,6 +1107,34 @@ def score_run(
     adjudications, contexts = _capture_adjudications(
         request, buckets, per_pr, api_key, adjudicator or _adjudicate
     )
+    stage_rows, stage_matches, stage_capture, stage_calls = stages.capture_score(
+        traces,
+        bugs,
+        epoch,
+        enabled=capture_stages,
+        cap=stage_cost_cap_usd,
+        matcher=stage_matcher,
+        price_estimator=stage_price_estimator,
+        errors=trace_errors,
+        evaluator_id=evaluator.evaluator_id,
+        pin=pin,
+        api_key=api_key,
+        prices=baselines.get("stage_prices"),
+    )
+    terminal_losses = {
+        (row.pr_url, row.bug_id): row.loss
+        for row in stage_rows
+        if row.stage == "deliver" and row.loss is not None
+    }
+    bugs = tuple(
+        replace(
+            bug,
+            loss=observations.freeze(asdict(terminal_losses[bug.pr_url, bug.bug_id])),
+        )
+        if (bug.pr_url, bug.bug_id) in terminal_losses
+        else bug
+        for bug in bugs
+    )
     fp = sum(
         ev.get(TOOL, {}).get("fp", 0)
         for u, ev in evaluations.items()
@@ -1006,7 +1150,9 @@ def score_run(
         **legacy,
         **profiles[epoch.primary_profile],
         "golden_recall": profiles[epoch.primary_profile]["recall"],
-        "per_dimension": {},
+        "per_dimension": stages.dimension_metrics(
+            candidate_map, bugs, stage_rows, epoch.primary_profile, traces
+        ),
         "per_bucket": {
             "golden_matched": legacy["per_bucket"]["golden_matched"],
             "valid_extra": legacy["per_bucket"]["valid_extra"],
@@ -1044,6 +1190,8 @@ def score_run(
             for u in urls
         ),
         adjudicator_calls=len(adjudications),
+        stage_judge_calls=stage_capture["actual_call_count"],
+        stage_judge_cost_usd=stage_capture["actual_cost_usd"],
     )
     score_manifest: ScoreManifestWire = {
         "schema_version": 2,
@@ -1055,7 +1203,13 @@ def score_run(
         "selected_attempts": attempts,
         "source_artifact_hashes": source_hashes,
         "run_validity_ref": None,
-        "provenance_status": "legacy_unknown",
+        "provenance_status": "ambiguous"
+        if trace_errors
+        else "complete"
+        if all(c.provenance_status == "complete" for c in candidate_map)
+        and not trace_errors
+        and len(traces) == len(urls)
+        else "legacy_unknown",
         "profiles": list(epoch.supported_profiles),
         "completion_status": "complete",
     }
@@ -1067,8 +1221,8 @@ def score_run(
         "profiles": profiles,
         "metrics": metrics,
         "observations_path": "bugs.jsonl",
-        "stages_path": None,
-        "stage_capture": {"status": "not_requested", "reason": None},
+        "stages_path": "stages.jsonl" if stage_rows else None,
+        "stage_capture": stage_capture,
         "adjudications_path": "adjudications.jsonl",
         "ledger_row": row,
         "complete_path": "complete.json",
@@ -1080,6 +1234,20 @@ def score_run(
         },
         "adjudications": [cast(AdjudicationWire, asdict(a)) for a in adjudications],
     }
+    observations.exclusive_json(
+        pending / "stage_trace_bindings.json",
+        {
+            url: {
+                "attempt_id": attempts[url],
+                "trace_path": str(Path("sources") / path.relative_to(run_dir)),
+                "trace_sha256": source_hashes[str(path.relative_to(run_dir))],
+                "delivery": delivery_bindings.get(url),
+            }
+            for url, (path, trace) in traces.items()
+        },
+    )
+    observations.exclusive_json(pending / "provenance_errors.json", trace_errors)
+    observations.exclusive_json(pending / "stage_calls.json", list(stage_calls))
     observations.write_packet(
         request,
         packet=packet,
@@ -1088,6 +1256,8 @@ def score_run(
         groups=groups,
         adjudications=adjudications,
         contexts=contexts,
+        stage_observations=stage_rows,
+        stage_matches=stage_matches,
     )
     if not (run_dir / "scores.json").exists():
         observations.exclusive_json(

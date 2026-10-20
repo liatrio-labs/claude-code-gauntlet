@@ -22,7 +22,7 @@ test('happy contract: compact envelope and complete dispatch inventory', async (
   const { out, ctx, payload } = await runAndCapture(validArgs());
   assert.equal(out.ok, true);
   assert.equal(out.phaseReached, 'report');
-  assert.deepEqual(Object.keys(out), ['ok', 'phaseReached', 'stats', 'artifactPaths', 'resolvedPolicy', 'checkpoints', 'gaps']);
+  assert.deepEqual(Object.keys(out), ['ok', 'phaseReached', 'stats', 'artifactPaths', 'resolvedPolicy', 'checkpoints', 'gaps', 'measurement', 'persistReturn']);
   assert.deepEqual(out.artifactPaths, PATHS);
   assert.deepEqual(out.checkpoints, { completed: PHASES });
   assert.equal(Object.hasOwn(out, 'findings'), false);
@@ -208,7 +208,7 @@ test('fresh paths: discovery normalizes files and both reference arrays', async 
     '[ABSOLUTE_DISCOVERY] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped',
     '[ABSOLUTE_DISCOVERY] Invalid cross_file_refs path: absolute file path is outside repoRoot - reference dropped',
   ]) assert.ok(out.gaps.includes(gap));
-  for (const value of [payload, out]) {
+  for (const value of [payload, { ...out, persistReturn: undefined }]) {
     for (const path of ['/outside/consumer.js', '/repo/src/consumer.js', '/repo/src/module.js']) {
       assert.equal(JSON.stringify(value).includes(path), false);
     }
@@ -346,7 +346,7 @@ for (const replay of [false, true]) test(`field validation wiring: ${replay ? 'r
     '[BAD_PATH_ARRAY] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped',
   ]) assert.ok(out.gaps.includes(gap));
   assert.equal(JSON.stringify(payload).includes('/outside/consumer.js'), false);
-  assert.equal(JSON.stringify(out).includes('/outside/consumer.js'), false);
+  assert.equal(JSON.stringify({ ...out, persistReturn: undefined }).includes('/outside/consumer.js'), false);
 });
 
 const KEY_ROWS = [
@@ -691,7 +691,7 @@ for (const row of FAILURE_ROWS) test(`path-safe failure: ${row.name}`, async () 
   await replayProducedCheckpoint(args, out.checkpoints);
   assert.equal(out.checkpoints.phases.discover.findings[0].file, 'src/module.js');
   assert.deepEqual(out.checkpoints.phases.discover.findings[0].cross_file_refs, ['src/other.js:4']);
-  for (const path of ['/repo/src/module.js', 'file:///repo/src/module.js']) assert.equal(JSON.stringify(out).includes(path), false);
+  for (const path of ['/repo/src/module.js', 'file:///repo/src/module.js']) assert.equal(JSON.stringify({ ...out, persistReturn: undefined }).includes(path), false);
   if (row.writerFails) {
     assert.ok(out.gaps.some((gap) => gap.includes('partial-artifacts')));
     assert.deepEqual(Object.keys(out.checkpoints.phases), PHASES);

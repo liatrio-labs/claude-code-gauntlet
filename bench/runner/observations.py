@@ -6,7 +6,7 @@ import json
 import os
 import shutil
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal, TypeAlias, TypedDict, cast
 
@@ -69,8 +69,65 @@ class MatchWire(TypedDict):
     kind: Literal["direct", "dedup_sibling"]
 
 
+Stage = Literal[
+    "discover",
+    "merge",
+    "verify",
+    "validate",
+    "filter",
+    "challenge",
+    "holdback",
+    "select",
+    "deliver",
+]
+LossStage = Literal[
+    "not_found",
+    "verify",
+    "validate",
+    "challenge",
+    "cap",
+    "merge",
+    "filter",
+    "delivery",
+    "unknown",
+]
+Decision = Literal["kept", "eliminated", "coalesced", "held_back", "not_selected"]
+ReasonCode = Literal[
+    "not_found",
+    "duplicate_id",
+    "invalid_shape",
+    "invalid_path",
+    "audit_overlap",
+    "verify_eliminated",
+    "verify_unproven",
+    "validation_skipped",
+    "threshold",
+    "exclusion",
+    "injection",
+    "suppression",
+    "challenge_removed",
+    "challenge_downgraded_removed",
+    "challenge_failed",
+    "challenge_cap",
+    "delivery_cap",
+    "delivery_tier",
+    "unanchored",
+    "body_budget",
+    "post_omission",
+    "unknown",
+]
+Coverage = Literal["complete", "partial", "unavailable"]
+
+
 class LossWire(TypedDict):
-    status: Literal["unavailable"]
+    stage: LossStage
+    physical_stage: Stage | None
+    cause_stage: Stage | None
+    reason_code: ReasonCode
+    reason: str
+    trace_ids: list[str]
+    evidence_refs: list[str]
+    status: Literal["established", "unavailable", "ambiguous"]
 
 
 class BugObservationWire(TypedDict):
@@ -202,8 +259,15 @@ class ScorerOutputsWire(TypedDict):
 
 
 class StageCaptureWire(TypedDict):
-    status: Literal["not_requested", "unavailable"]
+    enabled: bool
+    status: Literal["off", "complete", "unavailable", "refused", "capped"]
     reason: str | None
+    pairwise_call_count: int
+    estimated_cost_usd: float | None
+    cost_cap_usd: float | None
+    price_schedule_sha256: str | None
+    actual_call_count: int
+    actual_cost_usd: float | None
 
 
 class ScorePacketWire(TypedDict):
@@ -426,8 +490,15 @@ class Complete:
 
 @dataclass(frozen=True, slots=True)
 class StageCapture:
-    status: Literal["not_requested", "unavailable"]
+    enabled: bool
+    status: Literal["off", "complete", "unavailable", "refused", "capped"]
     reason: str | None
+    pairwise_call_count: int
+    estimated_cost_usd: float | None
+    cost_cap_usd: float | None
+    price_schedule_sha256: str | None
+    actual_call_count: int
+    actual_cost_usd: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -759,6 +830,8 @@ def write_packet(
     groups,
     adjudications,
     contexts,
+    stage_observations=(),
+    stage_matches=(),
 ) -> ScoreRef:
     pending = request.work_dir
     final = pending.parent / request.score_ref.score_id
@@ -774,11 +847,12 @@ def write_packet(
     for name, records in (
         ("bugs.jsonl", observations),
         ("adjudications.jsonl", adjudications),
+        ("stages.jsonl", stage_observations),
+        ("stage_matches.jsonl", stage_matches),
     ):
         with (pending / name).open("xb") as stream:
             for record in records:
                 stream.write(canonical(asdict(record)) + b"\n")
-    (pending / "stages.jsonl").open("xb").close()
     for context in contexts:
         exclusive_json(
             pending / "contexts" / (context.candidate_id + ".json"), asdict(context)
@@ -952,9 +1026,8 @@ def _load_packet(path: Path, epoch=None, *, allow_pending=False) -> ScorePacket:
     failures = frozenset(
         o.pr_url for o in observations if o.outcome == "operational_failure"
     )
-    if (
-        build_observations(request, evaluations, groups, failures=failures)
-        != observations
+    if build_observations(request, evaluations, groups, failures=failures) != tuple(
+        replace(o, loss=None) for o in observations
     ):
         raise ValueError("packet observations disagree with raw evaluations")
     fp = sum(evaluations[u]["deep-review"]["fp"] for u in urls if u not in failures)
@@ -972,6 +1045,9 @@ def _load_packet(path: Path, epoch=None, *, allow_pending=False) -> ScorePacket:
     for name, expected_hash in manifest["source_artifact_hashes"].items():
         if file_hash(confined(path / "sources", name)) != expected_hash:
             raise ValueError("packet source hash mismatch")
+    from bench.runner.stages import validate_packet_evidence
+
+    validate_packet_evidence(path, packet, observations, candidates)
     adjudications = tuple(
         Adjudication(**json.loads(line))
         for line in (path / "adjudications.jsonl")
@@ -1050,7 +1126,25 @@ def _load_packet(path: Path, epoch=None, *, allow_pending=False) -> ScorePacket:
         metrics_record,
         packet["observations_path"],
         packet["stages_path"],
-        StageCapture(**packet["stage_capture"]),
+        StageCapture(
+            **(
+                {
+                    "enabled": False,
+                    "status": "off"
+                    if packet["stage_capture"]["status"] == "not_requested"
+                    else "unavailable",
+                    "reason": packet["stage_capture"].get("reason"),
+                    "pairwise_call_count": 0,
+                    "estimated_cost_usd": None,
+                    "cost_cap_usd": None,
+                    "price_schedule_sha256": None,
+                    "actual_call_count": 0,
+                    "actual_cost_usd": None,
+                }
+                if "enabled" not in packet["stage_capture"]
+                else packet["stage_capture"]
+            )
+        ),
         packet["adjudications_path"],
         freeze(packet["ledger_row"]),
         packet["complete_path"],

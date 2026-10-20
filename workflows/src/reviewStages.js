@@ -1,4 +1,5 @@
 // Validation, filtering, challenge, and delivery selection stages.
+import { measurementCapacity } from './measurementTrace.js';
 import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap } from './capacity.js';
 import { modelFor } from './registry.js';
@@ -242,7 +243,7 @@ export async function challengeStage(ctx, input) {
 
   const unverified = rankFindings(skipped);
 
-  return {
+  return measurementCapacity({
     findings: applied.findings,
     unverified,
     eliminated: applied.eliminated,
@@ -261,7 +262,7 @@ export async function challengeStage(ctx, input) {
       final_count: applied.stats.final_count,
     },
     generated_at: inp.generatedAt,
-  };
+  }, cap, overflow.length > 0);
 }
 
 // Delivery defaults to all survivors to avoid silently narrowing scope.

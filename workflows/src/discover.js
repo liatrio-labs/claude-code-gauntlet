@@ -1,3 +1,4 @@
+import { stampDiscovery, recordStage, traceDecision } from './measurementTrace.js';
 // Summary and discovery stages, finding schemas, and scope flags.
 import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISPATCH_RESULTS, modelFor, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { computeLightEligible } from './knobs.js';
@@ -224,6 +225,9 @@ export async function discover(ctx, input) {
 
   const gaps = [];
   const findings = [];
+  const intake = [];
+  const decisions = [];
+  const trace = inp.measurementTrace;
   const degradedDims = [];
   let droppedAuditOverlaps = 0;
 
@@ -237,6 +241,8 @@ export async function discover(ctx, input) {
       const checked = checkRemovedTestAudit(inventory, res.removed_test_audit, inp.repoRoot);
       removedTestAudit = checked.audit;
       auditLosses = checked.findings;
+      if (trace) auditLosses = auditLosses.map((f, n) => stampDiscovery(trace, f, spec, i, `synthetic-${n}`));
+      intake.push(...auditLosses);
       findings.push(...auditLosses);
     }
     if (res === null || res === undefined) {
@@ -255,12 +261,15 @@ export async function discover(ctx, input) {
       degradedDims.push(...spec.dimensions);
       return;
     }
-    for (const f of list) {
+    for (const [occurrence, raw] of list.entries()) {
+      const f = trace ? stampDiscovery(trace, raw, spec, i, occurrence) : raw;
+      intake.push(f);
       // The audit already represents coverage lost at this anchor within this dispatch.
       const normalized = repoRelativeFindingPath(inp.repoRoot, f.file);
       // Same start line only: a wider range at that anchor may describe a different untested behaviour.
       if (auditLosses.some((loss) => normalized.file === loss.file && f.line_start === loss.line_start)) {
         droppedAuditOverlaps += 1;
+        if (trace) decisions.push(traceDecision(f, 'audit_overlap', 'removed-test audit represents this anchor'));
         continue;
       }
       delete f.removed_test;
@@ -273,6 +282,10 @@ export async function discover(ctx, input) {
       gaps.push(`${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
     }
   });
+
+  if (trace) recordStage(trace, 'discover', intake, { decisions,
+    dispatched_dimensions: specs.flatMap((spec) => spec.dimensions), degraded_dimensions: [...new Set(degradedDims)],
+    coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
 
   if (droppedAuditOverlaps > 0) removedTestAudit.duplicates_dropped = droppedAuditOverlaps;
 

@@ -1,3 +1,4 @@
+import { measurementDecisions, traceDecision } from './measurementTrace.js';
 import { hostPlatformForRoots } from './paths.js';
 import { modelFor } from './registry.js';
 import { firstUnsafeNumber } from './wire.js';
@@ -74,7 +75,7 @@ export async function verifyStage(ctx, input) {
 
   // A zero-filled ledger spares consumers telling "no slices" from a missing field.
   if (findings.length === 0) {
-    return { findings: [], verified: true, gaps: [], inputProof: emptyInputProof() };
+    return { findings: [], eliminated: [], verified: true, gaps: [], inputProof: emptyInputProof() };
   }
 
   const model = modelFor('code-gauntlet:executor', inp.policy || {});
@@ -99,6 +100,7 @@ export async function verifyStage(ctx, input) {
   }
 
   const out = [];
+  const eliminated = [];
   let degradedSlices = 0;
   const inputProof = { ...emptyInputProof(), slices: slices.length };
 
@@ -162,6 +164,7 @@ export async function verifyStage(ctx, input) {
       else if (attempt.inputFault === 'missing') inputProof.missing += 1;
     }
     out.push(...attempt.verified);
+    eliminated.push(...attempt.eliminated);
     if (attempt.degraded) {
       degradedSlices += 1;
       gaps.push(verifyDegradeGap(`slice ${i}: ${attempt.reason}`, attempt.degraded, findings.length));
@@ -170,7 +173,8 @@ export async function verifyStage(ctx, input) {
     }
   }
 
-  return { findings: out, verified: degradedSlices === 0, gaps, inputProof };
+  return measurementDecisions({ findings: out, eliminated, verified: degradedSlices === 0, gaps, inputProof },
+    eliminated.filter((f) => f.trace_id).map((f) => traceDecision(f, 'verify_eliminated', f.elimination_reason)));
 }
 
 function degradedSlice(slice) {
@@ -214,7 +218,9 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
   }
   const degraded = slice.length - accepted.size;
   return {
-    // Walk once in held order, including trusted eliminations in accepted membership.
+    eliminated: slice.filter((f) => accepted.get(f.id)?.verified === false)
+      .map((f) => ({ ...f, elimination_reason: accepted.get(f.id).elimination_reason })),
+    // Accepted membership includes trusted eliminations exactly once after retry.
     verified: slice.flatMap((f) => accepted.has(f.id)
       ? joinVerifyDeltas([f], [accepted.get(f.id)]) : degradedSlice([f])),
     degraded,

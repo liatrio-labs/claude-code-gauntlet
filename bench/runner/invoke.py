@@ -490,6 +490,7 @@ def supersede_workflow_records(pr_dir):
 
 
 _ATTEMPT_ARTIFACT_PATTERNS = (
+    "measurement-*.json",
     "code-gauntlet-*",
     "post-review-payload*.json",
     "risk-table-*.json",

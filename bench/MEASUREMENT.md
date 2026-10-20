@@ -294,3 +294,52 @@ in a closed issue. The observed failure mode, once a run shows one, belongs in
 - **Paired mini / full-15 / holdout:** owner-triggered only.
 
 See also [`CONTRIBUTING.md`](../CONTRIBUTING.md).
+
+### Stage capture and the instrumented baseline arm
+
+The baseline arm for Wave 0a uses the eventual Wave 0a merge commit, with review
+behavior compared against reference
+`94ea095a89bfc2430814ff4e65db4ba790654fc7` (v3.42.49).
+The merge SHA is pending the orchestrator commit and merge.
+The historical mini baseline remains a separate captured run.
+Instrumentation versions are measurement trace `1` and stage matcher `1`.
+The stage2 equivalence receipt is `../../reports/stage2-equivalence.json`.
+It records both bundle hashes and exact review prompt, schema, ordered GitHub and
+GitLab comment-byte equality, without forge access or measurement model calls.
+The orchestrator must retain that receipt and record the actual merge SHA here.
+
+Workflow capture is automatic and generic.
+Its `code-gauntlet-measurement-<sha>.json` artifact travels through
+`persistReturn.entries`, with its original byte SHA256, separately from the signed
+checkpoint.
+Primary persistence and recovery budgets take priority.
+An oversized trace is unavailable and cannot select a different persistence fallback.
+Old checkpoints without compatible separate evidence give partial stage coverage.
+Collection binds trace bytes and Workflow record hashes to the captured attempt.
+Superseded artifacts are excluded from scoring.
+
+Stage judging is off by default.
+Use `python3 bench/run.py --score-only RUN_ID --golden-epoch EPOCH_ID
+--capture-stages --stage-cost-cap-usd AMOUNT` for an explicitly capped diagnostic.
+The cap must be finite and nonnegative before delivered scoring starts.
+Only delivered misses generate stage pairs.
+Identical golden/claim/evaluator pairs share a request across the entire score.
+Every call and retry reserves its maximum charge before dispatch.
+Unmeasured actual cost remains null.
+
+The operator must supply a pinned `stage_prices` object in the scoring baselines
+file, with `model`, `as_of`, `input_usd_per_million` and
+`output_usd_per_million` matching the judge pin.
+The schedule hash, UTF-8 input-byte upper bound and maximum output budget determine
+the printed estimate.
+Prices are deliberately unset until supplied; unavailable prices or an over-cap
+estimate refuse stage dispatch while preserving delivered scoring.
+Stage results, retries, immutable source bindings and losses live in the score packet.
+Missing trace or match evidence produces unavailable diagnostics, rather than misses.
+Dimension counts credit matched source evidence only; null recall discloses partial
+coverage, including delivered hits whose discovery claims were not separately judged.
+Severity continues to describe drift and is not a discovery dimension.
+
+The required post-merge known-loss smoke demonstration, capped paid stage matching
+and measured trace-materialization overhead remain unverified.
+Synthetic code tests do not replace that live acceptance receipt.

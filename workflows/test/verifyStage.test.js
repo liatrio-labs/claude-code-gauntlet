@@ -229,6 +229,7 @@ for (const row of LOCAL_ROWS) test(`per-record recovery: ${row.name}`, async () 
   assert.equal(out.verified, degraded.length === 0);
   assert.deepEqual(out.findings, findings.filter((f) => !(row.acceptedElimination && f.id === 'F0'))
     .map((f) => ({ ...f, origin: degraded.includes(f.id) ? 'unknown' : 'new' })));
+  assert.deepEqual(out.eliminated, row.acceptedElimination ? [{ ...findings[0], elimination_reason: ELIMINATION_STAMP }] : []);
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, localised: 3 - row.bad.length,
     retriedFindings: row.bad.length, degradedFindings: degraded.length,
     ...(degraded.length ? { mismatched: 1 } : { retried: 1, [row.missing ? 'retriedMissing' : 'retriedMismatch']: 1 }),
@@ -328,7 +329,7 @@ for (const [name, receipt, fault] of [
 });
 test('empty input emits the complete zero ledger', async () => {
   const ctx = verifyCtx(() => { throw new Error('must not dispatch'); });
-  assert.deepEqual(await verifyStage(ctx, verifyInput([])), { findings: [], verified: true, gaps: [], inputProof: ZERO });
+  assert.deepEqual(await verifyStage(ctx, verifyInput([])), { findings: [], eliminated: [], verified: true, gaps: [], inputProof: ZERO });
 });
 
 const bulk = (prefix, length, chars) => Array.from({ length }, (_, i) => ({

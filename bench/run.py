@@ -775,6 +775,19 @@ def _run_prs(
             _collect_artifacts(output_dir, pr_dir)
             if not is_naive:
                 invoke.collect_workflow_records(claude_home, pr_dir, wf_baseline)
+                from bench.runner.stages import TraceUnavailableWire, collect_trace
+
+                try:
+                    collect_trace(pr_dir)
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    diagnostic: TraceUnavailableWire = {
+                        "status": "unavailable",
+                        "reason": str(exc),
+                    }
+                    (pr_dir / "measurement-unavailable.json").write_text(
+                        json.dumps(diagnostic),
+                        encoding="utf-8",
+                    )
         except Exception as exc:  # noqa: BLE001 - fail only this PR and continue
             # PR-granular progress: an unexpected error (bad JSON, an OSError during
             # collection, a plain bug) must fail only this PR and let the tier continue --
@@ -1089,7 +1102,9 @@ def _resume(run_id, args, retry):
     return _exit_code(final, urls)
 
 
-def _score_only(run_id, *, epoch_id=None):
+def _score_only(
+    run_id, *, epoch_id=None, capture_stages=False, stage_cost_cap_usd=None
+):
     run_dir = RUNS_ROOT / run_id
     try:
         from bench.runner import score
@@ -1104,7 +1119,12 @@ def _score_only(run_id, *, epoch_id=None):
         print(f"No run dir at {run_dir} to score.", file=sys.stderr)
         return 2
     try:
-        result = score.score_run(str(run_dir), epoch_id=epoch_id)
+        options = {"epoch_id": epoch_id}
+        if capture_stages or stage_cost_cap_usd is not None:
+            options.update(
+                capture_stages=capture_stages, stage_cost_cap_usd=stage_cost_cap_usd
+            )
+        result = score.score_run(str(run_dir), **options)
     except (ValueError, RuntimeError) as exc:
         print(f"--score-only failed for {run_id}: {exc}", file=sys.stderr)
         return 2
@@ -1225,6 +1245,8 @@ def parse_args(argv=None):
     )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
     parser.add_argument("--golden-epoch", metavar="EPOCH_ID")
+    parser.add_argument("--capture-stages", action="store_true")
+    parser.add_argument("--stage-cost-cap-usd", type=float)
     parser.add_argument(
         "--check",
         metavar="RUN_ID",
@@ -1240,6 +1262,10 @@ def parse_args(argv=None):
         "The alias 'mini' expands to the pre-registered 6-PR mini subset.",
     )
     args = parser.parse_args(argv)
+    if (
+        args.capture_stages or args.stage_cost_cap_usd is not None
+    ) and not args.score_only:
+        parser.error("stage capture is available only with --score-only")
     # Validate --prs against the golden set at parse time so an unknown URL is a hard
     # argparse error (exit 2), never a mid-run surprise; normalize the string to a list.
     # The documented alias ``mini`` expands to subsets.json["mini"] (still labels custom).
@@ -1279,6 +1305,13 @@ def main(argv=None):
     # --score-only / --check have different prerequisites (no claude/gh invocation) and
     # are handled before the run prereq checks.
     if args.score_only:
+        if args.capture_stages or args.stage_cost_cap_usd is not None:
+            return _score_only(
+                args.score_only,
+                epoch_id=args.golden_epoch,
+                capture_stages=args.capture_stages,
+                stage_cost_cap_usd=args.stage_cost_cap_usd,
+            )
         if args.golden_epoch is None:
             return _score_only(args.score_only)
         return _score_only(args.score_only, epoch_id=args.golden_epoch)

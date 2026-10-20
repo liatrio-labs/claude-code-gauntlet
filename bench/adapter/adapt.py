@@ -72,7 +72,14 @@ def _iter_comments(payload):
         )
 
 
-def payload_to_candidates(payload_json, golden_url, tool=DEFAULT_TOOL):
+def payload_to_candidates(
+    payload_json,
+    golden_url,
+    tool=DEFAULT_TOOL,
+    *,
+    selected_findings=None,
+    diff_text=None,
+):
     """Convert one PR's dry-run payload into a candidates dict.
 
     ``payload_json`` may be a payload dict or a path to the payload JSON file.
@@ -84,6 +91,14 @@ def payload_to_candidates(payload_json, golden_url, tool=DEFAULT_TOOL):
         {"text": text, "path": path, "line": line, "source": "extracted"}
         for text, path, line in _iter_comments(payload)
     ]
+    if selected_findings is not None:
+        from bench.runner.provenance import map_delivery
+
+        mapped = map_delivery(payload, selected_findings, diff_text or "")
+        for candidate, source in zip(candidates, mapped, strict=True):
+            candidate["source_trace_ids"] = list(source.source_trace_ids)
+            candidate["discovery_dimensions"] = list(source.discovery_dimensions)
+            candidate["provenance_status"] = source.provenance_status
     result = {golden_url: {tool: candidates}}
     stats = {
         "n_candidates": len(candidates),
