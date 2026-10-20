@@ -17,7 +17,7 @@ Every cost below is `auth_mode=api` spend; see
 |------|------|------|---------|---------------|---------|
 | Always-on suites | `suites-only` | `pytest` (pipeline + `bench/tests/`) + `node --test workflows/test/*.test.js` + `pre-commit` | Every PR / every commit path | $0 | Deterministic correctness |
 | Functional smoke | `smoke` | `--tier smoke` (2–3 PRs) + mechanical checker | Per sub-release, run by the release manager | ~$21–$32 (mean ~$27; 16–22 min/PR) | "No bugs, functions correctly" — **not** performance proof |
-| Paired mini-subset | `paired-mini` | `--tier mini` or `--prs mini` (6 PRs) vs baseline of record | Owner-triggered, only when a change plausibly moves recall/noise | ~$78–$85 / leg | Gate-grade paired measurement |
+| Paired mini-subset | `paired-mini` | `--tier mini` or `--prs mini` (6 PRs) vs baseline of record | Owner-triggered, only when a change plausibly moves recall/noise | $19–$85 / leg in the ledger ($19.47 on v3.42.49) | Gate-grade paired measurement |
 | Full-15 / holdout | — | `--tier subset` (~$190–$230) / `--tier holdout` (sealed) | Owner-triggered, release-grade | see ledger | Confirmation / V3.2 reservation |
 
 The `Slug` column is the spelling work-queue issues and PR descriptions use
