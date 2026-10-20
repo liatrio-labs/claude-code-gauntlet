@@ -672,6 +672,38 @@ def test_operational_compare_complete_matrix_and_extension_prefix_refusal(
         )
 
 
+@pytest.mark.parametrize("location", ["run", "packet"])
+@pytest.mark.parametrize("mutation", ["reordered", "duplicate", "missing", "different"])
+def test_compare_uses_equal_length_pr_sets(operational_case, location, mutation):
+    spec, packets, window = operational_case
+    ref = spec.baseline.scores[0]
+    packet = packets[ref]
+    urls = list(reversed(window.pr_urls))
+    if mutation == "duplicate":
+        urls.append(urls[0])
+    elif mutation == "missing":
+        urls.pop()
+    elif mutation == "different":
+        urls[0] = "https://github.com/example/other/pull/1"
+    if location == "packet":
+        packets[ref] = replace(
+            packet, manifest=replace(packet.manifest, requested_pr_urls=tuple(urls))
+        )
+    else:
+        path = packet.root / "run-provenance.json"
+        run = read_json(path)
+        run["pr_urls"] = urls
+        path.write_text(json.dumps(run), encoding="utf-8")
+    if mutation == "reordered":
+        assert (
+            c.compare_arms(spec, packet_loader=packets.__getitem__).promotion.verdict
+            == "pass"
+        )
+    else:
+        with pytest.raises(ValueError, match=r"PR.*identity|PR in selected run"):
+            c.compare_arms(spec, packet_loader=packets.__getitem__)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

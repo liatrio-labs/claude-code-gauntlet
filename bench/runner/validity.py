@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 
 from bench.runner.epochs import (  # noqa: E402
     DEFAULT_ROOT,
+    JsonValue,
     confined,
     digest,
     file_hash,
@@ -57,6 +58,7 @@ InvalidReason = Literal[
     "missing_provenance",
     "provider_transient",
     "review_failure_unconfirmed",
+    "pre_dispatch_failure",
 ]
 EFFORT_KEYS = (
     "CLAUDE_CODE_EFFORT_LEVEL",
@@ -75,6 +77,7 @@ RETRY_REASONS = frozenset(
         "subscription_stall_unknown",
         "provider_transient",
         "review_failure_unconfirmed",
+        "pre_dispatch_failure",
     }
 )
 
@@ -456,6 +459,74 @@ def recheck_cli(fingerprint, *, probe=cli_probe):
         raise ValueError("cli_mismatch: pinned CLI changed before child dispatch")
 
 
+def same_pr_set(actual, expected):
+    return len(actual) == len(expected) and set(actual) == set(expected)
+
+
+class ChildFailureEventWire(TypedDict):
+    source: Literal["child_result"]
+    authenticated: Literal[True]
+    code: str
+    phase: Literal["child_result"]
+    diagnostic_sha256: str
+
+
+def _normalize_diagnostic(text):
+    # Keep semantic diagnostics while removing per-request transport metadata.
+    patterns = (
+        (r"\b(?:request|req)[_ -]?id[\"']?\s*[:=]?\s*[\"']?[\w.-]+", "request_id=<id>"),
+        (r"\breq_[A-Za-z0-9_-]+\b", "<request-id>"),
+        (r"\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b", "<uuid>"),
+        (
+            r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?",
+            "<timestamp>",
+        ),
+        (
+            r"\b(timestamp|time)[\"']?\s*[:=]\s*[\"']?\d{10,}(?:\.\d+)?",
+            r"\1=<timestamp>",
+        ),
+        (
+            r"\b(byte(?:[_ -]?offset)?|offset)[\"']?\s*[:=]?\s*[\"']?\d+\b",
+            r"\1=<offset>",
+        ),
+    )
+    for pattern, replacement in patterns:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
+
+
+def _child_failure_event(envelope) -> ChildFailureEventWire | None:
+    if (
+        not envelope
+        or envelope.get("type") != "result"
+        or envelope.get("is_error") is not True
+    ):
+        return None
+    status = envelope.get("api_error_status")
+    terminal = envelope.get("terminal_reason")
+    subtype = envelope.get("subtype")
+    errors = envelope.get("errors")
+    diagnostic: list[JsonValue] = [
+        _normalize_diagnostic(value) if isinstance(value, str) else None
+        for value in (terminal, subtype)
+    ]
+    diagnostic.append(
+        sorted(_normalize_diagnostic(e) for e in errors if isinstance(e, str))
+        if isinstance(errors, list)
+        else []
+    )
+    code = str(status) if type(status) is int else terminal or subtype
+    if not code and not any(diagnostic):
+        return None
+    return {
+        "source": "child_result",
+        "authenticated": True,
+        "code": _normalize_diagnostic(str(code or "child_failure")),
+        "phase": "child_result",
+        "diagnostic_sha256": digest(diagnostic),
+    }
+
+
 def classify_attempt(
     result,
     *,
@@ -470,7 +541,7 @@ def classify_attempt(
     known = {
         "plugin_mutated_by_child": "input_drift",
         "incomplete_sha_entry": "input_drift",
-        "mirror_error": "input_drift",
+        "input_drift": "input_drift",
         "missing_payload": "artifact_missing",
         "no_payload": "artifact_missing",
         "naive_output_unparseable": "artifact_missing",
@@ -481,6 +552,22 @@ def classify_attempt(
         "claude_not_found": "cli_mismatch",
     }
     specific = next((v for k, v in known.items() if k in reason), None)
+    if specific == "input_drift":
+        return Validity("invalid", (specific,))
+    if (
+        result.status != "ok"
+        and (not result.child_dispatched or reason == "mirror_error")
+        and result.cost_usd == 0
+        and not result.per_model.entries
+    ):
+        return Validity(
+            "invalid",
+            ("pre_dispatch_failure",),
+            evidence_refs=("pre-dispatch:no-child-spend",),
+            retryable=True,
+        )
+    if specific:
+        return Validity("invalid", (specific,))
     if not specific and any(
         k in reason
         for k in ("identity", "auth", "setup", "cli_", "scoring", "input_drift")
@@ -526,7 +613,10 @@ def classify_attempt(
     )
     transient = failure and (
         failure["code"] in ("overloaded", "rate_limit", "retryable_rate_limit")
-        or str(failure["code"]).startswith("5")
+        or (
+            str(failure["code"]).isdigit()
+            and (int(failure["code"]) == 429 or int(failure["code"]) >= 500)
+        )
     )
     cause = (
         "provider_transient"
@@ -542,7 +632,7 @@ def classify_attempt(
     )
     if retry_at:
         timestamp(retry_at)
-    evidence = (
+    evidence = ("child-auth:" + auth_mode,) + (
         ()
         if not failure
         else (
@@ -753,10 +843,23 @@ def check_retry(original, *, now, reset_evidence=None, reset_confirmed_at=None):
     value = original.validity
     if not value.retryable or not set(value.reasons) <= RETRY_REASONS:
         raise ValueError("unrelated invalid attempt cannot retry")
+    if value.reasons == ("pre_dispatch_failure",):
+        return None
     if value.retry_not_before and timestamp(now) < timestamp(value.retry_not_before):
         wait = (timestamp(value.retry_not_before) - timestamp(now)).total_seconds()
         raise ValueError(f"retry refused: remaining wait {wait:g} seconds")
-    auth = value.observed.auth_mode if value.observed else None
+    auth = (
+        value.observed.auth_mode
+        if value.observed
+        else next(
+            (
+                r.removeprefix("child-auth:")
+                for r in value.evidence_refs
+                if r.startswith("child-auth:")
+            ),
+            None,
+        )
+    )
     if auth == "subscription" or set(value.reasons) & {
         "subscription_stall_unknown",
         "usage_limit",
@@ -813,22 +916,36 @@ def confirm_failure(original, retry, *, reset_evidence):
         raise ValueError("failure confirmation must be independent")
     if retry.validity.state == "valid":
         return CellSelection("", 0, retry.pr_url, retry.attempt_id, None, attempt=retry)
+    no_fingerprint = (
+        original.validity.failure_fingerprint is None
+        and retry.validity.failure_fingerprint is None
+    )
     if (
         "usage_limit" in retry.validity.reasons
         or "usage_limit" in original.validity.reasons
-        or not retry.validity.failure_fingerprint
-        or original.validity.failure_fingerprint != retry.validity.failure_fingerprint
+        or (
+            not no_fingerprint
+            and original.validity.failure_fingerprint
+            != retry.validity.failure_fingerprint
+        )
     ):
         raise ValueError("failure not confirmed: changed or definitive quota cause")
     if (
         not original.validity.retryable
         or not retry.validity.retryable
+        or not set(original.validity.reasons)
+        <= RETRY_REASONS - {"pre_dispatch_failure"}
+        or not set(retry.validity.reasons) <= RETRY_REASONS - {"pre_dispatch_failure"}
         or timestamp(retry.started_at) < timestamp(original.completed_at)
     ):
         raise ValueError("failure not retryable")
     if (
-        original.validity.observed
-        and original.validity.observed.auth_mode == "subscription"
+        (
+            original.validity.observed
+            and original.validity.observed.auth_mode == "subscription"
+        )
+        or "child-auth:subscription" in original.validity.evidence_refs
+        or "subscription_stall_unknown" in original.validity.reasons
     ):
         if not reset_evidence or not retry.validity.confirmed_reset_at:
             raise ValueError("reset_not_confirmed")
@@ -848,6 +965,16 @@ def confirm_failure(original, retry, *, reset_evidence):
         sorted(
             {
                 *target.validity.evidence_refs,
+                *(
+                    [
+                        "failure-confirmation:recurring-same-pr-without-stable-fingerprint",
+                        "original-failure-reason:"
+                        + ",".join(original.validity.reasons),
+                        "retry-failure-reason:" + ",".join(retry.validity.reasons),
+                    ]
+                    if no_fingerprint
+                    else []
+                ),
                 *(
                     ["confirmation-source:" + retry.run_id + "/" + retry.attempt_id]
                     if cross_auth
@@ -934,6 +1061,14 @@ def failure_confirmation_ref(attempt):
             if ref.startswith("confirmation-source:")
         ),
         attempt.validity.retry_of,
+    )
+
+
+def confirmed_failure(attempt):
+    return bool(failure_confirmation_ref(attempt)) and (
+        bool(attempt.validity.failure_fingerprint)
+        or "failure-confirmation:recurring-same-pr-without-stable-fingerprint"
+        in attempt.validity.evidence_refs
     )
 
 
@@ -1207,19 +1342,8 @@ def collect_attempt(
             Path(result.raw_json_path).read_text(encoding="utf-8")
         )
     observed = tuple(sorted((envelope or {}).get("modelUsage", {})))
-    events = []
-    error = (envelope or {}).get("error")
-    if isinstance(error, dict) and error.get("code") and error.get("phase"):
-        events.append(
-            {
-                "source": "child_result",
-                "authenticated": True,
-                "code": str(error["code"]),
-                "phase": error["phase"],
-                "diagnostic_sha256": digest(error.get("message", "")),
-                "retry_not_before": error.get("retry_not_before"),
-            }
-        )
+    event = _child_failure_event(envelope)
+    events = [event] if event else []
     value = classify_attempt(
         result,
         auth_mode=manifest.get("child_auth", "api"),

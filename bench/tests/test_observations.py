@@ -158,8 +158,21 @@ def test_superseded_payload_does_not_mask_missing_current_payload(score_case):
         score_case.execute()
 
 
+@pytest.mark.parametrize("field", ["urls", "pr_urls"])
+def test_score_refuses_duplicate_requested_prs(score_case, field):
+    manifest = score_case.run / "run.json"
+    value = read_json(manifest)
+    value.pop("urls", None)
+    value[field] = [score_case.url, score_case.url]
+    manifest.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(ValueError, match="requested PR matrix"):
+        score_case.execute()
+    assert not score_case.calls
+
+
+@pytest.mark.parametrize("structured", [True, False])
 def test_countable_failure_has_full_zero_denominator_and_unresolved_pr_refuses(
-    score_case,
+    score_case, structured
 ):
     state = score_case.run / "state/a.json"
     state.write_text(
@@ -177,37 +190,24 @@ def test_countable_failure_has_full_zero_denominator_and_unresolved_pr_refuses(
             {
                 "type": "result",
                 "is_error": True,
-                "error": {
-                    "code": "review_failed",
-                    "phase": "review",
-                    "message": "same",
-                },
+                "terminal_reason": "aborted_tools",
+                "subtype": "error_during_execution",
+                "errors": ["same review failure"],
             }
         ),
         encoding="utf-8",
     )
     result = InvokeResult(
-        "failed", reason="same review failure", raw_json_path=str(raw)
+        "failed",
+        reason="same review failure",
+        raw_json_path=str(raw) if structured else None,
     )
-    original = validity.snapshot_attempt(
+    original = validity.collect_attempt(
         score_case.run,
         score_case.payload.parent,
-        run_id="run",
-        pr_url=score_case.url,
+        url=score_case.url,
         result=result,
-        validity=validity.classify_attempt(
-            result,
-            auth_mode="api",
-            trusted_events=[
-                {
-                    "source": "child_result",
-                    "authenticated": True,
-                    "code": "review_failed",
-                    "phase": "review",
-                    "diagnostic_sha256": digest("same"),
-                }
-            ],
-        ),
+        manifest={"run_id": "run", "child_auth": "api"},
         started_at=validity.utc_now(),
     )
     confirmed = validity.collect_attempt(

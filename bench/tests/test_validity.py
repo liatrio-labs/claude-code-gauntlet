@@ -11,6 +11,7 @@ from bench.runner import checkpoint
 from bench.runner import validity as v
 from bench.runner.epochs import DEFAULT_ROOT, load_epoch, read_json
 from bench.runner.invoke import InvokeResult
+from bench.tests.test_harness_boundaries import harness as harness
 
 NOW = "2026-10-20T12:00:00Z"
 
@@ -414,9 +415,265 @@ def test_fake_child_failure_envelope_is_classified_at_collection(
     assert attempt.validity.reasons == (cause,) and attempt.validity.state == "invalid"
     assert (
         attempt.validity.failure_fingerprint is not None
-        if mode == "provider_overload"
+        if mode != "fast_exit"
         else attempt.validity.failure_fingerprint is None
     )
+
+
+@pytest.mark.parametrize("auth", ["api", "subscription"])
+@pytest.mark.parametrize(
+    "fixture", ["api_connection_closed", "api_bad_request", "aborted_tools"]
+)
+def test_recorded_cli_failure_is_confirmed_after_its_retry_gate(
+    tmp_path, monkeypatch, fingerprint, auth, fixture
+):
+    envelope = read_json(
+        Path(__file__).parent / "fixtures/cli_failures" / f"{fixture}.json"
+    )
+    pr = tmp_path / "pr"
+    pr.mkdir()
+    raw = pr / "raw.json"
+    raw.write_text(json.dumps(envelope), encoding="utf-8")
+    manifest = {
+        "child_auth": auth,
+        "provenance": replace(fingerprint, auth_mode=auth).wire(),
+    }
+    result = InvokeResult("failed", raw_json_path=str(raw))
+    original = v.collect_attempt(
+        tmp_path, pr, url="pr", result=result, started_at=NOW, manifest=manifest
+    )
+    assert original.validity.failure_fingerprint
+    assert original.validity.state == "invalid"
+    reset = tmp_path / "public-reset.json"
+    reset.write_text('{"reset":true}', encoding="utf-8")
+    if auth == "subscription":
+        with pytest.raises(ValueError, match="reset_not_confirmed"):
+            v.check_retry(original, now="2026-10-20T14:00:00Z")
+    reset_ref = v.check_retry(
+        original,
+        now="2026-10-20T14:00:00Z",
+        reset_evidence=reset,
+        reset_confirmed_at="2026-10-20T13:00:00Z",
+    )
+    monkeypatch.setattr(v, "utc_now", lambda: "2026-10-20T14:00:00Z")
+    retry = v.collect_attempt(
+        tmp_path,
+        pr,
+        url="pr",
+        result=result,
+        started_at=v.utc_now(),
+        manifest=manifest,
+        prior=original,
+        reset_at="2026-10-20T13:00:00Z" if reset_ref else None,
+        reset_ref=reset_ref,
+    )
+    assert retry.validity.state == "operational_failure"
+    assert retry.validity.failure_fingerprint == original.validity.failure_fingerprint
+    assert v.confirmed_failure(retry)
+
+
+@pytest.mark.parametrize("status", [429, 500, 503, 529, 600, 400])
+def test_cli_api_status_classification_and_normalized_confirmation(
+    tmp_path, monkeypatch, status
+):
+    pr = tmp_path / "pr"
+    pr.mkdir()
+    raw = pr / "raw.json"
+    envelope = read_json(
+        Path(__file__).parent / "fixtures/cli_failures/api_bad_request.json"
+    )
+    envelope["api_error_status"] = status
+    manifest = {"child_auth": "api"}
+    result = InvokeResult("failed", raw_json_path=str(raw))
+
+    def collect(prior, diagnostic):
+        raw.write_text(
+            json.dumps({**envelope, "errors": [diagnostic]}), encoding="utf-8"
+        )
+        return v.collect_attempt(
+            tmp_path,
+            pr,
+            url="pr",
+            result=result,
+            started_at=v.utc_now(),
+            manifest=manifest,
+            prior=prior,
+        )
+
+    original = collect(
+        None,
+        "Connection closed request_id=req_first at 2026-10-20T12:00:00.123Z byte offset 123",
+    )
+    assert original.validity.reasons == (
+        ("provider_transient",) if status != 400 else ("review_failure_unconfirmed",)
+    )
+    monkeypatch.setattr(v, "utc_now", lambda: "2026-10-20T14:00:00Z")
+    retry = collect(
+        original,
+        "Connection closed request_id=req_second at 2026-10-20T14:00:00.999Z byte offset 987",
+    )
+    assert retry.validity.state == "operational_failure"
+    assert retry.validity.failure_fingerprint == original.validity.failure_fingerprint
+    changed = collect(
+        original,
+        "Malformed tool arguments request_id=req_third at 2026-10-20T14:00:00Z byte offset 789",
+    )
+    assert changed.validity.state == "invalid" and changed.validity.retryable
+    assert changed.validity.failure_fingerprint != original.validity.failure_fingerprint
+
+
+@pytest.mark.parametrize("auth", ["api", "subscription"])
+@pytest.mark.parametrize(
+    "status,reason", [("timeout", "watchdog_timeout"), ("failed", "fast_exit")]
+)
+def test_failure_without_fingerprint_counts_only_after_same_pr_retry(
+    tmp_path, monkeypatch, fingerprint, auth, status, reason
+):
+    pr = tmp_path / "pr"
+    pr.mkdir()
+    result = InvokeResult(status, reason=reason)
+    manifest = {
+        "child_auth": auth,
+        "provenance": replace(fingerprint, auth_mode=auth).wire(),
+    }
+    original = v.collect_attempt(
+        tmp_path, pr, url="pr", result=result, started_at=NOW, manifest=manifest
+    )
+    assert (
+        original.validity.state == "invalid"
+        and original.validity.failure_fingerprint is None
+    )
+    reset = tmp_path / "public-reset.json"
+    reset.write_text('{"reset":true}', encoding="utf-8")
+    reset_at = "2026-10-20T13:00:00Z"
+    if auth == "subscription":
+        monkeypatch.setattr(v, "utc_now", lambda: "2026-10-20T14:00:00Z")
+        unconfirmed = v.collect_attempt(
+            tmp_path,
+            pr,
+            url="pr",
+            result=result,
+            started_at=v.utc_now(),
+            manifest=manifest,
+            prior=original,
+        )
+        assert unconfirmed.validity.state == "invalid"
+        with pytest.raises(ValueError, match="reset_not_confirmed"):
+            v.check_retry(original, now=v.utc_now())
+    reset_ref = v.check_retry(
+        original,
+        now="2026-10-20T14:00:00Z",
+        reset_evidence=reset,
+        reset_confirmed_at=reset_at,
+    )
+    monkeypatch.setattr(v, "utc_now", lambda: "2026-10-20T14:00:00Z")
+    retry = v.collect_attempt(
+        tmp_path,
+        pr,
+        url="pr",
+        result=result,
+        started_at=v.utc_now(),
+        manifest=manifest,
+        prior=original,
+        reset_at=reset_at if reset_ref else None,
+        reset_ref=reset_ref,
+    )
+    assert retry.validity.state == "operational_failure"
+    assert retry.validity.failure_fingerprint is None
+    assert (
+        "failure-confirmation:recurring-same-pr-without-stable-fingerprint"
+        in retry.validity.evidence_refs
+    )
+    assert (
+        "original-failure-reason:" + ",".join(original.validity.reasons)
+        in retry.validity.evidence_refs
+    )
+    with pytest.raises(ValueError, match="same PR"):
+        v.confirm_failure(
+            original, replace(retry, pr_url="other"), reset_evidence=reset_ref
+        )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["mirror_error", "claude_not_found", "unexpected_error:auth setup unavailable"],
+)
+def test_pre_dispatch_subscription_failure_needs_no_reset_and_never_counts(
+    fingerprint, reason
+):
+    value = v.classify_attempt(
+        InvokeResult("failed", reason=reason, child_dispatched=False),
+        auth_mode="subscription",
+    )
+    original = v.AttemptRecord(
+        1,
+        "a",
+        "run",
+        "pr",
+        NOW,
+        NOW,
+        "failed",
+        "mirror_error",
+        replace(value, observed=replace(fingerprint, auth_mode="subscription")),
+        (),
+        1,
+        (),
+        (),
+    )
+    assert v.check_retry(original, now=NOW) is None
+    retry = replace(
+        original, attempt_id="b", validity=replace(original.validity, retry_of="a")
+    )
+    with pytest.raises(ValueError, match="not retryable"):
+        v.confirm_failure(original, retry, reset_evidence=None)
+
+
+@pytest.mark.parametrize("mutation", [None, "duplicate", "missing", "different"])
+def test_run_window_pr_identity_and_manifest_order(
+    harness, monkeypatch, window, mutation
+):
+    window = replace(window, pr_urls=tuple(reversed(window.pr_urls)))
+    path = harness.workspace / "window.json"
+    v.exclusive_json(path, window.wire())
+    monkeypatch.setattr(v, "run_provenance", lambda **kwargs: window.expected.wire())
+    monkeypatch.setattr(v, "recheck_cli", lambda fp: None)
+    urls = list(reversed(window.pr_urls))
+    if mutation == "duplicate":
+        urls.append(urls[0])
+    elif mutation == "missing":
+        urls.pop()
+    elif mutation == "different":
+        urls[0] = next(
+            url
+            for url in run._load_json(run.GOLDEN_DIR / "shas.json")
+            if url not in urls
+        )
+    calls = []
+
+    def invoke(worktree, pr, run_dir, **kwargs):
+        calls.append(pr["url"])
+        return InvokeResult("failed", reason="fast_exit")
+
+    monkeypatch.setattr(run.invoke, "invoke_review", invoke)
+    args = [
+        "--prs",
+        ",".join(urls),
+        "--measurement-window",
+        str(path),
+        "--child-model",
+        "claude-session-1",
+        "--run-index",
+        "0",
+        "--arm",
+        "baseline",
+    ]
+    assert run.main(args) == (1 if mutation is None else 2)
+    if mutation:
+        assert not calls and not harness.commands
+    else:
+        manifest = read_json(next(run.RUNS_ROOT.glob("*/run.json")))
+        assert manifest["pr_urls"] == list(window.pr_urls)
+        assert calls == list(window.pr_urls)
 
 
 @pytest.mark.parametrize(

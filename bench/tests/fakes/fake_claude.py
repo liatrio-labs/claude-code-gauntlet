@@ -357,11 +357,11 @@ def main():
         envelope["is_error"] = True
         envelope["subtype"] = "error_during_execution"
         if mode == "provider_overload":
-            envelope["error"] = {
-                "code": os.environ.get("FAKE_CLAUDE_FAILURE_CODE", "overloaded"),
-                "phase": "review",
-                "message": "synthetic provider failure",
-            }
+            envelope["api_error_status"] = int(
+                os.environ.get("FAKE_CLAUDE_FAILURE_CODE", "529")
+            )
+            envelope["terminal_reason"] = "api_error"
+            envelope["errors"] = ["synthetic provider failure"]
         if mode != "fast_exit":
             print(json.dumps(envelope))
         raise SystemExit(1)

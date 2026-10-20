@@ -1099,9 +1099,7 @@ def compare_arms(
                 identity = evaluator
             elif evaluator != identity:
                 raise ValueError("mixed evaluator identities")
-            if set(packet.manifest.requested_pr_urls) != set(scope) or len(
-                packet.manifest.requested_pr_urls
-            ) != len(scope):
+            if not validity.same_pr_set(packet.manifest.requested_pr_urls, scope):
                 raise ValueError("missing/extra PR in selected run")
             expected = {b.bug_id for b in epoch.bugs if b.pr_url in scope}
             by_bug = {b.bug_id: b for b in packet.observations}
@@ -1120,6 +1118,7 @@ def compare_arms(
                 assert window is not None and spec.window_path is not None
                 if (
                     run.get("provenance") != window.expected.wire()
+                    or not validity.same_pr_set(run.get("pr_urls") or (), scope)
                     or run.get("window_id") != window.window_id
                     or run.get("window_sha256")
                     != validity.file_hash(Path(spec.window_path))

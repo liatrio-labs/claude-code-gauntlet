@@ -400,6 +400,67 @@ def test_mixed_auth_library_validates_separate_windows_and_shared_model_identity
         s.load_simulation_spec(source, packet_loader=packets.__getitem__)
 
 
+@pytest.mark.parametrize("location", ["run", "packet"])
+@pytest.mark.parametrize("mutation", ["reordered", "duplicate", "missing", "different"])
+def test_simulation_uses_equal_length_pr_sets(
+    operational_case, tmp_path, location, mutation
+):
+    import json
+
+    from bench.runner.epochs import read_json
+
+    spec, packets, window = operational_case
+    ref = spec.baseline.scores[0]
+    packet = packets[ref]
+    urls = list(reversed(window.pr_urls))
+    if mutation == "duplicate":
+        urls.append(urls[0])
+    elif mutation == "missing":
+        urls.pop()
+    elif mutation == "different":
+        urls[0] = "https://github.com/example/other/pull/1"
+    if location == "packet":
+        packets[ref] = replace(
+            packet, manifest=replace(packet.manifest, requested_pr_urls=tuple(urls))
+        )
+    else:
+        path = packet.root / "run-provenance.json"
+        run = read_json(path)
+        run["pr_urls"] = urls
+        path.write_text(json.dumps(run), encoding="utf-8")
+    source = tmp_path / "simulation.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "baseline_scores": [c.wire(r) for r in spec.baseline.scores],
+                "epoch_id": spec.epoch_id,
+                "profile": "core",
+                "contamination_path": spec.contamination_path,
+                "populations_path": spec.populations_path,
+                "rules": [c.wire(replace(spec.rule, frozen=False))],
+                "trials": 1,
+                "seed": 1,
+                "generators": ["empirical_run_vectors"],
+                "effects_pp": [0],
+                "baseline_groundedness_audit_path": None,
+                "groundedness_model": "conditional_pass",
+                "power_target": None,
+                "mde_effect_grid_pp": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    if mutation == "reordered":
+        library, _ = s.load_simulation_spec(source, packet_loader=packets.__getitem__)
+        assert len(library.vectors) == len(spec.baseline.scores)
+    else:
+        with pytest.raises(
+            ValueError, match=r"source window/run identity|evaluator/epoch"
+        ):
+            s.load_simulation_spec(source, packet_loader=packets.__getitem__)
+
+
 def test_sensitivity_common_pr_uniform_and_negative_covariance_are_explicit(
     library, paired_case, monkeypatch
 ):

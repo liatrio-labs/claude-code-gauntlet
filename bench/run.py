@@ -16,6 +16,7 @@ import sys
 import traceback
 from collections import defaultdict
 from contextlib import contextmanager, suppress
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -528,6 +529,7 @@ def _naive_payload_from_result(result_text, pr_dir):
     return dest
 
 
+@invoke.track_child_dispatch
 def _invoke_naive(
     worktree,
     pr,
@@ -536,6 +538,8 @@ def _invoke_naive(
     bench_entry,
     timeout_s,
     child_auth=ledger.API_AUTH_MODE,
+    *,
+    _popen=None,
 ):
     """Run the bare single-pass anchor review; return an :class:`invoke.InvokeResult`.
 
@@ -583,7 +587,7 @@ def _invoke_naive(
         cmd += ["--model", requested_model]
     prompt = _naive_prompt(pr, diff_text, bench_entry)
 
-    proc = subprocess.Popen(
+    proc = _popen(
         cmd,
         cwd=str(worktree),
         env=env,
@@ -663,8 +667,6 @@ def _checkpoint_attempt(
     checkpoint_status=None,
     extra=None,
 ):
-    from dataclasses import replace
-
     result = replace(result, payload_path=payload_path or result.payload_path)
     prior_ref = cp.detail(url).get("attempt_ref")
     prior = (
@@ -834,7 +836,9 @@ def _run_prs(
                 pr_dir,
                 cp,
                 url,
-                invoke.InvokeResult("failed", reason="mirror_error"),
+                invoke.InvokeResult(
+                    "failed", reason="mirror_error", child_dispatched=False
+                ),
                 started_at,
                 manifest,
                 extra={"error": f"{type(exc).__name__}: {str(exc)[:200]}"},
@@ -842,6 +846,8 @@ def _run_prs(
             counts["failed"] += 1
             continue
 
+        child_dispatched = False
+        result = None
         try:
             if url in fixture_urls:
                 (worktree / "REVIEW.md").write_text(fixture_text, encoding="utf-8")
@@ -858,6 +864,7 @@ def _run_prs(
             wf_baseline = (
                 {} if is_naive else invoke.snapshot_workflow_records(claude_home)
             )
+            child_dispatched = True
             if is_naive:
                 result = _invoke_naive(
                     worktree,
@@ -911,7 +918,11 @@ def _run_prs(
                 pr_dir,
                 cp,
                 url,
-                invoke.InvokeResult("failed", reason=reason),
+                replace(result, status="failed", reason=reason)
+                if result is not None
+                else invoke.InvokeResult(
+                    "failed", reason=reason, child_dispatched=child_dispatched
+                ),
                 started_at,
                 manifest,
                 extra={"traceback": traceback.format_exc()},
@@ -1143,6 +1154,8 @@ def _new_run(args):
         tier, urls = "custom", _target_urls(args.tier, args.prs)
     else:
         tier, urls = args.tier, _target_urls(args.tier)
+    if getattr(args, "_window", None):
+        urls = list(args._window.pr_urls)
     fixture_urls = set(subsets.get("review_md_fixtures", []))
     timeout_s = args.timeout_mins * 60
 
@@ -1558,7 +1571,7 @@ def main(argv=None):
             urls = (prior_manifest or {}).get("pr_urls") or _target_urls(
                 args.tier, args.prs
             )
-            if set(urls) != set(window.pr_urls) or len(urls) != len(set(urls)):
+            if not validity.same_pr_set(urls, window.pr_urls):
                 raise ValueError("window requested PR matrix mismatch")
             if prior_manifest:
                 if prior_manifest.get(

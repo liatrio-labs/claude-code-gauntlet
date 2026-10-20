@@ -158,6 +158,23 @@ reported the outcome. They remain unscored but are retryable with
 `--retry-failed`; an all-degraded result is self-describing and commonly
 transient.
 
+Failure confirmation uses CLI result-envelope fields `api_error_status`,
+`terminal_reason`, `subtype`, and `errors`. Request identifiers, timestamps, and
+byte offsets are normalized before hashing diagnostics. API status 429 or any
+status at least 500 (including 529) is retryable `provider_transient`.
+A matching failure after the registered API retry or a documented subscription
+reset becomes an all-missed `operational_failure` cell. If neither attempt has a
+stable fingerprint, recurrence on the same PR counts with that basis and both
+failure reasons retained in the attempt evidence. Changed fingerprints remain
+invalid. Recorded failure-envelope fixtures do not establish quota detection;
+the production usage-limit signature registry remains empty.
+
+Failures before child dispatch with no child spend, including `mirror_error`,
+are retryable setup attempts and require no subscription reset. They never count
+as operational misses. Incomplete SHA entries and input drift remain invalid.
+Measurement PR identity uses equal-length URL sets at preflight, comparison,
+and simulation. New measurement manifests and dispatch use window URL order.
+
 The prose identity receipt symptom belongs to **G4**, not this floor: G4 checks
 that the code-owned `pipeline_version=… (bundle)` and `plugin_root=… (resolved)`
 lines identify the active plugin, with Workflow `scriptPath` as defense in depth.

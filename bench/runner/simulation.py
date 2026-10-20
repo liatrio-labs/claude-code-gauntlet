@@ -940,7 +940,7 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
             or run.get("window_id") != window.window_id
             or run.get("window_sha256")
             != validity.file_hash(Path(run["measurement_window"]))
-            or run.get("pr_urls") != list(window.pr_urls)
+            or not validity.same_pr_set(run.get("pr_urls") or (), window.pr_urls)
             or set(window.pr_urls) != set(subsets["gate"])
             or not run.get("instrumentation_version")
             or not run.get("agent_read_sha256")
@@ -966,7 +966,9 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
         }
         if (
             dict(packet.manifest.epoch_hashes) != observations.epoch_hashes(epoch)
-            or set(packet.manifest.requested_pr_urls) != set(window.pr_urls)
+            or not validity.same_pr_set(
+                packet.manifest.requested_pr_urls, window.pr_urls
+            )
             or packet.judge_pin != window.expected.judge_pin
             or packet.adjudicator_pin != window.expected.adjudicator_pin
             or packet.manifest.evaluator.scorer_sha256 != window.expected.scorer_sha256

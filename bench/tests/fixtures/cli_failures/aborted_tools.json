@@ -1,0 +1,9 @@
+{
+  "type": "result",
+  "is_error": true,
+  "terminal_reason": "aborted_tools",
+  "subtype": "error_during_execution",
+  "errors": [
+    "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"
+  ]
+}

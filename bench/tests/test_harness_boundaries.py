@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from bench import run
-from bench.runner import checkpoint, invoke
+from bench.runner import checkpoint, invoke, mirrors
 from bench.tests.test_run_cli import fake_ensure_mirror, fake_make_worktree
 
 
@@ -336,6 +336,88 @@ def test_current_bash_receipt_classifies_and_retries_pre_workflow_stop(
     assert run.main(["--retry-failed", run_dir.name]) == 0
     assert len(harness.launches) == 2
     assert cp.status(url) == "ok"
+
+
+def test_retry_failed_retries_free_setup_failures_but_not_sha_or_drift(
+    harness, monkeypatch
+):
+    load = run._load_json
+    shas = load(run.GOLDEN_DIR / "shas.json")
+    urls = list(shas)[:4]
+    shas[urls[1]]["head_sha"] = "missing"
+    monkeypatch.setattr(
+        run,
+        "_load_json",
+        lambda path: shas if Path(path) == run.GOLDEN_DIR / "shas.json" else load(path),
+    )
+    calls = []
+
+    def ensure(*args):
+        calls.append(args)
+        if len(calls) == 1:
+            raise OSError("temporary mirror failure")
+        return fake_ensure_mirror(*args)
+
+    drift_dir = invoke.pr_dir_name({"url": urls[2], **shas[urls[2]]})
+    setup_dir = invoke.pr_dir_name({"url": urls[3], **shas[urls[3]]})
+
+    def worktree(*args, **kwargs):
+        if Path(args[4]).parent.name == drift_dir:
+            raise mirrors.DriftError("pinned base changed")
+        return fake_make_worktree(*args, **kwargs)
+
+    def diff(worktree, *args):
+        if Path(worktree).parent.name == setup_dir:
+            raise OSError("auth setup file temporarily unavailable")
+        return ""
+
+    monkeypatch.setattr(run.mirrors, "ensure_mirror", ensure)
+    monkeypatch.setattr(run.mirrors, "make_worktree", worktree)
+    monkeypatch.setattr(run, "_compute_diff", diff)
+    assert run.main(["--prs", ",".join(urls)]) == 1
+    run_dir = next(run.RUNS_ROOT.iterdir())
+    cp = checkpoint.Checkpoint(run_dir)
+    assert cp.detail(urls[0])["reason"] == "mirror_error"
+    assert cp.detail(urls[1])["reason"] == "incomplete_sha_entry"
+    assert cp.status(urls[2]) == "drifted"
+    assert not harness.launches
+    assert cp.failed(urls) == [urls[0], urls[3]]
+    monkeypatch.setattr(run, "_compute_diff", lambda *args: "")
+    assert run.main(["--retry-failed", run_dir.name]) == 1
+    assert len(harness.launches) == 2
+    assert [cp.status(url) for url in urls] == ["ok", "failed", "drifted", "ok"]
+
+
+@pytest.mark.parametrize("anchor", [None, "naive"])
+@pytest.mark.parametrize("stage", ["environment", "launch"])
+def test_retry_failed_retries_undispatched_invocation_failures(
+    harness, monkeypatch, anchor, stage
+):
+    url = next(iter(run._load_json(run.GOLDEN_DIR / "shas.json")))
+    calls = []
+    original = invoke.build_env if stage == "environment" else subprocess.Popen
+
+    def fail_once(*args, **kwargs):
+        if stage == "environment" and not (Path(args[1]) / "run.json").is_file():
+            return original(*args, **kwargs)
+        calls.append(args)
+        if len(calls) == 1:
+            raise OSError("temporary auth setup failure")
+        return original(*args, **kwargs)
+
+    if stage == "environment":
+        monkeypatch.setattr(invoke, "build_env", fail_once)
+    else:
+        monkeypatch.setattr(subprocess, "Popen", fail_once)
+    args = ["--prs", url] + (["--anchor", anchor] if anchor else [])
+    assert run.main(args) == 1
+    run_dir = next(run.RUNS_ROOT.iterdir())
+    cp = checkpoint.Checkpoint(run_dir)
+    assert cp.failed([url]) == [url]
+    assert not harness.launches
+    assert run.main(["--retry-failed", run_dir.name]) == 0
+    assert cp.status(url) == "ok"
+    assert len(harness.launches) == 1
 
 
 @pytest.mark.parametrize(

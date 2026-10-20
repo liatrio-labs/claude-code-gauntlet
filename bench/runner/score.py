@@ -704,9 +704,10 @@ def score_run(
         raise ValueError("duplicate or unknown requested PR identity")
     manifest = _read_run_manifest(run_dir)
     requested = manifest.get("urls", manifest.get("pr_urls", urls))
-    if set(requested) != set(urls):
-        raise ValueError("requested PR matrix is incomplete")
     from bench.runner import validity
+
+    if not validity.same_pr_set(requested, urls):
+        raise ValueError("requested PR matrix is incomplete")
 
     selected = {}
     selected_records = {}
@@ -738,10 +739,7 @@ def score_run(
                 raise ValueError("selected attempt identity mismatch")
             value = record.validity
             if value.state == "operational_failure":
-                if (
-                    not validity.failure_confirmation_ref(record)
-                    or not value.failure_fingerprint
-                ):
+                if not validity.confirmed_failure(record):
                     raise ValueError("unconfirmed operational failure")
                 failures.add(url)
             elif record.checkpoint_status != "ok" or value.state == "invalid":

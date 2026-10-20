@@ -1,0 +1,7 @@
+{
+  "type": "result",
+  "is_error": true,
+  "api_error_status": 400,
+  "terminal_reason": "api_error",
+  "subtype": "success"
+}

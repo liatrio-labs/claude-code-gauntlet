@@ -25,7 +25,8 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict
 
@@ -253,6 +254,7 @@ class InvokeResult:
     raw_json_path: str | None = None
     reason: str | None = None
     validity: "Validity | None" = None
+    child_dispatched: bool = True
 
     def __post_init__(self):
         if isinstance(self.per_model, dict):
@@ -1561,6 +1563,40 @@ def pinned_cli(run_dir):
     return None
 
 
+def track_child_dispatch(function):
+    @wraps(function)
+    def tracked(*args, **kwargs):
+        dispatched = False
+
+        def launch(cmd, *, cwd, env, stdout, stderr, start_new_session):
+            nonlocal dispatched
+            process = subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                env=env,
+                stdout=stdout,
+                stderr=stderr,
+                start_new_session=start_new_session,
+            )
+            dispatched = True
+            return process
+
+        try:
+            result = function(*args, **kwargs, _popen=launch)
+        except Exception as exc:
+            if dispatched:
+                raise
+            return InvokeResult(
+                "failed",
+                reason=f"pre_dispatch_error:{type(exc).__name__}: {str(exc)[:200]}",
+                child_dispatched=False,
+            )
+        return replace(result, child_dispatched=dispatched)
+
+    return tracked
+
+
+@track_child_dispatch
 def invoke_review(
     worktree,
     pr,
@@ -1569,6 +1605,8 @@ def invoke_review(
     tool="deep-review-v3",
     child_model="inherit",
     child_auth=API_AUTH_MODE,
+    *,
+    _popen=None,
 ):
     """Run the headless review for one PR and classify the outcome.
 
@@ -1641,7 +1679,7 @@ def invoke_review(
         cmd += ["--model", child_model]
 
     with open(raw_path, "w", encoding="utf-8") as fh:
-        proc = subprocess.Popen(
+        proc = _popen(
             cmd,
             cwd=str(worktree),
             env=env,
