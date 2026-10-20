@@ -318,6 +318,7 @@ The [committed ledger](experiments.jsonl) records these runs:
 | v3.12 | 2026-08-18 | `mini-20260818-120540-b423885` + `custom-20260818-142206-b423885` | 0.667 | 0.106 |
 | v3.24 | 2026-09-01 | `mini-20260901-170531-2cb9104` | 0.633 | 0.179 |
 | v3.26 | 2026-09-03 | `mini-20260903-204424-e8b3af7` | 0.667 | 0.138 |
+| v3.42.49 baseline | 2026-10-20 | `mini-20261020-030509-839b1886` | 0.633 | 0.065 |
 
 The v3.12 row combines a five-PR mini and its one-PR completion leg.
 The v3.26 mini met the pre-registered 0.24 noise ceiling.

@@ -192,8 +192,10 @@ python3 bench/run.py --prs mini           # expands the same URLs; labels custom
 
 ## Baseline of record
 
-Mini-subset A `custom-20260723-102149-381e9ff` — recall 19/30 = 0.6333, noise
-0.2233, on the six pre-registered PRs above. Ledger cost: $77.73.
+`mini-20261020-030509-839b1886` (v3.42.49, Claude 5.5 children, `api` auth) — recall
+19/30 = 0.6333, noise 0.0649, valid-extra 0.7273, on the six pre-registered PRs
+above. Ledger cost: $19.47. It replaces `custom-20260723-102149-381e9ff` (recall
+0.6333, noise 0.2233, $77.73).
 
 ## Ledger-sourced costs
 
@@ -204,9 +206,10 @@ Rows with `auth_mode=subscription` are excluded — they are not API spend:
 ```text
 smoke:        $21.11–$32.04 across 14 runs (mean ~$27, 16–22 min/PR)
 mini-subset:  $84.18 (custom-20260723-070640-c1dd46f)
-              $77.73 (custom-20260723-102149-381e9ff, of record: recall 19/30=0.6333, noise 0.2233)
+              $77.73 (custom-20260723-102149-381e9ff, former baseline: recall 19/30=0.6333, noise 0.2233)
               $54.92 (mini-20260901-170531-2cb9104, v3.24 post-#273 check: recall 19/30=0.6333, noise 0.1786)
               $51.02 (mini-20260903-204424-e8b3af7, post-#283 check: recall 20/30=0.6667, noise 0.1379)
+              $19.47 (mini-20261020-030509-839b1886, of record: recall 19/30=0.6333, noise 0.0649)
 full-15:      $190.72–$229.88
 holdout:      $169.34 (holdout-20260721-085348-eec15be, recall 0.7407, noise 0.2095 — sealed for V3.2)
 scoring:      ~$2/run;  M4 trivial fixture: ~$3
