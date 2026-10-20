@@ -1568,16 +1568,45 @@ def track_child_dispatch(function):
     def tracked(*args, **kwargs):
         dispatched = False
 
-        def launch(cmd, *, cwd, env, stdout, stderr, start_new_session):
+        def launch(
+            cmd,
+            *,
+            cwd,
+            env,
+            stdout,
+            stderr,
+            start_new_session,
+            stdin=None,
+            text=False,
+            encoding=None,
+        ):
             nonlocal dispatched
-            process = subprocess.Popen(
-                cmd,
-                cwd=cwd,
-                env=env,
-                stdout=stdout,
-                stderr=stderr,
-                start_new_session=start_new_session,
-            )
+            # Children run either binary or UTF-8 text; the text-I/O guard needs both
+            # spelled as literals, so the two shapes are separate calls.
+            if text:
+                if encoding != "utf-8":
+                    raise ValueError(f"unsupported child encoding: {encoding!r}")
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=cwd,
+                    env=env,
+                    stdin=stdin,
+                    stdout=stdout,
+                    stderr=stderr,
+                    start_new_session=start_new_session,
+                    text=True,
+                    encoding="utf-8",
+                )
+            else:
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=cwd,
+                    env=env,
+                    stdin=stdin,
+                    stdout=stdout,
+                    stderr=stderr,
+                    start_new_session=start_new_session,
+                )
             dispatched = True
             return process
 
