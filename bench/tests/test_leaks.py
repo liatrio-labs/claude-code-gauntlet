@@ -51,6 +51,7 @@ def empty_allowlist(derived):
 def ceiling_for(derived, allowlist):
     return {
         "schema_version": 3,
+        "derivation_version": derived.derivation_version,
         "epoch_id": derived.epoch_id,
         "golden_sha256": derived.golden_sha256,
         "holdout_salt": derived.holdout_salt,
@@ -62,17 +63,26 @@ def ceiling_for(derived, allowlist):
     }
 
 
-def toy_identifiers(corpus, comments, sealed=frozenset()):
+def toy_identifiers(corpus, comments, sealed=frozenset(), *, projects=None):
     epoch, original, _ = corpus
     bugs = tuple(
         replace(epoch.bugs[0], bug_id=f"g:{i}", pr_url=url, comment=text)
         for i, (url, text) in enumerate(comments)
     )
-    return leaks.derive_identifiers(
-        replace(epoch, bugs=bugs, golden_sha256=digest(comments)),
-        holdout_pr_urls=sealed,
-        holdout_salt=original.holdout_salt,
-    )
+    projects = projects or {url: url for url, _ in comments}
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        (root / "golden_comments").mkdir()
+        for index, project in enumerate(sorted(set(projects.values()))):
+            (root / "golden_comments" / f"project_{index}.json").write_text(
+                json.dumps([{"url": u} for u, p in projects.items() if p == project]),
+                encoding="utf-8",
+            )
+        return leaks.derive_identifiers(
+            replace(epoch, bugs=bugs, root=root, golden_sha256=digest(comments)),
+            holdout_pr_urls=sealed,
+            holdout_salt=original.holdout_salt,
+        )
 
 
 def surface(text, name="agents/new-agent.md"):
@@ -269,7 +279,7 @@ def test_shared_context_scans_emitted_template_and_keeps_stable_id(tmp_path, cor
     )
 
 
-def test_runtime_names_and_symbols_shared_by_different_prs_are_excluded(corpus):
+def test_runtime_names_and_symbols_shared_by_different_projects_are_excluded(corpus):
     names = leaks.runtime_identifiers()
     assert {
         "indexOf",
@@ -292,6 +302,62 @@ def test_runtime_names_and_symbols_shared_by_different_prs_are_excluded(corpus):
     assert {i.token for i in derived.identifiers} == {"SamePrSynthetic"}
     assert len(derived.identifiers[0].bug_ids) == 2
     assert derived.holdout_identifiers == ()
+
+
+def test_pr_variants_within_one_project_remain_distinctive(corpus):
+    comments = [
+        ("fork-a/pr-1", "ProjectSynthetic SharedSynthetic private_synthetic"),
+        ("fork-b/pr-2", "ProjectSynthetic SharedSynthetic private_synthetic"),
+        ("fork-a/pr-3", "ProjectSynthetic"),
+        ("fork-a/pr-4", "SharedSynthetic"),
+    ]
+    projects = {
+        "fork-a/pr-1": "first",
+        "fork-b/pr-2": "first",
+        "fork-a/pr-3": "first",
+        "fork-a/pr-4": "second",
+    }
+    derived = toy_identifiers(corpus, comments, projects=projects)
+    assert {i.token for i in derived.identifiers} == {
+        "ProjectSynthetic",
+        "private_synthetic",
+    }
+    assert (
+        len(
+            next(
+                i for i in derived.identifiers if i.token == "ProjectSynthetic"
+            ).bug_ids
+        )
+        == 3
+    )
+    sealed = toy_identifiers(
+        corpus, comments, frozenset({"fork-b/pr-2"}), projects=projects
+    )
+    assert not sealed.identifiers
+    assert len(sealed.holdout_identifiers) == 2
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_project_membership_must_be_unique_and_complete(tmp_path, corpus, missing):
+    epoch, derived, _ = corpus
+    root = tmp_path / "golden_comments"
+    root.mkdir()
+    urls = sorted({b.pr_url for b in epoch.bugs})
+    (root / "first.json").write_text(
+        json.dumps([{"url": u} for u in (urls[1:] if missing else urls)]),
+        encoding="utf-8",
+    )
+    if not missing:
+        (root / "second.json").write_text(
+            json.dumps([{"url": urls[1]}]), encoding="utf-8"
+        )
+    error = "missing" if missing else "duplicate"
+    with pytest.raises(ValueError, match=error + " golden project membership"):
+        leaks.derive_identifiers(
+            replace(epoch, root=tmp_path),
+            holdout_pr_urls=frozenset(),
+            holdout_salt=derived.holdout_salt,
+        )
 
 
 def test_boundaries_case_subchains_paths_and_generic_words(corpus):
@@ -400,12 +466,16 @@ def test_epoch_and_golden_changes_require_reissued_pinned_ceiling(
     for changed in (
         replace(derived, epoch_id="next-epoch"),
         replace(derived, golden_sha256="0" * 64),
+        replace(derived, derivation_version="next-derivation"),
     ):
         matching = dict(allowed, epoch_id=changed.epoch_id)
         with pytest.raises(ValueError, match="re-issue"):
             leaks.scan(changed, generated, matching)
         reissued = dict(
-            ceiling, epoch_id=changed.epoch_id, golden_sha256=changed.golden_sha256
+            ceiling,
+            epoch_id=changed.epoch_id,
+            golden_sha256=changed.golden_sha256,
+            derivation_version=changed.derivation_version,
         )
         leaks._scan_with_ceiling(
             changed, generated, matching, ceiling=dict(reissued, passages=[])
@@ -451,6 +521,8 @@ def test_committed_history_preserves_retirement_across_ceiling_repin(
     snapshots["migration"] = (restored, ceiling)
     with pytest.raises(ValueError, match="incomplete allowance history"):
         leaks._committed_allowlists(leaks.ROOT, ceiling)
+    snapshots["migration"] = (restored, dict(ceiling, derivation_version="older"))
+    assert len(leaks._committed_allowlists(leaks.ROOT, ceiling)) == 3
 
 
 def test_known_passages_require_dispositions_until_deleted(corpus, generated):
@@ -464,6 +536,57 @@ def test_known_passages_require_dispositions_until_deleted(corpus, generated):
             leaks.scan(derived, surfaces, removed)
         remaining = tuple(s for s in surfaces if s.surface_id != passage["surface_id"])
         leaks.scan(derived, remaining, removed)
+
+
+def test_api_key_member_rule_and_example_are_known_cues_alongside_security_sweep(
+    corpus, generated
+):
+    epoch, derived, _ = corpus
+    original = read_json(DEFAULT_ROOT / "leak_allowlist.json")
+    member = next(
+        i for i in derived.identifiers if i.token == "organization_context.member"
+    )
+    assert {
+        "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1",
+        "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/2",
+    } <= {b.pr_url for b in epoch.bugs if b.bug_id in member.bug_ids}
+    report = leaks.scan(
+        derived, leaks.collect_surfaces(leaks.ROOT, generated), original
+    )
+    hits = [h for h in report.hits if h.identifier_id == member.identifier_id]
+    assert len(hits) == 2
+    assert all(h.allowed and h.source_path == "agents/bug-detector.md" for h in hits)
+    assert any(h.excerpt and "12. **Check auth-context" in h.excerpt for h in hits)
+    assert any(h.excerpt and '"id":"bug-1"' in h.excerpt for h in hits)
+    known = "known_cue_remove_in_wave_2a"
+    for token, count in (
+        ("organization_context", 2),
+        (member.token, 2),
+        ("postMessage", 8),
+    ):
+        identifier = next(i for i in derived.identifiers if i.token == token)
+        entries = [
+            r
+            for r in original["entries"]
+            if r["identifier_id"] == identifier.identifier_id
+        ]
+        assert len(entries) == count
+        assert all(
+            r["disposition"] == known and r["expires_wave"] == "2a" for r in entries
+        )
+    passages = [
+        r
+        for r in original["passages"]
+        if r["passage_id"] in {"P002", "P003", "P010-P014"}
+    ]
+    assert Counter(r["passage_id"] for r in passages) == {
+        "P002": 1,
+        "P003": 1,
+        "P010-P014": 8,
+    }
+    assert all(
+        r["disposition"] == known and r["expires_wave"] == "2a" for r in passages
+    )
 
 
 def test_missing_generated_prompt_schema_bundle_and_context_fail(corpus, generated):

@@ -1,9 +1,26 @@
 {
   "schema_version": 3,
+  "derivation_version": "distinctive-project-symbol-spans-v3",
   "epoch_id": "e616e84-v1",
   "golden_sha256": "a6edc0e159ac0c5f62d470a4d8bdf1c2006710606c48110818a2ec527f0d37c2",
   "holdout_salt": "8511c869475fb31b3c006cd86eda7c56c6d31b485bc02747fe55688a68317abf",
   "entries": [
+    {
+      "identifier_id": "27be433d5addca879e8edd221c6beaee44a145534df7dd2e759bfbb5610402c8",
+      "excerpt_sha256": "22a43050ba532d525209175e4b07a1bdede1b44cd28f925db7a2914044ccec09",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "reason": "API-key auth-context member rule and worked example; remove the known cue in Wave 2a.",
+      "source_path": "agents/bug-detector.md",
+      "expected_count": 1
+    },
+    {
+      "identifier_id": "27be433d5addca879e8edd221c6beaee44a145534df7dd2e759bfbb5610402c8",
+      "excerpt_sha256": "4b4bdee05ac115b0c825755cbb34c23b7258359e75a0b9cea77402ddd41cef2f",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "reason": "API-key auth-context member rule and worked example; remove the known cue in Wave 2a.",
+      "source_path": "agents/bug-detector.md",
+      "expected_count": 1
+    },
     {
       "identifier_id": "353c919021b7ea5b2067b3c3df60a5b7146ceba25f3e6b15ed5cc0d84352d8b2",
       "excerpt_sha256": "02eb3616a2ead1093002e67dff2b19083e4539e6922186842f687d57de14d8c0",
@@ -35,6 +52,22 @@
       "reason": "Security dispatch sweep; comment-scope exclusions remain required.",
       "source_path": "workflows/src/discover.js",
       "expected_count": 4
+    },
+    {
+      "identifier_id": "4c1881f964032291b99cb0410e05bc3b190a4f0ef93e1ec4973bb4e67dd0a973",
+      "excerpt_sha256": "22a43050ba532d525209175e4b07a1bdede1b44cd28f925db7a2914044ccec09",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "reason": "API-key auth-context member rule and worked example; remove the known cue in Wave 2a.",
+      "source_path": "agents/bug-detector.md",
+      "expected_count": 1
+    },
+    {
+      "identifier_id": "4c1881f964032291b99cb0410e05bc3b190a4f0ef93e1ec4973bb4e67dd0a973",
+      "excerpt_sha256": "4b4bdee05ac115b0c825755cbb34c23b7258359e75a0b9cea77402ddd41cef2f",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "reason": "API-key auth-context member rule and worked example; remove the known cue in Wave 2a.",
+      "source_path": "agents/bug-detector.md",
+      "expected_count": 1
     },
     {
       "identifier_id": "4caf796d3887b3ac0bf555eb822e9cd6b14e798305ac0a46ec6d80d33f767cd6",
@@ -86,18 +119,18 @@
     },
     {
       "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
-      "excerpt_sha256": "af813570630509ae5186e7cb40e23002b878daa5fb04cf2b93199f36e2fd36df",
-      "disposition": "generic_identifier",
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
-      "source_path": "skills/code-gauntlet/references/delivery-guide.md",
-      "expected_count": 1
-    },
-    {
-      "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
       "excerpt_sha256": "843e18e94c172f5295d63c003f63b34704f184865891bf423608bd9befd6c982",
       "disposition": "generic_identifier",
       "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
       "source_path": "skills/code-gauntlet/references/validation-pipeline.md",
+      "expected_count": 1
+    },
+    {
+      "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
+      "excerpt_sha256": "af813570630509ae5186e7cb40e23002b878daa5fb04cf2b93199f36e2fd36df",
+      "disposition": "generic_identifier",
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "source_path": "skills/code-gauntlet/references/delivery-guide.md",
       "expected_count": 1
     }
   ],

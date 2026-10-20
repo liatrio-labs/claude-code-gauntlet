@@ -27,10 +27,10 @@ from bench.runner.epochs import (
 
 MatchMode = Literal["identifier", "literal_path"]
 Disposition = Literal["known_cue_remove_in_wave_2a", "generic_identifier", "delete"]
-DERIVATION_VERSION = "distinctive-symbol-spans-v2"
+DERIVATION_VERSION = "distinctive-project-symbol-spans-v3"
 ROOT = Path(__file__).resolve().parents[2]
 ALLOWANCE_CEILING_SHA256 = (
-    "bc69950505e63984803e47aca0ed8e6b4aa038c9c24b22293d3e1e9861f86d44"
+    "03909b3974cd1aa430dc5ec82968337b47aaf9bb56996fc0ee772dcdc8121bb7"
 )
 
 
@@ -105,6 +105,7 @@ class CeilingPassageWire(CeilingEntryWire):
 
 class LeakAllowanceCeilingWire(TypedDict):
     schema_version: Literal[3]
+    derivation_version: str
     epoch_id: str
     golden_sha256: str
     holdout_salt: str
@@ -333,8 +334,20 @@ def derive_identifiers(
     _salt(holdout_salt)
     if not holdout_pr_urls <= {b.pr_url for b in epoch.bugs}:
         raise ValueError("unknown sealed membership")
+    # File stems identify projects across benchmark forks and PR variants.
+    project_by_pr = {}
+    for path in sorted((epoch.root / "golden_comments").glob("*.json")):
+        if not _safe(epoch.root, path):
+            raise ValueError("unconfined golden project source")
+        for pr in read_json(path):
+            url = pr["url"]
+            if url in project_by_pr:
+                raise ValueError("duplicate golden project membership")
+            project_by_pr[url] = path.stem
+    if any(b.pr_url not in project_by_pr for b in epoch.bugs):
+        raise ValueError("missing golden project membership")
     sources: dict[tuple[MatchMode, str], set[tuple[str, str]]] = defaultdict(set)
-    prs = defaultdict(set)
+    projects = defaultdict(set)
     excluded = runtime_identifiers()
     sealed = set()
     for bug in epoch.bugs:
@@ -342,13 +355,13 @@ def derive_identifiers(
             key = (span.mode, span.token)
             if span.mode == "identifier" and span.token in excluded:
                 continue
-            prs[key].add(bug.pr_url)
+            projects[key].add(project_by_pr[bug.pr_url])
             sources[key].add(
                 (bug.bug_id, hashlib.sha256(bug.comment.encode()).hexdigest())
             )
             if bug.pr_url in holdout_pr_urls:
                 sealed.add(key)
-    sources = {key: refs for key, refs in sources.items() if len(prs[key]) == 1}
+    sources = {key: refs for key, refs in sources.items() if len(projects[key]) == 1}
     sealed.intersection_update(sources)
     # A longer public chain must not serialize a sealed sub-chain as plaintext.
     hidden_text = tuple(token for _, token in sealed)
@@ -686,6 +699,9 @@ def _committed_allowlists(
             break
         if receipt["holdout_salt"] != ceiling["holdout_salt"]:
             raise ValueError("persisted sealed salt cannot change within an epoch")
+        if receipt.get("derivation_version") != ceiling["derivation_version"]:
+            boundary_seen = True
+            break
         accepted.append(previous)
     if not boundary_seen:
         raise ValueError(
@@ -713,13 +729,19 @@ def _check_ceiling(
     ceiling: LeakAllowanceCeilingWire,
     previous: Sequence[LeakAllowlistWire] = (),
 ) -> None:
-    if (identifiers.epoch_id, identifiers.golden_sha256, identifiers.holdout_salt) != (
+    if (
+        identifiers.epoch_id,
+        identifiers.golden_sha256,
+        identifiers.holdout_salt,
+        identifiers.derivation_version,
+    ) != (
         ceiling["epoch_id"],
         ceiling["golden_sha256"],
         ceiling["holdout_salt"],
+        ceiling["derivation_version"],
     ):
         raise ValueError(
-            "epoch, golden hash or salt mismatch; re-issue the allowance ceiling"
+            "epoch, golden hash, salt or derivation mismatch; re-issue the allowance ceiling"
         )
     _check_bounds(
         allowlist["entries"], ceiling["entries"], [old["entries"] for old in previous]

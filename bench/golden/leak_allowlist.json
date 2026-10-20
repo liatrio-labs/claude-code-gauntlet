@@ -3,6 +3,26 @@
   "epoch_id": "e616e84-v1",
   "entries": [
     {
+      "identifier_id": "27be433d5addca879e8edd221c6beaee44a145534df7dd2e759bfbb5610402c8",
+      "surface_id": "agents/bug-detector.md",
+      "source_path": "agents/bug-detector.md",
+      "excerpt_sha256": "22a43050ba532d525209175e4b07a1bdede1b44cd28f925db7a2914044ccec09",
+      "expected_count": 1,
+      "reason": "API-key auth-context member rule and worked example; remove the known cue in Wave 2a.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "27be433d5addca879e8edd221c6beaee44a145534df7dd2e759bfbb5610402c8",
+      "surface_id": "agents/bug-detector.md",
+      "source_path": "agents/bug-detector.md",
+      "excerpt_sha256": "4b4bdee05ac115b0c825755cbb34c23b7258359e75a0b9cea77402ddd41cef2f",
+      "expected_count": 1,
+      "reason": "API-key auth-context member rule and worked example; remove the known cue in Wave 2a.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
       "identifier_id": "353c919021b7ea5b2067b3c3df60a5b7146ceba25f3e6b15ed5cc0d84352d8b2",
       "surface_id": "skills/code-gauntlet/SKILL.md",
       "source_path": "skills/code-gauntlet/SKILL.md",
@@ -99,6 +119,26 @@
       "excerpt_sha256": "018bbbdef2c52e62d2841fb86ad455476e06749cdc96ed27e0fb92aa2a5f0688",
       "expected_count": 1,
       "reason": "Security dispatch sweep; comment-scope exclusions remain required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "4c1881f964032291b99cb0410e05bc3b190a4f0ef93e1ec4973bb4e67dd0a973",
+      "surface_id": "agents/bug-detector.md",
+      "source_path": "agents/bug-detector.md",
+      "excerpt_sha256": "22a43050ba532d525209175e4b07a1bdede1b44cd28f925db7a2914044ccec09",
+      "expected_count": 1,
+      "reason": "API-key auth-context member rule and worked example; remove the known cue in Wave 2a.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "4c1881f964032291b99cb0410e05bc3b190a4f0ef93e1ec4973bb4e67dd0a973",
+      "surface_id": "agents/bug-detector.md",
+      "source_path": "agents/bug-detector.md",
+      "excerpt_sha256": "4b4bdee05ac115b0c825755cbb34c23b7258359e75a0b9cea77402ddd41cef2f",
+      "expected_count": 1,
+      "reason": "API-key auth-context member rule and worked example; remove the known cue in Wave 2a.",
       "disposition": "known_cue_remove_in_wave_2a",
       "expires_wave": "2a"
     },
