@@ -38,6 +38,8 @@ const TRUSTED_ROWS = [
     inline: '{"findings":[{"id":"F1","file":"a.js","line_start":4,"confidence":90}],"base_branch":"main"}' },
   { name: 'reordered deltas preserve dispatched finding order', findings: findingsFor(3),
     options: (f) => ({ deltas: deltasFor(f).reverse() }) },
+  { name: 'git diff source is trusted when no file was dispatched', findings: BASE,
+    input: { verify: { baseBranch: 'main' } } },
   { name: 'stamped elimination removes only the eliminated finding', findings: findingsFor(3),
     options: () => ({ overrides: { F1: { verified: false, elimination_reason: ELIMINATION_STAMP } } }), ids: ['F0', 'F2'] },
   { name: 'hidden_errors and untouched extras survive script decisions', findings: [{ ...findingsFor(1)[0],
@@ -66,7 +68,7 @@ for (const row of TRUSTED_ROWS) {
 
 const degradedGap = (reason, first = reason, slice, affected, total) =>
   `verify: UNVERIFIED \u2014 slice ${slice}: ${reason} \u2014 retried once after the first attempt failed (${first}); `
-  + `${affected} of ${total} finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report`;
+  + `${affected} of ${total} finding(s) in stage marked origin=unknown, surfaced-classification skipped, held back to the report`;
 
 const UNTRUSTED_ROWS = [
   { name: 'origin drift rejects the original script proof',
@@ -140,7 +142,7 @@ for (const row of UNTRUSTED_ROWS) {
       assert.deepEqual(outputs, row.outputs);
       assert.equal(outputs[2], outputs[1], 'retry reuses the first attempt output path');
     }
-    assert.deepEqual(out.gaps, [degradedGap(row.reason, row.firstReason, row.slice || 0, row.origins ? 2 : findings.length, row.origins ? 2 : findings.length)]);
+    assert.deepEqual(out.gaps, [degradedGap(row.reason, row.firstReason, row.slice || 0, row.origins ? 2 : findings.length, findings.length)]);
   });
 }
 
@@ -157,7 +159,7 @@ test('missing id degrades without dispatch', async () => {
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, degradedFindings: 2 });
   assert.deepEqual(out.gaps, [
     'verify: UNVERIFIED \u2014 slice 0: a dispatched finding has no usable id \u2014 the delta echo is keyed by '
-      + 'id, so this slice cannot be verified; 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report'
+      + 'id, so this slice cannot be verified; 2 of 2 finding(s) in stage marked origin=unknown, surfaced-classification skipped, held back to the report'
   ]);
 });
 
@@ -251,6 +253,9 @@ for (const field of ['deltas_checksum', 'record_proofs']) test(`whole-attempt re
 
 for (const [name, mutate] of [
   ['context mismatch with matching record proofs', (env) => { env.receipt.base_branch = 'other'; }],
+  ['diff path mismatch with matching record proofs', (env) => { env.receipt.diff_source.path = '/other.patch'; }],
+  ['diff unreadable with matching record proofs', (env) => { env.receipt.diff_source.read = false; }],
+  ['diff source missing with matching record proofs', (env) => { env.receipt.diff_source = undefined; }],
   ['missing record_proofs', (env) => { env.receipt.record_proofs = undefined; }],
   ['malformed record_proofs', (env) => { env.receipt.record_proofs = [{ id: 'F0' }]; }],
   ['duplicate record proof', (env) => { env.receipt.record_proofs.push(env.receipt.record_proofs[0]); }],
@@ -289,6 +294,18 @@ test('unprovable expected record falls back to the whole-slice token gate', asyn
   const out = await verifyStage(ctx, verifyInput(findings));
   assert.equal(out.verified, false);
   assert.deepEqual(out.findings.map((f) => f.origin), ['unknown', 'unknown']);
+});
+
+test('unprovable expected record trusts valid whole-slice token and delta proofs', async () => {
+  const findings = findingsFor(2);
+  findings[0].line_start = Number.MAX_SAFE_INTEGER + 1;
+  const ctx = verifyCtx((_index, attempt, call) => envelopeForCall(call, attempt));
+  const out = await verifyStage(ctx, verifyInput(findings));
+  assert.equal(out.verified, true);
+  assert.deepEqual(out.findings, findings);
+  assert.deepEqual(out.gaps, []);
+  assert.equal(ctx.calls.length, 1);
+  assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, unprovable: 1, proven: 0 });
 });
 
 for (const [name, receipt, fault] of [
@@ -347,7 +364,7 @@ test('sibling-slice substitution keeps every finding and degrades only the subst
   const out = await verifyStage(ctx, verifyInput(findings, { limits: { verifySliceSize: 2 } }));
   assert.equal(out.verified, false);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['F0', 'unknown'], ['F1', 'unknown'], ['F2', 'new'], ['F3', 'new']]);
-  assert.deepEqual(out.gaps, [('verify: UNVERIFIED \u2014 slice 0: record_proofs ids differ from delta ids \u2014 retried once after the first attempt failed (status=failed (transient)); 2 of 2 finding(s) marked '
+  assert.deepEqual(out.gaps, [('verify: UNVERIFIED \u2014 slice 0: record_proofs ids differ from delta ids \u2014 retried once after the first attempt failed (status=failed (transient)); 2 of 4 finding(s) in stage marked '
     + 'origin=unknown, surfaced-classification skipped, held back to the report')]);
 });
 
@@ -378,5 +395,5 @@ for (const hostPlatform of ['posix', 'windows']) test(`oversize finding is discl
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1, oversize: 1, degradedFindings: 1 });
   assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0']);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['BIG', 'unknown'], ['OK', 'new']]);
-  assert.deepEqual(out.gaps, [`verify: UNVERIFIED \u2014 finding BIG has ${hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length'} ${hostPlatform === 'windows' ? 31089 : 50073}, over VERIFY_INLINE_CHAR_BUDGET=${hostPlatform === 'windows' ? 30442 : 50000}; 1 of 2 finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report`]);
+  assert.deepEqual(out.gaps, [`verify: UNVERIFIED \u2014 finding BIG has ${hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length'} ${hostPlatform === 'windows' ? 31089 : 50073}, over VERIFY_INLINE_CHAR_BUDGET=${hostPlatform === 'windows' ? 30442 : 50000}; 1 of 2 finding(s) in stage marked origin=unknown, surfaced-classification skipped, held back to the report`]);
 });

@@ -39,6 +39,11 @@ class RecordProof(TypedDict):
     checksum: str | None
 
 
+class DiffSource(TypedDict):
+    path: str | None
+    read: bool
+
+
 class _ReceiptRequired(TypedDict):
     sha: str
     n_in: int
@@ -46,6 +51,7 @@ class _ReceiptRequired(TypedDict):
     deltas_checksum: str | None
     inline_checksum: str
     base_branch: str
+    diff_source: DiffSource
     record_proofs: list[RecordProof]
 
 
@@ -311,6 +317,7 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
             "deltas_checksum": checksum_or_none(deltas),
             "inline_checksum": inline_checksum,
             "base_branch": context.base_branch,
+            "diff_source": {"path": args.diff_file, "read": context.diff_read},
             "record_proofs": record_proofs,
         }
         # The executor accepts only strings; omit an unavailable input proof.

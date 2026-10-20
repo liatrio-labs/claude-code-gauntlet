@@ -4661,6 +4661,11 @@ const VERIFY_RECEIPT_FIELDS = {
   input_checksum: { type: 'string' },
   inline_checksum: { type: 'string' },
   base_branch: { type: 'string' },
+  diff_source: {
+    type: 'object',
+    properties: { path: { type: ['string', 'null'] }, read: { type: 'boolean' } },
+    required: ['path', 'read'],
+  },
   record_proofs: {
     type: 'array',
     items: {
@@ -4762,7 +4767,7 @@ async function verifyStage(ctx, input) {
     }
     const degrade = (detail) => {
       out.push(...degradedSlice(slice));
-      gaps.push(verifyDegradeGap(detail, slice.length, slice.length));
+      gaps.push(verifyDegradeGap(detail, slice.length, findings.length));
       degradedSlices += 1;
       inputProof.degradedFindings += slice.length;
     };
@@ -4788,7 +4793,7 @@ async function verifyStage(ctx, input) {
     out.push(...attempt.verified);
     if (attempt.degraded) {
       degradedSlices += 1;
-      gaps.push(verifyDegradeGap(`slice ${i}: ${attempt.reason}`, attempt.degraded, slice.length));
+      gaps.push(verifyDegradeGap(`slice ${i}: ${attempt.reason}`, attempt.degraded, findings.length));
     } else if (attempt.retriedFindings) {
       gaps.push(`verify-slice-retry: slice ${i}'s first executor dispatch left ${attempt.retriedFindings} of ${slice.length} finding(s) unresolved (${attempt.reason}); a second dispatch repaired them`);
     }
@@ -4804,7 +4809,7 @@ const emptyInputProof = () => ({
   localised: 0, retriedFindings: 0, degradedFindings: 0,
 });
 function verifyDegradeGap(detail, k, n) {
-  return `verify: UNVERIFIED — ${detail}; ${k} of ${n} finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report`;
+  return `verify: UNVERIFIED — ${detail}; ${k} of ${n} finding(s) in stage marked origin=unknown, surfaced-classification skipped, held back to the report`;
 }
 function prepareVerifySlice(slice, baseBranch) {
   const content = { findings: slice.map(projectVerifySliceFinding), base_branch: baseBranch };
@@ -4851,7 +4856,8 @@ async function dispatchVerifySlice(c, inp, i, slice, record, sliceNonce, label) 
   } catch (e) {
     return { ok: false, reason: `executor threw (${(e && e.message) || 'unknown'})` };
   }
-  return trustSlice(env, { ...record, nonce: sliceNonce, headShaShort: inp.headShaShort, n: slice.length });
+  return trustSlice(env, { ...record, diffPath: (inp.verify || {}).diffPath || null,
+    nonce: sliceNonce, headShaShort: inp.headShaShort, n: slice.length });
 }
 function dispatchableIds(slice) {
   const seen = new Set();
@@ -4863,13 +4869,16 @@ function dispatchableIds(slice) {
   }
   return { ok: true };
 }
-function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBranch, expectedInputChecksum, expectedInlineChecksum }) {
+function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBranch, diffPath, expectedInputChecksum, expectedInlineChecksum }) {
   if (!env || typeof env !== 'object') return { ok: false, reason: 'executor returned no envelope' };
   if (env.status !== 'ok') return { ok: false, reason: `status=${env.status == null ? 'missing' : env.status}${env.stderr ? ` (${env.stderr})` : ''}` };
   const r = env.receipt || {};
   if (r.nonce !== nonce) return { ok: false, reason: `receipt nonce mismatch (got ${r.nonce == null ? 'missing' : r.nonce}, expected ${nonce})` };
   if (r.sha !== headShaShort) return { ok: false, reason: `receipt sha mismatch (got ${r.sha == null ? 'missing' : r.sha})` };
   if (r.base_branch !== baseBranch) return { ok: false, reason: 'receipt base_branch mismatch' };
+  if (r.diff_source?.path !== diffPath || r.diff_source?.read !== true) {
+    return { ok: false, reason: 'receipt diff_source mismatch or unreadable' };
+  }
   if (!Array.isArray(r.record_proofs)) return {
     ok: false, reason: 'receipt missing or malformed record_proofs',
     inputFault: r.record_proofs == null ? 'missing' : 'mismatch',

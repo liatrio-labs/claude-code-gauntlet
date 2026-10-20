@@ -576,6 +576,7 @@ def test_verify_consumes_pipeline_findings_without_error(
         "deltas_checksum",
         "inline_checksum",
         "base_branch",
+        "diff_source",
         "record_proofs",
         "input_checksum",
     ]
@@ -597,6 +598,10 @@ def test_verify_consumes_pipeline_findings_without_error(
     assert envelope["receipt"]["sha"] == "abcd"
     assert envelope["receipt"]["n_in"] == 2
     assert envelope["receipt"]["nonce"] == "boundary"
+    assert envelope["receipt"]["diff_source"] == {
+        "path": str(diff_path),
+        "read": True,
+    }
     assert list(envelope["result"]) == ["deltas", "verified", "eliminated", "stats"]
     assert [
         (delta["id"], delta["verified"]) for delta in envelope["result"]["deltas"]
@@ -678,7 +683,8 @@ def test_verify_localises_real_receipt_input_typo(
             + READ_INPUT
             + "const x=JSON.parse(source);"
             "const ctx=verifyCtx((_i,attempt)=>attempt===1?x.envelope:{status:'failed'});"
-            "const out=await verifyStage(ctx,verifyInput(x.findings));"
+            "const input=verifyInput(x.findings); input.verify.diffPath=null;"
+            "const out=await verifyStage(ctx,input);"
             "process.stdout.write(JSON.stringify({out,"
             "attempts:ctx.calls.map(c=>dispatchedFindings(c.prompt).map(f=>f.id))}));",
             {"envelope": envelope, "findings": findings},

@@ -89,6 +89,10 @@ export function sliceInputRecorder(env, prompt) {
   const document = dispatchedDocument(prompt);
   if (env && env.status === 'ok' && env.receipt) {
     if (!Object.hasOwn(env.receipt, 'base_branch')) env.receipt.base_branch = document.base_branch;
+    if (!Object.hasOwn(env.receipt, 'diff_source')) {
+      const diffIndex = argv.indexOf('--diff-file');
+      env.receipt.diff_source = { path: diffIndex < 0 ? null : argv[diffIndex + 1], read: true };
+    }
     if (!Object.hasOwn(env.receipt, 'record_proofs')) {
       env.receipt.record_proofs = document.findings.map((f) => ({ id: f.id, checksum: recordProof(f) }));
     }
