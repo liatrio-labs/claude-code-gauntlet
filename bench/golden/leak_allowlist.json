@@ -1,0 +1,1282 @@
+{
+  "schema_version": 2,
+  "epoch_id": "e616e84-v1",
+  "entries": [
+    {
+      "identifier_id": "15fe27b5f3eb4e3d53e0a29586e9352b16711ae022dcee7b0da32f61aef283df",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "71dd30d7f65b2b9b7dc9ed89609ed06de8de9fc4ebf66ee5bbe1cba93839bbb4",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "15fe27b5f3eb4e3d53e0a29586e9352b16711ae022dcee7b0da32f61aef283df",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "bec4e6518cdd8ec30d5e0b645171fc31a44ee2204e4539a12c3a8b561f777033",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "15fe27b5f3eb4e3d53e0a29586e9352b16711ae022dcee7b0da32f61aef283df",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "f28487323606ddc88b49310449c3b2efcdc1e32bb1dc705c2aaca05fee1b4300",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "15fe27b5f3eb4e3d53e0a29586e9352b16711ae022dcee7b0da32f61aef283df",
+      "surface_id": "workflows/src/measurementTrace.js",
+      "excerpt_sha256": "71dd30d7f65b2b9b7dc9ed89609ed06de8de9fc4ebf66ee5bbe1cba93839bbb4",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "15fe27b5f3eb4e3d53e0a29586e9352b16711ae022dcee7b0da32f61aef283df",
+      "surface_id": "workflows/src/measurementTrace.js",
+      "excerpt_sha256": "bec4e6518cdd8ec30d5e0b645171fc31a44ee2204e4539a12c3a8b561f777033",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "15fe27b5f3eb4e3d53e0a29586e9352b16711ae022dcee7b0da32f61aef283df",
+      "surface_id": "workflows/src/measurementTrace.js",
+      "excerpt_sha256": "f28487323606ddc88b49310449c3b2efcdc1e32bb1dc705c2aaca05fee1b4300",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "27be433d5addca879e8edd221c6beaee44a145534df7dd2e759bfbb5610402c8",
+      "surface_id": "agents/bug-detector.md",
+      "excerpt_sha256": "22a43050ba532d525209175e4b07a1bdede1b44cd28f925db7a2914044ccec09",
+      "expected_count": 1,
+      "reason": "Named auth-context member rule and worked example; PR-scope exclusion remains required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "27be433d5addca879e8edd221c6beaee44a145534df7dd2e759bfbb5610402c8",
+      "surface_id": "agents/bug-detector.md",
+      "excerpt_sha256": "4b4bdee05ac115b0c825755cbb34c23b7258359e75a0b9cea77402ddd41cef2f",
+      "expected_count": 1,
+      "reason": "Named auth-context member rule and worked example; PR-scope exclusion remains required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "1c5af3af543cba5af7e497bed04f25ee6433bc0740d4d7d63eb51bd90235b847",
+      "expected_count": 2,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "25e088eb94ee7c4299932bf2bbd07cc207fc7b13df54e96379d207c9d2d74f01",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "2c5d663963b8105cb8e8ac5cc5b9793662c2128ce9fa19dfdc55e72fc447d07f",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "353dc73ec6d01263c7acdaf430548c5da3351f29a544b4a549ef8cd63172a154",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "3e1c5a595d3e1c3254ec6c1a1ff6696c0b882e9704dae91ddf222f86e9f6928b",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "55fb1045582c522d1e56f15088f19e79e19ce3d5812ea7828d51b57e85c28092",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "60499dcd4ac7e5f27997349755495343a5d263cfbabd649e9e9004de6a805d69",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "688d64d3aeb0df16178d38f90cb731ced0e2995e30b6d43891d214aa4f3d9bac",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "7626aed8306ac577a29156102d922396d607a51a726a15e3007ab62b13fa678b",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "7d077768ee3fd74856bdf83636f14606fc8a7a27639cedbef6a6c79aaa043df5",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "b174c19f9d95f5d2ed242ecde9e94f156c3bbc7463bb7d74058bf03e6c846711",
+      "expected_count": 3,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "bea563e43687864050a06edd2a61ecdfcd89354269b8d8193e62b535e3523952",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "c3d92f67c9b50e2893b4f28bc0ffcad07b60579829b31c34e20f9e05633c3637",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "d9c7b88c0e9641c6bae124cff37a979c3ef18e56bca9f0160347af62d145c617",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "dde6925427903cfdaec3a44e0a8a8910d9fb64b1396e756fb0af617919764f8b",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "e64db98bca225df58e04cf540911e43d5064e9b5d201faa1d709221cab494944",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "e88c29a0adb9f76de86f9e4ddf6adab0f6f42270be50bea5ae535b5c7e938e06",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "e9b9883be5828124e6e8eb2d2173e753e6b1135345ff8431e919cf3dc28ca3f3",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "ea43bfe7dd41a0c85b99c6a614d361127c1dc5e7a4b632a1dee4dc69cb3fdc4c",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "f552ad559e670f2c9cc1ac34ebc8febbb5f86965627bf19c07b73ec77b9c807c",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "1c5af3af543cba5af7e497bed04f25ee6433bc0740d4d7d63eb51bd90235b847",
+      "expected_count": 2,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "25e088eb94ee7c4299932bf2bbd07cc207fc7b13df54e96379d207c9d2d74f01",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "2c5d663963b8105cb8e8ac5cc5b9793662c2128ce9fa19dfdc55e72fc447d07f",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "353dc73ec6d01263c7acdaf430548c5da3351f29a544b4a549ef8cd63172a154",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "3e1c5a595d3e1c3254ec6c1a1ff6696c0b882e9704dae91ddf222f86e9f6928b",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "55fb1045582c522d1e56f15088f19e79e19ce3d5812ea7828d51b57e85c28092",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "60499dcd4ac7e5f27997349755495343a5d263cfbabd649e9e9004de6a805d69",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "688d64d3aeb0df16178d38f90cb731ced0e2995e30b6d43891d214aa4f3d9bac",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "7626aed8306ac577a29156102d922396d607a51a726a15e3007ab62b13fa678b",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "7d077768ee3fd74856bdf83636f14606fc8a7a27639cedbef6a6c79aaa043df5",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "b174c19f9d95f5d2ed242ecde9e94f156c3bbc7463bb7d74058bf03e6c846711",
+      "expected_count": 3,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "bea563e43687864050a06edd2a61ecdfcd89354269b8d8193e62b535e3523952",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "c3d92f67c9b50e2893b4f28bc0ffcad07b60579829b31c34e20f9e05633c3637",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "d9c7b88c0e9641c6bae124cff37a979c3ef18e56bca9f0160347af62d145c617",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "dde6925427903cfdaec3a44e0a8a8910d9fb64b1396e756fb0af617919764f8b",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "e64db98bca225df58e04cf540911e43d5064e9b5d201faa1d709221cab494944",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "e88c29a0adb9f76de86f9e4ddf6adab0f6f42270be50bea5ae535b5c7e938e06",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "e9b9883be5828124e6e8eb2d2173e753e6b1135345ff8431e919cf3dc28ca3f3",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "ea43bfe7dd41a0c85b99c6a614d361127c1dc5e7a4b632a1dee4dc69cb3fdc4c",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "2ed9e8ea535dc56e9d9073cfb5b8159b8f08684241fbe40860ca49e9a99aa98f",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "f552ad559e670f2c9cc1ac34ebc8febbb5f86965627bf19c07b73ec77b9c807c",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "344ad75c9850719b3502063b3f847878d0a5dbbb949ef60e28905c3712b444fa",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "08f5ade926efcf226ebdd88bed17a145951e010443bfc68a43dbd8464ebde388",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "344ad75c9850719b3502063b3f847878d0a5dbbb949ef60e28905c3712b444fa",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "1ddb7cf99105c7c27252103df1ce8ec2be338ebac0107a44907dee9299d9b135",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "344ad75c9850719b3502063b3f847878d0a5dbbb949ef60e28905c3712b444fa",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "30773856f7c51c24584b36ee1277f51e9a929f7bddecdf681d7193df911c47a9",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "344ad75c9850719b3502063b3f847878d0a5dbbb949ef60e28905c3712b444fa",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "574d321e25f6d7fbdff837094391bd62a7eeaeca81d14786f9ce2ffe670873c1",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "344ad75c9850719b3502063b3f847878d0a5dbbb949ef60e28905c3712b444fa",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "76d93c227a95c2f583c9cb16e7a222bacbb518eb33cd9f26000adefe789492a7",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "344ad75c9850719b3502063b3f847878d0a5dbbb949ef60e28905c3712b444fa",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "7a48db636f9fbcaf1d648edb2c9cae4cc2670475e9286ad98d5b62f39f7c9178",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "344ad75c9850719b3502063b3f847878d0a5dbbb949ef60e28905c3712b444fa",
+      "surface_id": "workflows/src/capacity.js",
+      "excerpt_sha256": "7a48db636f9fbcaf1d648edb2c9cae4cc2670475e9286ad98d5b62f39f7c9178",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "344ad75c9850719b3502063b3f847878d0a5dbbb949ef60e28905c3712b444fa",
+      "surface_id": "workflows/src/contextPlan.js",
+      "excerpt_sha256": "1ddb7cf99105c7c27252103df1ce8ec2be338ebac0107a44907dee9299d9b135",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "344ad75c9850719b3502063b3f847878d0a5dbbb949ef60e28905c3712b444fa",
+      "surface_id": "workflows/src/filterFindings.js",
+      "excerpt_sha256": "574d321e25f6d7fbdff837094391bd62a7eeaeca81d14786f9ce2ffe670873c1",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "344ad75c9850719b3502063b3f847878d0a5dbbb949ef60e28905c3712b444fa",
+      "surface_id": "workflows/src/measurementTrace.js",
+      "excerpt_sha256": "30773856f7c51c24584b36ee1277f51e9a929f7bddecdf681d7193df911c47a9",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "344ad75c9850719b3502063b3f847878d0a5dbbb949ef60e28905c3712b444fa",
+      "surface_id": "workflows/src/outboundText.js",
+      "excerpt_sha256": "76d93c227a95c2f583c9cb16e7a222bacbb518eb33cd9f26000adefe789492a7",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "344ad75c9850719b3502063b3f847878d0a5dbbb949ef60e28905c3712b444fa",
+      "surface_id": "workflows/src/wire.js",
+      "excerpt_sha256": "08f5ade926efcf226ebdd88bed17a145951e010443bfc68a43dbd8464ebde388",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "353c919021b7ea5b2067b3c3df60a5b7146ceba25f3e6b15ed5cc0d84352d8b2",
+      "surface_id": "skills/code-gauntlet/SKILL.md",
+      "excerpt_sha256": "02eb3616a2ead1093002e67dff2b19083e4539e6922186842f687d57de14d8c0",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "353c919021b7ea5b2067b3c3df60a5b7146ceba25f3e6b15ed5cc0d84352d8b2",
+      "surface_id": "skills/code-gauntlet/references/validation-pipeline.md",
+      "excerpt_sha256": "5db6202705df890c0a3d7e2e53e9c19566aa77787c95e95a52d1891407d1324b",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "353c919021b7ea5b2067b3c3df60a5b7146ceba25f3e6b15ed5cc0d84352d8b2",
+      "surface_id": "workflows/src/paths.js",
+      "excerpt_sha256": "89c23203287821a99dc97a402d965aaf268f9551b7cb3690617c62ac718e63c5",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "353c919021b7ea5b2067b3c3df60a5b7146ceba25f3e6b15ed5cc0d84352d8b2",
+      "surface_id": "workflows/src/verifyWire.js",
+      "excerpt_sha256": "9106b38f8cad3635daad3d0ec52cbb500d6bbf26fcbf6610b2c56b4e534f0abc",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "353c919021b7ea5b2067b3c3df60a5b7146ceba25f3e6b15ed5cc0d84352d8b2",
+      "surface_id": "workflows/src/wire.js",
+      "excerpt_sha256": "d1abd0f1b373b4c202605a18099e0a2e0fd4e748da3dcc688b3362b2bdce2cf3",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "3b5b4e184695eae694d9910ddbcaa33af3c32401aefc03573db7a96c77cae2bb",
+      "surface_id": "generated/bucketed/code-gauntlet:security-reviewer/0",
+      "excerpt_sha256": "018bbbdef2c52e62d2841fb86ad455476e06749cdc96ed27e0fb92aa2a5f0688",
+      "expected_count": 1,
+      "reason": "Security dispatch sweep; comment-scope exclusions remain required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "3b5b4e184695eae694d9910ddbcaa33af3c32401aefc03573db7a96c77cae2bb",
+      "surface_id": "generated/derived/code-gauntlet:security-reviewer/0",
+      "excerpt_sha256": "018bbbdef2c52e62d2841fb86ad455476e06749cdc96ed27e0fb92aa2a5f0688",
+      "expected_count": 1,
+      "reason": "Security dispatch sweep; comment-scope exclusions remain required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "3b5b4e184695eae694d9910ddbcaa33af3c32401aefc03573db7a96c77cae2bb",
+      "surface_id": "generated/fallback/code-gauntlet:security-reviewer/0",
+      "excerpt_sha256": "018bbbdef2c52e62d2841fb86ad455476e06749cdc96ed27e0fb92aa2a5f0688",
+      "expected_count": 1,
+      "reason": "Security dispatch sweep; comment-scope exclusions remain required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "3b5b4e184695eae694d9910ddbcaa33af3c32401aefc03573db7a96c77cae2bb",
+      "surface_id": "generated/legacy/code-gauntlet:security-reviewer/0",
+      "excerpt_sha256": "018bbbdef2c52e62d2841fb86ad455476e06749cdc96ed27e0fb92aa2a5f0688",
+      "expected_count": 1,
+      "reason": "Security dispatch sweep; comment-scope exclusions remain required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "3b5b4e184695eae694d9910ddbcaa33af3c32401aefc03573db7a96c77cae2bb",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "ebc25206d8b81e5a49263c131ae562e4a845d200490f45f0cd73e5544cee7751",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "3b5b4e184695eae694d9910ddbcaa33af3c32401aefc03573db7a96c77cae2bb",
+      "surface_id": "workflows/src/registry.js",
+      "excerpt_sha256": "ebc25206d8b81e5a49263c131ae562e4a845d200490f45f0cd73e5544cee7751",
+      "expected_count": 1,
+      "reason": "Security dispatch sweep; comment-scope exclusions remain required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "4c1881f964032291b99cb0410e05bc3b190a4f0ef93e1ec4973bb4e67dd0a973",
+      "surface_id": "agents/bug-detector.md",
+      "excerpt_sha256": "22a43050ba532d525209175e4b07a1bdede1b44cd28f925db7a2914044ccec09",
+      "expected_count": 1,
+      "reason": "Named auth-context member rule and worked example; PR-scope exclusion remains required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "4c1881f964032291b99cb0410e05bc3b190a4f0ef93e1ec4973bb4e67dd0a973",
+      "surface_id": "agents/bug-detector.md",
+      "excerpt_sha256": "4b4bdee05ac115b0c825755cbb34c23b7258359e75a0b9cea77402ddd41cef2f",
+      "expected_count": 1,
+      "reason": "Named auth-context member rule and worked example; PR-scope exclusion remains required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "4caf796d3887b3ac0bf555eb822e9cd6b14e798305ac0a46ec6d80d33f767cd6",
+      "surface_id": "agents/bug-detector.md",
+      "excerpt_sha256": "96e4d14c56d9eae2d9f3792c7a867d416d88ba4f86a882dd5c32cb136e0cfc8f",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "1601e6fe8b798ab29fe05c99da4a930d4cf0bc9aa7e73a782005e54d2ca25ebe",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "2ddd3adbb3457de700e8ae10f7225c3b8f4b21a0b699406cca6bd0e203fc4cb3",
+      "expected_count": 2,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "4bd40a29b55731f67ad90a5f96833c87ec6fda83dabe80c6882d0e422fbc845e",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "5c96c495ab7af88a837a994109d5ab3921140b1dde7b220b24bc9d131c1c3c26",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "76f7927cd1ac9acbd2677ee884d82549655cc51cd702052afbce95a78c7615c4",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "9b2d7679c469f6da526ad831faddebad0b7adff56cfb132abde69f28e207c994",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "cebc36c6a98694464cbbfdd323b968ee9d64f88bf596f9542fe638ed28d90170",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "d6ce3af894e4018f495d546795ee07be06e8ffc8350877cd19a7f790a4082ff7",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "e6715a556fc6150778f0960a464aae2f78dabdfd55932c6ca6ec48beb3d0b948",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/src/checkpoints.js",
+      "excerpt_sha256": "1601e6fe8b798ab29fe05c99da4a930d4cf0bc9aa7e73a782005e54d2ca25ebe",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/src/checkpoints.js",
+      "excerpt_sha256": "cebc36c6a98694464cbbfdd323b968ee9d64f88bf596f9542fe638ed28d90170",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/src/discover.js",
+      "excerpt_sha256": "5c96c495ab7af88a837a994109d5ab3921140b1dde7b220b24bc9d131c1c3c26",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "4bd40a29b55731f67ad90a5f96833c87ec6fda83dabe80c6882d0e422fbc845e",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "76f7927cd1ac9acbd2677ee884d82549655cc51cd702052afbce95a78c7615c4",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "9b2d7679c469f6da526ad831faddebad0b7adff56cfb132abde69f28e207c994",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "e6715a556fc6150778f0960a464aae2f78dabdfd55932c6ca6ec48beb3d0b948",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/src/reviewStages.js",
+      "excerpt_sha256": "2ddd3adbb3457de700e8ae10f7225c3b8f4b21a0b699406cca6bd0e203fc4cb3",
+      "expected_count": 2,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6a99c0b5f664e5445b703bf59429711e99d0ee632379054d6ac4c70b84373a38",
+      "surface_id": "workflows/src/run.js",
+      "excerpt_sha256": "d6ce3af894e4018f495d546795ee07be06e8ffc8350877cd19a7f790a4082ff7",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "6f7d81d874f85be626c66c4a299a4e6e2ce903efb05af51d6bca68a67e74dc16",
+      "surface_id": "skills/build-review-md/references/review-md-practices.md",
+      "excerpt_sha256": "81c000ad6be275dd8c47b832323401c8da8526985c77311adf34e110d7115136",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "73ff5e180c3006595f6b8305a24fe991e46a91778b03ccc3a79aefbdaff783e0",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "81e2156c6e2e7a6eac11a62694010aff996565e0bb26f5cc0ddae5d716639f81",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "73ff5e180c3006595f6b8305a24fe991e46a91778b03ccc3a79aefbdaff783e0",
+      "surface_id": "workflows/src/verifySymbols.js",
+      "excerpt_sha256": "81e2156c6e2e7a6eac11a62694010aff996565e0bb26f5cc0ddae5d716639f81",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "9960c5f772ef223482f83e98752d93b60db9a88dee34d6b3f3ca877f1cda6fd8",
+      "surface_id": "agents/code-simplifier.md",
+      "excerpt_sha256": "8d2a0b4abb6d9e3a70f08baf92ffe77064b8ae7c7155b9768826cc1ca3d69305",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "9960c5f772ef223482f83e98752d93b60db9a88dee34d6b3f3ca877f1cda6fd8",
+      "surface_id": "skills/code-gauntlet/references/false-positive-exclusions.md",
+      "excerpt_sha256": "b1ac303ee6ebd9fb1527637ce114fb23c19eb743c3f3ac6e99a194adf06cd65c",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "a1cd4e2abff04ad10df90f436ebaa04cbcb2e3b898e4a7efac1493dfb77d90b0",
+      "surface_id": "skills/build-review-md/references/review-md-practices.md",
+      "excerpt_sha256": "df8424d800eaa50bc980854c322567950bc6c599261000755e8b6a0247136ca2",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "a2021e626d9e007e16182c8bcae6e1b58a088497b0713fe918aa4152bccecbfb",
+      "surface_id": "agents/cross-file-impact.md",
+      "excerpt_sha256": "cb54353b496eeb70f8d25c0124ae5ba6f0342a81ddc98ba3782ed680917136cf",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "a2021e626d9e007e16182c8bcae6e1b58a088497b0713fe918aa4152bccecbfb",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "81e2156c6e2e7a6eac11a62694010aff996565e0bb26f5cc0ddae5d716639f81",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "a2021e626d9e007e16182c8bcae6e1b58a088497b0713fe918aa4152bccecbfb",
+      "surface_id": "workflows/src/verifySymbols.js",
+      "excerpt_sha256": "81e2156c6e2e7a6eac11a62694010aff996565e0bb26f5cc0ddae5d716639f81",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "a86f2279e8c63493629672a7fd445457f99162800a4385909f2c10f597b149d2",
+      "surface_id": "scripts/gauntlet/contract_gen.py#L162C9",
+      "excerpt_sha256": "098d264fc79309732041c29dcc90b78a74f958656ae23a4fb96aee2de58b4fd0",
+      "expected_count": 1,
+      "reason": "holdout_delete_only",
+      "disposition": "delete",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "051ac3c954a5cf9908b8a4058ba6f062dc63922b3297c95ca93f7410b3769038",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "08edb062bb0cf769fed82f86d5efd04de0e97a06dc78f9665795cd4605d0d4c7",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "4cdae648d636cd68499d6cb3d96515184af4f4d00a00b639a40757a9ebf372da",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "4d29a3078e47ef92c0d3ac20331732ff2f367e6754fcbaea108dde5f536f4195",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "4dcfde518f27952c2b32d65a6a3de8af1c7e88260e939f7b3e1227033f9d2879",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "590a8540db4ca7879fb0b008918c69931bac2c1530dff30e569dcc6f94af6852",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "5aac8da754703c6c74969cebc91b2deb5d38eef5a72f88d8832e976b1ec5ee84",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "5dd777e9be11552751037141744e2311059050ceb0d093c21803f60cd655dada",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "7eb7339e72a147530f91f01f6a55dbd9bc5f0ceb489fc1e92fa5327696f248b6",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "c2cc63cc3e2873ac0108cc0ea1e553aee73c5be6c942e91a69a70c8d0da7e639",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "d419ee6ddedfad4d8ef112e1525b79a27982e71f4440e93c492dd17b8486cef9",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/src/applyChallenges.js",
+      "excerpt_sha256": "5aac8da754703c6c74969cebc91b2deb5d38eef5a72f88d8832e976b1ec5ee84",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/src/applyChallenges.js",
+      "excerpt_sha256": "c2cc63cc3e2873ac0108cc0ea1e553aee73c5be6c942e91a69a70c8d0da7e639",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/src/filterFindings.js",
+      "excerpt_sha256": "7eb7339e72a147530f91f01f6a55dbd9bc5f0ceb489fc1e92fa5327696f248b6",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/src/filterFindings.js",
+      "excerpt_sha256": "d419ee6ddedfad4d8ef112e1525b79a27982e71f4440e93c492dd17b8486cef9",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/src/outboundText.js",
+      "excerpt_sha256": "4cdae648d636cd68499d6cb3d96515184af4f4d00a00b639a40757a9ebf372da",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/src/outboundText.js",
+      "excerpt_sha256": "4d29a3078e47ef92c0d3ac20331732ff2f367e6754fcbaea108dde5f536f4195",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/src/outboundText.js",
+      "excerpt_sha256": "5dd777e9be11552751037141744e2311059050ceb0d093c21803f60cd655dada",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "051ac3c954a5cf9908b8a4058ba6f062dc63922b3297c95ca93f7410b3769038",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/src/renderReport.js",
+      "excerpt_sha256": "08edb062bb0cf769fed82f86d5efd04de0e97a06dc78f9665795cd4605d0d4c7",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/src/verifyStage.js",
+      "excerpt_sha256": "4dcfde518f27952c2b32d65a6a3de8af1c7e88260e939f7b3e1227033f9d2879",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3356a2bae207cd5994363c1dc85ce737cbeb75ad9d11c836364d77afaa56013",
+      "surface_id": "workflows/src/verifyStage.js",
+      "excerpt_sha256": "590a8540db4ca7879fb0b008918c69931bac2c1530dff30e569dcc6f94af6852",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
+      "surface_id": "scripts/gauntlet/jsjson.py#L1C1",
+      "excerpt_sha256": "20b83b2dbac7d23b1be3c46b935e084724163b3eebf246b6cf2b82e947c2c00c",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
+      "surface_id": "scripts/gauntlet/text.py#L1C1",
+      "excerpt_sha256": "c49de761b15d753c97c81bf11be55e9458666f3d1aa67882bb5289446efc0ae5",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
+      "surface_id": "skills/build-review-md/SKILL.md",
+      "excerpt_sha256": "6ce3a5d1ad9b59421b13db05c4482c1bd03e5dc73f591fb068814ffe042c8329",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
+      "surface_id": "skills/code-gauntlet/references/delivery-guide.md",
+      "excerpt_sha256": "af813570630509ae5186e7cb40e23002b878daa5fb04cf2b93199f36e2fd36df",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
+      "surface_id": "skills/code-gauntlet/references/validation-pipeline.md",
+      "excerpt_sha256": "843e18e94c172f5295d63c003f63b34704f184865891bf423608bd9befd6c982",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e8a8af31025e155a2a9aa3a6aa753bc102d9f728afb733f7fef1d6f97df750b5",
+      "surface_id": "agents/bug-detector.md",
+      "excerpt_sha256": "b5546b1f8485e46db179022c80c02c58fc34e8b4a985c0cf65bd513805e2dcce",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e8a8af31025e155a2a9aa3a6aa753bc102d9f728afb733f7fef1d6f97df750b5",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "1fbd2ae0d00882c01c2c1a58f1c9fb4211ffff9d7fc8d34674896dd24117f7b0",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e8a8af31025e155a2a9aa3a6aa753bc102d9f728afb733f7fef1d6f97df750b5",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "81e2156c6e2e7a6eac11a62694010aff996565e0bb26f5cc0ddae5d716639f81",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e8a8af31025e155a2a9aa3a6aa753bc102d9f728afb733f7fef1d6f97df750b5",
+      "surface_id": "workflows/src/verifySymbols.js",
+      "excerpt_sha256": "81e2156c6e2e7a6eac11a62694010aff996565e0bb26f5cc0ddae5d716639f81",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "e8a8af31025e155a2a9aa3a6aa753bc102d9f728afb733f7fef1d6f97df750b5",
+      "surface_id": "workflows/src/wire.js",
+      "excerpt_sha256": "1fbd2ae0d00882c01c2c1a58f1c9fb4211ffff9d7fc8d34674896dd24117f7b0",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "f6ea3acfd81228e057eb0ab4ce7c1b098f3be65c33d1a63c17c49ca0fc2a58ba",
+      "surface_id": "workflows/pipeline.js",
+      "excerpt_sha256": "39abc9cf40192279de073463bbd44b0b0206efa2781970ad00cc965af86b6f64",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    },
+    {
+      "identifier_id": "f6ea3acfd81228e057eb0ab4ce7c1b098f3be65c33d1a63c17c49ca0fc2a58ba",
+      "surface_id": "workflows/src/verifySymbols.js",
+      "excerpt_sha256": "39abc9cf40192279de073463bbd44b0b0206efa2781970ad00cc965af86b6f64",
+      "expected_count": 1,
+      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_identifier",
+      "expires_wave": "2a"
+    }
+  ],
+  "passages": [
+    {
+      "passage_id": "P001",
+      "surface_id": "agents/bug-detector.md",
+      "excerpt_sha256": "8e3370f0f44f8fc0b8d545dbb97c17d93152bb2aced42d1f03bece79a8426c67",
+      "expected_count": 1,
+      "line_count": 1,
+      "reason": "Wrapper delegation recipe; scenario-level PR exclusion remains required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "passage_id": "P002",
+      "surface_id": "agents/bug-detector.md",
+      "excerpt_sha256": "b9d557c22752ea549d1d16e67f65e2106b2e8f5f2b09a04cff097ba01b6e8171",
+      "expected_count": 1,
+      "line_count": 1,
+      "reason": "Auth-context member rule; identifier-level PR exclusions remain required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "passage_id": "P003",
+      "surface_id": "agents/bug-detector.md",
+      "excerpt_sha256": "e423e94eb738522e7844c1a2d0fb0bda7699f2a9e2c8e32dac48daf6895c6ec5",
+      "expected_count": 1,
+      "line_count": 1,
+      "reason": "Auth-context member worked example; identifier-level PR exclusions remain required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "passage_id": "P010-P014",
+      "surface_id": "workflows/src/registry.js",
+      "excerpt_sha256": "fcaf5814b8f27915ef2d0ca7f6a81900d8b60fb15cec3f4c73b237d53c8f4cd3",
+      "expected_count": 1,
+      "line_count": 8,
+      "reason": "Security dispatch sweeps; semantic comment-scope exclusions remain required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    },
+    {
+      "passage_id": "P015",
+      "surface_id": "workflows/src/registry.js",
+      "excerpt_sha256": "c224e09b1fc97e7c7774b9cd174bd27869be69e6a4b3566767faa764c99d9a90",
+      "expected_count": 1,
+      "line_count": 5,
+      "reason": "Typo and naming dispatch sweep; semantic comment-scope exclusions remain required.",
+      "disposition": "known_cue_remove_in_wave_2a",
+      "expires_wave": "2a"
+    }
+  ]
+}
