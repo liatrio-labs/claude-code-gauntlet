@@ -2,6 +2,47 @@
 
 <!-- version list -->
 
+## v3.42.49 (2026-10-20)
+
+### Bug Fixes
+
+- Bind the verify diff source into the whole-attempt context proof
+  ([#535](https://github.com/liatrio-labs/claude-code-gauntlet/pull/535),
+  [`da5f8b2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/da5f8b21a3f88be3d011fc0d53081b1b467fa39c))
+
+- Trust verify decisions per finding so one mistyped record no longer degrades its slice
+  ([#535](https://github.com/liatrio-labs/claude-code-gauntlet/pull/535),
+  [`da5f8b2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/da5f8b21a3f88be3d011fc0d53081b1b467fa39c))
+
+### Chores
+
+- **bench**: Carry a live GitHub token to children, retry pre-workflow stops, match artifact shas
+  exactly ([#534](https://github.com/liatrio-labs/claude-code-gauntlet/pull/534),
+  [`8c6cc05`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c6cc05a2a0c6f48bf0976c491077577a8d20a9a))
+
+- **bench**: Live GitHub token for children, retryable pre-workflow stops, exact artifact shas
+  ([#534](https://github.com/liatrio-labs/claude-code-gauntlet/pull/534),
+  [`8c6cc05`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c6cc05a2a0c6f48bf0976c491077577a8d20a9a))
+
+### Documentation
+
+- Describe per-finding verify trust in the dispatch and receipt references
+  ([#535](https://github.com/liatrio-labs/claude-code-gauntlet/pull/535),
+  [`da5f8b2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/da5f8b21a3f88be3d011fc0d53081b1b467fa39c))
+
+### Refactoring
+
+- **bench**: Flatten the session transcript reader
+  ([#534](https://github.com/liatrio-labs/claude-code-gauntlet/pull/534),
+  [`8c6cc05`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c6cc05a2a0c6f48bf0976c491077577a8d20a9a))
+
+### Testing
+
+- **bench**: Prove the GITHUB_TOKEN preflight, scope the auth note, drop a dead fake branch
+  ([#534](https://github.com/liatrio-labs/claude-code-gauntlet/pull/534),
+  [`8c6cc05`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c6cc05a2a0c6f48bf0976c491077577a8d20a9a))
+
+
 ## v3.42.48 (2026-10-20)
 
 ### Bug Fixes
