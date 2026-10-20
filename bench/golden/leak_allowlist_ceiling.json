@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "derivation_version": "distinctive-project-symbol-spans-v3",
+  "derivation_version": "distinctive-project-symbol-spans-v4",
   "epoch_id": "e616e84-v1",
   "golden_sha256": "a6edc0e159ac0c5f62d470a4d8bdf1c2006710606c48110818a2ec527f0d37c2",
   "holdout_salt": "8511c869475fb31b3c006cd86eda7c56c6d31b485bc02747fe55688a68317abf",
@@ -24,16 +24,16 @@
     {
       "identifier_id": "353c919021b7ea5b2067b3c3df60a5b7146ceba25f3e6b15ed5cc0d84352d8b2",
       "excerpt_sha256": "02eb3616a2ead1093002e67dff2b19083e4539e6922186842f687d57de14d8c0",
-      "disposition": "generic_identifier",
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_vocabulary",
+      "reason": "Ordinary technical vocabulary; not a leak.",
       "source_path": "skills/code-gauntlet/SKILL.md",
       "expected_count": 1
     },
     {
       "identifier_id": "353c919021b7ea5b2067b3c3df60a5b7146ceba25f3e6b15ed5cc0d84352d8b2",
       "excerpt_sha256": "5db6202705df890c0a3d7e2e53e9c19566aa77787c95e95a52d1891407d1324b",
-      "disposition": "generic_identifier",
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_vocabulary",
+      "reason": "Ordinary technical vocabulary; not a leak.",
       "source_path": "skills/code-gauntlet/references/validation-pipeline.md",
       "expected_count": 1
     },
@@ -72,64 +72,56 @@
     {
       "identifier_id": "4caf796d3887b3ac0bf555eb822e9cd6b14e798305ac0a46ec6d80d33f767cd6",
       "excerpt_sha256": "96e4d14c56d9eae2d9f3792c7a867d416d88ba4f86a882dd5c32cb136e0cfc8f",
-      "disposition": "generic_identifier",
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_vocabulary",
+      "reason": "Ordinary technical vocabulary; not a leak.",
       "source_path": "agents/bug-detector.md",
-      "expected_count": 1
-    },
-    {
-      "identifier_id": "6f7d81d874f85be626c66c4a299a4e6e2ce903efb05af51d6bca68a67e74dc16",
-      "excerpt_sha256": "81c000ad6be275dd8c47b832323401c8da8526985c77311adf34e110d7115136",
-      "disposition": "generic_identifier",
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
-      "source_path": "skills/build-review-md/references/review-md-practices.md",
       "expected_count": 1
     },
     {
       "identifier_id": "9960c5f772ef223482f83e98752d93b60db9a88dee34d6b3f3ca877f1cda6fd8",
       "excerpt_sha256": "8d2a0b4abb6d9e3a70f08baf92ffe77064b8ae7c7155b9768826cc1ca3d69305",
-      "disposition": "generic_identifier",
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_vocabulary",
+      "reason": "Ordinary technical vocabulary; not a leak.",
       "source_path": "agents/code-simplifier.md",
       "expected_count": 1
     },
     {
       "identifier_id": "9960c5f772ef223482f83e98752d93b60db9a88dee34d6b3f3ca877f1cda6fd8",
       "excerpt_sha256": "b1ac303ee6ebd9fb1527637ce114fb23c19eb743c3f3ac6e99a194adf06cd65c",
-      "disposition": "generic_identifier",
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_vocabulary",
+      "reason": "Ordinary technical vocabulary; not a leak.",
       "source_path": "skills/code-gauntlet/references/false-positive-exclusions.md",
       "expected_count": 1
     },
     {
       "identifier_id": "a1cd4e2abff04ad10df90f436ebaa04cbcb2e3b898e4a7efac1493dfb77d90b0",
       "excerpt_sha256": "df8424d800eaa50bc980854c322567950bc6c599261000755e8b6a0247136ca2",
-      "disposition": "generic_identifier",
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_vocabulary",
+      "reason": "Ordinary technical vocabulary; not a leak.",
       "source_path": "skills/build-review-md/references/review-md-practices.md",
       "expected_count": 1
     },
     {
       "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
       "excerpt_sha256": "6ce3a5d1ad9b59421b13db05c4482c1bd03e5dc73f591fb068814ffe042c8329",
-      "disposition": "generic_identifier",
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_vocabulary",
+      "reason": "Ordinary technical vocabulary; not a leak.",
       "source_path": "skills/build-review-md/SKILL.md",
       "expected_count": 1
     },
     {
       "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
       "excerpt_sha256": "843e18e94c172f5295d63c003f63b34704f184865891bf423608bd9befd6c982",
-      "disposition": "generic_identifier",
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_vocabulary",
+      "reason": "Ordinary technical vocabulary; not a leak.",
       "source_path": "skills/code-gauntlet/references/validation-pipeline.md",
       "expected_count": 1
     },
     {
       "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
       "excerpt_sha256": "af813570630509ae5186e7cb40e23002b878daa5fb04cf2b93199f36e2fd36df",
-      "disposition": "generic_identifier",
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
+      "disposition": "generic_vocabulary",
+      "reason": "Ordinary technical vocabulary; not a leak.",
       "source_path": "skills/code-gauntlet/references/delivery-guide.md",
       "expected_count": 1
     }

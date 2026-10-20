@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import builtins
 import hashlib
+import importlib
 import json
 import re
 import subprocess
 import sys
 import tempfile
+import warnings
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
@@ -26,11 +28,60 @@ from bench.runner.epochs import (
 )
 
 MatchMode = Literal["identifier", "literal_path"]
-Disposition = Literal["known_cue_remove_in_wave_2a", "generic_identifier", "delete"]
-DERIVATION_VERSION = "distinctive-project-symbol-spans-v3"
+ExpiringDisposition = Literal[
+    "known_cue_remove_in_wave_2a", "generic_identifier", "delete"
+]
+Disposition = Literal[
+    "known_cue_remove_in_wave_2a",
+    "generic_identifier",
+    "generic_vocabulary",
+    "delete",
+]
+DERIVATION_VERSION = "distinctive-project-symbol-spans-v4"
 ROOT = Path(__file__).resolve().parents[2]
 ALLOWANCE_CEILING_SHA256 = (
-    "03909b3974cd1aa430dc5ec82968337b47aaf9bb56996fc0ee772dcdc8121bb7"
+    "53359fe8e425fcbe7bc455a16a5f76921499507291ba907e0ce588f3f5ee1ec4"
+)
+# These standard modules print output, run site customization, or launch a browser on import.
+STDLIB_IMPORT_SIDE_EFFECTS = frozenset(
+    {"__hello__", "__phello__", "antigravity", "site", "this"}
+)
+STDLIB_PLATFORM_MODULES = frozenset(
+    {
+        "_aix_support",
+        "_crypt",
+        "_curses",
+        "_curses_panel",
+        "_msi",
+        "_osx_support",
+        "_overlapped",
+        "_posixshmem",
+        "_posixsubprocess",
+        "_scproxy",
+        "_winapi",
+        "_wmi",
+        "curses",
+        "crypt",
+        "fcntl",
+        "grp",
+        "msvcrt",
+        "msilib",
+        "nis",
+        "nt",
+        "ossaudiodev",
+        "posix",
+        "pty",
+        "pwd",
+        "readline",
+        "resource",
+        "spwd",
+        "syslog",
+        "termios",
+        "tty",
+        "winerror",
+        "winreg",
+        "winsound",
+    }
 )
 
 
@@ -60,15 +111,22 @@ class DerivedLeakIdentifiersWire(TypedDict):
     holdout_identifiers: list[HoldoutLeakIdentifierWire]
 
 
-class LeakAllowanceWire(TypedDict):
+class LeakAllowanceBaseWire(TypedDict):
     identifier_id: str
     surface_id: str
     source_path: str
     excerpt_sha256: str
     expected_count: int
     reason: str
+
+
+class LeakAllowanceWire(LeakAllowanceBaseWire):
     disposition: Disposition
     expires_wave: Literal["2a"]
+
+
+class GenericVocabularyAllowanceWire(LeakAllowanceBaseWire):
+    disposition: Literal["generic_vocabulary"]
 
 
 class PassageWire(TypedDict):
@@ -78,7 +136,7 @@ class PassageWire(TypedDict):
     excerpt_sha256: str
     expected_count: int
     line_count: int
-    disposition: Disposition
+    disposition: ExpiringDisposition
     reason: str
     expires_wave: Literal["2a"]
 
@@ -86,7 +144,7 @@ class PassageWire(TypedDict):
 class LeakAllowlistWire(TypedDict):
     schema_version: Literal[2]
     epoch_id: str
-    entries: list[LeakAllowanceWire]
+    entries: list[LeakAllowanceWire | GenericVocabularyAllowanceWire]
     passages: list[PassageWire]
 
 
@@ -183,7 +241,7 @@ class LeakAllowance:
     expected_count: int
     reason: str
     disposition: Disposition
-    expires_wave: Literal["2a"]
+    expires_wave: Literal["2a"] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,7 +383,21 @@ process.stdout.write(JSON.stringify([...names].sort()));
     names = json.loads(result.stdout)
     if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
         raise ValueError("runtime identifier enumeration failed")
-    return frozenset(names) | frozenset(dir(builtins)) | sys.stdlib_module_names
+    python_names = set(dir(builtins)) | set(sys.stdlib_module_names)
+    skipped_modules = STDLIB_IMPORT_SIDE_EFFECTS | STDLIB_PLATFORM_MODULES
+    for module_name in sys.stdlib_module_names - skipped_modules:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                module = importlib.import_module(module_name)
+            except Exception:  # noqa: BLE001 - optional stdlib imports can fail by platform.
+                continue
+        python_names.update(
+            f"{module_name}.{member}"
+            for member in dir(module)
+            if not member.startswith("_")
+        )
+    return frozenset(names) | frozenset(python_names)
 
 
 def derive_identifiers(
@@ -795,17 +867,30 @@ def _scan_with_ceiling(
     plain = {(x.match_mode, x.token): x for x in identifiers.identifiers}
     entries = {}
     for row in allowlist["entries"]:
-        if set(row) != set(LeakAllowanceWire.__annotations__):
-            raise ValueError("invalid allowance fields")
         entry = LeakAllowance(**row)
+        expected_fields = set(LeakAllowanceBaseWire.__annotations__) | {"disposition"}
+        if entry.disposition == "generic_vocabulary":
+            if "expires_wave" in row:
+                expected_fields.add("expires_wave")
+        else:
+            expected_fields.add("expires_wave")
         key = (entry.identifier_id, entry.surface_id, entry.excerpt_sha256)
         if (
-            key in entries
+            set(row) != expected_fields
+            or (entry.disposition == "generic_vocabulary" and "expires_wave" in row)
+            or (
+                entry.disposition != "generic_vocabulary" and entry.expires_wave != "2a"
+            )
+            or key in entries
             or type(entry.expected_count) is not int
             or entry.expected_count < 1
-            or entry.expires_wave != "2a"
             or entry.disposition
-            not in {"known_cue_remove_in_wave_2a", "generic_identifier", "delete"}
+            not in {
+                "known_cue_remove_in_wave_2a",
+                "generic_identifier",
+                "generic_vocabulary",
+                "delete",
+            }
             or not entry.reason
         ):
             raise ValueError("invalid exact allowance")

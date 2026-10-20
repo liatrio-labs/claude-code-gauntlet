@@ -287,7 +287,10 @@ def test_runtime_names_and_symbols_shared_by_different_projects_are_excluded(cor
         "Object.prototype.hasOwnProperty",
         "__import__",
         "pathlib",
+        "time.sleep",
+        "time.struct_time",
     } <= names
+    assert {"antigravity.geohash", "fcntl.ioctl"}.isdisjoint(names)
     derived = toy_identifiers(corpus, [("same-pr", " ".join(sorted(names)))])
     assert not {i.token for i in derived.identifiers} & names
     derived = toy_identifiers(
@@ -302,6 +305,66 @@ def test_runtime_names_and_symbols_shared_by_different_projects_are_excluded(cor
     assert {i.token for i in derived.identifiers} == {"SamePrSynthetic"}
     assert len(derived.identifiers[0].bug_ids) == 2
     assert derived.holdout_identifiers == ()
+
+
+def test_generic_vocabulary_is_permanent_and_shrink_only(corpus):
+    _, derived, ceiling = corpus
+    allowlist = read_json(DEFAULT_ROOT / "leak_allowlist.json")
+    vocabulary = [
+        row
+        for row in allowlist["entries"]
+        if row["disposition"] == "generic_vocabulary"
+    ]
+    ceiling_vocabulary = [
+        row for row in ceiling["entries"] if row["disposition"] == "generic_vocabulary"
+    ]
+    expected_tokens = {
+        "POSIX",
+        "NullPointerException",
+        "if/else",
+        "RuntimeException",
+        "JavaScript",
+    }
+    identifiers = {item.identifier_id: item for item in derived.identifiers}
+    assert len(vocabulary) == len(ceiling_vocabulary) == 9
+    assert {
+        identifiers[row["identifier_id"]].token for row in vocabulary
+    } == expected_tokens
+    assert all(
+        row["reason"] == "Ordinary technical vocabulary; not a leak."
+        and "expires_wave" not in row
+        for row in vocabulary
+    )
+    time_sleep_id = digest(["identifier", "time.sleep"])
+    assert "time.sleep" in leaks.runtime_identifiers()
+    assert not any(
+        row["identifier_id"] == time_sleep_id for row in allowlist["entries"]
+    )
+    assert not any(row["identifier_id"] == time_sleep_id for row in ceiling["entries"])
+
+    removed = vocabulary[0]
+    leaks._check_bounds(
+        [row for row in allowlist["entries"] if row != removed],
+        ceiling["entries"],
+        [],
+    )
+    removed_bound = leaks._bound_key(removed)
+    remaining_ceiling = [
+        row for row in ceiling["entries"] if leaks._bound_key(row) != removed_bound
+    ]
+    with pytest.raises(ValueError, match="widened"):
+        leaks._check_bounds([removed], remaining_ceiling, [])
+    widened_count = dict(removed, expected_count=2)
+    lowered_count = dict(removed, expected_count=1)
+    leaks._check_bounds([lowered_count], [widened_count], [])
+    with pytest.raises(ValueError, match="widened"):
+        leaks._check_bounds([widened_count], [lowered_count], [])
+
+    invalid_expiry = json.loads(json.dumps(allowlist))
+    invalid_expiry["entries"].remove(removed)
+    invalid_expiry["entries"].append(dict(removed, expires_wave="2a"))
+    with pytest.raises(ValueError, match="invalid exact allowance"):
+        leaks._scan_with_ceiling(derived, (), invalid_expiry, ceiling=ceiling)
 
 
 def test_pr_variants_within_one_project_remain_distinctive(corpus):

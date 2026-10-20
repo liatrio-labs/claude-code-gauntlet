@@ -28,9 +28,8 @@
       "source_path": "skills/code-gauntlet/SKILL.md",
       "excerpt_sha256": "02eb3616a2ead1093002e67dff2b19083e4539e6922186842f687d57de14d8c0",
       "expected_count": 1,
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
-      "disposition": "generic_identifier",
-      "expires_wave": "2a"
+      "reason": "Ordinary technical vocabulary; not a leak.",
+      "disposition": "generic_vocabulary"
     },
     {
       "identifier_id": "353c919021b7ea5b2067b3c3df60a5b7146ceba25f3e6b15ed5cc0d84352d8b2",
@@ -38,9 +37,8 @@
       "source_path": "skills/code-gauntlet/references/validation-pipeline.md",
       "excerpt_sha256": "5db6202705df890c0a3d7e2e53e9c19566aa77787c95e95a52d1891407d1324b",
       "expected_count": 1,
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
-      "disposition": "generic_identifier",
-      "expires_wave": "2a"
+      "reason": "Ordinary technical vocabulary; not a leak.",
+      "disposition": "generic_vocabulary"
     },
     {
       "identifier_id": "3b5b4e184695eae694d9910ddbcaa33af3c32401aefc03573db7a96c77cae2bb",
@@ -148,19 +146,8 @@
       "source_path": "agents/bug-detector.md",
       "excerpt_sha256": "96e4d14c56d9eae2d9f3792c7a867d416d88ba4f86a882dd5c32cb136e0cfc8f",
       "expected_count": 1,
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
-      "disposition": "generic_identifier",
-      "expires_wave": "2a"
-    },
-    {
-      "identifier_id": "6f7d81d874f85be626c66c4a299a4e6e2ce903efb05af51d6bca68a67e74dc16",
-      "surface_id": "skills/build-review-md/references/review-md-practices.md",
-      "source_path": "skills/build-review-md/references/review-md-practices.md",
-      "excerpt_sha256": "81c000ad6be275dd8c47b832323401c8da8526985c77311adf34e110d7115136",
-      "expected_count": 1,
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
-      "disposition": "generic_identifier",
-      "expires_wave": "2a"
+      "reason": "Ordinary technical vocabulary; not a leak.",
+      "disposition": "generic_vocabulary"
     },
     {
       "identifier_id": "9960c5f772ef223482f83e98752d93b60db9a88dee34d6b3f3ca877f1cda6fd8",
@@ -168,9 +155,8 @@
       "source_path": "agents/code-simplifier.md",
       "excerpt_sha256": "8d2a0b4abb6d9e3a70f08baf92ffe77064b8ae7c7155b9768826cc1ca3d69305",
       "expected_count": 1,
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
-      "disposition": "generic_identifier",
-      "expires_wave": "2a"
+      "reason": "Ordinary technical vocabulary; not a leak.",
+      "disposition": "generic_vocabulary"
     },
     {
       "identifier_id": "9960c5f772ef223482f83e98752d93b60db9a88dee34d6b3f3ca877f1cda6fd8",
@@ -178,9 +164,8 @@
       "source_path": "skills/code-gauntlet/references/false-positive-exclusions.md",
       "excerpt_sha256": "b1ac303ee6ebd9fb1527637ce114fb23c19eb743c3f3ac6e99a194adf06cd65c",
       "expected_count": 1,
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
-      "disposition": "generic_identifier",
-      "expires_wave": "2a"
+      "reason": "Ordinary technical vocabulary; not a leak.",
+      "disposition": "generic_vocabulary"
     },
     {
       "identifier_id": "a1cd4e2abff04ad10df90f436ebaa04cbcb2e3b898e4a7efac1493dfb77d90b0",
@@ -188,9 +173,8 @@
       "source_path": "skills/build-review-md/references/review-md-practices.md",
       "excerpt_sha256": "df8424d800eaa50bc980854c322567950bc6c599261000755e8b6a0247136ca2",
       "expected_count": 1,
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
-      "disposition": "generic_identifier",
-      "expires_wave": "2a"
+      "reason": "Ordinary technical vocabulary; not a leak.",
+      "disposition": "generic_vocabulary"
     },
     {
       "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
@@ -198,9 +182,8 @@
       "source_path": "skills/build-review-md/SKILL.md",
       "excerpt_sha256": "6ce3a5d1ad9b59421b13db05c4482c1bd03e5dc73f591fb068814ffe042c8329",
       "expected_count": 1,
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
-      "disposition": "generic_identifier",
-      "expires_wave": "2a"
+      "reason": "Ordinary technical vocabulary; not a leak.",
+      "disposition": "generic_vocabulary"
     },
     {
       "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
@@ -208,9 +191,8 @@
       "source_path": "skills/code-gauntlet/references/delivery-guide.md",
       "excerpt_sha256": "af813570630509ae5186e7cb40e23002b878daa5fb04cf2b93199f36e2fd36df",
       "expected_count": 1,
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
-      "disposition": "generic_identifier",
-      "expires_wave": "2a"
+      "reason": "Ordinary technical vocabulary; not a leak.",
+      "disposition": "generic_vocabulary"
     },
     {
       "identifier_id": "e3658bf77d415b4b7dd1edb6bf2369bc6edcb6d096be23d3140975b92d4bd75d",
@@ -218,9 +200,8 @@
       "source_path": "skills/code-gauntlet/references/validation-pipeline.md",
       "excerpt_sha256": "843e18e94c172f5295d63c003f63b34704f184865891bf423608bd9befd6c982",
       "expected_count": 1,
-      "reason": "Existing language, exception, API or control-flow spelling; lexical collision requires owner disposition by Wave 2a.",
-      "disposition": "generic_identifier",
-      "expires_wave": "2a"
+      "reason": "Ordinary technical vocabulary; not a leak.",
+      "disposition": "generic_vocabulary"
     }
   ],
   "passages": [
