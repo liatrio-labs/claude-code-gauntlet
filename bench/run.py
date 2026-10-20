@@ -34,7 +34,7 @@ import sys
 import time
 import traceback
 from collections import defaultdict
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -142,6 +142,58 @@ def _clear_dir(directory):
             child.unlink()
 
 
+def _target_urls(tier, explicit=None):
+    return (
+        list(explicit)
+        if explicit
+        else _resolve_tier(
+            tier,
+            _load_json(GOLDEN_DIR / "subsets.json"),
+            _load_json(GOLDEN_DIR / "shas.json"),
+        )
+    )
+
+
+def _read_run_manifest(run_id):
+    try:
+        manifest = _load_json(RUNS_ROOT / run_id / "run.json")
+    except (ValueError, OSError):
+        return None
+    return manifest if isinstance(manifest, dict) else None
+
+
+def _first_target_pr(args):
+    run_id = args.resume or args.retry_failed
+    if run_id:
+        run_dir = RUNS_ROOT / run_id
+        if not run_dir.exists():
+            return None
+        manifest = _read_run_manifest(run_id) or {}
+        urls = _target_urls(
+            manifest.get("tier") or run_id.split("-", 1)[0], manifest.get("pr_urls")
+        )
+    elif args.prs or args.tier:
+        urls = _target_urls(args.tier, args.prs)
+    else:
+        return None
+    return {"url": urls[0]} if urls else None
+
+
+@contextmanager
+def _gh_token_scope(env):
+    previous = os.environ.get("GH_TOKEN")
+    token = env.get("GH_TOKEN")
+    if token:
+        os.environ["GH_TOKEN"] = token
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("GH_TOKEN", None)
+        else:
+            os.environ["GH_TOKEN"] = previous
+
+
 def _collect_artifacts(output_dir, pr_dir):
     """Move every produced artifact from the shared output dir into ``pr_dir``.
 
@@ -198,8 +250,6 @@ def _compute_diff(worktree, base_sha, head_sha):
 
 
 def _read_env_key(env_path, key):
-    # Delegates to the canonical dotenv reader so the prereq check and build_env
-    # agree on every edge case (quoted-empty values, comments, quoting).
     return invoke._load_dotenv_key(env_path, key)
 
 
@@ -217,8 +267,11 @@ def check_prereqs(
     min_free_gb=MIN_FREE_GB,
     child_auth=ledger.API_AUTH_MODE,
     env=None,
+    gh_pr=None,
 ):
-    """Return a list of one-line, actionable failure messages (empty == all prereqs met).
+    """Return actionable prerequisite failures; put a validated GH_TOKEN into ``env``.
+
+    ``gh_pr`` selects the access probe; omit it for checks without a review target.
 
     ``child_auth`` swaps the credential prerequisite and nothing else. ``subscription``
     drops the metered-key requirement outright -- that key is deliberately not in play --
@@ -255,14 +308,6 @@ def check_prereqs(
         failures.append(
             "gh CLI not found on PATH -- install GitHub CLI and run `gh auth login`."
         )
-    else:
-        result = subprocess.run(
-            ["gh", "auth", "status"], capture_output=True, text=True, encoding="utf-8"
-        )
-        if result.returncode != 0:
-            failures.append(
-                "`gh auth status` failed -- run `gh auth login` to authenticate."
-            )
 
     if child_auth == ledger.SUBSCRIPTION_AUTH_MODE:
         # bench/.env before ambient, the precedence _claude_auth_env applies.
@@ -310,6 +355,16 @@ def check_prereqs(
             )
     except OSError as exc:
         failures.append(f"Could not check free disk space for {workspace_dir}: {exc}")
+
+    if not failures and gh_pr is not None:
+        token = invoke.preflight_gh(gh_pr, workspace_dir, env, child_auth)
+        if token is None:
+            failures.append(
+                "GitHub PR access preflight failed -- set GH_TOKEN or run `gh auth login` "
+                "with access to the first target PR."
+            )
+        else:
+            env["GH_TOKEN"] = token
 
     return failures
 
@@ -768,15 +823,7 @@ def _run_prs(
 
 
 def _resolve_child_model(tool, child_model):
-    """Effective child-session model: an explicit flag wins, else the per-tool default.
-
-    v3's child orchestrator session is mechanical -- it drives the Workflow pipeline while
-    the review agents' models are set by the pipeline's own policy -- yet the orchestrator
-    burns ~40-45% of a run's tokens on opus[1m]. Measured 2026-07-21: BOTH sonnet (2x per-PR tokens) and
-    sonnet[1m] (+51%) are WORSE than the inherited opus[1m] child (its 1M context avoids
-    compaction churn), so every tool defaults to ``inherit`` now; the flag remains for experiments. A None
-    ``child_model`` means the flag was not passed (take the per-tool default).
-    """
+    """Use an explicit child-session model, otherwise inherit the CLI default."""
     if child_model is not None:
         return child_model
     return "inherit"
@@ -809,16 +856,8 @@ def _recorded_child_auth(run_id):
     that on its own terms). A manifest that merely lacks the field is different: it
     predates the flag and so really did spend the metered key.
     """
-    path = RUNS_ROOT / run_id / "run.json"
-    if not path.is_file():
-        return None
-    try:
-        manifest = _load_json(path)
-    except (ValueError, OSError):
-        return None
-    if not isinstance(manifest, dict):
-        return None
-    return ledger.manifest_auth_mode(manifest)
+    manifest = _read_run_manifest(run_id)
+    return ledger.manifest_auth_mode(manifest) if manifest is not None else None
 
 
 def _child_auth_for(args, run_id=None):
@@ -947,9 +986,9 @@ def _new_run(args):
     # An explicit --prs list overrides --tier's subset resolution and labels the run
     # "custom"; the URLs were validated against shas.json at parse time.
     if args.prs:
-        tier, urls = "custom", list(args.prs)
+        tier, urls = "custom", _target_urls(args.tier, args.prs)
     else:
-        tier, urls = args.tier, _resolve_tier(args.tier, subsets, shas)
+        tier, urls = args.tier, _target_urls(args.tier)
     fixture_urls = set(subsets.get("review_md_fixtures", []))
     timeout_s = args.timeout_mins * 60
 
@@ -987,7 +1026,7 @@ def _resume(run_id, args, retry):
     subsets = _load_json(GOLDEN_DIR / "subsets.json")
     shas = _load_json(GOLDEN_DIR / "shas.json")
     bench_data = _load_json(GOLDEN_DIR / "benchmark_data.min.json")
-    urls = manifest.get("pr_urls") or _resolve_tier(tier, subsets, shas)
+    urls = _target_urls(tier, manifest.get("pr_urls"))
     fixture_urls = set(subsets.get("review_md_fixtures", []))
     fingerprint = manifest.get("env_fingerprint") or {}
     timeout_s = fingerprint.get("timeout_s") or args.timeout_mins * 60
@@ -1272,7 +1311,10 @@ def main(argv=None):
         )
         return 2
 
-    failures = check_prereqs(child_auth=child_auth)
+    runtime_env = dict(os.environ)
+    failures = check_prereqs(
+        child_auth=child_auth, env=runtime_env, gh_pr=_first_target_pr(args)
+    )
     if failures:
         print(
             "bench/run.py: prerequisite checks failed (fix each and re-run):",
@@ -1282,27 +1324,28 @@ def main(argv=None):
             print("  - " + failure, file=sys.stderr)
         return 2
 
-    note = _judge_key_note(ENV_PATH, child_auth)
-    if note:
-        print(note, file=sys.stderr)
+    with _gh_token_scope(runtime_env):
+        note = _judge_key_note(ENV_PATH, child_auth)
+        if note:
+            print(note, file=sys.stderr)
 
-    if args.resume:
-        return _resume(args.resume, args, retry=False)
-    if args.retry_failed:
-        return _resume(args.retry_failed, args, retry=True)
+        if args.resume:
+            return _resume(args.resume, args, retry=False)
+        if args.retry_failed:
+            return _resume(args.retry_failed, args, retry=True)
 
-    if not args.tier and not args.prs:
-        print(
-            "--tier or --prs is required for a new run "
-            "(smoke|mini|subset|holdout|full, or an explicit --prs list / --prs mini).",
-            file=sys.stderr,
-        )
-        return 2
+        if not args.tier and not args.prs:
+            print(
+                "--tier or --prs is required for a new run "
+                "(smoke|mini|subset|holdout|full, or an explicit --prs list / --prs mini).",
+                file=sys.stderr,
+            )
+            return 2
 
-    rc = 0
-    for _ in range(max(1, args.runs)):
-        rc = _new_run(args) or rc
-    return rc
+        rc = 0
+        for _ in range(max(1, args.runs)):
+            rc = _new_run(args) or rc
+        return rc
 
 
 if __name__ == "__main__":

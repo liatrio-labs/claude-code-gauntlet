@@ -1828,5 +1828,47 @@ def test_undecodable_checkpoint_does_not_crash_g3(tmp_path):
     assert result["stats"]["unknown_origin"] == 0
 
 
+@pytest.mark.parametrize("keep_primary", [True, False])
+def test_post_review_copy_never_counts_as_canonical(tmp_path, keep_primary):
+    _build_ok_run(tmp_path)
+    pr_dir = tmp_path / "pr-example-repo-1"
+    (pr_dir / "code-gauntlet-post-review-payload-deadbeef.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    if not keep_primary:
+        (pr_dir / "code-gauntlet-post-review-deadbeef.json").unlink()
+    result = check.check_run(tmp_path, repo_root=REPO_ROOT)
+    assert result["stats"]["deliverable_artifacts"] == (4 if keep_primary else 3)
+    if keep_primary:
+        assert result["ok"], result["failures"]
+    else:
+        assert any(
+            "missing code-gauntlet-post-review-*.json" in failure
+            for failure in result["failures"]
+        )
+
+
+@pytest.mark.parametrize("template", ARTIFACT_BASENAMES)
+@pytest.mark.parametrize(
+    "token",
+    [
+        "abcdef0",
+        "deadbeef",
+        "a" * 40,
+        "payload-deadbeef",
+        "deadbeef-copy",
+        "DEADBEEF",
+        "abcdef",
+        "a" * 41,
+        "gggggggg",
+    ],
+)
+def test_artifact_sha_is_a_bounded_lowercase_hex_token(tmp_path, template, token):
+    path = tmp_path / template.format(sha=token)
+    path.write_text("{}", encoding="utf-8")
+    expected = [path] if token in ("abcdef0", "deadbeef", "a" * 40) else []
+    assert check._artifact_matches(tmp_path, template) == expected
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -124,8 +124,13 @@ def _iter_findings_files(pr_dir):
 
 def _artifact_matches(pr_dir, template):
     """Return direct regular-file matches for one persisted artifact template."""
-    pattern = template.format(sha="*")
-    return sorted(path for path in Path(pr_dir).glob(pattern) if path.is_file())
+    prefix, suffix = template.split("{sha}")
+    name_re = re.compile(re.escape(prefix) + r"[0-9a-f]{7,40}" + re.escape(suffix))
+    return sorted(
+        path
+        for path in Path(pr_dir).glob(template.format(sha="*"))
+        if path.is_file() and name_re.fullmatch(path.name)
+    )
 
 
 def _artifact_sha(template, path):
