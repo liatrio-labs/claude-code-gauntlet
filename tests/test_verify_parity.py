@@ -1,4 +1,4 @@
-"""Verify decisions through the JS projection must match the frozen Python oracle."""
+"""Replay decision paths through the JS projection and the receipt command."""
 
 import json
 from pathlib import Path
@@ -15,8 +15,10 @@ FIXTURES = Path(__file__).parent / "fixtures/parity"
     sorted((FIXTURES / "decisions").iterdir()),
     ids=lambda path: path.name,
 )
-def test_decisions_parity(case_dir, tmp_path):
+def test_decisions_parity(case_dir, tmp_path, monkeypatch):
     inp = json.loads((case_dir / "input.json").read_text(encoding="utf-8"))
     expected = (case_dir / "expected.json").read_bytes()
-    actual = json.dumps(replay_decisions(inp, tmp_path), indent=2, sort_keys=True)
+    actual = json.dumps(
+        replay_decisions(inp, tmp_path, monkeypatch), indent=2, sort_keys=True
+    )
     assert (actual + "\n").encode("utf-8") == expected

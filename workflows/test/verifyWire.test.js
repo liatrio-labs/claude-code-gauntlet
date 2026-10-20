@@ -57,6 +57,7 @@ test('projection caches each finding object and preserves absent versus null sca
   assert.equal(projectVerifySliceFinding(finding), projected);
   assert.notEqual(projectVerifySliceFinding({ ...finding }), projected);
   assert.deepEqual(projectVerifySliceFinding(null), {});
+  assert.deepEqual(projectVerifySliceFinding(Object.create({ id: 'inherited' })), {});
 });
 
 test('projection emits decision flags only for valid references and removed-test locations', () => {
@@ -64,14 +65,14 @@ test('projection emits decision flags only for valid references and removed-test
     assert.deepEqual(projectVerifySliceFinding({ cross_file_refs: refs }), Array.isArray(refs) && refs.length
       ? { has_cross_file_refs: true } : {});
   }
-  const valid = { id: 'loss', path: 'tests/old', old_start: 1, old_end: 2 };
+  const valid = { id: 'loss', path: 't', old_start: 1, old_end: 2 };
   const rows = [
     [valid, true], [{ ...valid, extra: 'ignored' }, true],
     [{ ...valid, id: '\uFEFF', path: '\u0085\u001Ctests/old' }, true],
     [{ ...valid, old_start: 2 ** 54, old_end: 2 ** 55 }, true],
     ...[null, [], '', { ...valid, id: '' }, { ...valid, id: '\u0085\u001C' },
       { ...valid, path: '\u001C' }, { ...valid, path: 42 }, { ...valid, id: 42 },
-      { ...valid, old_start: true }, { ...valid, old_end: false },
+      { ...valid, old_start: true }, { ...valid, old_end: true },
       { ...valid, old_start: '1' }, { ...valid, old_start: 1.5 },
       { ...valid, old_start: 0 }, { ...valid, old_start: 3 }, { ...valid, old_end: undefined },
     ].map((value) => [value, false]),
