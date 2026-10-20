@@ -27,8 +27,8 @@ a per-finding **delta**, omitting the findings themselves:
 
 ```
 { status: 'ok',
-  receipt: { sha, n_in, nonce, deltas_checksum, inline_checksum, input_checksum?,
-             base_branch, record_proofs: [ { id, checksum }, ... ] },
+  receipt: { sha, n_in, nonce, deltas_checksum, input_checksum?, inline_checksum,
+             base_branch, diff_source: { path, read }, record_proofs: [ { id, checksum }, ... ] },
   result: {
     deltas: [ { id, verified, origin?, severity?, confidence?, elimination_reason? }, ... ],
     verified, eliminated, stats   // full arrays and stats on disk; NEVER echoed by the executor
