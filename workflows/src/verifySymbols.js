@@ -1,7 +1,4 @@
-import { asText } from './wire.js';
-
-// Python str.strip includes control separators and NEL, but excludes BOM.
-export const stripPythonWhitespace = (value) => value.replace(/^[\t-\r\x1C-\x20\x85\xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+|[\t-\r\x1C-\x20\x85\xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+$/g, '');
+import { asText, stripPythonWhitespace } from './wire.js';
 
 const VERIFY_SKIP_SYMBOLS = new Set(('the this that with from import class def for not and its but are was were '
   + 'can should would could also will has have been when then else elif True '

@@ -124,6 +124,11 @@ export function escapeRegExp(s) {
 }
 
 // Non-string model fields must not participate in text matching through implicit coercion.
+// Python str.strip includes control separators and NEL, but excludes BOM.
+const PYTHON_SPACE = '[\\t-\\r\\x1C-\\x20\\x85\\xA0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]+';
+const PYTHON_STRIP_RE = new RegExp(`^${PYTHON_SPACE}|${PYTHON_SPACE}$`, 'g');
+export const stripPythonWhitespace = (value) => value.replace(PYTHON_STRIP_RE, '');
+
 export function asText(value) {
   return typeof value === 'string' ? value : '';
 }

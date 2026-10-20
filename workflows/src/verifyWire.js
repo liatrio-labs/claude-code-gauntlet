@@ -129,22 +129,24 @@ const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'sev
 export const VERIFY_SLICE_FIELDS = [...VERIFY_SLICE_SCALAR_FIELDS, 'has_cross_file_refs', 'has_removed_test_location', 'symbols'];
 const verifyProjectionCache = new WeakMap();
 
-// Findings stay fixed between planning and dispatch; cache the extraction across both.
-export function projectVerifySliceFinding(finding) {
-  const cached = verifyProjectionCache.get(finding);
-  if (cached) return cached;
+function projectFinding(finding) {
   const projected = {};
   // Absent and null differ under Python .get() defaults.
   for (const k of VERIFY_SLICE_SCALAR_FIELDS) {
-    if (finding && Object.hasOwn(finding, k) && finding[k] !== undefined) projected[k] = finding[k];
+    if (Object.hasOwn(finding, k) && finding[k] !== undefined) projected[k] = finding[k];
   }
-  if (Array.isArray(finding?.cross_file_refs) && finding.cross_file_refs.length > 0) projected.has_cross_file_refs = true;
+  if (Array.isArray(finding.cross_file_refs) && finding.cross_file_refs.length > 0) projected.has_cross_file_refs = true;
   if (hasRemovedTestLocation(finding)) projected.has_removed_test_location = true;
-  const symbols = [...extractSymbols(finding?.description, finding?.evidence)].sort().join(' ');
+  const symbols = [...extractSymbols(finding.description, finding.evidence)].sort().join(' ');
   if (symbols) projected.symbols = symbols;
-  const pinned = pinNumericFields(projected);
-  if (finding && typeof finding === 'object') verifyProjectionCache.set(finding, pinned);
-  return pinned;
+  return pinNumericFields(projected);
+}
+
+// Findings stay fixed between planning and dispatch; cache the extraction across both.
+export function projectVerifySliceFinding(finding) {
+  if (!finding || typeof finding !== 'object') return {};
+  if (!verifyProjectionCache.has(finding)) verifyProjectionCache.set(finding, projectFinding(finding));
+  return verifyProjectionCache.get(finding);
 }
 
 // Twin of gauntlet.jsjson.checksum_or_none. Preserve key order to detect an executor

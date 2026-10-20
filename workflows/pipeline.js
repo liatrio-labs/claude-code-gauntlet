@@ -155,6 +155,9 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+const PYTHON_SPACE = '[\\t-\\r\\x1C-\\x20\\x85\\xA0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]+';
+const PYTHON_STRIP_RE = new RegExp(`^${PYTHON_SPACE}|${PYTHON_SPACE}$`, 'g');
+const stripPythonWhitespace = (value) => value.replace(PYTHON_STRIP_RE, '');
 function asText(value) {
   return typeof value === 'string' ? value : '';
 }
@@ -803,36 +806,6 @@ function trustedScriptPath(pluginRoot, basename) {
   if (root === null) throw new Error('pluginRoot must be an absolute confined root');
   return `${rootPrefix(root)}scripts/${basename}`;
 }
-// --- verifySymbols.js ---
-const stripPythonWhitespace = (value) => value.replace(/^[\t-\r\x1C-\x20\x85\xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+|[\t-\r\x1C-\x20\x85\xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+$/g, '');
-const VERIFY_SKIP_SYMBOLS = new Set(('the this that with from import class def for not and its but are was were '
-  + 'can should would could also will has have been when then else elif True '
-  + 'False None self return raise pass break continue lambda yield async await '
-  + 'print isinstance len str int list dict set tuple type super object '
-  + 'Exception ValueError TypeError KeyError AttributeError IndexError '
-  + 'RuntimeError StopIteration OSError IOError FileNotFoundError '
-  + 'NotImplementedError AssertionError OverflowError ZeroDivisionError').split(' '));
-const VERIFY_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-function extractSymbols(description, evidence) {
-  const text = `${asText(description)}\n${asText(evidence)}`;
-  const symbols = new Set();
-  for (const block of text.matchAll(/```[^\n]*\n(.*?)```/gs)) {
-    for (const identifier of block[1].matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) symbols.add(identifier[0]);
-  }
-  for (const span of text.matchAll(/`([^`]+)`/g)) {
-    for (const part of stripPythonWhitespace(span[1]).replace(/^[._]+|[._]+$/g, '').split('.')) {
-      const clean = part.replace(/[^A-Za-z0-9_]/g, '');
-      if (VERIFY_IDENT_RE.test(clean)) symbols.add(clean);
-    }
-  }
-  for (const match of text.matchAll(/(?<![\p{L}\p{N}_])([A-Za-z_][A-Za-z0-9_]*(?:[.()\[\]#]|::|->)[A-Za-z0-9_.()#\[\]:>-]*)/gu)) {
-    for (const part of match[1].split(/[.()\[\]#:>-]+/)) {
-      if (VERIFY_IDENT_RE.test(part)) symbols.add(part);
-    }
-  }
-  for (const match of text.matchAll(/(?<![\p{L}\p{N}_])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?![\p{L}\p{N}_])/gu)) symbols.add(match[1]);
-  return new Set([...symbols].filter((symbol) => symbol.length > 2 && !VERIFY_SKIP_SYMBOLS.has(symbol)));
-}
 // --- removedTests.js ---
 function hasRemovedTestLocation(finding) {
   const location = finding?.removed_test;
@@ -934,6 +907,35 @@ function checkRemovedTestAudit(inventory, rows, repoRoot) {
   }
   return { findings, audit: reasons.size > 0 ? { status: 'gap', reason: [...reasons].join('; ') } : inventory.omitted > 0
     ? { status: 'overflow', omitted: inventory.omitted } : { status: 'ran-clean' } };
+}
+// --- verifySymbols.js ---
+const VERIFY_SKIP_SYMBOLS = new Set(('the this that with from import class def for not and its but are was were '
+  + 'can should would could also will has have been when then else elif True '
+  + 'False None self return raise pass break continue lambda yield async await '
+  + 'print isinstance len str int list dict set tuple type super object '
+  + 'Exception ValueError TypeError KeyError AttributeError IndexError '
+  + 'RuntimeError StopIteration OSError IOError FileNotFoundError '
+  + 'NotImplementedError AssertionError OverflowError ZeroDivisionError').split(' '));
+const VERIFY_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+function extractSymbols(description, evidence) {
+  const text = `${asText(description)}\n${asText(evidence)}`;
+  const symbols = new Set();
+  for (const block of text.matchAll(/```[^\n]*\n(.*?)```/gs)) {
+    for (const identifier of block[1].matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) symbols.add(identifier[0]);
+  }
+  for (const span of text.matchAll(/`([^`]+)`/g)) {
+    for (const part of stripPythonWhitespace(span[1]).replace(/^[._]+|[._]+$/g, '').split('.')) {
+      const clean = part.replace(/[^A-Za-z0-9_]/g, '');
+      if (VERIFY_IDENT_RE.test(clean)) symbols.add(clean);
+    }
+  }
+  for (const match of text.matchAll(/(?<![\p{L}\p{N}_])([A-Za-z_][A-Za-z0-9_]*(?:[.()\[\]#]|::|->)[A-Za-z0-9_.()#\[\]:>-]*)/gu)) {
+    for (const part of match[1].split(/[.()\[\]#:>-]+/)) {
+      if (VERIFY_IDENT_RE.test(part)) symbols.add(part);
+    }
+  }
+  for (const match of text.matchAll(/(?<![\p{L}\p{N}_])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?![\p{L}\p{N}_])/gu)) symbols.add(match[1]);
+  return new Set([...symbols].filter((symbol) => symbol.length > 2 && !VERIFY_SKIP_SYMBOLS.has(symbol)));
 }
 // --- verifyWire.js ---
 const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
@@ -1037,20 +1039,21 @@ function pinNumericFields(finding) {
 const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'severity', 'confidence'];
 const VERIFY_SLICE_FIELDS = [...VERIFY_SLICE_SCALAR_FIELDS, 'has_cross_file_refs', 'has_removed_test_location', 'symbols'];
 const verifyProjectionCache = new WeakMap();
-function projectVerifySliceFinding(finding) {
-  const cached = verifyProjectionCache.get(finding);
-  if (cached) return cached;
+function projectFinding(finding) {
   const projected = {};
   for (const k of VERIFY_SLICE_SCALAR_FIELDS) {
-    if (finding && Object.hasOwn(finding, k) && finding[k] !== undefined) projected[k] = finding[k];
+    if (Object.hasOwn(finding, k) && finding[k] !== undefined) projected[k] = finding[k];
   }
-  if (Array.isArray(finding?.cross_file_refs) && finding.cross_file_refs.length > 0) projected.has_cross_file_refs = true;
+  if (Array.isArray(finding.cross_file_refs) && finding.cross_file_refs.length > 0) projected.has_cross_file_refs = true;
   if (hasRemovedTestLocation(finding)) projected.has_removed_test_location = true;
-  const symbols = [...extractSymbols(finding?.description, finding?.evidence)].sort().join(' ');
+  const symbols = [...extractSymbols(finding.description, finding.evidence)].sort().join(' ');
   if (symbols) projected.symbols = symbols;
-  const pinned = pinNumericFields(projected);
-  if (finding && typeof finding === 'object') verifyProjectionCache.set(finding, pinned);
-  return pinned;
+  return pinNumericFields(projected);
+}
+function projectVerifySliceFinding(finding) {
+  if (!finding || typeof finding !== 'object') return {};
+  if (!verifyProjectionCache.has(finding)) verifyProjectionCache.set(finding, projectFinding(finding));
+  return verifyProjectionCache.get(finding);
 }
 function sliceInputChecksum(content) {
   return fnv1a32(JSON.stringify(content, null, 2));

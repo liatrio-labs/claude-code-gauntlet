@@ -1,7 +1,6 @@
-import { fnv1a32, isPlainObject } from './wire.js';
+import { fnv1a32, isPlainObject, stripPythonWhitespace } from './wire.js';
 import { AGENT_TYPE_TEST_ANALYZER, DISPATCH_RESULTS } from './registry.js';
 import { repoRelativeFindingPath } from './paths.js';
-import { stripPythonWhitespace } from './verifySymbols.js';
 
 export function hasRemovedTestLocation(finding) {
   const location = finding?.removed_test;
