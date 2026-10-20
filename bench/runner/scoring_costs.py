@@ -78,7 +78,9 @@ def recording_proxy(base_url, pin, receipt):
             headers = {
                 k: v
                 for k, v in self.headers.items()
-                if k.lower() not in ("host", "connection", "content-length")
+                # The relay sends only Content-Type, so upstream must answer uncompressed.
+                if k.lower()
+                not in ("host", "connection", "content-length", "accept-encoding")
             }
             request = urllib.request.Request(
                 base_url.rstrip("/") + self.path, data=body, headers=headers
