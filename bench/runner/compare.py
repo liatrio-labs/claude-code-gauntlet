@@ -373,8 +373,8 @@ class BugComparison:
     baseline_label: StabilityLabel
     candidate_label: StabilityLabel
     stable_loss: bool
-    source_dimension_hits: observations.FrozenJson = None
-    stage_outcomes: observations.FrozenJson = None
+    source_dimension_hits: observations.FrozenJson | None = None
+    stage_outcomes: observations.FrozenJson | None = None
 
 
 class PopulationComparisonWire(TypedDict):
@@ -1142,7 +1142,7 @@ def compare_arms(
                 if (
                     evaluator.judge_pin != window.expected.judge_pin
                     or evaluator.adjudicator_pin != window.expected.adjudicator_pin
-                    or evaluator.scorer_sha256 != window.expected.scorer_sha256
+                    or evaluator.scorer_tree != window.expected.scorer_tree
                 ):
                     raise ValueError("review/score evaluator mismatch")
                 if arm == spec.baseline:
@@ -1245,9 +1245,11 @@ def compare_arms(
                     "review_cost_usd": dict(packet.ledger_row).get("cost_usd"),
                     "duration_s": dict(packet.ledger_row).get("duration_s"),
                     "judge_diagnostics": {
-                        "buckets": dict(packet.metrics.per_bucket),
-                        "noise_rate": packet.metrics.noise_rate,
-                        "valid_extra_rate": packet.metrics.valid_extra_rate,
+                        "buckets": packet.projection()["metrics"]["per_bucket"],
+                        "noise_rate": packet.projection()["metrics"]["noise_rate"],
+                        "valid_extra_rate": packet.projection()["metrics"][
+                            "valid_extra_rate"
+                        ],
                     },
                 }
             )

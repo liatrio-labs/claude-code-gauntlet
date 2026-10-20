@@ -27,12 +27,14 @@ if str(REPO_ROOT) not in sys.path:
 
 from bench.runner import checkpoint, invoke, ledger, mirrors, validity  # noqa: E402
 from bench.runner.costs import parse_costs  # noqa: E402
+from bench.runner.epochs import load_epoch  # noqa: E402
 
 # Workspace layout (all under bench/workspace/, gitignored). Referenced as module
 # globals so tests can repoint them at a tempdir.
 WORKSPACE = REPO_ROOT / "bench" / "workspace"
 RUNS_ROOT = WORKSPACE / "runs"
 MIRRORS_DIR = WORKSPACE / "mirrors"
+
 GOLDEN_DIR = REPO_ROOT / "bench" / "golden"
 ENV_PATH = REPO_ROOT / "bench" / ".env"
 FIXTURE_PATH = GOLDEN_DIR / "review_md_fixture.md"
@@ -1149,7 +1151,7 @@ def _exit_code(final, urls):
 def _new_run(args):
     subsets = _load_json(GOLDEN_DIR / "subsets.json")
     shas = _load_json(GOLDEN_DIR / "shas.json")
-    bench_data = _load_json(GOLDEN_DIR / "benchmark_data.min.json")
+    bench_data = load_epoch(root=GOLDEN_DIR).scorer_input
     # An explicit --prs list overrides --tier's subset resolution and labels the run
     # "custom"; the URLs were validated against shas.json at parse time.
     if args.prs:
@@ -1194,7 +1196,7 @@ def _resume(run_id, args, retry):
     tier = manifest.get("tier") or run_id.split("-", 1)[0]
     subsets = _load_json(GOLDEN_DIR / "subsets.json")
     shas = _load_json(GOLDEN_DIR / "shas.json")
-    bench_data = _load_json(GOLDEN_DIR / "benchmark_data.min.json")
+    bench_data = load_epoch(root=GOLDEN_DIR).scorer_input
     urls = _target_urls(tier, manifest.get("pr_urls"))
     fixture_urls = set(subsets.get("review_md_fixtures", []))
     fingerprint = manifest.get("env_fingerprint") or {}
@@ -1292,9 +1294,7 @@ def _resume(run_id, args, retry):
     return _exit_code(final, urls)
 
 
-def _score_only(
-    run_id, *, epoch_id=None, capture_stages=False, stage_cost_cap_usd=None
-):
+def _score_only(run_id, *, epoch_id=None):
     run_dir = RUNS_ROOT / run_id
     try:
         from bench.runner import score
@@ -1310,10 +1310,6 @@ def _score_only(
         return 2
     try:
         options = {"epoch_id": epoch_id}
-        if capture_stages or stage_cost_cap_usd is not None:
-            options.update(
-                capture_stages=capture_stages, stage_cost_cap_usd=stage_cost_cap_usd
-            )
         result = score.score_run(str(run_dir), **options)
     except (ValueError, RuntimeError) as exc:
         print(f"--score-only failed for {run_id}: {exc}", file=sys.stderr)
@@ -1432,8 +1428,6 @@ def parse_args(argv=None):
     )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
     parser.add_argument("--golden-epoch", metavar="EPOCH_ID")
-    parser.add_argument("--capture-stages", action="store_true")
-    parser.add_argument("--stage-cost-cap-usd", type=float)
     parser.add_argument(
         "--check",
         metavar="RUN_ID",
@@ -1455,10 +1449,6 @@ def parse_args(argv=None):
     parser.add_argument("--reset-evidence")
     parser.add_argument("--baseline-equivalence-receipt")
     args = parser.parse_args(argv)
-    if (
-        args.capture_stages or args.stage_cost_cap_usd is not None
-    ) and not args.score_only:
-        parser.error("stage capture is available only with --score-only")
     # Validate --prs against the golden set at parse time so an unknown URL is a hard
     # argparse error (exit 2), never a mid-run surprise; normalize the string to a list.
     # The documented alias ``mini`` expands to subsets.json["mini"] (still labels custom).
@@ -1498,13 +1488,6 @@ def main(argv=None):
     # --score-only / --check have different prerequisites (no claude/gh invocation) and
     # are handled before the run prereq checks.
     if args.score_only:
-        if args.capture_stages or args.stage_cost_cap_usd is not None:
-            return _score_only(
-                args.score_only,
-                epoch_id=args.golden_epoch,
-                capture_stages=args.capture_stages,
-                stage_cost_cap_usd=args.stage_cost_cap_usd,
-            )
         if args.golden_epoch is None:
             return _score_only(args.score_only)
         return _score_only(args.score_only, epoch_id=args.golden_epoch)

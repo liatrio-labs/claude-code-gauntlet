@@ -23,7 +23,6 @@ from bench.runner.score import (
 
 __all__ = ["ANCHOR_TOOLS", "rejudge_anchors", "spot_check"]
 
-# bench/runner/anchors.py -> parents[2] is the plugin root.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCH_DIR = REPO_ROOT / "bench"
 ANCHORS_CANDIDATES = BENCH_DIR / "golden" / "anchors" / "candidates.json"
@@ -49,9 +48,6 @@ ANCHOR_TOOLS = ("claude", "claude-code", "coderabbit")
 _COUNT_KEYS = ("tp", "fp", "fn")
 _TOLERANCE = 1  # ±1 per count per tool: judge nondeterminism at temp 0.
 _MAX_DIFF_CHARS = 30000  # cap on the full-diff adjudicator context per anchor comment.
-
-
-# ------------------------------------------------------------- spot-check
 
 
 def _counts(ev):
@@ -152,11 +148,7 @@ def spot_check(
     overall_pass = True
     n_judge_calls = 0
     n_dedup_calls = 0
-    n_golden = len(
-        (_load_json(epoch.root / "benchmark_data.min.json").get(pr_url) or {}).get(
-            "golden_comments", []
-        )
-    )
+    n_golden = len(epoch.claims_by_pr.get(pr_url, ()))
     for t in tools:
         ours_ev = (evaluations.get(pr_url) or {}).get(t)
         theirs_ev = (upstream.get(pr_url) or {}).get(t)
@@ -207,9 +199,6 @@ def spot_check(
     observations.exclusive_json(out_path, report)
     report["diff_path"] = str(out_path)
     return report
-
-
-# ------------------------------------------------------------- rejudge (Step 3)
 
 
 def _subset_candidates(anchors, urls, tools):
@@ -316,7 +305,7 @@ def rejudge_anchors(
         set(t) != set(tools) for t in candidates.values()
     ):
         raise ValueError("incomplete anchor candidate matrix")
-    baselines = read_json(epoch.root / "baselines.json")
+    baselines = read_json(BENCH_DIR / "baselines.json")
     adj_pin = baselines.get("adjudicator_pin") or judge_pin
     evaluator = score.evaluator_for(epoch, judge_pin, adj_pin)
     key = digest(
@@ -380,7 +369,7 @@ def rejudge_anchors(
         )
         groups = observations.dedup_groups(raw_groups, candidate_map, tool)
         bugs = observations.build_observations(request, evaluations, groups)
-        matched = observations.bucket_candidate_ids(epoch, bugs)
+        matched = observations.bucket_candidate_ids(bugs)
         buckets = {
             u: {
                 "golden_matched": [

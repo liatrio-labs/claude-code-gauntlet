@@ -1,23 +1,10 @@
 """Profile arithmetic over complete, Boolean per-golden observations."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, TypedDict
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Literal
 
 from bench.runner.epochs import PROFILE_CATEGORIES, Profile
-
-
-class ProfileMetricsWire(TypedDict):
-    profile: Profile
-    tp: int
-    fp: int
-    fn: int
-    denominator: int
-    recall: float | None
-    precision_strict: float
-    f1_strict: float
-    f2_strict: float
-    status: Literal["scored", "empty"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,19 +20,8 @@ class ProfileMetrics:
     f2_strict: float
     status: Literal["scored", "empty"]
 
-    def to_wire(self) -> ProfileMetricsWire:
-        return {
-            "profile": self.profile,
-            "tp": self.tp,
-            "fp": self.fp,
-            "fn": self.fn,
-            "denominator": self.denominator,
-            "recall": self.recall,
-            "precision_strict": self.precision_strict,
-            "f1_strict": self.f1_strict,
-            "f2_strict": self.f2_strict,
-            "status": self.status,
-        }
+    def to_wire(self):
+        return asdict(self)
 
 
 def profile_metrics(

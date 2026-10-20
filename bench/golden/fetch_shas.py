@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fetch and pin per-PR head/base SHAs for the 50 golden PRs (Task 6).
 
-Reads golden urls from ``bench/golden/benchmark_data.min.json``, resolves each
+Reads golden urls through ``GoldenEpoch``, resolves each
 via ``gh api repos/{owner}/{repo}/pulls/{n}``, and writes
 ``bench/golden/shas.json`` keyed by golden url. Fork-org PRs
 (owner == ``ai-code-review-evaluation``) are only resolvable while those forks
@@ -111,8 +111,10 @@ def fetch_one(owner, repo, pr_number, run=None):
 
 
 def main():
-    with open(GOLDEN / "benchmark_data.min.json", encoding="utf-8") as handle:
-        golden_urls = sorted(json.load(handle).keys())
+    sys.path.insert(0, str(GOLDEN.parents[1]))
+    from bench.runner.epochs import load_epoch
+
+    golden_urls = sorted(load_epoch(root=GOLDEN).claims_by_pr)
     out = {}
     missing = []
     for url in golden_urls:

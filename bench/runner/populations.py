@@ -129,15 +129,7 @@ def _raw_snapshot(source, epoch):
     source = Path(source).resolve()
     if (source / "offline").is_dir():
         source = source / "offline"
-    data_path = source / "results/benchmark_data.json"
-    if not data_path.is_file():
-        data_path = source / "benchmark_data.min.json"
-    upstream = read_json(data_path)
-    raw, files, stems = (
-        {},
-        {str(data_path.relative_to(source)): file_hash(data_path)},
-        {},
-    )
+    stems, raw, files = {}, {}, {}
     for path in sorted((source / "golden_comments").glob("*.json")):
         files[str(path.relative_to(source))] = file_hash(path)
         records = read_json(path)
@@ -145,21 +137,8 @@ def _raw_snapshot(source, epoch):
         for pr in records:
             if pr["url"] in raw:
                 raise ValueError("duplicate raw PR")
-            raw[pr["url"]] = pr["comments"]
-    lean = {
-        url: {
-            k: pr[k]
-            for k in ("pr_title", "original_url", "source_repo", "golden_comments")
-        }
-        | {"reviews": []}
-        for url, pr in upstream.items()
-        if url in raw
-    }
-    if (
-        digest(lean) != epoch.golden_sha256
-        or set(lean) != set(raw)
-        or any(raw[url] != lean[url]["golden_comments"] for url in raw)
-    ):
+            raw[pr["url"]] = tuple(pr["comments"])
+    if raw != epoch.claims_by_pr:
         raise ValueError("raw canonical lean golden hash mismatch")
     return source, stems, files
 

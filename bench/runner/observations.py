@@ -1,4 +1,4 @@
-"""Score identities, complete observations, and append-only packet transactions."""
+"""Canonical score evidence and immutable packet publication."""
 
 from __future__ import annotations
 
@@ -8,13 +8,12 @@ import shutil
 import uuid
 from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from pathlib import Path
-from typing import Literal, TypeAlias, TypedDict, cast
+from typing import Any, Literal
 
+from bench.runner.decode import decode
 from bench.runner.epochs import (
     Category,
     GoldenEpoch,
-    JsonValue,
-    Profile,
     canonical,
     confined,
     digest,
@@ -22,7 +21,7 @@ from bench.runner.epochs import (
     load_epoch,
     read_json,
 )
-from bench.runner.profiles import ProfileMetrics, ProfileMetricsWire, profile_metrics
+from bench.runner.profiles import profile_metrics
 
 Dimension = Literal[
     "bug",
@@ -40,33 +39,6 @@ Outcome = Literal["matched", "missed", "operational_failure", "unavailable"]
 Bucket = Literal["golden_matched", "valid_extra", "noise", "error", "unavailable"]
 ProvenanceStatus = Literal["complete", "legacy_unknown", "ambiguous"]
 ContextStatus = Literal["head_and_hunk", "hunk_only", "full_diff", "missing"]
-
-
-class ScoreRefWire(TypedDict):
-    run_id: str
-    epoch_id: str
-    score_id: str
-
-
-class CandidateWire(TypedDict):
-    candidate_id: str
-    pr_url: str
-    attempt_id: str
-    index: int
-    text: str
-    path: str | None
-    line: int | None
-    source_trace_ids: list[str]
-    discovery_dimensions: list[Dimension]
-    dedup_group_id: str
-    provenance_status: ProvenanceStatus
-
-
-class MatchWire(TypedDict):
-    candidate_id: str
-    confidence: float
-    reasoning: str | None
-    kind: Literal["direct", "dedup_sibling"]
 
 
 Stage = Literal[
@@ -119,210 +91,6 @@ ReasonCode = Literal[
 Coverage = Literal["complete", "partial", "unavailable"]
 
 
-class LossWire(TypedDict):
-    stage: LossStage
-    physical_stage: Stage | None
-    cause_stage: Stage | None
-    reason_code: ReasonCode
-    reason: str
-    trace_ids: list[str]
-    evidence_refs: list[str]
-    status: Literal["established", "unavailable", "ambiguous"]
-
-
-class BugObservationWire(TypedDict):
-    schema_version: Literal[1]
-    score_ref: ScoreRefWire
-    pr_url: str
-    attempt_id: str
-    bug_id: str
-    category: Category | None
-    outcome: Outcome
-    matches: list[MatchWire]
-    errors: list[str]
-    loss: LossWire | None
-
-
-class DedupGroupWire(TypedDict):
-    group_id: str
-    pr_url: str
-    candidate_ids: list[str]
-
-
-class AdjudicationWire(TypedDict):
-    candidate_id: str
-    pr_url: str
-    bucket: Bucket
-    reasoning: str | None
-    evaluator_id: str
-    context_sha256: str
-    context_status: ContextStatus
-    error: str | None
-
-
-class AdjudicationContextWire(TypedDict):
-    candidate_id: str
-    hunk: str
-    file_context: str
-    context_status: ContextStatus
-    truncated: bool
-    context_sha256: str
-
-
-class EvaluatorWire(TypedDict):
-    evaluator_id: str
-    judge_pin: str
-    adjudicator_pin: str
-    scorer_sha: str
-    scorer_sha256: str
-    harness_scoring_sha256: str
-    adapter_sha256: str
-    adjudicator_code_sha256: str
-    adjudicator_prompt_sha256: str
-    profile_policy_version: str
-    stage_matcher_version: str
-    temperature: float
-
-
-class ScoreManifestWire(TypedDict):
-    schema_version: Literal[2]
-    score_ref: ScoreRefWire
-    created_at: str
-    epoch_hashes: dict[str, str]
-    evaluator: EvaluatorWire
-    requested_pr_urls: list[str]
-    selected_attempts: dict[str, str]
-    source_artifact_hashes: dict[str, str]
-    run_validity_ref: str | None
-    provenance_status: ProvenanceStatus
-    profiles: list[Profile]
-    completion_status: Literal["complete"]
-
-
-class CompleteWire(TypedDict):
-    schema_version: Literal[1]
-    score_ref: ScoreRefWire
-    files: dict[str, str]
-
-
-class DriftWire(TypedDict):
-    desc_len_mean: float
-    severity_dist: dict[str, int]
-
-
-class DimensionMetricsWire(TypedDict):
-    dimension: Dimension
-    candidate_count: int
-    delivered_bug_hits: int
-    discovery_bug_hits: int
-    denominator: int
-    delivered_recall: float | None
-    discovery_recall: float | None
-    audited_count: int
-    correct_count: int
-    unresolved_count: int
-    groundedness: float | None
-
-
-class RunMetricsWire(ProfileMetricsWire):
-    golden_recall: float | None
-    valid_extra_rate: float
-    noise_rate: float
-    total_candidates: int
-    n_prs: int
-    per_bucket: dict[Bucket, int]
-    per_dimension: dict[Dimension, DimensionMetricsWire]
-    drift: DriftWire
-
-
-class LegacyMetricsWire(TypedDict):
-    golden_recall: float
-    valid_extra_rate: float
-    noise_rate: float
-    precision_strict: float
-    f1_strict: float
-    tp: int
-    fp: int
-    fn: int
-    total_candidates: int
-    n_prs: int
-    per_bucket: dict[str, int]
-    per_dimension: dict[str, int]
-    drift: DriftWire
-
-
-class ScorerOutputsWire(TypedDict):
-    candidates_path: str
-    dedup_groups_path: str
-    evaluations_path: str
-    stage_logs: dict[str, str]
-
-
-class StageCaptureWire(TypedDict):
-    enabled: bool
-    status: Literal["off", "complete", "unavailable", "refused", "capped"]
-    reason: str | None
-    pairwise_call_count: int
-    estimated_cost_usd: float | None
-    cost_cap_usd: float | None
-    price_schedule_sha256: str | None
-    actual_call_count: int
-    actual_cost_usd: float | None
-
-
-class ScorePacketWire(TypedDict):
-    schema_version: Literal[2]
-    manifest: ScoreManifestWire
-    run_id: str
-    score_ref: ScoreRefWire
-    profiles: dict[Profile, ProfileMetricsWire]
-    metrics: RunMetricsWire
-    observations_path: str
-    stages_path: str | None
-    stage_capture: StageCaptureWire
-    adjudications_path: str
-    ledger_row: dict[str, JsonValue]
-    complete_path: str
-    judge_pin: str
-    adjudicator_pin: str
-    scorer_sha: str
-
-
-class CompatibilityScorePacketWire(ScorePacketWire):
-    buckets: dict[str, dict[str, int]]
-    adjudications: list[AdjudicationWire]
-
-
-class LegacyArchiveWire(TypedDict):
-    schema_version: Literal[1]
-    run_id: str
-    epoch_id: str
-    archived_files: dict[str, str]
-    unavailable_files: list[str]
-    aggregate_scores: JsonValue
-    observations_available: bool
-    status: Literal["complete", "partial"]
-    source_score_id: str | None
-    pins: dict[str, str | None]
-    per_profile_results: dict[Profile, JsonValue]
-
-
-class CalibrationReportWire(TypedDict):
-    schema_version: Literal[1]
-    epoch_id: str
-    golden_sha256: str
-    evaluator_id: str
-    input_refs: list[ScoreRefWire]
-    passes: int
-    per_profile_variability: dict[Profile, dict[str, float]]
-    anchor_results: dict[str, JsonValue]
-    proposed_noise_threshold: float | None
-    derivation: str
-    status: Literal["complete", "partial"]
-    input_byte_hashes: dict[str, str]
-    evaluator: EvaluatorWire
-
-
 @dataclass(frozen=True, slots=True)
 class ScoreRef:
     run_id: str
@@ -364,7 +132,7 @@ class BugObservation:
     outcome: Outcome
     matches: tuple[Match, ...]
     errors: tuple[str, ...]
-    loss: tuple | None
+    loss: dict[str, Any] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,14 +169,8 @@ class Evaluator:
     evaluator_id: str
     judge_pin: str
     adjudicator_pin: str
-    scorer_sha: str
-    scorer_sha256: str
+    scorer_tree: str
     harness_scoring_sha256: str
-    adapter_sha256: str
-    adjudicator_code_sha256: str
-    adjudicator_prompt_sha256: str
-    profile_policy_version: str
-    stage_matcher_version: str
     temperature: float
 
 
@@ -425,47 +187,6 @@ class ScoreRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class ScorerOutputs:
-    candidates_path: Path
-    dedup_groups_path: Path
-    evaluations_path: Path
-    stage_logs: tuple[tuple[str, Path], ...]
-
-
-@dataclass(frozen=True, slots=True)
-class Drift:
-    desc_len_mean: float
-    severity_dist: tuple[tuple[str, int], ...]
-
-
-@dataclass(frozen=True, slots=True)
-class DimensionMetrics:
-    dimension: Dimension
-    candidate_count: int
-    delivered_bug_hits: int
-    discovery_bug_hits: int
-    denominator: int
-    delivered_recall: float | None
-    discovery_recall: float | None
-    audited_count: int
-    correct_count: int
-    unresolved_count: int
-    groundedness: float | None
-
-
-@dataclass(frozen=True, slots=True)
-class RunMetrics(ProfileMetrics):
-    golden_recall: float | None
-    valid_extra_rate: float
-    noise_rate: float
-    total_candidates: int
-    n_prs: int
-    per_bucket: tuple[tuple[Bucket, int], ...]
-    per_dimension: tuple[tuple[Dimension, DimensionMetrics], ...]
-    drift: Drift
-
-
-@dataclass(frozen=True, slots=True)
 class ScoreManifest:
     schema_version: Literal[2]
     score_ref: ScoreRef
@@ -477,51 +198,6 @@ class ScoreManifest:
     source_artifact_hashes: tuple[tuple[str, str], ...]
     run_validity_ref: str | None
     provenance_status: ProvenanceStatus
-    profiles: tuple[Profile, ...]
-    completion_status: Literal["complete"]
-
-
-@dataclass(frozen=True, slots=True)
-class Complete:
-    schema_version: Literal[1]
-    score_ref: ScoreRef
-    files: tuple[tuple[str, str], ...]
-
-
-@dataclass(frozen=True, slots=True)
-class StageCapture:
-    enabled: bool
-    status: Literal["off", "complete", "unavailable", "refused", "capped"]
-    reason: str | None
-    pairwise_call_count: int
-    estimated_cost_usd: float | None
-    cost_cap_usd: float | None
-    price_schedule_sha256: str | None
-    actual_call_count: int
-    actual_cost_usd: float | None
-
-
-@dataclass(frozen=True, slots=True)
-class ScorePacket:
-    schema_version: Literal[2]
-    manifest: ScoreManifest
-    run_id: str
-    score_ref: ScoreRef
-    profiles: tuple[tuple[Profile, ProfileMetrics], ...]
-    metrics: RunMetrics
-    observations_path: str
-    stages_path: str | None
-    stage_capture: StageCapture
-    adjudications_path: str
-    ledger_row: tuple
-    complete_path: str
-    judge_pin: str
-    adjudicator_pin: str
-    scorer_sha: str
-    observations: tuple[BugObservation, ...]
-    candidates: tuple[Candidate, ...]
-    adjudications: tuple[Adjudication, ...]
-    root: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -535,95 +211,21 @@ class LegacyScoreIdentity:
 
 
 @dataclass(frozen=True, slots=True)
-class LegacyArchive:
-    schema_version: Literal[1]
-    run_id: str
-    epoch_id: str
-    archived_files: tuple[tuple[str, str], ...]
-    unavailable_files: tuple[str, ...]
-    aggregate_scores: tuple | None
-    observations_available: bool
-    status: Literal["complete", "partial"]
-    source_score_id: str | None
-    pins: tuple[tuple[str, str | None], ...]
-    per_profile_results: tuple
+class FrozenJson:
+    text: str
 
 
-@dataclass(frozen=True, slots=True)
-class CalibrationReport:
-    schema_version: Literal[1]
-    epoch_id: str
-    golden_sha256: str
-    evaluator_id: str
-    input_refs: tuple[ScoreRef, ...]
-    passes: int
-    per_profile_variability: tuple
-    anchor_results: tuple
-    proposed_noise_threshold: float | None
-    derivation: str
-    status: Literal["complete", "partial"]
-    input_byte_hashes: tuple[tuple[str, str], ...]
-    evaluator: Evaluator
-
-    def to_wire(self) -> CalibrationReportWire:
-        return {
-            "schema_version": self.schema_version,
-            "epoch_id": self.epoch_id,
-            "golden_sha256": self.golden_sha256,
-            "evaluator_id": self.evaluator_id,
-            "input_refs": [cast(ScoreRefWire, asdict(r)) for r in self.input_refs],
-            "passes": self.passes,
-            "per_profile_variability": {
-                p: dict(v) for p, v in self.per_profile_variability
-            },
-            "anchor_results": {k: thaw_json(v) for k, v in self.anchor_results},
-            "proposed_noise_threshold": self.proposed_noise_threshold,
-            "derivation": self.derivation,
-            "status": self.status,
-            "input_byte_hashes": dict(self.input_byte_hashes),
-            "evaluator": cast(EvaluatorWire, asdict(self.evaluator)),
-        }
+def freeze_json(value):
+    return FrozenJson(canonical(value).decode("utf-8"))
 
 
-FrozenJson: TypeAlias = "bool | int | float | str | FrozenObject | FrozenArray | None"
-
-
-@dataclass(frozen=True, slots=True)
-class FrozenObject:
-    items: tuple[tuple[str, FrozenJson], ...]
-
-
-@dataclass(frozen=True, slots=True)
-class FrozenArray:
-    items: tuple[FrozenJson, ...]
-
-
-def freeze_json(value: object) -> FrozenJson:
-    if isinstance(value, dict):
-        if any(not isinstance(key, str) for key in value):
-            raise ValueError("JSON object keys must be strings")
-        return FrozenObject(
-            tuple((k, freeze_json(v)) for k, v in sorted(value.items()))
-        )
-    if isinstance(value, (list, tuple)):
-        return FrozenArray(tuple(freeze_json(v) for v in value))
-    if value is not None and not isinstance(value, (bool, int, float, str)):
-        raise ValueError("unsupported JSON value")
-    canonical(value)
-    return value
-
-
-def thaw_json(value: FrozenJson) -> JsonValue:
-    if isinstance(value, FrozenObject):
-        return {k: thaw_json(v) for k, v in value.items}
-    if isinstance(value, FrozenArray):
-        return [thaw_json(v) for v in value.items]
-    return value
+def thaw_json(value):
+    return json.loads(value.text) if isinstance(value, FrozenJson) else value
 
 
 def wire_record(value):
     """Serialize frozen records without turning declared wire maps into pair arrays."""
-    if isinstance(value, (FrozenObject, FrozenArray)):
+    if isinstance(value, FrozenJson):
         return thaw_json(value)
     if is_dataclass(value):
         result = {}
@@ -635,16 +237,10 @@ def wire_record(value):
                 else wire_record(item)
             )
         return result
-    if isinstance(value, tuple):
-        return [wire_record(v) for v in value]
-    return value
-
-
-def freeze(value):
     if isinstance(value, dict):
-        return tuple((k, freeze(v)) for k, v in sorted(value.items()))
-    if isinstance(value, list):
-        return tuple(freeze(v) for v in value)
+        return {k: wire_record(v) for k, v in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [wire_record(v) for v in value]
     return value
 
 
@@ -679,14 +275,8 @@ def publish_packet(pending: Path, final: Path):
     pending.rename(final)
 
 
-def bucket_candidate_ids(epoch, bugs):
-    """The epoch decides whether matched siblings also leave adjudication."""
-    return {
-        m.candidate_id
-        for bug in bugs
-        for m in bug.matches
-        if epoch.bucket_policy == "dedup_expanded" or m.kind == "direct"
-    }
+def bucket_candidate_ids(bugs):
+    return {m.candidate_id for bug in bugs for m in bug.matches}
 
 
 def candidate_records(
@@ -854,459 +444,302 @@ def begin_packet(run_dir: Path, epoch: GoldenEpoch, score_id: str | None):
     return score_id, pending
 
 
+@dataclass(frozen=True, slots=True)
+class StoredScore:
+    schema_version: Literal[3]
+    manifest: ScoreManifest
+    observations: tuple[BugObservation, ...]
+    candidates: tuple[Candidate, ...]
+    adjudications: tuple[Adjudication, ...]
+    contexts: tuple[AdjudicationContext, ...]
+    metadata: dict[str, Any]
+    costs: dict[Literal["dedup", "judge", "adjudicator"], float | None]
+
+
+@dataclass(frozen=True, slots=True)
+class ScorePacket(StoredScore):
+    root: Path
+
+    @property
+    def score_ref(self):
+        return self.manifest.score_ref
+
+    @property
+    def run_id(self):
+        return self.score_ref.run_id
+
+    @property
+    def judge_pin(self):
+        return self.manifest.evaluator.judge_pin
+
+    @property
+    def adjudicator_pin(self):
+        return self.manifest.evaluator.adjudicator_pin
+
+    @property
+    def stages_path(self):
+        return "stages.jsonl"
+
+    @property
+    def ledger_row(self):
+        return self.projection()["ledger_row"]
+
+    def projection(self):
+        from bench.runner import score, stages
+
+        epoch = load_epoch(self.score_ref.epoch_id)
+        raw = read_json(self.root / "evaluations.json")
+        fp = sum(
+            raw.get(u, {}).get("deep-review", {}).get("fp", 0)
+            for u in self.manifest.requested_pr_urls
+        )
+        profiles = {
+            p: asdict(profile_metrics(self.observations, fp, p))
+            for p in epoch.supported_profiles
+        }
+        total = len(self.candidates)
+        matched = bucket_candidate_ids(self.observations)
+        counts = {"golden_matched": len(matched), "valid_extra": 0, "noise": 0}
+        for a in self.adjudications:
+            counts[a.bucket] += 1
+        texts = [c.text for c in self.candidates]
+        severity = {}
+        for text in texts:
+            key = score._severity_of(text)
+            severity[key] = severity.get(key, 0) + 1
+        traces = stages.packet_traces(self.root)
+        stage_rows = stages.read_rows(self.root)
+        metrics = {
+            **profiles[epoch.primary_profile],
+            "golden_recall": profiles[epoch.primary_profile]["recall"],
+            "valid_extra_rate": counts["valid_extra"] / total if total else 0.0,
+            "noise_rate": counts["noise"] / total if total else 0.0,
+            "total_candidates": total,
+            "n_prs": len(self.manifest.requested_pr_urls),
+            "per_bucket": counts,
+            "per_dimension": stages.dimension_metrics(
+                self.candidates,
+                self.observations,
+                stage_rows,
+                epoch.primary_profile,
+                traces,
+            ),
+            "drift": {
+                "desc_len_mean": sum(map(len, texts)) / total if total else 0.0,
+                "severity_dist": severity,
+            },
+        }
+        row = {
+            **self.metadata,
+            **{
+                k: metrics[k]
+                for k in (
+                    "golden_recall",
+                    "valid_extra_rate",
+                    "noise_rate",
+                    "precision_strict",
+                    "f1_strict",
+                    "per_bucket",
+                    "per_dimension",
+                    "drift",
+                    "n_prs",
+                )
+            },
+            "denominator": metrics["denominator"],
+            "packet_path": str(self.root),
+            "dedup_cost_usd": self.costs["dedup"],
+            "judge_cost_usd": self.costs["judge"],
+            "adjudicator_cost_usd": self.costs["adjudicator"],
+        }
+        return {
+            "schema_version": 3,
+            "score_ref": asdict(self.score_ref),
+            "metrics": metrics,
+            "profiles": profiles,
+            "ledger_row": row,
+        }
+
+
+def _manifest_wire(value):
+    return {
+        **value,
+        **{
+            k: tuple(sorted(value[k].items()))
+            for k in ("epoch_hashes", "selected_attempts", "source_artifact_hashes")
+        },
+    }
+
+
 def write_packet(
-    request: ScoreRequest,
+    request,
     *,
-    packet: ScorePacketWire,
+    packet,
     observations,
     candidates,
     groups,
     adjudications,
     contexts,
     stage_observations=(),
-    stage_matches=(),
-) -> ScoreRef:
+    costs=None,
+):
     pending = request.work_dir
     final = pending.parent / request.score_ref.score_id
-    if final.exists():
-        raise FileExistsError("score packet already exists")
-    for name, value in (
-        ("manifest.json", packet["manifest"]),
-        ("candidate-map.json", [asdict(c) for c in candidates]),
-        ("canonical-dedup-groups.json", [asdict(g) for g in groups]),
-        ("scores.json", packet),
-    ):
-        exclusive_json(pending / name, value)
-    for name, records in (
-        ("bugs.jsonl", observations),
-        ("adjudications.jsonl", adjudications),
-        ("stages.jsonl", stage_observations),
-        ("stage_matches.jsonl", stage_matches),
-    ):
-        with (pending / name).open("xb") as stream:
-            for record in records:
-                stream.write(canonical(asdict(record)) + b"\n")
-    for context in contexts:
-        exclusive_json(
-            pending / "contexts" / (context.candidate_id + ".json"), asdict(context)
-        )
-    files = {
-        p.relative_to(pending).as_posix(): file_hash(p)
-        for p in sorted(pending.rglob("*"))
-        if p.is_file()
-    }
+    stored = StoredScore(
+        3,
+        decode(ScoreManifest, _manifest_wire(packet["manifest"])),
+        tuple(observations),
+        tuple(candidates),
+        tuple(adjudications),
+        tuple(contexts),
+        packet["ledger_row"],
+        costs or {"dedup": None, "judge": None, "adjudicator": None},
+    )
+    exclusive_json(pending / "scores.json", asdict(stored))
+    with (pending / "stages.jsonl").open("xb") as stream:
+        for row in stage_observations:
+            stream.write(canonical(asdict(row)) + b"\n")
     exclusive_json(
         pending / "complete.json",
-        {"schema_version": 1, "score_ref": asdict(request.score_ref), "files": files},
+        {
+            "files": {
+                p.relative_to(pending).as_posix(): file_hash(p)
+                for p in sorted(pending.rglob("*"))
+                if p.is_file()
+            }
+        },
     )
     _load_packet(pending, request.epoch, allow_pending=True)
     publish_packet(pending, final)
     return request.score_ref
 
 
-def load_packet(path: Path) -> ScorePacket:
+def load_packet(path):
     return _load_packet(Path(path))
 
 
-def _load_packet(path: Path, epoch=None, *, allow_pending=False) -> ScorePacket:
-    path = Path(path)
+def _load_packet(path, epoch=None, *, allow_pending=False):
     if path.name.startswith(".pending-") and not allow_pending:
         raise ValueError("pending packet is not a score input")
-    complete = read_json(path / "complete.json")
-    if complete["schema_version"] != 1:
-        raise ValueError("unsupported packet completion schema")
+    receipt = read_json(path / "complete.json")["files"]
     actual = {
         p.relative_to(path).as_posix() for p in path.rglob("*") if p.is_file()
     } - {"complete.json"}
     required = {
-        "manifest.json",
         "scores.json",
-        "bugs.jsonl",
-        "candidate-map.json",
+        "evaluations.json",
         "candidates.json",
         "dedup_groups.json",
-        "evaluations.json",
-        "adjudications.jsonl",
         "stages.jsonl",
+        "stage_trace_bindings.json",
     }
-    if not required <= actual:
+    if not required <= actual or actual != set(receipt):
         raise ValueError("incomplete packet inventory")
-    if actual != set(complete["files"]):
-        raise ValueError("packet file inventory mismatch")
-    for name, expected in complete["files"].items():
+    for name, expected in receipt.items():
         if file_hash(confined(path, name)) != expected:
             raise ValueError("packet hash mismatch")
-    packet = read_json(path / "scores.json")
-    manifest = read_json(path / "manifest.json")
-    if packet["schema_version"] != 2 or manifest["schema_version"] != 2:
-        raise ValueError("unsupported score packet schema")
-    ref = ScoreRef(**complete["score_ref"])
-    if not allow_pending and path.name != ref.score_id:
-        raise ValueError("packet directory identity mismatch")
+    data = decode(StoredScore, read_json(path / "scores.json"))
+    manifest = data.manifest
+    epoch = epoch or load_epoch(manifest.score_ref.epoch_id)
     if (
-        manifest != packet["manifest"]
-        or manifest["score_ref"] != asdict(ref)
-        or packet["score_ref"] != asdict(ref)
-        or packet["run_id"] != ref.run_id
-        or manifest["completion_status"] != "complete"
+        manifest.score_ref.epoch_id != epoch.epoch_id
+        or dict(manifest.epoch_hashes) != epoch_hashes(epoch)
+        or (not allow_pending and path.name != manifest.score_ref.score_id)
     ):
-        raise ValueError("packet identity mismatch")
-    if any(key not in packet for key in ScorePacketWire.__annotations__):
-        raise ValueError("incomplete packet schema")
-    if manifest["run_validity_ref"] is not None:
-        from bench.runner.validity import attempt_from_wire
-
-        if manifest["run_validity_ref"] != "run-provenance.json":
-            raise ValueError("unknown run validity reference")
-        run = read_json(confined(path, manifest["run_validity_ref"]))
-        if run.get("run_id") != ref.run_id or not run.get("provenance"):
-            raise ValueError("score packet lost original run provenance")
-        for url, aid in manifest["selected_attempts"].items():
-            attempt = attempt_from_wire(
-                read_json(confined(path, f"attempts/{aid}.json"))
-            )
-            if (
-                attempt.attempt_id != aid
-                or attempt.run_id != ref.run_id
-                or attempt.pr_url != url
-                or attempt.validity.state == "invalid"
-            ):
-                raise ValueError("score packet selected an invalid attempt")
-    evaluator = dict(manifest["evaluator"])
-    eid = evaluator.pop("evaluator_id")
-    if eid != digest(evaluator):
-        raise ValueError("evaluator identity mismatch")
-    wires = [
-        json.loads(line)
-        for line in (path / "bugs.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
-    observations = tuple(
-        BugObservation(
-            **{
-                **r,
-                "score_ref": ScoreRef(**r["score_ref"]),
-                "matches": tuple(Match(**m) for m in r["matches"]),
-                "errors": tuple(r["errors"]),
-                "loss": freeze(r["loss"]),
-            }
-        )
-        for r in wires
-    )
-    if any(
-        o.score_ref != ref or o.errors or o.outcome == "unavailable"
-        for o in observations
-    ):
-        raise ValueError("invalid bug observations")
-    epoch = epoch or load_epoch(ref.epoch_id, root=DEFAULT_GOLDEN_ROOT)
+        raise ValueError("packet epoch or identity mismatch")
+    evaluator = asdict(manifest.evaluator)
+    identity = evaluator.pop("evaluator_id")
     if (
-        evaluator["scorer_sha"] != epoch.scorer_sha
-        or evaluator["scorer_sha256"] != epoch.scorer_sha256
+        digest(evaluator) != identity
+        or evaluator["scorer_tree"] != epoch.scorer_tree
+        or evaluator["judge_pin"] != epoch.judge_pin
     ):
-        raise ValueError("packet evaluator/epoch mismatch")
-    urls = manifest["requested_pr_urls"]
+        raise ValueError("evaluator identity or epoch pin mismatch")
+    urls, attempts = manifest.requested_pr_urls, dict(manifest.selected_attempts)
     if (
-        len(urls) != len(set(urls))
-        or set(urls) != set(manifest["selected_attempts"])
-        or set(urls) - {b.pr_url for b in epoch.bugs}
+        len(set(urls)) != len(urls)
+        or set(attempts) != set(urls)
+        or not set(urls) <= set(epoch.claims_by_pr)
     ):
-        raise ValueError("packet requested population mismatch")
-    expected = {
-        (b.pr_url, b.bug_id, b.category)
-        for b in epoch.bugs
-        if b.pr_url in manifest["requested_pr_urls"]
-    }
-    if (
-        len(observations) != len(expected)
-        or {(o.pr_url, o.bug_id, o.category) for o in observations} != expected
-    ):
-        raise ValueError("packet golden coverage mismatch")
-    if manifest["epoch_hashes"] != epoch_hashes(epoch):
-        raise ValueError("packet epoch hashes mismatch")
-    candidate_wires = read_json(path / "candidate-map.json")
-    candidates = tuple(
-        Candidate(
-            **{
-                **c,
-                "source_trace_ids": tuple(c["source_trace_ids"]),
-                "discovery_dimensions": tuple(c["discovery_dimensions"]),
-            }
-        )
-        for c in candidate_wires
-    )
-    ids = {c.candidate_id for c in candidates}
-    if len(ids) != len(candidates) or any(
-        m.candidate_id not in ids for o in observations for m in o.matches
-    ):
-        raise ValueError("packet candidate join mismatch")
-    raw_candidates = read_json(path / "candidates.json")
-    if set(raw_candidates) != set(urls):
-        raise ValueError("packet raw candidate population mismatch")
-    rebuilt = candidate_records(raw_candidates, manifest["selected_attempts"])
-    groups = dedup_groups(read_json(path / "dedup_groups.json"), rebuilt)
+        raise ValueError("invalid requested PR matrix")
+    for name, expected in manifest.source_artifact_hashes:
+        if file_hash(confined(path / "sources", name)) != expected:
+            raise ValueError("evaluated source hash mismatch")
+    candidates = read_json(path / "candidates.json")
+    expected_candidates = candidate_records(candidates, attempts)
+    if [
+        (c.candidate_id, c.text, c.pr_url, c.index, c.attempt_id)
+        for c in data.candidates
+    ] != [
+        (c.candidate_id, c.text, c.pr_url, c.index, c.attempt_id)
+        for c in expected_candidates
+    ]:
+        raise ValueError("candidate receipt join mismatch")
+    groups = dedup_groups(read_json(path / "dedup_groups.json"), data.candidates)
     group_ids = {cid: g.group_id for g in groups for cid in g.candidate_ids}
-    if len(rebuilt) != len(candidates):
-        raise ValueError("packet candidate map population mismatch")
-    for original, stored in zip(rebuilt, candidates, strict=True):
-        if (
-            any(
-                getattr(original, field) != getattr(stored, field)
-                for field in (
-                    "candidate_id",
-                    "pr_url",
-                    "attempt_id",
-                    "index",
-                    "text",
-                    "path",
-                    "line",
-                )
-            )
-            or stored.dedup_group_id != group_ids[stored.candidate_id]
-            or stored.attempt_id != manifest["selected_attempts"][stored.pr_url]
-        ):
-            raise ValueError("packet candidate identity mismatch")
+    if any(c.dedup_group_id != group_ids[c.candidate_id] for c in data.candidates):
+        raise ValueError("candidate dedup join mismatch")
     request = ScoreRequest(
-        ref,
+        manifest.score_ref,
         epoch,
         path,
-        tuple(urls),
-        tuple(sorted(manifest["selected_attempts"].items())),
-        candidates,
+        urls,
+        manifest.selected_attempts,
+        data.candidates,
         "deep-review",
-        Evaluator(evaluator_id=eid, **evaluator),
+        manifest.evaluator,
     )
-    evaluations = read_json(path / "evaluations.json")
     failures = frozenset(
-        o.pr_url for o in observations if o.outcome == "operational_failure"
+        o.pr_url for o in data.observations if o.outcome == "operational_failure"
     )
-    if build_observations(request, evaluations, groups, failures=failures) != tuple(
-        replace(o, loss=None) for o in observations
-    ):
-        raise ValueError("packet observations disagree with raw evaluations")
-    fp = sum(evaluations[u]["deep-review"]["fp"] for u in urls if u not in failures)
-    if packet["profiles"] != {
-        p: profile_metrics(observations, fp, p).to_wire()
-        for p in epoch.supported_profiles
-    }:
-        raise ValueError("packet profile arithmetic mismatch")
-    primary = packet["profiles"][epoch.primary_profile]
+    rebuilt = build_observations(
+        request, read_json(path / "evaluations.json"), groups, failures=failures
+    )
+    if tuple(replace(o, loss=None) for o in data.observations) != rebuilt:
+        raise ValueError("observation receipt join mismatch")
+    matched = bucket_candidate_ids(data.observations)
+    remaining = {
+        c.candidate_id: c for c in data.candidates if c.candidate_id not in matched
+    }
+    contexts = {c.candidate_id: c for c in data.contexts}
     if (
-        any(packet["metrics"].get(k) != v for k, v in primary.items())
-        or packet["metrics"]["golden_recall"] != primary["recall"]
+        len({a.candidate_id for a in data.adjudications}) != len(data.adjudications)
+        or {a.candidate_id for a in data.adjudications} != set(remaining)
+        or set(contexts) != set(remaining)
     ):
-        raise ValueError("packet primary projection mismatch")
-    for name, expected_hash in manifest["source_artifact_hashes"].items():
-        if file_hash(confined(path / "sources", name)) != expected_hash:
-            raise ValueError("packet source hash mismatch")
+        raise ValueError("incomplete adjudication coverage")
+    for a in data.adjudications:
+        c, context = remaining[a.candidate_id], contexts[a.candidate_id]
+        if (
+            a.pr_url != c.pr_url
+            or a.evaluator_id != manifest.evaluator.evaluator_id
+            or a.bucket not in ("noise", "valid_extra")
+            or a.error
+            or a.context_sha256 != context.context_sha256
+            or context.context_sha256
+            != digest(
+                [
+                    context.hunk,
+                    context.file_context,
+                    context.context_status,
+                    context.truncated,
+                ]
+            )
+        ):
+            raise ValueError("adjudication context join mismatch")
+    if set(data.costs) != {"dedup", "judge", "adjudicator"} or any(
+        v is not None and v < 0 for v in data.costs.values()
+    ):
+        raise ValueError("invalid judge cost")
     from bench.runner.stages import validate_packet_evidence
 
-    validate_packet_evidence(path, packet, observations, candidates)
-    adjudications = tuple(
-        Adjudication(**json.loads(line))
-        for line in (path / "adjudications.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-    )
-    if any(a.error or a.evaluator_id != eid for a in adjudications):
-        raise ValueError("invalid adjudicator observation")
-    candidate_urls = {c.candidate_id: c.pr_url for c in candidates}
-    if any(
-        a.bucket not in ("valid_extra", "noise")
-        or candidate_urls.get(a.candidate_id) != a.pr_url
-        for a in adjudications
-    ):
-        raise ValueError("invalid adjudicator candidate identity")
-    matched = bucket_candidate_ids(epoch, observations)
-    if (
-        len(adjudications) != len(ids - matched)
-        or {a.candidate_id for a in adjudications} != ids - matched
-    ):
-        raise ValueError("packet candidate bucket coverage mismatch")
-    for a in adjudications:
-        ctx = read_json(path / "contexts" / (a.candidate_id + ".json"))
-        if ctx["context_sha256"] != a.context_sha256 or a.context_sha256 != digest(
-            [ctx["hunk"], ctx["file_context"], ctx["context_status"], ctx["truncated"]]
-        ):
-            raise ValueError("packet adjudication context mismatch")
-    expected_row = {
-        "schema_version": 2,
-        "run_id": ref.run_id,
-        "epoch_id": ref.epoch_id,
-        "score_id": ref.score_id,
-        "golden_sha256": epoch.golden_sha256,
-        "profile": epoch.primary_profile,
-        "denominator": primary["denominator"],
-        "evaluator_id": eid,
-        "population_sha256": digest(tuple(urls)),
-    }
-    if any(packet["ledger_row"].get(k) != v for k, v in expected_row.items()):
-        raise ValueError("packet ledger projection identity mismatch")
-    manifest_record = ScoreManifest(
-        **{
-            **manifest,
-            "score_ref": ref,
-            "evaluator": request.evaluator,
-            "epoch_hashes": tuple(sorted(manifest["epoch_hashes"].items())),
-            "requested_pr_urls": tuple(urls),
-            "selected_attempts": request.selected_attempts,
-            "source_artifact_hashes": tuple(
-                sorted(manifest["source_artifact_hashes"].items())
-            ),
-            "profiles": tuple(manifest["profiles"]),
-        }
-    )
-    metrics = packet["metrics"]
-    metrics_record = RunMetrics(
-        **{
-            **metrics,
-            "per_bucket": tuple(sorted(metrics["per_bucket"].items())),
-            "per_dimension": tuple(
-                (key, DimensionMetrics(**value))
-                for key, value in sorted(metrics["per_dimension"].items())
-            ),
-            "drift": Drift(
-                metrics["drift"]["desc_len_mean"],
-                tuple(sorted(metrics["drift"]["severity_dist"].items())),
-            ),
-        }
-    )
+    validate_packet_evidence(path, data)
     return ScorePacket(
-        2,
-        manifest_record,
-        ref.run_id,
-        ref,
-        tuple((p, ProfileMetrics(**v)) for p, v in sorted(packet["profiles"].items())),
-        metrics_record,
-        packet["observations_path"],
-        packet["stages_path"],
-        StageCapture(
-            **(
-                {
-                    "enabled": False,
-                    "status": "off"
-                    if packet["stage_capture"]["status"] == "not_requested"
-                    else "unavailable",
-                    "reason": packet["stage_capture"].get("reason"),
-                    "pairwise_call_count": 0,
-                    "estimated_cost_usd": None,
-                    "cost_cap_usd": None,
-                    "price_schedule_sha256": None,
-                    "actual_call_count": 0,
-                    "actual_cost_usd": None,
-                }
-                if "enabled" not in packet["stage_capture"]
-                else packet["stage_capture"]
-            )
-        ),
-        packet["adjudications_path"],
-        freeze(packet["ledger_row"]),
-        packet["complete_path"],
-        packet["judge_pin"],
-        packet["adjudicator_pin"],
-        packet["scorer_sha"],
-        observations,
-        candidates,
-        adjudications,
-        path.resolve(),
+        **{f.name: getattr(data, f.name) for f in fields(data)}, root=path
     )
-
-
-DEFAULT_GOLDEN_ROOT = Path(__file__).resolve().parents[1] / "golden"
 
 
 def epoch_hashes(epoch):
-    return {
-        k: getattr(epoch, k)
-        for k in ("golden_sha256", "scorer_sha256", "bugs_sha256", "labels_sha256")
-    }
+    return {"golden_sha256": epoch.golden_sha256, "scorer_tree": epoch.scorer_tree}
 
 
-def import_legacy(run_dir: Path, epoch: GoldenEpoch) -> LegacyArchive:
-    """Preserve available historical bytes without fabricating per-bug results."""
-    if epoch.epoch_id != "dfc6cb4-v1":
-        raise ValueError("legacy import requires the old epoch")
-    home = run_dir / "legacy" / epoch.epoch_id
-    if (home / "complete.json").exists():
-        marker = read_json(home / "complete.json")
-        for name, expected in marker["files"].items():
-            if file_hash(confined(home, name)) != expected:
-                raise ValueError("legacy archive hash mismatch")
-        wire = read_json(home / "archive.json")
-    else:
-        pending = home.parent / (".pending-" + uuid.uuid4().hex)
-        pending.mkdir(parents=True, exist_ok=False)
-        names = {
-            "scores.json",
-            "run.json",
-            "latest-score.json",
-            "candidates.json",
-            "dedup_groups.json",
-            "evaluations.json",
-            "adjudications.jsonl",
-            "post-review-payload.json",
-            "raw.json",
-            "raw-naive.json",
-            "diff.patch",
-            "findings.json",
-            "checkpoint.json",
-        }
-        files = {}
-        for source in sorted(run_dir.rglob("*")):
-            relative = source.relative_to(run_dir)
-            if (
-                relative.parts[0] in ("legacy", "scores", "attempts")
-                or source.name not in names
-            ):
-                continue
-            if not artifact_allowed(relative):
-                continue
-            if not source.is_file() or source.is_symlink():
-                continue
-            target = pending / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            copy_exclusive(source, target)
-            files[relative.as_posix()] = file_hash(target)
-        missing = [
-            name
-            for name in ("evaluations.json", "dedup_groups.json")
-            if not any(Path(f).name == name for f in files)
-        ]
-        if "scores.json" not in files:
-            missing.append("scores_absent")
-        aggregate = (
-            read_json(pending / "scores.json") if "scores.json" in files else None
-        )
-        baseline_pins = read_json(epoch.root / "baselines.json")
-        wire = {
-            "schema_version": 1,
-            "run_id": run_dir.name,
-            "epoch_id": epoch.epoch_id,
-            "archived_files": files,
-            "unavailable_files": missing,
-            "aggregate_scores": aggregate,
-            "observations_available": False,
-            "status": "partial",
-            "source_score_id": (aggregate or {}).get("score_ref", {}).get("score_id"),
-            "pins": {
-                k: (aggregate or {}).get(k, baseline_pins.get(k))
-                for k in ("judge_pin", "adjudicator_pin", "scorer_sha")
-            },
-            "per_profile_results": {"all": (aggregate or {}).get("metrics")},
-        }
-        exclusive_json(pending / "archive.json", wire)
-        exclusive_json(
-            pending / "complete.json",
-            {"files": files | {"archive.json": file_hash(pending / "archive.json")}},
-        )
-        if home.exists():
-            raise FileExistsError("legacy archive already exists")
-        pending.rename(home)
-    return LegacyArchive(
-        **{
-            **wire,
-            "archived_files": tuple(sorted(wire["archived_files"].items())),
-            "unavailable_files": tuple(wire["unavailable_files"]),
-            "aggregate_scores": freeze(wire["aggregate_scores"]),
-            "pins": tuple(sorted(wire["pins"].items())),
-            "per_profile_results": freeze(wire["per_profile_results"]),
-        }
-    )
+ScoreRefWire = dict

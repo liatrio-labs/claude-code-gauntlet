@@ -406,16 +406,7 @@ def derive_identifiers(
     _salt(holdout_salt)
     if not holdout_pr_urls <= {b.pr_url for b in epoch.bugs}:
         raise ValueError("unknown sealed membership")
-    # File stems identify projects across benchmark forks and PR variants.
-    project_by_pr = {}
-    for path in sorted((epoch.root / "golden_comments").glob("*.json")):
-        if not _safe(epoch.root, path):
-            raise ValueError("unconfined golden project source")
-        for pr in read_json(path):
-            url = pr["url"]
-            if url in project_by_pr:
-                raise ValueError("duplicate golden project membership")
-            project_by_pr[url] = path.stem
+    project_by_pr = epoch.project_by_pr
     if any(b.pr_url not in project_by_pr for b in epoch.bugs):
         raise ValueError("missing golden project membership")
     sources: dict[tuple[MatchMode, str], set[tuple[str, str]]] = defaultdict(set)

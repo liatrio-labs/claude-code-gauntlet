@@ -28,9 +28,7 @@ def review_attempt_costs(run_dir):
     return result
 
 
-# Required keys from spec H8's ledger row schema. Missing any -> ValueError.
-# ``auth_mode`` is deliberately absent: the ledger is append-only, and every row
-# written before the field existed must stay valid forever.
+# Historical rows may omit auth mode, so absence keeps its original API semantics.
 REQUIRED_KEYS = (
     "run_id",
     "ts",
@@ -180,8 +178,7 @@ def read_rows(path):
 def replay_packet(ledger_path, packet_path):
     """Recover an append failure using an already committed score, with no judging."""
     packet_path = Path(packet_path)
-    load_packet(packet_path)
-    packet = read_json(packet_path / "scores.json")
+    packet = load_packet(packet_path).projection()
     row = {
         **packet["ledger_row"],
         "packet_path": str(packet_path.resolve()),

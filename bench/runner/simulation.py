@@ -976,7 +976,7 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
             )
             or packet.judge_pin != window.expected.judge_pin
             or packet.adjudicator_pin != window.expected.adjudicator_pin
-            or packet.manifest.evaluator.scorer_sha256 != window.expected.scorer_sha256
+            or packet.manifest.evaluator.scorer_tree != window.expected.scorer_tree
         ):
             raise ValueError("simulation evaluator/epoch mismatch")
         if identity is None:

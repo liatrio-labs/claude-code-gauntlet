@@ -80,5 +80,7 @@
     "adapter": "ed13e407b1f9e43b922e36cbb2d2e610732bb155",
     "adjudicator": "bfda0a4a077fa6294643b414ca3f7e66a44eb2fe",
     "note": "git tree SHAs at final freeze 2026-07-18, post review-hardening (recompute: git rev-parse <commit>:bench/<dir>); baselines.json protected by review, not self-reference"
-  }
+  },
+  "epoch_id": "dfc6cb4-v1",
+  "profile": "all"
 }

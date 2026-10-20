@@ -2411,7 +2411,7 @@ def spend_totals(rows):
                 review += amount
             seen_attempts.add(key)
         if identity not in seen_scores:
-            for field in ("judge_cost_usd", "adjudicator_cost_usd"):
+            for field in ("dedup_cost_usd", "judge_cost_usd", "adjudicator_cost_usd"):
                 amount = row.get(field)
                 if amount is None:
                     unmeasured += 1
@@ -2438,7 +2438,7 @@ def render_html(rows, baselines, sha, generated):
             r for r in historical if score_identity(r).epoch_id == historical_epoch
         ]
         archived_baselines = load_baselines(
-            BENCH_DIR / "golden/epochs" / historical_epoch / "baselines.json"
+            BENCH_DIR / "golden/historical_baselines.json"
         )
     active_label = html.escape(
         f"{baselines.get('epoch_id') or historical_epoch or 'unversioned'} / {baselines.get('profile', 'all')}"

@@ -1,0 +1,12 @@
+{
+  "epoch_id": "e616e84-v1",
+  "upstream_sha": "e616e849755441da38f18bf3adba2c9583b03803",
+  "scorer_tree": "9bbfc71b865731a7d48a803d5f0ebedd54d85803",
+  "supported_profiles": [
+    "core",
+    "all",
+    "strict"
+  ],
+  "primary_profile": "core",
+  "judge_pin": "claude-opus-4-5-20251101"
+}

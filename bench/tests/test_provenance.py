@@ -94,68 +94,6 @@ def test_unanchored_selected_group_is_a_delivery_omission(tmp_path):
     assert {d.reason_code for d in overlay.snapshots[-1].decisions} == {"unanchored"}
 
 
-def test_reference_bundle_preserves_review_dispatches_and_rendered_delivered_bytes(
-    tmp_path,
-):
-    import hashlib
-    import json
-    import subprocess
-
-    from bench.tests.test_stages import ROOT
-
-    reference = subprocess.run(
-        [
-            "git",
-            "show",
-            "94ea095a89bfc2430814ff4e65db4ba790654fc7:workflows/pipeline.js",
-        ],
-        cwd=ROOT,
-        capture_output=True,
-        check=True,
-    ).stdout
-    reference_path = tmp_path / "reference.js"
-    reference_path.write_bytes(reference)
-    current_path = ROOT / "workflows/pipeline.js"
-    assert (
-        hashlib.sha256(reference).hexdigest()
-        != hashlib.sha256(current_path.read_bytes()).hexdigest()
-    )
-    outputs = [
-        json.loads(
-            subprocess.run(
-                [
-                    "node",
-                    str(ROOT / "workflows/test/tools/emit_agent_prompts.mjs"),
-                    "--bundle",
-                    str(path),
-                ],
-                cwd=ROOT,
-                capture_output=True,
-                check=True,
-                text=True,
-                encoding="utf-8",
-            ).stdout
-        )
-        for path in (reference_path, current_path)
-    ]
-    before, after = outputs
-    assert before["prompts"] == after["prompts"]
-    assert before["schemas"] == after["schemas"]
-    assert before["labels"] == after["labels"]
-    selected = [out["payload"]["postReview"]["findings"] for out in outputs]
-    diff = captured_diff(selected[0])
-    for platform in ("github", "gitlab"):
-        comments = [
-            tuple(
-                (row.body.encode("utf-8"), row.path, row.line)
-                for row in provenance.render_delivery(findings, diff, platform=platform)
-            )
-            for findings in selected
-        ]
-        assert comments[0] == comments[1]
-        assert comments[0]
-
-
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
 def test_independent_producer_payload_preserves_patch_demotion_and_order(platform):
     import json

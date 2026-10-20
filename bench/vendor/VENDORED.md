@@ -4,101 +4,30 @@ The MIT-licensed benchmark comes from
 [withmartian/code-review-benchmark](https://github.com/withmartian/code-review-benchmark).
 Copyright (c) 2025 Martian (withmartian.com).
 
-## Active revision
-
-The active epoch is `e616e84-v1`, upstream/scorer commit
+The active epoch is `e616e84-v1`, upstream commit
 `e616e849755441da38f18bf3adba2c9583b03803`.
-The five `bench/golden/golden_comments/*.json` files are verbatim upstream data.
-`benchmark_data.min.json` retains only PR title, original URL, source repository,
-golden comments including severity/category, and empty reviews from
-`offline/results/benchmark_data.json`. It has 173 bugs across the same 50 PRs.
-Raw and lean goldens agree. Subsets, SHAs, adapter and frozen anchor candidates
-retain their original bytes.
+The five files in `bench/golden/golden_comments/` are upstream raw comments.
+`GoldenEpoch` derives scorer inputs, stable bug ids, denominators and a content digest.
+Core is primary, with 158 full and 66 gate bugs.
+All has 173 full and 73 gate bugs; strict has 139 full and 58 gate bugs.
+The upstream dashboard derived-label refresh is not applicable to this harness.
 
-The primary profile is core (158 full / 66 gate). Strict contains 139 full / 58
-gate, and all contains 173 full / 73 gate. Scoring keeps upstream false positives
-unchanged when excluding golden categories. New anchors and calibration remain
-pending. No leaderboard rows were adopted.
+The manifest pins scorer tree `9bbfc71b865731a7d48a803d5f0ebedd54d85803`.
+Each scoring execution materializes that tree with read-only `git archive` into
+a temporary directory and places it on `PYTHONPATH`. The harness never imports
+vendor modules. The existing vendor environment runs with `uv run --project
+<absolute vendor path> --no-sync`. No dependency installation is part of scoring.
+Missing trees require fetching the containing history, including unshallowing a
+shallow clone. Judge and adjudicator use `claude-opus-4-5-20251101`, temperature 0.
 
-## Immutable epochs
+Only dedup, judging, their tests, license and environment metadata are vendored.
+Online extraction, dashboards and label generation are excluded.
+The vendor environment requires Python >=3.11 with openai/tqdm; harness code is
+Python 3.10 stdlib-only. Discovery trace versions are evaluated as pseudo-tools
+in the same scorer pass. Every matched dedup sibling leaves adjudication.
 
-`bench/golden/epochs/index.json` names the active epoch and pins manifest bytes.
-Each epoch directory contains its manifest, authoritative lean corpus, raw goldens,
-bug identities, labels and baselines. Epochs contain no scorer code.
-Each manifest records `scorer_tree`, the git tree id of
-`bench/vendor/code-review-benchmark`, and `scorer_file_hashes`, the SHA-256
-of every kept file, including the MIT license and environment metadata.
-Manifest content hashes validate the corpus, bugs, labels and scorer modules;
-byte hashes additionally protect all archived data files.
-
-The old scorer tree is `1b63af9917874ac20d2f9b3740718a3e8ab1ca5e`.
-The new scorer tree is `9bbfc71b865731a7d48a803d5f0ebedd54d85803`.
-These content identities survive squash merges that preserve the vendor bytes.
-The upstream `scorer_sha` remains separate provenance.
-Active scoring verifies the vendor files. For a non-active epoch, read-only
-`git archive TREE_ID` materializes the tree in a temporary directory, checks
-its complete inventory and every SHA-256, and refuses a mismatch before dispatch.
-Temporary source is removed on success or failure. Missing trees raise a
-`ValueError` naming the object and needed fetch. Fetch the history containing
-that tree with `git fetch origin`, or `git fetch --unshallow origin` in a shallow
-clone. The bench CI checkout uses `fetch-depth: 0`.
-Both epochs also require the provisioned environment's `pyproject.toml` and
-`uv.lock` to match their pinned hashes before any scorer subprocess runs.
-
-Epoch manifests pin `bucket_policy` and archived baselines pin the judge and
-adjudicator. `dfc6cb4-v1` uses direct winning matches for buckets, so matched
-dedup siblings still receive adjudication. `e616e84-v1` expands buckets through
-dedup siblings. Explicit baseline pin overrides refuse. An offline replay of
-`mini-20261020-030509-839b1886` preserves its recorded scoring and drift metrics.
-Discovery dimensions require captured provenance; historical severity counts
-remain available as `drift.severity_dist`.
-
-`dfc6cb4-v1` preserves the old upstream/scorer commit
-`dfc6cb427b5d0d7492a8d875ee9447744b7de3d1`. Its raw goldens contain 136 claims;
-its scorer-authoritative input contains 137, including the additional Sentry
-paginator import claim. It supports all only, with no manufactured categories.
-Its original baselines, ledger bytes and adjudicator prompt hashes are archived.
-Historical results apply to that epoch only.
-
-PR-level labels retain the old source epoch in metadata. Derived count/severity
-labels are refreshed. New comment labels join byte-identical claims to old raw
-positional labels by stable bug identity; unmatched claims are not_relabelled.
-The older label taxonomy never supplies the new category field.
-
-## Kept scorer source
-
-The active vendor tree contains:
-
-- `code_review_benchmark/__init__.py`, `step2_5_dedup_candidates.py` and
-  `step3_judge_comments.py`.
-- `tests/test_step3.py`, the trimmed path-bootstrap-only `tests/conftest.py`.
-- Existing trimmed `pyproject.toml`, environment lock, `.gitignore` and `LICENSE`.
-
-Only step3 and its corresponding test changed at the new revision. Step2_5,
-trimmed metadata and conftest retain their bytes. Online extraction, dashboards,
-label generation, other stages and their dependencies are excluded.
-The vendor environment requires Python >=3.11 and its existing openai/tqdm
-packages; new harness code remains Python 3.10 stdlib-only.
-
-The harness never imports vendor modules. Each execution uses a private results
-tree and the named epoch's source on PYTHONPATH, through the already-provisioned
-vendor environment with `uv run --project <absolute vendor path> --no-sync`.
-Dedup groups are passed explicitly. Judge and adjudicator remain
-`claude-opus-4-5-20251101`, temperature 0.
-No upstream code or dependency installation was executed during this migration.
-
-## Preparation and measurement
-
-`python3 -m bench.runner.migrate_epoch prepare --source PATH --upstream-sha SHA --out PATH`
-reads upstream JSON and source bytes as data and emits an inactive, complete copy
-proposal. It reads the old scorer from git history and verifies the prepared
-scorer against a git tree without executing upstream code or
-installing dependencies. `--scorer-tree TREE_ID` selects that content identity;
-it defaults to the active epoch's tree. The selected vendor tree must
-already contain the proposed source bytes. The epoch proposal contains only
-scorer references and hashes; source copy operations target the active vendor
-tree alone.
-Use `archive-run` before live rescoring, then explicit epoch scoring for continuity.
-The never-scored repeat records scores_absent rather than inventing legacy scores.
-Paid rescoring, anchor rejudging, calibration and post-commit protected tree hashes
-belong to the orchestrator. No new measurement is claimed here.
+The old epoch `dfc6cb4-v1` is available only in git history. Its recorded ledger
+rows and baseline scores retain that epoch and are never compared with active
+scores. `bench/golden/historical_baselines.json` preserves the recorded baseline
+scores for historical reporting. Active anchors, calibration and paid rescoring
+remain pending; no new paid measurement is claimed here.

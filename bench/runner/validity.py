@@ -110,7 +110,7 @@ class RunFingerprintWire(TypedDict):
     adjudicator_pin: str
     golden_epoch_id: str
     golden_sha256: str
-    scorer_sha256: str
+    scorer_tree: str
     auth_mode: AuthMode
     bench_policy_sha256: str
 
@@ -128,7 +128,7 @@ class UnverifiedRunProvenanceWire(TypedDict):
     adjudicator_pin: str | None
     golden_epoch_id: str
     golden_sha256: str
-    scorer_sha256: str
+    scorer_tree: str
     auth_mode: AuthMode
     bench_policy_sha256: str
     requested_models: dict[str, str]
@@ -147,7 +147,7 @@ class RunFingerprint:
     adjudicator_pin: str
     golden_epoch_id: str
     golden_sha256: str
-    scorer_sha256: str
+    scorer_tree: str
     auth_mode: AuthMode
     bench_policy_sha256: str
 
@@ -164,7 +164,7 @@ class RunFingerprint:
             "adjudicator_pin": self.adjudicator_pin,
             "golden_epoch_id": self.golden_epoch_id,
             "golden_sha256": self.golden_sha256,
-            "scorer_sha256": self.scorer_sha256,
+            "scorer_tree": self.scorer_tree,
             "auth_mode": self.auth_mode,
             "bench_policy_sha256": self.bench_policy_sha256,
         }
@@ -435,7 +435,7 @@ def capture_fingerprint(
         adjudicator_pin,
         epoch.epoch_id,
         epoch.golden_sha256,
-        epoch.scorer_sha256,
+        epoch.scorer_tree,
         auth_mode,
         digest(policy),
     )
@@ -449,7 +449,7 @@ def check_window(expected, observed, *, now):
         "model_mismatch": ("resolved_models", "allowed_auxiliary_model_ids"),
         "effort_mismatch": ("effort_env", "frontmatter_effort_sha256"),
         "judge_mismatch": ("judge_pin", "adjudicator_pin"),
-        "epoch_mismatch": ("golden_epoch_id", "golden_sha256", "scorer_sha256"),
+        "epoch_mismatch": ("golden_epoch_id", "golden_sha256", "scorer_tree"),
         "window_mismatch": ("auth_mode", "bench_policy_sha256"),
     }
     for reason, fields in mapping.items():
@@ -1311,7 +1311,7 @@ def run_provenance(
     *, child_model, child_auth, timeout_s, epoch_id=None, window=None, root=ROOT
 ):
     epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
-    pins = read_json(epoch.root / "baselines.json")
+    pins = read_json(Path(__file__).resolve().parents[1] / "baselines.json")
     policy = benchmark_policy(timeout_s, resolve_limits=window is not None)
     cli = window.expected.cli_realpath if window else shutil.which("claude")
     try:
@@ -1358,7 +1358,7 @@ def run_provenance(
             "adjudicator_pin": pins.get("adjudicator_pin") or pins.get("judge_pin"),
             "golden_epoch_id": epoch.epoch_id,
             "golden_sha256": epoch.golden_sha256,
-            "scorer_sha256": epoch.scorer_sha256,
+            "scorer_tree": epoch.scorer_tree,
             "auth_mode": child_auth,
             "bench_policy_sha256": digest(policy),
         }

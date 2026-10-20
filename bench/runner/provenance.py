@@ -174,3 +174,24 @@ def bind_candidates(candidates, mapped):
         )
         for c, m in zip(candidates, mapped, strict=True)
     )
+
+
+def trace_delivery(trace, selected, payload, diff):
+    from bench.runner.stages import bind_delivery_trace
+
+    selected = selected.get("findings", []) if isinstance(selected, dict) else selected
+    versions = {v.version_id: v for v in trace.versions}
+    expected = [
+        versions[v].projection()
+        for s in trace.snapshots
+        if s.stage == "select"
+        for v in s.finding_version_ids
+    ]
+    if len(selected) != len(expected) or any(
+        any(f.get(k) != v for k, v in original.items())
+        for f, original in zip(selected, expected, strict=True)
+    ):
+        raise ValueError("selected findings disagree with trace")
+    mapped = map_delivery(payload, selected, diff)
+    omissions = delivery_omissions(selected, diff, platform=payload["platform"])
+    return bind_delivery_trace(trace, mapped, omissions=omissions), mapped

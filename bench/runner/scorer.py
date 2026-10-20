@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import subprocess
 from pathlib import Path
 
-from bench.runner.epochs import file_hash, read_json
-from bench.runner.observations import ScoreRequest, ScorerOutputs, exclusive_json
+from bench.runner.epochs import read_json
+from bench.runner.observations import exclusive_json
 from bench.runner.scorer_source import scorer_source
 
 VENDOR_ENV = Path(__file__).resolve().parents[1] / "vendor/code-review-benchmark"
@@ -19,7 +20,7 @@ def stage_inputs(epoch, candidates, pin, work_dir):
     model_dir = results / pin.strip().replace("/", "_")
     model_dir.mkdir(parents=True, exist_ok=False)
     exclusive_json(model_dir / "candidates.json", candidates)
-    golden = read_json(epoch.root / "benchmark_data.min.json")
+    golden = copy.deepcopy(epoch.scorer_input)
     if set(candidates) - set(golden):
         raise ValueError("candidate URLs absent from named epoch")
     for url, entry in golden.items():
@@ -42,21 +43,13 @@ def execute(
     api_key,
     model_dir,
     *,
-    tool="deep-review",
+    tool=None,
     env=None,
     base_url=BASE_URL,
     executor=subprocess.run,
 ):
     if not api_key:
         raise RuntimeError("no judge API key available to run the scorer")
-    hashes = dict(epoch.scorer_file_hashes)
-    for name in ("pyproject.toml", "uv.lock"):
-        path = VENDOR_ENV / name
-        if not path.is_file() or file_hash(path) != hashes[name]:
-            raise ValueError(
-                f"scorer file hash mismatch: provisioned environment {name} "
-                f"differs from epoch {epoch.epoch_id}"
-            )
     model_dir = Path(model_dir).resolve()
     work_dir = model_dir.parent.parent
     run_env = dict(os.environ if env is None else env)
@@ -106,36 +99,16 @@ def execute(
         return tuple(logs)
 
 
-def run_stages(
-    request: ScoreRequest, api_key: str | None, *, executor=subprocess.run, env=None
-) -> ScorerOutputs:
-    candidates = {}
-    for url in request.requested_pr_urls:
-        candidates[url] = {
-            request.tool: [
-                {"text": c.text, "path": c.path, "line": c.line, "source": "extracted"}
-                for c in request.candidates
-                if c.pr_url == url
-            ]
-        }
-    model_dir = stage_inputs(
-        request.epoch,
-        candidates,
-        request.evaluator.judge_pin,
-        request.work_dir / "work/delivered",
+def read_costs(model_dir):
+    """A scorer without a measured charge receipt leaves the charge unknown."""
+    from typing import Literal
+
+    from bench.runner.decode import decode
+
+    path = Path(model_dir) / "scoring-costs.json"
+    costs = (
+        decode(dict[Literal["dedup", "judge"], float | None], read_json(path))
+        if path.is_file()
+        else {}
     )
-    logs = execute(
-        request.epoch,
-        request.evaluator.judge_pin,
-        api_key,
-        model_dir,
-        tool=request.tool,
-        executor=executor,
-        env=env,
-    )
-    return ScorerOutputs(
-        model_dir / "candidates.json",
-        model_dir / "dedup_groups.json",
-        model_dir / "evaluations.json",
-        logs,
-    )
+    return {stage: costs.get(stage) for stage in ("dedup", "judge")}

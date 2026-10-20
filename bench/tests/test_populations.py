@@ -131,7 +131,7 @@ def test_prepare_refuses_bad_ordinals_and_unknown_stems(tmp_path, key):
     path = tmp_path / "source.json"
     path.write_text(json.dumps(source), encoding="utf-8")
     with pytest.raises(ValueError):
-        p.prepare_leak_manifest_v2(path, epoch.root, epoch)
+        p.prepare_leak_manifest_v2(path, DEFAULT_ROOT, epoch)
 
 
 @pytest.mark.parametrize(
@@ -142,7 +142,7 @@ def test_preparation_and_receipt_refuse_drift(tmp_path, mutation):
     source = tmp_path / "source.json"
     shutil.copyfile(SOURCE, source)
     raw = tmp_path / "raw"
-    shutil.copytree(epoch.root, raw)
+    shutil.copytree(DEFAULT_ROOT, raw)
     if mutation in ("duplicate_pr", "epoch"):
         value = read_json(source)
         if mutation == "duplicate_pr":

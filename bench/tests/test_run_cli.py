@@ -173,7 +173,7 @@ class RunTestBase(unittest.TestCase):
 
         self.shas = run._load_json(run.GOLDEN_DIR / "shas.json")
         self.subsets = run._load_json(run.GOLDEN_DIR / "subsets.json")
-        self.bench_data = run._load_json(run.GOLDEN_DIR / "benchmark_data.min.json")
+        self.bench_data = run.load_epoch(root=run.GOLDEN_DIR).scorer_input
 
     def _patch_global(self, name, value):
         patcher = patch.object(run, name, value)

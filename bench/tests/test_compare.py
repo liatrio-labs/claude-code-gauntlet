@@ -447,7 +447,7 @@ def operational_case(population_case, score_case, tmp_path, request, monkeypatch
     populations_path.write_text(json.dumps(manifest), encoding="utf-8")
     binary = tmp_path / "claude"
     binary.write_text("synthetic binary", encoding="utf-8")
-    pins = read_json(epoch.root / "baselines.json")
+    pins = read_json(DEFAULT_ROOT.parent / "baselines.json")
     fp = validity.capture_fingerprint(
         cli_path=binary,
         child_model="claude-session-1",

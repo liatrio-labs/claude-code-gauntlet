@@ -16,15 +16,12 @@ judge variability and diagnostic noise thresholds are pending measurement.
 All numeric benchmark and cost claims below are historical `dfc6cb4-v1 / all`
 measurements and cannot be used as new-epoch verdict thresholds.
 
-Before rescoring, archive the available score and review artifacts of
-`mini-20261020-030509-839b1886` and `mini-20261020-140911-94ea095a` with
-`python3 -m bench.runner.migrate_epoch archive-run --run-dir PATH --epoch dfc6cb4-v1`.
-The latter run was never scored; preserve its reviews and record scores_absent.
-Then score identical frozen review bytes under old/all and new/all/core/strict,
-rejudge the three gate anchors and run fixed-candidate calibration. Commands
-`rescore`, `anchors` and `calibrate` take explicit epoch identities and never
-rewrite committed baselines. No live result is asserted by the code migration.
-Recompute protected git-tree hashes after the orchestrator commits.
+Preserve the recorded scores and captured reviews of both historical minis.
+The old epoch is available only in git history. Continuity is checked by freely
+replaying its stored evaluations through the metric code, rather than re-judging
+or reconstructing judgments from aggregate scores. Fresh scoring uses the active
+epoch for both arms. Rejudge the three gate anchors and calibrate on frozen
+candidates before recording new baselines. No paid result is asserted here.
 
 Stage trace, complete attempt/window validity, comparisons, simulation and leak
 coverage are subsequent code stages. No real trusted usage-limit/reset fixture
@@ -319,17 +316,15 @@ behavior compared against reference
 `94ea095a89bfc2430814ff4e65db4ba790654fc7` (v3.42.49).
 The merge SHA is pending the orchestrator commit and merge.
 The historical mini baseline remains a separate captured run.
-Instrumentation versions are measurement trace `1` and stage matcher `1`.
+The measurement trace input format is version `1`; discovery claims use the
+same pinned scorer as delivered findings.
 The reference bundle SHA256 is
 `966bd2e29926a0d632d151ee83ffc5ae1ff08c15db71c2ec636cdc05f79b653f`.
 The instrumented bundle SHA256 is
 `959f92cb29da616e4d65eaf39f9b6ff3285d7c9c1238c434b97e1ba4a996c45e`.
-The in-tree test
-`bench/tests/test_provenance.py::test_reference_bundle_preserves_review_dispatches_and_rendered_delivered_bytes`
-compares review prompts, schemas, dispatch order and ordered GitHub and GitLab
-comment bytes without forge access or measurement model calls.
-The PR body retains the equivalence receipt.
-The orchestrator records the actual merge SHA here after merge.
+Bundle equivalence is a one-time receipt for the trace stage. It compares review
+prompts, schemas, dispatch order and ordered GitHub and GitLab comment bytes
+without forge access or measurement model calls. The receipt remains pending.
 
 Workflow capture is automatic and generic.
 Its `code-gauntlet-measurement-<sha>.json` artifact travels through
@@ -345,30 +340,18 @@ Earlier records remain forensic evidence and do not invalidate the selected trac
 Cap-hit counts count distinct PR attempts with a stage cap hit, including discovery,
 independently of bug-level terminal losses.
 
-Stage judging is off by default.
-Use `python3 bench/run.py --score-only RUN_ID --golden-epoch EPOCH_ID
---capture-stages --stage-cost-cap-usd AMOUNT` for an explicitly capped diagnostic.
-The cap must be finite and nonnegative before delivered scoring starts.
-Only delivered misses generate stage pairs.
-Identical golden/claim/evaluator pairs share a request across the entire score.
-Every call and retry reserves its maximum charge before dispatch.
-Unmeasured actual cost remains null.
+Scoring evaluates discovery-stage finding versions as pseudo-tools in the same
+vendored scorer pass as delivered candidates. A matched discovery version credits
+its discovery dimension, including for delivered hits. A discovery hit missing in
+delivery is a loss; trace snapshots supply its eliminating stage and reason.
+Missing or unreadable traces leave attribution unavailable and preserve delivered recall.
+Raw evaluator receipts, candidate provenance and observations remain in the immutable
+score packet. Summaries are derived on read. Per-run dedup, judge and adjudicator
+charges are recorded when available; unknown charges remain null.
+Severity describes drift and is not a discovery dimension.
 
-The operator must supply a pinned `stage_prices` object in the scoring baselines
-file, with `model`, `as_of`, `input_usd_per_million` and
-`output_usd_per_million` matching the judge pin.
-The schedule hash, UTF-8 input-byte upper bound and maximum output budget determine
-the printed estimate.
-Prices are deliberately unset until supplied; unavailable prices or an over-cap
-estimate refuse stage dispatch while preserving delivered scoring.
-Stage results, retries, immutable source bindings and losses live in the score packet.
-Missing trace or match evidence produces unavailable diagnostics, rather than misses.
-Dimension counts credit matched source evidence only; null recall discloses partial
-coverage, including delivered hits whose discovery claims were not separately judged.
-Severity continues to describe drift and is not a discovery dimension.
-
-The required post-merge known-loss smoke demonstration, capped paid stage matching
-and measured trace-materialization overhead remain unverified.
+The required known-loss smoke demonstration and measured trace-materialization
+overhead remain unverified.
 Synthetic code tests do not replace that live acceptance receipt.
 
 ## Window validity and planning status

@@ -5,11 +5,9 @@ import os
 import re
 import subprocess
 import time
-import urllib.request
 from contextlib import suppress
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import cast
 
 from bench.adapter.adapt import merge_candidates, payload_to_candidates
 from bench.adjudicator.adjudicate import adjudicate as _adjudicate
@@ -18,7 +16,6 @@ from bench.runner import invoke, observations, provenance, scorer, stages
 from bench.runner.costs import parse_costs
 from bench.runner.epochs import (
     DEFAULT_ROOT,
-    PROFILE_POLICY_VERSION,
     digest,
     file_hash,
     load_epoch,
@@ -28,48 +25,25 @@ from bench.runner.ledger import manifest_auth_mode, replay_packet, review_attemp
 from bench.runner.observations import (
     Adjudication,
     AdjudicationContext,
-    AdjudicationWire,
-    CompatibilityScorePacketWire,
     Evaluator,
-    EvaluatorWire,
-    LegacyMetricsWire,
-    RunMetricsWire,
-    ScoreManifestWire,
-    ScorePacketWire,
     ScoreRef,
-    ScoreRefWire,
     ScoreRequest,
 )
-from bench.runner.profiles import profile_metrics
 
 __all__ = [
     "compute_metrics",
-    "resolve_judge_pin",
     "score_run",
 ]
 
-# bench/runner/score.py -> parents[2] is the plugin root.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCH_DIR = REPO_ROOT / "bench"
 BASELINES_PATH = BENCH_DIR / "baselines.json"
 LEDGER_PATH = BENCH_DIR / "experiments.jsonl"
 
-MODELS_URL = "https://api.anthropic.com/v1/models"
-ANTHROPIC_VERSION = "2023-06-01"
-
 TOOL = "deep-review"
 
-# A dated snapshot id: the family alias plus a 6-digit (or longer) date suffix.
-# ``_OPUS_48_DATED`` matches only the 4.8 family; ``_OPUS_DATED`` matches any dated
-# Opus (4-8, 4-5, 4-1, ...). The ``[1m]`` context variant has no digit suffix and is
-# intentionally excluded by both.
-_OPUS_48_DATED = re.compile(r"^claude-opus-4-8-(\d{6,})$")
-_OPUS_DATED = re.compile(r"^claude-opus-(?:\d+-)+(\d{6,})$")
 _SEVERITY_RE = re.compile(r"\[(CRITICAL|HIGH|MEDIUM|LOW)\]", re.IGNORECASE)
 _PULL_RE = re.compile(r"github\.com/([^/]+)/([^/]+)/pull/(\d+)")
-
-
-# ------------------------------------------------------------------- baselines/env
 
 
 def _load_json(path):
@@ -118,93 +92,6 @@ def _judge_api_key(env=None):
         if value:
             return value
     return None
-
-
-# --------------------------------------------------------------------- judge pin
-
-
-def _http_get_json(url, headers):
-    """GET ``url`` and return the decoded JSON body (isolated for test injection)."""
-    req = urllib.request.Request(url, headers=headers, method="GET")
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def _pick_opus_snapshot(models_json):
-    """Return the judge snapshot id: newest dated Opus 4.8, else newest dated Opus.
-
-    Preference order (baselines.json ``judge_pin_resolution``): a dated
-    ``claude-opus-4-8-<date>`` id if one ever appears in the models list, otherwise a
-    fallback to the newest-dated ``claude-opus-*-<date>`` id across families. As of the
-    pin resolution no dated 4.8 exists (models API verified complete), so the fallback
-    selects ``claude-opus-4-5-20251101`` -- the settled pin the committed baselines.json
-    already ships. Returns None only when the list carries no dated Opus id at all.
-    """
-    data = models_json.get("data") if isinstance(models_json, dict) else None
-    if not isinstance(data, list):
-        return None
-    dated_48 = []
-    dated_any = []
-    for entry in data:
-        model_id = entry.get("id") if isinstance(entry, dict) else None
-        if not model_id:
-            continue
-        m48 = _OPUS_48_DATED.match(model_id)
-        if m48:
-            dated_48.append((int(m48.group(1)), model_id))
-        m_any = _OPUS_DATED.match(model_id)
-        if m_any:
-            dated_any.append((int(m_any.group(1)), model_id))
-    pool = dated_48 or dated_any
-    if not pool:
-        return None
-    pool.sort()
-    return pool[-1][1]
-
-
-def resolve_judge_pin(env=None, force=False, baselines_path=None):
-    """Resolve and pin the dated Opus judge snapshot into ``baselines.json``.
-
-    Idempotent: if ``baselines.json`` already carries a ``judge_pin`` it is
-    returned without any API call unless ``force=True``. Otherwise the models
-    API is queried (``x-api-key`` from the judge key) and ``_pick_opus_snapshot``
-    resolves the id -- a dated 4.8 snapshot if one exists, else the newest dated
-    Opus of any family. Raises ``RuntimeError`` if no key is available or no dated
-    Opus snapshot is found.
-    """
-    path = Path(baselines_path) if baselines_path else BASELINES_PATH
-    baselines = _load_baselines(path)
-    existing = baselines.get("judge_pin")
-    if existing and not force:
-        return existing
-
-    api_key = _judge_api_key(env)
-    if not api_key:
-        raise RuntimeError(
-            "no judge API key: set BENCH_JUDGE_API_KEY or ANTHROPIC_API_KEY "
-            "(env or bench/.env)"
-        )
-
-    models_json = _http_get_json(
-        MODELS_URL,
-        {"x-api-key": api_key, "anthropic-version": ANTHROPIC_VERSION},
-    )
-    pin = _pick_opus_snapshot(models_json)
-    if not pin:
-        raise RuntimeError(
-            "no dated claude-opus snapshot found in the models list: resolve_judge_pin "
-            "prefers a dated claude-opus-4-8-* id and otherwise falls back to the newest "
-            "dated claude-opus-*-* id, but the list carried neither. Note the committed "
-            "baselines.json already ships the settled pin (claude-opus-4-5-20251101), so "
-            "scoring needs no live resolution unless you are re-resolving with force=True."
-        )
-
-    baselines["judge_pin"] = pin
-    _write_json(path, baselines)
-    return pin
-
-
-# ------------------------------------------------------- candidate assembly
 
 
 def _pull_number(url):
@@ -311,9 +198,6 @@ def _assemble_candidates(run_dir, pr_records):
     return merged, per_pr
 
 
-# ----------------------------------------------------------------- adjudication
-
-
 def _head_file_lines(pr_info, path):
     """Best-effort head-file lines for ``path`` from a surviving worktree.
 
@@ -337,17 +221,12 @@ def _head_file_lines(pr_info, path):
     return []
 
 
-# ---------------------------------------------------------------------- metrics
-
-
 def _severity_of(text):
     m = _SEVERITY_RE.search(text or "")
     return m.group(1).upper() if m else "UNKNOWN"
 
 
-def compute_metrics(
-    evaluations, candidates, buckets, adjudications, tool=TOOL
-) -> LegacyMetricsWire:
+def compute_metrics(evaluations, candidates, buckets, adjudications, tool=TOOL):
     """Historical all-category arithmetic; per_dimension means severity here."""
     tp = fp = fn = 0
     for _url, ev_tools in evaluations.items():
@@ -375,7 +254,6 @@ def compute_metrics(
     valid_extra_rate = n_valid_extra / total_candidates if total_candidates else 0.0
     noise_rate = n_noise / total_candidates if total_candidates else 0.0
 
-    # drift telltales + severity-keyed dimension breakdown over all candidates.
     texts = [c["text"] for tools in candidates.values() for c in tools.get(tool, [])]
     desc_len_mean = sum(len(t or "") for t in texts) / len(texts) if texts else 0.0
     severity_dist: dict[str, int] = {}
@@ -406,9 +284,6 @@ def compute_metrics(
         "per_dimension": per_dimension,
         "drift": {"desc_len_mean": desc_len_mean, "severity_dist": severity_dist},
     }
-
-
-# ------------------------------------------------------------------- ledger row
 
 
 def _now():
@@ -535,16 +410,7 @@ def _build_ledger_row(
         "tool": _tool_label(manifest),
         "hypothesis": manifest.get("hypothesis"),
         "change": manifest.get("change"),
-        "n_prs": metrics["n_prs"],
         "runs": manifest.get("runs", 1),
-        "golden_recall": metrics["golden_recall"],
-        "valid_extra_rate": metrics["valid_extra_rate"],
-        "noise_rate": metrics["noise_rate"],
-        "precision_strict": metrics["precision_strict"],
-        "f1_strict": metrics["f1_strict"],
-        "per_bucket": metrics["per_bucket"],
-        "per_dimension": metrics["per_dimension"],
-        "drift": metrics["drift"],
         "tokens_total": costs["tokens_total"],
         "cost_usd": costs["cost_usd"],
         "per_model": costs["per_model"],
@@ -558,40 +424,32 @@ def _build_ledger_row(
     }
 
 
-# --------------------------------------------------------------------- score_run
-
-
 def evaluator_for(epoch, pin, adjudicator_pin):
-    runner = Path(__file__).parent
-    harness = [
-        (name, file_hash(runner / (name + ".py")))
-        for name in (
+    paths = [
+        Path(__file__).parent / (n + ".py")
+        for n in (
             "score",
             "scorer",
             "observations",
             "profiles",
             "epochs",
+            "decode",
             "stages",
             "provenance",
         )
-        if (runner / (name + ".py")).is_file()
+    ]
+    paths += sorted((BENCH_DIR / "adapter").glob("*.py"))
+    paths += [
+        BENCH_DIR / "adjudicator/adjudicate.py",
+        BENCH_DIR / "adjudicator/prompt.txt",
     ]
     fields = {
         "judge_pin": pin,
         "adjudicator_pin": adjudicator_pin,
-        "scorer_sha": epoch.scorer_sha,
-        "scorer_sha256": epoch.scorer_sha256,
-        "harness_scoring_sha256": digest(harness),
-        "adapter_sha256": digest(
-            [
-                (p.name, file_hash(p))
-                for p in sorted((BENCH_DIR / "adapter").glob("*.py"))
-            ]
+        "scorer_tree": epoch.scorer_tree,
+        "harness_scoring_sha256": digest(
+            [(str(p.relative_to(BENCH_DIR)), file_hash(p)) for p in paths]
         ),
-        "adjudicator_code_sha256": file_hash(BENCH_DIR / "adjudicator/adjudicate.py"),
-        "adjudicator_prompt_sha256": file_hash(BENCH_DIR / "adjudicator/prompt.txt"),
-        "profile_policy_version": PROFILE_POLICY_VERSION + ":" + epoch.bucket_policy,
-        "stage_matcher_version": stages.STAGE_MATCHER_VERSION,
         "temperature": 0.0,
     }
     return Evaluator(evaluator_id=digest(fields), **fields)
@@ -624,7 +482,7 @@ def _candidate_context(info, candidate):
 
 
 def _capture_adjudications(request, buckets, per_pr, api_key, adjudicator):
-    contexts, verdicts = [], []
+    contexts, verdicts, charges = [], [], []
     for c in request.candidates:
         if c.text not in buckets[c.pr_url]["adjudicator"]:
             continue
@@ -640,6 +498,7 @@ def _capture_adjudications(request, buckets, per_pr, api_key, adjudicator):
             "error"
         ):
             raise ValueError("invalid adjudicator result")
+        charges.append(verdict.get("cost_usd"))
         verdicts.append(
             Adjudication(
                 c.candidate_id,
@@ -652,7 +511,11 @@ def _capture_adjudications(request, buckets, per_pr, api_key, adjudicator):
                 None,
             )
         )
-    return tuple(verdicts), tuple(contexts)
+    return (
+        tuple(verdicts),
+        tuple(contexts),
+        sum(charges) if all(c is not None for c in charges) else None,
+    )
 
 
 def score_run(
@@ -666,32 +529,26 @@ def score_run(
     epoch_id=None,
     score_id=None,
     attempt_selection=None,
-    capture_stages=False,
-    stage_cost_cap_usd=None,
-    stage_matcher=None,
-    stage_price_estimator=None,
-) -> ScorePacketWire:
+):
     """Execute a fresh score; failures retain a pending diagnostic packet."""
     run_dir = Path(run_dir).resolve()
     env = os.environ if env is None else env
     epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
-    epoch_baselines = _load_baselines(epoch.root / "baselines.json")
+    epoch_baselines = _load_baselines()
     baselines = _load_baselines(baselines_path) if baselines_path else epoch_baselines
     pin = baselines.get("judge_pin")
     if not pin:
         raise RuntimeError(
-            "baselines.json judge_pin is null; run resolve_judge_pin() before scoring"
+            "baselines.json judge_pin is null; set the epoch judge pin before scoring"
         )
     if env.get("MARTIAN_MODEL") and env["MARTIAN_MODEL"] != pin:
         raise RuntimeError(
             "MARTIAN_MODEL disagrees with baselines judge_pin; refusing to score"
         )
-    if capture_stages:
-        stages.validate_cap(stage_cost_cap_usd)
     adjudicator_pin = baselines.get("adjudicator_pin") or pin
     if (pin, adjudicator_pin) != (
-        epoch_baselines.get("judge_pin"),
-        epoch_baselines.get("adjudicator_pin") or epoch_baselines.get("judge_pin"),
+        epoch.judge_pin,
+        epoch_baselines.get("adjudicator_pin") or epoch.judge_pin,
     ):
         raise ValueError(f"baseline pin override disagrees with epoch {epoch.epoch_id}")
     records = _run_pr_records(run_dir)
@@ -772,35 +629,36 @@ def score_run(
             if url in selected
             else str(_resolve_pr_dir(run_dir, url)),
         }
-    traces = {}
-    trace_errors = {}
+    traces, trace_errors = {}, {}
     for url, info in per_pr.items():
         if url in failures:
-            trace_errors[url] = "operational_failure: funnel evidence unavailable"
+            trace_errors[url] = "operational failure"
             continue
-        pr_dir = Path(info["pr_dir"])
         try:
-            if (pr_dir / "measurement-unavailable.json").is_file():
-                trace_errors[url] = _load_json(
-                    pr_dir / "measurement-unavailable.json"
-                ).get("reason", "trace collection unavailable")
+            pr_dir = Path(info["pr_dir"])
             paths = [
                 p
                 for p in pr_dir.rglob("code-gauntlet-measurement-*.json")
                 if not _is_superseded(p)
             ]
-            if len(paths) == 1:
+            if len(paths) > 1:
+                raise ValueError("ambiguous measurement artifacts")
+            if paths:
                 path = paths[0]
                 if path.is_symlink() or not path.resolve().is_relative_to(run_dir):
                     raise ValueError("measurement artifact escapes selected run")
                 receipt = pr_dir / "measurement-artifact.json"
-                binding = _load_json(receipt) if receipt.is_file() else None
-                expected = binding["sha256"] if binding else file_hash(path)
-                if binding and binding.get("path") != path.name:
+                binding = (
+                    _load_json(receipt)
+                    if receipt.is_file()
+                    else {"path": path.name, "sha256": file_hash(path)}
+                )
+                if binding["path"] != path.name:
                     raise ValueError("measurement artifact binding mismatch")
-                traces[url] = (path, stages.load_trace(path, expected_sha256=expected))
-            elif paths:
-                raise ValueError("ambiguous measurement artifacts")
+                traces[url] = (
+                    path,
+                    stages.load_trace(path, expected_sha256=binding["sha256"]),
+                )
         except (ValueError, KeyError, TypeError, OSError) as exc:
             trace_errors[url] = str(exc)
     source_hashes = {}
@@ -823,7 +681,6 @@ def score_run(
                 "result.json",
                 "costs.json",
                 "measurement-artifact.json",
-                "measurement-unavailable.json",
             )
         ]
         if info.get("payload_path"):
@@ -869,13 +726,6 @@ def score_run(
     }
     if attempt_selection is not None:
         attempts = dict(attempt_selection)
-    legacy_score = run_dir / "scores.json"
-    if (
-        legacy_score.is_file()
-        and _load_json(legacy_score).get("schema_version", 1) == 1
-        and not (run_dir / "scores").exists()
-    ):
-        observations.import_legacy(run_dir, load_epoch("dfc6cb4-v1", root=DEFAULT_ROOT))
     sid, pending = observations.begin_packet(run_dir, epoch, score_id)
     ref = ScoreRef(manifest.get("run_id") or run_dir.name, epoch.epoch_id, sid)
     evaluator = evaluator_for(epoch, pin, adjudicator_pin)
@@ -897,37 +747,10 @@ def score_run(
             trace_errors[url] = "ambiguous selected findings"
             continue
         try:
-            selected_data = _load_json(selected_paths[0])
-            selected_findings = (
-                selected_data.get("findings", [])
-                if isinstance(selected_data, dict)
-                else selected_data
-            )
-            selected_snapshot = next(
-                (s for s in trace.snapshots if s.stage == "select"), None
-            )
-            versions = {v.version_id: v for v in trace.versions}
-            trace_findings = (
-                [
-                    versions[v].projection()
-                    for v in selected_snapshot.finding_version_ids
-                ]
-                if selected_snapshot
-                else []
-            )
-            if [f.get("trace_id") for f in selected_findings] != [
-                f.get("trace_id") for f in trace_findings
-            ]:
-                raise ValueError("selected findings disagree with trace")
-            # Persisted aliases are accepted, while every producer field must agree.
-            if any(
-                any(f.get(k) != v for k, v in original.items())
-                for f, original in zip(selected_findings, trace_findings, strict=True)
-            ):
-                raise ValueError("selected finding content disagrees with trace")
-            mapped = provenance.map_delivery(
+            bound_trace, mapped = provenance.trace_delivery(
+                trace,
+                _load_json(selected_paths[0]),
                 _load_json(info["payload_path"]),
-                selected_findings,
                 diff_path.read_text(encoding="utf-8"),
             )
             delivery_bindings[url] = {
@@ -939,15 +762,7 @@ def score_run(
                 ),
                 "diff_path": str(Path("sources") / diff_path.relative_to(run_dir)),
             }
-            omissions = provenance.delivery_omissions(
-                selected_findings,
-                diff_path.read_text(encoding="utf-8"),
-                platform=_load_json(info["payload_path"])["platform"],
-            )
-            traces[url] = (
-                path,
-                stages.bind_delivery_trace(trace, mapped, omissions=omissions),
-            )
+            traces[url] = path, bound_trace
             bound = provenance.bind_candidates(
                 tuple(c for c in candidate_map if c.pr_url == url), mapped
             )
@@ -957,7 +772,12 @@ def score_run(
     candidate_map = tuple(
         sorted(
             (
-                replace(c, provenance_status="ambiguous")
+                replace(
+                    c,
+                    provenance_status="ambiguous",
+                    source_trace_ids=(),
+                    discovery_dimensions=("unknown",),
+                )
                 if c.pr_url in trace_errors
                 else c
                 for c in candidate_map
@@ -993,13 +813,14 @@ def score_run(
         or env.get("ANTHROPIC_API_KEY")
         else None
     )
+    discovery = stages.discovery_inputs(traces, trace_errors)
+    combined = {
+        url: {**tools, **discovery.get(url, {})} for url, tools in candidates.items()
+    }
+    model_dir = scorer.stage_inputs(epoch, combined, pin, pending / "work/delivered")
     if run_scorer is None:
-        outputs = scorer.run_stages(request, api_key, env=env)
-        model_dir = outputs.candidates_path.parent
+        scorer.execute(epoch, pin, api_key, model_dir, env=env)
     else:
-        model_dir = scorer.stage_inputs(
-            epoch, candidates, pin, pending / "work/delivered"
-        )
         run_scorer(pin, api_key, model_dir)
     for name in ("candidates.json", "dedup_groups.json", "evaluations.json"):
         observations.copy_exclusive(model_dir / name, pending / name)
@@ -1015,7 +836,7 @@ def score_run(
     bugs = observations.build_observations(
         request, evaluations, groups, failures=frozenset(failures)
     )
-    matched = observations.bucket_candidate_ids(epoch, bugs)
+    matched = observations.bucket_candidate_ids(bugs)
     buckets = {
         url: {
             "golden_matched": [
@@ -1031,22 +852,17 @@ def score_run(
         }
         for url in urls
     }
-    adjudications, contexts = _capture_adjudications(
+    adjudications, contexts, adjudicator_cost = _capture_adjudications(
         request, buckets, per_pr, api_key, adjudicator or _adjudicate
     )
-    stage_rows, stage_matches, stage_capture, stage_calls = stages.capture_score(
+    stage_rows = stages.capture_score(
         traces,
         bugs,
-        epoch,
-        enabled=capture_stages,
-        cap=stage_cost_cap_usd,
-        matcher=stage_matcher,
-        price_estimator=stage_price_estimator,
-        errors=trace_errors,
-        evaluator_id=evaluator.evaluator_id,
-        pin=pin,
-        api_key=api_key,
-        prices=baselines.get("stage_prices"),
+        request,
+        evaluations,
+        _load_json(pending / "dedup_groups.json"),
+        discovery,
+        trace_errors,
     )
     terminal_losses = {
         (row.pr_url, row.bug_id): row.loss
@@ -1056,41 +872,17 @@ def score_run(
     bugs = tuple(
         replace(
             bug,
-            loss=observations.freeze(asdict(terminal_losses[bug.pr_url, bug.bug_id])),
+            loss=asdict(terminal_losses[bug.pr_url, bug.bug_id]),
         )
         if (bug.pr_url, bug.bug_id) in terminal_losses
         else bug
         for bug in bugs
     )
-    fp = sum(
-        ev.get(TOOL, {}).get("fp", 0)
-        for u, ev in evaluations.items()
-        if u in urls and u not in failures
-    )
-    profiles = {
-        p: profile_metrics(bugs, fp, p).to_wire() for p in epoch.supported_profiles
-    }
-    legacy = compute_metrics(
-        evaluations, candidates, buckets, [asdict(a) for a in adjudications]
-    )
-    metrics: RunMetricsWire = {
-        **legacy,
-        **profiles[epoch.primary_profile],
-        "golden_recall": profiles[epoch.primary_profile]["recall"],
-        "per_dimension": stages.dimension_metrics(
-            candidate_map, bugs, stage_rows, epoch.primary_profile, traces
-        ),
-        "per_bucket": {
-            "golden_matched": legacy["per_bucket"]["golden_matched"],
-            "valid_extra": legacy["per_bucket"]["valid_extra"],
-            "noise": legacy["per_bucket"]["noise"],
-        },
-    }
     costs = _read_run_costs(
         run_dir, pr_dirs=[Path(info["pr_dir"]) for info in per_pr.values()]
     )
     row = _build_ledger_row(
-        run_dir, metrics, costs, manifest, pin, adjudicator_pin, epoch.scorer_sha
+        run_dir, {}, costs, manifest, pin, adjudicator_pin, epoch.upstream_sha
     )
     packet_dir = pending.parent / sid
     row.update(
@@ -1099,7 +891,6 @@ def score_run(
         epoch_id=epoch.epoch_id,
         golden_sha256=epoch.golden_sha256,
         profile=epoch.primary_profile,
-        denominator=metrics["denominator"],
         evaluator_id=evaluator.evaluator_id,
         validity_state=("operational_failure" if failures else "valid")
         if selected_records
@@ -1112,29 +903,24 @@ def score_run(
         else "historical_descriptive",
         population_sha256=digest(urls),
         packet_path=str(packet_dir),
-        packet_sha256=None,
         selected_attempts=attempts,
         review_attempt_costs=review_attempt_costs(run_dir)
         or {
             attempts[url]: _read_pr_costs(Path(info["pr_dir"]))["cost_usd"]
             for url, info in per_pr.items()
         },
-        judge_cost_usd=None,
-        adjudicator_cost_usd=None,
         judge_calls=sum(
             len([b for b in epoch.bugs if b.pr_url == u]) * len(candidates[u][TOOL])
             for u in urls
         ),
         adjudicator_calls=len(adjudications),
-        stage_judge_calls=stage_capture["actual_call_count"],
-        stage_judge_cost_usd=stage_capture["actual_cost_usd"],
     )
-    score_manifest: ScoreManifestWire = {
+    score_manifest = {
         "schema_version": 2,
-        "score_ref": cast(ScoreRefWire, asdict(ref)),
+        "score_ref": asdict(ref),
         "created_at": _now(),
         "epoch_hashes": observations.epoch_hashes(epoch),
-        "evaluator": cast(EvaluatorWire, asdict(evaluator)),
+        "evaluator": asdict(evaluator),
         "requested_pr_urls": list(urls),
         "selected_attempts": attempts,
         "source_artifact_hashes": source_hashes,
@@ -1148,30 +934,8 @@ def score_run(
         and not trace_errors
         and len(traces) == len(urls)
         else "legacy_unknown",
-        "profiles": list(epoch.supported_profiles),
-        "completion_status": "complete",
     }
-    packet: CompatibilityScorePacketWire = {
-        "schema_version": 2,
-        "manifest": score_manifest,
-        "run_id": ref.run_id,
-        "score_ref": cast(ScoreRefWire, asdict(ref)),
-        "profiles": profiles,
-        "metrics": metrics,
-        "observations_path": "bugs.jsonl",
-        "stages_path": "stages.jsonl" if stage_rows else None,
-        "stage_capture": stage_capture,
-        "adjudications_path": "adjudications.jsonl",
-        "ledger_row": row,
-        "complete_path": "complete.json",
-        "judge_pin": pin,
-        "adjudicator_pin": adjudicator_pin,
-        "scorer_sha": epoch.scorer_sha,
-        "buckets": {
-            u: {k: len(v) for k, v in split.items()} for u, split in buckets.items()
-        },
-        "adjudications": [cast(AdjudicationWire, asdict(a)) for a in adjudications],
-    }
+    packet = {"manifest": score_manifest, "ledger_row": row}
     observations.exclusive_json(
         pending / "stage_trace_bindings.json",
         {
@@ -1193,7 +957,6 @@ def score_run(
     for path in confirmation_paths.values():
         observations.copy_exclusive(path, pending / "failure-confirmations" / path.name)
     observations.exclusive_json(pending / "provenance_errors.json", trace_errors)
-    observations.exclusive_json(pending / "stage_calls.json", list(stage_calls))
     observations.write_packet(
         request,
         packet=packet,
@@ -1203,19 +966,10 @@ def score_run(
         adjudications=adjudications,
         contexts=contexts,
         stage_observations=stage_rows,
-        stage_matches=stage_matches,
+        costs={**scorer.read_costs(model_dir), "adjudicator": adjudicator_cost},
     )
-    if not (run_dir / "scores.json").exists():
-        observations.exclusive_json(
-            run_dir / "scores.json", {**packet, "snapshot_status": "first_score_only"}
-        )
     pointer = run_dir / (".latest-score-" + sid + ".json")
     observations.exclusive_json(pointer, asdict(ref))
     pointer.replace(run_dir / "latest-score.json")
     replay_packet(ledger_path or LEDGER_PATH, packet_dir)
-    # The replayable projection stores its completion hash outside the hashed packet.
-    packet["ledger_row"] = {
-        **row,
-        "packet_sha256": file_hash(packet_dir / "complete.json"),
-    }
-    return packet
+    return observations.load_packet(packet_dir).projection()

@@ -85,24 +85,14 @@ def score_case(tmp_path):
             for url, tools in candidates.items():
                 for tool, entries in tools.items():
                     claims = golden[url]["golden_comments"]
-                    tp = (
-                        [
-                            {
-                                "golden_comment": c["comment"],
-                                "category": c.get("category"),
-                                "matched_candidate": entries[0]["text"],
-                                "confidence": 0.9,
-                                "reasoning": "synthetic",
-                            }
-                            for c in claims[:2]
-                        ]
-                        if entries
-                        else []
-                    )
-                    fn = [
-                        {"golden_comment": c["comment"], "category": c.get("category")}
-                        for c in claims[len(tp) :]
+                    tp = [
+                        {
+                            "golden_comment": c["comment"],
+                            "matched_candidate": entries[0]["text"],
+                        }
+                        for c in (claims[:2] if entries else [])
                     ]
+                    fn = [{"golden_comment": c["comment"]} for c in claims[len(tp) :]]
                     evaluations.setdefault(url, {})[tool] = {
                         "true_positives": tp,
                         "false_negatives": fn,
@@ -131,21 +121,19 @@ def score_case(tmp_path):
     pr = run / score.invoke.pr_dir_name({"url": url})
     pr.mkdir()
     payload = pr / "post-review-payload.json"
-    payload.write_text(
-        json.dumps(
-            {
-                "platform": "github",
-                "payload": {
-                    "comments": [
-                        {"body": "matched candidate", "path": "a.py", "line": 1},
-                        {"body": "dedup sibling", "path": "a.py", "line": 2},
-                        {"body": "extra candidate", "path": "a.py", "line": 3},
-                    ]
-                },
-                "skipped": [],
-            }
-        ),
-        encoding="utf-8",
+    score._write_json(
+        payload,
+        {
+            "platform": "github",
+            "payload": {
+                "comments": [
+                    {"body": text, "path": "a.py", "line": i}
+                    for i, text in enumerate(
+                        ("matched candidate", "dedup sibling", "extra candidate"), 1
+                    )
+                ]
+            },
+        },
     )
     (pr / "diff.patch").write_text(
         "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1,3 @@\n+one\n+two\n+three\n",
@@ -168,7 +156,7 @@ def population_case(tmp_path):
     receipt = tmp_path / "receipt.json"
     populations.prepare_leak_manifest_v2(
         Path(__file__).parent / "fixtures/leak-manifest-v2.json",
-        epoch.root,
+        DEFAULT_ROOT,
         epoch,
         receipt,
     )

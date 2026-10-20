@@ -345,7 +345,7 @@ class TestReleaseProgression(unittest.TestCase):
     def setUpClass(cls):
         cls.rows = report.load_ledger(REAL_LEDGER)
         cls.baselines = report.load_baselines(
-            BENCH_DIR / "golden/epochs/dfc6cb4-v1/baselines.json"
+            BENCH_DIR / "golden/historical_baselines.json"
         )
 
     def test_row_by_run_id_finds_exact_match(self):
@@ -633,13 +633,11 @@ if __name__ == "__main__":
 
 def test_new_score_identities_do_not_collapse_into_historical_release_rows(score_case):
     from bench import report
-    from bench.runner.epochs import DEFAULT_ROOT, load_epoch, read_json
+    from bench.runner.epochs import DEFAULT_ROOT, read_json
 
     first = score_case.execute()
     second = score_case.execute()
-    old_baselines = read_json(
-        load_epoch("dfc6cb4-v1", root=DEFAULT_ROOT).root / "baselines.json"
-    )
+    old_baselines = read_json(DEFAULT_ROOT / "historical_baselines.json")
     first_row = first["ledger_row"]
     historical = {
         **first_row,
@@ -687,12 +685,14 @@ def test_report_counts_review_once_and_scoring_per_execution(score_case):
     second = score_case.execute()["ledger_row"]
     first.update(
         cost_usd=2.0,
+        dedup_cost_usd=0.0,
         judge_cost_usd=0.4,
         adjudicator_cost_usd=0.1,
         review_attempt_costs={"attempt": 2.0},
     )
     second.update(
         cost_usd=2.0,
+        dedup_cost_usd=0.0,
         judge_cost_usd=0.4,
         adjudicator_cost_usd=0.1,
         review_attempt_costs={"attempt": 2.0},

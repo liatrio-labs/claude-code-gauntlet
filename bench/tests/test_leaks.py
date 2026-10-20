@@ -70,19 +70,20 @@ def toy_identifiers(corpus, comments, sealed=frozenset(), *, projects=None):
         for i, (url, text) in enumerate(comments)
     )
     projects = projects or {url: url for url, _ in comments}
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory).resolve()
-        (root / "golden_comments").mkdir()
-        for index, project in enumerate(sorted(set(projects.values()))):
-            (root / "golden_comments" / f"project_{index}.json").write_text(
-                json.dumps([{"url": u} for u, p in projects.items() if p == project]),
-                encoding="utf-8",
-            )
-        return leaks.derive_identifiers(
-            replace(epoch, bugs=bugs, root=root, golden_sha256=digest(comments)),
-            holdout_pr_urls=sealed,
-            holdout_salt=original.holdout_salt,
-        )
+    names = {
+        project: f"project_{i}"
+        for i, project in enumerate(sorted(set(projects.values())))
+    }
+    return leaks.derive_identifiers(
+        replace(
+            epoch,
+            bugs=bugs,
+            project_by_pr={url: names[p] for url, p in projects.items()},
+            golden_sha256=digest(comments),
+        ),
+        holdout_pr_urls=sealed,
+        holdout_salt=original.holdout_salt,
+    )
 
 
 def surface(text, name="agents/new-agent.md"):
@@ -573,24 +574,11 @@ def test_pr_variants_within_one_project_remain_distinctive(corpus):
     assert len(sealed.holdout_identifiers) == 2
 
 
-@pytest.mark.parametrize("missing", [False, True])
-def test_project_membership_must_be_unique_and_complete(tmp_path, corpus, missing):
+def test_project_membership_must_be_complete(corpus):
     epoch, derived, _ = corpus
-    root = tmp_path / "golden_comments"
-    root.mkdir()
-    urls = sorted({b.pr_url for b in epoch.bugs})
-    (root / "first.json").write_text(
-        json.dumps([{"url": u} for u in (urls[1:] if missing else urls)]),
-        encoding="utf-8",
-    )
-    if not missing:
-        (root / "second.json").write_text(
-            json.dumps([{"url": urls[1]}]), encoding="utf-8"
-        )
-    error = "missing" if missing else "duplicate"
-    with pytest.raises(ValueError, match=error + " golden project membership"):
+    with pytest.raises(ValueError, match="missing golden project membership"):
         leaks.derive_identifiers(
-            replace(epoch, root=tmp_path),
+            replace(epoch, project_by_pr={}),
             holdout_pr_urls=frozenset(),
             holdout_salt=derived.holdout_salt,
         )
