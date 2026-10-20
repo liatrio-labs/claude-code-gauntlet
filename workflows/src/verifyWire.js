@@ -1,4 +1,4 @@
-import { INT_POLICY, coerceInt, fnv1a32 } from './wire.js';
+import { INT_POLICY, coerceInt, firstUnsafeNumber, fnv1a32 } from './wire.js';
 import { hasRemovedTestLocation } from './removedTests.js';
 import { extractSymbols } from './verifySymbols.js';
 
@@ -77,8 +77,7 @@ export function encodeSliceInline(content) {
   return encoded;
 }
 
-// 51,744 chars was the largest payload measured to copy exactly (2/2 sonnet executors);
-// above it is unmeasured. The rest of the command adds about 300 chars.
+// Leave room for the rest of the executor command.
 export const VERIFY_INLINE_CHAR_BUDGET = 50000;
 
 // Generated into Python; this order also governs the delta checksum.
@@ -155,13 +154,18 @@ export function sliceInputChecksum(content) {
   return fnv1a32(JSON.stringify(content, null, 2));
 }
 
+// Python uses checksum_or_none on the decoded record before mutation.
+export function recordProof(record) {
+  return firstUnsafeNumber(record, 'record') === null ? sliceInputChecksum(record) : null;
+}
+
 // Hash the ASCII token to catch respelled numbers and Unicode escapes without
 // cross-runtime collation or number-spelling rules.
 export function sliceTokenChecksum(payload) {
   return fnv1a32(String(payload));
 }
 
-// Twin of gauntlet.verify.wire.build_deltas(): dispatched id order, DELTA_KEYS
+// Twin of gauntlet.verify.wire.build_deltas(): received record order, DELTA_KEYS
 // order, absent values omitted. The join also ignores keys outside DELTA_KEYS.
 function canonicalDeltas(ids, byId) {
   return ids.map((id) => {

@@ -20,6 +20,12 @@ EMPTY_BYTES = b"""{
     "nonce": "cli",
     "deltas_checksum": "fnv1a32:0x741638a5",
     "inline_checksum": "fnv1a32:0x8c59538c",
+    "base_branch": "main",
+    "diff_source": {
+      "path": null,
+      "read": true
+    },
+    "record_proofs": [],
     "input_checksum": "fnv1a32:0x2eb50aa0"
   },
   "result": {
@@ -221,6 +227,29 @@ def test_receipt_bytes(destination, invoke, tmp_path, verify_git):
     assert result.stderr == b"Diff source: git diff main...HEAD (three-dot), 0 bytes\n"
 
 
+@pytest.mark.parametrize(
+    "source", ["empty", "content", "missing", "directory", "git", "failed-git"]
+)
+def test_receipt_diff_source(source, invoke, tmp_path, verify_git):
+    path = tmp_path / "patch"
+    if source in ("empty", "content"):
+        path.write_text("" if source == "empty" else "diff content\n", encoding="utf-8")
+    elif source == "directory":
+        path.mkdir()
+    if source == "failed-git":
+        verify_git[1]["diff"] = ("", "diff unavailable", 1)
+    from_git = source in ("git", "failed-git")
+    flags = [] if from_git else ["--diff-file", str(path)]
+    result = receipt(invoke, tmp_path, extra=flags)
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["receipt"]["diff_source"] == {
+        "path": None if from_git else str(path),
+        "read": source in ("empty", "content", "git"),
+    }
+    if not from_git:
+        assert all(cmd[1] != "diff" for cmd, _ in verify_git[0])
+
+
 def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
     (tmp_path / "source").write_text("code\n", encoding="utf-8")
     token = (
@@ -235,6 +264,9 @@ def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
         "nonce": "cli",
         "deltas_checksum": "fnv1a32:0xc9ca61b0",
         "inline_checksum": "fnv1a32:0x17c759ec",
+        "base_branch": "main",
+        "diff_source": {"path": None, "read": True},
+        "record_proofs": [{"id": "a", "checksum": "fnv1a32:0x2fc424e8"}],
         "input_checksum": "fnv1a32:0x6754b4b8",
     }
     assert (tmp_path / "slice.json").read_bytes() == (
@@ -305,6 +337,9 @@ def test_receipt_fallback(invoke, tmp_path, verify_git):
         "nonce",
         "deltas_checksum",
         "inline_checksum",
+        "base_branch",
+        "diff_source",
+        "record_proofs",
     ]
     assert env["receipt"]["deltas_checksum"] == "fnv1a32:0x741638a5"
     assert (
@@ -329,6 +364,9 @@ def test_receipt_surrogate_ascii(invoke, tmp_path, verify_git):
         "nonce": "cli",
         "deltas_checksum": "fnv1a32:0x877e5b9a",
         "inline_checksum": "fnv1a32:0xc771c3d9",
+        "base_branch": "main",
+        "diff_source": {"path": None, "read": True},
+        "record_proofs": [{"id": "\udcff", "checksum": "fnv1a32:0x09a08d9b"}],
         "input_checksum": "fnv1a32:0xefcb2f8b",
     }
     assert (tmp_path / "slice.json").read_bytes() == (
@@ -517,6 +555,9 @@ def test_receipt_defaults(head_reply, invoke, tmp_path, verify_git):
         "nonce": None,
         "deltas_checksum": "fnv1a32:0x741638a5",
         "inline_checksum": "fnv1a32:0x8c59538c",
+        "base_branch": "main",
+        "diff_source": {"path": "patch", "read": True},
+        "record_proofs": [],
         "input_checksum": "fnv1a32:0x2eb50aa0",
     }
     assert verify_git[0] == [

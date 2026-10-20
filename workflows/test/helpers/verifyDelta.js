@@ -1,5 +1,5 @@
 // Honest executor envelopes echo the dispatched token; fault rows override proofs explicitly.
-import { deltaContentProof } from '../../src/verifyWire.js';
+import { deltaContentProof, recordProof } from '../../src/verifyWire.js';
 import { fnv1a32 } from '../../src/wire.js';
 import { shellSplit } from './shellWords.js';
 import { assertPrompt, assertValidSchema } from './pipelineMock.js';
@@ -71,9 +71,13 @@ function decodeInlineValue(value) {
 }
 
 export function dispatchedFindings(prompt) {
+  return dispatchedDocument(prompt)?.findings ?? null;
+}
+
+function dispatchedDocument(prompt) {
   const argv = shellSplit(prompt.split('\n').pop());
   const index = argv.indexOf('--input-inline');
-  return index < 0 ? null : decodeInlineValue(JSON.parse(argv[index + 1])).findings;
+  return index < 0 ? null : decodeInlineValue(JSON.parse(argv[index + 1]));
 }
 
 // Derive honest mock proofs from the actual command, leaving explicit faults untouched.
@@ -82,9 +86,18 @@ export function sliceInputRecorder(env, prompt) {
   const index = argv.indexOf('--input-inline');
   if (index < 0) return env;
   const token = argv[index + 1];
+  const document = dispatchedDocument(prompt);
   if (env && env.status === 'ok' && env.receipt) {
+    if (!Object.hasOwn(env.receipt, 'base_branch')) env.receipt.base_branch = document.base_branch;
+    if (!Object.hasOwn(env.receipt, 'diff_source')) {
+      const diffIndex = argv.indexOf('--diff-file');
+      env.receipt.diff_source = { path: diffIndex < 0 ? null : argv[diffIndex + 1], read: true };
+    }
+    if (!Object.hasOwn(env.receipt, 'record_proofs')) {
+      env.receipt.record_proofs = document.findings.map((f) => ({ id: f.id, checksum: recordProof(f) }));
+    }
     if (!Object.hasOwn(env.receipt, 'input_checksum')) {
-      env.receipt.input_checksum = fnv1a32(JSON.stringify(decodeInlineValue(JSON.parse(token)), null, 2));
+      env.receipt.input_checksum = fnv1a32(JSON.stringify(document, null, 2));
     }
     if (!Object.hasOwn(env.receipt, 'inline_checksum')) env.receipt.inline_checksum = fnv1a32(token);
   }

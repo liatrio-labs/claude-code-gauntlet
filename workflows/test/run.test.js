@@ -17,7 +17,7 @@ const DISCOVERY = [
 const DIMENSIONS = ['bug', 'security', 'cross_file_impact', 'test_coverage', 'convention', 'intent', 'comment_accuracy',
   'type_design', 'simplification'];
 const PROOF = { slices: 1, proven: 1, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,
-  retried: 0, retriedMismatch: 0, retriedMissing: 0 };
+  retried: 0, retriedMismatch: 0, retriedMissing: 0, localised: 0, retriedFindings: 0, degradedFindings: 0 };
 test('happy contract: compact envelope and complete dispatch inventory', async () => {
   const { out, ctx, payload } = await runAndCapture(validArgs());
   assert.equal(out.ok, true);

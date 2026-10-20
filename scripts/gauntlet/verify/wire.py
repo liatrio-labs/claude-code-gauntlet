@@ -34,12 +34,25 @@ class SliceInput(_SliceRequired, total=False):
     base_branch: object
 
 
+class RecordProof(TypedDict):
+    id: str
+    checksum: str | None
+
+
+class DiffSource(TypedDict):
+    path: str | None
+    read: bool
+
+
 class _ReceiptRequired(TypedDict):
     sha: str
     n_in: int
     nonce: str | None
     deltas_checksum: str | None
     inline_checksum: str
+    base_branch: str
+    diff_source: DiffSource
+    record_proofs: list[RecordProof]
 
 
 class Receipt(_ReceiptRequired, total=False):
@@ -63,7 +76,6 @@ class FailedEnvelope(TypedDict):
 
 
 Envelope = SuccessEnvelope | FailedEnvelope
-# A quoted number would raise TypeError and degrade the whole slice.
 # Half-up rounding mirrors the JS side's pinNumericFields.
 _NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
 _INT_RE = re.compile(r"[+-]?\d+")
@@ -241,17 +253,23 @@ def _delta_confidence(value: object) -> int | None:
     return int(value) if abs(value) <= JS_MAX_SAFE_INTEGER else None
 
 
+def _record_id(finding: object) -> str | None:
+    if isinstance(finding, dict):
+        fid = finding.get("id")
+        if isinstance(fid, str) and fid.strip():
+            return fid
+    return None
+
+
 def build_deltas(findings: Sequence[object], verified: Sequence[object]) -> list[Delta]:
-    """Echo decisions in dispatch order, using object identity for kept membership."""
+    """Echo decisions in received order, using object identity for kept membership."""
     kept = {id(f) for f in verified}
     deltas: list[Delta] = []
     for finding in findings:
-        if not isinstance(finding, dict):
+        fid = _record_id(finding)
+        if fid is None:
             continue
         finding = cast(dict[str, object], finding)
-        fid = finding.get("id")
-        if not isinstance(fid, str) or not fid.strip():
-            continue
         delta: dict[str, object] = {"id": fid, "verified": id(finding) in kept}
         for key in DELTA_VALUE_FIELDS:
             value = finding.get(key)
@@ -270,11 +288,15 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
     repo_root = decide.resolve_repo_root()
     sha = args.head_sha or decide.resolve_head_sha() or ""
     try:
-        # Proofs precede decoding and coercion: the token covers received bytes and the
-        # value proof covers the document before numeric values are rewritten.
+        # Snapshot received values before coercion or decisions can rewrite them.
         inline_checksum = fnv1a32(args.input_inline)
         data = validate_input_shape(decode_inline_slice(args.input_inline))
         input_checksum = checksum_or_none(data)
+        record_proofs: list[RecordProof] = [
+            {"id": fid, "checksum": checksum_or_none(finding)}
+            for finding in data["findings"]
+            if (fid := _record_id(finding)) is not None
+        ]
         try:
             input_text = js_stringify_pretty(data)
         except JsSerializationError:
@@ -294,6 +316,9 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
             "nonce": args.nonce,
             "deltas_checksum": checksum_or_none(deltas),
             "inline_checksum": inline_checksum,
+            "base_branch": context.base_branch,
+            "diff_source": {"path": args.diff_file, "read": context.diff_read},
+            "record_proofs": record_proofs,
         }
         # The executor accepts only strings; omit an unavailable input proof.
         # trustSlice skips this check when dispatch cannot compute it either.

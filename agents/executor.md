@@ -37,16 +37,15 @@ summarize, fix, or re-run.
      `result` that in turn holds a short `deltas` array
      FOLLOWED BY large `verified` and `eliminated` finding arrays. Return only: `status`;
      every field `receipt` contains (`sha`, `n_in`, `nonce`, `deltas_checksum`,
-     `inline_checksum`, and `input_checksum` when present — never invent an absent one),
-     copied exactly;
+     `inline_checksum`, `base_branch`, `diff_source`, `record_proofs`, and `input_checksum`
+     when present; never invent an absent one), copied exactly;
      and every entry of `result.deltas`, copied exactly. Do NOT return `result.verified`, `result.eliminated`,
      or `result.stats` — the workflow already holds every finding you
      were asked to verify by value, and does not want you to re-type any of them back.
      Copy the fields you do return character for character: the deltas carry a checksum
      computed over exactly what the script wrote, and a single altered value — one
      flipped `origin`, one shifted `confidence` — makes the workflow's recomputed
-     checksum disagree, which costs the WHOLE slice its verification (every one of its
-     findings falls back to unclassified) rather than silently accepting a drifted echo.
+     checksum disagree, which costs the whole attempt its verification.
    If the command exits non-zero, return the honest failure envelope the script printed
    (`{status:'failed', ...}` or `{"ok": false, "errors": [...]}`) — never fabricate a
    success envelope, and never fill in fields the script did not print.

@@ -83,6 +83,7 @@ class VerifyContext:
     base_branch: str
     _pr_commits: frozenset[str] | None = None
     commit_error: str | None = None
+    diff_read: bool = False
 
     def commits(self) -> frozenset[str] | None:
         if self._pr_commits is None and self.commit_error is None:
@@ -465,6 +466,7 @@ def run_verification(
             finding["elimination_reason"] = "evidence does not match file content"
             eliminated.append(finding)
     diff_text = get_diff(context, diff_file)
+    context.diff_read = diff_text is not None
     facts = (
         None
         if diff_text is None

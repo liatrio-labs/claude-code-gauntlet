@@ -1,0 +1,13 @@
+{
+  "record": {
+    "id": " F0 ",
+    "file": "caf\u00e9/\ud83d\udca5\udcff",
+    "line_start": 9007199254740991,
+    "line_end": null,
+    "severity": "high",
+    "confidence": 80,
+    "has_cross_file_refs": true,
+    "has_removed_test_location": true,
+    "symbols": "alpha_token beta_token"
+  }
+}

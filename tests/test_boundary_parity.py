@@ -14,6 +14,7 @@ from gauntlet import config as resolve_config
 from gauntlet import patches as report_patches
 from gauntlet.delivery import compose
 from gauntlet.delivery.input import Finding
+from gauntlet.verify import wire as verify_wire
 
 from bench.runner import invoke
 from tests.support.forge import FakeForgeFactory
@@ -574,11 +575,33 @@ def test_verify_consumes_pipeline_findings_without_error(
         "nonce",
         "deltas_checksum",
         "inline_checksum",
+        "base_branch",
+        "diff_source",
+        "record_proofs",
         "input_checksum",
     ]
+    declared = json.loads(
+        run_node(
+            "import { verifyStage } from './workflows/src/verifyStage.js';"
+            "import { verifyCtx, verifyInput } from './workflows/test/helpers/verifyDelta.js';"
+            + READ_INPUT
+            + "const findings=JSON.parse(source); const ctx=verifyCtx(()=>null);"
+            "await verifyStage(ctx,verifyInput(findings));"
+            "process.stdout.write(JSON.stringify({"
+            "keys:Object.keys(ctx.calls[0].schema.properties.receipt.properties),"
+            "prompt:ctx.calls[0].prompt}));",
+            findings,
+        ).stdout
+    )
+    assert set(declared["keys"]) == set(envelope["receipt"])
+    assert all(key in declared["prompt"] for key in declared["keys"])
     assert envelope["receipt"]["sha"] == "abcd"
     assert envelope["receipt"]["n_in"] == 2
     assert envelope["receipt"]["nonce"] == "boundary"
+    assert envelope["receipt"]["diff_source"] == {
+        "path": str(diff_path),
+        "read": True,
+    }
     assert list(envelope["result"]) == ["deltas", "verified", "eliminated", "stats"]
     assert [
         (delta["id"], delta["verified"]) for delta in envelope["result"]["deltas"]
@@ -601,3 +624,76 @@ def test_verify_consumes_pipeline_findings_without_error(
         "findings": project_findings(findings),
         "base_branch": "main",
     }
+
+
+@pytest.mark.parametrize("fault", ["symbols", "has_cross_file_refs"])
+def test_verify_localises_real_receipt_input_typo(
+    fault: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verify_git
+) -> None:
+    findings = [
+        {
+            "id": f"F{i}",
+            "file": "source",
+            "line_start": 1,
+            "severity": "high",
+            "confidence": 80,
+            "description": "`alpha_token` and `beta_token`",
+            "cross_file_refs": ["other:1"],
+        }
+        for i in range(3)
+    ]
+    (tmp_path / "source").write_text("alpha_token beta_token\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    verify_git[1]["rev-parse"] = (str(tmp_path), "", 0)
+    document = {"findings": project_findings(findings), "base_branch": "main"}
+    if fault == "symbols":
+        document["findings"][1]["symbols"] = "alpha_token"
+    else:
+        del document["findings"][1]["has_cross_file_refs"]
+    token = run_node(
+        "import { encodeSliceInline } from './workflows/src/verifyWire.js';"
+        + READ_INPUT
+        + "process.stdout.write(encodeSliceInline(JSON.parse(source)));",
+        document,
+    ).stdout
+    args = verify_wire.CLI.parser.parse_args(
+        [
+            "--input",
+            str(tmp_path / "slice.json"),
+            "--input-inline",
+            token,
+            "--head-sha",
+            "abc123",
+            "--nonce",
+            "n-1.0",
+        ]
+    )
+    envelope = verify_wire.run_receipt(args)
+    assert envelope["status"] == "ok"
+    assert [row["id"] for row in envelope["receipt"]["record_proofs"]] == [
+        "F0",
+        "F1",
+        "F2",
+    ]
+    stage = json.loads(
+        run_node(
+            "import { verifyStage } from './workflows/src/verifyStage.js';"
+            "import { verifyCtx, verifyInput, dispatchedFindings } "
+            "from './workflows/test/helpers/verifyDelta.js';"
+            + READ_INPUT
+            + "const x=JSON.parse(source);"
+            "const ctx=verifyCtx((_i,attempt)=>attempt===1?x.envelope:{status:'failed'});"
+            "const input=verifyInput(x.findings); input.verify.diffPath=null;"
+            "const out=await verifyStage(ctx,input);"
+            "process.stdout.write(JSON.stringify({out,"
+            "attempts:ctx.calls.map(c=>dispatchedFindings(c.prompt).map(f=>f.id))}));",
+            {"envelope": envelope, "findings": findings},
+        ).stdout
+    )
+    assert stage["attempts"] == [["F0", "F1", "F2"], ["F1"]]
+    assert stage["out"]["verified"] is False
+    assert [(f["id"], f["origin"]) for f in stage["out"]["findings"]] == [
+        ("F0", "surfaced"),
+        ("F1", "unknown"),
+        ("F2", "surfaced"),
+    ]

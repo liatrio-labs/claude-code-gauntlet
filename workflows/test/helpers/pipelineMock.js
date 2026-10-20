@@ -46,7 +46,7 @@ function assertValidConditional(clause, path) {
 // array schemas carry "items" — recursively (catches nested shorthand like {id:'string'}).
 export function assertValidSchema(schema, path = '$') {
   if (!schema || typeof schema !== 'object') throw new Error(`schema ${path}: must be a JSON Schema object (got ${typeof schema})`);
-  if (typeof schema.type !== 'string') {
+  if (typeof schema.type !== 'string' && !(Array.isArray(schema.type) && schema.type.every((type) => typeof type === 'string'))) {
     throw new Error(`schema ${path}: must declare a string "type" (shorthand like {id:'string'} is invalid)`);
   }
   if (schema.type === 'object') {
@@ -161,10 +161,6 @@ export function makeCtx(args, opts = {}) {
       return { summary: 'the PR changes X' };
     }
     if (label.startsWith('verify-slice-')) {
-      // Per-slice DELTA receipt (issue #25 PR2): label carries the index (and optional
-      // -retry); nonce is `${nonce}.${i}` on attempt 1 and `${nonce}.${i}.r1` on the retry.
-      // Build the envelope over only THIS slice's findings so n_in and the id-coverage
-      // check in trustSlice match when verifySliceSize < nFindings.
       const m = /^verify-slice-(\d+)(-retry)?$/.exec(label);
       const sliceIndex = m ? Number(m[1]) : 0;
       const isRetry = Boolean(m && m[2]);
@@ -173,12 +169,7 @@ export function makeCtx(args, opts = {}) {
       }
       const slice = dispatchedFindings(prompt) ?? sliceForIndex(sliceIndex);
       const sliceNonce = isRetry ? `${A.nonce}.${sliceIndex}.r1` : `${A.nonce}.${sliceIndex}`;
-      // deltaEnvelope builds a TRUSTED delta echo for this slice — one {id, verified, ...}
-      // decision per dispatched finding, never the finding itself (the executor can no
-      // longer supply findings at all under the delta echo). The old by-value mock stamped
-      // origin:'new' onto every echoed finding so the pipeline's happy-path tests could tell
-      // "verified" apart from "unknown"/degraded origin; the override here reproduces that
-      // same signal on every delta in the slice.
+      // A deterministic classification keeps routing tests independent of git blame.
       const originOverrides = Object.fromEntries(slice.map((f) => [f.id, { origin: 'new' }]));
       return sliceInputRecorder(deltaEnvelope(slice, {
         sha: A.headShaShort,

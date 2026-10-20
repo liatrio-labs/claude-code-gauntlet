@@ -48,6 +48,12 @@ def _slice_input_proof(inp):
     return {"checksum": checksum_or_none(inp["doc"])}
 
 
+def _record_proof(inp):
+    from gauntlet.verify.wire import checksum_or_none
+
+    return {"checksum": checksum_or_none(inp["record"])}
+
+
 def _slice_inline(inp):
     from gauntlet.jsjson import fnv1a32
     from gauntlet.verify.wire import checksum_or_none
@@ -104,6 +110,7 @@ RECORDERS = {
     "review_text_checksum": _review_text_checksum,
     "verify_deltas": _verify_deltas,
     "slice_input_proof": _slice_input_proof,
+    "record_proof": _record_proof,
     "slice_inline": _slice_inline,
 }
 

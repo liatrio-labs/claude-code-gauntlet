@@ -1,26 +1,40 @@
 import { hostPlatformForRoots } from './paths.js';
 import { modelFor } from './registry.js';
 import { firstUnsafeNumber } from './wire.js';
-import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, sliceInputChecksum, sliceTokenChecksum } from './verifyWire.js';
+import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum } from './verifyWire.js';
 import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
 
 // Allow honest failures in the schema to avoid fabricated successes under retry
 // pressure. Deltas avoid retranscribing finding fields.
+const VERIFY_RECEIPT_FIELDS = {
+  sha: { type: 'string' },
+  n_in: { type: 'number' },
+  nonce: { type: 'string' },
+  deltas_checksum: { type: 'string' },
+  input_checksum: { type: 'string' },
+  inline_checksum: { type: 'string' },
+  base_branch: { type: 'string' },
+  diff_source: {
+    type: 'object',
+    properties: { path: { type: ['string', 'null'] }, read: { type: 'boolean' } },
+    required: ['path', 'read'],
+  },
+  record_proofs: {
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: { id: { type: 'string' }, checksum: { type: ['string', 'null'] } },
+      required: ['id', 'checksum'],
+    },
+  },
+};
 const VERIFY_SCHEMA = {
   type: 'object',
   properties: {
     status: { type: 'string' },
     receipt: {
       type: 'object',
-      properties: {
-        sha: { type: 'string' },
-        n_in: { type: 'number' },
-        nonce: { type: 'string' },
-        // Missing proofs are legal to report but unsafe to trust.
-        deltas_checksum: { type: 'string' },
-        input_checksum: { type: 'string' },
-        inline_checksum: { type: 'string' },
-      },
+      properties: VERIFY_RECEIPT_FIELDS,
     },
     result: {
       type: 'object',
@@ -101,6 +115,7 @@ export async function verifyStage(ctx, input) {
       const encodedLength = verifyInlineCost(encodeSliceInline(content), hostPlatform);
       const lengthKind = hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length';
       inputProof.oversize += 1;
+      inputProof.degradedFindings += 1;
       out.push(...degradedSlice([unit.finding]));
       gaps.push(verifyDegradeGap(
         `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has ${lengthKind} ${encodedLength}, over VERIFY_INLINE_CHAR_BUDGET=${inlineBudget}`,
@@ -111,12 +126,8 @@ export async function verifyStage(ctx, input) {
       continue;
     }
     const { index: i, slice } = unit;
-    const content = { findings: slice.map(projectVerifySliceFinding), base_branch: baseBranch };
-    const expectedInputChecksum = firstUnsafeNumber(content, `slice${i}`) === null
-      ? sliceInputChecksum(content)
-      : null;
-    const payload = encodeSliceInline(content);
-    const expectedInlineChecksum = sliceTokenChecksum(payload);
+    const record = prepareVerifySlice(slice, baseBranch);
+    const payload = record.inlinePayload;
     const predictedPayloadLength = predictVerifySliceInlineLength(slice, baseBranch);
     const commandCost = predictVerifySliceInlineLength(slice, baseBranch, hostPlatform);
     if (payload.length !== predictedPayloadLength || commandCost > inlineBudget) {
@@ -126,6 +137,7 @@ export async function verifyStage(ctx, input) {
       out.push(...degradedSlice(slice));
       gaps.push(verifyDegradeGap(detail, slice.length, findings.length));
       degradedSlices += 1;
+      inputProof.degradedFindings += slice.length;
     };
 
     // Unusable ids cannot support a delta join, so avoid spending an executor call.
@@ -135,22 +147,27 @@ export async function verifyStage(ctx, input) {
       continue;
     }
 
-    const attempt = await verifySliceWithRetry(ctx, inp, i, slice, { model, ids: ids.ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload: payload });
-    if (!attempt.ok) {
-      if (attempt.inputFault === 'mismatch') inputProof.mismatched += 1;
-      else if (attempt.inputFault === 'missing') inputProof.missing += 1;
-      degrade(`slice ${i}: ${attempt.reason}`);
-      continue;
-    }
-    if (expectedInputChecksum == null) inputProof.unprovable += 1;
-    else inputProof.proven += 1;
-    if (attempt.retried) {
+    const attempt = await verifySliceWithRetry(ctx, inp, i, slice, { ...record, model });
+    if (attempt.proven) inputProof.proven += 1;
+    if (!attempt.degraded && record.expectedInputChecksum == null) inputProof.unprovable += 1;
+    inputProof.localised += attempt.localised;
+    inputProof.retriedFindings += attempt.retriedFindings;
+    inputProof.degradedFindings += attempt.degraded;
+    if (attempt.retriedFindings && !attempt.degraded) {
       inputProof.retried += 1;
       if (attempt.inputFault === 'mismatch') inputProof.retriedMismatch += 1;
       else if (attempt.inputFault === 'missing') inputProof.retriedMissing += 1;
+    } else {
+      if (attempt.inputFault === 'mismatch') inputProof.mismatched += 1;
+      else if (attempt.inputFault === 'missing') inputProof.missing += 1;
     }
     out.push(...attempt.verified);
-    if (attempt.gap) gaps.push(attempt.gap);
+    if (attempt.degraded) {
+      degradedSlices += 1;
+      gaps.push(verifyDegradeGap(`slice ${i}: ${attempt.reason}`, attempt.degraded, findings.length));
+    } else if (attempt.retriedFindings) {
+      gaps.push(`verify-slice-retry: slice ${i}'s first executor dispatch left ${attempt.retriedFindings} of ${slice.length} finding(s) unresolved (${attempt.reason}); a second dispatch repaired them`);
+    }
   }
 
   return { findings: out, verified: degradedSlices === 0, gaps, inputProof };
@@ -163,85 +180,106 @@ function degradedSlice(slice) {
 const emptyInputProof = () => ({
   slices: 0, proven: 0, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,
   retried: 0, retriedMismatch: 0, retriedMissing: 0,
+  localised: 0, retriedFindings: 0, degradedFindings: 0,
 });
 
 // Name the affected count so partial verification failures remain attributable.
 function verifyDegradeGap(detail, k, n) {
-  return `verify: UNVERIFIED — ${detail}; ${k} of ${n} finding(s) marked origin=unknown, surfaced-classification skipped, held back to the report`;
+  return `verify: UNVERIFIED — ${detail}; ${k} of ${n} finding(s) in stage marked origin=unknown, surfaced-classification skipped, held back to the report`;
+}
+
+function prepareVerifySlice(slice, baseBranch) {
+  const content = { findings: slice.map(projectVerifySliceFinding), base_branch: baseBranch };
+  const inlinePayload = encodeSliceInline(content);
+  return {
+    ids: slice.map((f) => f.id),
+    expectedProofs: new Map(content.findings.map((f) => [f.id, recordProof(f)])),
+    expectedInputChecksum: firstUnsafeNumber(content, 'slice') === null ? sliceInputChecksum(content) : null,
+    expectedInlineChecksum: sliceTokenChecksum(inlinePayload),
+    baseBranch, inlinePayload,
+  };
 }
 
 // A fresh sample can repair transcription. A distinct retry nonce prevents replay
 // of the first receipt from satisfying the retry; .r1 fits args.js NONCE_RE.
 async function verifySliceWithRetry(c, inp, i, slice, record) {
-  const { nonce } = inp;
-  const attempt = (sliceNonce, label) =>
-    dispatchVerifySlice(c, inp, i, slice, record, sliceNonce, label);
-
-  const first = await attempt(`${nonce}.${i}`, `verify-slice-${i}`);
-  if (first.ok) return { ok: true, verified: first.verified, gap: null, retried: false };
-
-  const second = await attempt(`${nonce}.${i}.r1`, `verify-slice-${i}-retry`);
-  if (second.ok) {
-    // A trusted retry costs another dispatch without degrading findings.
-    return {
-      ok: true,
-      verified: second.verified,
-      gap: `verify-slice-retry: slice ${i}'s first executor dispatch was untrusted (${first.reason}); a second dispatch was trusted and this slice's verified findings are from that attempt`,
-      retried: true,
-      inputFault: first.inputFault,
-    };
+  const first = await dispatchVerifySlice(c, inp, i, slice, record, `${inp.nonce}.${i}`, `verify-slice-${i}`);
+  const accepted = new Map((first.deltas || []).map((d) => [d.id, d]));
+  const unresolved = slice.filter((f) => !accepted.has(f.id));
+  let last = first;
+  if (unresolved.length) {
+    const retryRecord = { ...prepareVerifySlice(unresolved, record.baseBranch), model: record.model };
+    last = await dispatchVerifySlice(c, inp, i, unresolved, retryRecord, `${inp.nonce}.${i}.r1`, `verify-slice-${i}-retry`);
+    for (const d of last.deltas || []) accepted.set(d.id, d);
   }
+  const degraded = slice.length - accepted.size;
   return {
-    ok: false,
-    reason: `${second.reason} — retried once after the first attempt failed (${first.reason})`,
-    // Retain the first input fault if the retry fails for a different reason.
-    inputFault: second.inputFault ?? first.inputFault,
+    // Walk once in held order, including trusted eliminations in accepted membership.
+    verified: slice.flatMap((f) => accepted.has(f.id)
+      ? joinVerifyDeltas([f], [accepted.get(f.id)]) : degradedSlice([f])),
+    degraded,
+    localised: unresolved.length ? slice.length - unresolved.length : 0,
+    retriedFindings: unresolved.length,
+    proven: record.expectedInputChecksum != null && (first.proven || (unresolved.length === slice.length && last.proven)),
+    reason: degraded ? `${last.reason} — retried once after the first attempt failed (${first.reason})` : first.reason,
+    inputFault: last.inputFault ?? first.inputFault,
   };
 }
 
-async function dispatchVerifySlice(c, inp, i, slice, { model, ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload }, sliceNonce, label) {
+async function dispatchVerifySlice(c, inp, i, slice, record, sliceNonce, label) {
   let env;
   try {
-    env = await c.agent(verifyPrompt(inp, i, sliceNonce, inlinePayload), {
+    env = await c.agent(verifyPrompt(inp, i, sliceNonce, record.inlinePayload), {
       label,
       agentType: 'code-gauntlet:executor',
-      model,
+      model: record.model,
       schema: VERIFY_SCHEMA,
     });
   } catch (e) {
     return { ok: false, reason: `executor threw (${(e && e.message) || 'unknown'})` };
   }
-  const trust = trustSlice(env, { nonce: sliceNonce, headShaShort: inp.headShaShort, n: slice.length, ids, expectedInputChecksum, expectedInlineChecksum });
-  if (!trust.ok) return trust;
-  return { ok: true, verified: joinVerifyDeltas(slice, env.result.deltas) };
+  return trustSlice(env, { ...record, diffPath: (inp.verify || {}).diffPath || null,
+    nonce: sliceNonce, headShaShort: inp.headShaShort, n: slice.length });
 }
 
 // Match ids exactly, as gauntlet.verify.wire does; trimming for matching would
 // collide padded ids. Only the usability check trims.
 function dispatchableIds(slice) {
-  const ids = [];
   const seen = new Set();
   for (const f of slice) {
     const id = f && typeof f.id === 'string' ? f.id : '';
     if (!id.trim()) return { ok: false, reason: 'a dispatched finding has no usable id' };
     if (seen.has(id)) return { ok: false, reason: `duplicate finding id in the slice (${id})` };
     seen.add(id);
-    ids.push(id);
   }
-  return { ok: true, ids };
+  return { ok: true };
 }
 
-// Coverage binds sibling slices even when their counts match. Shape checks give
-// precise diagnostics before checksums reject changed input or output.
 // Trust model: a stale or confused executor. Nonces are argv-visible and proofs
 // travel with data, so these checks cannot authenticate a malicious executor.
-function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, expectedInlineChecksum }) {
+function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBranch, diffPath, expectedInputChecksum, expectedInlineChecksum }) {
   if (!env || typeof env !== 'object') return { ok: false, reason: 'executor returned no envelope' };
   if (env.status !== 'ok') return { ok: false, reason: `status=${env.status == null ? 'missing' : env.status}${env.stderr ? ` (${env.stderr})` : ''}` };
   const r = env.receipt || {};
   if (r.nonce !== nonce) return { ok: false, reason: `receipt nonce mismatch (got ${r.nonce == null ? 'missing' : r.nonce}, expected ${nonce})` };
   if (r.sha !== headShaShort) return { ok: false, reason: `receipt sha mismatch (got ${r.sha == null ? 'missing' : r.sha})` };
-  if (r.n_in !== n) return { ok: false, reason: `receipt n_in mismatch (got ${r.n_in == null ? 'missing' : r.n_in}, expected ${n})` };
+  if (r.base_branch !== baseBranch) return { ok: false, reason: 'receipt base_branch mismatch' };
+  if (r.diff_source?.path !== diffPath || r.diff_source?.read !== true) {
+    return { ok: false, reason: 'receipt diff_source mismatch or unreadable' };
+  }
+  if (!Array.isArray(r.record_proofs)) return {
+    ok: false, reason: 'receipt missing or malformed record_proofs',
+    inputFault: r.record_proofs == null ? 'missing' : 'mismatch',
+  };
+  const proofs = new Map();
+  for (const row of r.record_proofs) {
+    if (!row || typeof row !== 'object' || typeof row.id !== 'string' || !row.id.trim()
+      || (typeof row.checksum !== 'string' && row.checksum !== null)) {
+      return { ok: false, reason: 'receipt missing or malformed record_proofs', inputFault: 'mismatch' };
+    }
+    if (proofs.has(row.id)) return { ok: false, reason: `record_proofs repeats a finding id (${row.id})` };
+    proofs.set(row.id, row.checksum);
+  }
   const result = env.result || {};
   if (!Array.isArray(result.deltas)) return { ok: false, reason: 'result missing deltas array' };
 
@@ -251,7 +289,6 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, e
     if (!d || typeof d !== 'object') return { ok: false, reason: 'delta entry is not an object' };
     const id = typeof d.id === 'string' ? d.id : '';
     if (!id.trim()) return { ok: false, reason: 'delta entry has no id' };
-    if (!expected.has(id)) return { ok: false, reason: `delta names a finding this slice did not dispatch (${id})` };
     if (byId.has(id)) return { ok: false, reason: `delta repeats a finding id (${id})` };
     if (typeof d.verified !== 'boolean') return { ok: false, reason: `delta ${id} has no boolean verified flag` };
     for (const k of ['origin', 'severity', 'elimination_reason']) {
@@ -270,34 +307,50 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, e
     }
     byId.set(id, d);
   }
-  const missing = ids.filter((id) => !byId.has(id));
-  if (missing.length) {
-    return { ok: false, reason: `delta does not cover ${missing.length} of ${ids.length} dispatched finding(s) (first: ${missing[0]})` };
+  if (proofs.size !== byId.size || [...proofs.keys()].some((id) => !byId.has(id))) {
+    return { ok: false, reason: 'record_proofs ids differ from delta ids' };
+  }
+  if ([...proofs.keys()].filter((id) => !expected.has(id)).length > 1) {
+    return { ok: false, reason: 'receipt names multiple findings this slice did not dispatch' };
   }
 
   const proof = typeof r.deltas_checksum === 'string' ? r.deltas_checksum.trim() : '';
   if (!proof) return { ok: false, reason: 'receipt carries no deltas_checksum (content proof missing)' };
-  const recomputed = deltaContentProof(ids, result.deltas);
+  const recomputed = deltaContentProof([...proofs.keys()], result.deltas);
   if (proof !== recomputed) {
     return { ok: false, reason: `delta content proof mismatch (receipt ${proof}, recomputed ${recomputed}) — the echoed values are not the ones the script wrote` };
   }
 
-  // Token proof precedes value proof because it also covers unprovable numbers.
+  let diagnostic = r.n_in === n ? null : {
+    reason: `receipt n_in mismatch (got ${r.n_in == null ? 'missing' : r.n_in}, expected ${n})`, inputFault: 'mismatch',
+  };
   for (const [field, expected, missingReason, name, noun] of [
     ['inline_checksum', expectedInlineChecksum, 'inline token proof missing from receipt', 'token', 'token'],
     ['input_checksum', expectedInputChecksum, 'input content proof missing from receipt', 'content', 'document'],
   ]) {
     if (expected == null) continue;
     const got = typeof r[field] === 'string' ? r[field].trim() : '';
-    if (!got) return { ok: false, reason: missingReason, inputFault: 'missing' };
-    if (got !== expected) return { ok: false, reason: `slice-input ${name} proof mismatch (receipt ${got}, dispatched ${expected}) — the ${noun} the script decoded is not the ${noun} this stage dispatched`, inputFault: 'mismatch' };
+    if (!got) diagnostic ??= { reason: missingReason, inputFault: 'missing' };
+    else if (got !== expected) diagnostic ??= { reason: `slice-input ${name} proof mismatch (receipt ${got}, dispatched ${expected}) — the ${noun} the script decoded is not the ${noun} this stage dispatched`, inputFault: 'mismatch' };
   }
 
-  return { ok: true };
+  // An unsupported expected value cannot safely be localised by record proof.
+  const wholeSlice = [...expectedProofs.values()].some((proof) => proof === null);
+  if (wholeSlice && diagnostic) return { ok: false, ...diagnostic };
+  const deltas = ids.filter((id) => byId.has(id) && (wholeSlice || proofs.get(id) === expectedProofs.get(id)))
+    .map((id) => byId.get(id));
+  if (wholeSlice && deltas.length !== ids.length) return { ok: false, reason: 'delta does not cover dispatched findings' };
+  return {
+    ok: true, deltas,
+    proven: !diagnostic && deltas.length === ids.length,
+    reason: diagnostic?.reason || `record proof missing or mismatched for ${ids.length - deltas.length} of ${n} finding(s)`,
+    inputFault: deltas.length !== ids.length
+      ? (ids.some((id) => !proofs.has(id)) ? 'missing' : 'mismatch') : diagnostic?.inputFault,
+  };
 }
 
 // Read the deltas prefix because length-capped Reads give no truncation notice;
 // the later full finding arrays are unnecessary for the join.
 function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
-  return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (sha, n_in, nonce, deltas_checksum, inline_checksum, and input_checksum when present — never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token IS the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
+  return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (${Object.keys(VERIFY_RECEIPT_FIELDS).join(', ')} when present; never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token IS the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered delta value costs the whole attempt its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
 }
