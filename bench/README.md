@@ -67,18 +67,20 @@ actionable line and the whole list is shown at once (exit code 2):
 - at least 10 GB free on the partition holding `bench/workspace/` (bare
   mirrors are large — see above)
 
-GitHub authentication is resolved once per `run.py` invocation, before any review
-child starts: nonempty `GH_TOKEN`, then `GITHUB_TOKEN`, then the operator's
-`gh auth token --hostname github.com`. The selected credential is held in memory
-and forwarded as `GH_TOKEN` across the isolated HOME boundary. A bounded
+For new runs, resumes, and retries, GitHub authentication is resolved once per
+`run.py` invocation, before any review child starts: nonempty `GH_TOKEN`, then
+`GITHUB_TOKEN`, then the operator's `gh auth token --hostname github.com`. The
+selected credential is held in memory and forwarded as `GH_TOKEN` across the
+isolated HOME boundary. A bounded
 `gh api repos/OWNER/REPO/pulls/N` read of the first target PR probes that exact
-credential under the child environment, including for resumes and retries.
+credential under the child environment.
 An explicit credential that is rejected fails preflight (exit 2); it never falls
 back to another account. Probe diagnostics and token values are never logged or
 written to run manifests or checkpoints.
 
-`--score-only` skips these entirely — it re-scores an already-completed
-run's captured candidates and needs no `claude`/`gh`/disk headroom.
+`--score-only` and `--check` skip GitHub authentication. `--score-only` re-scores
+an already-completed run's captured candidates and needs no `claude`/`gh`/disk
+headroom.
 
 ## CLI reference
 

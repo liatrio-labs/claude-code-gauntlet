@@ -33,6 +33,7 @@ class Harness:
     control: dict = field(default_factory=dict, repr=False)
     commands: list = field(default_factory=list)
     launches: list = field(default_factory=list)
+    probe_tokens: list = field(default_factory=list)
 
     def echo(self, **changes):
         knobs = dict(invoke.EXPECTED_ECHO, **changes)
@@ -63,10 +64,9 @@ class Harness:
                 "" if mode == "empty" else self.control["token"] + "\n",
                 self.control["token"],
             )
-        if argv == ["gh", "auth", "status"]:
-            return subprocess.CompletedProcess(argv, 0, "", "")
         if argv[:2] == ["gh", "api"]:
             env = kwargs["env"]
+            self.probe_tokens.append(env.get("GH_TOKEN"))
             assert env["HOME"] == str(self.workspace / "claude-home")
             assert env["CLAUDE_CONFIG_DIR"] == str(
                 self.workspace / "claude-home" / "config"
@@ -254,6 +254,19 @@ def test_explicit_credential_wins_without_operator_lookup(
     assert run.main(["--tier", "smoke"]) == 0
     assert not any(cmd[:3] == ["gh", "auth", "token"] for cmd in harness.commands)
     assert os.environ.get(explicit) == harness.control["token"]
+    first_url = run._load_json(run.GOLDEN_DIR / "subsets.json")["smoke"][0]
+    assert [cmd for cmd in harness.commands if cmd[:2] == ["gh", "api"]] == [
+        [
+            "gh",
+            "api",
+            "--hostname",
+            "github.com",
+            first_url.replace("https://github.com/", "repos/").replace(
+                "/pull/", "/pulls/"
+            ),
+        ]
+    ]
+    assert harness.probe_tokens == [harness.control["token"]]
 
 
 @pytest.mark.parametrize(

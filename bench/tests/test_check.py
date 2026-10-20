@@ -1828,10 +1828,6 @@ def test_undecodable_checkpoint_does_not_crash_g3(tmp_path):
     assert result["stats"]["unknown_origin"] == 0
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 @pytest.mark.parametrize("keep_primary", [True, False])
 def test_post_review_copy_never_counts_as_canonical(tmp_path, keep_primary):
     _build_ok_run(tmp_path)
@@ -1872,3 +1868,7 @@ def test_artifact_sha_is_a_bounded_lowercase_hex_token(tmp_path, template, token
     path.write_text("{}", encoding="utf-8")
     expected = [path] if token in ("abcdef0", "deadbeef", "a" * 40) else []
     assert check._artifact_matches(tmp_path, template) == expected
+
+
+if __name__ == "__main__":
+    unittest.main()
