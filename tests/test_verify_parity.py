@@ -1,4 +1,4 @@
-"""Frozen decision and symbol oracles recorded before changing the verify wire."""
+"""Verify decisions through the JS projection must match the frozen Python oracle."""
 
 import json
 from pathlib import Path

@@ -814,7 +814,7 @@ const VERIFY_SKIP_SYMBOLS = new Set(('the this that with from import class def f
   + 'NotImplementedError AssertionError OverflowError ZeroDivisionError').split(' '));
 const VERIFY_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 function extractSymbols(description, evidence) {
-  const text = `${typeof description === 'string' ? description : ''}\n${typeof evidence === 'string' ? evidence : ''}`;
+  const text = `${asText(description)}\n${asText(evidence)}`;
   const symbols = new Set();
   for (const block of text.matchAll(/```[^\n]*\n(.*?)```/gs)) {
     for (const identifier of block[1].matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) symbols.add(identifier[0]);
