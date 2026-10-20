@@ -4,7 +4,7 @@
 useDefault = true
 
 [[allowlists]]
-description = "SHA-256 digests in golden-epoch manifests and the leak guard's identifier list"
-paths = ['''^bench/golden/epochs/[^/]+/epoch\.json$''', '''^bench/golden/leak_identifiers\.json$''']
+description = "SHA-256 digests in golden-epoch manifests"
+paths = ['''^bench/golden/epochs/[^/]+/epoch\.json$''']
 regexTarget = "match"
 regexes = ['''"[0-9a-f]{64}"''']

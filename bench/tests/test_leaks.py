@@ -1,54 +1,42 @@
-"""Caller-boundary leak diagnostics; sealed fixtures never appear in assertion output."""
+"""Exercise the lexical guard at its collection, dispatch, policy and CLI boundaries."""
 
-import ast
 import json
 import shutil
 import subprocess
+import tempfile
 from collections import Counter
 from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
 
+from bench.runner import leaks
 from bench.runner.epochs import DEFAULT_ROOT, canonical, digest, load_epoch, read_json
-from bench.runner.leaks import (
-    ROOT,
-    PromptSurface,
-    _spans,
-    assert_no_holdout_tokens,
-    collect_surfaces,
-    derive_identifiers,
-    identifiers_wire,
-    load_generated,
-    main,
-    scan,
-    validate_identifiers,
-)
 
 
 @pytest.fixture(scope="module")
 def corpus():
     epoch = load_epoch(root=DEFAULT_ROOT)
-    stored = read_json(DEFAULT_ROOT / "leak_identifiers.json")
-    derived = derive_identifiers(
+    ceiling = leaks.load_ceiling()
+    derived = leaks.derive_identifiers(
         epoch,
         holdout_pr_urls=frozenset(read_json(DEFAULT_ROOT / "subsets.json")["holdout"]),
-        holdout_salt=stored["holdout_salt"],
+        holdout_salt=ceiling["holdout_salt"],
     )
-    return epoch, derived, stored
+    return epoch, derived, ceiling
 
 
 @pytest.fixture(scope="module")
 def generated(tmp_path_factory):
     result = subprocess.run(
         ["node", "workflows/test/tools/emit_agent_prompts.mjs"],
-        cwd=ROOT,
+        cwd=leaks.ROOT,
         capture_output=True,
         check=True,
     )
     path = tmp_path_factory.mktemp("prompts") / "prompts.json"
     path.write_bytes(result.stdout)
-    return load_generated(path)
+    return leaks.load_generated(path)
 
 
 def empty_allowlist(derived):
@@ -60,28 +48,42 @@ def empty_allowlist(derived):
     }
 
 
-def simple_epoch(epoch, comments):
+def ceiling_for(derived, allowlist):
+    return {
+        "schema_version": 3,
+        "epoch_id": derived.epoch_id,
+        "golden_sha256": derived.golden_sha256,
+        "holdout_salt": derived.holdout_salt,
+        "entries": [dict(row) for row in allowlist["entries"]],
+        "passages": [
+            dict(row, identifier_id="passage:" + row["passage_id"])
+            for row in allowlist["passages"]
+        ],
+    }
+
+
+def toy_identifiers(corpus, comments, sealed=frozenset()):
+    epoch, original, _ = corpus
     bugs = tuple(
         replace(epoch.bugs[0], bug_id=f"g:{i}", pr_url=url, comment=text)
         for i, (url, text) in enumerate(comments)
     )
-    return replace(epoch, bugs=bugs, golden_sha256=digest(comments))
-
-
-def public_token(derived):
-    return next(
-        i.token for i in derived.identifiers if i.token == "organization_context.member"
+    return leaks.derive_identifiers(
+        replace(epoch, bugs=bugs, golden_sha256=digest(comments)),
+        holdout_pr_urls=sealed,
+        holdout_salt=original.holdout_salt,
     )
 
 
 def surface(text, name="agents/new-agent.md"):
-    return PromptSurface(name, name, name, "static", text)
+    return leaks.PromptSurface(name, name, name, "static", text)
 
 
-def allowance(derived, hit, count=1):
+def allowance(hit, count=1):
     return {
         "identifier_id": hit.identifier_id,
         "surface_id": hit.surface_id,
+        "source_path": hit.source_path,
         "excerpt_sha256": hit.excerpt_sha256,
         "expected_count": count,
         "reason": "holdout_delete_only"
@@ -92,147 +94,218 @@ def allowance(derived, hit, count=1):
     }
 
 
+def public_token(derived):
+    return next(
+        i.token
+        for i in derived.identifiers
+        if i.match_mode == "identifier" and "." not in i.token
+    )
+
+
+def ensure_redacted(tokens, data):
+    if any(token.encode() in data for token in tokens):
+        pytest.fail("sealed text escaped redaction", pytrace=False)
+
+
 def test_agent_read_text_has_no_unallowed_golden_identifiers(corpus, generated):
-    _, derived, stored = corpus
-    validate_identifiers(stored, derived)
+    _, derived, _ = corpus
     allowlist = read_json(DEFAULT_ROOT / "leak_allowlist.json")
-    rows = allowlist["entries"] + allowlist["passages"]
-    assert len({digest(row) for row in rows}) == len(rows)
-    report = scan(derived, collect_surfaces(ROOT, generated), allowlist)
+    report = leaks.scan(
+        derived, leaks.collect_surfaces(leaks.ROOT, generated), allowlist
+    )
     if not report.passed:
         pytest.fail(
             "unallowed/stale leak allowance or missing generated route; use the redacted CLI report",
             pytrace=False,
         )
-    assert {s.scenario for s in generated} == {
-        "legacy",
-        "derived",
-        "bucketed",
-        "fallback",
-    }
-    assert len(report.hits) > 0
+    assert not any(h.holdout for h in report.hits)
+    for prefix in ("generated", "generated-bundle"):
+        selected = [s for s in generated if s.surface_id.startswith(prefix + "/")]
+        assert {s.scenario for s in selected} == {
+            "legacy",
+            "derived",
+            "bucketed",
+            "fallback",
+        }
+        prompts = {
+            s.surface_id.removesuffix("/prompt")
+            for s in selected
+            if s.surface_id.endswith("/prompt")
+        }
+        schemas = {
+            s.surface_id.removesuffix("/schema")
+            for s in selected
+            if s.surface_id.endswith("/schema")
+        }
+        assert prompts == schemas
+        assert len(prompts) > 0
 
 
 @pytest.mark.parametrize(
     "path",
     [
-        "AGENTS.md",
         "agents/new-agent.md",
-        "skills/new-skill/references/orphan.md",
-        "skills/new-skill/templates/new.md",
-        ".claude-plugin/plugin.json",
+        "skills/new/SKILL.md",
+        "skills/new/references/orphan.md",
+        "skills/new/templates/new.md",
+    ],
+)
+def test_new_cue_in_every_agent_markdown_surface_fails(
+    tmp_path, corpus, generated, path
+):
+    _, derived, _ = corpus
+    target = tmp_path / path
+    target.parent.mkdir(parents=True)
+    target.write_text("new cue: " + public_token(derived), encoding="utf-8")
+    report = leaks.scan(
+        derived,
+        (*generated, *leaks.collect_surfaces(tmp_path, ())),
+        read_json(DEFAULT_ROOT / "leak_allowlist.json"),
+    )
+    assert any(h.source_path == path and not h.allowed for h in report.unallowed_hits)
+
+
+def test_maintainer_files_metadata_and_code_are_not_agent_read(tmp_path, corpus):
+    _, derived, _ = corpus
+    for name in (
+        "AGENTS.md",
+        "agents/AGENTS.md",
+        "agents/nested/helper.md",
         "workflows/AGENTS.md",
         "workflows/src/new.js",
         "workflows/pipeline.js",
         "scripts/new.py",
-        "scripts/gauntlet/new.py",
-    ],
-)
-def test_new_cue_in_every_agent_read_surface_fails(tmp_path, corpus, generated, path):
-    _, derived, _ = corpus
-    target = tmp_path / path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    token = public_token(derived)
-    text = f"prompt = {token!r}" if path.endswith(".py") else f"new cue: {token}"
-    target.write_text(text, encoding="utf-8")
-    surfaces = collect_surfaces(tmp_path, ())
-    report = scan(derived, (*generated, *surfaces), empty_allowlist(derived))
-    assert not report.passed
-    assert any(h.source_path == path and not h.allowed for h in report.unallowed_hits)
+        ".claude-plugin/plugin.json",
+    ):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(public_token(derived), encoding="utf-8")
+    assert leaks.collect_surfaces(tmp_path, ()) == ()
 
 
-def test_generated_prompt_assembled_across_workflow_fragments_is_scanned(
-    tmp_path, corpus
+def copy_workflow(root):
+    for directory in (
+        "workflows/src",
+        "workflows/test/helpers",
+        "workflows/test/tools",
+    ):
+        target = root / directory
+        target.mkdir(parents=True)
+        for path in (leaks.ROOT / directory).glob("*.*js"):
+            shutil.copyfile(path, target / path.name)
+    shutil.copyfile(
+        leaks.ROOT / "workflows/pipeline.js", root / "workflows/pipeline.js"
+    )
+
+
+@pytest.mark.parametrize("implementation", ["source", "bundle"])
+@pytest.mark.parametrize("kind", ["prompt", "schema"])
+def test_assembled_dispatch_prompt_and_schema_are_scanned(
+    tmp_path, corpus, implementation, kind
 ):
     _, derived, _ = corpus
     token = public_token(derived)
-    for directory in ("workflows/src", "workflows/test/helpers"):
-        destination = tmp_path / directory
-        destination.mkdir(parents=True)
-        for path in (ROOT / directory).glob("*.js"):
-            shutil.copyfile(path, destination / path.name)
-    helper = "workflows/test/tools/emit_agent_prompts.mjs"
-    (tmp_path / helper).parent.mkdir(parents=True)
-    shutil.copyfile(ROOT / helper, tmp_path / helper)
-    registry = tmp_path / "workflows/src/registry.js"
-    midpoint = token.index(".")
-    declaration = "const TYPO_NAMING_SWEEP_PROMPT_EXTRA = "
-    registry.write_text(
-        registry.read_text(encoding="utf-8").replace(
-            declaration,
-            declaration
-            + json.dumps(token[:midpoint])
-            + " + "
-            + json.dumps(token[midpoint:])
-            + " + ' ' + ",
-        ),
-        encoding="utf-8",
+    copy_workflow(tmp_path)
+    path = tmp_path / (
+        "workflows/src/registry.js"
+        if implementation == "source"
+        else "workflows/pipeline.js"
     )
-    allowlist = read_json(DEFAULT_ROOT / "leak_allowlist.json")
-    token_id = digest(["identifier", token])
-    static = collect_surfaces(tmp_path, ())
-    assert not any(
-        h.identifier_id == token_id for h in scan(derived, static, allowlist).hits
-    )
+    fragment = json.dumps(token[:3]) + " + " + json.dumps(token[3:])
+    text = path.read_text(encoding="utf-8")
+    if kind == "prompt":
+        marker = "const TYPO_NAMING_SWEEP_PROMPT_EXTRA = "
+        text = text.replace(marker, marker + fragment + " + ' ' + ")
+    else:
+        text = text.replace(
+            "id: 'string', file:",
+            "id: { type: 'string', description: " + fragment + " }, file:",
+        )
+    path.write_text(text, encoding="utf-8")
+    assert leaks.collect_surfaces(tmp_path, ()) == ()
     result = subprocess.run(
-        ["node", helper], cwd=tmp_path, capture_output=True, check=True
+        ["node", "workflows/test/tools/emit_agent_prompts.mjs"],
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
-    emitted = tmp_path / "prompts.json"
-    emitted.write_bytes(result.stdout)
-    report = scan(
-        derived, collect_surfaces(tmp_path, load_generated(emitted)), allowlist
+    output = tmp_path / "prompts.json"
+    output.write_bytes(result.stdout)
+    report = leaks.scan(
+        derived,
+        leaks.collect_surfaces(tmp_path, leaks.load_generated(output)),
+        read_json(DEFAULT_ROOT / "leak_allowlist.json"),
     )
-    assert not report.passed
+    prefix = "generated/" if implementation == "source" else "generated-bundle/"
     assert any(
-        h.surface_id.startswith("generated/") and h.identifier_id == token_id
+        h.identifier_id == digest(["identifier", token])
+        and h.surface_id.startswith(prefix)
+        and h.surface_id.endswith("/" + kind)
         for h in report.unallowed_hits
     )
 
 
-def test_exact_allowance_rejects_added_occurrence_changed_excerpt_and_staleness(
-    corpus, generated
-):
-    epoch, original, _ = corpus
-    token = public_token(original)
-    derived = derive_identifiers(
-        simple_epoch(epoch, [("public", token)]),
-        holdout_pr_urls=frozenset(),
-        holdout_salt=original.holdout_salt,
+def test_shared_context_scans_emitted_template_and_keeps_stable_id(tmp_path, corpus):
+    _, derived, _ = corpus
+    for path in (leaks.ROOT / "scripts").rglob("*.py"):
+        if not leaks._safe(leaks.ROOT, path):
+            continue
+        target = tmp_path / path.relative_to(leaks.ROOT)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+    path = tmp_path / "scripts/gauntlet/shared_context.py"
+    original = leaks.collect_surfaces(tmp_path, ())
+    text = path.read_text(encoding="utf-8").replace(
+        'b"\\n## Risk classification',
+        'b"\\n' + public_token(derived) + " ## Risk classification",
     )
-    cue = surface(token)
-    base = scan(derived, (*generated, cue), empty_allowlist(derived))
-    hits = [h for h in base.hits if h.surface_id == cue.surface_id]
-    allowed = empty_allowlist(derived)
-    allowed["entries"] = [allowance(derived, h) for h in hits]
-    assert all(h.allowed for h in scan(derived, (cue,), allowed).hits)
-    assert scan(
-        derived, (replace(cue, text=cue.text + " " + cue.text),), allowed
-    ).unallowed_hits
-    assert scan(
-        derived, (replace(cue, text="changed " + cue.text),), allowed
-    ).unallowed_hits
-    assert scan(derived, (), allowed).stale_allowances
-    assert scan(derived, (cue,), empty_allowlist(derived)).unallowed_hits
-    assert not scan(derived, (), empty_allowlist(derived)).stale_allowances
-    allowed["epoch_id"] = "different"
-    with pytest.raises(ValueError, match="epoch mismatch"):
-        scan(derived, (cue,), allowed)
+    path.write_text("# Unrelated source line.\n" + text, encoding="utf-8")
+    changed = leaks.collect_surfaces(tmp_path, ())
+    assert [s.surface_id for s in original] == [s.surface_id for s in changed]
+    report = leaks.scan(derived, changed, empty_allowlist(derived))
+    assert any(
+        h.source_path == "scripts/gauntlet/shared_context.py"
+        for h in report.unallowed_hits
+    )
 
 
-def test_boundaries_case_terminal_symbols_paths_and_generic_words(corpus):
-    epoch, _, _ = corpus
-    toy = simple_epoch(
-        epoch,
+def test_runtime_names_and_symbols_shared_by_different_prs_are_excluded(corpus):
+    names = leaks.runtime_identifiers()
+    assert {
+        "indexOf",
+        "TypeError",
+        "Object.prototype.hasOwnProperty",
+        "__import__",
+        "pathlib",
+    } <= names
+    derived = toy_identifiers(corpus, [("same-pr", " ".join(sorted(names)))])
+    assert not {i.token for i in derived.identifiers} & names
+    derived = toy_identifiers(
+        corpus,
+        [
+            ("pr-a", "RepeatedSynthetic SamePrSynthetic"),
+            ("pr-a", "SamePrSynthetic"),
+            ("pr-b", "RepeatedSynthetic"),
+        ],
+        frozenset({"pr-b"}),
+    )
+    assert {i.token for i in derived.identifiers} == {"SamePrSynthetic"}
+    assert len(derived.identifiers[0].bug_ids) == 2
+    assert derived.holdout_identifiers == ()
+
+
+def test_boundaries_case_subchains_paths_and_generic_words(corpus):
+    derived = toy_identifiers(
+        corpus,
         [
             (
                 "public",
-                "`sample_symbol` `AlphaWidget.valueChain` `src/sample_file.py` SSRF prose ordinary",
+                "sample_symbol AlphaWidget.valueChain src/sample_file.py SSRF prose ordinary",
             )
         ],
     )
-    derived = derive_identifiers(
-        toy, holdout_pr_urls=frozenset(), holdout_salt="1" * 64
-    )
+    allowed = empty_allowlist(derived)
+    ceiling = ceiling_for(derived, allowed)
     tokens = {i.token for i in derived.identifiers}
     assert {
         "sample_symbol",
@@ -241,27 +314,185 @@ def test_boundaries_case_terminal_symbols_paths_and_generic_words(corpus):
         "AlphaWidget",
         "src/sample_file.py",
     } <= tokens
-    assert "ordinary" not in tokens and "SSRF" not in tokens
+    assert not {"ordinary", "SSRF"} & tokens
     text = "presample_symbolSuffix SAMPLE_SYMBOL x.AlphaWidget.valueChain.tail src/sample_file.py"
-    report = scan(derived, (surface(text),), empty_allowlist(derived))
+    report = leaks._scan_with_ceiling(
+        derived, (surface(text),), allowed, ceiling=ceiling
+    )
     found = Counter(h.identifier_id for h in report.hits)
     assert digest(["identifier", "sample_symbol"]) not in found
     assert found[digest(["identifier", "valueChain"])] == 1
     assert found[digest(["literal_path", "src/sample_file.py"])] == 1
-    assert not scan(
-        derived, (surface("alphawidget.valuechain"),), empty_allowlist(derived)
+    assert not leaks._scan_with_ceiling(
+        derived, (surface("alphawidget.valuechain"),), allowed, ceiling=ceiling
     ).hits
 
 
-def test_missing_generated_path_and_wrong_producer_fail(corpus, generated, tmp_path):
+def test_exact_allowance_counts_excerpts_and_source_paths(corpus):
+    derived = toy_identifiers(corpus, [("public", "UniqueSyntheticCue")])
+    cue = surface("UniqueSyntheticCue")
+    allowed = empty_allowlist(derived)
+    hit = leaks._scan_with_ceiling(
+        derived, (cue,), allowed, ceiling=ceiling_for(derived, allowed)
+    ).hits[0]
+    allowed["entries"] = [allowance(hit)]
+    ceiling = ceiling_for(derived, allowed)
+    assert all(
+        h.allowed
+        for h in leaks._scan_with_ceiling(
+            derived, (cue,), allowed, ceiling=ceiling
+        ).hits
+    )
+    for changed in (
+        replace(cue, text=cue.text + " " + cue.text),
+        replace(cue, text="changed " + cue.text),
+        replace(cue, source_path="agents/other.md"),
+    ):
+        assert leaks._scan_with_ceiling(
+            derived, (changed,), allowed, ceiling=ceiling
+        ).unallowed_hits
+    assert leaks._scan_with_ceiling(
+        derived, (), allowed, ceiling=ceiling
+    ).stale_allowances
+
+
+def test_ceiling_accepts_lower_counts_and_removal_but_rejects_restoration(corpus):
+    derived = toy_identifiers(corpus, [("public", "UniqueSyntheticCue")])
+    cue = surface("UniqueSyntheticCue\nUniqueSyntheticCue")
+    empty = empty_allowlist(derived)
+    hit = leaks._scan_with_ceiling(
+        derived, (cue,), empty, ceiling=ceiling_for(derived, empty)
+    ).hits[0]
+    original = empty_allowlist(derived)
+    original["entries"] = [allowance(hit, 2)]
+    ceiling = ceiling_for(derived, original)
+    lower = json.loads(json.dumps(original))
+    lower["entries"][0]["expected_count"] = 1
+    assert all(
+        h.allowed
+        for h in leaks._scan_with_ceiling(
+            derived, (replace(cue, text="UniqueSyntheticCue"),), lower, ceiling=ceiling
+        ).hits
+    )
+    leaks._check_ceiling(derived, (), empty, ceiling, [lower])
+    for previous in (lower, empty):
+        with pytest.raises(ValueError, match="restored or widened"):
+            leaks._check_ceiling(derived, (cue,), original, ceiling, [previous])
+    for key, value in (
+        ("expected_count", 3),
+        ("reason", "new reason"),
+        ("source_path", "agents/other.md"),
+        ("disposition", "delete"),
+        ("identifier_id", "0" * 64),
+        ("excerpt_sha256", "1" * 64),
+    ):
+        changed = json.loads(json.dumps(original))
+        changed["entries"][0][key] = value
+        with pytest.raises(ValueError, match="widened"):
+            leaks._scan_with_ceiling(derived, (cue,), changed, ceiling=ceiling)
+
+
+def test_epoch_and_golden_changes_require_reissued_pinned_ceiling(
+    corpus, generated, monkeypatch
+):
+    _, derived, ceiling = corpus
+    allowed = empty_allowlist(derived)
+    for changed in (
+        replace(derived, epoch_id="next-epoch"),
+        replace(derived, golden_sha256="0" * 64),
+    ):
+        matching = dict(allowed, epoch_id=changed.epoch_id)
+        with pytest.raises(ValueError, match="re-issue"):
+            leaks.scan(changed, generated, matching)
+        reissued = dict(
+            ceiling, epoch_id=changed.epoch_id, golden_sha256=changed.golden_sha256
+        )
+        leaks._scan_with_ceiling(
+            changed, generated, matching, ceiling=dict(reissued, passages=[])
+        )
+    monkeypatch.setattr(leaks, "ALLOWANCE_CEILING_SHA256", "0" * 64)
+    with pytest.raises(ValueError, match="re-issue"):
+        leaks.load_ceiling()
+
+
+def test_committed_history_preserves_retirement_across_ceiling_repin(
+    corpus, monkeypatch
+):
+    _, derived, ceiling = corpus
+    removed = empty_allowlist(derived)
+    restored = read_json(DEFAULT_ROOT / "leak_allowlist.json")
+    older_ceiling = dict(ceiling, entries=[])
+    snapshots = {
+        "restore": (restored, ceiling),
+        "remove": (removed, older_ceiling),
+        "issued": (restored, ceiling),
+        "migration": (restored, dict(ceiling, schema_version=2)),
+    }
+    paths = [
+        "bench/golden/leak_allowlist.json",
+        "bench/golden/leak_allowlist_ceiling.json",
+    ]
+
+    def git(args, **kwargs):
+        if args[1] == "log":
+            return subprocess.CompletedProcess(
+                args, 0, "restore\nremove\nissued\nmigration\n"
+            )
+        revision, path = args[2].split(":", 1)
+        return subprocess.CompletedProcess(
+            args, 0, json.dumps(snapshots[revision][paths.index(path)])
+        )
+
+    monkeypatch.setattr(leaks.subprocess, "run", git)
+    history = leaks._committed_allowlists(leaks.ROOT, ceiling)
+    assert len(history) == 3
+    with pytest.raises(ValueError, match="restored"):
+        leaks._check_ceiling(derived, (), restored, ceiling, history)
+    snapshots["migration"] = (restored, ceiling)
+    with pytest.raises(ValueError, match="incomplete allowance history"):
+        leaks._committed_allowlists(leaks.ROOT, ceiling)
+
+
+def test_known_passages_require_dispositions_until_deleted(corpus, generated):
     _, derived, _ = corpus
-    report = scan(derived, generated[1:], empty_allowlist(derived))
-    assert generated[0].surface_id in report.generation_coverage
-    wrong = replace(generated[0], producer_path="workflows/src/not-present.js")
+    surfaces = leaks.collect_surfaces(leaks.ROOT, generated)
+    original = read_json(DEFAULT_ROOT / "leak_allowlist.json")
+    for index in range(len(original["passages"])):
+        removed = json.loads(json.dumps(original))
+        passage = removed["passages"].pop(index)
+        with pytest.raises(ValueError, match="known passage"):
+            leaks.scan(derived, surfaces, removed)
+        remaining = tuple(s for s in surfaces if s.surface_id != passage["surface_id"])
+        leaks.scan(derived, remaining, removed)
+
+
+def test_missing_generated_prompt_schema_bundle_and_context_fail(corpus, generated):
+    _, derived, _ = corpus
+    surfaces = leaks.collect_surfaces(leaks.ROOT, generated)
+    for removed in (
+        next(s for s in surfaces if s.surface_id.endswith("/schema")),
+        next(
+            s
+            for s in surfaces
+            if s.surface_id.startswith("generated-bundle/")
+            and s.surface_id.endswith("/prompt")
+        ),
+        next(s for s in surfaces if s.scenario == "shared-context"),
+    ):
+        report = leaks._scan_with_ceiling(
+            derived,
+            tuple(s for s in surfaces if s != removed),
+            empty_allowlist(derived),
+            ceiling=ceiling_for(derived, empty_allowlist(derived)),
+        )
+        assert removed.surface_id in report.generation_coverage
     with pytest.raises(ValueError, match="producer"):
-        collect_surfaces(ROOT, (wrong,))
+        leaks.collect_surfaces(
+            leaks.ROOT,
+            (replace(generated[0], producer_path="workflows/src/not-present.js"),),
+        )
     with pytest.raises(ValueError, match="duplicate"):
-        collect_surfaces(ROOT, (generated[0], generated[0]))
+        leaks.collect_surfaces(leaks.ROOT, (generated[0], generated[0]))
 
 
 def test_deny_list_and_symlink_confinement_never_read_denied_files(
@@ -278,7 +509,7 @@ def test_deny_list_and_symlink_confinement_never_read_denied_files(
         "skills/x/.env.md",
         "skills/x/auth.json",
         "skills/pairing/x.md",
-        "scripts/credentials.json",
+        "skills/x/credentials.json",
     ]
     for relative in blocked:
         path = root / relative
@@ -300,180 +531,126 @@ def test_deny_list_and_symlink_confinement_never_read_denied_files(
         return read(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", guarded)
-    surfaces = collect_surfaces(root, ())
-    assert {s.surface_id for s in surfaces} == {"agents/clean.md", "agents/alias.md"}
-
-
-def test_python_fstring_pieces_with_shared_source_positions_remain_distinct(
-    tmp_path, corpus, monkeypatch
-):
-    epoch, original, _ = corpus
-    source = 'prompt = f"FirstSynthetic {value} LastSynthetic"'
-    tree = ast.parse(source)
-    joined = next(node for node in ast.walk(tree) if isinstance(node, ast.JoinedStr))
-    for node in joined.values:
-        if isinstance(node, ast.Constant):
-            node.lineno, node.col_offset = joined.lineno, joined.col_offset
-    path = tmp_path / "scripts/prompt.py"
-    path.parent.mkdir()
-    path.write_text(source, encoding="utf-8")
-    with monkeypatch.context() as patch:
-        patch.setattr("bench.runner.leaks.ast.parse", lambda text: tree)
-        surfaces = collect_surfaces(tmp_path, ())
-    assert len(surfaces) == len({s.surface_id for s in surfaces}) == 2
-    derived = derive_identifiers(
-        simple_epoch(epoch, [("public", "FirstSynthetic LastSynthetic")]),
-        holdout_pr_urls=frozenset(),
-        holdout_salt=original.holdout_salt,
-    )
-    assert len(scan(derived, surfaces, empty_allowlist(derived)).unallowed_hits) == 2
-
-
-def sealed_tokens(epoch, derived):
-    ids = {i.identifier_id for i in derived.holdout_identifiers}
-    return tuple(
-        {
-            s.token
-            for b in epoch.bugs
-            for s in _spans(b.comment)
-            if digest([derived.holdout_salt, s.mode, s.token]) in ids
-        }
-    )
-
-
-def ensure_redacted(tokens, data):
-    if any(token.encode() in data for token in tokens):
-        pytest.fail("sealed text escaped redaction", pytrace=False)
-
-
-def test_all_committed_leak_files_and_changed_outputs_withhold_sealed_tokens(corpus):
-    epoch, derived, _ = corpus
-    tracked = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True
-    ).stdout.split(b"\0")
-    changed = subprocess.run(
-        ["git", "diff", "--name-only", "-z", "HEAD"],
-        cwd=ROOT,
-        capture_output=True,
-        check=True,
-    ).stdout.split(b"\0")
-    added = subprocess.run(
-        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
-        cwd=ROOT,
-        capture_output=True,
-        check=True,
-    ).stdout.split(b"\0")
-    names = {
-        p.decode()
-        for p in tracked
-        if p and any(word in p.lower() for word in (b"leak", b"receipt", b"reports/"))
+    assert {s.surface_id for s in leaks.collect_surfaces(root, ())} == {
+        "agents/clean.md",
+        "agents/alias.md",
     }
-    names.update(p.decode() for p in changed + added if p)
-    names.update(
-        {
-            "bench/golden/leak_identifiers.json",
-            "bench/golden/leak_allowlist.json",
-            "bench/runner/leaks.py",
-            "bench/tests/test_leaks.py",
-            "workflows/test/tools/emit_agent_prompts.mjs",
-        }
-    )
-    from bench.runner.leaks import _denied, _safe
-
-    files = [
-        ROOT / name
-        for name in names
-        if not _denied(Path(name))
-        and _safe(ROOT, ROOT / name)
-        and (ROOT / name).is_file()
-        and not (name.startswith("bench/golden/") and "leak_" not in name)
-    ]
-    report = ROOT.parent / "reports/stage4.md"
-    if report.is_file():
-        files.append(report)
-    try:
-        assert_no_holdout_tokens(derived, epoch, files)
-    except ValueError as error:
-        pytest.fail(str(error), pytrace=False)
 
 
-def test_plaintext_sealed_insertion_fails_with_only_hash_and_location(corpus, tmp_path):
+def test_committed_mechanism_outputs_withhold_sealed_tokens(corpus):
     epoch, derived, _ = corpus
-    tokens = sealed_tokens(epoch, derived)
-    path = tmp_path / "leak-receipt.json"
-    path.write_text(tokens[0], encoding="utf-8")
-    try:
-        assert_no_holdout_tokens(derived, epoch, [path])
-    except ValueError as error:
-        ensure_redacted(tokens, str(error).encode())
-        if str(path) not in str(error) or ":1" not in str(error):
-            pytest.fail("sealed diagnostic lost location", pytrace=False)
-    else:
-        pytest.fail("plaintext sealed insertion was accepted", pytrace=False)
+    leaks.assert_no_holdout_tokens(derived, epoch, leaks.mechanism_outputs(leaks.ROOT))
 
 
-def test_sealed_derivation_redacts_shared_chains_overlaps_and_errors(corpus):
-    epoch, original, _ = corpus
-    tokens = sealed_tokens(epoch, original)
-    token = next(t for t in tokens if "." not in t and "/" not in t)
-    toy = simple_epoch(
-        epoch, [("sealed", token), ("public", token + " `SyntheticWidget`")]
-    )
-    derived = derive_identifiers(
-        toy, holdout_pr_urls=frozenset({"sealed"}), holdout_salt=original.holdout_salt
-    )
-    ensure_redacted((token,), canonical(identifiers_wire(derived)))
-    if (
-        not derived.holdout_identifiers
-        or len(derived.holdout_identifiers[0].bug_ids) != 2
+def test_output_inventory_only_reads_mechanism_files_and_explicit_targets(
+    tmp_path, monkeypatch, corpus
+):
+    epoch, derived, _ = corpus
+    names = [
+        "bench/golden/leak_allowlist.json",
+        "bench/capture.json",
+        "workflows/src/ordinary.js",
+    ]
+    for name in names:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("synthetic output", encoding="utf-8")
+
+    def git(args, **kwargs):
+        assert args == ["git", "ls-files", "-z", "--", "**/leak_*"]
+        return subprocess.CompletedProcess(args, 0, names[0].encode() + b"\0")
+
+    monkeypatch.setattr(leaks.subprocess, "run", git)
+    files = leaks.mechanism_outputs(tmp_path, [Path(names[1])])
+    assert set(files) == {tmp_path / name for name in names[:2]}
+    leaks.assert_no_holdout_tokens(derived, epoch, files, root=tmp_path)
+    outside = tmp_path.parent / "outside.json"
+    (tmp_path / "escape.json").symlink_to(outside)
+    for target in (
+        outside,
+        tmp_path / "escape.json",
+        tmp_path / "../outside.json",
+        tmp_path / ".env",
     ):
-        pytest.fail("shared sealed token lost source ids", pytrace=False)
-    cue = surface(f"wrapper.{token}.tail SyntheticWidget")
-    report = scan(derived, (cue,), empty_allowlist(derived))
-    ensure_redacted((token,), canonical(asdict(report)))
-    if not report.hits or any(h.excerpt is not None for h in report.hits):
-        pytest.fail("overlapping public excerpt was not suppressed", pytrace=False)
-    allowed = empty_allowlist(derived)
-    allowed["entries"] = [allowance(derived, h) for h in report.hits]
-    scan(derived, (cue,), allowed)
-    entry = next(
-        row for row in allowed["entries"] if row["reason"] == "holdout_delete_only"
+        with pytest.raises(ValueError, match="unconfined"):
+            leaks.mechanism_outputs(tmp_path, [target])
+        with pytest.raises(ValueError, match="unconfined"):
+            leaks.assert_no_holdout_tokens(derived, epoch, [target], root=tmp_path)
+
+
+def test_holdout_output_check_uses_spans_and_redacts_location(corpus, tmp_path):
+    epoch, _, _ = corpus
+    sealed_chain = "SyntheticSealed.memberCase"
+    derived = toy_identifiers(corpus, [("sealed", sealed_chain)], frozenset({"sealed"}))
+    path = tmp_path / "receipt.json"
+    path.write_text("SyntheticSealedSuffix memberCaseSuffix", encoding="utf-8")
+    leaks.assert_no_holdout_tokens(derived, epoch, [path], root=tmp_path)
+    path.write_text(sealed_chain, encoding="utf-8")
+    with pytest.raises(ValueError) as captured:
+        leaks.assert_no_holdout_tokens(derived, epoch, [path], root=tmp_path)
+    ensure_redacted(
+        (sealed_chain, "SyntheticSealed", "memberCase"), str(captured.value).encode()
     )
-    entry["disposition"] = "generic_identifier"
-    try:
-        scan(derived, (cue,), allowed)
-    except ValueError as error:
-        ensure_redacted((token,), str(error).encode())
-    else:
-        pytest.fail("sealed rewrite allowance was accepted", pytrace=False)
+    assert "receipt.json:1" in str(captured.value)
 
 
-def test_corpus_omissions_staleness_order_and_source_ids(corpus):
-    epoch, derived, stored = corpus
-    assert identifiers_wire(derived) == identifiers_wire(
-        derive_identifiers(
-            replace(epoch, bugs=tuple(reversed(epoch.bugs))),
+def test_sealed_subchains_and_overlapping_public_excerpts_are_redacted(corpus):
+    sealed_chain = "SyntheticSealed.memberCase"
+    derived = toy_identifiers(
+        corpus,
+        [("sealed", sealed_chain), ("public", "SyntheticWidget")],
+        frozenset({"sealed"}),
+    )
+    empty = empty_allowlist(derived)
+    ceiling = ceiling_for(derived, empty)
+    for text in (
+        "outer." + sealed_chain + ".tailCase SyntheticWidget",
+        "memberCase SyntheticWidget",
+        "SyntheticSealed SyntheticWidget",
+    ):
+        report = leaks._scan_with_ceiling(
+            derived, (surface(text),), empty, ceiling=ceiling
+        )
+        assert any(h.holdout and h.excerpt is None for h in report.hits)
+        assert all(h.excerpt is None for h in report.hits)
+        ensure_redacted(
+            (sealed_chain, "memberCase", "SyntheticSealed"), canonical(asdict(report))
+        )
+    assert not leaks._scan_with_ceiling(
+        derived, (surface(sealed_chain.lower()),), empty, ceiling=ceiling
+    ).hits
+    report = leaks._scan_with_ceiling(
+        derived, (surface(sealed_chain),), empty, ceiling=ceiling
+    )
+    allowed = dict(empty, entries=[allowance(h) for h in report.hits])
+    allowed["entries"][0]["disposition"] = "generic_identifier"
+    with pytest.raises(ValueError, match="delete-only"):
+        leaks._scan_with_ceiling(
+            derived,
+            (surface(sealed_chain),),
+            allowed,
+            ceiling=ceiling_for(derived, allowed),
+        )
+
+
+def test_derivation_is_in_memory_deterministic_and_order_independent(corpus):
+    epoch, derived, _ = corpus
+    reversed_epoch = replace(epoch, bugs=tuple(reversed(epoch.bugs)))
+    assert leaks.identifiers_wire(derived) == leaks.identifiers_wire(
+        leaks.derive_identifiers(
+            reversed_epoch,
             holdout_pr_urls=frozenset(
                 read_json(DEFAULT_ROOT / "subsets.json")["holdout"]
             ),
             holdout_salt=derived.holdout_salt,
         )
     )
-    for key in ("identifiers", "holdout_identifiers"):
-        changed = json.loads(json.dumps(stored))
-        changed[key].pop()
-        with pytest.raises(ValueError, match="altered identifier corpus"):
-            validate_identifiers(changed, derived)
-    changed = json.loads(json.dumps(stored))
-    changed["holdout_identifiers"][0]["bug_ids"] = []
-    with pytest.raises(ValueError, match="altered identifier corpus"):
-        validate_identifiers(changed, derived)
+    assert not (DEFAULT_ROOT / "leak_identifiers.json").exists()
 
 
-def test_cli_rederives_and_scans_without_emitting_sealed_text(
+def test_cli_rederives_scans_and_confines_explicit_output(
     corpus, generated, tmp_path, capsys
 ):
-    epoch, derived, _ = corpus
     prompt_path = tmp_path / "prompts.json"
     prompt_path.write_bytes(
         canonical(
@@ -486,84 +663,20 @@ def test_cli_rederives_and_scans_without_emitting_sealed_text(
             ]
         )
     )
-    out = tmp_path / "report.json"
-    assert (
-        main(
-            [
-                "--root",
-                str(ROOT),
-                "--generated-prompts",
-                str(prompt_path),
-                "--out",
-                str(out),
-            ]
-        )
-        == 0
-    )
-    ensure_redacted(
-        sealed_tokens(epoch, derived),
-        out.read_bytes() + capsys.readouterr().out.encode(),
-    )
-    assert main(["--root", str(ROOT)]) == 2
-    derived_path = tmp_path / "identifiers.json"
-    assert main(["--root", str(ROOT), "--derive", "--out", str(derived_path)]) == 0
-    assert read_json(derived_path) == identifiers_wire(derived)
-    assert (
-        main(
-            [
-                "--root",
-                str(ROOT),
-                "--derive",
-                "--holdout-salt",
-                "0" * 64,
-                "--out",
-                str(derived_path),
-            ]
-        )
-        == 2
-    )
-
-
-def test_initial_allowlist_can_only_shrink_and_known_passages_need_dispositions(
-    corpus, generated
-):
-    _, derived, _ = corpus
-    surfaces = collect_surfaces(ROOT, generated)
-    original = read_json(DEFAULT_ROOT / "leak_allowlist.json")
-    widened = json.loads(json.dumps(original))
-    widened["entries"][0]["expected_count"] += 1
-    with pytest.raises(ValueError, match="widened"):
-        scan(derived, surfaces, widened)
-    widened = json.loads(json.dumps(original))
-    widened["entries"][0]["surface_id"] = "agents/future.md"
-    with pytest.raises(ValueError, match="widened"):
-        scan(derived, surfaces, widened)
-    removed = json.loads(json.dumps(original))
-    removed["entries"].pop()
-    assert not scan(derived, surfaces, removed).passed
-    for index in range(len(original["passages"])):
-        removed = json.loads(json.dumps(original))
-        passage = removed["passages"].pop(index)
-        with pytest.raises(ValueError, match="known passage"):
-            scan(derived, surfaces, removed)
-        # Deleting the passage permits removing its disposition at the same time.
-        remaining = tuple(s for s in surfaces if s.surface_id != passage["surface_id"])
-        scan(derived, remaining, removed)
-
-
-def test_sealed_dotted_terminal_case_and_shared_subchains(corpus):
-    epoch, original, _ = corpus
-    hidden = "SyntheticSealed.memberCase"
-    toy = simple_epoch(
-        epoch, [("sealed", hidden), ("public", "prefix." + hidden + ".tailCase")]
-    )
-    derived = derive_identifiers(
-        toy, holdout_pr_urls=frozenset({"sealed"}), holdout_salt=original.holdout_salt
-    )
-    for text in ("outer." + hidden + ".tailCase", "memberCase", "SyntheticSealed"):
-        report = scan(derived, (surface(text),), empty_allowlist(derived))
-        assert any(h.holdout and h.excerpt is None for h in report.hits)
-    assert not scan(derived, (surface(hidden.lower()),), empty_allowlist(derived)).hits
-    ensure_redacted(
-        (hidden, "memberCase", "SyntheticSealed"), canonical(identifiers_wire(derived))
-    )
+    args = [
+        "--root",
+        str(leaks.ROOT),
+        "--generated-prompts",
+        str(prompt_path),
+        "--allowlist",
+        "bench/golden/leak_allowlist.json",
+    ]
+    with tempfile.NamedTemporaryFile(
+        dir=leaks.ROOT / "bench", suffix=".json"
+    ) as output:
+        assert leaks.main([*args, "--out", output.name]) == 0
+        assert read_json(Path(output.name))["passed"]
+    assert "LEAK_GUARD: PASS" in capsys.readouterr().out
+    outside = tmp_path / "report.json"
+    assert leaks.main([*args, "--out", str(outside)]) == 2
+    assert not outside.exists()

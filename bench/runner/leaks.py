@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import argparse
-import ast
+import builtins
 import hashlib
 import json
 import re
-import secrets
 import subprocess
+import sys
+import tempfile
 from collections import Counter, defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from bench.runner.epochs import (
     GoldenEpoch,
@@ -26,10 +27,10 @@ from bench.runner.epochs import (
 
 MatchMode = Literal["identifier", "literal_path"]
 Disposition = Literal["known_cue_remove_in_wave_2a", "generic_identifier", "delete"]
-DERIVATION_VERSION = "symbol-spans-v1"
+DERIVATION_VERSION = "distinctive-symbol-spans-v2"
 ROOT = Path(__file__).resolve().parents[2]
 ALLOWANCE_CEILING_SHA256 = (
-    "86e258eb15bad23d68a0b4eeea01e71671e54f725294b632172ba9769244b898"
+    "bc69950505e63984803e47aca0ed8e6b4aa038c9c24b22293d3e1e9861f86d44"
 )
 
 
@@ -62,6 +63,7 @@ class DerivedLeakIdentifiersWire(TypedDict):
 class LeakAllowanceWire(TypedDict):
     identifier_id: str
     surface_id: str
+    source_path: str
     excerpt_sha256: str
     expected_count: int
     reason: str
@@ -72,6 +74,7 @@ class LeakAllowanceWire(TypedDict):
 class PassageWire(TypedDict):
     passage_id: str
     surface_id: str
+    source_path: str
     excerpt_sha256: str
     expected_count: int
     line_count: int
@@ -87,12 +90,26 @@ class LeakAllowlistWire(TypedDict):
     passages: list[PassageWire]
 
 
+class CeilingEntryWire(TypedDict):
+    identifier_id: str
+    source_path: str
+    excerpt_sha256: str
+    expected_count: int
+    disposition: Disposition
+    reason: str
+
+
+class CeilingPassageWire(CeilingEntryWire):
+    line_count: int
+
+
 class LeakAllowanceCeilingWire(TypedDict):
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     epoch_id: str
     golden_sha256: str
-    entry_digests: list[str]
-    passages: list[PassageWire]
+    holdout_salt: str
+    entries: list[CeilingEntryWire]
+    passages: list[CeilingPassageWire]
 
 
 class PromptSurfaceWire(TypedDict):
@@ -160,6 +177,7 @@ class DerivedLeakIdentifiers:
 class LeakAllowance:
     identifier_id: str
     surface_id: str
+    source_path: str
     excerpt_sha256: str
     expected_count: int
     reason: str
@@ -268,22 +286,70 @@ def _salt(value: str) -> None:
         raise ValueError("holdout salt must encode 32 bytes")
 
 
+@lru_cache(maxsize=1)
+def runtime_identifiers() -> frozenset[str]:
+    """Ask the runtimes, including qualified standard members, instead of curating words."""
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+const names = new Set(Object.getOwnPropertyNames(globalThis));
+for (const name of [...names]) names.add(`globalThis.${name}`);
+const standards = { Object, Array, String, Promise, Map, Set, JSON, Math };
+for (const name of Object.getOwnPropertyNames(globalThis)) {
+  const value = Object.getOwnPropertyDescriptor(globalThis, name).value;
+  if (typeof value === 'function' && (value === Error || value.prototype instanceof Error)) standards[name] = value;
+}
+for (const [name, value] of Object.entries(standards)) {
+  for (const [prefix, target] of [[name, value], [`${name}.prototype`, value.prototype]]) {
+    if (!target) continue;
+    for (const member of Object.getOwnPropertyNames(target)) {
+      names.add(member);
+      names.add(`${prefix}.${member}`);
+      names.add(`${name}.${member}`);
+      if (target === value.prototype) names.add(`prototype.${member}`);
+    }
+  }
+}
+process.stdout.write(JSON.stringify([...names].sort()));
+""",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    names = json.loads(result.stdout)
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        raise ValueError("runtime identifier enumeration failed")
+    return frozenset(names) | frozenset(dir(builtins)) | sys.stdlib_module_names
+
+
 def derive_identifiers(
     epoch: GoldenEpoch, *, holdout_pr_urls: frozenset[str], holdout_salt: str
 ) -> DerivedLeakIdentifiers:
     _salt(holdout_salt)
     if not holdout_pr_urls <= {b.pr_url for b in epoch.bugs}:
         raise ValueError("unknown sealed membership")
-    sources = defaultdict(set)
+    sources: dict[tuple[MatchMode, str], set[tuple[str, str]]] = defaultdict(set)
+    prs = defaultdict(set)
+    excluded = runtime_identifiers()
     sealed = set()
     for bug in epoch.bugs:
         for span in _spans(bug.comment):
             key = (span.mode, span.token)
+            if span.mode == "identifier" and span.token in excluded:
+                continue
+            prs[key].add(bug.pr_url)
             sources[key].add(
                 (bug.bug_id, hashlib.sha256(bug.comment.encode()).hexdigest())
             )
             if bug.pr_url in holdout_pr_urls:
                 sealed.add(key)
+    sources = {key: refs for key, refs in sources.items() if len(prs[key]) == 1}
+    sealed.intersection_update(sources)
     # A longer public chain must not serialize a sealed sub-chain as plaintext.
     hidden_text = tuple(token for _, token in sealed)
     sealed.update(
@@ -325,11 +391,6 @@ def identifiers_wire(derived: DerivedLeakIdentifiers) -> DerivedLeakIdentifiersW
         DerivedLeakIdentifiersWire,
         json.loads(canonical({"schema_version": 2, **asdict(derived)})),
     )
-
-
-def validate_identifiers(stored: object, derived: DerivedLeakIdentifiers) -> None:
-    if stored != identifiers_wire(derived):
-        raise ValueError("altered identifier corpus; rederive from the named epoch")
 
 
 def _denied(path: Path) -> bool:
@@ -397,51 +458,21 @@ def collect_surfaces(
     root = root.resolve()
     surfaces = []
     paths = [
-        root / "AGENTS.md",
-        root / ".claude-plugin/plugin.json",
-        root / "workflows/pipeline.js",
+        path
+        for path in _walk(root, root / "agents")
+        if path.parent == root / "agents"
+        and path.suffix == ".md"
+        and path.name != "AGENTS.md"
     ]
-    for directory in ("agents", "skills", "workflows", "scripts"):
-        for path in _walk(root, root / directory):
-            rel = path.relative_to(root)
-            if (
-                path.name == "AGENTS.md"
-                or (directory in {"agents", "skills"} and path.suffix == ".md")
-                or (rel.parts[:2] == ("workflows", "src") and path.suffix == ".js")
-                or (directory == "scripts" and path.suffix == ".py")
-            ):
-                paths.append(path)
+    paths.extend(path for path in _walk(root, root / "skills") if path.suffix == ".md")
     for path in sorted(set(paths)):
-        if not _safe(root, path) or not path.is_file():
-            continue
         relative = path.relative_to(root).as_posix()
-        text = path.read_text(encoding="utf-8")
-        if path.suffix == ".py":
-            try:
-                tree = ast.parse(text)
-            except SyntaxError:
-                raise ValueError("unparseable prompt producer") from None
-            positions: Counter[tuple[int, int]] = Counter()
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                    position = (node.lineno, node.col_offset)
-                    ordinal = positions[position]
-                    positions[position] += 1
-                    # Python 3.10 gives f-string pieces the same source position.
-                    suffix = f"#{ordinal}" if ordinal else ""
-                    surfaces.append(
-                        PromptSurface(
-                            f"{relative}#L{node.lineno}C{node.col_offset + 1}{suffix}",
-                            relative,
-                            relative,
-                            "python_literal",
-                            node.value,
-                            node.lineno,
-                            node.col_offset + 1,
-                        )
-                    )
-        else:
-            surfaces.append(PromptSurface(relative, relative, relative, "static", text))
+        surfaces.append(
+            PromptSurface(
+                relative, relative, relative, "static", path.read_text(encoding="utf-8")
+            )
+        )
+    surfaces.extend(_shared_context_surfaces(root))
     for surface in generated_prompts:
         if (
             not _safe(root, root / surface.producer_path)
@@ -452,6 +483,45 @@ def collect_surfaces(
     if len({s.surface_id for s in surfaces}) != len(surfaces):
         raise ValueError("duplicate prompt surface id")
     return tuple(sorted(surfaces, key=lambda s: s.surface_id))
+
+
+def _shared_context_surfaces(root: Path) -> tuple[PromptSurface, ...]:
+    producer = "scripts/gauntlet/shared_context.py"
+    entry = root / "scripts/write_shared_context.py"
+    if not entry.exists():
+        return ()
+    # Check import targets before invoking the script; symlinks cannot expand the read set.
+    if not _safe(root, entry) or any(
+        not _safe(root, path) for path in (root / "scripts/gauntlet").rglob("*.py")
+    ):
+        raise ValueError("unconfined context producer")
+    with tempfile.TemporaryDirectory(prefix="leak-context-") as directory:
+        output = Path(directory)
+        (output / "code-gauntlet-project-rules-abc1234.md").write_text(
+            "Synthetic project rules.\n", encoding="utf-8"
+        )
+        (output / "code-gauntlet-diff-abc1234.patch").write_text(
+            "Synthetic diff.\n", encoding="utf-8"
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                str(entry),
+                "--output-dir",
+                directory,
+                "--head-sha",
+                "abc1234",
+            ],
+            input=b"Synthetic risk classification and code status.\n",
+            capture_output=True,
+            check=True,
+        )
+        text = (output / "code-gauntlet-context-abc1234.md").read_text(encoding="utf-8")
+    return (
+        PromptSurface(
+            "generated/shared-context/0", producer, producer, "shared-context", text
+        ),
+    )
 
 
 @lru_cache(maxsize=1)
@@ -510,16 +580,26 @@ def _required_generation() -> dict[str, str]:
         if scenario == "derived":
             labels["assemble-artifacts"] = "persist"
         for label, producer in labels.items():
-            result[f"generated/{scenario}/{label}/0"] = f"workflows/src/{producer}.js"
+            for prefix, path in (
+                ("generated", f"workflows/src/{producer}.js"),
+                ("generated-bundle", "workflows/pipeline.js"),
+            ):
+                for kind in ("prompt", "schema"):
+                    result[f"{prefix}/{scenario}/{label}/0/{kind}"] = path
+    result["generated/shared-context/0"] = "scripts/gauntlet/shared_context.py"
     return result
 
 
 def _passage_count(
     identifiers: DerivedLeakIdentifiers,
     surface: PromptSurface | None,
-    passage: PassageWire,
+    passage: PassageWire | CeilingPassageWire,
 ) -> int:
-    lines = surface.text.split("\n") if surface else []
+    lines = (
+        surface.text.split("\n")
+        if surface and surface.source_path == passage["source_path"]
+        else []
+    )
     width = passage["line_count"]
     return sum(
         digest([identifiers.holdout_salt, "\n".join(lines[i : i + width])])
@@ -528,31 +608,134 @@ def _passage_count(
     )
 
 
+def load_ceiling(root: Path = ROOT) -> LeakAllowanceCeilingWire:
+    path = root / "bench/golden/leak_allowlist_ceiling.json"
+    if not _safe(root, path):
+        raise ValueError("unconfined allowance ceiling")
+    ceiling: LeakAllowanceCeilingWire = read_json(path)
+    if (
+        ceiling.get("schema_version") != 3
+        or digest(ceiling) != ALLOWANCE_CEILING_SHA256
+    ):
+        raise ValueError(
+            "allowance ceiling changed; re-issue and pin it in the same change"
+        )
+    _salt(ceiling["holdout_salt"])
+    return ceiling
+
+
+def _bound_key(row: Mapping[str, Any]) -> tuple[str, ...]:
+    return (
+        row.get("identifier_id", "passage:" + row.get("passage_id", "")),
+        row["excerpt_sha256"],
+        row["disposition"],
+        row["reason"],
+        row["source_path"],
+    )
+
+
+def _bounds(rows: Sequence[Mapping[str, Any]]) -> Counter[tuple[str, ...]]:
+    counts: Counter[tuple[str, ...]] = Counter()
+    for row in rows:
+        if type(row["expected_count"]) is not int or row["expected_count"] < 1:
+            raise ValueError("invalid ceiling count")
+        counts[_bound_key(row)] += row["expected_count"]
+    return counts
+
+
+def _committed_allowlists(
+    root: Path, ceiling: LeakAllowanceCeilingWire
+) -> tuple[LeakAllowlistWire, ...]:
+    """A removed or reduced committed allowance stays retired until an epoch re-issue."""
+    paths = [
+        "bench/golden/leak_allowlist.json",
+        "bench/golden/leak_allowlist_ceiling.json",
+    ]
+    history = subprocess.run(
+        ["git", "log", "--format=%H", "--", *paths],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.splitlines()
+    accepted = []
+    boundary_seen = False
+    for revision in history:
+        receipts = []
+        for path in paths:
+            result = subprocess.run(
+                ["git", "show", f"{revision}:{path}"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+            if result.returncode:
+                raise ValueError("incomplete allowance history")
+            receipts.append(json.loads(result.stdout))
+        previous, receipt = receipts
+        if receipt.get("schema_version") != 3:
+            boundary_seen = True
+            break
+        if (receipt["epoch_id"], receipt["golden_sha256"]) != (
+            ceiling["epoch_id"],
+            ceiling["golden_sha256"],
+        ):
+            boundary_seen = True
+            break
+        if receipt["holdout_salt"] != ceiling["holdout_salt"]:
+            raise ValueError("persisted sealed salt cannot change within an epoch")
+        accepted.append(previous)
+    if not boundary_seen:
+        raise ValueError(
+            "incomplete allowance history; fetch history through the ceiling re-issue"
+        )
+    return tuple(accepted)
+
+
+def _check_bounds(
+    rows: Sequence[Mapping[str, Any]],
+    ceiling_rows: Sequence[Mapping[str, Any]],
+    previous: Sequence[Sequence[Mapping[str, Any]]],
+) -> None:
+    limits = _bounds(ceiling_rows)
+    historical = [_bounds(old) for old in previous]
+    for key, count in _bounds(rows).items():
+        if count > limits[key] or any(count > old[key] for old in historical):
+            raise ValueError("allowance added, restored or widened beyond ceiling")
+
+
 def _check_ceiling(
     identifiers: DerivedLeakIdentifiers,
     surfaces: Sequence[PromptSurface],
     allowlist: LeakAllowlistWire,
+    ceiling: LeakAllowanceCeilingWire,
+    previous: Sequence[LeakAllowlistWire] = (),
 ) -> None:
-    ceiling: LeakAllowanceCeilingWire = read_json(
-        ROOT / "bench/golden/leak_allowlist_ceiling.json"
-    )
-    if digest(ceiling) != ALLOWANCE_CEILING_SHA256:
-        raise ValueError("initial allowance receipt changed")
-    if (identifiers.epoch_id, identifiers.golden_sha256) != (
+    if (identifiers.epoch_id, identifiers.golden_sha256, identifiers.holdout_salt) != (
         ceiling["epoch_id"],
         ceiling["golden_sha256"],
+        ceiling["holdout_salt"],
     ):
-        return
-    entries = allowlist["entries"] + allowlist.get("passages", [])
-    if not {digest(row) for row in entries} <= set(ceiling["entry_digests"]):
-        raise ValueError("allowance added or widened beyond initial receipt")
-    by_id = {s.surface_id: s for s in surfaces}
-    active = {digest(row) for row in allowlist.get("passages", [])}
+        raise ValueError(
+            "epoch, golden hash or salt mismatch; re-issue the allowance ceiling"
+        )
+    _check_bounds(
+        allowlist["entries"], ceiling["entries"], [old["entries"] for old in previous]
+    )
+    _check_bounds(
+        allowlist["passages"],
+        ceiling["passages"],
+        [old["passages"] for old in previous],
+    )
     for passage in ceiling["passages"]:
-        if (
-            _passage_count(identifiers, by_id.get(passage["surface_id"]), passage)
-            and digest(passage) not in active
-        ):
+        count = sum(
+            _passage_count(identifiers, surface, passage)
+            for surface in surfaces
+            if surface.source_path == passage["source_path"]
+        )
+        if count > _bounds(allowlist.get("passages", []))[_bound_key(passage)]:
             raise ValueError("known passage still requires its disposition")
 
 
@@ -561,13 +744,31 @@ def scan(
     surfaces: Sequence[PromptSurface],
     allowlist: LeakAllowlistWire,
 ) -> LeakReport:
+    ceiling = load_ceiling()
+    return _scan_with_ceiling(
+        identifiers,
+        surfaces,
+        allowlist,
+        ceiling=ceiling,
+        previous=_committed_allowlists(ROOT, ceiling),
+    )
+
+
+def _scan_with_ceiling(
+    identifiers: DerivedLeakIdentifiers,
+    surfaces: Sequence[PromptSurface],
+    allowlist: LeakAllowlistWire,
+    *,
+    ceiling: LeakAllowanceCeilingWire,
+    previous: Sequence[LeakAllowlistWire] = (),
+) -> LeakReport:
     _salt(identifiers.holdout_salt)
     if (
         allowlist.get("schema_version") != 2
         or allowlist.get("epoch_id") != identifiers.epoch_id
     ):
         raise ValueError("allowlist schema or epoch mismatch")
-    _check_ceiling(identifiers, surfaces, allowlist)
+    _check_ceiling(identifiers, surfaces, allowlist, ceiling, previous)
     hidden = {x.identifier_id: x for x in identifiers.holdout_identifiers}
     plain = {(x.match_mode, x.token): x for x in identifiers.identifiers}
     entries = {}
@@ -635,6 +836,7 @@ def scan(
             h,
             allowed=(key := (h.identifier_id, h.surface_id, h.excerpt_sha256))
             in entries
+            and entries[key].source_path == h.source_path
             and counts[key] == entries[key].expected_count,
         )
         for h in hits
@@ -684,78 +886,98 @@ def scan(
     )
 
 
+def mechanism_outputs(root: Path, explicit: Sequence[Path] = ()) -> tuple[Path, ...]:
+    root = root.resolve()
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "--", "**/leak_*"],
+        cwd=root,
+        capture_output=True,
+        check=True,
+    ).stdout.split(b"\0")
+    files = {root / name.decode() for name in tracked if name}
+    for target in explicit:
+        path = target if target.is_absolute() else root / target
+        if not _safe(root, path):
+            raise ValueError("unconfined mechanism output")
+        files.add(path)
+    return tuple(sorted(path for path in files if _safe(root, path) and path.is_file()))
+
+
 def assert_no_holdout_tokens(
-    derived: DerivedLeakIdentifiers, epoch: GoldenEpoch, files: Sequence[Path]
+    derived: DerivedLeakIdentifiers,
+    epoch: GoldenEpoch,
+    files: Sequence[Path],
+    *,
+    root: Path = ROOT,
 ) -> None:
-    """Inspect bytes without allowing assertion rendering to disclose sealed input."""
+    """Check lexical spans, with confined inputs and sealed diagnostics."""
+    root = root.resolve()
+    if any(not _safe(root, path) for path in files):
+        raise ValueError("unconfined mechanism output")
     ids = {x.identifier_id for x in derived.holdout_identifiers}
-    for bug in epoch.bugs:
-        for span in _spans(bug.comment):
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        for span in _spans(text):
             identifier_id = digest([derived.holdout_salt, span.mode, span.token])
-            if identifier_id in ids:
-                for path in files:
-                    if span.token.encode() in path.read_bytes():
-                        location = path.as_posix()
-                        if any(
-                            s.token in location
-                            for b in epoch.bugs
-                            for s in _spans(b.comment)
-                            if digest([derived.holdout_salt, s.mode, s.token]) in ids
-                        ):
-                            location = digest(location)
-                        data = path.read_bytes()
-                        line = data[: data.index(span.token.encode())].count(b"\n") + 1
-                        raise ValueError(
-                            f"sealed token {identifier_id} at {location}:{line}"
-                        )
+            if identifier_id not in ids:
+                continue
+            location = path.relative_to(root).as_posix()
+            if any(
+                digest([derived.holdout_salt, s.mode, s.token]) in ids
+                for s in _spans(location)
+            ):
+                location = digest(location)
+            line = text.count("\n", 0, span.start) + 1
+            raise ValueError(f"sealed token {identifier_id} at {location}:{line}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--epoch")
     parser.add_argument("--root", type=Path, default=ROOT)
-    parser.add_argument("--generated-prompts", type=Path)
+    parser.add_argument("--generated-prompts", type=Path, required=True)
     parser.add_argument("--allowlist", type=Path)
     parser.add_argument("--out", type=Path)
-    parser.add_argument("--derive", action="store_true")
-    parser.add_argument("--holdout-salt")
     args = parser.parse_args(argv)
     root = args.root.resolve()
     try:
-        corpus_path = root / "bench/golden/leak_identifiers.json"
-        stored = read_json(corpus_path) if corpus_path.exists() else None
-        salt = args.holdout_salt or (
-            stored["holdout_salt"] if stored else secrets.token_hex(32)
-        )
-        if stored and salt != stored["holdout_salt"]:
-            raise ValueError("persisted sealed salt cannot change")
+        ceiling = load_ceiling(root)
         epoch = load_epoch(args.epoch, root=root / "bench/golden")
         membership = frozenset(read_json(root / "bench/golden/subsets.json")["holdout"])
         derived = derive_identifiers(
-            epoch, holdout_pr_urls=membership, holdout_salt=salt
+            epoch, holdout_pr_urls=membership, holdout_salt=ceiling["holdout_salt"]
         )
-        if args.derive:
-            output = args.out or corpus_path
-            output.write_bytes(canonical(identifiers_wire(derived)) + b"\n")
-            return 0
-        validate_identifiers(stored, derived)
-        if args.generated_prompts is None:
-            raise ValueError("generated prompts are required")
         generated = load_generated(args.generated_prompts)
         surfaces = collect_surfaces(root, generated)
-        report = scan(
+        allowlist_path = args.allowlist or root / "bench/golden/leak_allowlist.json"
+        if not allowlist_path.is_absolute():
+            allowlist_path = root / allowlist_path
+        if not _safe(root, allowlist_path):
+            raise ValueError("unconfined allowlist")
+        allowlist = read_json(allowlist_path)
+        report = _scan_with_ceiling(
             derived,
             surfaces,
-            read_json(args.allowlist or root / "bench/golden/leak_allowlist.json"),
+            allowlist,
+            ceiling=ceiling,
+            previous=_committed_allowlists(root, ceiling),
         )
         if args.out:
-            args.out.write_bytes(canonical(asdict(report)) + b"\n")
+            output = args.out if args.out.is_absolute() else root / args.out
+            if not _safe(root, output):
+                raise ValueError("unconfined mechanism output")
+            output.write_bytes(canonical(asdict(report)) + b"\n")
+        assert_no_holdout_tokens(
+            derived,
+            epoch,
+            mechanism_outputs(root, [args.out] if args.out else []),
+            root=root,
+        )
         print(
             f"LEAK_GUARD: {'PASS' if report.passed else 'FAIL'}; {len(report.hits)} hits; {len(report.unallowed_hits)} unallowed; {len(report.stale_allowances)} stale; {len(report.generation_coverage)} missing prompts"
         )
         return 0 if report.passed else 1
-    except (ValueError, KeyError, TypeError, OSError):
-        # Input-controlled exception messages can contain sealed text.
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         print("LEAK_GUARD: invalid input (details redacted)")
         return 2
 
