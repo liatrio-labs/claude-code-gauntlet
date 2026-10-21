@@ -16,6 +16,33 @@ owner options.
 `profile_run.py`, which turns a recorded `code-gauntlet` workflow run (record JSON +
 subagent transcripts + orchestrator session) into a stage/critical-path/cost profile.
 
+## Golden epochs and immutable scores
+
+The active epoch is `e616e84-v1`: 173 bugs over the fixed 50 PRs, with core
+primary (158 full / 66 gate). All (173 / 73) and strict (139 / 58) are also
+reported. `dfc6cb4-v1` survives in git history; its recorded scores retain
+their original epoch and are never compared with active scores.
+New baseline, anchor, variability and diagnostic noise measurements are pending.
+Recorded measurement status is in [MEASUREMENT.md](MEASUREMENT.md).
+
+```bash
+python3 bench/run.py --score-only RUN_ID --golden-epoch e616e84-v1
+```
+
+Scoring writes a fresh UUID packet at `scores/<epoch-id>/<score-id>/`, retaining
+raw candidates, dedup groups, evaluations, exact adjudication contexts, per-bug
+observations and provenance. Profile summaries and ledger projections are derived
+when read. A complete marker protects the evaluated artifact bytes. Failed transactions remain under `.pending-*` and cannot be read as scores.
+Existing packets and legacy `scores.json` are preserved. New scores use packet paths. `latest-score.json` is a convenience pointer, never an official
+comparison selector. Explicit `(run_id, epoch_id, score_id)` identities survive
+rescoring. `bench.runner.ledger.replay_packet` recovers a completed packet after
+a failed ledger append without judging again.
+
+Historical captured reviews are descriptive rescoring inputs with unresolved
+provenance. Scoring cannot make those runs valid measurement records. Live
+attempt validity and stage capture are separate integrations.
+See [vendoring](vendor/VENDORED.md) for active inputs and historical scores.
+
 ## Quickstart
 
 ```bash
@@ -95,7 +122,6 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 | Flag | Values | Default | What it does |
 |---|---|---|---|
 | `--tier` | `smoke` \| `mini` \| `subset` \| `holdout` \| `full` | — (required for a new run unless `--prs`) | Which PR set to run. `smoke` = 3 PRs (functional smoke). `mini` = 6-PR paired cut. `subset` = 15-PR gate. `holdout` = 10-PR confirmation set (sealed for V3.2). `full` = all 50 golden PRs. |
-| `--prs` | URL list or `mini` | — | Explicit golden PR list; labels the run `custom`. The alias `mini` expands to the pre-registered 6-PR mini subset. |
 | `--runs` | int | `1` | Number of sequential runs, each getting its own run directory under `bench/workspace/runs/`. |
 | `--fidelity` | `dry-run` \| `live` | `dry-run` | Recorded in the run manifest. |
 | `--resume` | `RUN_ID` | — | Re-run only the PRs of `RUN_ID` still `pending` (skips `ok`/`invalid`/`drifted` and also `timeout`/`failed` — use `--retry-failed` for those). |
@@ -348,11 +374,38 @@ Gitignored (`bench/workspace/`, `bench/.env`):
 
 Committed:
 
-- `bench/golden/` — vendored golden PR data (50 PRs, 137 golden comments),
+- `bench/golden/` — raw upstream golden PR data (50 PRs, 173 golden comments),
   `subsets.json` (tier membership), `shas.json` (pinned head/base SHAs),
   `review_md_fixture.md`
 - `bench/vendor/` — pinned MIT-licensed scorer subset plus
   [`VENDORED.md`](vendor/VENDORED.md) (upstream commit, citation, file list)
-- `bench/baselines.json` — judge/adjudicator pins, scorer SHA, anchor table,
-  judge noise SD, `delta_noise` (read-only to any optimizing loop)
+- `bench/baselines.json` - anchor table, judge noise SD and `delta_noise`
+  (read-only to any optimizing loop). Both scoring pins live in `golden/epoch.json`.
 - `bench/experiments.jsonl` — the append-only scoring ledger
+
+Stage attribution is opt-in and evaluates only discovery versions eliminated before delivery:
+
+```bash
+python3 bench/run.py --score-only RUN_ID --golden-epoch e616e84-v1 --attribution
+```
+
+Workflow traces are separate artifacts with attempt-bound byte hashes.
+Delivered candidates retain their actual posted text and credit discovery dimensions
+through trace provenance without additional judging. Snapshots identify losses between
+discovery and delivery. Missing or unreadable traces leave attribution unavailable
+and preserve delivered recall. Collection status and its reason remain in the score packet.
+Scoring records dedup, judge and adjudicator costs from response usage with pinned prices.
+Attribution cost is separate; unknown costs remain null. See [MEASUREMENT.md](MEASUREMENT.md).
+
+Registration, scoring and look recording therefore need no intervening commit,
+including before an extension run.
+
+Attempts are immutable under `attempts/<pr-key>/<attempt-id>/`. Checkpoints select the
+latest scheduling outcome. Retrying preserves raw output, payloads, workflow records,
+model provenance, hashes and consumption from every prior attempt. Subscription
+failures require `--retry-failed RUN --measurement-window window.json
+--reset-confirmed-at ISO_TIMESTAMP`. The operator-recorded reset time must follow
+the first attempt and precede the subscription retry. Any first non-ok attempt is
+invalid and retryable. Any second non-ok for the same PR and window on API, or after
+the recorded subscription reset, is an operational failure with all bugs missed.
+Diagnostics do not have to match. Attempt records and review provenance stay immutable.

@@ -1,41 +1,36 @@
-"""Append-only experiment ledger (spec H8).
+"""Append-only score ledger with explicit legacy identity and cost semantics."""
 
-Each scored run contributes exactly one NDJSON row to
-``bench/experiments.jsonl``. The ledger is append-only: rows already written
-are never rewritten, so history is immutable and safe to read concurrently.
-
-``append_row`` validates that the row carries the required schema keys before
-touching the file, then appends a single physical line. The spec's full row
-schema has more optional fields; only the keys below are mandatory and
-enforced here — extras pass through untouched.
-
-The optional ``auth_mode`` field records which credential served a run's review
-children. It qualifies ``cost_usd``: Anthropic documents a subscription-served
-run's ``total_cost_usd`` as not relevant for billing purposes, so
-``cost_is_billable`` below is the single gate every consumer (scoring, the
-dashboard) reads before letting a row's cost into a billable figure.
-
-This module is also the canonical home of the child-auth vocabulary itself
-(``AUTH_MODES`` and friends) and of the manifest -> ``auth_mode`` chain, so the
-CLI, the env assembly, the scorer and the dashboard all read one definition.
-"""
-
+import hashlib
 import json
 import os
+from pathlib import Path
 
-# The canonical child-auth vocabulary, defined once for the whole harness: the CLI's
-# ``--child-auth`` choices, the manifest's ``child_auth``, this row's ``auth_mode``, and
-# the credential branch in ``invoke.build_env`` are all these same two strings. It lives
-# here because ``auth_mode`` is the field that outlives a run, and because this module
-# imports nothing from the package -- every consumer can depend on it without a cycle.
+from bench.runner.epochs import digest, file_hash, read_json
+from bench.runner.observations import LegacyScoreIdentity, ScoreRef, load_packet
+
+# Auth semantics must agree across invocation, scoring and reports.
 API_AUTH_MODE = "api"
 SUBSCRIPTION_AUTH_MODE = "subscription"
 AUTH_MODES = (API_AUTH_MODE, SUBSCRIPTION_AUTH_MODE)
 DEFAULT_AUTH_MODE = API_AUTH_MODE
 
-# Required keys from spec H8's ledger row schema. Missing any -> ValueError.
-# ``auth_mode`` is deliberately absent: the ledger is append-only, and every row
-# written before the field existed must stay valid forever.
+
+def review_attempt_costs(run_dir):
+    """Retain failed-attempt consumption even when a successful retry is selected."""
+    result = {}
+    for path in sorted((Path(run_dir) / "attempts").glob("*/*/attempt.json")):
+        receipt = path.parent / "artifacts/attempt-result.json"
+        if receipt.is_file():
+            attempt = read_json(path)
+            if attempt["source_artifact_hashes"].get(
+                "artifacts/attempt-result.json"
+            ) != file_hash(receipt):
+                raise ValueError("attempt cost receipt hash mismatch")
+            result[attempt["attempt_id"]] = read_json(receipt)["cost_usd"]
+    return result
+
+
+# Historical rows may omit auth mode, so absence keeps its original API semantics.
 REQUIRED_KEYS = (
     "run_id",
     "ts",
@@ -111,6 +106,23 @@ def append_row(ledger_path, row):
     if missing:
         raise ValueError(f"ledger row missing required key(s): {', '.join(missing)}")
 
+    if row.get("schema_version") == 2:
+        score_identity(row)
+        if not row.get("packet_sha256"):
+            raise ValueError("new ledger row requires complete packet hash")
+        path = Path(ledger_path)
+        if path.exists():
+            identity = score_identity(row)
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    previous = json.loads(line)
+                    if score_identity(previous) == identity:
+                        if previous != row:
+                            raise ValueError(
+                                "conflicting row for immutable score identity"
+                            )
+                        return
+
     line = json.dumps(row, ensure_ascii=False)
 
     parent = os.path.dirname(ledger_path)
@@ -119,3 +131,80 @@ def append_row(ledger_path, row):
 
     with open(ledger_path, "a", encoding="utf-8") as fh:
         fh.write(line + "\n")
+
+
+def score_identity(row) -> ScoreRef | LegacyScoreIdentity:
+    if row.get("schema_version", 1) == 2:
+        required = (
+            "score_id",
+            "epoch_id",
+            "golden_sha256",
+            "profile",
+            "denominator",
+            "evaluator_id",
+            "validity_state",
+            "population_sha256",
+            "packet_path",
+        )
+        if any(key not in row or row[key] is None for key in required):
+            raise ValueError("incomplete versioned score identity")
+        return ScoreRef(row["run_id"], row["epoch_id"], row["score_id"])
+    sha = row.get("scorer_sha")
+    known = bool(
+        sha
+        and len(sha) >= 7
+        and "dfc6cb427b5d0d7492a8d875ee9447744b7de3d1".startswith(sha)
+    )
+    return LegacyScoreIdentity(
+        row.get("run_id", "unknown"),
+        sha,
+        "dfc6cb4-v1" if known else None,
+        "all",
+        row.get("source_line_sha256") or digest(row),
+        "known_old" if known else "legacy_unknown",
+    )
+
+
+def read_rows(path):
+    rows = []
+    with Path(path).open("rb") as stream:
+        for line in stream:
+            if line.strip():
+                row = json.loads(line)
+                if row.get("schema_version", 1) == 1:
+                    row["source_line_sha256"] = hashlib.sha256(line).hexdigest()
+                rows.append(row)
+    return rows
+
+
+def replay_packet(ledger_path, packet_path):
+    """Recover an append failure using an already committed score, with no judging."""
+    packet_path = Path(packet_path)
+    packet = load_packet(packet_path).projection()
+    row = {
+        **packet["ledger_row"],
+        "packet_path": str(packet_path.resolve()),
+        "packet_sha256": file_hash(packet_path / "complete.json"),
+    }
+    append_row(str(ledger_path), row)
+    return row
+
+
+def spend_totals(rows):
+    amounts = {"review": {}, "scoring": {}, "attribution": {}}
+    for row in rows:
+        identity = (row["run_id"], row.get("epoch_id"), row.get("score_id"))
+        attempts = row.get("review_attempt_costs") or {"unknown": None}
+        for aid, amount in attempts.items():
+            amounts["review"][(row["run_id"], aid)] = (
+                amount if cost_is_billable(row) else 0
+            )
+        for field in ("dedup", "judge", "adjudicator", "attribution"):
+            group = "attribution" if field == "attribution" else "scoring"
+            amounts[group][(identity, field)] = row.get(field + "_cost_usd")
+    return {
+        group + "_cost_usd": sum(values.values())
+        if all(v is not None for v in values.values())
+        else None
+        for group, values in amounts.items()
+    }

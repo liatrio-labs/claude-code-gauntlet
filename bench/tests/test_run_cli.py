@@ -1938,17 +1938,6 @@ class CliGuardTest(RunTestBase):
         self.assertEqual(rc, 2)
         self.assertIn("No run dir", stderr.getvalue())
 
-    def test_score_only_invokes_score_run(self):
-        run_id = "smoke-20260101-000000-abc1234"
-        (run.RUNS_ROOT / run_id).mkdir(parents=True, exist_ok=True)
-        with patch("bench.runner.score.score_run", return_value={"ok": True}) as scored:
-            stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
-                rc = run.main(["--score-only", run_id])
-        self.assertEqual(rc, 0)
-        scored.assert_called_once_with(str(run.RUNS_ROOT / run_id))
-        self.assertIn("Scored", stdout.getvalue())
-
     def test_score_only_refusal_is_actionable(self):
         run_id = "smoke-20260101-000000-abc1235"
         (run.RUNS_ROOT / run_id).mkdir(parents=True, exist_ok=True)
@@ -2332,3 +2321,39 @@ class CheckWatchLineTest(RunTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_score_only_forwards_explicit_epoch_and_prints_score_identity(
+    tmp_path, monkeypatch, capsys
+):
+    from bench.runner import score
+
+    monkeypatch.setattr(run, "RUNS_ROOT", tmp_path)
+    (tmp_path / "r").mkdir()
+    calls = []
+
+    def fake(path, **kwargs):
+        calls.append((path, kwargs))
+        return {
+            "score_ref": {
+                "run_id": "r",
+                "epoch_id": kwargs["epoch_id"],
+                "score_id": "a" * 32,
+            }
+        }
+
+    monkeypatch.setattr(score, "score_run", fake)
+    assert run.main(["--score-only", "r", "--golden-epoch", "dfc6cb4-v1"]) == 0
+    assert calls == [
+        (
+            str(tmp_path / "r"),
+            {
+                "epoch_id": "dfc6cb4-v1",
+            },
+        )
+    ]
+    assert "dfc6cb4-v1" in capsys.readouterr().out
+    assert run.main(["--score-only", "r"]) == 0
+    assert calls[-1][1] == {
+        "epoch_id": None,
+    }

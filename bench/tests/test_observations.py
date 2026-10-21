@@ -1,0 +1,136 @@
+"""Scoring refuses corrupt verdicts and publishes only complete evidence."""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from bench.runner import ledger, observations, score
+from bench.runner.epochs import file_hash, read_json
+
+
+def packet_path(packet):
+    return Path(packet["ledger_row"]["packet_path"])
+
+
+def test_score_packet_buckets_costs_and_replay_are_derived_once(score_case):
+    packet = score_case.execute()
+    path = packet_path(packet)
+    loaded = observations.load_packet(path)
+    stored = read_json(path / "scores.json")
+    assert (
+        "metrics" not in stored
+        and "profiles" not in stored
+        and not (path / "manifest.json").exists()
+    )
+    assert stored["costs"] == {
+        "dedup": None,
+        "judge": None,
+        "adjudicator": None,
+        "attribution": None,
+    }
+    assert len(loaded.observations) == packet["profiles"]["all"]["denominator"]
+    assert packet["metrics"]["per_bucket"] == {
+        "golden_matched": 2,
+        "valid_extra": 0,
+        "noise": 1,
+    }
+    assert {m.kind for b in loaded.observations for m in b.matches} == {
+        "direct",
+        "dedup_sibling",
+    }
+    assert len(loaded.adjudications) == 1
+    ledger.replay_packet(score_case.ledger, path)
+    assert len(score_case.ledger.read_text(encoding="utf-8").splitlines()) == 1
+    previous = file_hash(path / "scores.json")
+    other = score_case.execute()
+    assert (
+        other["score_ref"] != packet["score_ref"]
+        and file_hash(path / "scores.json") == previous
+    )
+    with pytest.raises(FileExistsError):
+        score_case.execute(score_id=packet["score_ref"]["score_id"])
+
+
+@pytest.mark.parametrize(
+    "mutation", ["coverage", "match", "error", "dedup", "candidate", "no_evaluation"]
+)
+def test_invalid_scorer_output_cannot_become_a_packet(
+    score_case, monkeypatch, mutation
+):
+    original = type(score_case).scorer
+
+    def corrupt(self, pin, key, model):
+        original(self, pin, key, model)
+        ev = read_json(model / "evaluations.json")
+        record = ev[self.url]["deep-review"]
+        if mutation == "coverage":
+            record["false_negatives"] = []
+        elif mutation == "match":
+            record["true_positives"][0]["matched_candidate"] = "absent"
+        elif mutation == "error":
+            record["errors"] = ["unavailable"]
+        elif mutation == "dedup":
+            (model / "dedup_groups.json").write_text(
+                json.dumps({self.url: {"deep-review": [[0, 1], [1]]}}), encoding="utf-8"
+            )
+        elif mutation == "candidate":
+            (model / "candidates.json").write_text("{}", encoding="utf-8")
+        else:
+            ev.clear()
+        score._write_json(model / "evaluations.json", ev)
+
+    monkeypatch.setattr(type(score_case), "scorer", corrupt)
+    with pytest.raises(ValueError):
+        score_case.execute()
+    assert not score_case.ledger.exists()
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["outcome", "matches", "adjudication", "context", "source", "hash", "evaluator"],
+)
+def test_reader_rechecks_joins_beyond_byte_hashes(score_case, field):
+    path = packet_path(score_case.execute())
+    data = read_json(path / "scores.json")
+    if field == "evaluator":
+        data["manifest"]["evaluator"]["judge_pin"] = "forged"
+    elif field == "outcome":
+        data["observations"][0]["outcome"] = "missed"
+    elif field == "matches":
+        data["observations"][0]["matches"] = []
+    elif field == "adjudication":
+        data["adjudications"] = []
+    elif field == "context":
+        data["contexts"][0]["hunk"] = "forged bytes"
+    elif field == "source":
+        data["candidates"][0]["source_trace_ids"] = ["made-up"]
+    score._write_json(path / "scores.json", data)
+    if field != "hash":
+        complete = read_json(path / "complete.json")
+        complete["files"]["scores.json"] = file_hash(path / "scores.json")
+        score._write_json(path / "complete.json", complete)
+    with pytest.raises(ValueError):
+        observations.load_packet(path)
+
+
+@pytest.mark.parametrize("failure", ["scorer", "adjudicator", "publish"])
+def test_interrupted_score_is_pending_and_not_ledgered(
+    score_case, monkeypatch, failure
+):
+    def fail(*args, **kwargs):
+        raise RuntimeError("interrupted")
+
+    if failure == "publish":
+        monkeypatch.setattr(observations, "publish_packet", fail)
+    elif failure == "scorer":
+        monkeypatch.setattr(type(score_case), "scorer", fail)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        score_case.execute(
+            **({"adjudicator": fail} if failure == "adjudicator" else {})
+        )
+    assert not score_case.ledger.exists()
+    assert all(
+        p.name.startswith(".pending-")
+        for p in (score_case.run / "scores/e616e84-v1").iterdir()
+    )
