@@ -2,6 +2,43 @@
 
 <!-- version list -->
 
+## v3.47.1 (2026-10-21)
+
+### Bug Fixes
+
+- **skills**: Delivery guidance is read before every delivery, and every cross-reference names a
+  real section ([#544](https://github.com/liatrio-labs/claude-code-gauntlet/pull/544),
+  [`98ba611`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/98ba611205a8080295ea96d4e490c9066d7fdb6c))
+
+- **skills**: Every run except headless chat delivery prints its completion summary
+  ([#544](https://github.com/liatrio-labs/claude-code-gauntlet/pull/544),
+  [`98ba611`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/98ba611205a8080295ea96d4e490c9066d7fdb6c))
+
+- **skills**: Keep the measured code-gauntlet description until a rewrite passes the trigger evals
+  ([#544](https://github.com/liatrio-labs/claude-code-gauntlet/pull/544),
+  [`98ba611`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/98ba611205a8080295ea96d4e490c9066d7fdb6c))
+
+- **skills**: Trigger evals grade activation mechanically, and the concise description stays
+  ([#544](https://github.com/liatrio-labs/claude-code-gauntlet/pull/544),
+  [`98ba611`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/98ba611205a8080295ea96d4e490c9066d7fdb6c))
+
+### Documentation
+
+- **skills**: Review fixes for pointers, the model-policy owner and history wording
+  ([#544](https://github.com/liatrio-labs/claude-code-gauntlet/pull/544),
+  [`98ba611`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/98ba611205a8080295ea96d4e490c9066d7fdb6c))
+
+### Refactoring
+
+- **skills**: Code-gauntlet skill as a router with phase references (#46 Wave 1)
+  ([#544](https://github.com/liatrio-labs/claude-code-gauntlet/pull/544),
+  [`98ba611`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/98ba611205a8080295ea96d4e490c9066d7fdb6c))
+
+- **skills**: The code-gauntlet skill becomes a router, with phase detail read when its phase runs
+  ([#544](https://github.com/liatrio-labs/claude-code-gauntlet/pull/544),
+  [`98ba611`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/98ba611205a8080295ea96d4e490c9066d7fdb6c))
+
+
 ## v3.47.0 (2026-10-21)
 
 ### Bug Fixes
