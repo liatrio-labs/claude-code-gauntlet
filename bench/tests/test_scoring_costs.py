@@ -4,6 +4,9 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 
+import pytest
+
+from bench.adjudicator.adjudicate import adjudicate
 from bench.runner.scoring_costs import recording_proxy, total_cost
 
 REPLY = {
@@ -11,6 +14,62 @@ REPLY = {
     "choices": [{"message": {"content": "{}"}}],
     "usage": {"prompt_tokens": 1000, "completion_tokens": 100},
 }
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        None,
+        {},
+        {"prompt_tokens": None, "completion_tokens": 1},
+        {"prompt_tokens": "100", "completion_tokens": 1},
+        {"prompt_tokens": True, "completion_tokens": 1},
+        {"prompt_tokens": -1, "completion_tokens": 1},
+        {"prompt_tokens": 10, "completion_tokens": None},
+        {"prompt_tokens": 10, "completion_tokens": 1, "prompt_tokens_details": None},
+        {"prompt_tokens": 10, "completion_tokens": 1, "prompt_tokens_details": []},
+        {"prompt_tokens": 10, "completion_tokens": 1, "prompt_tokens_details": "bad"},
+        {
+            "prompt_tokens": 10,
+            "completion_tokens": 1,
+            "prompt_tokens_details": {"cached_tokens": None},
+        },
+        {
+            "prompt_tokens": 10,
+            "completion_tokens": 1,
+            "prompt_tokens_details": {"cached_tokens": "2"},
+        },
+        {
+            "prompt_tokens": 10,
+            "completion_tokens": 1,
+            "prompt_tokens_details": {"cached_tokens": -1},
+        },
+        {
+            "prompt_tokens": 10,
+            "completion_tokens": 1,
+            "prompt_tokens_details": {"cached_tokens": 11},
+        },
+        {"input_tokens": None, "output_tokens": 1},
+        {"input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": "2"},
+    ],
+)
+def test_adjudication_keeps_verdict_with_unknown_cost_for_malformed_usage(usage):
+    reply = {
+        **REPLY,
+        "usage": usage,
+        "choices": [{"message": {"content": '{"bucket":"noise","reason":"checked"}'}}],
+    }
+    result = adjudicate(
+        "claim",
+        "hunk",
+        "context",
+        REPLY["model"],
+        "synthetic",
+        transport=lambda *args: reply,
+    )
+    assert result["bucket"] == "noise" and result["reason"] == "checked"
+    assert result["cost_usd"] is None
+    assert result["usage"] == [{"model": REPLY["model"], "usage": None}]
 
 
 class Upstream(BaseHTTPRequestHandler):

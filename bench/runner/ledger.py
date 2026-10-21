@@ -5,29 +5,16 @@ import json
 import os
 from pathlib import Path
 
-from bench.runner.epochs import digest, file_hash, read_json
-from bench.runner.observations import LegacyScoreIdentity, ScoreRef, load_packet
+from bench.runner.contracts import LedgerRow, ScoreRef
+from bench.runner.decode import decode
+from bench.runner.epochs import digest, file_hash
+from bench.runner.observations import LegacyScoreIdentity, load_packet
 
 # Auth semantics must agree across invocation, scoring and reports.
 API_AUTH_MODE = "api"
 SUBSCRIPTION_AUTH_MODE = "subscription"
 AUTH_MODES = (API_AUTH_MODE, SUBSCRIPTION_AUTH_MODE)
 DEFAULT_AUTH_MODE = API_AUTH_MODE
-
-
-def review_attempt_costs(run_dir):
-    """Retain failed-attempt consumption even when a successful retry is selected."""
-    result = {}
-    for path in sorted((Path(run_dir) / "attempts").glob("*/*/attempt.json")):
-        receipt = path.parent / "artifacts/attempt-result.json"
-        if receipt.is_file():
-            attempt = read_json(path)
-            if attempt["source_artifact_hashes"].get(
-                "artifacts/attempt-result.json"
-            ) != file_hash(receipt):
-                raise ValueError("attempt cost receipt hash mismatch")
-            result[attempt["attempt_id"]] = read_json(receipt)["cost_usd"]
-    return result
 
 
 # Historical rows may omit auth mode, so absence keeps its original API semantics.
@@ -102,10 +89,6 @@ def append_row(ledger_path, row):
     ledger. The file is opened in append mode only — existing lines are never
     rewritten.
     """
-    missing = [key for key in REQUIRED_KEYS if key not in row]
-    if missing:
-        raise ValueError(f"ledger row missing required key(s): {', '.join(missing)}")
-
     if row.get("schema_version") == 2:
         score_identity(row)
         if not row.get("packet_sha256"):
@@ -123,6 +106,13 @@ def append_row(ledger_path, row):
                             )
                         return
 
+    else:
+        missing = [key for key in REQUIRED_KEYS if key not in row]
+        if missing:
+            raise ValueError(
+                f"ledger row missing required key(s): {', '.join(missing)}"
+            )
+
     line = json.dumps(row, ensure_ascii=False)
 
     parent = os.path.dirname(ledger_path)
@@ -135,19 +125,7 @@ def append_row(ledger_path, row):
 
 def score_identity(row) -> ScoreRef | LegacyScoreIdentity:
     if row.get("schema_version", 1) == 2:
-        required = (
-            "score_id",
-            "epoch_id",
-            "golden_sha256",
-            "profile",
-            "denominator",
-            "evaluator_id",
-            "validity_state",
-            "population_sha256",
-            "packet_path",
-        )
-        if any(key not in row or row[key] is None for key in required):
-            raise ValueError("incomplete versioned score identity")
+        decode(LedgerRow, row)
         return ScoreRef(row["run_id"], row["epoch_id"], row["score_id"])
     sha = row.get("scorer_sha")
     known = bool(
@@ -188,23 +166,3 @@ def replay_packet(ledger_path, packet_path):
     }
     append_row(str(ledger_path), row)
     return row
-
-
-def spend_totals(rows):
-    amounts = {"review": {}, "scoring": {}, "attribution": {}}
-    for row in rows:
-        identity = (row["run_id"], row.get("epoch_id"), row.get("score_id"))
-        attempts = row.get("review_attempt_costs") or {"unknown": None}
-        for aid, amount in attempts.items():
-            amounts["review"][(row["run_id"], aid)] = (
-                amount if cost_is_billable(row) else 0
-            )
-        for field in ("dedup", "judge", "adjudicator", "attribution"):
-            group = "attribution" if field == "attribution" else "scoring"
-            amounts[group][(identity, field)] = row.get(field + "_cost_usd")
-    return {
-        group + "_cost_usd": sum(values.values())
-        if all(v is not None for v in values.values())
-        else None
-        for group, values in amounts.items()
-    }

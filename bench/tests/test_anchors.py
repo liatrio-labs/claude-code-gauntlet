@@ -7,7 +7,24 @@ from pathlib import Path
 import pytest
 
 from bench.runner import anchors
-from bench.runner.epochs import load_epoch
+from bench.runner.epochs import load_epoch, read_json
+
+
+def test_committed_anchor_matrix_has_complete_unique_candidates():
+    epoch = load_epoch()
+    candidates = read_json(anchors.ANCHORS_CANDIDATES)
+    frozen_subset = read_json(anchors.BENCH_DIR / "golden/benchmark_data.min.json")
+    assert set(candidates) <= set(frozen_subset)
+    assert set(epoch.subsets["gate"]) <= set(candidates)
+    for tools in candidates.values():
+        assert set(tools) == set(anchors.ANCHOR_TOOLS)
+        for entries in tools.values():
+            assert isinstance(entries, list)
+            assert all(
+                isinstance(c["text"], str) and isinstance(c["source"], str)
+                for c in entries
+            )
+            assert len({c["text"] for c in entries}) == len(entries)
 
 
 def test_anchors_use_active_profiles_context_and_cache(

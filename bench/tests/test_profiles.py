@@ -4,7 +4,8 @@ from dataclasses import replace
 
 import pytest
 
-from bench.runner.observations import BugObservation, ScoreRef
+from bench.runner.contracts import ScoreRef
+from bench.runner.observations import BugObservation
 from bench.runner.profiles import profile_metrics
 
 

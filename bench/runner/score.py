@@ -14,21 +14,27 @@ from bench.adjudicator.adjudicate import adjudicate as _adjudicate
 from bench.adjudicator.adjudicate import file_context, slice_hunk
 from bench.runner import contracts as io
 from bench.runner import observations, provenance, scorer, stages
-from bench.runner.contracts import _is_superseded
+from bench.runner.contracts import (
+    ScoreRef,
+    _is_superseded,
+    artifact_allowed,
+    copy_exclusive,
+    exclusive_json,
+)
 from bench.runner.costs import parse_costs
 from bench.runner.epochs import (
     DEFAULT_ROOT,
     digest,
     file_hash,
+    in_profile,
     load_epoch,
     read_json,
 )
-from bench.runner.ledger import manifest_auth_mode, replay_packet, review_attempt_costs
+from bench.runner.ledger import manifest_auth_mode, replay_packet
 from bench.runner.observations import (
     Adjudication,
     AdjudicationContext,
     Evaluator,
-    ScoreRef,
     ScoreRequest,
 )
 from bench.runner.scoring_costs import read_costs, total_cost
@@ -196,7 +202,7 @@ def _head_file_lines(pr_info, path):
         return []
     base = Path(pr_dir) / "worktree"
     candidate = base / path
-    if not observations.artifact_allowed(Path(path)):
+    if not artifact_allowed(Path(path)):
         return []
     if not candidate.resolve().is_relative_to(base.resolve()):
         return []
@@ -314,9 +320,7 @@ def _read_run_costs(run_dir, *, pr_dirs=None):
     }
 
 
-def _build_ledger_row(
-    run_dir, metrics, costs, manifest, pin, adjudicator_pin, scorer_sha
-):
+def _build_ledger_row(run_dir, costs, manifest, pin, adjudicator_pin, scorer_sha):
     run_id = manifest.get("run_id") or Path(run_dir).name
     tier = manifest.get("tier") or _infer_tier(run_id)
     envelope = {
@@ -380,7 +384,7 @@ def evaluator_for(epoch, pin, adjudicator_pin):
         ),
         "temperature": 0.0,
     }
-    return Evaluator(evaluator_id=digest(fields), **fields)
+    return Evaluator(**fields)
 
 
 def _candidate_context(info, candidate):
@@ -411,12 +415,8 @@ def _capture_adjudications(
         if c.candidate_id in matched:
             continue
         hunk, ctx, status, truncated = context_builder(per_pr[c.pr_url], asdict(c))
-        context_hash = digest([hunk, ctx, status, truncated])
-        contexts.append(
-            AdjudicationContext(
-                c.candidate_id, hunk, ctx, status, truncated, context_hash
-            )
-        )
+        context = AdjudicationContext(c.candidate_id, hunk, ctx, status, truncated)
+        contexts.append(context)
         verdict = adjudicator(c.text, hunk, ctx, pin, api_key)
         if verdict.get("bucket") not in ("valid_extra", "noise") or verdict.get(
             "error"
@@ -430,12 +430,10 @@ def _capture_adjudications(
                 verdict["bucket"],
                 verdict.get("reason"),
                 request.evaluator.evaluator_id,
-                context_hash,
+                context.context_sha256,
             )
         )
-    observations.exclusive_json(
-        request.work_dir / (request.tool + "-adjudicator-usage.json"), usage
-    )
+    exclusive_json(request.work_dir / (request.tool + "-adjudicator-usage.json"), usage)
     return tuple(verdicts), tuple(contexts), total_cost(usage)
 
 
@@ -448,7 +446,6 @@ def score_run(
     *,
     epoch_id=None,
     score_id=None,
-    attempt_selection=None,
     attribution=False,
 ):
     """Execute a fresh score; failures retain a pending diagnostic packet."""
@@ -471,83 +468,17 @@ def score_run(
     if len(requested) != len(urls) or set(requested) != set(urls):
         raise ValueError("requested PR matrix is incomplete")
 
-    selected = {}
-    selected_records = {}
-    checkpoint_attempts = {
-        state["url"]: state.get("detail", {}).get("attempt_id")
-        for path in (run_dir / "state").glob("*.json")
-        if (state := read_json(path)).get("detail", {}).get("attempt_id")
-    }
-    failures = set()
-    if checkpoint_attempts:
-        if (
-            attempt_selection is None
-            or set(attempt_selection) != set(urls)
-            or set(checkpoint_attempts) != set(urls)
-        ):
-            raise ValueError("attempt selection must cover the requested PR matrix")
-        records = []
-        for url in urls:
-            aid = checkpoint_attempts[url]
-            if not isinstance(aid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", aid):
-                raise ValueError("invalid selected attempt identity")
-            paths = list((run_dir / "attempts").glob(f"*/{aid}/attempt.json"))
-            if len(paths) != 1 or not paths[0].resolve().is_relative_to(run_dir):
-                raise ValueError("selected attempt is missing or ambiguous")
-            path = paths[0]
-            record = attempt_selection[url]
-            if (
-                record.attempt_id != aid
-                or record.pr_url != url
-                or record.run_id != (manifest.get("run_id") or run_dir.name)
-            ):
-                raise ValueError("selected attempt identity mismatch")
-            value = record.validity
-            if value.state == "operational_failure":
-                if not record.validity.retry_of:
-                    raise ValueError("unconfirmed operational failure")
-                failures.add(url)
-            elif record.checkpoint_status != "ok" or value.state == "invalid":
-                raise ValueError("selected attempt is invalid; retry before scoring")
-            artifacts = path.parent / "artifacts"
-            payloads = list(artifacts.rglob("post-review-payload.json"))
-            if url not in failures and len(payloads) != 1:
-                raise ValueError("missing or ambiguous payload in selected attempt")
-            selected[url] = path
-            selected_records[url] = record
-            records.append(
-                (
-                    url,
-                    "failed" if url in failures else "ok",
-                    str(payloads[0]) if payloads else None,
-                )
+    for _url, status, _hint in records:
+        if status != "ok":
+            raise RuntimeError(
+                "no scorable PRs: unresolved/invalid PR; re-run or --retry-failed"
             )
-    else:
-        for _url, status, _hint in records:
-            if status != "ok":
-                raise RuntimeError(
-                    "no scorable PRs: unresolved/invalid PR; re-run or --retry-failed"
-                )
     candidates, per_pr = _assemble_candidates(run_dir, records)
-    for url in failures:
-        candidates[url] = {TOOL: []}
-        per_pr[url] = {
-            "candidates": [],
-            "pr_dir": str(selected[url].parent / "artifacts")
-            if url in selected
-            else str(_resolve_pr_dir(run_dir, url)),
-        }
     traces, trace_errors, collection = {}, {}, {}
     for url, info in per_pr.items():
         collection[url] = stages.TraceCollection(
             "unavailable", "collection not recorded"
         )
-        if url in failures:
-            collection[url] = stages.TraceCollection(
-                "unavailable", "operational failure"
-            )
-            trace_errors[url] = "operational failure"
-            continue
         try:
             pr_dir = Path(info["pr_dir"])
             for name in ("measurement-collection.json", "measurement-unavailable.json"):
@@ -591,13 +522,6 @@ def score_run(
             trace_errors[url] = str(exc)
     source_hashes = {}
     sources = [run_dir / "run.json", *sorted((run_dir / "state").glob("*.json"))]
-    sources.extend(selected.values())
-    confirmation_paths = {
-        url: run_dir / "failure-confirmations" / (record.attempt_id + ".json")
-        for url, record in selected_records.items()
-        if (run_dir / "failure-confirmations" / (record.attempt_id + ".json")).is_file()
-    }
-    sources.extend(confirmation_paths.values())
     for info in per_pr.values():
         pr_dir = Path(info["pr_dir"])
         sources += [
@@ -623,9 +547,9 @@ def score_run(
         for c in info["candidates"]:
             if c.get("path"):
                 head = pr_dir / "worktree" / c["path"]
-                if observations.artifact_allowed(
-                    Path(c["path"])
-                ) and head.resolve().is_relative_to((pr_dir / "worktree").resolve()):
+                if artifact_allowed(Path(c["path"])) and head.resolve().is_relative_to(
+                    (pr_dir / "worktree").resolve()
+                ):
                     sources.append(head)
     for source in sources:
         if not source.resolve().is_relative_to(run_dir):
@@ -654,8 +578,6 @@ def score_run(
         )
         for url in urls
     }
-    if checkpoint_attempts:
-        attempts = checkpoint_attempts
     sid, pending = observations.begin_packet(run_dir, epoch, score_id)
     ref = ScoreRef(manifest.get("run_id") or run_dir.name, epoch.epoch_id, sid)
     evaluator = evaluator_for(epoch, pin, adjudicator_pin)
@@ -729,7 +651,7 @@ def score_run(
     for name in source_hashes:
         dest = pending / "sources" / name
         dest.parent.mkdir(parents=True, exist_ok=True)
-        observations.copy_exclusive(run_dir / name, dest)
+        copy_exclusive(run_dir / name, dest)
         if file_hash(dest) != source_hashes[name]:
             raise ValueError("input changed during score snapshot")
     for info in per_pr.values():
@@ -750,7 +672,7 @@ def score_run(
     else:
         run_scorer(pin, api_key, model_dir)
     for name in ("candidates.json", "dedup_groups.json", "evaluations.json"):
-        observations.copy_exclusive(model_dir / name, pending / name)
+        copy_exclusive(model_dir / name, pending / name)
     evaluations = read_json(pending / "evaluations.json")
     groups = observations.dedup_groups(
         read_json(pending / "dedup_groups.json"), candidate_map
@@ -760,9 +682,7 @@ def score_run(
         replace(c, dedup_group_id=group_ids[c.candidate_id]) for c in candidate_map
     )
     request = replace(request, candidates=candidate_map)
-    bugs = observations.build_observations(
-        request, evaluations, groups, failures=frozenset(failures)
-    )
+    bugs = observations.build_observations(request, evaluations, groups)
     matched = observations.bucket_candidate_ids(bugs)
     adjudications, contexts, adjudicator_cost = _capture_adjudications(
         request, matched, per_pr, api_key, adjudicator or _adjudicate
@@ -811,7 +731,7 @@ def score_run(
         if row.stage == "deliver" and row.loss is not None
     }
     bugs = tuple(
-        replace(b, loss=asdict(terminal_losses[b.pr_url, b.bug_id]))
+        replace(b, loss=terminal_losses[b.pr_url, b.bug_id])
         if (b.pr_url, b.bug_id) in terminal_losses
         else b
         for b in bugs
@@ -820,7 +740,7 @@ def score_run(
         run_dir, pr_dirs=[Path(info["pr_dir"]) for info in per_pr.values()]
     )
     row = _build_ledger_row(
-        run_dir, {}, costs, manifest, pin, adjudicator_pin, epoch.upstream_sha
+        run_dir, costs, manifest, pin, adjudicator_pin, epoch.upstream_sha
     )
     packet_dir = pending.parent / sid
     row.update(
@@ -830,15 +750,15 @@ def score_run(
         golden_sha256=epoch.golden_sha256,
         profile=epoch.primary_profile,
         evaluator_id=evaluator.evaluator_id,
-        validity_state=("operational_failure" if failures else "valid")
-        if selected_records
-        and manifest.get("provenance", {}).get("status") != "non_record"
-        else "historical_descriptive",
+        denominator=sum(
+            b.pr_url in urls and in_profile(b.category, epoch.primary_profile)
+            for b in epoch.bugs
+        ),
+        validity_state="historical_descriptive",
         population_sha256=digest(urls),
         packet_path=str(packet_dir),
         selected_attempts=attempts,
-        review_attempt_costs=review_attempt_costs(run_dir)
-        or {
+        review_attempt_costs={
             attempts[url]: _read_pr_costs(Path(info["pr_dir"]))["cost_usd"]
             for url, info in per_pr.items()
         },
@@ -858,7 +778,7 @@ def score_run(
         selected_attempts=attempts,
         source_artifact_hashes=source_hashes,
     )
-    observations.exclusive_json(
+    exclusive_json(
         pending / "stage_trace_bindings.json",
         {
             url: {
@@ -870,14 +790,8 @@ def score_run(
             for url, (path, trace) in traces.items()
         },
     )
-    observations.exclusive_json(pending / "run-provenance.json", manifest)
-    for record in selected_records.values():
-        observations.exclusive_json(
-            pending / "attempts" / (record.attempt_id + ".json"), record.wire()
-        )
-    for path in confirmation_paths.values():
-        observations.copy_exclusive(path, pending / "failure-confirmations" / path.name)
-    observations.exclusive_json(pending / "provenance_errors.json", trace_errors)
+    exclusive_json(pending / "run-provenance.json", manifest)
+    exclusive_json(pending / "provenance_errors.json", trace_errors)
     observations.write_packet(
         request,
         manifest=score_manifest,
@@ -893,7 +807,7 @@ def score_run(
         },
     )
     pointer = run_dir / (".latest-score-" + sid + ".json")
-    observations.exclusive_json(pointer, asdict(ref))
+    exclusive_json(pointer, asdict(ref))
     pointer.replace(run_dir / "latest-score.json")
     replay_packet(ledger_path or LEDGER_PATH, packet_dir)
     return observations.load_packet(packet_dir).projection()

@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from collections import Counter
-from dataclasses import asdict, astuple, dataclass, fields, is_dataclass, replace
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
-from bench.runner.contracts import ScoreRef, exclusive_json
-from bench.runner.contracts import artifact_allowed as artifact_allowed
-from bench.runner.contracts import copy_exclusive as copy_exclusive
+from bench.runner.contracts import LedgerRow, ScoreRef, exclusive_json
 from bench.runner.decode import decode
 from bench.runner.epochs import (
     Category,
@@ -94,6 +91,25 @@ Coverage = Literal["complete", "partial", "unavailable"]
 
 
 @dataclass(frozen=True, slots=True)
+class Loss:
+    stage: LossStage
+    status: Literal["established", "unavailable", "ambiguous"]
+    physical_stage: Stage | None = None
+    reason_code: ReasonCode = "unknown"
+    reason: str = "attribution unavailable"
+    trace_ids: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        if self.status == "established" and (
+            self.stage == "unknown"
+            or self.physical_stage is None
+            or (self.stage != "not_found" and not self.trace_ids)
+        ):
+            raise ValueError("established loss requires a known stage and evidence")
+
+
+@dataclass(frozen=True, slots=True)
 class Candidate:
     candidate_id: str
     pr_url: str
@@ -106,6 +122,17 @@ class Candidate:
     discovery_dimensions: tuple[Dimension, ...] = ("unknown",)
     dedup_group_id: str = ""
     provenance_status: ProvenanceStatus = "legacy_unknown"
+
+    def identity(self):
+        return {
+            "candidate_id": self.candidate_id,
+            "pr_url": self.pr_url,
+            "attempt_id": self.attempt_id,
+            "index": self.index,
+            "text": self.text,
+            "path": self.path,
+            "line": self.line,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +154,7 @@ class BugObservation:
     outcome: Outcome
     matches: tuple[Match, ...]
     errors: tuple[str, ...]
-    loss: dict[str, Any] | None
+    loss: Loss | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,17 +181,28 @@ class AdjudicationContext:
     file_context: str
     context_status: ContextStatus
     truncated: bool
-    context_sha256: str
+    context_sha256: str = field(init=False)
+
+    def __post_init__(self):
+        object.__setattr__(
+            self,
+            "context_sha256",
+            digest([self.hunk, self.file_context, self.context_status, self.truncated]),
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class Evaluator:
-    evaluator_id: str
     judge_pin: str
     adjudicator_pin: str
     scorer_tree: str
     harness_scoring_sha256: str
     temperature: float
+    evaluator_id: str = field(init=False)
+
+    def __post_init__(self):
+        identity = {f.name: getattr(self, f.name) for f in fields(self) if f.init}
+        object.__setattr__(self, "evaluator_id", digest(identity))
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,30 +245,10 @@ class LegacyScoreIdentity:
     status: Literal["known_old", "legacy_unknown"]
 
 
-@dataclass(frozen=True, slots=True)
-class FrozenJson:
-    text: str
-
-
-def freeze_json(value):
-    return FrozenJson(canonical(value).decode("utf-8"))
-
-
-def thaw_json(value):
-    return json.loads(value.text) if isinstance(value, FrozenJson) else value
-
-
 def wire_record(value):
-    """Serialize frozen records without turning declared wire maps into pair arrays."""
-    if isinstance(value, FrozenJson):
-        return thaw_json(value)
+    """Serialize dataclasses and nested containers to JSON-compatible values."""
     if is_dataclass(value):
-        result = {}
-        for field in fields(value):
-            item = getattr(value, field.name)
-            item = dict(item) if field.metadata.get("wire_mapping") else item
-            result[field.name] = wire_record(item)
-        return result
+        return {f.name: wire_record(getattr(value, f.name)) for f in fields(value)}
     if isinstance(value, dict):
         return {k: wire_record(v) for k, v in value.items()}
     if isinstance(value, (tuple, list)):
@@ -411,7 +429,7 @@ class StoredScore:
     candidates: tuple[Candidate, ...]
     adjudications: tuple[Adjudication, ...]
     contexts: tuple[AdjudicationContext, ...]
-    metadata: dict[str, Any]
+    metadata: LedgerRow
     costs: dict[Literal["dedup", "judge", "adjudicator", "attribution"], float | None]
 
 
@@ -517,7 +535,7 @@ def write_packet(
         costs,
     )
     exclusive_json(pending / "golden-context.json", epoch_context(request.epoch))
-    exclusive_json(pending / "scores.json", asdict(stored))
+    exclusive_json(pending / "scores.json", wire_record(stored))
     with (pending / "stages.jsonl").open("xb") as stream:
         for row in stage_observations:
             stream.write(canonical(asdict(row)) + b"\n")
@@ -569,13 +587,11 @@ def _load_packet(path, epoch=None, *, allow_pending=False):
         or (not allow_pending and path.name != manifest.score_ref.score_id)
     ):
         raise ValueError("packet epoch or identity mismatch")
-    evaluator = asdict(manifest.evaluator)
-    identity = evaluator.pop("evaluator_id")
+    evaluator = manifest.evaluator
     if (
-        digest(evaluator) != identity
-        or evaluator["scorer_tree"] != epoch.scorer_tree
-        or evaluator["judge_pin"] != epoch.judge_pin
-        or evaluator["adjudicator_pin"] != epoch.adjudicator_pin
+        evaluator.scorer_tree != epoch.scorer_tree
+        or evaluator.judge_pin != epoch.judge_pin
+        or evaluator.adjudicator_pin != epoch.adjudicator_pin
     ):
         raise ValueError("evaluator identity or epoch pin mismatch")
     urls, attempts = manifest.requested_pr_urls, dict(manifest.selected_attempts)
@@ -590,8 +606,8 @@ def _load_packet(path, epoch=None, *, allow_pending=False):
             raise ValueError("evaluated source hash mismatch")
     candidates = read_json(path / "candidates.json")
     expected_candidates = candidate_records(candidates, attempts)
-    if [astuple(c)[:7] for c in data.candidates] != [
-        astuple(c)[:7] for c in expected_candidates
+    if [c.identity() for c in data.candidates] != [
+        c.identity() for c in expected_candidates
     ]:
         raise ValueError("candidate receipt join mismatch")
     groups = dedup_groups(read_json(path / "dedup_groups.json"), data.candidates)
@@ -633,15 +649,6 @@ def _load_packet(path, epoch=None, *, allow_pending=False):
             a.pr_url != c.pr_url
             or a.evaluator_id != manifest.evaluator.evaluator_id
             or a.context_sha256 != context.context_sha256
-            or context.context_sha256
-            != digest(
-                [
-                    context.hunk,
-                    context.file_context,
-                    context.context_status,
-                    context.truncated,
-                ]
-            )
         ):
             raise ValueError("adjudication context join mismatch")
     if set(data.costs) != {"dedup", "judge", "adjudicator", "attribution"} or any(

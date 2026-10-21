@@ -8,9 +8,9 @@ from pathlib import Path
 from bench.adjudicator.adjudicate import adjudicate as _adjudicate
 from bench.adjudicator.adjudicate import slice_hunk
 from bench.runner import observations, score, scorer
+from bench.runner.contracts import ScoreRef, exclusive_json
 from bench.runner.epochs import DEFAULT_ROOT, digest, file_hash, load_epoch, read_json
 from bench.runner.observations import (
-    ScoreRef,
     ScoreRequest,
 )
 from bench.runner.profiles import profile_metrics
@@ -18,7 +18,7 @@ from bench.runner.score import (
     _judge_api_key,
 )
 
-__all__ = ["ANCHOR_TOOLS", "rejudge_anchors", "spot_check"]
+__all__ = ["ANCHOR_TOOLS", "rejudge_anchors"]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCH_DIR = REPO_ROOT / "bench"
@@ -27,175 +27,9 @@ WORKSPACE = BENCH_DIR / "workspace"
 
 MARTIAN_BASE_URL = scorer.BASE_URL
 
-# The judge whose committed evaluations the spot-check reproduces.
-UPSTREAM_JUDGE = "claude-opus-4-5-20251101"
-UPSTREAM_RESULTS = (
-    BENCH_DIR
-    / "workspace"
-    / "upstream"
-    / "offline"
-    / "results"
-    / "anthropic_claude-opus-4-5-20251101"
-)
-UPSTREAM_EVAL = UPSTREAM_RESULTS / "evaluations.json"
-
 ANCHOR_TOOLS = ("claude", "claude-code", "coderabbit")
 
-_COUNT_KEYS = ("tp", "fp", "fn")
-_TOLERANCE = 1  # ±1 per count per tool: judge nondeterminism at temp 0.
 _MAX_DIFF_CHARS = 30000  # cap on the full-diff adjudicator context per anchor comment.
-
-
-def _counts(ev):
-    """Return ``{tp, fp, fn, present}``; a missing key reads 0, a missing
-    evaluation reads None (so tolerance never passes on absent data)."""
-    if not isinstance(ev, dict):
-        return {"tp": None, "fp": None, "fn": None, "present": False}
-    return {
-        "tp": ev.get("tp", 0),
-        "fp": ev.get("fp", 0),
-        "fn": ev.get("fn", 0),
-        "present": True,
-    }
-
-
-def _matched_texts(ev):
-    if not isinstance(ev, dict):
-        return []
-    return [tp.get("matched_candidate") for tp in ev.get("true_positives", [])]
-
-
-def _fp_texts(ev):
-    if not isinstance(ev, dict):
-        return []
-    return [fp.get("candidate") for fp in ev.get("false_positives", [])]
-
-
-def _within_tolerance(ours, theirs):
-    for k in _COUNT_KEYS:
-        a, b = ours.get(k), theirs.get(k)
-        if a is None or b is None:
-            return False
-        if abs(a - b) > _TOLERANCE:
-            return False
-    return True
-
-
-def spot_check(
-    pr_url,
-    judge_model=UPSTREAM_JUDGE,
-    api_key=None,
-    env=None,
-    run_scorer=None,
-    results_dir=None,
-    anchors_path=None,
-    upstream_eval_path=None,
-    diff_out=None,
-    *,
-    epoch_id: str,
-):
-    """Re-judge one PR's stored anchor candidates and diff against upstream.
-
-    Stages the three anchors' committed candidates for ``pr_url``, runs the
-    vendored dedup+judge under ``judge_model`` via the Anthropic OpenAI-compat
-    endpoint, and compares the resulting per-tool TP/FP/FN against the repo's
-    committed ``evaluations.json`` for that same judge. Returns a report dict
-    with ``pass`` True iff every tool's counts are within ±1 of upstream. Always
-    writes the full per-comment comparison to ``diff_out`` (default
-    a unique file in the private epoch work directory) for inspection when the
-    drift is larger. ``run_scorer`` is injectable so tests run with no network.
-    """
-    epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
-    anchors = read_json(anchors_path or ANCHORS_CANDIDATES)
-    if pr_url not in anchors:
-        raise ValueError(f"pr_url not in anchor candidates: {pr_url!r}")
-    tools_map = anchors[pr_url]
-    tools = [t for t in ANCHOR_TOOLS if t in tools_map]
-    candidates_by_url = {pr_url: {t: tools_map[t] for t in tools}}
-
-    key = api_key or _judge_api_key(env)
-    if not key and run_scorer is None:
-        raise RuntimeError(
-            "no judge API key: set BENCH_JUDGE_API_KEY or ANTHROPIC_API_KEY "
-            "(env or bench/.env)"
-        )
-
-    work_dir = (
-        (Path(results_dir) if results_dir else WORKSPACE / "spot-checks")
-        / epoch.epoch_id
-        / uuid.uuid4().hex
-    )
-    model_dir = scorer.stage_inputs(epoch, candidates_by_url, judge_model, work_dir)
-    if run_scorer is None:
-        scorer.execute(epoch, judge_model, key, model_dir, tool=None, env=env)
-    else:
-        run_scorer(
-            judge_model,
-            key,
-            MARTIAN_BASE_URL,
-            str(model_dir / "dedup_groups.json"),
-            env=env,
-        )
-
-    evaluations = read_json(model_dir / "evaluations.json")
-    upstream = read_json(upstream_eval_path or UPSTREAM_EVAL)
-
-    per_tool = {}
-    overall_pass = True
-    n_judge_calls = 0
-    n_dedup_calls = 0
-    entry = epoch.scorer_input.get(pr_url)
-    n_golden = len(entry["golden_comments"]) if entry else 0
-    for t in tools:
-        ours_ev = (evaluations.get(pr_url) or {}).get(t)
-        theirs_ev = (upstream.get(pr_url) or {}).get(t)
-        ours = _counts(ours_ev)
-        theirs = _counts(theirs_ev)
-        within = _within_tolerance(ours, theirs)
-        overall_pass = overall_pass and within
-        n_cands = len(tools_map[t])
-        n_judge_calls += n_golden * n_cands
-        if n_cands >= 2:
-            n_dedup_calls += 1
-        per_tool[t] = {
-            "ours": {k: ours[k] for k in _COUNT_KEYS},
-            "upstream": {k: theirs[k] for k in _COUNT_KEYS},
-            "deltas": {
-                k: (
-                    None
-                    if ours[k] is None or theirs[k] is None
-                    else ours[k] - theirs[k]
-                )
-                for k in _COUNT_KEYS
-            },
-            "within_tolerance": within,
-            "n_candidates": n_cands,
-            "matched_ours": _matched_texts(ours_ev),
-            "matched_upstream": _matched_texts(theirs_ev),
-            "fp_ours": _fp_texts(ours_ev),
-            "fp_upstream": _fp_texts(theirs_ev),
-        }
-
-    report = {
-        "epoch_id": epoch.epoch_id,
-        "pr_url": pr_url,
-        "judge_model": judge_model,
-        "base_url": MARTIAN_BASE_URL,
-        "n_golden": n_golden,
-        "tools": tools,
-        "per_tool": per_tool,
-        "pass": overall_pass,
-        "tolerance": _TOLERANCE,
-        "spend_estimate": {
-            "judge_calls": n_judge_calls,
-            "dedup_calls": n_dedup_calls,
-        },
-    }
-
-    out_path = Path(diff_out) if diff_out else work_dir / "spot-check-diff.json"
-    observations.exclusive_json(out_path, report)
-    report["diff_path"] = str(out_path)
-    return report
 
 
 def _subset_candidates(anchors, urls, tools):
@@ -288,7 +122,7 @@ def rejudge_anchors(
         Path(results_dir) if results_dir else cache_dir / "executions"
     ) / uuid.uuid4().hex
     model_dir = scorer.stage_inputs(epoch, candidates, judge_pin, work_dir)
-    observations.exclusive_json(
+    exclusive_json(
         work_dir / "inputs.json", {"diffs": diffs or {}, "evaluator": asdict(evaluator)}
     )
     if run_scorer is None:
@@ -330,7 +164,7 @@ def rejudge_anchors(
             _anchor_context,
         )
         for ctx in contexts:
-            observations.exclusive_json(
+            exclusive_json(
                 work_dir / "contexts" / tool / (ctx.candidate_id + ".json"), asdict(ctx)
             )
         fp = sum(evaluations[u][tool]["fp"] for u in tool_candidates)
@@ -348,7 +182,7 @@ def rejudge_anchors(
             "profile": epoch.primary_profile,
             "per_dimension": {},
         }
-        observations.exclusive_json(
+        exclusive_json(
             work_dir / (tool + "-adjudications.json"),
             [asdict(a) for a in verdict_records],
         )
@@ -365,8 +199,8 @@ def rejudge_anchors(
         "cache_hit": False,
         "work_dir": str(work_dir.resolve()),
     }
-    observations.exclusive_json(work_dir / "result.json", result)
-    observations.exclusive_json(
+    exclusive_json(work_dir / "result.json", result)
+    exclusive_json(
         work_dir / "complete.json",
         {
             "files": {
@@ -376,5 +210,5 @@ def rejudge_anchors(
             }
         },
     )
-    observations.exclusive_json(cache_file, result)
+    exclusive_json(cache_file, result)
     return result

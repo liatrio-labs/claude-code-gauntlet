@@ -47,9 +47,3 @@ def materialize_scorer(tree, *, repo=REPO_ROOT):
                 with archive.extractfile(member) as incoming:
                     path.write_bytes(incoming.read())
         yield root
-
-
-@contextmanager
-def scorer_source(epoch):
-    with materialize_scorer(epoch.scorer_tree) as root:
-        yield root

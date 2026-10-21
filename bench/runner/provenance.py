@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Literal, cast
+from typing import Literal, cast, get_args
 
 from gauntlet.delivery import gate, post
 from gauntlet.delivery.input import ReviewInput
 from gauntlet.diff import parse_diff, posting_policy
 
 from bench.adapter.adapt import _iter_comments
-from bench.runner.epochs import JsonValue, digest
-from bench.runner.observations import Candidate, Dimension
+from bench.runner.epochs import JsonValue
+from bench.runner.observations import Dimension, ProvenanceStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +33,16 @@ class DeliveryOmission:
 class DeliveryReconstruction:
     groups: tuple[RenderedDelivery, ...]
     omissions: tuple[DeliveryOmission, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryProvenance:
+    text: str
+    path: str
+    line: int
+    source_trace_ids: tuple[str, ...]
+    discovery_dimensions: tuple[Dimension, ...]
+    provenance_status: ProvenanceStatus = "complete"
 
 
 def reconstruct_delivery(selected_findings, diff_text, *, platform):
@@ -106,7 +116,9 @@ def reconstruct_delivery(selected_findings, diff_text, *, platform):
     return DeliveryReconstruction(tuple(rendered), tuple(omissions))
 
 
-def map_delivery(payload, selected_findings, diff_text) -> tuple[Candidate, ...]:
+def map_delivery(
+    payload, selected_findings, diff_text
+) -> tuple[DeliveryProvenance, ...]:
     """Attach provenance only after exact ordered body/path/line equality."""
     actual = tuple(_iter_comments(payload))
     planned = reconstruct_delivery(
@@ -118,7 +130,7 @@ def map_delivery(payload, selected_findings, diff_text) -> tuple[Candidate, ...]
     if len(all_ids) != len(set(all_ids)):
         raise ValueError("ambiguous delivery occurrence identity")
     out = []
-    for index, row in enumerate(planned):
+    for row in planned:
         text, path, line = row.body, row.path, row.line
         members = row.members
         ids = tuple(f.get("trace_id") for f in members)
@@ -127,23 +139,15 @@ def map_delivery(payload, selected_findings, diff_text) -> tuple[Candidate, ...]
         dimensions = tuple(
             sorted({f.get("discovery_dimension", "unknown") for f in members})
         )
-        from typing import get_args
-
         if any(d not in get_args(Dimension) for d in dimensions):
             raise ValueError("invalid discovery dimension")
         out.append(
-            Candidate(
-                digest([index, text, path, line, ids]),
-                "",
-                "",
-                index,
+            DeliveryProvenance(
                 text,
                 path,
                 line,
                 ids,
                 dimensions,
-                "",
-                "complete",
             )
         )
     return tuple(out)
@@ -152,6 +156,11 @@ def map_delivery(payload, selected_findings, diff_text) -> tuple[Candidate, ...]
 def bind_candidates(candidates, mapped):
     if len(candidates) != len(mapped):
         raise ValueError("candidate provenance length mismatch")
+    if any(
+        (c.text, c.path, c.line) != (m.text, m.path, m.line)
+        for c, m in zip(candidates, mapped, strict=True)
+    ):
+        raise ValueError("candidate provenance identity mismatch")
     return tuple(
         replace(
             c,

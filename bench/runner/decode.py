@@ -5,7 +5,15 @@ from __future__ import annotations
 import math
 import types
 from dataclasses import MISSING, fields, is_dataclass
-from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
+from typing import (
+    Any,
+    Literal,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+    is_typeddict,
+)
 
 
 def decode(cls, value):
@@ -23,6 +31,13 @@ def decode(cls, value):
         if any(type(value) is type(v) and value == v for v in args):
             return value
         raise ValueError(f"expected {cls}")
+    if is_typeddict(cls):
+        hints = get_type_hints(cls)
+        if not isinstance(value, dict) or cls.__required_keys__ - value.keys():
+            raise ValueError(f"incomplete {cls.__name__}")
+        if value.keys() - hints.keys():
+            raise ValueError(f"invalid fields for {cls.__name__}")
+        return {k: decode(hints[k], v) for k, v in value.items()}
     if is_dataclass(cls):
         if not isinstance(value, dict):
             raise ValueError(f"expected object for {cls.__name__}")
@@ -32,7 +47,13 @@ def decode(cls, value):
         }
         if required - value.keys() or value.keys() - {f.name for f in fs}:
             raise ValueError(f"invalid fields for {cls.__name__}")
-        return cls(**{k: decode(hints[k], v) for k, v in value.items()})
+        decoded = {k: decode(hints[k], v) for k, v in value.items()}
+        record = cls(
+            **{f.name: decoded[f.name] for f in fs if f.init and f.name in decoded}
+        )
+        if any(not f.init and getattr(record, f.name) != decoded[f.name] for f in fs):
+            raise ValueError(f"invalid derived fields for {cls.__name__}")
+        return record
     if origin in (tuple, list) or cls is tuple:
         if not isinstance(value, (list, tuple)):
             raise ValueError("expected array")

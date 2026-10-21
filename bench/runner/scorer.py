@@ -7,8 +7,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from bench.runner.observations import exclusive_json
-from bench.runner.scorer_source import scorer_source
+from bench.runner.contracts import exclusive_json
+from bench.runner.scorer_source import materialize_scorer
 from bench.runner.scoring_costs import recording_proxy
 
 VENDOR_ENV = Path(__file__).resolve().parents[1] / "vendor/code-review-benchmark"
@@ -53,7 +53,7 @@ def execute(
     model_dir = Path(model_dir).resolve()
     work_dir = model_dir.parent.parent
     run_env = dict(os.environ if env is None else env)
-    with scorer_source(epoch) as source:
+    with materialize_scorer(epoch.scorer_tree) as source:
         run_env.update(
             MARTIAN_MODEL=pin,
             MARTIAN_API_KEY=api_key,

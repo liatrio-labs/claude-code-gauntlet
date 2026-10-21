@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypedDict, get_args
 
+from bench.runner.contracts import ScoreRef, artifact_allowed, exclusive_json
 from bench.runner.decode import decode
-from bench.runner.epochs import file_hash, read_json
+from bench.runner.epochs import confined, file_hash, in_profile, read_json
 from bench.runner.observations import (
     Coverage,
     Decision,
     Dimension,
+    Loss,
     LossStage,
     ReasonCode,
-    ScoreRef,
+    ScoreRequest,
     Stage,
     TraceCollection,
-    artifact_allowed,
+    build_observations,
+    candidate_records,
+    dedup_groups,
 )
 
 
@@ -63,18 +67,6 @@ class MeasurementTrace:
     versions: tuple[FindingVersion, ...]
     snapshots: tuple[StageSnapshot, ...]
     complete: bool
-
-
-@dataclass(frozen=True, slots=True)
-class Loss:
-    stage: LossStage = "unknown"
-    physical_stage: Stage | None = None
-    cause_stage: Stage | None = None
-    reason_code: ReasonCode = "unknown"
-    reason: str = "attribution unavailable"
-    trace_ids: tuple[str, ...] = ()
-    evidence_refs: tuple[str, ...] = ()
-    status: Literal["established", "unavailable", "ambiguous"] = "unavailable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +132,6 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
             ),
             "finding provenance",
         )
-        identities[version.trace_id] = identity
         by_id[version.version_id] = version
     for sequence, snapshot in enumerate(trace.snapshots):
         _require(snapshot.sequence == sequence, "stage sequence")
@@ -181,42 +172,67 @@ def render_claim(finding):
     ).body
 
 
-def discovery_inputs(traces, errors):
-    inputs = {
-        url: {
-            "discover:" + vid: [
-                {
-                    "text": render_claim(versions[vid].projection()),
-                    "path": None,
-                    "line": None,
-                    "source": "discovery",
-                }
-            ]
-            for vid in snapshot.finding_version_ids
-            if versions[vid].trace_id
-            not in {
-                versions[v].trace_id
-                for s in trace.snapshots
-                if s.stage == "deliver"
-                for v in s.finding_version_ids
-            }
-        }
-        for url, (_, trace) in traces.items()
-        if url not in errors
-        for versions in [{v.version_id: v for v in trace.versions}]
-        for snapshot in trace.snapshots
-        if snapshot.stage == "discover" and snapshot.executed
-    }
-    return {url: tools for url, tools in inputs.items() if tools}
+REASON_LOSS_STAGES: dict[ReasonCode, LossStage] = {
+    "validation_skipped": "validate",
+    "verify_unproven": "verify",
+    "challenge_failed": "challenge",
+    "challenge_cap": "cap",
+    "delivery_cap": "cap",
+    "injection": "filter",
+}
 
 
-def capture_score(traces, bugs, request, evaluations, raw_groups, inputs, errors):
-    from bench.runner.observations import (
-        build_observations,
-        candidate_records,
-        dedup_groups,
+# A holdback with an unlisted reason, or a version gone before merge, names no stage.
+PHYSICAL_LOSS_STAGES: dict[Stage, LossStage] = {
+    "merge": "merge",
+    "verify": "verify",
+    "validate": "validate",
+    "filter": "filter",
+    "challenge": "challenge",
+    "select": "delivery",
+    "deliver": "delivery",
+}
+
+
+def _loss_stage(reason: ReasonCode, physical: Stage) -> LossStage:
+    return REASON_LOSS_STAGES.get(reason) or PHYSICAL_LOSS_STAGES.get(
+        physical, "unknown"
     )
 
+
+def discovery_inputs(traces, errors):
+    inputs = {}
+    for url, (_, trace) in traces.items():
+        if url in errors:
+            continue
+        versions = {v.version_id: v for v in trace.versions}
+        delivered = {
+            versions[vid].trace_id
+            for snapshot in trace.snapshots
+            if snapshot.stage == "deliver"
+            for vid in snapshot.finding_version_ids
+        }
+        tools = {}
+        for snapshot in trace.snapshots:
+            if snapshot.stage != "discover" or not snapshot.executed:
+                continue
+            for vid in snapshot.finding_version_ids:
+                if versions[vid].trace_id in delivered:
+                    continue
+                tools["discover:" + vid] = [
+                    {
+                        "text": render_claim(versions[vid].projection()),
+                        "path": None,
+                        "line": None,
+                        "source": "discovery",
+                    }
+                ]
+        if tools:
+            inputs[url] = tools
+    return inputs
+
+
+def _version_results(traces, bugs, request, evaluations, raw_groups, inputs):
     sources = {c.candidate_id: set(c.source_trace_ids) for c in request.candidates}
     matched_sources = {
         b.bug_id: set().union(*(sources[m.candidate_id] for m in b.matches))
@@ -246,122 +262,123 @@ def capture_score(traces, bugs, request, evaluations, raw_groups, inputs, errors
                 pseudo = replace(
                     request, requested_pr_urls=(url,), candidates=candidates, tool=tool
                 )
-                rows = build_observations(
+                observations = build_observations(
                     pseudo, evaluations, dedup_groups(raw_groups, candidates, tool)
                 )
                 results[url, tool.removeprefix("discover:")] = {
-                    b.bug_id: b.outcome == "matched" for b in rows
+                    b.bug_id: b.outcome == "matched" for b in observations
                 }
             except (ValueError, KeyError, TypeError):
                 continue
+    return results
+
+
+def _trace_loss(bug, trace, versions, trace_ids, judged):
+    if bug.outcome == "matched":
+        return None
+    if not judged:
+        return Loss(stage="unknown", status="unavailable")
+    if not trace_ids:
+        return Loss(
+            stage="not_found",
+            physical_stage="discover",
+            reason_code="not_found",
+            reason="no discovery claim matched",
+            status="established",
+        )
+    previous = set(trace_ids)
+    for snapshot in trace.snapshots[1:]:
+        if not snapshot.executed or snapshot.coverage == "unavailable":
+            break
+        surviving = {
+            versions[v].trace_id for v in snapshot.finding_version_ids
+        } & trace_ids
+        if previous and not surviving:
+            decisions = [
+                d
+                for d in snapshot.decisions
+                if d.trace_id in previous and d.decision != "kept"
+            ]
+            if not decisions:
+                break
+            decision = decisions[0]
+            loss_stage = _loss_stage(decision.reason_code, snapshot.stage)
+            return Loss(
+                stage=loss_stage,
+                physical_stage=snapshot.stage,
+                reason_code=decision.reason_code,
+                reason=decision.reason or decision.reason_code,
+                trace_ids=tuple(sorted(previous)),
+                evidence_refs=(f"snapshot:{snapshot.sequence}",),
+                status="ambiguous" if loss_stage == "unknown" else "established",
+            )
+        previous = surviving
+    return Loss(stage="unknown", status="unavailable")
+
+
+def _bug_stage_rows(bug, trace, results):
+    snapshots = {s.stage: s for s in trace.snapshots} if trace else {}
+    versions = {v.version_id: v for v in trace.versions} if trace else {}
+    discovery = snapshots.get("discover")
+    discovery_ids = discovery.finding_version_ids if discovery else ()
+    judged = bool(
+        trace
+        and trace.complete
+        and discovery
+        and discovery.executed
+        and discovery.coverage == "complete"
+        and all((bug.pr_url, v) in results for v in discovery_ids)
+    )
+    matched = tuple(
+        v for v in discovery_ids if results.get((bug.pr_url, v), {}).get(bug.bug_id)
+    )
+    trace_ids = {versions[v].trace_id for v in matched}
+    loss = _trace_loss(bug, trace, versions, trace_ids, judged)
+    rows = []
+    for stage in get_args(Stage):
+        snapshot = snapshots.get(stage)
+        surviving = tuple(
+            v
+            for v in (snapshot.finding_version_ids if snapshot else ())
+            if versions[v].trace_id in trace_ids
+        )
+        known = (
+            judged
+            and snapshot is not None
+            and snapshot.executed
+            and snapshot.coverage == "complete"
+        )
+        if stage == "deliver":
+            bit = bug.outcome == "matched"
+        elif known or surviving:
+            bit = bool(surviving)
+        else:
+            bit = None
+        rows.append(
+            StageBugObservation(
+                bug.score_ref,
+                bug.attempt_id,
+                bug.pr_url,
+                bug.bug_id,
+                stage,
+                bit,
+                matched if stage == "discover" else surviving,
+                loss if stage == "deliver" else None,
+                snapshot.coverage if snapshot else "unavailable",
+                snapshot.cap_hit if snapshot else False,
+            )
+        )
+    return rows
+
+
+def capture_score(traces, bugs, request, evaluations, raw_groups, inputs, errors):
+    results = _version_results(traces, bugs, request, evaluations, raw_groups, inputs)
     rows = []
     for bug in bugs:
-        trace = (
-            traces[bug.pr_url][1]
-            if bug.pr_url in traces and bug.pr_url not in errors
-            else None
-        )
-        snapshots = {s.stage: s for s in trace.snapshots} if trace else {}
-        versions = {v.version_id: v for v in trace.versions} if trace else {}
-        discovery = snapshots.get("discover")
-        judged = bool(
-            trace
-            and trace.complete
-            and discovery
-            and discovery.executed
-            and discovery.coverage == "complete"
-        )
-        vids = discovery.finding_version_ids if discovery else ()
-        judged = judged and all((bug.pr_url, v) in results for v in vids)
-        matched = tuple(
-            v for v in vids if results.get((bug.pr_url, v), {}).get(bug.bug_id)
-        )
-        tids = {versions[v].trace_id for v in matched}
-        loss = None
-        if bug.outcome != "matched":
-            loss = Loss()
-            if judged and not matched:
-                loss = Loss(
-                    "not_found",
-                    "discover",
-                    reason_code="not_found",
-                    reason="no discovery claim matched",
-                    status="established",
-                )
-            elif judged:
-                previous = set(tids)
-                for snapshot in trace.snapshots[1:]:
-                    if not snapshot.executed or snapshot.coverage == "unavailable":
-                        break
-                    surviving = {
-                        versions[v].trace_id for v in snapshot.finding_version_ids
-                    } & tids
-                    if previous and not surviving:
-                        decisions = [
-                            d
-                            for d in snapshot.decisions
-                            if d.trace_id in previous and d.decision != "kept"
-                        ]
-                        if decisions:
-                            d = decisions[0]
-                            physical = snapshot.stage
-                            stage = {
-                                "validation_skipped": "validate",
-                                "verify_unproven": "verify",
-                                "challenge_failed": "challenge",
-                                "challenge_cap": "cap",
-                                "delivery_cap": "cap",
-                                "injection": "filter",
-                            }.get(
-                                d.reason_code,
-                                "unknown"
-                                if physical == "holdback"
-                                else "delivery"
-                                if physical in ("select", "deliver")
-                                else physical,
-                            )
-                            loss = Loss(
-                                stage,
-                                physical,
-                                None,
-                                d.reason_code or "unknown",
-                                d.reason or d.reason_code or "unknown",
-                                tuple(sorted(previous)),
-                                (f"snapshot:{snapshot.sequence}",),
-                                "established",
-                            )
-                        break
-                    previous = surviving
-        for stage in get_args(Stage):
-            snapshot = snapshots.get(stage)
-            surviving = tuple(
-                v
-                for v in (snapshot.finding_version_ids if snapshot else ())
-                if versions[v].trace_id in tids
-            )
-            known = (
-                judged
-                and snapshot is not None
-                and snapshot.executed
-                and snapshot.coverage == "complete"
-            )
-            bit = bool(surviving) if known else True if surviving else None
-            if stage == "deliver":
-                bit = bug.outcome == "matched"
-            rows.append(
-                StageBugObservation(
-                    bug.score_ref,
-                    bug.attempt_id,
-                    bug.pr_url,
-                    bug.bug_id,
-                    stage,
-                    bit,
-                    matched if stage == "discover" else surviving,
-                    loss if stage == "deliver" else None,
-                    snapshot.coverage if snapshot else "unavailable",
-                    snapshot.cap_hit if snapshot else False,
-                )
-            )
+        trace = None
+        if bug.pr_url in traces and bug.pr_url not in errors:
+            trace = traces[bug.pr_url][1]
+        rows.extend(_bug_stage_rows(bug, trace, results))
     return tuple(rows)
 
 
@@ -457,8 +474,6 @@ def credited_dimensions(bug, candidates):
 
 
 def dimension_metrics(candidates, bugs, stage_rows, profile, traces):
-    from bench.runner.epochs import in_profile
-
     population = [b for b in bugs if in_profile(b.category, profile)]
     versions = {
         (url, v.version_id): v
@@ -556,8 +571,6 @@ def _collect_trace(pr_dir: Path) -> CollectedTraceWire | None:
 
     from gauntlet import tasks
 
-    from bench.runner.observations import exclusive_json
-
     pr_dir = Path(pr_dir)
     current = []
     for record in sorted((pr_dir / "workflows").glob("wf_*.json")):
@@ -606,10 +619,6 @@ def _collect_trace(pr_dir: Path) -> CollectedTraceWire | None:
 
 
 def collect_trace(pr_dir: Path) -> TraceCollection:
-    from dataclasses import asdict
-
-    from bench.runner.observations import exclusive_json
-
     try:
         found = _collect_trace(pr_dir)
         receipt = (
@@ -637,8 +646,6 @@ def read_rows(path):
 
 
 def packet_traces(path):
-    from bench.runner.epochs import confined
-
     return {
         url: (
             confined(path, b["trace_path"]),
@@ -651,8 +658,6 @@ def packet_traces(path):
 
 
 def validate_packet_evidence(path, packet, epoch):
-    from bench.runner.epochs import confined
-    from bench.runner.observations import ScoreRequest, wire_record
     from bench.runner.provenance import bind_candidates, trace_delivery
 
     bindings = read_json(path / "stage_trace_bindings.json")
@@ -721,6 +726,6 @@ def validate_packet_evidence(path, packet, epoch):
     )
     if read_rows(path) != rebuilt:
         raise ValueError("stage observation receipt join mismatch")
-    losses = {r.bug_id: wire_record(r.loss) for r in rebuilt if r.stage == "deliver"}
-    if any(b.loss != losses.get(b.bug_id) for b in packet.observations):
+    losses = {(r.pr_url, r.bug_id): r.loss for r in rebuilt if r.stage == "deliver"}
+    if any(b.loss != losses.get((b.pr_url, b.bug_id)) for b in packet.observations):
         raise ValueError("terminal loss join mismatch")

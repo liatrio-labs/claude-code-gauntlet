@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock, Thread
 from typing import TypedDict
 
+from bench.runner.contracts import exclusive_json
 from bench.runner.epochs import read_json
 
 # Dated model pricing keeps rescoring independent of a moving model alias.
@@ -30,13 +31,13 @@ def usage_record(reply, pin) -> Usage:
     counts = None
     if isinstance(usage, dict):
         if "prompt_tokens" in usage:
-            cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
-            counts = [
-                usage["prompt_tokens"] - cached,
-                usage.get("completion_tokens"),
-                cached,
-                0,
-            ]
+            details = usage.get("prompt_tokens_details", {})
+            if isinstance(details, dict):
+                prompt = usage["prompt_tokens"]
+                cached = details.get("cached_tokens", 0)
+                completion = usage.get("completion_tokens")
+                if all(type(n) is int and n >= 0 for n in (prompt, cached, completion)):
+                    counts = [prompt - cached, completion, cached, 0]
         elif "input_tokens" in usage:
             counts = [
                 usage.get(k, 0) if k.startswith("cache_") else usage.get(k)
@@ -120,8 +121,6 @@ def recording_proxy(base_url, pin, receipt):
         server.shutdown()
         server.server_close()
         thread.join()
-        from bench.runner.observations import exclusive_json
-
         exclusive_json(receipt, records)
 
 

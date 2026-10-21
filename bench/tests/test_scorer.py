@@ -85,11 +85,8 @@ def test_pinned_scorer_execution_and_failure_receipts(
         with pytest.raises(RuntimeError, match=failure):
             scorer.execute(epoch, pin, "offline", model, executor=execute)
     else:
-        assert (
-            len(scorer.execute(epoch, pin, "offline", model, executor=execute))
-            == len(calls)
-            == 2
-        )
+        logs = scorer.execute(epoch, pin, "offline", model, executor=execute)
+        assert len(logs) == len(calls) == 2
     expected = 0.001005 if native else 0.000955
     assert costs.read_costs(model) == {
         "dedup": pytest.approx(expected),

@@ -6,7 +6,29 @@ from pathlib import Path
 import pytest
 
 from bench.runner import ledger, observations, score
+from bench.runner.contracts import artifact_allowed
 from bench.runner.epochs import file_hash, read_json
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "Pairing/receipt.json",
+        "nested/Auth.json",
+        ".CODEX/settings.json",
+        ".ENV",
+        "nested/.Env.local",
+        "Credentials.json",
+        "BACKUPS/receipt.GPG",
+    ],
+)
+def test_artifact_guard_and_context_capture_deny_secret_names_in_any_case(
+    tmp_path, relative
+):
+    assert not artifact_allowed(Path(relative))
+    info = {"pr_dir": str(tmp_path)}
+    assert score._head_file_lines(info, relative) == []
+    assert artifact_allowed(Path("src/environment.py"))
 
 
 def packet_path(packet):
@@ -88,7 +110,19 @@ def test_invalid_scorer_output_cannot_become_a_packet(
 
 @pytest.mark.parametrize(
     "field",
-    ["outcome", "matches", "adjudication", "context", "source", "hash", "evaluator"],
+    [
+        "outcome",
+        "matches",
+        "adjudication",
+        "context",
+        "source",
+        "hash",
+        "evaluator",
+        "ledger_state",
+        "ledger_profile",
+        "ledger_schema",
+        "ledger_missing",
+    ],
 )
 def test_reader_rechecks_joins_beyond_byte_hashes(score_case, field):
     path = packet_path(score_case.execute())
@@ -105,6 +139,14 @@ def test_reader_rechecks_joins_beyond_byte_hashes(score_case, field):
         data["contexts"][0]["hunk"] = "forged bytes"
     elif field == "source":
         data["candidates"][0]["source_trace_ids"] = ["made-up"]
+    elif field == "ledger_state":
+        data["metadata"]["validity_state"] = "unknown"
+    elif field == "ledger_profile":
+        data["metadata"]["profile"] = "unknown"
+    elif field == "ledger_schema":
+        data["metadata"]["schema_version"] = 1
+    elif field == "ledger_missing":
+        del data["metadata"]["denominator"]
     score._write_json(path / "scores.json", data)
     if field != "hash":
         complete = read_json(path / "complete.json")
