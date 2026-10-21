@@ -1,5 +1,17 @@
 # Headless Mode Reference
 
+## Contents
+
+- [Env contract](#env-contract)
+- [Precedence](#precedence)
+- [Validation](#validation)
+- [Model policy](#model-policy)
+- [Hard rules (always true when headless — no env var toggles these)](#hard-rules-always-true-when-headless--no-env-var-toggles-these)
+- [Prior-review policy](#prior-review-policy)
+- [Per-gate resolution](#per-gate-resolution)
+- [`Headless config:` echo block](#headless-config-echo-block)
+- [Prerequisite](#prerequisite)
+
 Code-gauntlet runs unattended when `CODE_GAUNTLET_HEADLESS=1`. In headless mode, no `AskUserQuestion` is ever presented: every interactive gate is resolved deterministically from the resolver result. A single `AskUserQuestion` call in a headless run deadlocks the process — the harness marks such runs invalid.
 
 This file is the authority for the headless contract. It covers the environment table, resolver precedence, validation, the hard rules, the per-gate resolution, and the `Headless config:` block.
@@ -52,29 +64,40 @@ The resolver stops with a non-zero outcome. It never falls back or asks. The loc
 
 ---
 
-## Orchestrator model & per-agent pins
+## Model policy
 
-The **orchestrator** (the session running this skill and the workflow's own reasoning) is simply the session's model — there is no skill-level knob for it. In bench harness runs it is selected with `--child-model`; in real use it is whatever model the user's session runs.
-
-**Per-agent pins use full model IDs on first-party sessions**, except aliases listed in `policy.mappedAliases`. `resolvePolicy` maps unmapped aliases through `MODEL_IDS` (`sonnet` -> `claude-sonnet-5-5`, `opus` -> `claude-opus-5-5`, `haiku` -> `claude-haiku-4-5-20251001`) to prevent the session's model variant from cascading into agents. Mapped aliases dispatch bare so Claude Code resolves the user's `ANTHROPIC_DEFAULT_<ALIAS>_MODEL`, including its `[1m]` suffix, model overrides and allowlist. Only alias names enter the policy and methodology, never deployment IDs. Bedrock, Vertex and Foundry always receive bare aliases because their deployment mappings require them. Gateways retain the provider's naming rule; a gateway with nonstandard names can use a tier mapping or `CLAUDE_CODE_SUBAGENT_MODEL`. Schema handling is independent; see the [capture contract](phase2-triage.md#args-preparation).
-
-`CLAUDE_CODE_SUBAGENT_MODEL` follows the same resolution: a bare override of a mapped alias stays bare; an unmapped first-party alias receives its full-ID pin. Explicit model or deployment IDs pass through unchanged. The override applies to every stage.
+See [model-policy.md](model-policy.md) for stage defaults, overrides, and provider naming.
 
 ---
 
 ## Hard rules (always true when headless — no env var toggles these)
 
-- **PR-comment selection is deterministic.** The set posted is the pipeline's pre-selected `artifactPaths.postReview` payload. The workflow filters the challenge-survivors by the receipt-backed tier (`all` keeps every survivor; `main_only` keeps main-tagged only). It then ranks them and caps them at the receipt-backed delivery cap. The payload is posted verbatim, never re-filtered or re-ranked. Its `review_body` is the report's outcome-first Summary body (counts, selected findings index, and any remainder); `post_review.py` appends the header, skipped-finding section, and footer. The complete posted body budget can omit whole skipped groups; those omissions are counted in the comment. The default `all` is deliberate — headless posts everything that survives the blind challenge. The per-finding walkthrough and the dismissed-findings gate no longer exist in either mode.
+- **PR-comment selection is deterministic.** The set posted is the pipeline's pre-selected `artifactPaths.postReview` payload. The workflow filters the challenge-survivors by the receipt-backed tier (`all` keeps every survivor; `main_only` keeps main-tagged only). It then ranks them and caps them at the receipt-backed delivery cap. The payload is posted verbatim, never re-filtered or re-ranked. Its `review_body` is the report's outcome-first Summary body (counts, selected findings index, and any remainder); `post_review.py` appends the header, skipped-finding section, and footer. The default `all` is deliberate — headless posts everything that survives the blind challenge. Neither mode asks per-finding or dismissed-findings questions.
 - **Closed/merged PR state does not stop a review.** The interactive closed/merged stop does not apply. The eligibility script evaluates the remaining rules before the pipeline runs against the pinned head exactly as resolved. Posting follows the resolver's `post_mode` and delivery list regardless of PR state. **Markdown delivery in headless** means the report is already persisted at `artifactPaths.report`; no additional file is written. The change summary appears in the report's Change Context section; any posted Summary body leads with counts, the selected findings index, and its remainder.
 - **`gh pr checkout` is never run.** Headless never checks out, fetches, or stashes to move the working tree — the harness pre-places a worktree pinned at the review head, and a checkout would abandon it for the live branch head. Instead verify the tree is already at the intended commit: compare `git rev-parse HEAD` against the PR's live head (`gh pr view <n> --json headRefOid`). If they match, review the current checkout as-is; if they differ, print `HEADLESS INPUT ERROR: working tree HEAD <sha> != PR head <sha>` and stop with a non-zero outcome — never silently review a different commit than the one pinned.
-- **The Phase 3 wait is a held turn, never a yielded one.** Run `{plugin_root}/scripts/await_workflow.py` under an explicit Bash `timeout: 600000` and branch on its exit code; SKILL.md's "Wait protocol — MANDATORY" owns the full flow. Headless is where this matters most: a `-p` run blocks on background tasks still running at turn end only up to `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms) and then terminates them, so a child that ends its turn to wait for the completion notification loses any review that outlasts the ceiling. Bench children set that variable to `"0"` (wait unbounded) and so are already insulated; an ordinary headless run on the default is not, which is why the protocol may never be skipped here.
+- **Hold the turn during the Phase 3 wait.** Follow [phase3-dispatch.md](phase3-dispatch.md#wait-protocol) in both modes, including terminal failure salvage.
 - **Task board = none.** The Phase 8 task-board offer is skipped; no tasks are created.
-- **REVIEW.md setup and subdirectory notices = suppressed.** Neither is a question in either mode any more (issue #35); headless additionally suppresses the notice text, since no operator is reading it.
+- **REVIEW.md setup and subdirectory notices = suppressed.** Neither is a question in either mode; headless suppresses the notice text because no operator is reading it.
 - **`build-review-md` is never invoked.** Headless runs never launch the REVIEW.md configuration wizard.
-- **REVIEW.md is read-only.** Both remaining write paths (root scaffold, subdirectory scaffold) are disabled. The dismissed-findings append path no longer exists in either mode. The resolver reads the Phase 1 quick-check for `default_delivery`. Phase 2d performs the hierarchical parse. The JS `filterStage` consumes the parsed `reviewConfig`/`exclusionPatterns` (passed through the args waist).
+- **REVIEW.md is read-only.** Root and subdirectory scaffolding are disabled, and neither mode appends to it. The resolver reads the Phase 1 quick-check for `default_delivery`. Phase 2d collects complete raw texts and checksums. The workflow parses root and subtree layers through `resolveReviewConfig`; Filter consumes those resolved settings per finding path.
 - **The apply-checked patches render step is unconditional.** It runs on every Phase 8 pass whenever `artifactPaths.findings` is non-null — the same rule as interactive mode, no headless carve-out. It is read-only and posts nothing; its artifact path is named alongside the report path wherever the report path is disclosed.
 
 ---
+
+## Prior-review policy
+
+Run read-only prior-review detection even headless, after the head check. Use
+`configResult.resolved.reviewed_policy` instead of asking:
+
+- `skip` stops only when `previously_reviewed` and `sha_is_ancestor` are both true.
+- `incremental` uses the detector's `incremental_safe`; otherwise use full review and disclose why.
+- Rewritten history (`sha_is_ancestor: false`) proceeds as full review, including for `skip`.
+- Resolve `DEFERRED` truncation with the same decision. Run
+  `{python} "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha {head_sha_short} --unconditional`
+  for every outcome except a `skip` that stops. An exit 2 truncated nothing; resolve it the same way.
+
+Retain detector facts in `reviewScope`; omit receipt-derived `requested` headless.
+Detection failures and degradations are disclosed even when detection also found a prior review.
 
 ## Per-gate resolution
 
@@ -82,7 +105,7 @@ Every interactive gate maps to a deterministic headless outcome. Phase 1 eligibi
 
 | Gate (site) | Headless resolution |
 |---|---|
-| Phase 1 configuration resolution | Resolve every knob per precedence; print the `Headless config:` block. No question in either mode since issue #35 — interactive prints `Resolved config:` instead. |
+| Phase 1 configuration resolution | Resolve every knob per precedence; print the `Headless config:` block. Neither mode asks a question — interactive prints `Resolved config:` instead. |
 | Phase 2 entry gate | Passes if the `Headless config:` block was printed in Phase 1 (interactive: `Resolved config:`). The gate reads resolved state, never whether a prompt occurred. |
 | PR-not-found (resolution failure) | `resolved.pr_not_found_policy`: `error` stops the run; `local` proceeds as a local review. |
 | Closed/merged PR | `check_eligibility.py` bypasses the interactive closed stop, then evaluates the remaining eligibility rules. |
@@ -91,7 +114,7 @@ Every interactive gate maps to a deterministic headless outcome. Phase 1 eligibi
 | Previously reviewed (Phase 2 2b-post step 3, after checkout) | `resolved.reviewed_policy`: `incremental` scopes the diff to new commits only when `detect_prior_review.py`'s `incremental_safe` is true; when the head has not advanced, the recorded SHA is unresolvable, history was rewritten, or detection errored, it degrades to `full` and discloses the degradation. `skip` stops the run only when `previously_reviewed` is true and `sha_is_ancestor` is true; on rewritten history it proceeds as a full review with the degradation disclosed. Detection is read-only and exits successfully for every outcome. |
 | Trivial / light-scope (all low-risk, <50 lines) | `CODE_GAUNTLET_TRIVIAL_SCOPE` selects the scope: `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven discovery agents covering nine dimensions. The resolver emits no resolved key for `trivial_scope`. |
 | REVIEW.md detection (root setup + subdirectory offer) | Discovered configs apply as in interactive mode: root defaults plus matching subtree overrides; never invoke `build-review-md`. |
-| Phase 8 Stage 1 (delivery question) | Not asked. Deliver per `resolved.delivery` and post `artifactPaths.postReview` verbatim, including its renderer-owned outcome-first Summary body. The Challenge stage applies the receipt-backed tier and cap. Posting follows `resolved.post_mode`; `dry-run` captures the payload without posting. |
+| Phase 8 Stage 1 (delivery question) | Not asked. Deliver per `resolved.delivery` and post `artifactPaths.postReview` verbatim, including its renderer-owned outcome-first Summary body. `selectDelivery` applies the receipt-backed tier and cap after Challenge. Posting follows `resolved.post_mode`; `dry-run` captures the payload without posting. |
 | Checkpoint recovery | Follow [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable): one dispatched review retry (a checksum re-copy dispatches nothing and does not count); after a second checksum refusal deliver partial report plus gaps and stop, with no fresh paid review. |
 | Phase 8 Stage 2 (task board) | Skipped; no tasks are created. |
 

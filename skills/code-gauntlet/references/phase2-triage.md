@@ -11,8 +11,6 @@ Sub-steps, detection logic, and **args preparation** for Phase 2: Target, Triage
 - **Shared agent context file** — **Args preparation** (the args waist the workflow consumes)
 - **Triage announcement**
 
-> **What moved into the workflow (v3).** The change summarizer (v2 steps **2f** and **2j**) is now the workflow's **Summarize** stage — Phase 2 no longer dispatches summarizer agents. The old two-batch "agents then file discovery" execution strategy is likewise gone; Phase 2 is now a straight-line context-and-args build, and the only agent dispatch is the single `Workflow` call in Phase 3. The 2f/2j content below is retained only to explain what the Summarize stage now does internally.
-
 ---
 
 ## 2a. Detect VCS Platform
@@ -30,7 +28,7 @@ If detection fails, ask the user.
 
 Before running any diff commands, confirm the local working tree matches the review target. Use the `pr_number` resolved in Phase 1 — never extract PR numbers from branch names (branch names may contain upstream PR numbers that differ from the PR number in the current repo).
 
-**SKILL.md owns the literal Composite A blocks for GitHub, GitLab, and branch targets.** Run those blocks as written; this section explains their target resolution and failure rules.
+**[phase2-preparation.md: Phase 2 Composite A](phase2-preparation.md#phase-2-composite-a--pre-gather-status--checkout--sha--prior-review-gate--stale-truncation) owns the literal blocks for GitHub, GitLab, and branch targets.** Run those blocks as written; this section explains their target resolution and failure rules.
 
 **1. Resolve the target's head SHA:**
 
@@ -62,7 +60,7 @@ TARGET_SHA=${TARGET_SHA#head_sha=}
 CODE_GAUNTLET~BRANCH
 ```
 
-Resolve the comparison base (the repository's default branch or the user's chosen base) with SKILL.md's literal `CODE_GAUNTLET~BASE` block in its own Bash call. The resolver looks the name up as a local branch, then a remote-tracking branch (`origin/main`), and refuses a name that is both; a name that is neither, such as a tag, a SHA or `HEAD~1`, resolves as a git revision. If either call exits non-zero, stop and report its one-line error. Otherwise record the printed SHAs as `{target_sha}` and `{base_sha}` and type those hex values into later commands; shell variables do not survive between Bash calls. Never put the heredoc inside `$( )`: bash 3.2 parses its body for parentheses. `~` cannot appear in a git ref name, so no branch name can end the heredoc early.
+Resolve the comparison base (the repository's default branch or the user's chosen base) with the literal `CODE_GAUNTLET~BASE` block in [phase2-preparation.md: Phase 2 Composite A](phase2-preparation.md#phase-2-composite-a--pre-gather-status--checkout--sha--prior-review-gate--stale-truncation), in its own Bash call. The resolver looks the name up as a local branch, then a remote-tracking branch (`origin/main`), and refuses a name that is both; a name that is neither, such as a tag, a SHA or `HEAD~1`, resolves as a git revision. If either call exits non-zero, stop and report its one-line error. Otherwise record the printed SHAs as `{target_sha}` and `{base_sha}` and type those hex values into later commands; shell variables do not survive between Bash calls. Never put the heredoc inside `$( )`: bash 3.2 parses its body for parentheses. `~` cannot appear in a git ref name, so no branch name can end the heredoc early.
 
 - **Local changes:** HEAD — no-op, already on correct state
 
@@ -101,7 +99,7 @@ No fallback or workaround — a silently wrong working tree produces unreliable 
 
 ## 2b-post. Resolve Head SHA, Previously-Reviewed Gate, and Clean Stale Files
 
-Now that the working tree reflects the review target, compute the short SHA and perform housekeeping. **These steps run as SKILL.md's "Phase 2 Composite A — pre-gather" — one Bash call whose sections form the genuine dependency chain below.** See SKILL.md for the full runnable script; this section explains the reasoning behind its ordering.
+Now that the working tree reflects the review target, compute the short SHA and perform housekeeping. **Run [phase2-preparation.md: Phase 2 Composite A](phase2-preparation.md#phase-2-composite-a--pre-gather-status--checkout--sha--prior-review-gate--stale-truncation) as one Bash call whose sections form the genuine dependency chain below.** That section owns the full runnable script; this section explains the reasoning behind its ordering.
 
 **1. Resolve head SHA** (`sha` section) — after checkout, so it reflects the actual PR HEAD, not whatever branch was checked out before.
 
@@ -131,7 +129,7 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 
 1. **PR/MR mode** (`pr_number` set) — Use `gh pr view {pr_number}`/`glab mr view {pr_number}` + diff commands. Get full SHA: `git rev-parse HEAD`
    - **GitHub (PR):** Gather the file list with `{python} "{plugin_root}/scripts/list_pr_files.py" --platform github --pr {pr_number}`. Gather the full diff with `gh pr diff {pr_number}`.
-   - **GitLab (MR):** Gather the file list with `{python} "{plugin_root}/scripts/list_pr_files.py" --platform gitlab --pr {pr_number}` (the Composite B `files` producer in SKILL.md). Gather the full diff with `glab mr diff {pr_number}`.
+   - **GitLab (MR):** Gather the file list with `{python} "{plugin_root}/scripts/list_pr_files.py" --platform gitlab --pr {pr_number}` (the `files` producer in [phase2-preparation.md: Phase 2 Composite B](phase2-preparation.md#phase-2-composite-b--gather-diff-changed-files-line-count-misc)). Gather the full diff with `glab mr diff {pr_number}`.
 2. **Branch comparison** - use 2b's resolved SHAs. Save the changed-file JSON first, then the validated patch:
 
    ```bash
@@ -181,7 +179,7 @@ On `files: FAILED`, stop the handoff and report the stderr reason (headless: non
 1. **Changed files** → `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file. On the incremental path, this stays branch 1's full server file list unchanged — the same list branch 4 uses to bound the diff, never a narrower incremental-only set. Saved **first**, so branch 4's incremental diff (below) has a file list already on disk to bound against.
 2. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when 2b-post step 3 resolved incremental, branch 4's `incremental_diff.py` command); for branch/local targets use `save_git_diff.py` from steps 2/3, which refuses empty or malformed patches. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
 
-**These saves run as SKILL.md's Phase 2 Composite B** — one Bash call. `files` runs first and gates the rest: the incremental diff reads its list, and `numstat` reads the saved patch. See SKILL.md for the exact script.
+**Run these saves as [phase2-preparation.md: Phase 2 Composite B](phase2-preparation.md#phase-2-composite-b--gather-diff-changed-files-line-count-misc)** — one Bash call. `files` runs first and gates the rest: the incremental diff reads its list, and `numstat` reads the saved patch. That section owns the exact script.
 
 `changedLines` (threaded into `args.changedLines`, Args Preparation below) is counted from the diff actually saved above — the incremental diff on the incremental path, never branch 1's full-PR diff. The `numstat` section runs `scripts/diff_numstat.py` against that saved patch; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules. Check `binary_files > 0` before treating a low count as no diff. Never run a second `gh pr diff`; the 2k scan reads the same saved patch, never a fresh diff fetch.
 
@@ -218,9 +216,9 @@ Do not `Glob(pattern: "**/REVIEW.md")`; use the collector's receipt, not a secon
 
 Complete 2d's collector and raw-input handoff before proceeding to 2e. REVIEW.md thresholds and ignore patterns apply to matching finding subtrees through the pipeline. Every context-reading agent receives all source-path-tagged `review-rules` blocks; each block's prose is advisory for its source directory's subtree.
 
-Use only `receipt.review_md` and `receipt.review_md_dirs` from step 2 for the optional notice in step 4. A successful empty discovery never blocks or asks a question (issue #35). Report the result alongside triage and continue. Collector or raw Read failures stop the handoff. `references/review-md-spec.md` -> Discovery owns the exact notice wording.
+Use only `receipt.review_md` and `receipt.review_md_dirs` from step 2 for the optional notice in step 4. A successful empty discovery never blocks or asks a question. Report the result alongside triage and continue. Collector or raw Read failures stop the handoff. `references/review-md-spec.md` -> Discovery owns the exact notice wording.
 
-Pass raw `args.reviewMd` as described in SKILL.md. The pipeline merges thresholds and ignore patterns per matching finding subtree; the shared context retains every source-path-tagged prose block as advisory guidance for its source subtree. Never hand-parse here.
+Pass raw `args.reviewMd` as described in [phase2-preparation.md: Discover REVIEW.md and stamp its raw text](phase2-preparation.md#discover-reviewmd-and-stamp-its-raw-text). The pipeline merges thresholds and ignore patterns per matching finding subtree; the shared context retains every source-path-tagged prose block as advisory guidance for its source subtree. Never hand-parse here.
 
 > Headless mode has identical behavior, minus the notice — REVIEW.md is
 > read-only headless and `build-review-md` is never invoked. The hierarchical parse still runs. See
@@ -248,16 +246,6 @@ If ALL files are low-risk AND total lines <50, ask Light review vs Full review (
 > Headless exception: do not ask, and leave `scopeAnswer` out; interactive runs stamp the question answer.
 
 Only stamp `scopeAnswer` when this gate actually fired (every file low-risk AND total lines <50); omit it entirely otherwise — the args waist refuses a `scopeAnswer` the riskTable/changedLines don't support, and refuses a light-eligible riskTable with no `scopeAnswer` at all (the gate must have asked).
-
----
-
-## 2f. Change Summary (now the workflow's Summarize stage)
-
-The semantic change summary is no longer produced in Phase 2. The workflow's **Summarize** stage dispatches the `change-summarizer` agent internally (its model comes from `resolvePolicy` — Sonnet) and threads the result to `renderReport()` for its Change Context section. The skill neither dispatches a summarizer nor writes the summary into the context file.
-
-For reference, the Summarize stage produces a 3–5 sentence summary of what the change *claims* to do, its rationale, and its risk profile, framed strictly as claims (never "clean", "correct", "safe", "straightforward", "trivial", or "verbatim" — the summary must never conclude a refactoring is correct). The change-summarizer agent definition holds the authoritative framing rules.
-
-**Large changes.** For >500-line changes that also span more files than one summarize bucket, the Summarize stage fans out per-file buckets through `parallel()` and stitches the partials with a single merge call — again, internal to the workflow, not a Phase 2 dispatch. (This subsumes the old 2j file-level summarization step.)
 
 ---
 
@@ -303,12 +291,6 @@ Then use **Read** to load relevant files for each changed file's directory. Neve
 
 ---
 
-## 2j. File-Level Summarization (now internal to the Summarize stage)
-
-Per-file summarization for large changes is no longer a Phase 2 dispatch — it is the bucket fan-out described in 2f above. When the change exceeds 500 lines and spans more files than one summarize bucket, the workflow's Summarize stage fans out one `change-summarizer` call per per-file bucket through `parallel()` and stitches the partials with a merge call. There is no separate 2j step and no "agents then file discovery" batching to arrange — the only agent dispatch the skill makes is the single `Workflow` call in Phase 3.
-
----
-
 ## 2k. AI-Generated Code Detection
 
 Scan for AI co-author trailers, attribution comments, AI tool metadata. **Elevate AI-generated files one risk level** (research shows 75% more logic errors in AI-authored code). Include AI-generation status in risk classification sent to all agents.
@@ -348,11 +330,11 @@ The default discovery model policy uses Sonnet except security-reviewer, which u
 
 The workflow's **summarize, discovery, and validate** agents Read a shared context file. The workflow threads exactly this path to them: `{output_dir}/code-gauntlet-context-{head_sha_short}.md`. The skill must write it there before the Phase 3 `Workflow` call, or the agents' "Read the shared context" step hits a missing file. The **challenger** is not in that list and never has been — it is structurally blind (it receives only a finding's title, description, and location and opens the code itself), so the Challenge stage is given no context path at all.
 
-Use the command in `SKILL.md` under "Write the shared agent context file" and `scripts/write_shared_context.py`; pass the 2e risk classification and 2k AI-generated-code status as Markdown on stdin.
+Use the command in [phase2-preparation.md: Write the shared agent context file](phase2-preparation.md#write-the-shared-agent-context-file) and `scripts/write_shared_context.py`; pass the 2e risk classification and 2k AI-generated-code status as Markdown on stdin.
 
 The **change summary** is no longer written into the context file — the workflow's Summarize stage produces it internally and threads it to `renderReport()` for its Change Context section. The NDJSON `## Validator` section is likewise dropped: v3 agents return findings through structured output, not by appending NDJSON, so there is no per-agent validator step to record.
 
-### Measure it (issue #48)
+### Measure it
 
 Stamp the script receipt verbatim. Both waist fields are optional only so a skipped step degrades to a disclosed `context_unmeasured` gap, never a licence to skip; `contextChars` without `contextLines` is refused at the waist. `contextReadPlan` and `sharedContextLine` (`workflows/src/contextPlan.js`) turn the pair into the Read calls.
 
@@ -436,7 +418,7 @@ Run `scripts/capture_policy_env.py` and stamp its four keys verbatim. The workfl
 - `gateway` - stamp `policy.gateway` as `true` iff `ANTHROPIC_BASE_URL` is nonblank after trimming. It leaves `provider` unchanged and disables conditional per-dimension schemas because gateways can forward schemas to another backend. Absent or null equals `false`.
 - `mappedAliases` - distinct model aliases whose `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` value is nonblank after trimming, in registry order. Captured on every provider; absent or null equals `[]`.
 
-Model dispatch, including user mappings and gateway naming, follows [Orchestrator model & per-agent pins](headless-mode.md#orchestrator-model--per-agent-pins).
+Model dispatch, including user mappings and gateway naming, follows [model-policy.md: Session model and stage defaults](model-policy.md#session-model-and-stage-defaults).
 
 **Other inputs (optional unless noted):**
 
@@ -467,6 +449,8 @@ Supply the path bases and any REVIEW.md `verifySliceSize` override. Inside the w
 
 ## Triage Announcement
 
-Announce triage results before proceeding: PR title, review mode, file counts by risk level, AI-generated files if any, active dimensions, incremental scope (`Full`, or `Incremental since {last_reviewed_sha} (N commits)` when 2b-post step 3 resolved Incremental — `Full` is the no-op case for a normal review). For 1000+ line PRs, add: "This PR is [N] lines. Review effectiveness drops sharply above 400 lines. Consider splitting into smaller PRs."
+Announce triage results before proceeding: PR title, review mode, file counts by risk level, AI-generated files if any, active dimensions, incremental scope (`Full`, or `Incremental since {last_reviewed_sha} (N commits)` when 2b-post step 3 resolved Incremental — `Full` is the no-op case for a normal review).
+
+For 1000+ line PRs, add: 'This PR is [N] lines; consider splitting it into smaller PRs.'
 
 If the collector receipt (2d step 2) has `gaps[]`, announce each as a one-line note. Also announce every `sources[]` and `review_md[]` entry with `modified_in_diff: true`; a change to rules governing this review is disclosed, not blocked.

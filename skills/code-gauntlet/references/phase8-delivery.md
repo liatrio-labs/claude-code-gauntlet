@@ -1,5 +1,11 @@
 # Phase 8 Delivery Reference
 
+## Contents
+
+- [Stage 0: Collect Artifacts (from the workflow return)](#stage-0-collect-artifacts-from-the-workflow-return)
+- [Stage 1: Deliver the Report](#stage-1-deliver-the-report)
+- [Stage 2: Task Board](#stage-2-task-board)
+
 Full UX orchestration flow for Phase 8: report delivery, PR comment posting, and the task board — the two
 questions of the run.
 
@@ -16,17 +22,17 @@ The Phase 3 `Workflow` call returned a compact object that always includes a `ch
   persistReturn }   // RETURN channel only
 ```
 
-**All-degraded mode (issue #178):** an `error` prefixed `all-degraded:` means every active discovery dimension failed and **no review was performed** — deliver it as a hard failure via resume-from-checkpoint below, never as a clean/empty report. The per-agent `gaps` and `resolvedPolicy` (model/provider actually resolved) carry the diagnosis — a model/provider mismatch is the usual cause. The resume re-dispatches discovery because the `discover` checkpoint is deliberately absent from `return.checkpoints`.
+**All-degraded mode:** an `error` prefixed `all-degraded:` means every active discovery dimension failed and **no review was performed** — deliver it as a hard failure via resume-from-checkpoint below, never as a clean/empty report. The per-agent `gaps` and `resolvedPolicy` (model/provider actually resolved) carry the diagnosis — a model/provider mismatch is the usual cause. The resume re-dispatches discovery because the `discover` checkpoint is deliberately absent from `return.checkpoints`.
 
-**When `persistReturn` is present, run `materialize_artifacts.py` before anything below** — the artifacts do not exist yet. SKILL.md Phase 8 → "Materialize the artifacts" owns the command and its exit-code table. The short version: the pipeline returned its primaries instead of dictating them to an artifact-writer, the harness put that return on disk at `tasks/<task-id>.output`, and this one command writes the primaries out of it and derives `post-review.json` + `checkpoint-all.json` from them. Exit 0 means everything landed and every content proof matched.
+**When `persistReturn` is present, run `materialize_artifacts.py` before anything below** — the artifacts do not exist yet. [SKILL.md: Phase 8: Materialize, collect, patch, deliver](../SKILL.md#phase-8-materialize-collect-patch-deliver) owns the command and its exit-code table. The short version: the pipeline returned its primaries instead of dictating them to an artifact-writer, the harness put that return on disk at `tasks/<task-id>.output`, and this one command writes the primaries out of it and derives `post-review.json` + `checkpoint-all.json` from them. Exit 0 means everything landed and every content proof matched.
 
-Never hand-write an artifact from `persistReturn`'s contents. The whole channel exists because a model transcribing those bytes loses 36% of them, most damagingly by rewriting long prose shorter with the schema intact — which is why `await_workflow.py` elides them from its stdout and only the path reaches you.
+Never hand-write an artifact from `persistReturn`; `await_workflow.py` elides its entries so the original serialized text reaches `materialize_artifacts.py` without model transcription.
 
 Findings with skipped validation or unknown verify origin are challenged, then held back to the report's Unverified / pipeline-degraded section alongside capped or failed challenges. They are absent from findings.json, PR comments, patches, and fix tasks. Old challenge checkpoints pass through the same holdback before delivery.
 
-**Then render the apply-checked patches** whenever `artifactPaths.findings` is non-null — SKILL.md Phase 8 → "Render apply-checked patches" owns the command, the exit-code table, and where the patches path is surfaced in delivery.
+**Then render the apply-checked patches** whenever `artifactPaths.findings` is non-null — [SKILL.md: Phase 8: Materialize, collect, patch, deliver](../SKILL.md#phase-8-materialize-collect-patch-deliver) owns the command, its exit-code rules, and where the patches path is surfaced in delivery.
 
-**On `ok: true` (writer succeeded):** read the artifacts — they are the source of truth for delivery. Do not reconstruct, re-filter, or re-rank findings from the return value or from memory.
+**On `ok: true` after materialization or writer persistence:** read the artifacts — they are the source of truth for delivery. Do not reconstruct, re-filter, or re-rank findings from the return value or from memory.
 
 - `artifactPaths.postReview` — the pipeline's **pre-selected delivery payload**: the challenge-survivors chosen by the delivery tier (`args.delivery.tier` — `all` (default) keeps every survivor, `main_only` keeps main-tagged only), ranked by `selectDelivery` and truncated to `limits.deliveryCap`, each carrying its `report_tag`. Same **union schema** as the findings file, so `post_review.py` consumes it unchanged. This is the PR-comment set — post every entry as a comment, verbatim; the live agent never re-selects.
 - `artifactPaths.findings` — the full persisted findings JSON (every high-confidence survivor). It carries the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged. Delivery never selects from this full file: the posted set is `artifactPaths.postReview`, posted verbatim.
@@ -39,7 +45,7 @@ Findings with skipped validation or unknown verify origin are challenged, then h
 
 **On failure, partial artifacts, or a checkpoint refusal:** follow [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable). That reference owns whole-object copying (`checksum` included), checksum re-copy, and interactive/headless retry limits. Never edit the checkpoint.
 
-**Surface the integer gap count in report methodology regardless of `ok`**; at delivery, include the full `gaps` entries in chat as post-report gap details. Each entry names a degraded or skipped stage (unverified findings, skipped validation batch, capped challenges, partial artifacts).
+Code renders the integer gap count in report methodology regardless of `ok`. Chat points to that section and adds only gaps arising after the report stage. Each entry names a degraded or skipped stage (unverified findings, skipped validation batch, capped challenges, partial artifacts).
 
 Read `references/report-format.md` for the PR comment format.
 
@@ -73,7 +79,7 @@ path of `artifactPaths.report` plus a short chat summary, and skip posting.
 **Question 1 of 2 — Delivery.** The report already exists on disk; the only open question is whether the
 findings also post to the PR. Ask once, after materialization, before anything is posted:
 
-> Headless mode exception: do not present this `AskUserQuestion`; deliver per `configResult.resolved.delivery`, with the Challenge stage applying the receipt-backed tier and cap before Phase 8 posts `artifactPaths.postReview` verbatim.
+> Headless mode exception: do not present this `AskUserQuestion`; deliver per `configResult.resolved.delivery`, with `selectDelivery` applying the receipt-backed tier and cap after Challenge and before Phase 8 posts `artifactPaths.postReview` verbatim.
 > See `references/headless-mode.md`.
 
 ```
@@ -92,8 +98,7 @@ AskUserQuestion(
 
 For a GitLab target, say `MR !{pr_number}` in the question and `Post to MR (Recommended)` in the label.
 **When the PR is closed or merged, or the target is a local diff, do not ask** — there is nothing to post
-to; deliver markdown-only and say so. That is the same closed/merged rule as before, now expressed by
-skipping the question instead of narrowing its options.
+to; deliver markdown-only and say so.
 
 - **"Post to PR"** → post `artifactPaths.postReview` **verbatim**. This is the pipeline's pre-selected
   set: the survivors chosen by `args.delivery.tier`, ranked by `selectDelivery`, capped at
@@ -106,8 +111,9 @@ skipping the question instead of narrowing its options.
   Never invent a root-level `./code-gauntlet-{date}.md` (or any other default path outside
   `{output_dir}`).
 
-Either way, print a short completion summary to chat: finding counts by severity, the report path, and the
-methodology pointer. Never dump the full report into the conversation unprompted.
+Every run except headless chat delivery prints a short completion summary to chat: finding counts by
+severity, the report path, and the methodology pointer. Headless chat delivery includes the full report
+per [delivery-guide.md: Chat](delivery-guide.md#chat).
 
 **Post via post_review.py — only on a "Post to PR/MR" answer.** A "Markdown only" answer ends Stage 1 at
 the completion summary above: skip this whole posting step, run nothing, and go straight to Stage 2. (A
@@ -116,11 +122,7 @@ follows `configResult.resolved.post_mode`.)
 
 When `delivery.prIdentity` is set in the args waist, the persisted `artifactPaths.postReview` file
 already is the post_review-ready wrapper (`{ owner, repo, pr_number, sha, platform, web_origin, review_body, findings }`).
-Pass that file to `post_review.py` unchanged. Its `review_body` is exactly the report's outcome-first Summary section body: counts, selected findings index, and any remainder. `post_review.py` bounds the complete posted comment with a per-platform UTF-8 byte
-budget: the header and footer are reserved first; the summary folds only when it cannot fit beside
-the skipped-section frame and footer; skipped groups appear whole or not at all in list order,
-followed by one closing count line when any group is omitted; the footer stays last. Keep its `sha` field because it pins the
-marker to the commit the review ran against.
+Pass that file to `post_review.py` unchanged. Its `review_body` is exactly the report's outcome-first Summary section body: counts, selected findings index, and any remainder. Keep its `sha` because it pins the prior-review marker to the reviewed commit. Code-owned byte budgets and folding are documented in [delivery rendering](../../../docs/delivery-rendering.md).
 
 When the artifact is the legacy bare findings array, invoke `post_review.py` with `--report` and the
 identity flags. The script derives the Summary body from the report and forms the wrapper in code:
@@ -162,5 +164,5 @@ call `TaskCreate(subject, description)` and then `TaskUpdate(taskId, metadata)`.
 count, or call failure and report it. Never fall back to hand composition. After creating, report the
 number of created tasks.
 
-The `ignore:` list is user-edited by hand per the #94 contract (`references/review-md-spec.md` →
+The `ignore:` list is user-edited by hand (`references/review-md-spec.md` →
 Ignore); no Phase 8 write path exists.

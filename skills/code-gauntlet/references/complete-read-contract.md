@@ -27,16 +27,8 @@
 
 ## Why this exists
 
-Issue #48, measured on run `wf_cef39739-577`. All 7 discovery agents' **first** `Read`
-of the 95,057-byte / 2,028-line shared context file returned 58,145 characters,
-ending at line 1083. **No tool result contained a truncation notice** — checked
-programmatically across all 7 transcripts. Six agents inferred the cutoff from the line
-numbering and paginated on to the file's true end. `security-reviewer` did not: it made
-one `Read` of the context file and returned `{"findings":[],"complete":true}` after
-seeing roughly the first half of the diff and project rules.
-
-Nothing in the run distinguished that from a clean empty result. The report, the
-artifacts, and the transcript all looked normal.
+A Read can stop without a truncation notice, leaving a plausible but incomplete context.
+A completeness claim without an end check cannot distinguish that from an empty review.
 
 The primary fix is arithmetic, not instruction: the skill measures the context file and
 `contextReadPlan` (`workflows/src/contextPlan.js`) turns the measurement into the exact

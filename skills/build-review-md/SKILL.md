@@ -118,7 +118,7 @@ If Step 2 surfaced an explicit user preference for a starting threshold, uncomme
 write that value instead of leaving the example commented out — but never substitute a number the user
 didn't state.
 
-**Do not emit a `## Model Tier` section.** Nothing reads it (issue #153): the model policy is fixed to the
+**Do not emit a `## Model Tier` section.** Nothing reads it: the model policy is fixed to the
 single benchmarked configuration, and the only remaining pin is the fail-loud `CODE_GAUNTLET_MODEL_TIER`
 env knob. Emitting the heading advertises a knob that does not exist.
 
@@ -218,4 +218,4 @@ Do not offer to run a review or explain the review process. The user can trigger
 4. **Do not create subdirectory configs without the decision test.** Technology-specific rules that pass the false-positive test belong in root with a path qualifier.
 5. **Never pin an unrequested threshold.** Leave `confidence_threshold` / `severity_threshold` commented out in the generated config block unless the user explicitly asked for a specific value — the pipeline's built-in defaults (55 non-security / 70 security confidence, low severity) already apply when the keys are absent.
 6. **Never generate a `## Skip` section.** It is never parsed — generating one implies a feature that does not exist.
-7. **Never emit a `## Model Tier` section.** Nothing reads it (issue #153) — emitting it advertises a knob that does not exist.
+7. **Never emit a `## Model Tier` section.** Nothing reads it — emitting it advertises a knob that does not exist.
