@@ -485,18 +485,19 @@ class ScorePacket(StoredScore):
                 traces,
             ),
         }
-        row = {
-            **self.metadata,
-            **metrics,
-            "packet_path": str(self.root),
-            **{stage + "_cost_usd": value for stage, value in self.costs.items()},
-        }
         return {
             "schema_version": 3,
             "score_ref": asdict(self.score_ref),
             "metrics": metrics,
             "profiles": profiles,
-            "ledger_row": row,
+            "ledger_row": {**self.ledger_row(), **metrics},
+        }
+
+    def ledger_row(self):
+        return {
+            **self.metadata,
+            "packet_path": str(self.root),
+            **{stage + "_cost_usd": value for stage, value in self.costs.items()},
         }
 
 

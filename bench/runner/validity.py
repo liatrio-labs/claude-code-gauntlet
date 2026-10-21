@@ -12,6 +12,7 @@ import sys
 import uuid
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
+from itertools import pairwise
 from pathlib import Path
 from typing import Literal
 
@@ -134,6 +135,10 @@ class MeasurementWindow:
     planned_run_indices: tuple[int, ...]
     max_parallel_prs: Literal[1]
     arms: dict[str, Treatment]
+    planned_order: tuple[tuple[str, int], ...] = ()
+    wave_id: str = ""
+    rule_sha256: str = ""
+    candidate_arm: str = "candidate"
 
     def wire(self):
         return asdict(self)
@@ -165,6 +170,7 @@ def window_from_wire(value):
         or tuple(sorted(set(window.planned_run_indices))) != window.planned_run_indices
         or min(window.planned_run_indices) < 0
         or len(window.arms) != 2
+        or window.candidate_arm not in window.arms
     ):
         raise ValueError("invalid measurement window")
     return window
@@ -525,12 +531,15 @@ class CompleteMatrix:
     stage_observations: tuple = ()
 
 
-def validate_matrix(selections, window, population, *, epoch, expected_run_indices):
+def validate_matrix(
+    selections, window, population, *, epoch, expected_run_indices, source=False
+):
     selections = tuple(selections)
     arms = tuple(sorted({s.arm for s in selections}))
-    if (
-        len(arms) != 2
-        or tuple(window.planned_run_indices[: len(expected_run_indices)])
+    if (len(arms) != 1 if source else len(arms) != 2) or (
+        not set(expected_run_indices) <= set(window.planned_run_indices)
+        if source
+        else tuple(window.planned_run_indices[: len(expected_run_indices)])
         != expected_run_indices
     ):
         raise ValueError("invalid arms or planned run prefix")
@@ -595,6 +604,55 @@ def validate_matrix(selections, window, population, *, epoch, expected_run_indic
         arms,
         tuple((a, expected_run_indices) for a in arms),
     )
+
+
+def load_selected_attempt(packet, url, aid):
+    run_dir = packet.root.parents[2]
+    paths = list((run_dir / "attempts").glob(f"*/{aid}/attempt.json"))
+    if len(paths) != 1:
+        raise ValueError("immutable selected attempt missing")
+    path = paths[0]
+    expected = dict(packet.manifest.source_artifact_hashes).get(
+        str(path.relative_to(run_dir))
+    )
+    if expected != file_hash(path):
+        raise ValueError("selected attempt differs from immutable score evidence")
+    attempt = selected_attempt(path)
+    if attempt.run_id != packet.run_id or attempt.pr_url != url:
+        raise ValueError("selected attempt run/PR identity mismatch")
+    receipt = run_dir / "failure-confirmations" / (aid + ".json")
+    if receipt.is_file() and dict(packet.manifest.source_artifact_hashes).get(
+        str(receipt.relative_to(run_dir))
+    ) != file_hash(receipt):
+        raise ValueError("failure confirmation differs from score evidence")
+    current = [
+        row
+        for p in (run_dir / "state").glob("*.json")
+        if (row := read_json(p)).get("url") == url
+    ]
+    if len(current) != 1 or (current[0].get("detail") or {}).get("attempt_id") != aid:
+        raise ValueError("score does not select the current attempt")
+    return attempt
+
+
+def validate_interleaving(selections, window, runs):
+    order = tuple((a, r) for a, r in window.planned_order if r in dict(runs)[a])
+    starts = {
+        (a, r): [
+            timestamp(s.attempt.started_at)
+            for s in selections
+            if (s.arm, s.run_index) == (a, r)
+        ]
+        for a, r in order
+    }
+    if (
+        set(order) != {(a, r) for a, indices in runs for r in indices}
+        or len(order) != len(starts)
+        or any(
+            a[0] == b[0] or max(starts[a]) >= min(starts[b]) for a, b in pairwise(order)
+        )
+    ):
+        raise ValueError("selected attempts do not follow planned interleaving")
 
 
 def benchmark_policy(timeout_s, *, resolve_limits=True):

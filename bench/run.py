@@ -1061,6 +1061,8 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
             args.baseline_equivalence_receipt
         )
     if getattr(args, "measurement_window", None):
+        # Registration order needs subsecond resolution.
+        manifest["started"] = validity.utc_now()
         manifest["child_model"] = _resolve_child_model(args.tool, args.child_model)
     validity.exclusive_json(Path(run_dir) / "run.json", manifest)
 
@@ -1381,7 +1383,7 @@ def parse_args(argv=None):
     )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
     parser.add_argument("--golden-epoch", metavar="EPOCH_ID")
-    parser.add_argument("--unseal-holdout", choices=("#101-close",))
+    parser.add_argument("--unseal-holdout", help="one-time final-SHA unseal receipt")
     parser.add_argument(
         "--check",
         metavar="RUN_ID",
@@ -1496,7 +1498,20 @@ def main(argv=None):
             if (prior_manifest or args.tier or args.prs)
             else ()
         )
-        check_holdout(urls, load_epoch(root=GOLDEN_DIR), args.unseal_holdout)
+        check_holdout(
+            urls,
+            load_epoch(root=GOLDEN_DIR),
+            args.unseal_holdout,
+            validity.treatment_sha() if args.unseal_holdout else None,
+        )
+        if args.unseal_holdout:
+            check_holdout(
+                urls,
+                load_epoch(root=GOLDEN_DIR),
+                args.unseal_holdout,
+                validity.treatment_sha(),
+                use="run",
+            )
         if args.measurement_window:
             validity.refuse_ambient_model_overrides(os.environ)
             validity.require_clean_treatment()
@@ -1525,6 +1540,14 @@ def main(argv=None):
                 window=window,
                 arm=prior.get("arm") or args.arm,
             )
+            if (prior.get("arm") or args.arm) == window.candidate_arm and set(
+                window.pr_urls
+            ) & set(load_epoch(root=GOLDEN_DIR).subsets["gate"]):
+                from bench.runner.looks import registration
+
+                registration(
+                    window.wave_id, window.rule_sha256, started=validity.utc_now()
+                )
             urls = prior.get("pr_urls") or _target_urls(args.tier, args.prs)
             if not validity.same_pr_set(urls, window.pr_urls):
                 raise ValueError("window requested PR matrix mismatch")

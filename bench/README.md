@@ -120,7 +120,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 
 | Flag | Values | Default | What it does |
 |---|---|---|---|
-| `--tier` | `smoke` \| `mini` \| `subset` \| `holdout` \| `full` | — (required for a new run unless `--prs`) | Which PR set to run. `smoke` = 3 PRs (functional smoke). `mini` = 6-PR paired cut. `subset` = 15-PR gate. `holdout` = 10 sealed PRs. `full` includes sealed PRs. Both require `--unseal-holdout "#101-close"` at that close. |
+| `--tier` | `smoke` \| `mini` \| `subset` \| `holdout` \| `full` | — (required for a new run unless `--prs`) | Which PR set to run. `smoke` = 3 PRs (functional smoke). `mini` = 6-PR paired cut. `subset` = 15-PR gate. `holdout` = 10 sealed PRs. `full` includes sealed PRs. Both require `--unseal-holdout RECEIPT.json` at that close. |
 | `--prs` | URL list or `mini` | — | Explicit golden PR list; labels the run `custom`. The alias `mini` expands to the pre-registered 6-PR mini subset. |
 | `--runs` | int | `1` | Number of sequential runs, each getting its own run directory under `bench/workspace/runs/`. |
 | `--fidelity` | `dry-run` \| `live` | `dry-run` | Recorded in the run manifest. |
@@ -384,7 +384,11 @@ auto-update off, evaluator pins, golden epoch and auth mode. Its `arms` map decl
 exactly two treatments. Each `Treatment` pins its git SHA, dispatch roster and model
 map, per-agent effort values, auxiliary model allowlist and
 benchmark policy digest. Build declarations from `capture_fingerprint()` and review
-both arm entries before freezing. A removed discovery agent changes its arm's
+both arm entries before freezing. `planned_order` lists `[arm, run_index]` pairs
+in alternating cross-arm order. `wave_id` and `rule_sha256` bind the window to
+its preregistered frozen promotion rule. `candidate_arm` identifies the candidate
+entry (default `candidate`); preflight requires registration before that arm runs.
+A removed discovery agent changes its arm's
 roster, not the shared controls. Ambient model, effort and provider overrides are
 refused before mirror work. Verify installed CLI update/effort behavior separately.
 
@@ -409,23 +413,24 @@ Diagnostics do not have to match. Attempt records and review provenance stay imm
 
 ## Dispositions, audit, comparisons and planning
 
-The operating inputs use explicit immutable score references. Commands compute
-reports and never select a latest score. A descriptive comparison names `dev-slice`
-or `dev-pool`, uses `profile: "core"`, and omits window, rule and audit paths.
-Operational comparisons name a gate population and require a full gate matrix.
+The operating inputs use explicit immutable score references. Commands compute reports
+and never select a latest score. A descriptive comparison names `dev-slice`,
+`dev-pool`, or `mini` (the historical A/A), uses `profile: "core"`, and omits window
+and rule paths. Holdout comparisons additionally require `unseal`, the final-SHA
+receipt path, and the approved candidate treatment. Operational comparisons name a
+gate population and require a full gate matrix.
 
-Import the leakage lens's reviewed v2 dispositions and scan the current treatment:
+Import the leakage lens's reviewed v2 dispositions:
 
 ```sh
 python3 -m bench.runner.populations --spec leak-manifest-v2.json --out proposal.json
-python3 -m bench.runner.leaks --out leak-report.json
 ```
 
 The population freeze spec has `manifest` (the imported proposal object),
-`baseline_treatment_sha` (the eventual Wave 0a merge SHA), `leak_report`
-(the scan path), and `frozen_at` (an ISO timestamp). The baseline plugin tree must
-match the scanned clean checkout. HEAD itself need not equal the baseline SHA.
-The freeze recomputes the scan and refuses changed or failing evidence.
+`baseline_treatment_sha` (the eventual Wave 0a merge SHA), and `frozen_at` (an ISO
+timestamp). The baseline plugin tree must match the scanned clean checkout. HEAD
+itself need not equal the baseline SHA. The freeze runs the leak scan itself, refuses
+failing evidence, and binds its digest.
 
 ```sh
 python3 -m bench.runner.populations --spec freeze-spec.json --out contamination.json
@@ -438,12 +443,12 @@ references. Each reference has `run_id`, `epoch_id`, and `score_id`.
 python3 -m bench.runner.audit --spec sample-spec.json --out audit/
 ```
 
-Keep `audit/sample.json` private. Give only `audit/packets.json` to the Sol and Opus
-auditor seats, run by the orchestrator with repository access. Each label file has
-`auditor` (`Sol` or `Opus`), `sample_sha256`, and `labels`: rows with `sample_id`,
-Boolean `correct`, and nonempty `evidence_refs`.
-A merge spec has `sample_path` and `label_paths` in Sol, Opus order. An optional
-third file uses the `owner` seat and labels only disputes. The resulting
+Keep `audit/private/sample.json` private. Give only `audit/public/packets.json` to the
+Sol and Opus auditor seats, run by the orchestrator with repository access. Each label
+file has `auditor` (`Sol` or `Opus`), `packet_sha256` (the exact packet file hash),
+and `labels`: rows with `sample_id`, Boolean `correct`, and nonempty `evidence_refs`.
+A merge spec has `sample_path`, `packet_path`, and `label_paths` in Sol, Opus order.
+An optional third file uses the `owner` seat and labels only disputes. The resulting
 `owner_queue` must be resolved before an operational wave verdict or simulation.
 
 ```sh
@@ -453,11 +458,10 @@ python3 -m bench.runner.audit --spec merge-spec.json --out audit/receipt.json
 A ComparisonSpec has `comparison_id`, `purpose` (`descriptive`, `wave`, or `final`),
 `population`, `profile`, `epoch_id`, `contamination_path`, and `baseline`/`candidate`.
 Each arm has `name`, `scores`, `treatment_git_sha`, and `agent_read_sha256`.
-Operational specs add `window_path` and `rule_path`; wave specs add `audit_path`.
-All relative paths resolve beside the comparison spec. A permitted extension adds
-`initial_spec_path` and `initial_report_path` and preserves the initial score prefix. Its initial verdict is
-recomputed and matched to the saved initial report, including the frozen rule
-and audit hashes, before the extension is admitted.
+Operational specs add `window_path` and `rule_path`; wave specs add `audit_path`. All
+relative paths resolve beside the comparison spec. A permitted extension adds
+`initial_spec_path` and `initial_report_path` and preserves the initial score prefix.
+The ledger's first-look report hash binds the saved rule, audit and verdict.
 
 ```sh
 python3 -m bench.runner.compare --spec comparison.json --out comparison-report.json
@@ -466,8 +470,26 @@ python3 -m bench.runner.compare --spec comparison.json --out comparison-report.j
 Rules use `kind: "wave"` or `"ship"`, `profile: "core"`, `margin_pp`,
 `nonmini_margin_pp`, `initial_runs`, `extension_runs`, `stability_min_runs`,
 `bootstrap` (`draws`, `seed`, `alpha`), and `frozen`. The checked-in rule remains
-unfrozen with null parameters until the owner fixes them after Wave 0b.
-Ship rules use 3 runs per arm, zero extension runs, and an API window.
+unfrozen with null parameters until the owner fixes them after Wave 0b. Ship rules use
+3 runs per arm, zero extension runs, and an API window. Register the frozen rule
+before the first candidate run:
+
+```sh
+python3 -m bench.runner.looks --wave WAVE --rule frozen-rule.json
+```
+
+The append-only `golden/looks.jsonl` is the authoritative look count. The compare
+command appends operational verdicts. A second look requires fail or inconclusive; a
+third is refused. Before the one holdout review at issue #101 close, mint its receipt
+with the approved final SHA:
+
+```sh
+python3 -m bench.runner.looks --approved-final-sha FINAL_SHA --out unseal.json
+```
+
+Pass it to run's `--unseal-holdout`, comparison's `unseal`, and the audit sample's
+`unseal` with `final_sha`. Each step can use the receipt once. Receipt loading and
+label merge revalidate its authorization. Another SHA or unseal is refused.
 
 A simulation spec has `baseline_scores`, `epoch_id`, `contamination_path`,
 `rule_paths`, `audit_path`, `baseline_arm`, `trials`, `seed`, `power_target`, and
@@ -478,7 +500,7 @@ python3 -m bench.runner.simulation --spec simulation.json --out simulation-repor
 python3 bench/report.py
 ```
 
-Reports include core, all and strict automatically. Audited dimension groundedness
-is reported when its sampled provenance is available. Reports keep review, scoring,
-and attribution costs separate. Unknown costs remain null. Protocol, caveats,
-measured status and the gate-look ledger live in [MEASUREMENT.md](MEASUREMENT.md).
+Reports include core, all and strict automatically. Audited dimension groundedness is
+reported when its sampled provenance is available. Reports keep review, scoring, and
+attribution costs separate. Unknown costs remain null. Protocol, caveats, measured
+status and the gate-look ledger live in [MEASUREMENT.md](MEASUREMENT.md).

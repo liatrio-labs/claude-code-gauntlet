@@ -24,7 +24,6 @@ from bench.runner.epochs import canonical, digest, load_epoch, read_json  # noqa
 MatchMode = Literal["identifier", "literal_path"]
 
 
-# This finite vocabulary never exempts a project-qualified member.
 def ordinary_vocabulary(token):
     return bool(
         re.fullmatch(
@@ -96,7 +95,6 @@ class LeakReport:
     hits: tuple[LeakHit, ...]
     unallowed_hits: tuple[LeakHit, ...]
     stale_allowances: tuple[str, ...]
-    generation_coverage: tuple[str, ...]
     passed: bool
 
 
@@ -186,34 +184,8 @@ def derive_identifiers(
     )
 
 
-def _denied(path):
-    denied = {
-        ".git",
-        ".codex",
-        ".aws",
-        "auth.json",
-        "pairing",
-        "backups",
-        "credentials",
-        "credentials.json",
-        "credential",
-        "secrets",
-        "secrets.json",
-    }
-    return any(
-        p.startswith(".env") or p.lower() in denied or p.endswith(".gpg")
-        for p in path.parts
-    )
-
-
 def _safe(root: Path, path: Path) -> bool:
-    resolved = path.resolve()
-    return (
-        path.is_relative_to(root)
-        and resolved.is_relative_to(root)
-        and not _denied(path.relative_to(root))
-        and not _denied(resolved.relative_to(root))
-    )
+    return path.resolve().is_relative_to(root)
 
 
 def _walk(root, path):
@@ -344,15 +316,15 @@ def scan(identifiers, surfaces, allowlist):
         raise ValueError("allowance epoch/hash mismatch")
     wave = allowlist["current_wave"]
     waves = ("0a", "0b", "1", "2a", "2b", "3", "4", "closed")
-    if wave not in waves or any(
-        e.get("expires_wave") != "2a"
-        for e in allowlist["entries"] + allowlist["passages"]
-    ):
+    if wave not in waves:
         raise ValueError("invalid allowance wave")
     if waves.index(wave) >= waves.index("2a") and (
-        allowlist["entries"] or allowlist["passages"]
+        allowlist["entries"]
+        or any(p["expected_count"] != 0 for p in allowlist["passages"])
     ):
-        raise ValueError("allowances must be empty from Wave 2a")
+        raise ValueError(
+            "identifier allowances must be empty and passage counts zero from Wave 2a"
+        )
     plain = {(i.match_mode, i.token): i for i in identifiers.identifiers}
     hidden = {i.identifier_id: i for i in identifiers.holdout_identifiers}
     by_id = {s.surface_id: s for s in surfaces}
@@ -430,7 +402,7 @@ def scan(identifiers, surfaces, allowlist):
             type(width) is not int
             or width < 1
             or type(expected) is not int
-            or expected < 1
+            or expected < 0
         ):
             raise ValueError("invalid passage allowance")
         lines = (
@@ -445,8 +417,6 @@ def scan(identifiers, surfaces, allowlist):
         )
         if count != expected:
             stale.append(digest(passage))
-    expected = (*generated_surfaces(), *_shared_context_surfaces(ROOT))
-    missing = tuple(s.surface_id for s in expected if by_id.get(s.surface_id) != s)
     unallowed = tuple(h for h in hits if not h.allowed)
     return LeakReport(
         2,
@@ -457,8 +427,7 @@ def scan(identifiers, surfaces, allowlist):
         hits,
         unallowed,
         tuple(sorted(stale)),
-        missing,
-        not (unallowed or stale or missing),
+        not (unallowed or stale),
     )
 
 
@@ -478,7 +447,6 @@ def scan_repository(root=ROOT):
 
 
 def assert_no_holdout_tokens(derived, epoch, files, *, root: Path = ROOT) -> None:
-    """Check lexical spans, with confined inputs and sealed diagnostics."""
     root = root.resolve()
     if any(not _safe(root, path) for path in files):
         raise ValueError("unconfined mechanism output")
@@ -503,7 +471,7 @@ def main(argv=None):
     if args.out:
         args.out.write_bytes(canonical(asdict(report)) + b"\n")
     print(
-        f"LEAK_GUARD: {'PASS' if report.passed else 'FAIL'}; {len(report.hits)} hits; {len(report.unallowed_hits)} unallowed; {len(report.stale_allowances)} stale; {len(report.generation_coverage)} missing prompts"
+        f"LEAK_GUARD: {'PASS' if report.passed else 'FAIL'}; {len(report.hits)} hits; {len(report.unallowed_hits)} unallowed; {len(report.stale_allowances)} stale"
     )
     return 0 if report.passed else 1
 

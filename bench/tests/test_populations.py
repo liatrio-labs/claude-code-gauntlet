@@ -1,24 +1,24 @@
-"""Frozen population and exclusion boundaries."""
+"""Reviewed exclusions, freeze provenance and one-time holdout access."""
 
-import copy
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from bench.runner import leaks, validity
+from bench.runner import leaks, looks, validity
 from bench.runner import populations as p
-from bench.runner.epochs import canonical, digest, read_json
+from bench.runner.epochs import digest, read_json
+from bench.tests.conftest import refuses, write
 
 
-def test_exclusions_and_named_membership_are_derived_once(population_case):
-    epoch, contamination = population_case
-    rows = p.contamination_entries(contamination, epoch)
+def test_exclusions_and_named_membership_are_derived_once(pop_case):
+    e, manifest = pop_case
+    rows = p.contamination_entries(manifest, e)
     excluded = {
-        e["pr_url"].split("/")[-3] + "#" + e["pr_url"].split("/")[-1]
-        for e in rows
-        if e["scope"] == "pr"
+        r["pr_url"].split("/")[-3] + "#" + r["pr_url"].split("/")[-1]
+        for r in rows
+        if r["scope"] == "pr"
     }
     assert excluded == {
         "discourse-graphite#4",
@@ -28,130 +28,133 @@ def test_exclusions_and_named_membership_are_derived_once(population_case):
     }
 
     def resolve(name):
-        return p.resolve_population(name, epoch, "core", contamination)
+        return p.resolve_population(name, e, "core", manifest)
 
-    primary = resolve("gate-uncontaminated")
-    assert primary.denominator == 50 and len(primary.pr_urls) == 13
-    assert resolve("gate-uncontaminated-non-mini").denominator == 21
     assert resolve("gate").denominator == 66
+    assert resolve("gate-uncontaminated").denominator == 50
+    assert resolve("gate-uncontaminated-non-mini").denominator == 21
     assert resolve("gate-contaminated").denominator == 16
+    assert len(resolve("gate-uncontaminated").pr_urls) == 13
     pool, selected = resolve("dev-pool"), resolve("dev-slice")
-    assert len(pool.pr_urls) == 25 and len(selected.pr_urls) == 6
-    from bench.runner.epochs import included_bugs
-
-    expected = sorted(
-        pool.pr_urls,
-        key=lambda u: (
-            -sum(
-                b.pr_url == u
-                for b in included_bugs(epoch, "core", frozenset(pool.pr_urls))
-            ),
-            u,
-        ),
-    )[:6]
-    assert set(selected.pr_urls) == set(expected)
-    with pytest.raises(ValueError, match="sealed"):
-        resolve("holdout")
-    assert (
-        len(
-            p.resolve_population(
-                "holdout", epoch, "core", contamination, unseal="#101-close"
-            ).pr_urls
-        )
-        == 10
+    assert (len(pool.pr_urls), len(selected.pr_urls)) == (23, 6)
+    assert not set(pool.pr_urls) & {r["pr_url"] for r in rows if r["scope"] == "pr"}
+    counts = {
+        u: sum(b.pr_url == u and b.bug_id in pool.bug_ids for b in e.bugs)
+        for u in pool.pr_urls
+    }
+    assert set(selected.pr_urls) == set(
+        sorted(counts, key=lambda u: (-counts[u], u))[:6]
     )
+    assert set(resolve("mini").pr_urls) == set(e.subsets["mini"])
+    manifest["status"] = "unfrozen"
+    assert p.resolve_population("dev-slice", e, "core", manifest) == selected
+    refuses(p.resolve_population, "gate", e, "core", manifest, match="unfrozen")
+    refuses(p.resolve_population, "holdout", e, "core", manifest, match="sealed")
 
 
-@pytest.mark.parametrize("change", ["epoch", "unfrozen", "scope", "bug", "evidence"])
-def test_invalid_dispositions_are_refused(population_case, change):
-    epoch, value = population_case
-    value = copy.deepcopy(value)
+@pytest.mark.parametrize("change", ["epoch", "scope", "bug", "evidence"])
+def test_invalid_dispositions_are_refused(pop_case, change):
+    e, m = pop_case
     if change == "epoch":
-        value["golden_sha256"] = "wrong"
-    if change == "unfrozen":
-        value["status"] = "unfrozen"
+        m["golden_sha256"] = "wrong"
     if change == "scope":
-        value["entries"][0]["match_kind"] = "textbook_class"
+        m["entries"][0]["match_kind"] = "textbook_class"
     if change == "bug":
-        value["entries"][-1]["bug_ids"] = [epoch.bugs[0].bug_id]
+        m["entries"][-1]["bug_ids"] = [e.bugs[0].bug_id]
     if change == "evidence":
-        value["entries"][0]["evidence_refs"] = []
-    with pytest.raises(ValueError):
-        p.resolve_population("dev-slice", epoch, "core", value)
+        m["entries"][0]["evidence_refs"] = []
+    refuses(p.resolve_population, "dev-slice", e, "core", m)
 
 
-def test_importer_rejects_epoch_ordinal_and_duplicate_errors(population_case, tmp_path):
-    epoch, _ = population_case
-    path = Path(__file__).parent / "fixtures/leak-manifest-v2.json"
-    for change in ("epoch", "ordinal", "duplicate"):
-        source = read_json(path)
-        if change == "epoch":
-            source["golden_epoch"] = "wrong"
-        if change == "ordinal":
-            source["excluded_comments"][0] = "cal_dot_com:cal.com:10600:100"
-        if change == "duplicate":
-            source["excluded_prs"].append(source["excluded_prs"][0])
-        bad = tmp_path / (change + ".json")
-        bad.write_bytes(canonical(source))
-        with pytest.raises(ValueError):
-            p.import_dispositions(bad, epoch)
+@pytest.mark.parametrize("change", ["epoch", "ordinal", "duplicate"])
+def test_importer_rejects_epoch_ordinal_and_duplicate_errors(
+    pop_case, tmp_path, change
+):
+    e, _ = pop_case
+    source = read_json(Path(__file__).parent / "fixtures/leak-manifest-v2.json")
+    if change == "epoch":
+        source["golden_epoch"] = "wrong"
+    if change == "ordinal":
+        source["excluded_comments"][0] = "cal_dot_com:cal.com:10600:100"
+    if change == "duplicate":
+        source["excluded_prs"].append(source["excluded_prs"][0])
+    path = tmp_path / "bad.json"
+    write(path, source)
+    refuses(p.import_dispositions, path, e)
 
 
 def test_freeze_binds_explicit_baseline_and_exact_passing_scan(
-    population_case, tmp_path, monkeypatch
+    pop_case, tmp_path, monkeypatch
 ):
-    epoch, value = population_case
-    value.update(status="unfrozen", frozen_at=None)
+    e, m = pop_case
+    m.update(status="unfrozen", frozen_at=None)
     report = leaks.LeakReport(
-        2, epoch.epoch_id, epoch.golden_sha256, (), "surfaces", (), (), (), (), True
+        2, e.epoch_id, e.golden_sha256, (), "surfaces", (), (), (), True
     )
-    path = tmp_path / "scan.json"
-    path.write_bytes(canonical(asdict(report)))
     monkeypatch.setattr(validity, "require_clean_treatment", lambda root: None)
     monkeypatch.setattr(validity, "agent_read_hash", lambda root: "scanned-tree")
     calls = []
 
-    def git(args, **kwargs):
+    def git(args, **kw):
         calls.append(args)
         return SimpleNamespace(stdout=b"identical plugin tree")
 
     monkeypatch.setattr(p.subprocess, "run", git)
     monkeypatch.setattr(leaks, "scan_repository", lambda root: report)
-    kwargs = dict(
+    kw = dict(
         baseline_treatment_sha="a" * 40,
-        leak_report=path,
         frozen_at="fixture",
         out=tmp_path / "frozen.json",
     )
-    frozen = p.freeze_contamination(value, epoch, **kwargs)
-    assert frozen["baseline_treatment_sha"] == "a" * 40
-    assert any("a" * 40 in c for c in calls)
+    frozen = p.freeze_contamination(m, e, **kw)
+    assert frozen["baseline_treatment_sha"] == "a" * 40 and any(
+        "a" * 40 in c for c in calls
+    )
     assert frozen["leak_report_sha256"] == digest(asdict(report))
     monkeypatch.setattr(
         p.subprocess, "run", lambda args, **kw: SimpleNamespace(stdout=args[3].encode())
     )
-    with pytest.raises(ValueError, match="tree"):
-        p.freeze_contamination(
-            value, epoch, **{**kwargs, "out": tmp_path / "wrong-tree.json"}
-        )
+    refuses(p.freeze_contamination, m, e, **kw, match="tree")
     monkeypatch.setattr(p.subprocess, "run", git)
-    path.write_bytes(canonical({**asdict(report), "surfaces_sha256": "changed"}))
-    with pytest.raises(ValueError, match="scan"):
-        p.freeze_contamination(value, epoch, **{**kwargs, "out": tmp_path / "bad.json"})
+    report = replace(report, passed=False)
+    refuses(p.freeze_contamination, m, e, **kw, match="scan")
 
 
-def test_run_dispatch_refuses_holdout_before_prerequisites(
-    population_case, monkeypatch
-):
+def test_run_dispatch_refuses_holdout_before_prerequisites(pop_case, monkeypatch):
     from bench import run
 
-    epoch, _ = population_case
+    e, _ = pop_case
     monkeypatch.setattr(
         run, "check_prereqs", lambda **kw: pytest.fail("prerequisites reached")
     )
     for args in (
         ["--tier", "holdout"],
         ["--tier", "full"],
-        ["--prs", epoch.subsets["holdout"][0]],
+        ["--prs", e.subsets["holdout"][0]],
     ):
         assert run.main(args) == 2
+
+
+def test_holdout_receipt_is_once_and_final_sha_bound(pop_case, tmp_path, monkeypatch):
+    e, m = pop_case
+    ledger = tmp_path / "looks.jsonl"
+    ledger.write_bytes(b"")
+    monkeypatch.setattr(looks, "LEDGER", ledger)
+    receipt = tmp_path / "unseal.json"
+    sha = "a" * 40
+    looks.unseal(sha, receipt)
+    refuses(looks.unseal, sha, tmp_path / "second.json")
+    kw = dict(unseal=receipt, treatment_sha=sha)
+    assert len(p.resolve_population("holdout", e, "core", m, **kw).pr_urls) == 10
+    refuses(p.check_holdout, e.subsets["holdout"], e, receipt, "b" * 40)
+    for use in ["run", "audit", "compare"]:
+        p.check_holdout(e.subsets["holdout"], e, receipt, sha, use=use)
+        refuses(
+            p.check_holdout,
+            e.subsets["holdout"],
+            e,
+            receipt,
+            sha,
+            use=use,
+            match="second use",
+        )

@@ -90,27 +90,20 @@ def score_case(tmp_path):
                         if entries
                         else ()
                     )
-                    tp = [
-                        {
-                            "golden_comment": c["comment"],
-                            "matched_candidate": entries[0]["text"],
-                        }
-                        for i, c in enumerate(claims)
-                        if i in hits
-                    ]
-                    fn = [
-                        {"golden_comment": c["comment"]}
-                        for i, c in enumerate(claims)
-                        if i not in hits
-                    ]
-                    evaluations.setdefault(url, {})[tool] = {
-                        "true_positives": tp,
-                        "false_negatives": fn,
-                        "tp": len(tp),
-                        "fn": len(fn),
-                        "fp": max(0, len(entries) - 2),
-                        "errors": [],
-                    }
+                    tp, fn = [], []
+                    for i, claim in enumerate(claims):
+                        row = dict(golden_comment=claim["comment"])
+                        if i in hits:
+                            row["matched_candidate"] = entries[0]["text"]
+                        (tp if i in hits else fn).append(row)
+                    evaluations.setdefault(url, {})[tool] = dict(
+                        true_positives=tp,
+                        false_negatives=fn,
+                        tp=len(tp),
+                        fn=len(fn),
+                        fp=max(0, len(entries) - 2),
+                        errors=[],
+                    )
                     groups.setdefault(url, {})[tool] = (
                         [[0, 1]] if len(entries) >= 2 and not self.hits else []
                     )
@@ -141,7 +134,7 @@ def score_case(tmp_path):
 
 
 @pytest.fixture
-def population_case(tmp_path):
+def pop_case(tmp_path):
     from pathlib import Path
 
     from bench.runner import populations
@@ -159,3 +152,14 @@ def population_case(tmp_path):
         frozen_at="fixture",
     )
     return epoch, contamination
+
+
+def write(path, value):
+    from bench.runner.epochs import canonical
+
+    path.write_bytes(canonical(value))
+
+
+def refuses(call, *args, match=None, **kwargs):
+    with pytest.raises(ValueError, match=match):
+        call(*args, **kwargs)

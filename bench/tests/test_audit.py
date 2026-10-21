@@ -1,23 +1,23 @@
-"""Audit packets hide arms and receipts bind every imported label to the sample."""
+"""Auditors see separate public packets and receipts bind their exact bytes."""
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from bench.runner import audit as a
 from bench.runner import compare as c
-from bench.runner.epochs import canonical, digest, read_json
-from bench.tests.test_compare import comparison_case as comparison_case
+from bench.runner.epochs import file_hash, read_json
+from bench.tests.conftest import refuses, write
+from bench.tests.test_compare import case as case
+from bench.tests.test_compare import paired
 from bench.tests.test_validity import fingerprint as fingerprint
 from bench.tests.test_validity import window as window
 
 
-def resolve_audit(spec, packets, directory, *, dispute=False):
-    arms = {arm.name: arm.scores for arm in (spec.baseline, spec.candidate)}
-    frozen = a.sample(
-        arms, seed=17, size=30, out=directory, packet_loader=packets.__getitem__
-    )
-    paths = {"sample_path": str(directory / "sample.json"), "owner_path": None}
+def label_files(frozen, directory, dispute=False):
+    packet = directory / "public/packets.json"
+    paths = []
     for seat in ("Sol", "Opus"):
         labels = [
             dict(
@@ -28,100 +28,109 @@ def resolve_audit(spec, packets, directory, *, dispute=False):
             for i, r in enumerate(frozen["rows"])
         ]
         path = directory / (seat + ".json")
-        path.write_bytes(
-            canonical(dict(auditor=seat, sample_sha256=digest(frozen), labels=labels))
-        )
-        paths[seat.lower() + "_path"] = str(path)
-    result = a.merge(paths["sample_path"], [paths["sol_path"], paths["opus_path"]])
+        write(path, dict(auditor=seat, packet_sha256=file_hash(packet), labels=labels))
+        paths.append(str(path))
+    return paths
+
+
+def resolve_audit(spec, packets, directory, *, dispute=False):
+    arms = {arm.name: arm.scores for arm in (spec.baseline, spec.candidate)}
+    frozen = a.sample(
+        arms,
+        seed=17,
+        out=directory,
+        load=packets.__getitem__,
+        unseal=spec.unseal,
+        final_sha=spec.candidate.treatment_git_sha,
+    )
+    paths = dict(
+        sample_path=str(directory / "private/sample.json"),
+        packet_path=str(directory / "public/packets.json"),
+        label_paths=label_files(frozen, directory, dispute),
+    )
     receipt = directory / "receipt.json"
-    receipt.write_bytes(canonical(result))
+    write(receipt, a.merge(**paths))
     return frozen, paths, receipt
 
 
-def test_seeded_blind_audit_owner_queue_and_receipt_binding(comparison_case, tmp_path):
-    spec, packets = comparison_case.build()
-    frozen, paths, receipt = resolve_audit(
-        spec, packets, tmp_path / "audit", dispute=True
+def test_seeded_blind_audit_owner_queue_and_receipt_binding(case, tmp_path):
+    spec, packets = case.build()
+    directory = tmp_path / "audit"
+    frozen, paths, receipt = resolve_audit(spec, packets, directory, dispute=True)
+    arms = {arm.name: arm.scores for arm in (spec.baseline, spec.candidate)}
+    assert frozen == a.sample(
+        arms, seed=17, out=tmp_path / "again", load=packets.__getitem__
     )
-    again = a.sample(
-        {arm.name: arm.scores for arm in (spec.baseline, spec.candidate)},
-        seed=17,
-        size=30,
-        out=tmp_path / "again",
-        packet_loader=packets.__getitem__,
-    )
-    assert frozen == again
-    public = read_json(tmp_path / "audit/packets.json")
+    public = Path(paths["packet_path"])
+    assert public.parent != Path(paths["sample_path"]).parent
     assert all(
         set(r) == {"sample_id", "repository", "pr_url", "text", "path", "line"}
-        for r in public["findings"]
+        for r in read_json(public)["findings"]
     )
     result = read_json(receipt)
     assert len(result["owner_queue"]) == 1 and not result["resolved"]
-    with pytest.raises(ValueError):
-        a.load_receipt(receipt)
-    row = result["owner_queue"][0]
-    owner = tmp_path / "owner.json"
-    owner.write_bytes(
-        canonical(
-            dict(
-                auditor="owner",
-                sample_sha256=digest(frozen),
-                labels=[
-                    dict(
-                        sample_id=row["sample_id"],
-                        correct=True,
-                        evidence_refs=["owner:reference"],
-                    )
-                ],
-            )
-        )
+    refuses(a.load_receipt, receipt)
+    owner = directory / "owner.json"
+    value = read_json(paths["label_paths"][0])
+    sid = result["owner_queue"][0]["sample_id"]
+    value.update(
+        auditor="owner", labels=[r for r in value["labels"] if r["sample_id"] == sid]
     )
-    paths["owner_path"] = str(owner)
-    receipt.write_bytes(
-        canonical(
-            a.merge(
-                paths["sample_path"],
-                [paths["sol_path"], paths["opus_path"], paths["owner_path"]],
-            )
-        )
-    )
+    write(owner, value)
+    paths["label_paths"].append(str(owner))
+    write(receipt, a.merge(**paths))
     assert a.load_receipt(receipt)["resolved"]
-    with pytest.raises(ValueError):
-        a.load_receipt(receipt, {"other": ()})
-    changed = read_json(paths["sol_path"])
-    changed["sample_sha256"] = "different"
-    from pathlib import Path
-
-    Path(paths["sol_path"]).write_bytes(canonical(changed))
-    with pytest.raises(ValueError):
-        a.load_receipt(receipt)
+    refuses(a.load_receipt, receipt, {"other": ()})
+    public.write_bytes(public.read_bytes() + b" ")
+    refuses(a.merge, **paths, match="packet")
+    refuses(a.load_receipt, receipt)
 
 
-def test_operational_audit_is_required_and_finding_sample_is_bound(
-    comparison_case, tmp_path
-):
-    spec, packets = comparison_case.build()
-    with pytest.raises(ValueError, match="audit"):
-        c.compare_arms(spec, packet_loader=packets.__getitem__)
+@pytest.mark.parametrize("count", [0, 1, 3])
+def test_same_size_census_and_empty_arm_recall(case, tmp_path, count):
+    spec, packets = case.build()
+    ref = spec.candidate.scores[0]
+    for r in spec.candidate.scores:
+        packets[r] = replace(
+            packets[r], candidates=packets[r].candidates[:count] if r == ref else ()
+        )
+    frozen, paths, receipt = resolve_audit(spec, packets, tmp_path / "audit")
+    assert [
+        sum(r["arm"] == arm for r in frozen["rows"])
+        for arm in ("baseline", "candidate")
+    ] == [count, count]
+    report = paired(replace(spec, audit_path=str(receipt)), packets)
+    assert report.promotion.guards["groundedness"] == (
+        "pass" if count else "inconclusive"
+    )
+    assert report.population_reports[0].candidate_recall == 0
+    if count:
+        frozen["rows"] = [r for i, r in enumerate(frozen["rows"]) if i != 0]
+        write(Path(paths["sample_path"]), frozen)
+        write(Path(paths["packet_path"]), a.public_packet(frozen))
+        paths["label_paths"] = label_files(frozen, tmp_path / "audit")
+        refuses(a.merge, **paths, match="unequal")
+
+
+def test_operational_audit_is_required_and_finding_sample_is_bound(case, tmp_path):
+    spec, packets = case.build()
+    refuses(paired, spec, packets, match="audit")
     packets = {
-        ref: replace(
-            packet,
+        r: replace(
+            p,
             candidates=tuple(
                 replace(f, provenance_status="complete", discovery_dimensions=("bug",))
-                for f in packet.candidates
+                for f in p.candidates
             ),
         )
-        for ref, packet in packets.items()
+        for r, p in packets.items()
     }
-    _, paths, receipt = resolve_audit(spec, packets, tmp_path / "audit")
-    report = c.compare_arms(
-        replace(spec, audit_path=str(receipt)), packet_loader=packets.__getitem__
-    )
+    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
+    spec = replace(spec, audit_path=str(receipt))
+    report = paired(spec, packets)
     assert report.promotion.verdict == "pass"
-    gate = report.population_reports[0]
-    assert gate.dimensions["baseline"]["bug"]["groundedness"] == 1
-    assert gate.dimensions["baseline"]["security"]["groundedness"] is None
+    dims = report.population_reports[0].dimensions["baseline"]
+    assert dims["bug"]["groundedness"] == 1 and dims["security"]["groundedness"] is None
     ref = spec.baseline.scores[0]
     packets[ref] = replace(
         packets[ref],
@@ -129,7 +138,33 @@ def test_operational_audit_is_required_and_finding_sample_is_bound(
             replace(f, text="changed finding") for f in packets[ref].candidates
         ),
     )
-    with pytest.raises(ValueError):
-        c.compare_arms(
-            replace(spec, audit_path=str(receipt)), packet_loader=packets.__getitem__
-        )
+    refuses(paired, spec, packets)
+
+
+def test_holdout_compare_and_audit_use_the_final_receipt_once(
+    case, tmp_path, monkeypatch
+):
+    spec, packets = case.build("holdout", False)
+    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
+    spec = replace(spec, audit_path=str(receipt))
+    report = paired(spec, packets)
+    assert report.population_reports[0].population == "holdout"
+    refuses(resolve_audit, spec, packets, tmp_path / "second-audit", match="second use")
+    refuses(
+        paired,
+        replace(spec, candidate=replace(spec.candidate, treatment_git_sha="b" * 40)),
+        packets,
+        match="sealed",
+    )
+    compare = c.compare_arms
+    monkeypatch.setattr(
+        c, "compare_arms", lambda s: compare(s, packet_loader=packets.__getitem__)
+    )
+    path = tmp_path / "spec.json"
+    write(path, __import__("dataclasses").asdict(spec))
+    c.main(["--spec", str(path), "--out", str(tmp_path / "one.json")])
+    refuses(
+        c.main,
+        ["--spec", str(path), "--out", str(tmp_path / "two.json")],
+        match="second use",
+    )

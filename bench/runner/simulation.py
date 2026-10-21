@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import math
 import random
 import sys
@@ -20,6 +19,7 @@ from bench.runner import (  # noqa: E402
     populations,
     validity,
 )
+from bench.runner.cli import spec_output_args  # noqa: E402
 from bench.runner.decode import decode  # noqa: E402
 from bench.runner.epochs import digest, load_epoch, read_json  # noqa: E402
 from bench.runner.observations import ScoreRef  # noqa: E402
@@ -109,24 +109,14 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
             window_path=window_path,
             packet_loader=packet_loader,
         )
-        if run["run_index"] not in window.planned_run_indices:
-            raise ValueError("unplanned source run")
-        for selected in selections:
-            attempt = selected.attempt
-            v = attempt.validity
-            if (
-                v.state not in ("valid", "operational_failure")
-                or v.window_id != window.window_id
-                or v.observed != validity.fingerprint_from_wire(run["provenance"])
-                or (
-                    v.state == "operational_failure"
-                    and (
-                        not selected.failure_confirmation_ref
-                        or any(c.detected for c in selected.observations)
-                    )
-                )
-            ):
-                raise ValueError("invalid simulation source attempt")
+        validity.validate_matrix(
+            selections,
+            window,
+            (),
+            epoch=epoch,
+            expected_run_indices=(run["run_index"],),
+            source=True,
+        )
         controls = asdict(window.expected)
         controls.pop("auth_mode")
         identity = (
@@ -162,7 +152,7 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
     ), spec
 
 
-def generate_vectors(library, rule, effect, rng):
+def feasibility(library, effect):
     epoch = load_epoch(library.epoch_id)
     primary = populations.resolve_population(
         "gate-uncontaminated", epoch, "core", library.contamination
@@ -171,9 +161,14 @@ def generate_vectors(library, rule, effect, rng):
     r0 = sum(v.hits[i] for v in library.vectors for i in indices) / (
         len(library.vectors) * len(indices)
     )
-    delta = effect / 100
-    if delta < 0 or delta > 1 - r0 + 1e-12:
+    if effect < 0 or effect / 100 > 1 - r0 + 1e-12:
         raise ValueError("uplift exceeds empirical recall ceiling")
+    return indices, r0
+
+
+def generate_vectors(library, rule, effect, rng, *, feasible=None):
+    indices, r0 = feasible if feasible is not None else feasibility(library, effect)
+    delta = effect / 100
     total = rule.initial_runs + rule.extension_runs
     arms = [
         [list(rng.choice(library.vectors).hits) for _ in range(total)] for _ in range(2)
@@ -250,7 +245,6 @@ def simulate_rule(library, spec, *, rule_evaluator=compare.evaluate_promotion):
             if len({v.auth for v in library.vectors}) > 1
             else library.vectors[0].auth
         )
-        subset = library
         for effect in effects:
             rng = random.Random(
                 int(
@@ -260,22 +254,26 @@ def simulate_rule(library, spec, *, rule_evaluator=compare.evaluate_promotion):
             )
             decisions, extended, error = [], 0, None
             try:
+                feasible = feasibility(library, effect)
+            except ValueError as exc:
+                error = str(exc)
+            if not error:
                 for _ in range(spec.trials):
-                    arms = generate_vectors(subset, rule, effect, rng)
+                    arms = generate_vectors(
+                        library, rule, effect, rng, feasible=feasible
+                    )
                     receipt = simulated_audit(library, rng)
-                    reports = trial_reports(subset, arms, rule.initial_runs, rule)
+                    reports = trial_reports(library, arms, rule.initial_runs, rule)
                     decision = rule_evaluator(reports, receipt, rule)
                     if decision.extension_allowed:
                         extended += 1
                         reports = trial_reports(
-                            subset, arms, rule.initial_runs + rule.extension_runs, rule
+                            library, arms, rule.initial_runs + rule.extension_runs, rule
                         )
                         decision = rule_evaluator(
                             reports, simulated_audit(library, rng), rule, extended=True
                         )
                     decisions.append(decision)
-            except ValueError as exc:
-                error = str(exc)
             rate = (
                 sum(d.verdict == "pass" for d in decisions) / spec.trials
                 if not error
@@ -293,7 +291,7 @@ def simulate_rule(library, spec, *, rule_evaluator=compare.evaluate_promotion):
                     digest(asdict(rule)),
                     auth_mode,
                     effect,
-                    len(subset.vectors),
+                    len(library.vectors),
                     spec.trials,
                     rate,
                     math.sqrt(rate * (1 - rate) / spec.trials)
@@ -327,10 +325,7 @@ def simulate_rule(library, spec, *, rule_evaluator=compare.evaluate_promotion):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--spec", type=Path, required=True)
-    parser.add_argument("--out", type=Path, required=True)
-    args = parser.parse_args(argv)
+    args = spec_output_args(__doc__, argv)
     library, spec = load_simulation_spec(args.spec)
     observations.exclusive_json(args.out, simulate_rule(library, spec))
     return 0

@@ -1,8 +1,5 @@
 """Population-driven paired reports and the shared wave/ship rule evaluator."""
 
-from __future__ import annotations
-
-import argparse
 import math
 import random
 import sys
@@ -16,11 +13,13 @@ if str(ROOT) not in sys.path:
 
 from bench.runner import (  # noqa: E402
     audit,
+    looks,
     observations,
     populations,
     stages,
     validity,
 )
+from bench.runner.cli import spec_output_args  # noqa: E402
 from bench.runner.decode import decode  # noqa: E402
 from bench.runner.epochs import (  # noqa: E402
     Category,
@@ -32,6 +31,7 @@ from bench.runner.epochs import (  # noqa: E402
 )
 from bench.runner.observations import ScoreRef  # noqa: E402
 from bench.runner.populations import PopulationName  # noqa: E402
+from bench.runner.validity import load_selected_attempt  # noqa: E402
 
 Verdict = Literal["pass", "fail", "inconclusive"]
 
@@ -93,19 +93,13 @@ class ComparisonSpec:
     audit_path: str | None = None
     initial_spec_path: str | None = None
     initial_report_path: str | None = None
+    unseal: str | None = None
 
 
 def load_comparison_spec(path):
     path = Path(path).resolve()
     value = read_json(path)
-    for key in (
-        "contamination_path",
-        "window_path",
-        "rule_path",
-        "audit_path",
-        "initial_spec_path",
-        "initial_report_path",
-    ):
+    for key in (*[k for k in value if k.endswith("_path")], "unseal"):
         if value.get(key):
             value[key] = str((path.parent / value[key]).resolve())
     return decode(ComparisonSpec, value)
@@ -136,6 +130,7 @@ class Interval:
 @dataclass(frozen=True, slots=True)
 class PopulationComparison:
     population: PopulationName
+    content_sha256: str
     profile: Profile
     denominator: int
     baseline_recall: float | None
@@ -247,10 +242,18 @@ def reduce_population(
     dimensions, funnels = {}, {}
     for name in names:
         rows = members.get(name, [])
-        dimensions[name] = {
-            d: {
+        sampled = [
+            r
+            for r in (receipt["agreed"] if receipt else ())
+            if r["arm"] == name and r["finding"]["pr_url"] in population.pr_urls
+        ]
+        known = all(r["finding"]["provenance_status"] == "complete" for r in sampled)
+        dimensions[name] = {}
+        for d in get_args(observations.Dimension):
+            selected = [r for r in sampled if d in r["finding"]["discovery_dimensions"]]
+            dimensions[name][d] = {
                 kind: sum(
-                    (r.detected if kind == "delivered" else True)
+                    (r.detected or kind == "discovery")
                     and d in getattr(r, kind + "_dimensions")
                     for r in rows
                 )
@@ -259,25 +262,7 @@ def reduce_population(
                 else None
                 for kind in ("delivered", "discovery")
             }
-            for d in get_args(observations.Dimension)
-        }
-        for dimension in get_args(observations.Dimension):
-            sampled = (
-                [
-                    r
-                    for r in receipt["agreed"]
-                    if r["arm"] == name and r["finding"]["pr_url"] in population.pr_urls
-                ]
-                if receipt
-                else []
-            )
-            selected = [
-                r for r in sampled if dimension in r["finding"]["discovery_dimensions"]
-            ]
-            known = all(
-                r["finding"]["provenance_status"] == "complete" for r in sampled
-            )
-            dimensions[name][dimension]["groundedness"] = (
+            dimensions[name][d]["groundedness"] = (
                 sum(r["correct"] for r in selected) / len(selected)
                 if selected and known
                 else None
@@ -291,6 +276,7 @@ def reduce_population(
         )
     return PopulationComparison(
         population.name,
+        population.content_sha256,
         profile,
         len(bugs),
         *means(bugs),
@@ -330,18 +316,19 @@ def evaluate_promotion(reports, receipt, rule, *, extended=False):
     if rule.kind == "wave":
         if not receipt or not receipt["resolved"]:
             raise ValueError("resolved blinded audit required")
-        grouped = {}
-        for row in receipt["agreed"]:
-            grouped.setdefault(row["arm"], []).append(row["correct"])
-        if len(grouped) != 2 or any(
-            not values or any(type(v) is not bool for v in values)
-            for values in grouped.values()
+        base, candidate = (
+            [r["correct"] for r in receipt["agreed"] if r["arm"] == a]
+            for a in receipt["arm_order"]
+        )
+        if len(base) != len(candidate) or any(
+            type(v) is not bool for v in base + candidate
         ):
-            raise ValueError("incomplete audit")
-        base, candidate = (grouped[a] for a in receipt["arm_order"])
+            raise ValueError("incomplete or unequal audit")
         guards["groundedness"] = (
-            "pass"
-            if sum(candidate) / len(candidate) >= sum(base) / len(base)
+            "inconclusive"
+            if not base
+            else "pass"
+            if sum(candidate) >= sum(base)
             else "fail"
         )
         guards["stable_loss"] = (
@@ -375,7 +362,7 @@ def evaluate_promotion(reports, receipt, rule, *, extended=False):
         losses,
         rule.kind == "wave"
         and not extended
-        and verdict == "inconclusive"
+        and verdict in ("fail", "inconclusive")
         and rule.extension_runs > 0,
         improvement,
     )
@@ -386,77 +373,64 @@ def default_packet_loader(ref):
         not s or Path(s).name != s or s in (".", "..") for s in asdict(ref).values()
     ):
         raise ValueError("invalid score reference")
-    return observations.load_packet(
-        ROOT
-        / "bench/workspace/runs"
-        / ref.run_id
-        / "scores"
-        / ref.epoch_id
-        / ref.score_id
-    )
+    parent = ROOT / "bench/workspace/runs" / ref.run_id / "scores" / ref.epoch_id
+    return observations.load_packet(parent / ref.score_id)
 
 
 def _packet_run(packet):
     return read_json(packet.root / "run-provenance.json")
 
 
-def load_selected_attempt(packet, url, aid):
-    run_dir = packet.root.parents[2]
-    paths = list((run_dir / "attempts").glob(f"*/{aid}/attempt.json"))
-    if len(paths) != 1:
-        raise ValueError("immutable selected attempt missing")
-    path = paths[0]
-    expected = dict(packet.manifest.source_artifact_hashes).get(
-        str(path.relative_to(run_dir))
+def load_arm(arm, scope, epoch, *, window=None, window_path=None, packet_loader=None):
+    packet_loader = packet_loader or default_packet_loader
+    packets = tuple(packet_loader(ref) for ref in arm.scores)
+    attempts = (
+        {
+            (p.score_ref, url): load_selected_attempt(p, url, aid)
+            for p in packets
+            for url, aid in p.manifest.selected_attempts.items()
+        }
+        if window
+        else {}
     )
-    if expected != validity.file_hash(path):
-        raise ValueError("selected attempt differs from immutable score evidence")
-    attempt = validity.selected_attempt(path)
-    if attempt.run_id != packet.run_id or attempt.pr_url != url:
-        raise ValueError("selected attempt run/PR identity mismatch")
-    receipt = run_dir / "failure-confirmations" / (aid + ".json")
-    if receipt.is_file() and dict(packet.manifest.source_artifact_hashes).get(
-        str(receipt.relative_to(run_dir))
-    ) != validity.file_hash(receipt):
-        raise ValueError("failure confirmation differs from score evidence")
-    current = [
-        row
-        for p in (run_dir / "state").glob("*.json")
-        if (row := read_json(p)).get("url") == url
+    evidence = [
+        (_packet_run(p), stages.read_rows(p.root), stages.packet_traces(p.root))
+        for p in packets
     ]
-    if len(current) != 1 or (current[0].get("detail") or {}).get("attempt_id") != aid:
-        raise ValueError("score does not select the current attempt")
-    return attempt
+    return matrix_for_arm(
+        arm,
+        scope,
+        epoch,
+        packets,
+        attempts,
+        evidence,
+        window=window,
+        window_hash=file_hash(Path(window_path)) if window else None,
+    )
 
 
-def load_arm(
-    arm,
-    scope,
-    epoch,
-    *,
-    window=None,
-    window_path=None,
-    packet_loader=default_packet_loader,
+def matrix_for_arm(
+    arm, scope, epoch, packets, attempts, evidence, *, window=None, window_hash=None
 ):
-    cells, selections, stage_rows, packets, indices = [], [], [], [], []
+    cells, selections, stage_rows, indices = [], [], [], []
     by_attempt = {}
-    for order, ref in enumerate(arm.scores):
-        packet = packet_loader(ref)
+    for order, (ref, p, (run, sr, traces)) in enumerate(
+        zip(arm.scores, packets, evidence, strict=True)
+    ):
         if (
-            packet.score_ref != ref
+            p.score_ref != ref
             or ref.epoch_id != epoch.epoch_id
-            or dict(packet.manifest.epoch_hashes) != observations.epoch_hashes(epoch)
+            or dict(p.manifest.epoch_hashes) != observations.epoch_hashes(epoch)
         ):
-            raise ValueError("packet scoring context mismatch")
-        if not validity.same_pr_set(packet.manifest.requested_pr_urls, scope):
+            raise ValueError("p scoring context mismatch")
+        if not validity.same_pr_set(p.manifest.requested_pr_urls, scope):
             raise ValueError("incomplete PR scope")
         expected = {b.bug_id for b in epoch.bugs if b.pr_url in scope}
         if (
-            len(packet.observations) != len(expected)
-            or {b.bug_id for b in packet.observations} != expected
+            len(p.observations) != len(expected)
+            or {b.bug_id for b in p.observations} != expected
         ):
             raise ValueError("incomplete bug observations")
-        run = _packet_run(packet)
         index = run["run_index"] if window else order
         if window:
             fp = validity.fingerprint_from_wire(run["provenance"])
@@ -465,7 +439,7 @@ def load_arm(
                     window, fp, arm=arm.name, now=run["started"]
                 ).state
                 != "valid"
-                or run["window_sha256"] != file_hash(Path(window_path))
+                or run["window_sha256"] != window_hash
                 or run["window_id"] != window.window_id
                 or run["arm"] != arm.name
                 or not run.get("instrumentation_version")
@@ -474,14 +448,12 @@ def load_arm(
                 or run["pr_identities"] != {u: epoch.shas[u] for u in scope}
             ):
                 raise ValueError("review window/treatment mismatch")
-        if set(packet.manifest.selected_attempts) != set(scope):
+        if set(p.manifest.selected_attempts) != set(scope):
             raise ValueError("incomplete selected attempts")
-        sr = stages.read_rows(packet.root)
         stage_rows.extend(sr)
-        traces = stages.packet_traces(packet.root)
-        for url, aid in packet.manifest.selected_attempts.items():
+        for url, aid in p.manifest.selected_attempts.items():
             by_attempt[(index, url)] = []
-            attempt = load_selected_attempt(packet, url, aid) if window else None
+            attempt = attempts[(ref, url)] if window else None
             selections.append(
                 validity.CellSelection(
                     arm.name,
@@ -495,18 +467,15 @@ def load_arm(
                     attempt,
                 )
             )
-        for bug in packet.observations:
+        for bug in p.observations:
             if (
                 bug.errors
                 or bug.outcome == "unavailable"
-                or bug.attempt_id != packet.manifest.selected_attempts[bug.pr_url]
+                or bug.attempt_id != p.manifest.selected_attempts[bug.pr_url]
             ):
                 raise ValueError("invalid selected bug observation")
-            selected = next(
-                s for s in selections if s.run_index == index and s.pr_url == bug.pr_url
-            )
             if window and (bug.outcome == "operational_failure") != (
-                selected.attempt.validity.state == "operational_failure"
+                attempts[(ref, bug.pr_url)].validity.state == "operational_failure"
             ):
                 raise ValueError("operational failure must zero the entire PR")
             discovery = next(
@@ -514,17 +483,10 @@ def load_arm(
                 None,
             )
             matched = set(discovery.matched_version_ids) if discovery else set()
+            versions = traces[bug.pr_url][1].versions if bug.pr_url in traces else ()
             dims = tuple(
                 sorted(
-                    {
-                        v.discovery_dimension
-                        for v in (
-                            traces[bug.pr_url][1].versions
-                            if bug.pr_url in traces
-                            else ()
-                        )
-                        if v.version_id in matched
-                    }
+                    {v.discovery_dimension for v in versions if v.version_id in matched}
                 )
             )
             by_attempt[(index, bug.pr_url)].append(
@@ -536,13 +498,12 @@ def load_arm(
                     bug.outcome == "matched",
                     ref.run_id,
                     bug.attempt_id,
-                    stages.credited_dimensions(bug, packet.candidates),
+                    stages.credited_dimensions(bug, p.candidates),
                     dims,
                     (),
                     bool(discovery and discovery.coverage == "complete"),
                 )
             )
-        packets.append(packet)
         indices.append(index)
     if not indices or len(indices) != len(set(indices)):
         raise ValueError("missing or duplicate runs")
@@ -556,34 +517,52 @@ def load_arm(
 
 def compare_arms(spec, *, packet_loader=default_packet_loader):
     epoch = load_epoch(spec.epoch_id)
-    contamination = read_json(spec.contamination_path)
-    pop = populations.resolve_population(
-        spec.population, epoch, spec.profile, contamination
-    )
-    operational = spec.purpose != "descriptive"
-    if spec.population == "holdout" or spec.baseline.name == spec.candidate.name:
-        raise ValueError("sealed population or duplicate arm")
+    manifest = read_json(spec.contamination_path)
+
+    def resolve(name, profile):
+        return populations.resolve_population(
+            name,
+            epoch,
+            profile,
+            manifest,
+            unseal=spec.unseal,
+            treatment_sha=spec.candidate.treatment_git_sha,
+        )
+
+    pop = resolve(spec.population, spec.profile)
+    gate = spec.purpose != "descriptive"
     rule = decode(PromotionRule, read_json(spec.rule_path)) if spec.rule_path else None
     window = validity.load_window(Path(spec.window_path)) if spec.window_path else None
-    if operational and (
+    if gate and (
         not window
         or not rule
         or not rule.frozen
         or rule.kind != ("ship" if spec.purpose == "final" else "wave")
         or not spec.population.startswith("gate")
+        or spec.candidate.name != window.candidate_arm
     ):
-        raise ValueError("operational comparison requires gate, window and frozen rule")
-    if not operational and (rule or window):
-        raise ValueError("descriptive comparison has no operational rule/window")
-    scope = tuple(epoch.subsets["gate"]) if operational else pop.pr_urls
+        raise ValueError("gate comparison requires gate, window and frozen rule")
+    if spec.baseline.name == spec.candidate.name or (
+        not gate
+        and (
+            rule
+            or window
+            or spec.population not in ("dev-slice", "dev-pool", "mini", "holdout")
+        )
+    ):
+        raise ValueError("descriptive comparison has no gate rule/window")
+    look = looks.next_look(window.wave_id, digest(asdict(rule))) if gate else None
+    if gate and window.rule_sha256 != digest(asdict(rule)):
+        raise ValueError("window rule differs from preregistration")
+    scope = tuple(epoch.subsets["gate"]) if gate else pop.pr_urls
     if window and (
         not validity.same_pr_set(window.pr_urls, scope)
         or (rule.kind == "ship" and window.expected.auth_mode != "api")
     ):
-        raise ValueError("operational scope/auth mismatch")
-    if operational:
+        raise ValueError("gate scope/auth mismatch")
+    if gate:
         populations.check_baseline_binding(
-            contamination,
+            manifest,
             spec.baseline.treatment_git_sha,
             spec.baseline.agent_read_sha256,
         )
@@ -598,7 +577,15 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
             window_path=spec.window_path,
             packet_loader=packet_loader,
         )
-        if operational and arm == spec.baseline:
+        if (
+            spec.unseal
+            and arm == spec.candidate
+            and any(
+                _packet_run(p)["treatment_git_sha"] != arm.treatment_git_sha for p in ps
+            )
+        ):
+            raise ValueError("holdout final treatment mismatch")
+        if gate and arm == spec.baseline:
             for packet in ps:
                 receipt = _packet_run(packet).get("baseline_equivalence_receipt") or {}
                 if (
@@ -615,14 +602,13 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
     if (
         len({p.run_id for p in packets}) != len(packets)
         or len({p.manifest.evaluator for p in packets}) != 1
+        or (
+            gate
+            and len({_packet_run(p)["instrumentation_version"] for p in packets}) != 1
+        )
     ):
         raise ValueError("duplicate review or mixed scoring contexts")
-    if (
-        operational
-        and len({(_packet_run(p)["instrumentation_version"]) for p in packets}) != 1
-    ):
-        raise ValueError("mixed instrumentation")
-    if operational:
+    if gate:
         count = rule.initial_runs + (
             rule.extension_runs if spec.initial_spec_path else 0
         )
@@ -633,8 +619,14 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
             epoch=epoch,
             expected_run_indices=tuple(window.planned_run_indices[:count]),
         )
-        if any(len(indices) != count for _, indices in runs):
-            raise ValueError("unexpected rule run count")
+        validity.validate_interleaving(selections, window, runs)
+        for packet in packets:
+            if packet.score_ref in spec.candidate.scores:
+                looks.registration(
+                    window.wave_id,
+                    digest(asdict(rule)),
+                    started=_packet_run(packet)["started"],
+                )
     else:
         matrix = validity.CompleteMatrix(
             tuple(selections), tuple(cells), tuple(a.name for a in arms), tuple(runs)
@@ -661,24 +653,29 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
             for r in receipt["agreed"]
         ):
             raise ValueError("audit sample differs from delivered findings")
-        for arm in arms:
-            expected = min(
-                30, sum(len(p.candidates) for p in packets if p.score_ref in arm.scores)
+        expected = min(
+            30,
+            *(
+                sum(len(p.candidates) for p in packets if p.score_ref in a.scores)
+                for a in arms
+            ),
+        )
+        if any(
+            sum(r["arm"] == a.name for r in receipt["agreed"]) != expected for a in arms
+        ):
+            raise ValueError(
+                "audit requires same-size samples capped by the smaller census"
             )
-            if sum(r["arm"] == arm.name for r in receipt["agreed"]) != expected:
-                raise ValueError(
-                    "audit requires 30 findings per arm or a delivered census"
-                )
         receipt = {**receipt, "arm_order": [a.name for a in arms]}
     names = (
         tuple(n for n in get_args(PopulationName) if n.startswith("gate"))
-        if operational
+        if gate
         else (spec.population,)
     )
     reports = tuple(
         reduce_population(
             matrix,
-            populations.resolve_population(name, epoch, profile, contamination),
+            resolve(name, profile),
             epoch,
             profile,
             rule.bootstrap if rule else BootstrapConfig(),
@@ -692,7 +689,7 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
         evaluate_promotion(
             reports, receipt, rule, extended=bool(spec.initial_spec_path)
         )
-        if operational
+        if gate
         else None
     )
     if spec.initial_spec_path:
@@ -704,57 +701,58 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
             or initial.population != spec.population
         ):
             raise ValueError("invalid extension prefix")
-        for before, after in zip(
-            (initial.baseline, initial.candidate), arms, strict=True
+        if any(
+            before != replace(after, scores=after.scores[: rule.initial_runs])
+            for before, after in zip(
+                (initial.baseline, initial.candidate), arms, strict=True
+            )
         ):
-            if before != replace(after, scores=after.scores[: rule.initial_runs]):
-                raise ValueError("substituted initial runs")
-        previous = compare_arms(initial, packet_loader=packet_loader)
-        if not spec.initial_report_path:
-            raise ValueError("extension requires the saved initial report")
-        snapshot = read_json(spec.initial_report_path)
+            raise ValueError("substituted initial runs")
+        snapshot = (
+            read_json(spec.initial_report_path) if spec.initial_report_path else {}
+        )
+        prior = [
+            r
+            for r in looks.entries()
+            if r["kind"] == "look" and r["wave"] == window.wave_id
+        ]
         if (
-            digest(snapshot) != digest(asdict(previous))
-            or not previous.promotion.extension_allowed
+            not prior
+            or digest(snapshot) != prior[0]["report_sha256"]
+            or not snapshot["promotion"]["extension_allowed"]
         ):
             raise ValueError("initial report, rule, audit or decision changed")
     from bench.report import spend_totals
 
-    spend = spend_totals(
-        [
-            {
-                **p.metadata,
-                "packet_path": str(p.root),
-                **asdict(p.score_ref),
-                **{k + "_cost_usd": value for k, value in p.costs.items()},
-            }
-            for p in packets
-        ]
-    )
     return ComparisonReport(
         spec.comparison_id,
         reports,
         tuple(p.score_ref for p in packets),
         dict(
+            look=look,
+            populations={
+                p.population + "/" + p.profile: p.content_sha256 for p in reports
+            },
             epoch_id=epoch.epoch_id,
             golden_sha256=epoch.golden_sha256,
-            contamination_sha256=digest(contamination),
+            contamination_sha256=digest(manifest),
             rule_sha256=digest(asdict(rule)) if rule else None,
             audit_sha256=digest(receipt) if receipt else None,
         ),
-        spend,
+        spend_totals([p.ledger_row() for p in packets]),
         decision,
     )
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--spec", type=Path, required=True)
-    parser.add_argument("--out", type=Path, required=True)
-    args = parser.parse_args(argv)
-    observations.exclusive_json(
-        args.out, asdict(compare_arms(load_comparison_spec(args.spec)))
-    )
+    args = spec_output_args(__doc__, argv)
+    spec = load_comparison_spec(args.spec)
+    report = compare_arms(spec)
+    if report.promotion:
+        looks.record(validity.load_window(Path(spec.window_path)), spec, report)
+    if spec.population == "holdout":
+        looks.holdout(spec.unseal, spec.candidate.treatment_git_sha, use="compare")
+    observations.exclusive_json(args.out, asdict(report))
     return 0
 
 

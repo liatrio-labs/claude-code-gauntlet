@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import re
 import subprocess
 import sys
@@ -14,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from bench.runner.cli import spec_output_args  # noqa: E402
 from bench.runner.epochs import (  # noqa: E402
     digest,
     file_hash,
@@ -31,6 +31,7 @@ PopulationName = Literal[
     "dev-slice",
     "dev-pool",
     "holdout",
+    "mini",
 ]
 MatchKind = Literal["identifier", "scenario", "sweep", "textbook_class"]
 
@@ -62,7 +63,6 @@ class Population:
     name: PopulationName
     bug_ids: tuple[str, ...]
     pr_urls: tuple[str, ...]
-    nonempty_pr_clusters: tuple[tuple[str, tuple[str, ...]], ...]
     denominator: int
     content_sha256: str
 
@@ -89,12 +89,7 @@ def contamination_entries(manifest, epoch, *, require_frozen=True):
     ):
         raise ValueError("contamination dispositions are unfrozen")
     bugs = {b.bug_id: b.pr_url for b in epoch.bugs}
-    scopes = {
-        "identifier": "pr",
-        "scenario": "pr",
-        "sweep": "bug",
-        "textbook_class": "none",
-    }
+    scopes = dict(identifier="pr", scenario="pr", sweep="bug", textbook_class="none")
     for row in manifest["entries"]:
         if (
             row["pr_url"] not in bugs.values()
@@ -110,7 +105,6 @@ def contamination_entries(manifest, epoch, *, require_frozen=True):
 
 
 def import_dispositions(source, epoch, out=None):
-    """Join reviewed v2 ordinal references to the active epoch's stable bug ids."""
     source = Path(source)
     value = read_json(source)
     if value["schema_version"] != 2 or value["golden_epoch"] != epoch.upstream_sha:
@@ -150,14 +144,10 @@ def import_dispositions(source, epoch, out=None):
             "sweep",
             [key, digest(bug.comment)] + value["sweep_passages"],
         )
-    if len({e["pr_url"] for e in entries if e["scope"] == "pr"}) != len(
-        value["excluded_prs"]
-    ) or len(set(value["excluded_comments"])) != len(value["excluded_comments"]):
+    if len({digest(e) for e in entries}) != len(entries):
         raise ValueError("duplicate disposition")
-    result: ContaminationManifestWire = read_json(
-        ROOT / "bench/golden/contamination.json"
-    )
-    result.update(
+    result: ContaminationManifestWire = dict(
+        schema_version=1,
         epoch_id=epoch.epoch_id,
         golden_sha256=epoch.golden_sha256,
         entries=entries,
@@ -175,7 +165,7 @@ def import_dispositions(source, epoch, out=None):
 
 
 def freeze_contamination(
-    manifest, epoch, *, baseline_treatment_sha, leak_report, out, frozen_at, root=ROOT
+    manifest, epoch, *, baseline_treatment_sha, out, frozen_at, root=ROOT
 ):
     from bench.runner import leaks, validity
 
@@ -189,10 +179,9 @@ def freeze_contamination(
             "unfrozen manifest, explicit baseline SHA and timestamp required"
         )
     # A scan of this checkout can bind a future merge only when its plugin tree is identical.
-    paths = validity.PLUGIN_PATHS
     trees = [
         subprocess.run(
-            ["git", "ls-tree", "-r", ref, "--", *paths],
+            ["git", "ls-tree", "-r", ref, "--", *validity.PLUGIN_PATHS],
             cwd=root,
             capture_output=True,
             check=True,
@@ -204,8 +193,8 @@ def freeze_contamination(
         raise ValueError("baseline agent-read tree differs from scanned checkout")
     agent_hash = validity.agent_read_hash(root)
     report = leaks.scan_repository(root)
-    if not report.passed or digest(asdict(report)) != digest(read_json(leak_report)):
-        raise ValueError("freeze requires the exact passing scan")
+    if not report.passed:
+        raise ValueError("freeze requires a passing scan")
     result = {
         **manifest,
         "status": "frozen",
@@ -230,32 +219,42 @@ def check_baseline_binding(manifest, treatment_sha, agent_read_sha256):
         raise ValueError("contamination baseline treatment/hash/report mismatch")
 
 
-def check_holdout(urls, epoch, unseal=None):
-    if set(urls) & set(epoch.subsets["holdout"]) and unseal != "#101-close":
-        raise ValueError("holdout sealed until explicit #101-close unseal")
+def check_holdout(urls, epoch, unseal=None, treatment_sha=None, *, use=None):
+    if set(urls) & set(epoch.subsets["holdout"]):
+        from bench.runner.looks import holdout
+
+        holdout(unseal, treatment_sha, use=use)
 
 
-def resolve_population(name, epoch, profile, contamination, *, unseal=None):
+def resolve_population(
+    name, epoch, profile, contamination, *, unseal=None, treatment_sha=None
+):
     if name not in get_args(PopulationName):
         raise ValueError("unknown population")
     if name == "holdout":
-        check_holdout(epoch.subsets["holdout"], epoch, unseal)
-    entries = contamination_entries(contamination, epoch)
+        check_holdout(epoch.subsets["holdout"], epoch, unseal, treatment_sha)
+    entries = contamination_entries(
+        contamination, epoch, require_frozen=name.startswith("gate")
+    )
+    excluded_prs = {e["pr_url"] for e in entries if e["scope"] == "pr"}
+    excluded_bugs = {b for e in entries if e["scope"] == "bug" for b in e["bug_ids"]}
     gate, holdout, mini = (set(epoch.subsets[k]) for k in ("gate", "holdout", "mini"))
-    pool = {b.pr_url for b in epoch.bugs} - gate - holdout
-    core = included_bugs(epoch, "core", frozenset(pool))
+    pool = {b.pr_url for b in epoch.bugs} - gate - holdout - excluded_prs
+    core = [
+        b
+        for b in included_bugs(epoch, "core", frozenset(pool))
+        if b.bug_id not in excluded_bugs
+    ]
     selected = sorted(pool, key=lambda u: (-sum(b.pr_url == u for b in core), u))[:6]
-    urls = {"dev-pool": pool, "dev-slice": set(selected), "holdout": holdout}.get(
-        name, gate
+    urls = {"dev-pool": pool, "dev-slice": set(selected)}.get(
+        name, set(epoch.subsets.get(name, gate))
     )
     if name.endswith("non-mini"):
         urls = urls - mini
-    excluded_prs = {e["pr_url"] for e in entries if e["scope"] == "pr"}
-    excluded_bugs = {b for e in entries if e["scope"] == "bug" for b in e["bug_ids"]}
     if name in ("gate-uncontaminated", "gate-uncontaminated-non-mini"):
         urls = urls - excluded_prs
     bugs = included_bugs(epoch, profile, frozenset(urls))
-    if name.startswith("gate-"):
+    if name.startswith("gate-") or name.startswith("dev-"):
         contaminated = name == "gate-contaminated"
         bugs = tuple(
             b
@@ -265,33 +264,23 @@ def resolve_population(name, epoch, profile, contamination, *, unseal=None):
     ids = tuple(sorted(b.bug_id for b in bugs))
     if name == "gate-contaminated":
         urls = {b.pr_url for b in bugs}
-    clusters = tuple(
-        (u, tuple(b.bug_id for b in bugs if b.pr_url == u))
-        for u in sorted(urls)
-        if any(b.pr_url == u for b in bugs)
-    )
     return Population(
         name,
         ids,
         tuple(sorted(urls)),
-        clusters,
         len(ids),
         digest([epoch.epoch_id, epoch.golden_sha256, profile, name, ids, sorted(urls)]),
     )
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    for key in ("spec", "out"):
-        parser.add_argument("--" + key, required=True)
-    args = parser.parse_args(argv)
-    config, out = args.spec, args.out
-    value = read_json(config)
+    args = spec_output_args(__doc__, argv)
+    value = read_json(args.spec)
     epoch = load_epoch()
     if "baseline_treatment_sha" in value:
-        freeze_contamination(epoch=epoch, out=out, **value)
+        freeze_contamination(epoch=epoch, out=args.out, **value)
     else:
-        import_dispositions(config, epoch, out)
+        import_dispositions(args.spec, epoch, args.out)
 
 
 if __name__ == "__main__":

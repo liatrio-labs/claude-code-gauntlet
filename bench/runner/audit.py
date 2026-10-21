@@ -1,27 +1,23 @@
-"""Blinded delivered-finding samples, two auditor labels, and owner resolution."""
+"""Blinded same-size samples and packet-bound auditor receipts."""
 
-from __future__ import annotations
-
-import argparse
 import random
-import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal, TypedDict
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from bench.runner.decode import decode  # noqa: E402
-from bench.runner.epochs import digest, load_epoch, read_json  # noqa: E402
-from bench.runner.observations import ScoreRef, exclusive_json  # noqa: E402
+from bench.runner.cli import spec_output_args
+from bench.runner.decode import decode
+from bench.runner.epochs import digest, file_hash, load_epoch, read_json
+from bench.runner.looks import holdout
+from bench.runner.observations import ScoreRef, exclusive_json
+from bench.runner.populations import check_holdout
 
 
 class SampleWire(TypedDict):
     seed: int
     arms: dict[str, list[dict]]
     rows: list[dict]
+    unseal: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,32 +30,56 @@ class Label:
 @dataclass(frozen=True, slots=True)
 class Labels:
     auditor: Literal["Sol", "Opus", "owner"]
-    sample_sha256: str
+    packet_sha256: str
     labels: tuple[Label, ...]
 
 
-def sample(arms, *, seed, out, size=30, packet_loader=None):
-    from bench.runner.compare import default_packet_loader
+def public_packet(frozen):
+    findings, receipt = [], frozen["unseal"]
+    sha = read_json(receipt)["final_sha"] if receipt else None
+    if receipt:
+        holdout(receipt, sha)
+    for row in frozen["rows"]:
+        f = row["finding"]
+        epoch = load_epoch(row["score_ref"]["epoch_id"])
+        check_holdout((f["pr_url"],), epoch, receipt, sha)
+        findings.append(
+            dict(sample_id=row["sample_id"], repository=epoch.shas[f["pr_url"]])
+            | {k: f[k] for k in ("pr_url", "text", "path", "line")}
+        )
+    return dict(sample_sha256=digest(frozen), findings=findings)
 
-    loader = packet_loader or default_packet_loader
+
+def sample(arms, *, seed, out, size=30, load=None, unseal=None, final_sha=None):
+    from bench.runner.compare import _packet_run, default_packet_loader
+
+    loader = load or default_packet_loader
     if len(arms) != 2 or type(seed) is not int or type(size) is not int or size < 1:
         raise ValueError("two arms, seed and positive sample size required")
-    rng, rows = random.Random(seed), []
+    pools, final = {}, False
     for name, refs in sorted(arms.items()):
-        candidates = [
-            (ref, finding) for ref in refs for finding in loader(ref).candidates
-        ]
-        if not candidates or len(set(refs)) != len(refs):
-            raise ValueError("empty or duplicate delivered findings")
-        if any(
-            c.pr_url in load_epoch(ref.epoch_id).subsets["holdout"]
-            for ref, c in candidates
-        ):
-            raise ValueError("holdout sealed")
-        candidates.sort(
-            key=lambda pair: (pair[0].run_id, pair[0].score_id, pair[1].candidate_id)
+        if len(set(refs)) != len(refs):
+            raise ValueError("duplicate delivered findings")
+        packets = [loader(ref) for ref in refs]
+        if unseal:
+            final |= bool(refs) and all(
+                _packet_run(p)["treatment_git_sha"] == final_sha for p in packets
+            )
+        for packet in packets:
+            check_holdout(
+                packet.manifest.requested_pr_urls,
+                load_epoch(packet.score_ref.epoch_id),
+                unseal,
+                final_sha,
+            )
+        pools[name] = sorted(
+            [(p.score_ref, f) for p in packets for f in p.candidates],
+            key=lambda pair: (pair[0].run_id, pair[0].score_id, pair[1].candidate_id),
         )
-        for ref, finding in rng.sample(candidates, min(size, len(candidates))):
+    count = min(size, *(len(pool) for pool in pools.values()))
+    rng, rows = random.Random(seed), []
+    for name, pool in pools.items():
+        for ref, finding in rng.sample(pool, count):
             rows.append(
                 dict(
                     sample_id=f"s-{rng.getrandbits(128):032x}",
@@ -73,78 +93,68 @@ def sample(arms, *, seed, out, size=30, packet_loader=None):
         seed=seed,
         arms={a: [asdict(r) for r in refs] for a, refs in arms.items()},
         rows=rows,
+        unseal=unseal,
     )
+    if unseal:
+        if not final:
+            raise ValueError("holdout audit requires approved final treatment")
+        holdout(unseal, final_sha, use="audit")
     directory = Path(out)
-    directory.mkdir(parents=True, exist_ok=True)
-    exclusive_json(directory / "sample.json", frozen)
-    packets = [
-        {
-            "sample_id": r["sample_id"],
-            "repository": load_epoch(r["score_ref"]["epoch_id"]).shas[
-                r["finding"]["pr_url"]
-            ],
-            **{k: r["finding"][k] for k in ("pr_url", "text", "path", "line")},
-        }
-        for r in rows
-    ]
-    exclusive_json(
-        directory / "packets.json", dict(sample_sha256=digest(frozen), findings=packets)
-    )
+    exclusive_json(directory / "private/sample.json", frozen)
+    exclusive_json(directory / "public/packets.json", public_packet(frozen))
     return frozen
 
 
-def merge(sample_path, label_paths):
+def merge(sample_path, label_paths, packet_path):
     if len(label_paths) not in (2, 3):
         raise ValueError("Sol and Opus labels, with optional owner labels, required")
     frozen = read_json(sample_path)
-    sample_hash = digest(frozen)
+    if read_json(packet_path) != public_packet(frozen):
+        raise ValueError("auditor packet differs from frozen sample")
+    packet_hash = file_hash(Path(packet_path))
     ids = {r["sample_id"] for r in frozen["rows"]}
-    if len(ids) != len(frozen["rows"]):
-        raise ValueError("duplicate frozen sample")
+    counts = [sum(r["arm"] == arm for r in frozen["rows"]) for arm in frozen["arms"]]
+    if len(ids) != len(frozen["rows"]) or len(counts) != 2 or counts[0] != counts[1]:
+        raise ValueError("duplicate sample or unequal arm counts")
     labels = []
-    for seat, path in zip(
-        ("Sol", "Opus", "owner"), [*label_paths, None][:3], strict=True
-    ):
-        value = (
-            decode(Labels, read_json(path)) if path else Labels(seat, sample_hash, ())
-        )
+    for seat, path in zip(("Sol", "Opus", "owner"), label_paths, strict=False):
+        value = decode(Labels, read_json(path))
         rows = {r.sample_id: r for r in value.labels}
         if (
             value.auditor != seat
-            or value.sample_sha256 != sample_hash
+            or value.packet_sha256 != packet_hash
             or len(rows) != len(value.labels)
             or set(rows) - ids
             or (seat != "owner" and set(rows) != ids)
             or any(not r.evidence_refs for r in rows.values())
         ):
-            raise ValueError("auditor/sample/coverage/evidence mismatch")
+            raise ValueError("auditor/sample/packet/coverage/evidence mismatch")
         labels.append(rows)
+    if len(labels) == 2:
+        labels.append({})
     agreed, disputed = [], []
     for row in frozen["rows"]:
         sid = row["sample_id"]
-        a, b = labels[0][sid], labels[1][sid]
-        owner = labels[2].get(sid)
+        a, b, owner = labels[0][sid], labels[1][sid], labels[2].get(sid)
         if a.correct == b.correct and owner:
             raise ValueError("owner resolution must name a dispute")
         resolved = a if a.correct == b.correct else owner
-        status = "disputed"
-        if resolved:
-            status = "owner_resolved" if owner else "agreed"
         (agreed if resolved else disputed).append(
             {
                 **row,
                 "correct": resolved.correct if resolved else None,
-                "status": status,
-                "evidence_refs": list(
-                    a.evidence_refs
-                    + b.evidence_refs
-                    + (owner.evidence_refs if owner else ())
-                ),
+                "evidence_refs": [
+                    ref
+                    for label in (a, b, owner)
+                    if label
+                    for ref in label.evidence_refs
+                ],
             }
         )
     return dict(
-        sources=dict(sample_path=sample_path, label_paths=label_paths),
-        sample_sha256=sample_hash,
+        sources=dict(
+            sample_path=sample_path, label_paths=label_paths, packet_path=packet_path
+        ),
         agreed=agreed,
         owner_queue=disputed,
         resolved=not disputed,
@@ -164,20 +174,16 @@ def load_receipt(path, arms=None):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    for key in ("spec", "out"):
-        parser.add_argument("--" + key, required=True)
-    args = parser.parse_args(argv)
-    config, out = args.spec, args.out
-    value = read_json(config)
+    args = spec_output_args(__doc__, argv)
+    value = read_json(args.spec)
     if "arms" in value:
         value["arms"] = {
             a: tuple(decode(ScoreRef, r) for r in refs)
             for a, refs in value["arms"].items()
         }
-        sample(**value, out=out)
+        sample(**value, out=args.out)
     else:
-        exclusive_json(Path(out), merge(**value))
+        exclusive_json(Path(args.out), merge(**value))
 
 
 if __name__ == "__main__":
