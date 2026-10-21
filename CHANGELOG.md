@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.47.0 (2026-10-21)
+
+### Bug Fixes
+
+- **bench**: One-time evidence is written before it is spent, and windows plan their extension
+  ([#543](https://github.com/liatrio-labs/claude-code-gauntlet/pull/543),
+  [`465011c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/465011c16d8ba2c21600e2caf359d7f4a33638da))
+
+### Features
+
+- **bench**: Named populations, a counted look ledger, a groundedness audit, rule-driven comparison
+  and simulation ([#543](https://github.com/liatrio-labs/claude-code-gauntlet/pull/543),
+  [`465011c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/465011c16d8ba2c21600e2caf359d7f4a33638da))
+
+- **bench**: Populations, look ledger, groundedness audit, rule-driven comparison and simulation
+  (#46 stack 5/5) ([#543](https://github.com/liatrio-labs/claude-code-gauntlet/pull/543),
+  [`465011c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/465011c16d8ba2c21600e2caf359d7f4a33638da))
+
+
 ## v3.46.0 (2026-10-21)
 
 ### Bug Fixes
