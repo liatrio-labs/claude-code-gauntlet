@@ -36,6 +36,7 @@ from gauntlet.registry import ARTIFACT_BASENAMES
 
 from bench.runner import citations
 from bench.runner.invoke import (
+    PIPELINE_META_NAME,
     extract_identity_receipt,
     parse_result_envelope,
     pipeline_bundle_sha256,
@@ -530,6 +531,103 @@ def _finding_identity(finding):
     return json.dumps(key, sort_keys=True)
 
 
+def workflow_stage_outcomes(pr_dir):
+    """Execution failures remain invalid even when optional tracing is off."""
+    failures, disclosures, reports, phases = set(), set(), [], []
+    for path in (Path(pr_dir) / "workflows").glob("*.json"):
+        try:
+            record = _load_json(path)
+        except json.JSONDecodeError:
+            continue
+        script_path, name, _ = workflow_record_fields(record)
+        # Captured outcomes must stay readable after switching treatment bundles.
+        if name != PIPELINE_META_NAME and not (
+            isinstance(script_path, str)
+            and script_path_matches_repo(
+                script_path, Path(__file__).resolve().parents[2]
+            )
+        ):
+            continue
+        out = record.get("result")
+        if not isinstance(out, dict):
+            continue
+        reports.append(out)
+        phases.append((out.get("checkpoints") or {}).get("phases") or {})
+        holder = record.get("args") or {}
+        holder = json.loads(holder) if isinstance(holder, str) else holder
+        if isinstance(holder, dict) and holder.get("checkpoints"):
+            disclosures.add(
+                "Checkpoint replay used; recorded stage failures remain invalid."
+            )
+    for path in Path(pr_dir).glob("code-gauntlet-checkpoint-all-*.json"):
+        try:
+            phases.append(_load_json(path).get("phases") or {})
+        except json.JSONDecodeError:
+            continue
+    for phase in phases:
+        discover, verify = phase.get("discover") or {}, phase.get("verify") or {}
+        reports.append(
+            {
+                "stats": {
+                    "degraded": discover.get("degraded"),
+                    "verified": verify.get("verified"),
+                    "inputProof": verify.get("inputProof"),
+                    "validate": (phase.get("validate") or {}).get("stats"),
+                    "challenge": (phase.get("challenge") or {}).get("stats"),
+                }
+            }
+        )
+    for out in reports:
+        stats = out.get("stats") or {}
+        if out.get("ok") is False:
+            failures.add("workflow execution failed")
+        if stats.get("degraded"):
+            failures.add("discovery execution failed")
+        if (
+            stats.get("verified") is False
+            or (stats.get("inputProof") or {}).get("degradedFindings", 0) > 0
+        ):
+            failures.add("verify execution failed")
+        validation = stats.get("validate") or {}
+        if validation.get("skipped", 0) > 0 or validation.get(
+            "batches_completed", 0
+        ) < validation.get("batches_dispatched", 0):
+            failures.add("validate execution failed")
+        challenge = stats.get("challenge") or {}
+        failed = challenge.get("dispatched", 0) - challenge.get("completed", 0)
+        if failed > 0:
+            failures.add("challenge execution failed")
+        capped = challenge.get("skipped", 0) - max(0, failed)
+        if capped > 0:
+            disclosures.add(f"Permitted challenge cap: {capped} findings held back.")
+        if (stats.get("inputProof") or {}).get("retried", 0):
+            disclosures.add("Verification repaired by retry.")
+    return tuple(sorted(failures)), tuple(sorted(disclosures))
+
+
+def check_attempt(pr_dir, *, naive=False):
+    """Apply artifact and identity gates without the smoke-only nonempty-review gate."""
+    payload = pr_dir / "post-review-payload.json"
+    if not payload.is_file():
+        return ["artifact_missing"]
+    try:
+        failures = _validate_payload_fields(_load_json(payload), pr_dir.name)
+        if not naive:
+            artifacts, _ = _check_artifact_completeness(pr_dir, pr_dir.name)
+            identity, identity_ok = _check_echo_identity(
+                pr_dir, Path(__file__).resolve().parents[2], pr_dir.name
+            )
+            failures.extend(artifacts)
+            failures.extend(identity)
+            if not identity_ok:
+                failures.append("missing identity")
+            if _scan_degrade_text(pr_dir):
+                failures.append("pipeline degraded")
+    except (ValueError, TypeError, KeyError, OSError, AttributeError):
+        return ["artifact_missing"]
+    return failures
+
+
 def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
     """Run functional smoke gates against ``run_dir``.
 
@@ -551,6 +649,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         "workflow_records": 0,
     }
     stats["citation_boilerplate"] = citations.measure_run(run_dir)
+    stats["stage_disclosures"] = []
 
     if not run_dir.is_dir():
         return {
@@ -583,6 +682,14 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
             "stats": stats,
             "refused": True,
         }
+
+    if manifest and manifest.get("measurement_window"):
+        from bench.runner.validity import measurement_context
+
+        try:
+            measurement_context(manifest)
+        except (ValueError, TypeError, KeyError, OSError) as exc:
+            failures.append(str(exc))
 
     # G1: every declared pr_urls entry must have a terminal ok checkpoint.
     # Absence of a state file means pending (crash/kill mid-run) — must fail.
@@ -618,6 +725,14 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
 
     for pr_dir in pr_dirs:
         label = pr_dir.name
+        try:
+            stage_failures, disclosures = workflow_stage_outcomes(pr_dir)
+            stats["stage_disclosures"].extend(
+                f"{label}: {text}" for text in disclosures
+            )
+            failures.extend(f"{label}: {failure}" for failure in stage_failures)
+        except (ValueError, TypeError, KeyError, OSError, AttributeError):
+            failures.append(f"{label}: unreadable workflow stage outcomes")
 
         # --- G2: payload ---
         payload_path = pr_dir / "post-review-payload.json"

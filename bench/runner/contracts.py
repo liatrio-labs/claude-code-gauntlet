@@ -99,6 +99,18 @@ def copy_exclusive(source: Path, target: Path):
         shutil.copyfileobj(incoming, outgoing)
 
 
+def selected_attempt_path(run_dir, attempt_id):
+    if not isinstance(attempt_id, str) or not re.fullmatch(
+        r"[A-Za-z0-9_-]+", attempt_id
+    ):
+        raise ValueError("invalid selected attempt identity")
+    root = Path(run_dir)
+    paths = list((root / "attempts").glob(f"*/{attempt_id}/attempt.json"))
+    if len(paths) != 1 or not paths[0].resolve().is_relative_to(root.resolve()):
+        raise ValueError("selected attempt is missing or ambiguous")
+    return paths[0]
+
+
 def _pr_number(pr):
     number = next(
         (pr[k] for k in ("pr_number", "number", "n") if pr.get(k) is not None),

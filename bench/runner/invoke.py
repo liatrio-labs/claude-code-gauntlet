@@ -26,6 +26,7 @@ import sys
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal, TypedDict
 
 from gauntlet.config import (
     ResolverError,
@@ -153,7 +154,10 @@ def build_bench_env(pins, registry):
     return env
 
 
-BENCH_ENV = build_bench_env(BENCH_PINS, KNOB_REGISTRY)
+BENCH_ENV = {
+    **build_bench_env(BENCH_PINS, KNOB_REGISTRY),
+    "CODE_GAUNTLET_MEASUREMENT_TRACE": "1",
+}
 
 
 try:
@@ -215,11 +219,19 @@ _OUTRANKING_CREDENTIAL_VARS = (
 OAUTH_TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
 
 
-@dataclass
+InvokeStatus = Literal["ok", "timeout", "invalid", "failed"]
+
+
+class ModelUsageWire(TypedDict):
+    tokens: int
+    cost_usd: float
+
+
+@dataclass(frozen=True, slots=True)
 class InvokeResult:
-    status: str  # ok | timeout | invalid | failed
+    status: InvokeStatus
     cost_usd: float = 0.0
-    per_model: dict = field(default_factory=dict)
+    per_model: dict[str, ModelUsageWire] = field(default_factory=dict)
     echo_ok: bool = False
     payload_path: str | None = None
     raw_json_path: str | None = None
@@ -429,6 +441,7 @@ def supersede_workflow_records(pr_dir):
 
 
 _ATTEMPT_ARTIFACT_PATTERNS = (
+    "measurement-*.json",
     "code-gauntlet-*",
     "post-review-payload*.json",
     "risk-table-*.json",
@@ -661,6 +674,7 @@ def build_env(pr, run_dir, base_env, child_auth=API_AUTH_MODE):
     for alias in (*MODEL_ALIASES, "fable"):
         env.pop(f"ANTHROPIC_DEFAULT_{alias.upper()}_MODEL", None)
     env.update(BENCH_ENV)
+    env["DISABLE_AUTOUPDATER"] = "1"
     auth_updates, auth_removals = _claude_auth_env(base_env, child_auth)
     for name in auth_removals:
         env.pop(name, None)
@@ -1391,6 +1405,19 @@ def _v3_preflight(claude_bin):
     return None
 
 
+def pinned_cli(run_dir):
+    """Use the manifest pin after rechecking it at the final spend boundary."""
+    from bench.runner.validity import measurement_context, recheck_cli
+
+    path = Path(run_dir) / "run.json"
+    manifest = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    if manifest.get("measurement_window"):
+        fingerprint = measurement_context(manifest)
+        recheck_cli(fingerprint)
+        return fingerprint.controls.cli_realpath
+    return None
+
+
 def invoke_review(
     worktree,
     pr,
@@ -1433,7 +1460,9 @@ def invoke_review(
     pr_dir.mkdir(parents=True, exist_ok=True)
     raw_path = pr_dir / "raw.json"
 
-    claude_bin = shutil.which("claude", path=env.get("PATH") or os.environ.get("PATH"))
+    claude_bin = pinned_cli(run_dir) or shutil.which(
+        "claude", path=env.get("PATH") or os.environ.get("PATH")
+    )
     if not claude_bin:
         return InvokeResult(
             "failed", raw_json_path=str(raw_path), reason="claude_not_found"

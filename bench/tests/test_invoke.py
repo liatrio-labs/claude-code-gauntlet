@@ -982,7 +982,8 @@ class InvokeReviewTest(InvokeTestBase):
         self.assertIn("-p", argv)
         prompt = argv[argv.index("-p") + 1]
         self.assertEqual(
-            prompt, "/code-gauntlet:code-gauntlet {}".format(PR["pr_number"])
+            prompt,
+            "/code-gauntlet:code-gauntlet {}".format(PR["pr_number"]),
         )
         # Guard the exact regression: the bare/flat command must not reappear.
         self.assertNotEqual(prompt, "/code-gauntlet {}".format(PR["pr_number"]))
@@ -2067,3 +2068,14 @@ class WorkflowFailureTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_bench_resolver_sets_trace_without_prompt_instructions():
+    from gauntlet.config import resolve
+
+    assert (
+        resolve("headless", invoke.BENCH_ENV, None, "pr")["waist"]["measurementTrace"]
+        is True
+    )
+    for mode in ("headless", "interactive"):
+        assert "measurementTrace" not in resolve(mode, {}, None, "pr")["waist"]

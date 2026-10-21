@@ -20,6 +20,7 @@ from bench.runner.contracts import (
     artifact_allowed,
     copy_exclusive,
     exclusive_json,
+    selected_attempt_path,
 )
 from bench.runner.costs import parse_costs
 from bench.runner.epochs import (
@@ -30,7 +31,7 @@ from bench.runner.epochs import (
     load_epoch,
     read_json,
 )
-from bench.runner.ledger import manifest_auth_mode, replay_packet
+from bench.runner.ledger import manifest_auth_mode, replay_packet, review_attempt_costs
 from bench.runner.observations import (
     Adjudication,
     AdjudicationContext,
@@ -446,6 +447,7 @@ def score_run(
     *,
     epoch_id=None,
     score_id=None,
+    attempt_selection=None,
     attribution=False,
 ):
     """Execute a fresh score; failures retain a pending diagnostic packet."""
@@ -468,17 +470,77 @@ def score_run(
     if len(requested) != len(urls) or set(requested) != set(urls):
         raise ValueError("requested PR matrix is incomplete")
 
-    for _url, status, _hint in records:
-        if status != "ok":
-            raise RuntimeError(
-                "no scorable PRs: unresolved/invalid PR; re-run or --retry-failed"
+    selected = {}
+    selected_records = {}
+    checkpoint_attempts = {
+        state["url"]: state["detail"]["attempt_id"]
+        for path in (run_dir / "state").glob("*.json")
+        if (state := read_json(path)).get("detail", {}).get("attempt_id")
+    }
+    failures = set()
+    if checkpoint_attempts:
+        if (
+            attempt_selection is None
+            or set(attempt_selection) != set(urls)
+            or set(checkpoint_attempts) != set(urls)
+        ):
+            raise ValueError("attempt selection must cover the requested PR matrix")
+        records = []
+        for url in urls:
+            aid = checkpoint_attempts[url]
+            path = selected_attempt_path(run_dir, aid)
+            record = attempt_selection[url]
+            if (
+                record.attempt_id != aid
+                or record.pr_url != url
+                or record.run_id != (manifest.get("run_id") or run_dir.name)
+            ):
+                raise ValueError("selected attempt identity mismatch")
+            if record.validity.state == "operational_failure":
+                if not record.validity.retry_of:
+                    raise ValueError("unconfirmed operational failure")
+                failures.add(url)
+            elif record.checkpoint_status != "ok" or record.validity.state != "valid":
+                raise ValueError("selected attempt is invalid; retry before scoring")
+            payloads = list(
+                (path.parent / "artifacts").rglob("post-review-payload.json")
             )
+            if url not in failures and len(payloads) != 1:
+                raise ValueError("missing or ambiguous payload in selected attempt")
+            selected[url] = path
+            selected_records[url] = record
+            records.append(
+                (
+                    url,
+                    "failed" if url in failures else "ok",
+                    str(payloads[0]) if payloads else None,
+                )
+            )
+    else:
+        for _url, status, _hint in records:
+            if status != "ok":
+                raise RuntimeError(
+                    "no scorable PRs: unresolved/invalid PR; re-run or --retry-failed"
+                )
+    attempt_costs = review_attempt_costs(run_dir)
     candidates, per_pr = _assemble_candidates(run_dir, records)
+    for url in failures:
+        candidates[url] = {TOOL: []}
+        per_pr[url] = {
+            "candidates": [],
+            "pr_dir": str(selected[url].parent / "artifacts"),
+        }
     traces, trace_errors, collection = {}, {}, {}
     for url, info in per_pr.items():
         collection[url] = stages.TraceCollection(
             "unavailable", "collection not recorded"
         )
+        if url in failures:
+            collection[url] = stages.TraceCollection(
+                "unavailable", "operational failure"
+            )
+            trace_errors[url] = "operational failure"
+            continue
         try:
             pr_dir = Path(info["pr_dir"])
             for name in ("measurement-collection.json", "measurement-unavailable.json"):
@@ -522,6 +584,7 @@ def score_run(
             trace_errors[url] = str(exc)
     source_hashes = {}
     sources = [run_dir / "run.json", *sorted((run_dir / "state").glob("*.json"))]
+    sources.extend(selected.values())
     for info in per_pr.values():
         pr_dir = Path(info["pr_dir"])
         sources += [
@@ -578,6 +641,8 @@ def score_run(
         )
         for url in urls
     }
+    if checkpoint_attempts:
+        attempts = checkpoint_attempts
     sid, pending = observations.begin_packet(run_dir, epoch, score_id)
     ref = ScoreRef(manifest.get("run_id") or run_dir.name, epoch.epoch_id, sid)
     evaluator = evaluator_for(epoch, pin, adjudicator_pin)
@@ -682,7 +747,9 @@ def score_run(
         replace(c, dedup_group_id=group_ids[c.candidate_id]) for c in candidate_map
     )
     request = replace(request, candidates=candidate_map)
-    bugs = observations.build_observations(request, evaluations, groups)
+    bugs = observations.build_observations(
+        request, evaluations, groups, failures=frozenset(failures)
+    )
     matched = observations.bucket_candidate_ids(bugs)
     adjudications, contexts, adjudicator_cost = _capture_adjudications(
         request, matched, per_pr, api_key, adjudicator or _adjudicate
@@ -743,6 +810,12 @@ def score_run(
         run_dir, costs, manifest, pin, adjudicator_pin, epoch.upstream_sha
     )
     packet_dir = pending.parent / sid
+    if not selected_records or not manifest.get("measurement_window"):
+        validity_state = "historical_descriptive"
+    elif failures:
+        validity_state = "operational_failure"
+    else:
+        validity_state = "valid"
     row.update(
         schema_version=2,
         score_id=sid,
@@ -754,11 +827,12 @@ def score_run(
             b.pr_url in urls and in_profile(b.category, epoch.primary_profile)
             for b in epoch.bugs
         ),
-        validity_state="historical_descriptive",
+        validity_state=validity_state,
         population_sha256=digest(urls),
         packet_path=str(packet_dir),
         selected_attempts=attempts,
-        review_attempt_costs={
+        review_attempt_costs=attempt_costs
+        or {
             attempts[url]: _read_pr_costs(Path(info["pr_dir"]))["cost_usd"]
             for url, info in per_pr.items()
         },
@@ -791,6 +865,10 @@ def score_run(
         },
     )
     exclusive_json(pending / "run-provenance.json", manifest)
+    for record in selected_records.values():
+        exclusive_json(
+            pending / "attempts" / (record.attempt_id + ".json"), record.wire()
+        )
     exclusive_json(pending / "provenance_errors.json", trace_errors)
     observations.write_packet(
         request,

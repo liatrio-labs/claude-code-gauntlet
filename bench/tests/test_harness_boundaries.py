@@ -84,6 +84,12 @@ class Harness:
             return subprocess.CompletedProcess(argv, 0, "2.1.154 (Claude Code)", "")
         if argv == ["git", "status", "--porcelain"]:
             return subprocess.CompletedProcess(argv, 0, "", "")
+        if argv == ["git", "status", "--porcelain", "--untracked-files=no"]:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if argv[:3] == ["git", "ls-files", "--stage"]:
+            return subprocess.CompletedProcess(
+                argv, 0, b"100644 fixture 0\tworkflows/pipeline.js\0", b""
+            )
         raise AssertionError(f"unexpected subprocess: {argv}")
 
     def popen(self, argv, **kwargs):
@@ -192,6 +198,7 @@ def harness(tmp_path, monkeypatch):
     monkeypatch.setattr(run, "_read_env_key", lambda *args: "synthetic-api-key")
     monkeypatch.setattr(invoke, "_load_dotenv_key", lambda *args: None)
     monkeypatch.setattr(run, "_git_short_sha", lambda: "deadbeef")
+    monkeypatch.setattr(run.validity, "treatment_sha", lambda: "deadbeef" * 5)
     monkeypatch.setattr(run, "_compute_diff", lambda *args: "")
     monkeypatch.setattr(run, "_free_gb", lambda *args: 100)
     monkeypatch.setattr(invoke, "_plugin_dirty_paths", lambda *args: frozenset())
@@ -337,6 +344,38 @@ def test_current_bash_receipt_classifies_and_retries_pre_workflow_stop(
     assert cp.status(url) == "ok"
 
 
+@pytest.mark.parametrize("anchor", [None, "naive"])
+@pytest.mark.parametrize("stage", ["environment", "launch"])
+def test_retry_failed_retries_undispatched_invocation_failures(
+    harness, monkeypatch, anchor, stage
+):
+    url = next(iter(run._load_json(run.GOLDEN_DIR / "shas.json")))
+    calls = []
+    original = invoke.build_env if stage == "environment" else subprocess.Popen
+
+    def fail_once(*args, **kwargs):
+        if stage == "environment" and not (Path(args[1]) / "run.json").is_file():
+            return original(*args, **kwargs)
+        calls.append(args)
+        if len(calls) == 1:
+            raise OSError("temporary auth setup failure")
+        return original(*args, **kwargs)
+
+    if stage == "environment":
+        monkeypatch.setattr(invoke, "build_env", fail_once)
+    else:
+        monkeypatch.setattr(subprocess, "Popen", fail_once)
+    args = ["--prs", url] + (["--anchor", anchor] if anchor else [])
+    assert run.main(args) == 1
+    run_dir = next(run.RUNS_ROOT.iterdir())
+    cp = checkpoint.Checkpoint(run_dir)
+    assert cp.failed([url]) == [url]
+    assert not harness.launches
+    assert run.main(["--retry-failed", run_dir.name]) == 0
+    assert cp.status(url) == "ok"
+    assert len(harness.launches) == 1
+
+
 @pytest.mark.parametrize(
     "mode",
     [
@@ -351,7 +390,7 @@ def test_current_bash_receipt_classifies_and_retries_pre_workflow_stop(
         "wrong-knob",
     ],
 )
-def test_untrusted_transcript_does_not_make_stop_retryable(harness, mode):
+def test_untrusted_transcript_cannot_make_a_failed_review_valid(harness, mode):
     harness.control["transcript"] = mode
     if mode == "wrong-root":
         harness.control["root"] = "/another/plugin"
@@ -365,4 +404,4 @@ def test_untrusted_transcript_does_not_make_stop_retryable(harness, mode):
     cp = checkpoint.Checkpoint(run_dir)
     assert cp.status(url) == "invalid"
     assert cp.detail(url)["reason"] == "config_echo_mismatch"
-    assert cp.failed([url]) == []
+    assert cp.failed([url]) == [url]

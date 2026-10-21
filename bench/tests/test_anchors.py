@@ -13,8 +13,7 @@ from bench.runner.epochs import load_epoch, read_json
 def test_committed_anchor_matrix_has_complete_unique_candidates():
     epoch = load_epoch()
     candidates = read_json(anchors.ANCHORS_CANDIDATES)
-    frozen_subset = read_json(anchors.BENCH_DIR / "golden/benchmark_data.min.json")
-    assert set(candidates) <= set(frozen_subset)
+    assert set(candidates) <= set(epoch.scorer_input)
     assert set(epoch.subsets["gate"]) <= set(candidates)
     for tools in candidates.values():
         assert set(tools) == set(anchors.ANCHOR_TOOLS)

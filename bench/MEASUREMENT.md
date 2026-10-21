@@ -98,6 +98,12 @@ python3 bench/run.py --check <RUN_ID>
 Exit code is the smoke verdict. The checker never imports or calls the scorer.
 `--check` applies to skill runs only — naive-anchor runs are refused (exit 2).
 
+New outcomes also retain hashed immutable copies under
+`attempts/<pr-key>/<attempt-id>/`; checkpoints select the latest attempt.
+`--retry-failed` uses explicit attempt retryability when present, falling back to
+`timeout`/`failed` for legacy checkpoints. Subscription retries require an
+operator-recorded `--reset-confirmed-at` timestamp after failure completion.
+
 `--resume` and `--retry-failed` both move each todo PR's prior `workflows/wf_*.json`
 and prior-attempt deliverables into their respective `superseded/` directories
 before re-invoking, so `--check` gates the current attempt only; forensic records
@@ -252,7 +258,7 @@ subscription usage-limit stall — unclassified: a limit hit is expected to bloc
 until the window resets, which surfaces as a watchdog `timeout` and is therefore
 indistinguishable from a genuine hang. Deferred deliberately: classifying it as
 its own invalid reason needs a reliable transcript signature, and no subscription
-run has produced one yet. `--retry-failed` after the reset recovers either way.
+run has produced one yet. `--retry-failed` with a confirmed reset time permits a second attempt.
 ```
 
 The code-simplifier watch-item drop relies on this fact surviving issue deletion.
@@ -302,3 +308,27 @@ historical epoch. Free replay reproduced the buckets; missing pair judgments pre
 exact recall replay. Both new-epoch mini rejudgments, rebuilt anchors and judge
 variability/noise calibration remain external acceptance. No new paid result is
 asserted here.
+
+## Windowed run validity
+
+The runner accepts a JSON measurement window with explicit arm and planned run
+index. It checks shared CLI, scoring, epoch and auth controls, per-arm plugin and
+model treatment, time bounds and the requested PR set before mirror work. PRs run
+sequentially. Resume and retry require the same window path, bytes and provenance.
+The plugin identity is the digest of tracked index entries under `.claude-plugin`,
+`agents`, `skills`, `workflows` and `scripts`; it is independent of HEAD and bench
+ledger changes. See [README.md](README.md#measurement-windows-and-immutable-attempts)
+for the flags and artifact layout.
+
+A first non-ok attempt is invalid and retryable. A second non-ok attempt for the
+same PR, window and observed fingerprint is an all-missed operational failure on
+API, or on subscription after the operator-recorded reset. Diagnostic text need
+not match. Attempt snapshots preserve artifact hashes, model provenance and
+consumption. Selected attempts and review provenance remain immutable; rescoring
+creates no new independent review run.
+
+The runner collects stage traces and records their availability. Windowed skill
+attempts require a terminal measurement availability status; stage execution
+failures invalidate an attempt even without optional traces. Unavailable traces
+leave attribution unknown. A baseline-equivalence receipt is copied to the run
+manifest as supplied JSON, without content validation by this runner.
