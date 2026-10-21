@@ -271,8 +271,7 @@ def _shared_context_surfaces(root: Path) -> tuple[PromptSurface, ...]:
             [
                 sys.executable,
                 "-c",
-                "import runpy,secrets,sys; secrets.token_hex=lambda n: 'a'*(2*n); "
-                "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')",
+                "import runpy,secrets,sys; secrets.token_hex=lambda n: 'a'*(2*n); sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')",
                 str(entry),
                 "--output-dir",
                 directory,
@@ -442,11 +441,11 @@ def scan_repository(root=ROOT):
     surfaces = collect_surfaces(root, generated_surfaces(root))
     report = scan(derived, surfaces, policy)
     for path in (root / "bench/golden").glob("leak_*.json"):
-        assert_no_holdout_tokens(derived, epoch, [path], root=root)
+        assert_no_holdout_tokens(derived, [path], root=root)
     return report
 
 
-def assert_no_holdout_tokens(derived, epoch, files, *, root: Path = ROOT) -> None:
+def assert_no_holdout_tokens(derived, files, *, root: Path = ROOT) -> None:
     root = root.resolve()
     if any(not _safe(root, path) for path in files):
         raise ValueError("unconfined mechanism output")
