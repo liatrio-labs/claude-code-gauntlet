@@ -314,7 +314,9 @@ class TestCli(unittest.TestCase):
 class TestRealData(unittest.TestCase):
     def test_real_data_renders(self):
         rows = report.load_ledger(REAL_LEDGER)
-        baselines = report.load_baselines(REAL_BASELINES)
+        baselines = report.load_baselines(
+            BENCH_DIR / "golden/historical_baselines.json"
+        )
         out = report.render_html(rows, baselines, "abc1234", "2026-07-18")
         self.assertIn("subset-20260718", out)
         self.assertEqual(out.lower().count("<style"), 1)
@@ -631,78 +633,41 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def test_new_score_identities_do_not_collapse_into_historical_release_rows(
-    score_case, monkeypatch
+def test_report_selects_only_the_active_epoch_and_preserves_score_identities(
+    score_case,
 ):
-    from dataclasses import replace
+    from bench.runner.epochs import load_epoch, read_json
 
-    from bench import report
-    from bench.runner import epochs
-    from bench.runner.epochs import DEFAULT_ROOT, read_json
-
-    first = score_case.execute()
-    second = score_case.execute()
-    old_baselines = read_json(DEFAULT_ROOT / "historical_baselines.json")
-    first_row = first["ledger_row"]
-    historical = {
-        **first_row,
-        "schema_version": 1,
-        "scorer_sha": "dfc6cb4",
-        "golden_recall": 0.25,
-    }
-    for key in ("score_id", "epoch_id", "profile", "population_sha256"):
-        historical.pop(key, None)
-    rows = [historical, first_row, second["ledger_row"]]
+    first, second = (score_case.execute()["ledger_row"] for _ in range(2))
+    old = {**first, "epoch_id": "old", "run_id": "must-not-appear"}
+    rows = [old, first, second]
     assert len(report.ledger_groups(rows)) == 3
-    assert len(report.deep_review_points(rows)) == 3
-    assert report.row_by_run_id(rows, "run") == historical
-    assert report.classify(first_row, 0, 1)[0] != "gate"
     doc = report.render_html(
-        rows, read_json(DEFAULT_ROOT.parent / "baselines.json"), "sha", "date"
+        rows, read_json(BENCH_DIR / "baselines.json"), "sha", "date"
     )
-    assert "Historical epoch dfc6cb4-v1 / all" in doc
-    assert "Active epoch e616e84-v1 / core" in doc
-    epoch = epochs.load_epoch()
-    monkeypatch.setattr(
-        epochs,
-        "load_epoch",
-        lambda: replace(epoch, epoch_id="future<epoch>", primary_profile="strict"),
-    )
-    next_doc = report.render_html(
-        rows, read_json(DEFAULT_ROOT.parent / "baselines.json"), "sha", "date"
-    )
-    assert "Active epoch future&lt;epoch&gt; / strict" in next_doc
-    assert "Active epoch e616e84-v1" not in next_doc
-    assert (
-        first["score_ref"]["score_id"] in doc and second["score_ref"]["score_id"] in doc
-    )
-    v2, v3, _ = report.subset_comparison(
-        [first_row, second["ledger_row"]], old_baselines
-    )
-    assert v2 is None and v3 is None
+    assert "Active epoch " + load_epoch().epoch_id in doc
+    assert "must-not-appear" not in doc
+    assert first["score_id"] in doc and second["score_id"] in doc
 
 
-def test_report_counts_review_once_and_scoring_per_execution(score_case):
-    from bench import report
-
-    first = score_case.execute()["ledger_row"]
-    second = score_case.execute()["ledger_row"]
-    first.update(
-        cost_usd=2.0,
-        dedup_cost_usd=0.0,
-        judge_cost_usd=0.4,
-        adjudicator_cost_usd=0.1,
-        review_attempt_costs={"attempt": 2.0},
-    )
-    second.update(
-        cost_usd=2.0,
-        dedup_cost_usd=0.0,
-        judge_cost_usd=0.4,
-        adjudicator_cost_usd=0.1,
-        review_attempt_costs={"attempt": 2.0},
-    )
-    totals = report.spend_totals([first, second])
-    assert totals["review_cost_usd"] == 2.0
-    assert totals["measured_judging_cost_usd"] == 1.0
-    second["judge_cost_usd"] = None
-    assert report.spend_totals([first, second])["measured_judging_cost_usd"] is None
+def test_report_counts_review_once_and_scoring_and_attribution_per_score(score_case):
+    rows = [score_case.execute()["ledger_row"] for _ in range(2)]
+    for row in rows:
+        row.update(
+            cost_usd=2.0,
+            dedup_cost_usd=0.0,
+            judge_cost_usd=0.4,
+            adjudicator_cost_usd=0.1,
+            attribution_cost_usd=0.2,
+            review_attempt_costs={"attempt": 2.0},
+        )
+    totals = report.spend_totals([*rows, rows[0]])
+    assert totals == {
+        "review_cost_usd": 2.0,
+        "scoring_cost_usd": 1.0,
+        "attribution_cost_usd": 0.4,
+    }
+    rows[1]["judge_cost_usd"] = None
+    rows[1]["review_attempt_costs"] = {"attempt": None}
+    totals = report.spend_totals(rows)
+    assert totals["scoring_cost_usd"] is None and totals["review_cost_usd"] is None

@@ -1381,6 +1381,7 @@ def parse_args(argv=None):
     )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
     parser.add_argument("--golden-epoch", metavar="EPOCH_ID")
+    parser.add_argument("--unseal-holdout", choices=("#101-close",))
     parser.add_argument(
         "--check",
         metavar="RUN_ID",
@@ -1488,6 +1489,14 @@ def main(argv=None):
             if (args.resume or args.retry_failed)
             else None
         )
+        from bench.runner.populations import check_holdout
+
+        urls = (
+            (prior_manifest or {}).get("pr_urls") or _target_urls(args.tier, args.prs)
+            if (prior_manifest or args.tier or args.prs)
+            else ()
+        )
+        check_holdout(urls, load_epoch(root=GOLDEN_DIR), args.unseal_holdout)
         if args.measurement_window:
             validity.refuse_ambient_model_overrides(os.environ)
             validity.require_clean_treatment()

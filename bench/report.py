@@ -2375,14 +2375,14 @@ def _render_historical_html(rows, baselines, sha, generated):
 
 
 def _row_key(row):
+    identity = score_identity(row)
     if row.get("schema_version") == 2:
         return (
             row.get("epoch_id"),
             row.get("profile"),
             row.get("population_sha256"),
-            score_identity(row),
+            identity,
         )
-    identity = score_identity(row)
     return (
         identity.epoch_id or "legacy_unknown",
         "all",
@@ -2392,36 +2392,22 @@ def _row_key(row):
 
 
 def spend_totals(rows):
-    seen_attempts, seen_scores = set(), set()
-    review = 0.0
-    judge = 0.0
-    unmeasured = 0
+    amounts = {"review": {}, "scoring": {}, "attribution": {}}
     for row in rows:
-        if row.get("schema_version") == 2:
-            identity = score_identity(row)
-            attempts = row.get("review_attempt_costs", {})
-        else:
-            identity = (row.get("run_id"),)
-            attempts = {
-                "legacy-run:" + str(row.get("run_id")): row.get("cost_usd") or 0
-            }
-        for attempt_id, amount in attempts.items():
-            key = (row.get("run_id"), attempt_id)
-            if key not in seen_attempts and cost_is_billable(row):
-                review += amount
-            seen_attempts.add(key)
-        if identity not in seen_scores:
-            for field in ("dedup_cost_usd", "judge_cost_usd", "adjudicator_cost_usd"):
-                amount = row.get(field)
-                if amount is None:
-                    unmeasured += 1
-                else:
-                    judge += amount
-        seen_scores.add(identity)
+        identity = (row["run_id"], row.get("epoch_id"), row.get("score_id"))
+        attempts = row.get("review_attempt_costs") or {"unknown": None}
+        for aid, amount in attempts.items():
+            amounts["review"][(row["run_id"], aid)] = (
+                amount if cost_is_billable(row) else 0
+            )
+        for field in ("dedup", "judge", "adjudicator", "attribution"):
+            group = "attribution" if field == "attribution" else "scoring"
+            amounts[group][(identity, field)] = row.get(field + "_cost_usd")
     return {
-        "review_cost_usd": review,
-        "measured_judging_cost_usd": judge if not unmeasured else None,
-        "unmeasured_judging_entries": unmeasured,
+        group + "_cost_usd": sum(values.values())
+        if all(v is not None for v in values.values())
+        else None
+        for group, values in amounts.items()
     }
 
 
@@ -2429,73 +2415,36 @@ def render_html(rows, baselines, sha, generated):
     from bench.runner.epochs import load_epoch
 
     active = "measurement_status" in baselines
-    epoch = load_epoch()
-    historical = [r for r in rows if r.get("schema_version", 1) == 1]
-    unknown = [r for r in historical if score_identity(r).epoch_id is None]
-    historical_epoch = next(
-        (score_identity(r).epoch_id for r in historical if score_identity(r).epoch_id),
-        score_identity(baselines).epoch_id,
-    )
-    archived_baselines = baselines
-    if (active or baselines.get("epoch_id")) and historical_epoch:
-        historical = [
-            r for r in historical if score_identity(r).epoch_id == historical_epoch
-        ]
-        archived_baselines = load_baselines(
-            BENCH_DIR / "golden/historical_baselines.json"
+    epoch_id = load_epoch().epoch_id if active else baselines.get("epoch_id")
+    if epoch_id is None:
+        epoch_id = next(
+            (score_identity(r).epoch_id for r in rows if score_identity(r).epoch_id),
+            None,
         )
-    active_label = html.escape(
-        f"{epoch.epoch_id} / {epoch.primary_profile}"
-        if active
-        else f"{baselines.get('epoch_id') or historical_epoch or 'unversioned'} / {baselines.get('profile', 'all')}"
-    )
-    historical_label = html.escape(
-        f"{historical_epoch or 'unversioned'} / {archived_baselines.get('profile', 'all')}"
-    )
-    doc = _render_historical_html(historical, archived_baselines, sha, generated)
-    sections = [
-        f'<section id="epoch-scores"><h2>Active epoch {active_label}</h2>',
-        f"<p>Measurement and calibration pending. Historical benchmark and cost claims below use {historical_label}.</p>",
+    rows = [
+        r for r in rows if (r.get("epoch_id") or score_identity(r).epoch_id) == epoch_id
     ]
-    if unknown:
-        sections.append(
-            "<h3>Legacy unknown</h3><p>Unverified scorer identity; descriptive history only: "
-            + html.escape(", ".join(str(r.get("run_id")) for r in unknown))
-            + "</p>"
-        )
-    versioned = [r for r in rows if r.get("schema_version") == 2]
-    if versioned:
-        costs = spend_totals(versioned)
-        sections.append(
-            "<p>Review spend counted once per selected attempt: "
-            + fmt_money(costs["review_cost_usd"])
-            + "; judging spend: "
-            + fmt_money(costs["measured_judging_cost_usd"])
-            + "; unmeasured judging entries: "
-            + str(costs["unmeasured_judging_entries"])
-            + "</p>"
-        )
-    for group in ledger_groups(versioned):
+    if not active:
+        return _render_historical_html(rows, baselines, sha, generated)
+    parts = [
+        "<!doctype html><html><body>",
+        "<h1>Active epoch " + html.escape(epoch_id) + "</h1>",
+    ]
+    parts += ["<p>" + html.escape(str(spend_totals(rows))) + "</p>"]
+    for group in ledger_groups(rows):
         row = group["row"]
         label = " / ".join(
             str(row.get(k, ""))
-            for k in ("epoch_id", "profile", "population_sha256", "run_id", "score_id")
+            for k in ("profile", "run_id", "score_id", "denominator")
         )
-        sections.append(
-            "<article><h3>"
+        parts.append(
+            "<article>"
             + html.escape(label)
-            + "</h3><p>Denominator: "
-            + html.escape(str(row.get("denominator")))
-            + "; recall: "
+            + "; recall "
             + fmt_pct(row.get("golden_recall"))
-            + "; descriptive score; no verdict.</p></article>"
+            + "; descriptive score.</article>"
         )
-    sections.append(f"</section><h2>Historical epoch {historical_label}</h2>")
-    return doc.replace(
-        "<h2>Release progression</h2>",
-        "\n".join(sections) + "<h2>Release progression</h2>",
-        1,
-    )
+    return "\n".join([*parts, "</body></html>"])
 
 
 def _normalize(text):

@@ -8,9 +8,8 @@ recall and noise; deterministic suites gate development.
 
 **Measurement policy:** paired bench runs are *not* the default gate for every
 change. See the canonical runbook [`MEASUREMENT.md`](MEASUREMENT.md) for the
-ratcheted four-tier ladder (always-on suites → functional smoke → owner-triggered
-mini-subset → owner-triggered full-15/holdout), ledger costs, and pre-registered
-owner options.
+measurement tiers (always-on suites → functional smoke → owner-triggered
+gate and sealed holdout), populations and registered rule requirements.
 
 **Profiling a recorded workflow run:** see [`PROFILING.md`](PROFILING.md) for
 `profile_run.py`, which turns a recorded `code-gauntlet` workflow run (record JSON +
@@ -22,9 +21,8 @@ The active epoch is `e616e84-v1`: 173 bugs over the fixed 50 PRs, with core
 primary (158 full / 66 gate). All (173 / 73) and strict (139 / 58) are also
 reported. `dfc6cb4-v1` survives in git history; its recorded scores retain
 their original epoch and are never compared with active scores.
-All benchmark and cost claims in the historical sections below describe the
-old epoch. New baseline, anchor, variability and diagnostic noise measurements
-are pending; old ceilings do not apply to the new epoch.
+New baseline, anchor, variability and diagnostic noise measurements are pending.
+Recorded measurement status is in [MEASUREMENT.md](MEASUREMENT.md).
 
 ```bash
 python3 bench/run.py --score-only RUN_ID --golden-epoch e616e84-v1
@@ -122,7 +120,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 
 | Flag | Values | Default | What it does |
 |---|---|---|---|
-| `--tier` | `smoke` \| `mini` \| `subset` \| `holdout` \| `full` | — (required for a new run unless `--prs`) | Which PR set to run. `smoke` = 3 PRs (functional smoke). `mini` = 6-PR paired cut. `subset` = 15-PR gate. `holdout` = 10-PR confirmation set (sealed for V3.2). `full` = all 50 golden PRs. |
+| `--tier` | `smoke` \| `mini` \| `subset` \| `holdout` \| `full` | — (required for a new run unless `--prs`) | Which PR set to run. `smoke` = 3 PRs (functional smoke). `mini` = 6-PR paired cut. `subset` = 15-PR gate. `holdout` = 10 sealed PRs. `full` includes sealed PRs. Both require `--unseal-holdout "#101-close"` at that close. |
 | `--prs` | URL list or `mini` | — | Explicit golden PR list; labels the run `custom`. The alias `mini` expands to the pre-registered 6-PR mini subset. |
 | `--runs` | int | `1` | Number of sequential runs, each getting its own run directory under `bench/workspace/runs/`. |
 | `--fidelity` | `dry-run` \| `live` | `dry-run` | Recorded in the run manifest. |
@@ -322,42 +320,15 @@ receipts remain `invalid`.
 ### Recommended usage, and scope
 
 Functional smokes and dev iteration are the intended home for subscription mode
-— they are mechanical pass/fail, and under the ratcheted measurement policy the
-smoke is the recurring per-sub-release cost. **Of-record paired legs stay on
-`--child-auth api`**: clean cost accounting, and no throttle-induced timeouts
-mid-measurement. [`MEASUREMENT.md`](MEASUREMENT.md) states which tiers may run
-on subscription.
+— they are mechanical pass/fail, and under the measurement policy the
+smoke is the recurring per-sub-release cost. Registered wave windows may use subscription. Final confirmation uses API.
+[`MEASUREMENT.md`](MEASUREMENT.md) records the owner protocol.
 
 This mode exists to spend **your own** subscription capacity — ordinary,
 individual usage, via the `setup-token` mechanism Anthropic explicitly provides
 for CI pipelines and scripts. It is not a credential-routing surface for third
 parties, and routing other people's review traffic through Free/Pro/Max
 credentials is prohibited by the usage policy.
-
-## Measurement history
-
-The [release table](../README.md#benchmark-results) records the v3.0 gate subset and holdout, plus the v2 baseline and upstream anchors.
-Later paired minis use the same six PRs as the v3.1 baseline.
-The [committed ledger](experiments.jsonl) records these runs:
-
-| Release | Date | Run identifiers | Recall | Noise |
-| --- | --- | --- | --- | --- |
-| v3.1 baseline | 2026-07-23 | `custom-20260723-102149-381e9ff` | 0.633 | 0.223 |
-| v3.12 | 2026-08-18 | `mini-20260818-120540-b423885` + `custom-20260818-142206-b423885` | 0.667 | 0.106 |
-| v3.24 | 2026-09-01 | `mini-20260901-170531-2cb9104` | 0.633 | 0.179 |
-| v3.26 | 2026-09-03 | `mini-20260903-204424-e8b3af7` | 0.667 | 0.138 |
-| v3.42.49 baseline | 2026-10-20 | `mini-20261020-030509-839b1886` | 0.633 | 0.065 |
-
-The v3.12 row combines a five-PR mini and its one-PR completion leg.
-The v3.26 mini met the pre-registered 0.24 noise ceiling.
-At six PRs, one reference finding moves recall by 3.3 percentage points.
-Treat the gain over v3.1 as a consistency check.
-Noise in the v3.24 and v3.26 minis is below the v3.1 baseline.
-That matches what we would expect from v3.24's wider injection filtering.
-That change only adds eliminations.
-These runs do not establish causation.
-
-`report.py` renders release summaries, run-level recall and noise, tokens, cost, and anchor comparisons from the ledger and baselines.
 
 ## What gets written where
 
@@ -436,42 +407,78 @@ invalid and retryable. Any second non-ok for the same PR and window on API, or a
 the recorded subscription reset, is an operational failure with all bugs missed.
 Diagnostics do not have to match. Attempt records and review provenance stay immutable.
 
-Contamination and population manifests ship unfrozen. The supplied v2 leak manifest
-must be prepared against pinned upstream data, then ingested into the epoch:
+## Dispositions, audit, comparisons and planning
+
+The operating inputs use explicit immutable score references. Commands compute
+reports and never select a latest score. A descriptive comparison names `dev-slice`
+or `dev-pool`, uses `profile: "core"`, and omits window, rule and audit paths.
+Operational comparisons name a gate population and require a full gate matrix.
+
+Import the leakage lens's reviewed v2 dispositions and scan the current treatment:
 
 ```sh
-python3 -m bench.runner.populations prepare-leak-manifest --source leak-manifest-v2.json \
-  --golden-source /path/to/pinned/upstream/offline --epoch e616e84-v1 --out prepared.json
-python3 -m bench.runner.populations ingest-leak-manifest --prepared prepared.json \
-  --epoch e616e84-v1 --out contamination-proposal.json
-node workflows/test/tools/emit_agent_prompts.mjs > generated-prompts.json
-python3 -m bench.runner.leaks --generated-prompts generated-prompts.json --out leak-report.json
-python3 -m bench.runner.populations freeze-contamination --epoch e616e84-v1 \
-  --manifest contamination-proposal.json --baseline-treatment-sha BASELINE_FULL_SHA \
-  --generated-prompts generated-prompts.json --leak-report leak-report.json \
-  --frozen-at ISO_TIMESTAMP --out contamination-frozen.json
-python3 -m bench.runner.compare compare --spec comparison.json --out comparison-report.json
-python3 -m bench.runner.compare simulate --spec simulation.json --out simulation-report.json
+python3 -m bench.runner.populations --spec leak-manifest-v2.json --out proposal.json
+python3 -m bench.runner.leaks --out leak-report.json
 ```
 
-Preparation records raw file hashes and exact golden text hashes without storing text.
-Ingestion emits an unfrozen proposal. Semantic dispositions, content hashes and owner
-review are still required before `freeze_populations`. Never infer uncontamination
-from an empty lexical scan. Comparisons never consume sealed holdout populations.
-Freeze contamination at the clean baseline treatment SHA after semantic review.
-The command reruns the emitter and scan, records the plugin index hash and leak
-report digest, and refuses stale inputs. Operational comparisons and simulation
-sources must match that baseline binding.
+The population freeze spec has `manifest` (the imported proposal object),
+`baseline_treatment_sha` (the eventual Wave 0a merge SHA), `leak_report`
+(the scan path), and `frozen_at` (an ISO timestamp). The baseline plugin tree must
+match the scanned clean checkout. HEAD itself need not equal the baseline SHA.
+The freeze recomputes the scan and refuses changed or failing evidence.
 
-Failed discovery, verification, validation or challenge execution invalidates an
-attempt even when its optional trace is absent. Declared challenge caps, repaired
-verification retries and checkpoint replay remain separate reported disclosures.
+```sh
+python3 -m bench.runner.populations --spec freeze-spec.json --out contamination.json
+```
 
-Descriptive comparisons require explicit PR scope, complete score packets and
-`rule: null`. A windowless mini uses exactly the declared six PRs and produces no
-promotion verdict. Operational looks require the entire 15-PR matrix, a frozen rule,
-frozen populations, matching evaluator/review identities and independent review runs.
-The only optional extended look requires `initial_report_path`, preserves its exact
-initial score prefix and recomputes the initial decision before permitting extension.
-Exit 0 means a report was computed, including a quality fail or inconclusive result.
-Exit 2 writes a structured input refusal.
+A sample spec has `seed` and `arms`, a mapping from each arm's name to its score
+references. Each reference has `run_id`, `epoch_id`, and `score_id`.
+
+```sh
+python3 -m bench.runner.audit --spec sample-spec.json --out audit/
+```
+
+Keep `audit/sample.json` private. Give only `audit/packets.json` to the Sol and Opus
+auditor seats, run by the orchestrator with repository access. Each label file has
+`auditor` (`Sol` or `Opus`), `sample_sha256`, and `labels`: rows with `sample_id`,
+Boolean `correct`, and nonempty `evidence_refs`.
+A merge spec has `sample_path` and `label_paths` in Sol, Opus order. An optional
+third file uses the `owner` seat and labels only disputes. The resulting
+`owner_queue` must be resolved before an operational wave verdict or simulation.
+
+```sh
+python3 -m bench.runner.audit --spec merge-spec.json --out audit/receipt.json
+```
+
+A ComparisonSpec has `comparison_id`, `purpose` (`descriptive`, `wave`, or `final`),
+`population`, `profile`, `epoch_id`, `contamination_path`, and `baseline`/`candidate`.
+Each arm has `name`, `scores`, `treatment_git_sha`, and `agent_read_sha256`.
+Operational specs add `window_path` and `rule_path`; wave specs add `audit_path`.
+All relative paths resolve beside the comparison spec. A permitted extension adds
+`initial_spec_path` and `initial_report_path` and preserves the initial score prefix. Its initial verdict is
+recomputed and matched to the saved initial report, including the frozen rule
+and audit hashes, before the extension is admitted.
+
+```sh
+python3 -m bench.runner.compare --spec comparison.json --out comparison-report.json
+```
+
+Rules use `kind: "wave"` or `"ship"`, `profile: "core"`, `margin_pp`,
+`nonmini_margin_pp`, `initial_runs`, `extension_runs`, `stability_min_runs`,
+`bootstrap` (`draws`, `seed`, `alpha`), and `frozen`. The checked-in rule remains
+unfrozen with null parameters until the owner fixes them after Wave 0b.
+Ship rules use 3 runs per arm, zero extension runs, and an API window.
+
+A simulation spec has `baseline_scores`, `epoch_id`, `contamination_path`,
+`rule_paths`, `audit_path`, `baseline_arm`, `trials`, `seed`, `power_target`, and
+`mde_grid_pp`. Every source retains its own auth-specific measurement window.
+
+```sh
+python3 -m bench.runner.simulation --spec simulation.json --out simulation-report.json
+python3 bench/report.py
+```
+
+Reports include core, all and strict automatically. Audited dimension groundedness
+is reported when its sampled provenance is available. Reports keep review, scoring,
+and attribution costs separate. Unknown costs remain null. Protocol, caveats,
+measured status and the gate-look ledger live in [MEASUREMENT.md](MEASUREMENT.md).

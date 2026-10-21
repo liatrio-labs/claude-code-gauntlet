@@ -145,30 +145,17 @@ def population_case(tmp_path):
     from pathlib import Path
 
     from bench.runner import populations
-    from bench.runner.epochs import DEFAULT_ROOT, load_epoch, read_json
+    from bench.runner.epochs import load_epoch
 
-    epoch = load_epoch(root=DEFAULT_ROOT)
-    receipt = tmp_path / "receipt.json"
-    populations.prepare_leak_manifest_v2(
-        Path(__file__).parent / "fixtures/leak-manifest-v2.json",
-        DEFAULT_ROOT,
-        epoch,
-        receipt,
+    epoch = load_epoch()
+    contamination = populations.import_dispositions(
+        Path(__file__).parent / "fixtures/leak-manifest-v2.json", epoch
     )
-    contamination = populations.ingest_leak_manifest_v2(receipt, epoch)
     contamination.update(
         status="frozen",
         agent_read_sha256="baseline",
         baseline_treatment_sha="baseline",
         leak_report_sha256="synthetic-report-digest",
-        frozen_at="2026-10-20T00:00:00Z",
+        frozen_at="fixture",
     )
-    subsets = read_json(DEFAULT_ROOT / "subsets.json")
-    manifest = populations.freeze_populations(
-        epoch,
-        subsets,
-        contamination,
-        out=tmp_path / "populations.json",
-        frozen_at="2026-10-20T00:00:00Z",
-    )
-    return epoch, subsets, contamination, manifest, receipt
+    return epoch, contamination

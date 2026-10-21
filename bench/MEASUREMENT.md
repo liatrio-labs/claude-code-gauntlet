@@ -1,372 +1,151 @@
-# Measurement policy (canonical)
-
-This is the in-repo home for the ratcheted measurement policy (Issue #28).
-Maintainer work-queue items link here rather than restating the tiers — see
-[`docs/maintainer-issues.md`](../docs/maintainer-issues.md).
-
-**Supersedes** the framing "every behavior-changing item ships behind a paired
-bench measurement." Paired measurements are rare, expensive, owner-triggered
-events — not the default gate for every change.
-
-## Epoch migration status
-
-The active corpus/scorer is `e616e84-v1`, primary core. Baselines, anchors,
-judge variability and diagnostic noise thresholds are pending measurement.
-`judge_sd` and `delta_noise` remain null until calibration is recorded.
-All numeric benchmark and cost claims below are historical `dfc6cb4-v1 / all`
-measurements and cannot be used as new-epoch verdict thresholds.
-
-Preserve the recorded scores and captured reviews of both historical minis.
-The old epoch is available only in git history. Continuity is checked by freely
-replaying its stored evaluations through the metric code, rather than re-judging
-or reconstructing judgments from aggregate scores. Fresh scoring uses the active
-epoch for both arms. Rejudge the three gate anchors and calibrate on frozen
-candidates before recording new baselines. No paid result is asserted here.
-
-Stage trace, complete attempt/window validity, comparisons, simulation and leak
-coverage are subsequent code stages. No real trusted usage-limit/reset fixture
-exists. Limit recognition is unnecessary: every non-ok outcome is retryable,
-and recurrence uses the recorded reset time rather than diagnostic signatures.
-are required in the validity stage. Live migration smoke and a known-loss trace
-remain external acceptance. Holdout reviews are excluded from migration tuning.
-
-## Tier ladder
-
-Every cost below is `auth_mode=api` spend; see
-[Which tiers may run on subscription](#which-tiers-may-run-on-subscription).
-
-| Tier | Slug | What | Trigger | Cost (ledger, `auth_mode=api`) | Purpose |
-|------|------|------|---------|---------------|---------|
-| Always-on suites | `suites-only` | `pytest` (pipeline + `bench/tests/`) + `node --test workflows/test/*.test.js` + `pre-commit` | Every PR / every commit path | $0 | Deterministic correctness |
-| Functional smoke | `smoke` | `--tier smoke` (2–3 PRs) + mechanical checker | Per sub-release, run by the release manager | ~$21–$32 (mean ~$27; 16–22 min/PR) | "No bugs, functions correctly" — **not** performance proof |
-| Paired mini-subset | `paired-mini` | `--tier mini` or `--prs mini` (6 PRs) vs baseline of record | Owner-triggered, only when a change plausibly moves recall/noise | $19–$85 / leg in the ledger ($19.47 on v3.42.49) | Gate-grade paired measurement |
-| Full-15 / holdout | — | `--tier subset` (~$190–$230) / `--tier holdout` (sealed) | Owner-triggered, release-grade | see ledger | Confirmation / V3.2 reservation |
-
-The `Slug` column is the spelling work-queue issues and PR descriptions use
-when they name the tier a change ships behind; the release-grade row has no
-short slug because it is owner-triggered and named by the run it produced.
-
-Owner-triggered spend stays owner-triggered: this runbook documents readiness
-and protocol; it never schedules or auto-triggers spend, and no work issue
-gates on the owner running a measurement.
-
-## Which tiers may run on subscription
-
-`python3 bench/run.py --child-auth subscription` runs the review children on the
-owner's own Claude subscription capacity instead of the metered key, at no
-marginal cost. Mechanics, prerequisites, and cost-honesty rules:
-[`README.md` → Child auth modes](README.md#child-auth-modes).
-
-| Tier | Subscription? | Why |
-|------|---------------|-----|
-| Always-on suites | n/a | $0 already; no `claude` invocation |
-| Functional smoke | **Yes — recommended** | Mechanical pass/fail, not measurement; the recurring per-sub-release cost |
-| Dev iteration (`--prs`, `--anchor naive`) | **Yes** | Not of record |
-| Paired mini-subset | **No** | Of record: clean cost accounting, no throttle-induced timeouts mid-leg |
-| Full-15 / holdout | **No** | Same, at release grade |
-
-Caveat on the "yes" rows: the first live subscription smoke has now run
-(`smoke-20260812-030333-0f3f550`, 2026-08-12, main @ 0f3f550 / v3.8.0, `--tier
-smoke`, 3 PRs sequential, `--child-auth subscription`). All 3 review children
-ran to completion under the subscription token — no watchdog timeout, no
-mid-run auth failure. N=1: what a usage-limit hit looks like in bench terms
-remains unobserved. See [`README.md` → Usage limits](README.md#usage-limits)
-for the full record.
-
-Every ledger cost figure in this runbook is `auth_mode=api` spend. A
-`auth_mode=subscription` row's `cost_usd` is recorded but is not billable spend
-(Anthropic documents it as "not relevant for billing purposes"), so it is
-excluded from the dashboard's cost aggregates and must never be quoted here as a
-tier cost. A subscription leg is therefore not cost-comparable with an
-API-keyed one — which is the second reason of-record legs stay on `api`.
-
-## Functional smoke (mechanical)
-
-Smoke recall is noise (0.0–0.75 swing across 14 smoke rows on ~4 goldens). The
-verdict is **mechanical**, never the judge:
-
-```bash
-python3 bench/run.py --tier smoke        # --child-auth subscription skips API spend (see caveat above)
-python3 bench/run.py --check <RUN_ID>
-```
-
-`bench/run.py --check RUN_ID` implements the mechanical smoke gates:
-
-1. Completeness — every `run.json` `pr_urls` entry has terminal status `ok`
-2. Payload parse + adapter-required fields + union-schema findings check
-   (requires ≥1 `code-gauntlet-findings-*.json` per PR)
-3. Zero `origin=unknown` findings; no writer no-write-proof / partial-artifacts
-   degrade. The report is not a carrier: it is rendered before persistence from data
-   that carries only a gap count, so code-owned report text cannot hold the signal,
-   although model prose can. G3 scans only the direct `workflows/wf_*.json`, `raw.json`,
-   and `code-gauntlet-checkpoint-all-*.json` carriers. `raw.json` is scanned as text.
-   The other carriers are judged from parsed `gaps` arrays and their string items alone;
-   an empty array is clean. If a structured carrier cannot parse or has no `gaps` array,
-   G3 falls back to a raw scan after blanking its `script` field.
-4. Plugin identity — when the Headless config echo carries `pipeline_version` and
-   `plugin_root`, those receipts are validated against the repo's
-   `workflows/pipeline.js` version and plugin root (primary). A complete valid
-   echo receipt is sufficient even when no `pr_dir/workflows/wf_*.json` records
-   were collected. When records exist, the record's `script` bytes and
-   `workflowName` identify the repo bundle (primary when present);
-   `scriptPath` resolving to the repo bundle remains accepted for older records.
-   Without a complete echo receipt, G4 requires collected workflow records and
-   falls back to the record identity check (or scriptPath-only for corrupt
-   records).
-5. ≥1 delivered comment across the run set
-6. Artifact completeness — findings, report, post-review, and checkpoint-all are
-   each present exactly once, non-empty, and JSON members are parseable
-
-Exit code is the smoke verdict. The checker never imports or calls the scorer.
-`--check` applies to skill runs only — naive-anchor runs are refused (exit 2).
-
-`--resume` and `--retry-failed` both move each todo PR's prior `workflows/wf_*.json`
-and prior-attempt deliverables into their respective `superseded/` directories
-before re-invoking, so `--check` gates the current attempt only; forensic records
-stay on disk.
-Pre-fix run dirs that still hold
-a failed attempt beside a success keep FAILing `--check` until retried under
-this behavior.
-
-### Reading a FAIL — the tier has a non-change failure floor
-
-A red checker does **not** by itself mean the change under test is broken. Two
-failure modes fire on clean code and both have been observed on branches that
-were otherwise correct, so triage the reason before drawing a conclusion.
-
-**`config_echo_mismatch` — the registry-knob echo floor.** This label means
-the runner did not find every expected configuration knob in any accepted source;
-it is separate from the G4 identity check for `pipeline_version` and `plugin_root`.
-The report now carries the code-rendered knob receipt, so once the report is
-materialized this floor is expected to die; Smoke B observes whether any
-non-materialized path still needs the stdout or envelope fallback. Historically,
-the child could complete the review while omitting one knob from its prose, so an
-`invalid` with a complete artifact set was a formatting miss, not a pipeline
-failure. (Distinct from
-`workflow_backgrounded`, which the runner labels in
-`bench/runner/invoke.py`'s `_workflow_backgrounded` — a status distinct from
-any of `check.py`'s G1–G6 gates.)
-
-**`failed` with `all_degraded` or `pipeline_failed` — the pipeline return envelope.**
-`bench/runner/invoke.py` reads the child Workflow record's `result` after a
-clean CLI exit. `all_degraded` comes from the `all-degraded:` prefix in
-`result.error` or `result.gaps`; any other `ok: false` result is
-`pipeline_failed`. These are failed, not invalid, because the pipeline itself
-reported the outcome. They remain unscored but are retryable with
-`--retry-failed`; an all-degraded result is self-describing and commonly
-transient.
-
-Any non-ok attempt is invalid and retryable. A second non-ok for the same PR
-in the same window is an all-missed `operational_failure` on API, or when its
-subscription retry started after the operator-recorded reset time. Attempt diagnostics do not affect this rule.
-
-Measurement PR identity uses equal-length URL sets at preflight, comparison,
-and simulation. New measurement manifests and dispatch use window URL order.
-
-The prose identity receipt symptom belongs to **G4**, not this floor: G4 checks
-that the code-owned `pipeline_version=… (bundle)` and `plugin_root=… (resolved)`
-lines identify the active plugin, with Workflow `scriptPath` as defense in depth.
-
-**Current verify input transport.** Verify slices now travel to the executor as a
-percent-encoded `--input-inline` token planned under `VERIFY_INLINE_CHAR_BUDGET`;
-the executor reproduces the token exactly in one Bash call; `verify_findings.py`
-decodes it and writes the destination before running verification. The content
-proof remains as a belt. The artifact-writer
-still handles Persist's artifact paths; its historical slice-input transcription
-failure is retained below as benchmark evidence:
-`smoke-20260727-205454-f99d948` (`receipt nonce mismatch`, plus
-`artifact-content-proof` divergence on all 3 PRs and one assemble refusal) and
-`smoke-20260728-144630-a162ecd` (one stray `}` appended after an otherwise
-complete document, on 2 of 3 PRs — 23 findings lost, all recoverable with
-`raw_decode`; see issue #69). New runs should be diagnosed from the inline-token
-and content-proof gaps rather than by expecting a verify-input writer label.
-
-CI: `.github/workflows/bench-smoke.yml` (`workflow_dispatch`) runs smoke then
-`--check` on the newest run dir; the job fails if either step fails. Bare
-mirrors under `bench/workspace/mirrors/` are cached on GH-hosted runners via
-split restore/save (`actions/cache/restore` + `actions/cache/save`), keyed on
-`bench-mirrors-${{ runner.os }}-${{ hashFiles('bench/golden/shas.json') }}-v2`
-so new golden pins invalidate the cache. Save runs only when the smoke step
-succeeded and the exact key missed — a failed checker still persists mirrors,
-but an interrupted/partial populate cannot freeze a broken set under that key.
-`ensure_mirror` also tears down unusable mirror directories and re-clones.
-Several GB per upstream; a cache hit avoids cold clones; a miss remains
-correct but slower. GitHub evicts caches after 7 days of no access.
-
-Claude Code CLI is installed in that workflow via a pinned
-`npm install -g @anthropic-ai/claude-code@<version>` (same pin as
-`validate.yml`). Revisit the pin when preparing each smoke checkpoint
-(Smoke A / Smoke B / later) and record the CLI version alongside the
-smoke result in the ledger — Dependabot does not see `run:` package
-installs.
-
-## Named mini subset
-
-Registered as `"mini"` in [`golden/subsets.json`](golden/subsets.json) — the
-six pre-registered highest-golden-density gate PRs:
-
-1. discourse-graphite#4
-2. cal.com#11059
-3. cal.com#14740
-4. sentry#93824
-5. grafana#79265
-6. discourse-graphite#10
-
-Resolve without archaeology:
-
-```bash
-python3 bench/run.py --tier mini          # run_id prefix mini-…
-python3 bench/run.py --prs mini           # expands the same URLs; labels custom
-```
-
-## Baseline of record
-
-`mini-20261020-030509-839b1886` (v3.42.49, Claude 5.5 children, `api` auth) — recall
-19/30 = 0.6333, noise 0.0649, valid-extra 0.7273, on the six pre-registered PRs
-above. Ledger cost: $19.47. It replaces `custom-20260723-102149-381e9ff` (recall
-0.6333, noise 0.2233, $77.73).
-
-## Ledger-sourced costs
-
-From `bench/experiments.jsonl`:
-
-Rows with `auth_mode=subscription` are excluded — they are not API spend:
-
-```text
-smoke:        $21.11–$32.04 across 14 runs (mean ~$27, 16–22 min/PR)
-mini-subset:  $84.18 (custom-20260723-070640-c1dd46f)
-              $77.73 (custom-20260723-102149-381e9ff, former baseline: recall 19/30=0.6333, noise 0.2233)
-              $54.92 (mini-20260901-170531-2cb9104, v3.24 post-#273 check: recall 19/30=0.6333, noise 0.1786)
-              $51.02 (mini-20260903-204424-e8b3af7, post-#283 check: recall 20/30=0.6667, noise 0.1379)
-              $19.47 (mini-20261020-030509-839b1886, of record: recall 19/30=0.6333, noise 0.0649)
-full-15:      $190.72–$229.88
-holdout:      $169.34 (holdout-20260721-085348-eec15be, recall 0.7407, noise 0.2095 — sealed for V3.2)
-scoring:      ~$2/run;  M4 trivial fixture: ~$3
-```
-
-## Pre-registered owner measurement options
-
-Preserved verbatim (no reliance on issue links):
-
-```text
-Mini-subset B (V3.1's cut M7): same 6 pre-registered PRs, --child-model sonnet,
-  fully paired vs custom-20260723-102149-381e9ff; secondary metric =
-  SKILL.md-adherence deviation count (D21); ~$85; interim orchestrator
-  recommendation stands: inherit.
-Full-15 subset promotion: confirms the 6-PR verdict at gate grade (~$230).
-M4 trivial-PR fixture check: ~$3.
-Holdout holdout-20260721-085348-eec15be (recall 0.7407, noise 0.2095):
-  reserved exclusively for V3.2 fable.
-```
-
-## Watch ledger
-
-```text
-citation absence preamble (#265) — instrument = `bench/runner/citations.py` (regex
-heuristic, lower bound, sensitivity depends on agent wording; fixture-pinned on 40
-hand-labeled corpus rows); measurement of record 2026-09-05 over local runs:
-pre-#218 era 12/26 (46.2%); post-#218 era (mini-20260901-170531-2cb9104,
-mini-20260903-204424-e8b3af7; every child echoed `conditionalSchema: true`) 7/14
-(50.0%). The two eras draw on different PR mixes and per-PR rates range 0/4 to
-6/6, so the aggregate cannot separate the schema change from composition; on the
-PRs common to both eras the paired rate is flat or worse. Read-out instruction: at
-Smoke B and the wave-end paired mini run `python3 -m bench.runner.citations <run_dir>`
-and record the convention-dimension `rule_source` histogram for `documented_rule`,
-`code_comment`, `repo_precedent`, and `self_inconsistency`.
-
-code-simplifier malformed StructuredOutput (PR-310 one-off) — not reproduced:
-9 dispatches across the 3 V3.1 measured runs, zero events.
-
-subscription usage-limit stall: retry after the operator-recorded reset.
-```
-
-The code-simplifier watch-item drop relies on this fact surviving issue deletion.
-
-## Contributor rule
-
-- **External PRs:** ship behind the always-on deterministic suites only
-  (`python -m pytest tests/ -q`, `python -m pytest bench/tests/ -q`,
-  `node --test workflows/test/*.test.js`, `pre-commit run --all-files`).
-- **Functional smoke:** run by the release manager (not a contributor gate).
-- **Paired mini / full-15 / holdout:** owner-triggered only.
-
-See also [`CONTRIBUTING.md`](../CONTRIBUTING.md).
-
-### Stage capture and the instrumented baseline arm
-
-The baseline arm for Wave 0a uses the eventual Wave 0a merge commit, with review
-behavior compared against reference
-`94ea095a89bfc2430814ff4e65db4ba790654fc7` (v3.42.49).
-The merge SHA is pending the orchestrator commit and merge.
-The historical mini baseline remains a separate captured run.
-The measurement trace input format is version `1`; discovery claims use the
-same pinned scorer as delivered findings.
-A one-time A2 receipt compares every agent prompt, schema and model, dispatch order,
-persisted artifacts and terminal envelope minus measurement against the v3.42.49 bundle at `839b1886`, with tracing on and
-off. All digests agree across three persistence modes and oversized-trace fallback.
-The PR body carries the commands and digest inventory; tests retain on/off identity
-and trace-leak checks without depending on historical git objects.
-
-Tracing is opt-in through `args.measurementTrace`. The bench resolver enables it on both
-arms. The top-level `measurement.text` return stays outside `persistReturn`, so no
-measurement file enters a user's output directory. The bench hashes collected UTF-8
-bytes from the original task file; await stdout carries only status, chars and any reason.
-A window attempt missing terminal measurement status is invalid (`measurement_trace_missing`).
-Collection records available/unavailable with a reason. Primary persistence and
-recovery budgets take priority; oversized traces become unavailable. Replay coverage
-is partial. Collection binds the single current successful Workflow return and its
-hash to the attempt. Multiple successful returns are unavailable rather than guessed.
-Cap-hit counts count distinct PR attempts independently of terminal bug losses.
-
-With `--attribution`, scoring evaluates only eliminated discovery versions as
-pseudo-tools in a separate vendored scorer pass. Delivered hits credit their
-discovery dimensions through candidate-to-trace provenance without additional calls. A discovery hit missing in
-delivery is a loss; trace snapshots supply its eliminating stage and reason.
-Missing or unreadable traces leave attribution unavailable and preserve delivered recall.
-Raw evaluator receipts, candidate provenance and observations remain in the immutable
-score packet. Summaries are derived on read. Per-run dedup, judge and adjudicator
-charges are priced from response usage with one pinned price table; unknown charges
-remain null. Attribution costs are separate and never enter promotion inputs.
-Packets retain their scoring epoch, digest, pins and scorer tree independently of
-the original immutable review provenance, so both arms can be rescored after a
-golden correction. Comparisons refuse mixed scoring contexts.
-Severity describes drift and is not a discovery dimension.
-
-The required known-loss smoke demonstration and measured trace-materialization
-overhead remain unverified.
-Synthetic code tests do not replace that live acceptance receipt.
-
-## Window validity and planning status
-
-Shared window controls are independent of each arm's git SHA, roster, models and
-effort declaration. Preflight checks both before mirrors or child spend. Reviews
-run one PR at a time. The immutable selected attempt retains review provenance;
-scoring context belongs to each score packet. First failures remain invalid and
-retryable, and admissible second failures retain the complete PR denominator.
-
-CLI auto-update control, effective effort behavior and provider snapshot availability
-remain UNVERIFIED until the orchestrator checks the installed CLI. New non-record runs
-retain available CLI/effort/epoch provenance but cannot acquire official validity by
-rescoring. Historical review-time identity and score-time evaluator identity remain
-separate. Missing optional traces disable funnel and dimension evidence, not recall.
-
-Simulation is planning only. Both empirical run-vector and beta PR sensitivity rows
-are required. Each row reports library size, auth counts, the empirical `(n-1)/n`
-variance factor and its inverse, variance-floor calibration, guard counts, sole failures,
-co-failures, extension use, Monte Carlo uncertainty and a recall-only diagnostic.
-Auth-mixed libraries assume comparable review distributions and validate each source
-against its own auth-specific window. Operational comparisons retain auth equality.
-
-Groundedness comes from resolved blinded repository-backed audit labels. Judge noise
-buckets cannot supply it. Without that audit, callers must explicitly choose
-`conditional_pass`; every output then says it is conditional on groundedness passing,
-and unconditional full-rule power remains unavailable. Matched proposed rules must
-include groundedness margins of zero and a negative tolerance. No power target,
-promotion margin, run count, extension count or frozen selection is invented here.
-The checked-in promotion-rule template has null parameters and cannot issue a verdict.
-
-Both generators can miss unseen failures and stable-loss risk. The sensitivity adds
-Jeffreys uncertainty and a calibrated nonnegative within-PR shared effect; it does not
-model negative or cross-PR dependence. Bernoulli miss flips describe diffuse gains,
-not a particular prompt's effects. Actual auditor behavior and positive-effect power
-remain UNVERIFIED. The owner fixes policy only after reviewing this table in Wave 0b.
+# Measurement protocol and status
+
+The active epoch is `e616e84-v1`: 173 golden bugs over 50 PRs. Core is primary
+(158 full, 66 gate); all (173, 73) and strict (139, 58) are descriptive reported
+lines. Scoring identity is independent of original review provenance. A golden
+correction requires rescoring every run of both arms on the same corrected epoch.
+Historical epoch scores remain recorded but do not enter active comparisons.
+Operating commands and file shapes live in [README.md](README.md).
+
+## Populations and contamination
+
+| Population | Membership and use |
+| --- | --- |
+| gate | 15 PR decision set; no iterative tuning |
+| gate-uncontaminated | Gate minus excluded PRs and matched sweep comments; primary verdict |
+| gate-uncontaminated-non-mini | Uncontaminated gate outside the six mini PRs; separate guard |
+| gate-contaminated | Reported without verdict weight |
+| dev-slice | Six highest-core-golden dev-pool PRs, canonical URL tie break |
+| dev-pool | 25 PRs outside gate and holdout; iteration |
+| holdout | 10 PRs, sealed until explicit unseal at #101 close |
+
+Named populations derive from the epoch's subsets and reviewed contamination
+manifest. A named identifier or concrete scenario match excludes its entire PR.
+A narrow registry sweep excludes only matched golden comments. A textbook bug
+class excludes nothing and remains subject to the leakage lens's review.
+
+Re-derived dispositions retain four excluded PRs: discourse-graphite#4 and
+sentry-greptile#1 in gate; sentry-greptile#2 and keycloak#32918 in dev. Thirteen
+sweep-comment references join by project, repository, PR number and epoch-local
+ordinal to stable bug ids. The uncontaminated core gate has 50 bugs on 13 PRs;
+21 bugs are outside the mini. Textbook classes create no exclusions.
+
+The lexical guard scans agent and skill text, shared context, workflow literals,
+and emitted source/bundle prompts and schemas. A finite exact vocabulary predicate
+excludes ordinary terms. Allowances bind surface, source, exact passage/hash and
+expected count. Unlisted and stale hits fail. Every allowance expires in Wave 2a;
+recording Wave 2a or later as current mechanically requires an empty list.
+Holdout diagnostics use salted hashes and redact matching lines. A holdout match
+must be deleted; its wording and suggested rewrites never enter build briefs.
+Semantic dispositions are reviewed separately from a passing lexical scan.
+
+The freeze binds its passing recomputed scan to an explicit baseline treatment SHA
+and identical plugin tree, rather than requiring HEAD to be that SHA. It precedes
+candidate runs. The checked-in contamination manifest remains unfrozen pending the
+Wave 0a merge commit and owner-reviewed evidence. There is no untouched set for
+
+# 46's own confirmation. Gate transcripts are read only to explain a lost bug after
+
+its verdict. The final improvement claim is labelled as measured on a reused set.
+
+## Validity and statistic
+
+A window pins CLI binary/version, disabled auto-update, effective model controls,
+judge pins and auth. Each arm separately pins its treatment, roster, models and
+effort. Preflight precedes spend. Gate PRs run sequentially and each comparison
+requires a complete PR-by-run matrix of independent review runs. Rescoring creates
+no new independent run. Selected attempts and their provenance remain immutable.
+
+A first non-ok outcome is invalid and retryable. A second non-ok outcome for the
+same PR/window is an all-missed operational failure on API, or on subscription
+when the retry follows the operator-recorded reset. Diagnostic text need not match.
+Missing optional attribution disables dimension/funnel evidence, never recall.
+
+The unit is a golden bug. The statistic is the mean of per-bug differences between
+arm detection means. A seeded PR-cluster bootstrap resamples whole PR clusters,
+weights sampled bugs equally, and reports one-sided bounds and a two-sided 95%
+interval. Stable-found means found in every run with the required minimum runs;
+stable-missed means never found; intermediate outcomes are flaky. These are observed
+labels, not assertions of population certainty. Category and overlapping dimension
+recall are descriptive. Unavailable provenance remains unknown. Loss funnels retain
+the complete denominator, including unavailable traces and operational failures.
+
+## Audit and decisions
+
+A seeded sampler freezes up to 30 delivered findings per arm, using a census when
+an arm delivered fewer. Public auditor packets carry repository and code references
+while hiding arm and score identities. The arm map stays private. Sol and Opus
+seats run outside the bench with repository access. Agreed labels merge directly;
+disputes enter an owner queue. A resolved receipt binds the frozen sample, both
+label files and owner resolutions. Changed, incomplete or unresolved evidence is
+refused for an operational wave or simulation.
+
+A wave passes when both uncontaminated gate and non-mini lower bounds clear the
+owner margins, sampled groundedness is no worse than baseline, and no stable-found
+uncontaminated bug is lost in every candidate run. A failure fails the wave; mixed
+bounds yield inconclusive. An inconclusive initial look can use the registered
+extension once, preserving its exact initial prefix and matching its recomputed
+verdict, rule and audit to the saved initial report. Failed or inconclusive waves return to dev. Each wave gets at most two
+gate looks. Every actual gate look must be added to the ledger below.
+
+Final confirmation uses API 3+3, baseline versus final tip, gate only. The ship
+rule requires non-inferiority on uncontaminated gate and non-mini at the owner
+margins. It has no audit, stable-loss or extension requirement. Improvement is a
+point estimate of at least +5 points and lower bound above zero, reported but not
+required. Passing the ship line establishes the new baseline. Marketplace bumps
+are held from Wave 2a until this line passes; failure returns to the last passing
+tip. Margins, counts and bootstrap policy remain null and unfrozen until the owner
+fixes them after Wave 0b. No current template can issue a verdict.
+
+## Planning and spend
+
+One empirical simulator resamples whole baseline run vectors and runs the complete
+wave evaluator, including audit uncertainty, stable losses and a permitted extension.
+It reports null pass rate, power at +5/+10 points, Monte Carlo standard errors,
+guard counts, extension use and MDE on the declared effect grid. Groundedness uses
+a shared beta latent rate from the resolved baseline sample, followed by independent
+same-size arm samples. Judge noise buckets do not supply audit labels. Candidate
+uplifts flip eligible misses diffusely; infeasible effects above the empirical
+ceiling are reported explicitly. Auth-specific source windows remain attached to
+each vector. A mixed-auth library assumes comparable review distributions and
+reports its auth counts.
+
+With K=3, empirical per-bug rates have 1/3 granularity: 0, 1/3, 2/3, or 1. Resampling
+cannot reveal failures absent from that finite library and understates unbiased
+run variance by the factor (K-1)/K. MDE is grid-based, not a continuous estimate.
+Diffuse flips cannot model a particular prompt's correlated effects. Simulation
+is planning evidence and never authorizes promotion. Actual auditor behavior and
+positive-effect power remain unverified until measured.
+
+Review spend counts each immutable attempt once, including retries. Dedup, judge
+and adjudicator scoring charges count each score execution once. Attribution is
+reported separately. Unknown costs remain null. Subscription review consumption
+is recorded but is not API spend; its scoring still runs on API. Re-project spend
+after Wave 0, Wave 2b and Wave 3. A paid projection above $500 requires an owner
+ruling. No paid run is scheduled by this document.
+
+## Recorded status
+
+The historical baseline mini has 19/30 recall, 56/77 valid-extra and 5/77 noise on
+its historical epoch. Free replay reproduced the buckets; missing pair judgments
+prevent exact recall replay. Both new-epoch mini rejudgments, rebuilt anchors and
+judge variability/noise calibration remain external acceptance. No new paid result
+is asserted here.
+
+A2's one-time receipt matched prompts, schemas, models, dispatch order, artifacts
+and the terminal envelope minus measurement against v3.42.49 (`839b1886`) with
+tracing off and on, including oversized-trace fallback. Measurement is opt-in,
+outside primary persistence and absent from ordinary prompts and schemas. The bench
+collects and hashes the original task-file bytes. A missing terminal measurement
+status invalidates a window attempt. The live known-loss smoke and measured trace
+overhead remain unverified. CLI auto-update, effective effort and provider snapshot
+behavior still need the orchestrator's installed-CLI check.
+
+The dev-slice subscription run through scoring, audit, comparison and simulation,
+and the two-mini A/A comparison remain external acceptance. Synthetic boundary
+fixtures do not replace these receipts. Frozen margins, run counts, MDE, a passing
+baseline scan/freeze, and resolved repository-backed baseline audit are pending.
+
+| Gate look | Treatment | Window | Rule | Verdict |
+| --- | --- | --- | --- | --- |
+| None recorded | Pending Wave 0b | Pending | Unfrozen | None |

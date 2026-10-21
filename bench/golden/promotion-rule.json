@@ -1,14 +1,11 @@
 {
-  "rule_id": null,
-  "frozen": false,
-  "profile": null,
+  "kind": "wave",
+  "profile": "core",
   "margin_pp": null,
   "nonmini_margin_pp": null,
   "initial_runs": null,
   "extension_runs": null,
   "stability_min_runs": null,
-  "groundedness_margin_pp": null,
-  "groundedness_sample_size": null,
-  "extension_policy": null,
-  "bootstrap": null
+  "bootstrap": null,
+  "frozen": false
 }
