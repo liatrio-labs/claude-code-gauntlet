@@ -49,8 +49,8 @@ The shared vectors pin the bytes. Numeric references to 160 are removed before M
 classification.
 Comments are removed only when a `-->` begins after the end of a live `<!--` opener. An
 overlapping closer in `<!-->tail` stays visible as `&lt;!-->tail`; a later non-overlapping
-closer still removes the comment. Eager reduction can expose text that the previous wave order
-removed: `<!--&#38;#45;&#38;#45;&#38;#62;z-->tail` becomes `z-->tail`,
+closer still removes the comment. Eager reduction can expose text that a stricter reduction order would
+remove: `<!--&#38;#45;&#38;#45;&#38;#62;z-->tail` becomes `z-->tail`,
 `<!--x--` + U+200B + `>y-->z` becomes `y-->z`, and
 `<!-<!--x-->- y --<!--z-->> w` becomes `> w`.
 Secrets are redacted before containment. Inline spans pair on one line at the next exact
@@ -126,7 +126,7 @@ the old label may continue across lines, and it still applies inside code spans.
 a definition from turning code-owned text such as `[CRITICAL]` into a link. A footnote
 label has no rule of its own: its opener is already fullwidth.
 Footnote definitions and reference-style links in finding text therefore show as literal text. The
-new colon becomes fullwidth even when copied; the retained line-initial escape displays its
+inserted colon becomes fullwidth even when copied; the retained line-initial escape displays its
 original colon.
 None of these rules runs inside a trusted fenced payload. Summary titles and location paths
 force the fullwidth colon rule to remain stable when the containing bullet has a link pair;
@@ -197,10 +197,10 @@ before the poster applies its byte budget. Each bullet places its location link 
 the optional improvement-suggestion label, then the colon and folded title, so title Markdown cannot
 alter the location.
 The Summary index prepares each title as a single line, folds it to 512 code points, then
-contains raw HTML and visible mentions even in inline code. Its new definition-colon guard
+contains raw HTML and visible mentions even in inline code. Its definition-colon guard
 is forced because the containing bullet has a linked location: a Summary title `[x]: u`
 becomes `[x]` followed by U+FF1A FULLWIDTH COLON and `u`, while an ordinary single-line
-field keeps the existing `[x]\: u` output. It counts the final bullet after preparation against
+field keeps the `[x]\: u` output. It counts the final bullet after preparation against
 the index budget. Its display path and line sit inside one code span whose delimiter exceeds
 every backtick run in the location. The colon rule is span-blind and rewrites `]` plus zero
 or more backslashes plus `:` inside location paths too: `src/[x]:.py:3` displays as

@@ -1,5 +1,5 @@
 """Capture policy before dispatch because Workflows cannot read the environment.
-Provider switches select deployment naming; headless-mode.md owns alias pinning.
+Provider switches select deployment naming; model-policy.md owns alias pinning.
 Gateways disable conditional schemas because they may forward to another backend.
 """
 

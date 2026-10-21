@@ -169,7 +169,7 @@ For PR/MR targets, branch on the composite's eligibility receipt:
 
 - `proceed`: continue and disclose any non-null `reason`.
 - `stop`: print `reason` and end the run.
-- `ask_draft`: disclose any non-null `reason` before asking; use the draft template in `references/phase1-preflight.md`; continue only if the user chooses review. This verdict is interactive only.
+- `ask_draft`: disclose any non-null `reason` before asking; use the [Draft Review Template](#draft-review-template); continue only if the user chooses review. This verdict is interactive only.
 
 Local and branch targets continue directly to Phase 2.
 The previously-reviewed gate runs after checkout in Phase 2, section 2b-post step 3.

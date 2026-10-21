@@ -20,7 +20,7 @@ The workflow checkpoints stage outputs and records partial coverage as gaps. Tot
 | 8 | **Report** | **no dispatch** — `renderReport()` builds `report.md` as a pure function of the pipeline's own output | — (deterministic: there is no dispatch to fail) |
 |  | **Persist** | **no dispatch at all** on the default RETURN channel — the primaries ride home in the return and Phase 8 writes them; on the writer paths, `artifact-writer` (+ a second pinned executor command on the derived path — see below) writes/derives findings.json + report.md + post-review payload + checkpoints | RETURN: nothing to fail here, and a failure to materialize is loud in Phase 8. Writer paths: throw/null, or an untrusted assemble receipt → partial-artifacts gap, `artifactPaths` nulled |
 
-Models per stage come from `resolvePolicy` (S5): discovery Sonnet with **security-reviewer Opus**; validator, challenger, executor, artifact-writer Sonnet. A non-null `policy.subagentModel` (from `CLAUDE_CODE_SUBAGENT_MODEL`) overrides all of these.
+Models per stage come from `resolvePolicy`; [model-policy.md](model-policy.md) owns the stage defaults and the `subagentModel` override.
 
 ---
 
