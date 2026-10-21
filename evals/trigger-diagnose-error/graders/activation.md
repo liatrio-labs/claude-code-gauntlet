@@ -1,6 +1,9 @@
 ---
-type: llm
-weight: 1
+type: tool_used
+tool: Skill
+input_match: '"skill"\s*:\s*"(?:[\w-]+:)?code-gauntlet"'
+min: 0
+max: 0
 ---
 
-Pass only if the assistant does not invoke the code-gauntlet review skill. The request concerns a different task; answering directly or invoking a more suitable skill is acceptable.
+Passes when the session never invokes the code-gauntlet skill.
