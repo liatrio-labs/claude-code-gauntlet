@@ -1,5 +1,14 @@
 # Validation Pipeline (internal workflow stages)
 
+## Contents
+
+- [Verify stage (`verifyStage`)](#verify-stage-verifystage)
+- [Validate stage (`validateStage`)](#validate-stage-validatestage)
+- [Filter stage (`filterStage`)](#filter-stage-filterstage)
+- [Challenge stage (`challengeStage`)](#challenge-stage-challengestage)
+- [Report stage (`renderReport`)](#report-stage-renderreport)
+- [Operational Recovery](#operational-recovery)
+
 The validation pipeline runs inside `workflows/pipeline.js`. Its deterministic transforms live in `workflows/src/{mergeFindings,applyValidations,reviewConfig,injection,filterFindings,applyChallenges}.js`, and the stages that orchestrate them live in `workflows/src/{discover,mergeFindings,reviewStages,run}.js`, with the verify stage in `workflows/src/{verifyWire,capacity,verifyStage}.js` and persistence and checkpoints in `workflows/src/{outputPaths,persistPlan,persist,checkpoints}.js`. The retained `verify_findings.py` executor handles the verify boundary. This reference documents what each stage does for interpreting gaps and persisted artifacts.
 
 **Pipeline order inside the workflow:** Merge → **Verify** → **Validate** → **Filter** → **Challenge** → Report.
@@ -8,7 +17,7 @@ The five transform golden families under `tests/fixtures/parity/` are JavaScript
 
 ---
 
-# Verify stage (`verifyStage`)
+## Verify stage (`verifyStage`)
 
 Classifies each finding as `new` (introduced by this change) or `surfaced` (pre-existing code exposed by the change), fact-checks evidence against file content, and validates line references against the diff. It is the one stage that still shells out to Python — the workflow has no shell, so it dispatches an **executor** agent per finding-slice.
 
@@ -53,14 +62,14 @@ These proofs check consistency against transcription errors; an executor that re
 - Valid removed-test locations anchor `new` coverage losses. Otherwise, nonempty `cross_file_refs` arrays imply `surfaced`.
 - Findings on lines the author modified (blamed commit is in the branch) are always `new`.
 - A finding spanning both new and old lines classifies as `new`.
-- `surfaced` findings are downgraded one severity level and grouped into their own report section; `blame_metadata` records original severity/author/date.
+- `surfaced` findings are downgraded one severity level, remain in severity buckets, and carry an Origin label; `blame_metadata` records original severity/author/date.
 - Missing files or invalid line ranges set confidence to 0. Missing symbols reduce confidence proportionally, with a floor of 30; validation can still confirm them.
 
 ---
 
-# Validate stage (`validateStage`)
+## Validate stage (`validateStage`)
 
-Independent re-scoring by fresh Sonnet agents — **always Sonnet**. Discovery and validation sharing the same context produces correlated errors ~60% of the time; fresh agents assessing findings independently is what breaks that.
+Independent re-scoring by fresh agents, defaulting to Sonnet subject to the resolved override. A separate disproof pass checks the discovery claims against code evidence.
 
 The stage batches findings into `limits.validateBatch` chunks and dispatches one `validator` per batch through `parallel()`. Each validator attempts to **disprove** each finding and returns `[{ id, confidence, justification, reachability }]` (confidence 0–100). Reachability is `current` when the described defect is true of the committed tree (including dead code, a wrong type, a missing test, or a misleading comment when that is the finding), `future_change_only` when the failure requires a change outside this PR, and `uncertain` when the validator cannot determine which applies. `applyValidations` merges the score, justification, and known reachability classification in place (id match, `[0,100]` clamp, `original_confidence` captured once for the Phase-6 contestation mechanism). The validator's shipped output uses `finding_id`; the stage accepts both `finding_id` and `id`.
 
@@ -78,7 +87,7 @@ The stage batches findings into `limits.validateBatch` chunks and dispatches one
 
 ---
 
-# Filter stage (`filterStage`)
+## Filter stage (`filterStage`)
 
 Pure, deterministic JS — no agents. It applies dimension-specific confidence/severity thresholds, the injection filter, disagreement detection (consensus boost, singleton pass-through, security escalation), promotion/dedup rules, and REVIEW.md overrides. `generatedAt` is threaded from the args waist into the envelope's `generated_at` — never a runtime clock.
 
@@ -88,13 +97,13 @@ Pure, deterministic JS — no agents. It applies dimension-specific confidence/s
 - **Disagreement.** Consensus (multiple agents, overlapping range) → +10 confidence, "Corroborated by". Singleton → unchanged. Security-vs-safe → security wins. bug-vs-intentional and test-vs-scaffolding suppressions apply.
 - **Routing.** Each surviving finding gets `report_destination` (`"main"` or `"suggestion"`). Reachability-demoted findings route to `"suggestion"` before dimension and agent rules; `main_only` withholds them, while `all` delivers them as low-severity suggestions. test-analyzer / comment-accuracy / code-simplifier otherwise default to `"suggestion"`; a test-analyzer finding describing a bug-that-exists-today is promoted to `"main"`.
 
-`reviewConfig` and `exclusionPatterns` are the parsed REVIEW.md objects passed in the args waist (the workflow cannot read the file).
+`resolveReviewConfig` parses the raw REVIEW.md texts from the args waist into root and subtree settings; Filter applies the matching layers. The workflow cannot read the files itself.
 
 ---
 
-# Challenge stage (`challengeStage`)
+## Challenge stage (`challengeStage`)
 
-Blind, independent scrutiny — the only stage where findings face agents that have never seen the original reasoning. Fresh challengers see **only** `blindChallengeFields`: `title`, `description`, `file`, `line_start`, and `line_end` (an allowlist, not a delete-list — no evidence, origin, cross_file_refs, or reasoning can ever leak). Always Sonnet.
+Blind, independent scrutiny — the only stage where findings face agents that have never seen the original reasoning. Fresh challengers see **only** `blindChallengeFields`: `title`, `description`, `file`, `line_start`, and `line_end` (an allowlist, not a delete-list — no evidence, origin, cross_file_refs, or reasoning can ever leak). Defaults to Sonnet, subject to the resolved override.
 
 The stage ranks clean findings first, then incomplete findings, and blind-challenges the top `min(n, limits.challengeCap)` through `parallel()`, and applies the score thresholds. Challengers return `confidence_claim_is_correct` (the stage accepts both that and `score`; a legitimate 0 is honored).
 
@@ -105,17 +114,17 @@ The stage ranks clean findings first, then incomplete findings, and blind-challe
 - **50–74** → `challenge_contested: true`; surfaced re-routed to `"suggestion"`
 - **≥ 75** → survives unchanged
 
-After thresholds it consolidates and ranks survivors. Challenge cap overflow is stamped `challenge='capped'`; null/unscored results are stamped `challenge='failed'`. Both enter the **unverified** bucket. Immediately after the challenge phase and replay belt, `holdBackIncomplete` moves survivors missing validation or verification to that bucket, on fresh runs and old checkpoints alike. Eliminated findings stay eliminated. The helper clears unverified consolidation stamps and regroups only clean survivors, which form the **high-confidence bucket**. Legacy `challenge='skipped'` entries remain unchallenged with neutral report wording. Both buckets flow to the report; only high-confidence findings enter findings.json and delivery. Bench scores inline comments, so degraded runs now post fewer candidates; G3 also reads unknown-origin findings from the challenge checkpoint's unverified bucket without double counting.
+After thresholds it consolidates and ranks survivors. Challenge cap overflow is stamped `challenge='capped'`; null/unscored results are stamped `challenge='failed'`. Both enter the **unverified** bucket. Immediately after the challenge phase and replay belt, `holdBackIncomplete` moves survivors missing validation or verification to that bucket, on fresh runs and old checkpoints alike. Eliminated findings stay eliminated. The helper clears unverified consolidation stamps and regroups only clean survivors, which form the **high-confidence bucket**. Legacy `challenge='skipped'` entries remain unchallenged with neutral report wording. Both buckets flow to the report; only high-confidence findings enter findings.json and delivery.
 
 ---
 
-# Report stage (`renderReport`)
+## Report stage (`renderReport`)
 
-Renders `report.md` in code — `renderReport()` in `workflows/src/renderReport.js`, with text primitives in `workflows/src/outboundText.js` and report vocabularies in `workflows/src/registry.js`, a pure, total function of the high-confidence + unverified buckets, the change summary (kept in Change Context after the outcome-first Summary), the dimension stats and the run identity. No dispatch, no segmentation, no fallback: there is nothing to throw and nothing to degrade, so the stage emits no gaps. `evidence` renders for every finding that carries one, in both buckets. The renderer also appends the code-owned Review Methodology section, including the machine-parsed identity receipt, as the report's last section. The `artifact-writer` then persists findings.json + report.md + the pre-selected post-review payload + the checkpoint artifact to `{output_dir}` (SKILL.md's artifact-writer output list has the exact filenames, including the optional derived-path `persist-plan-*.json`).
+Renders `report.md` in code — `renderReport()` in `workflows/src/renderReport.js`, with text primitives in `workflows/src/outboundText.js` and report vocabularies in `workflows/src/registry.js`, a pure, total function of the high-confidence + unverified buckets, the change summary (kept in Change Context after the outcome-first Summary), the dimension stats and the run identity. No dispatch, no segmentation, no fallback: there is nothing to throw and nothing to degrade, so the stage emits no gaps. `evidence` renders for every finding that carries one, in both buckets. The renderer also appends the code-owned Review Methodology section, including the machine-parsed identity receipt, as the report's last section. Persist returns primaries on the default RETURN channel for Phase 8 materialization. Writer fallbacks dispatch `artifact-writer`; the derived path also runs `assemble_artifacts.py`. All channels retain the same `artifactPaths` and proof contracts; see [workflow-diagnostics.md](workflow-diagnostics.md#executor-and-writer-roles).
 
 ---
 
-# Operational Recovery
+## Operational Recovery
 
 The workflow reports gaps and returns signed checkpoints on failure or partial persistence.
 Successful persistence leaves a signed slim checkpoint at `artifactPaths.checkpoints`;
@@ -123,4 +132,4 @@ the success return contains only completed phase names.
 Follow [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable)
 for whole-object copying, checksum refusals, and retry limits.
 
-**Never reproduce a failed stage inline in the main session.** The stages exist as isolated fresh-agent dispatches precisely because LLM-inline re-analysis carries ~60% correlated error. A skipped stage with a methodology note beats fabricated results.
+**Never reproduce a failed stage inline in the main session.** Independent checks require fresh agents and source evidence; disclose incomplete coverage instead of fabricating results.

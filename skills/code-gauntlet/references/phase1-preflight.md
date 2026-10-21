@@ -1,14 +1,24 @@
 # Phase 1 Pre-Flight Reference
 
+## Contents
+
+- [Workflow-Tool Availability Check (run first)](#workflow-tool-availability-check-run-first)
+- [Resolve Review Target](#resolve-review-target)
+- [Draft Review Template](#draft-review-template)
+- [Phase 1 composite](#phase-1-composite-output-dir-plugin-confirmation-config-eligibility)
+- [Previously-Reviewed Gate](#previously-reviewed-gate)
+- [Configuration Resolution (no questions)](#configuration-resolution-no-questions)
+- [Light Review Template (Phase 2e)](#light-review-template-phase-2e)
+
 Workflow-tool availability check, review target resolution, the error-path AskUserQuestion templates, and question-free configuration resolution for Phase 1.
 
-> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) happens in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Output-directory resolve/ignore/mkdir is owned by `scripts/ensure_output_dir.py` in Phase 1's composite (SKILL.md) — not Phase 2. Phase 1's own Bash work is that composite (ensure_output_dir, plugin confirmation, config resolution, and eligibility) — no checkout-dependent state.
+> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) happens in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Output-directory resolve/ignore/mkdir is owned by `scripts/ensure_output_dir.py` in the composite below — not Phase 2. Phase 1's own Bash work is that composite (ensure_output_dir, plugin confirmation, config resolution, and eligibility) — no checkout-dependent state.
 
 ---
 
 ## Workflow-Tool Availability Check (run first)
 
-v3 orchestration is a single `Workflow` tool call (Phase 3). There is no in-session fallback — the break from v2's inline subagent dispatch is a locked decision. Before any other work, confirm the **`Workflow` tool is present in this session's tool definitions** by passive self-inspection only — never via `ToolSearch`, which searches deferred tools only and returns a false "absent" for a top-level `Workflow`.
+Inspect the session tool definitions for `Workflow` before other work. `ToolSearch` searches deferred tools and can miss a top-level `Workflow`. There is no in-session fallback; never emulate the pipeline inline.
 
 - **No Bash tool (PowerShell only)** -> print `Install Git for Windows to run code-gauntlet in Bash.` and STOP.
 - **Present in your tool definitions** → continue with target resolution.
@@ -18,7 +28,7 @@ v3 orchestration is a single `Workflow` tool call (Phase 3). There is no in-sess
 code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.
 ```
 
-This is the Phase-0 test-13 recipe: the session inspects its own tool registry for `Workflow` before dispatch. The check is identical in interactive and headless modes.
+The same availability check applies in interactive and headless modes.
 
 ---
 
@@ -44,7 +54,7 @@ AskUserQuestion(
     header: "PR Not Found",
     multiSelect: false,
     options: [
-      { label: "Proceed as local review", description: "Review the branch diff without PR integration (no PR comments)" },
+      { label: "Proceed as local review", description: "Review locally without PR comments" },
       { label: "Cancel", description: "Stop the review" }
     ]
   }]
@@ -74,6 +84,107 @@ AskUserQuestion(
   }]
 )
 ```
+
+---
+
+## Phase 1 composite: output dir, plugin confirmation, config, eligibility
+
+One Bash call sets up the output directory, confirms the plugin, resolves config, and checks PR/MR eligibility. Eligibility consumes the resolved config on stdin.
+
+```bash
+PYTHON=()
+for candidate in python3 python py; do
+  argv=("$candidate")
+  if [ "$candidate" = py ]; then argv+=(-3); fi
+  if "${argv[@]}" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
+    PYTHON=("${argv[@]}")
+    break
+  fi
+done
+if [ "${#PYTHON[@]}" -eq 0 ]; then
+  echo "Install Python 3.10+ reachable as python3, python, or py -3."
+  exit 1
+fi
+printf 'python=%s\n' "${PYTHON[*]}"
+echo "=== output_dir ==="
+if ! OUTPUT_DIR=$("${PYTHON[@]}" "{plugin_root}/scripts/ensure_output_dir.py"); then
+  echo "output_dir: FAILED"
+  exit 1
+fi
+printf '%s\n' "$OUTPUT_DIR"
+
+echo "=== plugin_dirs ==="
+command ls "{plugin_root}/scripts" "{plugin_root}/agents" "{plugin_root}/workflows"
+
+echo "=== config ==="
+if ! CONFIG_JSON=$("${PYTHON[@]}" "{plugin_root}/scripts/resolve_config.py" --target {target_type} --plugin-root "{plugin_root}"); then
+  echo "config: FAILED"
+  exit 1
+fi
+printf '%s\n' "$CONFIG_JSON"
+
+echo "=== eligibility ==="
+if ! ELIGIBILITY_JSON=$(printf '%s' "$CONFIG_JSON" | "${PYTHON[@]}" "{plugin_root}/scripts/check_eligibility.py" --platform github --pr {pr_number}); then
+  echo "eligibility: FAILED"
+  exit 1
+fi
+printf '%s\n' "$ELIGIBILITY_JSON"
+```
+
+For GitLab, replace the eligibility section with:
+
+```bash
+if ! ELIGIBILITY_JSON=$(printf '%s' "$CONFIG_JSON" | "${PYTHON[@]}" "{plugin_root}/scripts/check_eligibility.py" --platform gitlab --pr {pr_number}); then
+  echo "eligibility: FAILED"
+  exit 1
+fi
+printf '%s\n' "$ELIGIBILITY_JSON"
+```
+
+Local and branch targets omit the eligibility section. Their changed files are resolved in Phase 2.
+
+**Output-dir hard stops** (same severity class — stop before any agent dispatch; script stderr already flowed into this Bash result with disclosures/remedy lines):
+
+| Marker | Script exit | Meaning |
+| --- | --- | --- |
+| `output_dir: FAILED` | **1** | Cannot establish ignore for an in-repo dir (`info/exclude` unwritable/unresolvable and not otherwise ignored), or `mkdir` failed. Empty stdout — do not stamp `args.outputDir`. Remedy (ignore case): set `$CODE_GAUNTLET_OUTPUT_DIR` outside the repo and re-run. |
+| `output_dir: FAILED` | **2** | Usage: not a git repo, empty/whitespace `$CODE_GAUNTLET_OUTPUT_DIR`, output dir equals repo root, repo or resolved output path contains shell-active/control characters, or `git check-ignore` error (exit 128). Empty stdout — do not stamp. |
+
+On success, stdout is one absolute path line — store it as `{output_dir}` / `args.outputDir`. Ignore establishment (including `.git/info/exclude` append when needed) is owned by `ensure_output_dir.py` in this call; Phase 2 does not re-run it.
+
+Store `python` from the first line as one of `python3`, `python`, or `py -3`.
+Substitute `{python}` with those fixed argv words in every later command; quote each word separately.
+Copy it into `args.python` and pass `--python "{python}"` to the awaiter.
+Store: `output_dir` from section 1.
+Store the plugin-dir confirmation from section 2. If a directory is missing, stop because `plugin_root` was resolved wrong.
+Store the resolver JSON and stderr block from section 3. Retain them as `configResult`; its stderr block is the Phase 2 gate.
+Store the eligibility receipt from section 4 for PR/MR targets.
+The resolver owns its configuration inputs.
+
+**Do not resolve the head SHA yet** — it is computed after PR checkout in Phase 2 so the SHA reflects the actual PR HEAD, not whatever branch was checked out when the session started.
+
+### Eligibility checks
+
+For PR/MR targets, branch on the composite's eligibility receipt:
+
+- `proceed`: continue and disclose any non-null `reason`.
+- `stop`: print `reason` and end the run.
+- `ask_draft`: disclose any non-null `reason` before asking; use the draft template in `references/phase1-preflight.md`; continue only if the user chooses review. This verdict is interactive only.
+
+Local and branch targets continue directly to Phase 2.
+The previously-reviewed gate runs after checkout in Phase 2, section 2b-post step 3.
+
+### Resolve configuration
+
+The Phase 1 composite calls `scripts/resolve_config.py`. It reads `CODE_GAUNTLET_HEADLESS` to select `headless` or `interactive` mode.
+
+The resolver owns precedence and validation. It renders the configuration block to stderr in the Bash result under `=== config ===`.
+
+That stderr block is the Phase 2 entry gate. Retain the JSON as `configResult`, including `mode`, `waist`, `resolved`, and `identity`.
+
+Copy `configResult.waist` verbatim into args. For later decisions, use only `configResult.resolved.<knob>`.
+
+The resolver returns its JSON on stdout. A resolver failure stops the composite with `config: FAILED`.
 
 ---
 
@@ -183,7 +294,7 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
       options: [
         { label: "Incremental", description: "Review new commits only" },
         { label: "Full — review entire PR from scratch", description: "Start fresh" },
-        { label: "Skip — don't review again", description: "No review needed — the working tree stays checked out on this PR; nothing is reverted" }
+        { label: "Skip — don't review again", description: "Stop; leave this PR checked out" }
       ]
     }]
   )
@@ -200,7 +311,7 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
       multiSelect: false,
       options: [
         { label: "Yes — review again", description: "Run a fresh review" },
-        { label: "No — skip", description: "Keep the existing review — the working tree stays checked out on this PR; nothing is reverted" }
+        { label: "No — skip", description: "Keep the review; leave this PR checked out" }
       ]
     }]
   )

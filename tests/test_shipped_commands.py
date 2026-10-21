@@ -167,16 +167,15 @@ def _unquoted_path_lines(body: str) -> list[int]:
 
 
 def _context_block() -> str:
-    skill = skill_text(REPO / "skills/code-gauntlet/SKILL.md")
-    start = skill.index("### Write the shared agent context file")
-    end = skill.index("\n### ", start + 5)
-    section = skill[start:end]
+    skill = skill_text(REPO / "skills/code-gauntlet/references/phase2-preparation.md")
+    start = skill.index("## Write the shared agent context file")
+    section = skill[start:]
     fence_start = section.index("```bash") + len("```bash")
     return section[fence_start : section.index("```", fence_start)].strip("\n")
 
 
 def test_shipped_context_paths(tmp_path: Path) -> None:
-    skill = skill_text(REPO / "skills/code-gauntlet/SKILL.md")
+    skill = skill_text(REPO / "skills/code-gauntlet/references/phase2-preparation.md")
     collector = re.search(r'collect_project_rules\.py"[^\n]*--out "([^"]+)"', skill)
     assert collector is not None
     start = skill.index('echo "=== diff ==="')
@@ -289,7 +288,7 @@ def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) ->
 
 
 def _command_after_section(label: str, *, pipe: bool) -> str:
-    skill = skill_text(REPO / "skills/code-gauntlet/SKILL.md")
+    skill = skill_text(REPO / "skills/code-gauntlet/references/phase2-preparation.md")
     marker = f'echo "=== {label} ==="'
     start = skill.index(marker) + len(marker)
     end = skill.index("```", start)
@@ -482,7 +481,7 @@ def test_shipped_incremental_diff_keeps_paths_as_data(
                 .stdout.decode()
                 .strip()
             )
-    skill = skill_text(REPO / "skills/code-gauntlet/SKILL.md")
+    skill = skill_text(REPO / "skills/code-gauntlet/references/phase2-preparation.md")
     command = next(line for line in skill.splitlines() if "incremental_diff.py" in line)
     output_dir = tmp_path / "out [1]"
     output_dir.mkdir()
@@ -730,7 +729,7 @@ POSIX_FAKES = pytest.mark.skipif(
 def test_eligibility_shipped_producer_passes_config_as_stdin(
     platform, exit_code, tmp_path
 ):
-    text = skill_text(REPO / "skills/code-gauntlet/SKILL.md")
+    text = skill_text(REPO / "skills/code-gauntlet/references/phase1-preflight.md")
     pattern = (
         r'if ! ELIGIBILITY_JSON=\$\(printf [^\n]*check_eligibility\.py" --platform '
         + platform
@@ -809,7 +808,7 @@ def test_eligibility_shipped_producer_passes_config_as_stdin(
 def test_shipped_file_producer(platform, outcome, tmp_path):
     from tests.support.pr_files import FIXTURES, gitlab_view
 
-    text = skill_text(REPO / "skills/code-gauntlet/SKILL.md")
+    text = skill_text(REPO / "skills/code-gauntlet/references/phase2-preparation.md")
     commands = re.findall(
         r'if ! python3 "[^\n]+/scripts/list_pr_files\.py" --platform '
         + platform
@@ -921,7 +920,7 @@ def test_shipped_file_producer(platform, outcome, tmp_path):
 @pytest.mark.parametrize(
     "source",
     [
-        "skills/code-gauntlet/SKILL.md",
+        "skills/code-gauntlet/references/phase2-preparation.md",
         "skills/code-gauntlet/references/phase2-triage.md",
     ],
 )
@@ -1013,7 +1012,11 @@ def test_skill_and_reference_shell_blocks_have_no_jq():
 
 @pytest.mark.parametrize(
     "source",
-    ["SKILL.md", "references/phase1-preflight.md", "references/phase2-triage.md"],
+    [
+        "references/phase2-preparation.md",
+        "references/phase1-preflight.md",
+        "references/phase2-triage.md",
+    ],
 )
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
 @pytest.mark.parametrize("outcome", ["success", "failure"])
@@ -1100,7 +1103,9 @@ def test_shipped_forge_status_and_url(source, platform, outcome, tmp_path, monke
         assert result.stderr == ""
 
 
-@pytest.mark.parametrize("source", ["SKILL.md", "references/phase2-triage.md"])
+@pytest.mark.parametrize(
+    "source", ["references/phase2-preparation.md", "references/phase2-triage.md"]
+)
 @pytest.mark.parametrize("mode", ["branch", "local"])
 @pytest.mark.parametrize("outcome", ["success", "empty", "failure"])
 def test_shipped_patch_producer(source, mode, outcome, tmp_path, monkeypatch):
@@ -1179,7 +1184,7 @@ def test_shipped_branch_composite(outcome, tmp_path, monkeypatch):
         body
         for _, body in _shell_fences(
             skill_text(
-                REPO / "skills/code-gauntlet/SKILL.md",
+                REPO / "skills/code-gauntlet/references/phase2-preparation.md",
                 python=shlex.quote(sys.executable),
             )
         )
@@ -1246,7 +1251,9 @@ def test_shipped_branch_composite(outcome, tmp_path, monkeypatch):
 def test_shipped_interpreter_selection(statuses, selected, visited, tmp_path):
     if shutil.which(bash_executable()) is None:
         pytest.skip("Bash is required to execute the shipped preflight")
-    skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+    skill = (REPO / "skills/code-gauntlet/references/phase1-preflight.md").read_text(
+        encoding="utf-8"
+    )
     selector = skill[
         skill.index("PYTHON=()") : skill.index('echo "=== output_dir ==="')
     ]

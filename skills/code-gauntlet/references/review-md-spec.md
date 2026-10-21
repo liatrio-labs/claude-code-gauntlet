@@ -184,7 +184,7 @@ is no in-file place to put a per-entry note that both parses correctly and doesn
 
 ## Hierarchy
 
-`scripts/collect_project_rules.py` owns REVIEW.md discovery across the repo root, changed-file directories, and their ancestors, independently of CLAUDE.md locations (issue #80). A repository can have:
+`scripts/collect_project_rules.py` owns REVIEW.md discovery across the repo root, changed-file directories, and their ancestors, independently of CLAUDE.md locations. A repository can have:
 
 - A **root** `REVIEW.md` at the repo root (its thresholds and ignore apply to all files by default)
 - **Subdirectory** `REVIEW.md` files in any directory on that walked set (their thresholds and ignore apply to files in that directory tree)
@@ -242,7 +242,7 @@ The collector's `review_md` receipt is the authoritative REVIEW.md discovery lis
 
 #### Detection flow (Phase 2d)
 
-Use the successful collector receipt's `review_md` and `review_md_dirs` fields only. `review_md_dirs` is the searched directory list in walk order, repo-relative with root spelled `.`. Do not walk, Glob, or probe again. Run 2d step 4 as follows; emit at most one non-blocking notice alongside triage and never ask a question (issue #35).
+Use the successful collector receipt's `review_md` and `review_md_dirs` fields only. `review_md_dirs` is the searched directory list in walk order, repo-relative with root spelled `.`. Do not walk, Glob, or probe again. Run 2d step 4 as follows; emit at most one non-blocking notice alongside triage and never ask a question.
 
 - If `review_md` is empty, say: "No REVIEW.md found - reviewing with built-in defaults. Run `build-review-md` any time to configure thresholds, ignore patterns, and project rules."
 - Otherwise, if `review_md` contains path `REVIEW.md`, choose the first directory in `review_md_dirs` other than `.` whose {directory}/REVIEW.md is absent from `review_md` and whose REVIEW.md does not appear in the receipt's skipped list. If one exists, say: "Root REVIEW.md supplies defaults for this review. {directory} has no REVIEW.md of its own - add one if that area needs different thresholds or suppressions."

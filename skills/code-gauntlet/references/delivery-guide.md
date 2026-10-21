@@ -1,5 +1,12 @@
 # Delivery Guide
 
+## Contents
+
+- [PR/MR Comments (platform-aware)](#prmr-comments-platform-aware)
+- [Task Creation](#task-creation)
+- [Markdown File](#markdown-file)
+- [Chat](#chat)
+
 Implementation details for each delivery method in Phase 8, interactive and headless.
 
 ---
@@ -8,9 +15,10 @@ Implementation details for each delivery method in Phase 8, interactive and head
 
 **Only comment on files in the diff.** The GitHub/GitLab API rejects inline comments on files not part of the PR/MR diff (HTTP 422). Before posting each inline comment, verify the file path is in the changed files list. Cross-file impact findings about files outside the diff go in the top-level summary comment with a note: "This finding references `path/to/file.cs` which is not in this PR's diff."
 
-**Batch ALL inline comments into a single review event** — one GitHub notification instead of N separate ones. Notification fatigue causes teams to auto-dismiss AI review within ~10 days.
+Batch inline comments into a single GitHub review event to avoid one notification per finding.
 
-**The inline comment set is the pipeline's, not yours.** When the user answers "Post to PR/MR" at the Phase 8 delivery question, pass the `artifactPaths.postReview` payload unchanged to `post_review.py`; the script prepares posted fields. `selectDelivery` already applied the delivery tier, ranked the survivors, and capped them at `limits.deliveryCap`. Do not re-rank, re-filter, or re-apply the cap. There is no per-finding selection pass: the choice is post or don't.
+Follow [phase8-delivery.md](phase8-delivery.md#stage-1-deliver-the-report) for delivery authorization
+and the immutable `artifactPaths.postReview` payload. This guide documents the posting interface.
 
 ### Comment body format
 
@@ -46,12 +54,7 @@ whitespace-only all count as absent and produce no heading.
 string, non-empty after redaction, ship a matching `end_line`, land inside a valid diff range,
 match this render site's actual apply range, differ from the current text, and stay within the
 size bound. Any failure strips the field before render and the finding falls back to the prose
-`suggestion`, with the reason recorded via `warn_skip`. This used to be documented as a
-per-finding judgement call ("if `suggestion` looks like code, fence it"), which is precisely the
-wrong shape: a```suggestion fence is a one-click APPLY button, so turning prose into one on a
-hunch writes the guess straight into the author's branch. The rule is still structural — a fence
-comes from a field that exists to be a patch, or it does not appear — the apply-check is the
-mechanism that keeps that promise when agents populate the field too.
+`suggestion`, with the reason recorded via `warn_skip`. A suggestion fence is a one-click apply action, so it requires a dedicated patch field and a proved apply range.
 
 A multi-line fence on GitLab carries an offsets header, `` ```suggestion:-m+n ``, with `m`/`n`
 decided by the poster from the discussion's anchor line — never supplied on the finding itself.
@@ -134,137 +137,11 @@ that body as is.
 
 **Fields:**
 
-Every posted text field is prepared before Markdown is assembled. Titles and corroborator
-header values use the single-line class; body and suggestion use multiline prose; the cited
-rule is normalized, redacted, and has backtick runs of three or more collapsed to two
-before its source text is capped at 500 characters. Containment then escapes fence-shaped
-lines and unsafe visible characters before blockquote markers are added. Escaping can make
-the posted rule longer than 500 characters. Display
-locations are quoted with a code-span delimiter longer than any path backtick run. The
-caller-supplied `review_body` runs through the same prose guard before composition. A visible
-ASCII `@` at text start or after a non-alphanumeric character becomes U+FF20 FULLWIDTH COMMERCIAL AT,
-including inside inline code, quoted locations and a URL segment such as `/@name`.
-`<` before an ASCII letter, `/`, `!` or `?` becomes `&lt;` in prose and U+FF1C
-FULLWIDTH LESS-THAN SIGN inside a paired inline span or quoted location. Email address
-syntax stays intact. Outside inline code, display locations and trusted fences, reference
-syntax is broken: `#`, `!` and `&` before an ASCII digit become U+FF03, U+FF01 and U+FF06,
-a word-initial `GH-` before a digit takes U+2011 as its hyphen, and `~` or `%` before an
-ASCII letter, digit, underscore or `"` becomes U+FF5E or U+FF05. Tilde runs stay, and a
-rewritten sigil loses one preceding backslash when its backslash run is odd.
-A URL that starts at line start, after whitespace, or after `*`, `_`, `~`, `(`, `<`
-or a link label's `[`, and every inline link destination, keeps its sigils.
-A github.com or www.github.com URL shaped `/<owner>/<repo>/(issues|pull|discussions)/<digit>`,
-or a URL on any host containing `/-/(issues|merge_requests|work_items|epics|milestones|snippets)/<digit>`,
-becomes inline code, and as a link destination its `(` becomes U+FF08.
-GitHub Enterprise issue URLs are not wrapped.
-Numeric references and `&commat;`, `&excl;`, `&num;`, `&percnt;`, `&lbrack;`, `&lsqb;`,
-`&rsqb;`, `&rbrack;`, `&Hat;`, `&colon;`, `&lpar;`, `&rpar;`, `&bsol;`, `&nbsp;` and
-`&NonBreakingSpace;` decode as each replacement
-is consumed before the next input character. Decimal and hexadecimal accumulation saturates
-at 127; only ASCII values 32 through 126 are emitted. Other named references and query
-ampersands stay literal. Invisible code points, including CR, are discarded before matching;
-TAB and LF remain. Raw U+00A0 and its two named references become plain spaces everywhere,
-including inside inline code and trusted fences, like other decoded references. Text loss
-was measured on GitLab CE 19.4.1 through its Markdown API for a bracket-paren shape holding
-U+00A0 next to `&`, `<` or `>`; the prepared form was measured to show all text.
-The shared vectors pin the bytes. Numeric references to 160 are removed before Markdown
-classification.
-Comments are removed only when a `-->` begins after the end of a live `<!--` opener. An
-overlapping closer in `<!-->tail` stays visible as `&lt;!-->tail`; a later non-overlapping
-closer still removes the comment. Eager reduction can expose text that the previous wave order
-removed: `<!--&#38;#45;&#38;#45;&#38;#62;z-->tail` becomes `z-->tail`,
-`<!--x--` + U+200B + `>y-->z` becomes `y-->z`, and
-`<!-<!--x-->- y --<!--z-->> w` becomes `> w`.
-Secrets are redacted before containment. Inline spans pair on one line at the next exact
-backtick-run length, retrying shorter opener suffixes when a complete run has no mate.
-Only containment and the tilde guard share that span selection (`workflows/src/outboundText.js` for the pipeline Summary). The colon guard is
-span-blind and rewrites inside inline code too.
-A wrong pairing can show literal `&lt;` or backslashes, or show
-fullwidth characters in prose, but leaves the text contained. Fullwidth `＜` and `＠`
-inside code and display locations paste as different characters. Permalink URLs are
-encoded separately and retain the original path.
+The poster prepares text and applies host-specific containment in code. Pass the original fields
+unchanged. See [delivery rendering](../../../docs/delivery-rendering.md#outbound-text-preparation)
+when maintaining escaping or host rendering.
 
-Body text trusts column-zero backtick and tilde fences. Suggestion text and cited rules pass
-through `prepared_prose`, which collapses backtick runs of three or more to two before fence
-classification. Suggestion text therefore trusts only column-zero tilde fences; cited rules
-trust no fences. Trusted body and suggestion payloads retain normalized and redacted bytes,
-but accepted opener lines lose their entire info string. Finding-marker opening grammar is
-broken across the whole fence, including across newlines. Exact CommonMark
-closers end a trusted fence: up to three spaces of indent, the same fence character and at
-least the opener length, then only spaces or tabs. Every unprotected prose line escapes each
-tilde of a run of three or more outside complete paired inline-code spans. An even preceding
-backslash run gains one slash; an odd run already escapes the first tilde, and the remaining
-tildes each gain a slash. Fully escaped runs are fixed points. Ordinary mid-line `~~~`
-therefore displays as punctuation. Other untrusted backtick fence-shaped lines have their
-first fence character escaped, including lines after bullets or `[0-9]{1,9}[.)]` list
-markers followed by a space or tab. Single-line fields do not track fences or escape tilde
-runs. Summary titles and assembled bullets apply the prose tilde guard, preserving code-owned
-location spans while escaping runs in link destinations. Cited rules trust no fences:
-every backtick fence-shaped rule line has its first fence character escaped, every tilde
-run outside paired inline code is escaped, and every line receives outside-fence
-containment before blockquoting. An unclosed trusted body or suggestion fence gets a
-synthetic closer. A terminated HTML comment inside code is removed before fence or inline
-classification. Fields
-containing only Unicode whitespace are absent; Markdown blank lines still use only
-spaces and tabs.
-
-GitLab (measured on CE 19.4.1) runs a quick action from a posted note when a raw line of a
-top-level paragraph starts with `/` at column zero followed by a command name. The action runs
-with the posting account's permissions, and GitLab deletes the command line from the stored
-note even when it refuses the action. Indented lines, fences, blockquotes, lists, tables and
-mid-line slashes do not run. A multiline quote opener (a line starting with `>>>`, including
-alert openers such as `>>> [!note]`) can close a fenced block early and expose its lines,
-committable suggestion lines included, as prose. So every prepared prose field, on both
-platforms and outside trusted fences, puts a backslash before a line's leading `/` and before
-a run of three or more `>` that starts a line's content after list, quote and indent prefixes.
-The rules run after normalization and redaction. Suggested-fix code inside its suggestion fence
-is unchanged. Single-line fields carry neither escape because they follow a code-owned prefix
-or sit inside a code span. In ordinary prose, CommonMark consumes the escape backslash and
-displays the punctuation as intended. An opener on an indented-code line shows its backslash.
-GitLab CE 19.4.1 passes a backslash inside `$$` display math to its math renderer.
-Nested-quote shorthand such as `>>> text` displays literally.
-
-In prose, inline spans and quoted locations, the bracket after `!` or `[` (also
-across a run of backslashes) becomes U+FF3B FULLWIDTH LEFT SQUARE BRACKET.
-Both hosts render an image from `![`; GitLab also renders one from `[[`.
-So does every `[` before a caret, also across a run of backslashes: GitHub hides text
-between `[^` and a `]` on a later line of the paragraph. A regex such as `[^a-z]` shows
-as `［^a-z]`.
-GitLab parses text holding `](` a second time after backslashes are consumed,
-so a backslash does not hold there. On an unprotected physical line holding `](` or `]\(`,
-every `]` plus zero or more backslashes plus `:` everywhere on that triggered line changes
-only its colon to U+FF1A FULLWIDTH COLON. Named HTML5 forms for the closing bracket, colon,
-parentheses and backslash decode
-before this check. The colon rule is span-blind and applies inside inline code and to location
-paths because a platform can assign a backtick to another construct. A displayed path such
-as `src/[x]:.py` shows U+FF1A as `src/[x]：.py`, while its permalink href is unchanged.
-Without that trigger, a line-initial
-reference-definition label
-(`[label]:`) keeps the existing backslash-before-colon rule when only non-letter characters
-precede `[` on its line. A preceding backslash or another `[` prevents the match if it remains
-in the prefix when the guard runs. For `[[x]: u`, containment first turns the second bracket
-fullwidth, leaving the first bracket as the label opener, so its colon is escaped. In multiline fields,
-the old label may continue across lines, and it still applies inside code spans. This prevents
-a definition from turning code-owned text such as `[CRITICAL]` into a link. A footnote
-label has no rule of its own: its opener is already fullwidth.
-Footnote definitions and reference-style links in finding text therefore show as literal text. The
-new colon becomes fullwidth even when copied; the retained line-initial escape displays its
-original colon.
-None of these rules runs inside a trusted fenced payload. Summary titles and location paths
-force the fullwidth colon rule to remain stable when the containing bullet has a link pair;
-ordinary single-line fields keep
-the trigger-based rule.
-
-- `review_body` — exactly the pipeline-rendered Summary section body: counts first, selected findings index,
-  and any remainder with selection reasons. Whole index bullets fit within a 12,000-code-point
-  limit; later units join the remainder. The change summary stays in the report's Change Context section. `post_review.py`
-  bounds the summary comment, and every inline comment, discussion and note, with a per-platform
-  UTF-8 byte budget. Each includes its trailer; GitLab discussions and notes also include a live
-  marker when one is appended. Inline folds happen in place at a line boundary with a fold line
-  and may keep or drop a whole committable suggestion; summary folds do not apply that suggestion
-  rule. Every fold emits a stderr notice. The header and footer are reserved first; the summary
-  folds only when it cannot fit beside the skipped-section frame and footer. Skipped groups appear whole or not at all in list order,
-  followed by one closing count line when any group is omitted; the footer stays last.
+- `review_body` — the pipeline-rendered Summary body: counts, selected findings index, and any remainder. The change summary stays in Change Context. Code applies UTF-8 body budgets and preserves the footer; see [delivery rendering](../../../docs/delivery-rendering.md#posted-body-budgets).
 - `findings` — array of inline comments
   - `file` — relative path in repository
   - `line` — line number in diff (new version)
@@ -289,6 +166,9 @@ A wrong type on the fields below is refused before any forge access; other field
 `findings`: array of objects; `file`: string when present; `line`/`end_line`: non-bool integer or null; `consolidation_key`: string or null.
 
 **Example workflow:**
+
+Standalone caller example only. During Phase 8, pass the persisted `artifactPaths.postReview`
+file unchanged; never reconstruct it from this example.
 
 Use the Write tool to save the input JSON at
 `{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json`. Finding text stays
@@ -360,26 +240,16 @@ Generated by code-gauntlet | Reviewed up to: {full_sha}
 
 ## Task Creation
 
-**Never create tasks automatically.** The single Yes/No task-board question in Phase 8 Stage 2
-(`references/phase8-delivery.md`) is the consent gate; this section covers what happens after a "Yes".
+After the single consent question, follow [Phase 8 Stage 2](phase8-delivery.md#stage-2-task-board).
+The renderer returns one object per delivered finding with `subject`, `description`, and `metadata`.
+Its description contains Issue, Location, optional Evidence, optional Suggested Fix, Category,
+and optional Details or Toolchain sections. Metadata includes task identity, scope, requirements,
+proof artifacts, verification commands, commit template, and review context. Pass these fields
+unchanged through `TaskCreate(subject, description)` then `TaskUpdate(taskId, metadata)`.
+Do not create tasks headless or when the delivery payload is absent. Do not hand-compose tasks.
 
-> Headless mode exception: the task board is skipped (Phase 8 Stage 2), so no tasks are created and this section does not run. See `references/headless-mode.md`.
-
-### Create FIX tasks
-
-The renderer emits one object per delivered finding with `subject`, `description`, and `metadata`.
-The description contains Issue, Location, optional Evidence, optional Suggested Fix, Category, and
-optional Details or Toolchain sections. The metadata contains the task identity, scope, requirements,
-proof artifacts, verification commands, commit template, and review context. Pass `subject` and
-`description` to `TaskCreate`, then pass the returned task ID and `metadata` to `TaskUpdate`.
-Use the renderer command and stop on parse, count, or call failure. Never compose the object by hand.
-
-Category renders the normalized severity followed by the dimension, separated by ` | `.
-Metadata carries the same normalized severity, one of the labels in the severity legend above;
-case and JavaScript-trim padding are normalized, and any other value becomes low. Medium and low
-select trivial complexity and haiku; the other labels select standard complexity and sonnet.
-
-After creating: "Created N tasks from review findings."
+Category is normalized severity plus dimension, separated by ` | `. Unknown severity becomes low.
+Medium and low select trivial complexity and haiku; the other labels select standard and sonnet.
 
 ---
 

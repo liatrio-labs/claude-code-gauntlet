@@ -11,8 +11,6 @@ Sub-steps, detection logic, and **args preparation** for Phase 2: Target, Triage
 - **Shared agent context file** — **Args preparation** (the args waist the workflow consumes)
 - **Triage announcement**
 
-> **What moved into the workflow (v3).** The change summarizer (v2 steps **2f** and **2j**) is now the workflow's **Summarize** stage — Phase 2 no longer dispatches summarizer agents. The old two-batch "agents then file discovery" execution strategy is likewise gone; Phase 2 is now a straight-line context-and-args build, and the only agent dispatch is the single `Workflow` call in Phase 3. The 2f/2j content below is retained only to explain what the Summarize stage now does internally.
-
 ---
 
 ## 2a. Detect VCS Platform
@@ -218,7 +216,7 @@ Do not `Glob(pattern: "**/REVIEW.md")`; use the collector's receipt, not a secon
 
 Complete 2d's collector and raw-input handoff before proceeding to 2e. REVIEW.md thresholds and ignore patterns apply to matching finding subtrees through the pipeline. Every context-reading agent receives all source-path-tagged `review-rules` blocks; each block's prose is advisory for its source directory's subtree.
 
-Use only `receipt.review_md` and `receipt.review_md_dirs` from step 2 for the optional notice in step 4. A successful empty discovery never blocks or asks a question (issue #35). Report the result alongside triage and continue. Collector or raw Read failures stop the handoff. `references/review-md-spec.md` -> Discovery owns the exact notice wording.
+Use only `receipt.review_md` and `receipt.review_md_dirs` from step 2 for the optional notice in step 4. A successful empty discovery never blocks or asks a question. Report the result alongside triage and continue. Collector or raw Read failures stop the handoff. `references/review-md-spec.md` -> Discovery owns the exact notice wording.
 
 Pass raw `args.reviewMd` as described in SKILL.md. The pipeline merges thresholds and ignore patterns per matching finding subtree; the shared context retains every source-path-tagged prose block as advisory guidance for its source subtree. Never hand-parse here.
 
@@ -248,16 +246,6 @@ If ALL files are low-risk AND total lines <50, ask Light review vs Full review (
 > Headless exception: do not ask, and leave `scopeAnswer` out; interactive runs stamp the question answer.
 
 Only stamp `scopeAnswer` when this gate actually fired (every file low-risk AND total lines <50); omit it entirely otherwise — the args waist refuses a `scopeAnswer` the riskTable/changedLines don't support, and refuses a light-eligible riskTable with no `scopeAnswer` at all (the gate must have asked).
-
----
-
-## 2f. Change Summary (now the workflow's Summarize stage)
-
-The semantic change summary is no longer produced in Phase 2. The workflow's **Summarize** stage dispatches the `change-summarizer` agent internally (its model comes from `resolvePolicy` — Sonnet) and threads the result to `renderReport()` for its Change Context section. The skill neither dispatches a summarizer nor writes the summary into the context file.
-
-For reference, the Summarize stage produces a 3–5 sentence summary of what the change *claims* to do, its rationale, and its risk profile, framed strictly as claims (never "clean", "correct", "safe", "straightforward", "trivial", or "verbatim" — the summary must never conclude a refactoring is correct). The change-summarizer agent definition holds the authoritative framing rules.
-
-**Large changes.** For >500-line changes that also span more files than one summarize bucket, the Summarize stage fans out per-file buckets through `parallel()` and stitches the partials with a single merge call — again, internal to the workflow, not a Phase 2 dispatch. (This subsumes the old 2j file-level summarization step.)
 
 ---
 
@@ -300,12 +288,6 @@ Glob(pattern: "research/**/*.md")
 ```
 
 Then use **Read** to load relevant files for each changed file's directory. Never use `find` from Bash for locating docs/specs.
-
----
-
-## 2j. File-Level Summarization (now internal to the Summarize stage)
-
-Per-file summarization for large changes is no longer a Phase 2 dispatch — it is the bucket fan-out described in 2f above. When the change exceeds 500 lines and spans more files than one summarize bucket, the workflow's Summarize stage fans out one `change-summarizer` call per per-file bucket through `parallel()` and stitches the partials with a merge call. There is no separate 2j step and no "agents then file discovery" batching to arrange — the only agent dispatch the skill makes is the single `Workflow` call in Phase 3.
 
 ---
 
@@ -352,7 +334,7 @@ Use the command in `SKILL.md` under "Write the shared agent context file" and `s
 
 The **change summary** is no longer written into the context file — the workflow's Summarize stage produces it internally and threads it to `renderReport()` for its Change Context section. The NDJSON `## Validator` section is likewise dropped: v3 agents return findings through structured output, not by appending NDJSON, so there is no per-agent validator step to record.
 
-### Measure it (issue #48)
+### Measure it
 
 Stamp the script receipt verbatim. Both waist fields are optional only so a skipped step degrades to a disclosed `context_unmeasured` gap, never a licence to skip; `contextChars` without `contextLines` is refused at the waist. `contextReadPlan` and `sharedContextLine` (`workflows/src/contextPlan.js`) turn the pair into the Read calls.
 
@@ -467,6 +449,6 @@ Supply the path bases and any REVIEW.md `verifySliceSize` override. Inside the w
 
 ## Triage Announcement
 
-Announce triage results before proceeding: PR title, review mode, file counts by risk level, AI-generated files if any, active dimensions, incremental scope (`Full`, or `Incremental since {last_reviewed_sha} (N commits)` when 2b-post step 3 resolved Incremental — `Full` is the no-op case for a normal review). For 1000+ line PRs, add: "This PR is [N] lines. Review effectiveness drops sharply above 400 lines. Consider splitting into smaller PRs."
+Announce triage results before proceeding: PR title, review mode, file counts by risk level, AI-generated files if any, active dimensions, incremental scope (`Full`, or `Incremental since {last_reviewed_sha} (N commits)` when 2b-post step 3 resolved Incremental — `Full` is the no-op case for a normal review).
 
 If the collector receipt (2d step 2) has `gaps[]`, announce each as a one-line note. Also announce every `sources[]` and `review_md[]` entry with `modified_in_diff: true`; a change to rules governing this review is disclosed, not blocked.

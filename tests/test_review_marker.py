@@ -206,6 +206,7 @@ def test_output_directory_paths_do_not_embed_globs():
 
 PHASE1_REL = "skills/code-gauntlet/references/phase1-preflight.md"
 SKILL_REL = "skills/code-gauntlet/SKILL.md"
+PREPARATION_REL = "skills/code-gauntlet/references/phase2-preparation.md"
 PHASE2_REL = "skills/code-gauntlet/references/phase2-triage.md"
 HEADLESS_MODE_REL = "skills/code-gauntlet/references/headless-mode.md"
 REPORT_FORMAT_REL = "skills/code-gauntlet/references/report-format.md"
@@ -218,10 +219,10 @@ QUOTE_SCAN_RELS = (PHASE1_REL, SKILL_REL, REPORT_FORMAT_REL, DELIVERY_GUIDE_REL)
     "rel",
     [
         pytest.param(PHASE1_REL, id="phase1-preflight"),
-        pytest.param(SKILL_REL, id="skill"),
+        pytest.param(PREPARATION_REL, id="phase2-preparation"),
     ],
 )
-def test_doc_contract__phase1_and_skill_reference_detect_prior_review_script(rel):
+def test_doc_contract__preparation_references_detect_prior_review_script(rel):
     assert "detect_prior_review.py" in _read(rel)
 
 
@@ -275,7 +276,9 @@ def test_doc_contract__phase1_preflight_covers_the_required_output_fields():
 def test_doc_contract__phase2_triage_prescribes_the_bounded_incremental_diff():
     text = _read(PHASE2_REL)
     command = next(
-        line for line in _read(SKILL_REL).splitlines() if "incremental_diff.py" in line
+        line
+        for line in _read(PREPARATION_REL).splitlines()
+        if "incremental_diff.py" in line
     )
     assert command in text
     assert '--files "{output_dir}/code-gauntlet-files-{head_sha_short}.json"' in command
@@ -290,10 +293,10 @@ def test_doc_contract__phase2_triage_prescribes_the_bounded_incremental_diff():
     "rel, gate_marker, truncate_marker",
     [
         pytest.param(
-            SKILL_REL,
+            PREPARATION_REL,
             'echo "=== prior_review ==="',
             'echo "=== stale_truncate ==="',
-            id="skill",
+            id="phase2-preparation",
         ),
         pytest.param(
             PHASE2_REL,
@@ -312,7 +315,7 @@ def test_doc_contract__review_gate_precedes_stale_truncation(
     assert gate_idx != -1, f"gate section marker not found in {rel}"
     assert truncate_idx != -1, f"truncation section marker not found in {rel}"
     assert gate_idx < truncate_idx, "review gate must precede artifact truncation"
-    skill = _read(SKILL_REL)
+    skill = _read(PREPARATION_REL)
     truncate_block = skill[skill.find('echo "=== stale_truncate ==="') :]
     truncate_block = truncate_block[: truncate_block.find("```", 1)]
     assert "printf '%s\\n' \"$PRIOR_JSON\" | {python} " in truncate_block
@@ -322,26 +325,20 @@ def test_doc_contract__review_gate_precedes_stale_truncation(
 
 
 @pytest.mark.parametrize(
-    "rel",
-    [
-        pytest.param(SKILL_REL, id="skill"),
-        pytest.param(HEADLESS_MODE_REL, id="headless-mode"),
-    ],
+    "section", ["## Prior-review policy", "## Per-gate resolution"]
 )
-def test_doc_contract__headless_skip_semantics_agree_between_skill_and_headless_mode(
-    rel,
-):
-    text = _read(rel)
+def test_doc_contract__headless_skip_requires_prior_review_and_ancestry(section):
+    assert "[headless-mode.md](references/headless-mode.md)" in _read(SKILL_REL)
+    assert "headless-mode.md#prior-review-policy" in _read(PREPARATION_REL)
+    text = _read(HEADLESS_MODE_REL).split(section, 1)[1].split("\n## ", 1)[0]
     matching_lines = [
         line
         for line in text.splitlines()
-        if "resolved.reviewed_policy" in line
-        and re.search("\\bskip\\b", line, re.IGNORECASE)
-        and ("stops the run" in line)
-        and ("previously_reviewed" in line)
+        if line.startswith(("- `skip`", "| Previously reviewed"))
     ]
     assert matching_lines, "headless skip must gate on prior review"
     for line in matching_lines:
+        assert "previously_reviewed" in line, "skip requires a prior review"
         assert "sha_is_ancestor" in line, "rewritten history must not skip review"
 
 
@@ -350,14 +347,15 @@ def test_doc_contract__phase2_triage_never_appends_to_tracked_gitignore():
     assert ">> .gitignore" not in text, "triage must not write tracked gitignore"
 
 
-def test_doc_contract__skill_invokes_ensure_output_dir_and_has_no_gitignore_composite():
-    skill = _read(SKILL_REL)
+def test_doc_contract__preflight_invokes_ensure_output_dir_and_has_no_gitignore_composite():
+    assert "[phase1-preflight.md](references/phase1-preflight.md)" in _read(SKILL_REL)
+    skill = _read(PHASE1_REL)
     assert "ensure_output_dir.py" in skill, (
-        f"{SKILL_REL} must invoke scripts/ensure_output_dir.py in Phase 1"
+        f"{PHASE1_REL} must invoke scripts/ensure_output_dir.py in Phase 1"
     )
     assert 'echo "=== gitignore ==="' not in skill, "skill must ensure output directory"
     assert ">> .gitignore" not in skill, (
-        f"{SKILL_REL} must never append to the tracked .gitignore"
+        f"{PHASE1_REL} must never append to the tracked .gitignore"
     )
 
 

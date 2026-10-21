@@ -18,6 +18,13 @@ from bench.tests.test_validity import fingerprint as fingerprint
 from bench.tests.test_validity import window as window
 
 
+@pytest.fixture(autouse=True)
+def _committed_treatment(monkeypatch):
+    # Cleanliness has its own test against a scratch repo; these tests must not depend on
+    # whether the developer's checkout has uncommitted plugin edits.
+    monkeypatch.setattr(v, "require_clean_treatment", lambda root=v.ROOT: None)
+
+
 def test_model_probe_runs_real_node_against_registry():
     models = v.model_probe(v.ROOT, {"provider": "firstParty", "subagentModel": None})
     assert models["code-gauntlet:security-reviewer"] == "claude-opus-5-5"
