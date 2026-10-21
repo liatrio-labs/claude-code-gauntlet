@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.46.0 (2026-10-21)
+
+### Bug Fixes
+
+- **bench**: The leak guard's identifier, holdout and policy rules each have a direct test
+  ([#542](https://github.com/liatrio-labs/claude-code-gauntlet/pull/542),
+  [`43da329`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/43da3293f4f1a36f74b07a6a4afe010f1edef824))
+
+### Features
+
+- **bench**: A leak guard over every agent-read surface, with an exact allowance list that must
+  empty by Wave 2a ([#542](https://github.com/liatrio-labs/claude-code-gauntlet/pull/542),
+  [`43da329`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/43da3293f4f1a36f74b07a6a4afe010f1edef824))
+
+- **bench**: Leak guard over every agent-read surface with an exact allowance list (#46 stack 4/5)
+  ([#542](https://github.com/liatrio-labs/claude-code-gauntlet/pull/542),
+  [`43da329`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/43da3293f4f1a36f74b07a6a4afe010f1edef824))
+
+
 ## v3.45.0 (2026-10-21)
 
 ### Bug Fixes
