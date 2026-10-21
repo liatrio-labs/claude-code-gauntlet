@@ -133,3 +133,8 @@ def score_case(tmp_path):
     )
     score._write_json(run / "run.json", dict(run_id="run", urls=[url]))
     return ScoreCase(run, tmp_path / "ledger.jsonl", url, payload, [], {})
+
+
+def refuses(call, *args, match=None, **kwargs):
+    with pytest.raises(ValueError, match=match):
+        call(*args, **kwargs)
