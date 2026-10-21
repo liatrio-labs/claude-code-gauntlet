@@ -79,6 +79,12 @@ class Arm:
 
 
 @dataclass(frozen=True, slots=True)
+class GoldenCorrection:
+    review_contamination_sha256: str
+    golden_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class ComparisonSpec:
     comparison_id: str
     purpose: Literal["wave", "final", "descriptive"]
@@ -94,6 +100,7 @@ class ComparisonSpec:
     initial_spec_path: str | None = None
     initial_report_path: str | None = None
     unseal: str | None = None
+    golden_correction: GoldenCorrection | None = None
 
 
 def load_comparison_spec(path):
@@ -532,13 +539,22 @@ def matrix_for_arm(
 def compare_arms(spec, *, packet_loader=default_packet_loader):
     epoch = load_epoch(spec.epoch_id)
     manifest = read_json(spec.contamination_path)
+    scoring_manifest = manifest
+    if correction := spec.golden_correction:
+        if (
+            correction.review_contamination_sha256 != digest(manifest)
+            or correction.golden_sha256 != epoch.golden_sha256
+        ):
+            raise ValueError("golden correction binding mismatch")
+        # Population labels follow scoring; review evidence keeps its frozen binding.
+        scoring_manifest = {**manifest, "golden_sha256": correction.golden_sha256}
 
     def resolve(name, profile):
         return populations.resolve_population(
             name,
             epoch,
             profile,
-            manifest,
+            scoring_manifest,
             unseal=spec.unseal,
             treatment_sha=spec.candidate.treatment_git_sha,
         )
@@ -761,6 +777,9 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
             },
             epoch_id=epoch.epoch_id,
             golden_sha256=epoch.golden_sha256,
+            golden_correction=asdict(spec.golden_correction)
+            if spec.golden_correction
+            else None,
             contamination_sha256=digest(manifest),
             rule_sha256=digest(asdict(rule)) if rule else None,
             audit_sha256=digest(receipt) if receipt else None,

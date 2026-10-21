@@ -156,6 +156,40 @@ def test_freeze_precedes_every_candidate(case):
     refuses(paired, replace(spec, purpose="final"), packets, match="freeze")
 
 
+def test_golden_correction_keeps_review_binding(case, score_case, monkeypatch):
+    from bench.runner import epochs, score
+
+    spec, packets = case.build(promotion_rule=rule("ship"))
+    spec = replace(spec, purpose="final")
+    ctx = epochs.epoch_context(case.epoch)
+    ctx["scorer_input"][score_case.url]["golden_comments"][0]["category"] = "style"
+    ctx["spec"]["golden_sha256"] = digest([ctx["scorer_input"], ctx["project_by_pr"]])
+    epoch = epochs.from_context(ctx)
+    monkeypatch.setattr(compare, "load_epoch", lambda *args: epoch)
+    monkeypatch.setattr(score, "load_epoch", lambda *args, **kwargs: epoch)
+    refuses(paired, spec, packets, match="contamination epoch")
+    binding = compare.GoldenCorrection(digest(case.contamination), epoch.golden_sha256)
+    spec = replace(spec, golden_correction=binding)
+    refuses(paired, spec, packets, match="scoring context")
+    labels = {b.bug_id: b.category for b in epoch.bugs}
+    for arm in (spec.baseline, spec.candidate):
+        result = score_case.execute()
+        fresh = o.load_packet(Path(result["ledger_row"]["packet_path"])).manifest
+        for ref in arm.scores:
+            packet = packets[ref]
+            manifest = replace(packet.manifest, epoch_hashes=fresh.epoch_hashes)
+            rows = tuple(
+                replace(b, category=labels[b.bug_id]) for b in packet.observations
+            )
+            packets[ref] = replace(packet, manifest=manifest, observations=rows)
+    report = paired(spec, packets)
+    assert report.identity["contamination_sha256"] == digest(case.contamination)
+    assert report.identity["golden_sha256"] == epoch.golden_sha256
+    changed = {**case.contamination, "golden_sha256": epoch.golden_sha256}
+    write(Path(spec.contamination_path), changed)
+    refuses(paired, spec, packets, match="correction binding")
+
+
 def test_historical_comparison_retains_manifest_and_delivered_dimensions(
     case, monkeypatch
 ):

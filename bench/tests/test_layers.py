@@ -1,7 +1,10 @@
 """The stack can be extracted in order without reverse Python dependencies."""
 
 import ast
+from importlib.util import resolve_name
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 LAYERS = [
@@ -27,9 +30,13 @@ def test_imports_follow_stack_layers_and_trace_is_independent():
             if isinstance(node, ast.Import):
                 modules = [n.name for n in node.names]
             if isinstance(node, ast.ImportFrom):
-                modules = [node.module or ""]
-                if node.module in ("bench", "bench.runner"):
-                    modules = [node.module + "." + n.name for n in node.names]
+                module = node.module or ""
+                if node.level:
+                    package = ".".join(path.relative_to(ROOT).parts[:-1])
+                    module = resolve_name("." * node.level + module, package)
+                modules = [module]
+                if module in ("bench", "bench.runner"):
+                    modules = [module + "." + n.name for n in node.names]
             for module in modules:
                 if module.startswith("bench.runner.") or module in (
                     "bench.run",
@@ -52,3 +59,18 @@ def test_imports_follow_stack_layers_and_trace_is_independent():
     assert "from bench" not in (ROOT / "workflows/pipeline.js").read_text(
         encoding="utf-8"
     )
+
+
+def test_relative_scoring_import_cannot_reverse_layers(monkeypatch):
+    original = Path.read_text
+
+    def source(path, *args, **kwargs):
+        return original(path, *args, **kwargs) + (
+            "\nfrom .validity import scoring_selection\n"
+            if path.name == "score.py"
+            else ""
+        )
+
+    monkeypatch.setattr(Path, "read_text", source)
+    with pytest.raises(AssertionError, match=r"bench\.runner\.validity"):
+        test_imports_follow_stack_layers_and_trace_is_independent()
