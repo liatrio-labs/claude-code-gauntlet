@@ -12,12 +12,14 @@ import sys
 import uuid
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
+from itertools import pairwise
 from pathlib import Path
 from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from bench.runner.contracts import (
+    ScoreRef,
     artifact_allowed,
     copy_exclusive,
     exclusive_json,
@@ -492,6 +494,165 @@ def snapshot_attempt(
     )
     exclusive_json(target / "attempt.json", record.wire())
     return record
+
+
+@dataclass(frozen=True, slots=True)
+class CellSelection:
+    arm: str
+    run_index: int
+    pr_url: str
+    attempt_id: str
+    score_ref: ScoreRef | None
+    failure_confirmation_ref: str | None = None
+    attempt: AttemptRecord | None = None
+    observations: tuple[MatrixObservation, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MatrixObservation:
+    arm: str
+    run_index: int
+    pr_url: str
+    bug_id: str
+    detected: bool
+    run_id: str
+    attempt_id: str
+    delivered_dimensions: tuple[str, ...] = ()
+    discovery_dimensions: tuple[str, ...] = ()
+    stage_outcomes: tuple[tuple[str, bool | None], ...] = ()
+    provenance_available: bool = False
+    delivered_provenance_available: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class CompleteMatrix:
+    selections: tuple[CellSelection, ...]
+    observations: tuple[MatrixObservation, ...]
+    arms: tuple[str, str]
+    run_indices_by_arm: tuple[tuple[str, tuple[int, ...]], ...]
+    stage_observations: tuple = ()
+
+
+def validate_matrix(selections, window, *, epoch, expected_run_indices, source=False):
+    selections = tuple(selections)
+    arms = tuple(sorted({s.arm for s in selections}))
+    if (len(arms) != 1 if source else len(arms) != 2) or (
+        not set(expected_run_indices) <= set(window.planned_run_indices)
+        if source
+        else tuple(window.planned_run_indices[: len(expected_run_indices)])
+        != expected_run_indices
+    ):
+        raise ValueError("invalid arms or planned run prefix")
+    expected = {
+        (a, r, p) for a in arms for r in expected_run_indices for p in window.pr_urls
+    }
+    actual = [(s.arm, s.run_index, s.pr_url) for s in selections]
+    if len(actual) != len(set(actual)) or set(actual) != expected:
+        raise ValueError("incomplete or duplicate PR/run matrix")
+    run_ids = {}
+    expected_bugs = {
+        p: {b.bug_id for b in epoch.bugs if b.pr_url == p} for p in window.pr_urls
+    }
+    all_observations = []
+    for s in selections:
+        attempt = s.attempt
+        if (
+            not attempt
+            or not s.score_ref
+            or s.attempt_id != attempt.attempt_id
+            or s.pr_url != attempt.pr_url
+        ):
+            raise ValueError("missing selected attempt or score")
+        v = attempt.validity
+        if (
+            v.state not in ("valid", "operational_failure")
+            or v.window_id != window.window_id
+            or v.observed is None
+            or check_window(window, v.observed, arm=s.arm, now=attempt.started_at).state
+            != "valid"
+        ):
+            raise ValueError("invalid selected outcome or measurement identity")
+        if v.state == "operational_failure" and not s.failure_confirmation_ref:
+            raise ValueError("unconfirmed operational failure")
+        rows = s.observations
+        if (
+            len(rows) != len(expected_bugs[s.pr_url])
+            or {r.bug_id for r in rows} != expected_bugs[s.pr_url]
+            or any(
+                (r.arm, r.run_index, r.pr_url, r.run_id, r.attempt_id)
+                != (s.arm, s.run_index, s.pr_url, attempt.run_id, attempt.attempt_id)
+                or type(r.detected) is not bool
+                for r in rows
+            )
+            or (v.state == "operational_failure" and any(r.detected for r in rows))
+        ):
+            raise ValueError(
+                "incomplete/duplicate/non-Boolean bug matrix or nonzero operational failure"
+            )
+        all_observations.extend(rows)
+        key = (s.arm, s.run_index)
+        if (
+            run_ids.setdefault(key, attempt.run_id) != attempt.run_id
+            or s.score_ref.run_id != attempt.run_id
+        ):
+            raise ValueError("run identity mismatch")
+    if len(set(run_ids.values())) != len(run_ids):
+        raise ValueError("rescoring does not create independent review runs")
+    return CompleteMatrix(
+        selections,
+        tuple(all_observations),
+        arms,
+        tuple((a, expected_run_indices) for a in arms),
+    )
+
+
+def load_selected_attempt(packet, url, aid):
+    run_dir = packet.root.parents[2]
+    paths = list((run_dir / "attempts").glob(f"*/{aid}/attempt.json"))
+    if len(paths) != 1:
+        raise ValueError("immutable selected attempt missing")
+    path = paths[0]
+    expected = dict(packet.manifest.source_artifact_hashes).get(
+        str(path.relative_to(run_dir))
+    )
+    if expected != file_hash(path):
+        raise ValueError("selected attempt differs from immutable score evidence")
+    attempt = load_attempt(path)
+    if attempt.run_id != packet.run_id or attempt.pr_url != url:
+        raise ValueError("selected attempt run/PR identity mismatch")
+    receipt = run_dir / "failure-confirmations" / (aid + ".json")
+    if receipt.is_file() and dict(packet.manifest.source_artifact_hashes).get(
+        str(receipt.relative_to(run_dir))
+    ) != file_hash(receipt):
+        raise ValueError("failure confirmation differs from score evidence")
+    current = [
+        row
+        for p in (run_dir / "state").glob("*.json")
+        if (row := read_json(p)).get("url") == url
+    ]
+    if len(current) != 1 or (current[0].get("detail") or {}).get("attempt_id") != aid:
+        raise ValueError("score does not select the current attempt")
+    return attempt
+
+
+def validate_interleaving(selections, window, runs):
+    order = tuple((a, r) for a, r in window.planned_order if r in dict(runs)[a])
+    starts = {
+        (a, r): [
+            timestamp(s.attempt.started_at)
+            for s in selections
+            if (s.arm, s.run_index) == (a, r)
+        ]
+        for a, r in order
+    }
+    if (
+        set(order) != {(a, r) for a, indices in runs for r in indices}
+        or len(order) != len(starts)
+        or any(
+            a[0] == b[0] or max(starts[a]) >= min(starts[b]) for a, b in pairwise(order)
+        )
+    ):
+        raise ValueError("selected attempts do not follow planned interleaving")
 
 
 def benchmark_policy(timeout_s, *, resolve_limits=True):

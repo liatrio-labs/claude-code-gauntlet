@@ -2,8 +2,8 @@
 """bench/report.py — regenerable, self-contained HTML dashboard of deep-review
 benchmark performance over time.
 
-Reads ONLY the committed ledger (``bench/experiments.jsonl``) and baselines
-(``bench/baselines.json``); emits one static HTML file with all CSS inline in a
+Reads ONLY the committed ledger (``bench/experiments.jsonl``) and active and
+historical baselines; emits one static HTML file with all CSS inline in a
 single ``<style>``, charts as inline SVG, and a small inline tooltip script —
 zero external requests. Re-run after appending a scored ledger row to refresh
 the page::
@@ -19,7 +19,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
 BENCH_DIR = Path(__file__).resolve().parent
@@ -30,7 +30,13 @@ REPO_ROOT = BENCH_DIR.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.runner.ledger import cost_is_billable, row_auth_mode  # noqa: E402
+from bench.runner.ledger import (  # noqa: E402
+    cost_is_billable,
+    read_rows,
+    row_auth_mode,
+    score_identity,
+    spend_totals,
+)
 
 # Section break inside a tooltip / aria string. U+2028 (LINE SEPARATOR) renders as
 # a hard break in the browser but is NOT a "\n", so it survives _normalize() on one
@@ -39,6 +45,7 @@ TIP_BREAK = "\u2028"
 
 DEFAULT_LEDGER = BENCH_DIR / "experiments.jsonl"
 DEFAULT_BASELINES = BENCH_DIR / "baselines.json"
+HISTORICAL_BASELINES = BENCH_DIR / "golden/historical_baselines.json"
 DEFAULT_OUT = BENCH_DIR / "report.html"
 
 # Cost-honesty marker. A subscription-served run's cost_usd is a consumption
@@ -216,14 +223,7 @@ ANCHOR_METRICS = (
 # Loading
 # ---------------------------------------------------------------------------
 def load_ledger(path):
-    """Parse the NDJSON ledger into a list of row dicts (blank lines skipped)."""
-    rows = []
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    return rows
+    return read_rows(path)
 
 
 def load_baselines(path):
@@ -355,7 +355,7 @@ def deep_review_points(rows):
     for r in rows:
         if r.get("tool") != "deep-review-v2":
             continue
-        rid = r.get("run_id")
+        rid = _row_key(r)
         if rid not in groups:
             groups[rid] = []
             order.append(rid)
@@ -366,7 +366,7 @@ def deep_review_points(rows):
         rep = sorted(grp, key=lambda r: r.get("ts", ""))[0]
         points.append(
             {
-                "run_id": rid,
+                "run_id": rep.get("run_id"),
                 "row": rep,
                 "count": len(grp),
                 "identical": len({_metric_signature(r) for r in grp}) == 1,
@@ -388,7 +388,8 @@ def latest_subset_row(rows):
     subset = [
         r
         for r in rows
-        if str(r.get("tool", "")).startswith("deep-review")
+        if r.get("schema_version", 1) == 1
+        and str(r.get("tool", "")).startswith("deep-review")
         and r.get("tier") == "subset"
     ]
     if not subset:
@@ -402,7 +403,9 @@ def row_by_run_id(rows, run_id):
     Earliest ts wins on a k=5 re-score (byte-identical per judge_sd=0), matching
     the "representative row" convention used everywhere else in this module.
     """
-    cands = [r for r in rows if r.get("run_id") == run_id]
+    cands = [
+        r for r in rows if r.get("run_id") == run_id and r.get("schema_version", 1) == 1
+    ]
     return sorted(cands, key=lambda r: r.get("ts", ""))[0] if cands else None
 
 
@@ -423,7 +426,7 @@ def ledger_groups(rows):
     groups = {}
     order = []
     for r in rows:
-        key = (r.get("run_id"), r.get("tool"))
+        key = (_row_key(r), r.get("tool"))
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -452,6 +455,12 @@ def classify(row, top_anchor, ceiling):
     bars (recall must clear the top anchor, noise must stay under the ceiling);
     smoke runs are judged by whether their experiment stuck.
     """
+    if row.get("schema_version") == 2:
+        return (
+            "base",
+            "?",
+            "descriptive score; measurement validity and calibration pending",
+        )
     tool = str(row.get("tool", "") or "")
     tier = row.get("tier")
     change = str(row.get("change") or "")
@@ -537,7 +546,7 @@ def scored_run_points(rows, top_anchor, ceiling):
     for r in rows:
         if r.get("tool") not in TRACKED_TOOLS:
             continue
-        key = (r.get("run_id"), r.get("tool"))
+        key = (_row_key(r), r.get("tool"))
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -1076,6 +1085,7 @@ def subset_comparison(rows, baselines):
 
     Returns ``(v2_row, v3_row, n_goldens)`` or ``(None, None, n)`` when either
     side is missing (e.g. the offline test fixture with no v3 subset)."""
+    rows = [r for r in rows if r.get("schema_version", 1) == 1]
     bv2 = baselines.get("baseline_v2", {})
     n_goldens = bv2.get("n_goldens")
     v2_row = next(
@@ -2245,13 +2255,13 @@ def _thresholds(baselines):
     return top_anchor, v2_base, ceiling
 
 
-def render_html(rows, baselines, sha, generated):
+def _render_historical_html(rows, baselines, sha, generated, *, active_html=""):
     top_anchor, v2_base, ceiling = _thresholds(baselines)
     points = scored_run_points(rows, top_anchor, ceiling)
     groups = ledger_groups(rows)
     judge = html.escape(str(baselines.get("judge_pin", "—")))
     subtitle = (
-        f"Generated {html.escape(generated)} · commit "
+        f"Ledger through {html.escape(generated)} · commit "
         f'<span class="mono">{html.escape(sha)}</span> · judge '
         f'<span class="mono">{judge}</span>'
     )
@@ -2326,6 +2336,12 @@ def render_html(rows, baselines, sha, generated):
         "<h1>code-gauntlet bench — release progression</h1>",
         f'<p class="subtitle">{subtitle}</p>',
         "</header>",
+        active_html,
+        '<section id="historical-epoch">',
+        "<h2>Historical epoch "
+        + html.escape(baselines.get("epoch_id", "unknown"))
+        + "</h2>",
+        "<p>Read-only historical measurements. Comparisons below stay within this epoch.</p>",
         "<h2>Release progression</h2>",
         build_releases_html(rows, top_anchor, v2_base, ceiling),
         build_explainer_html(top_anchor, v2_base, ceiling),
@@ -2344,6 +2360,7 @@ def render_html(rows, baselines, sha, generated):
         build_table_html(groups, top_anchor, ceiling),
         "<h2>Notes</h2>",
         build_footnotes_html(baselines, rows),
+        "</section>",
         f'<script type="application/json" id="bench-data">{embedded}</script>',
         "</div>",
     ]
@@ -2364,6 +2381,73 @@ def render_html(rows, baselines, sha, generated):
         "</html>",
     ]
     return "\n".join(doc)
+
+
+def _row_key(row):
+    identity = score_identity(row)
+    if row.get("schema_version") == 2:
+        return (
+            row.get("epoch_id"),
+            row.get("profile"),
+            row.get("population_sha256"),
+            identity,
+        )
+    return (
+        identity.epoch_id or "legacy_unknown",
+        "all",
+        row.get("run_id"),
+        row.get("scorer_sha"),
+    )
+
+
+def render_html(rows, baselines, sha, generated):
+    from bench.runner.epochs import load_epoch
+
+    active = "measurement_status" in baselines
+    epoch_id = load_epoch().epoch_id if active else baselines.get("epoch_id")
+    if epoch_id is None:
+        epoch_id = next(
+            (score_identity(r).epoch_id for r in rows if score_identity(r).epoch_id),
+            None,
+        )
+    epoch_rows = [
+        r for r in rows if (r.get("epoch_id") or score_identity(r).epoch_id) == epoch_id
+    ]
+    if not active:
+        return _render_historical_html(epoch_rows, baselines, sha, generated)
+    parts = [
+        '<section id="epoch-scores">',
+        "<h2>Active epoch " + html.escape(epoch_id) + "</h2>",
+    ]
+    parts += ["<p>" + html.escape(str(spend_totals(epoch_rows))) + "</p>"]
+    if not epoch_rows:
+        parts.append("<p>Active-epoch measurements pending.</p>")
+    for group in ledger_groups(epoch_rows):
+        row = group["row"]
+        label = " / ".join(
+            str(row.get(k, ""))
+            for k in ("profile", "run_id", "score_id", "denominator")
+        )
+        parts.append(
+            "<article>"
+            + html.escape(label)
+            + "; recall "
+            + fmt_pct(row.get("golden_recall"))
+            + "; descriptive score.</article>"
+        )
+    historical = load_baselines(HISTORICAL_BASELINES)
+    historical_rows = [
+        r
+        for r in rows
+        if (r.get("epoch_id") or score_identity(r).epoch_id) == historical["epoch_id"]
+    ]
+    return _render_historical_html(
+        historical_rows,
+        historical,
+        sha,
+        generated,
+        active_html="\n".join([*parts, "</section>"]),
+    )
 
 
 def _normalize(text):
@@ -2387,7 +2471,13 @@ def main(argv=None):
 
     rows = load_ledger(args.ledger)
     baselines = load_baselines(args.baselines)
-    doc = render_html(rows, baselines, git_short_sha(), date.today().isoformat())
+    latest = max(rows, key=lambda r: r.get("ts", ""), default={})
+    doc = render_html(
+        rows,
+        baselines,
+        latest.get("git_sha", "uncommitted"),
+        latest.get("ts", "unknown")[:10],
+    )
     out = _normalize(doc)
     with open(args.out, "w", encoding="utf-8") as fh:
         fh.write(out)

@@ -1,0 +1,320 @@
+{
+  "schema_version": 1,
+  "epoch_id": "e616e84-v1",
+  "golden_sha256": "e5dead9466a98dcaba86316fe63a05fe90af926b8290c74dd6956ef99b4f18a5",
+  "entries": [
+    {
+      "pr_url": "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/4",
+      "bug_ids": [],
+      "scope": "pr",
+      "match_kind": "identifier",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "P008",
+        "P009"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1",
+      "bug_ids": [],
+      "scope": "pr",
+      "match_kind": "identifier",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "P002",
+        "P003"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/2",
+      "bug_ids": [],
+      "scope": "pr",
+      "match_kind": "identifier",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "P002",
+        "P003"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/keycloak/keycloak/pull/32918",
+      "bug_ids": [],
+      "scope": "pr",
+      "match_kind": "identifier",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "P001"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/calcom/cal.com/pull/10600",
+      "bug_ids": [
+        "g:5cb14228490b8a545fced1612d0de8358ff2c0616e3caf2ff36163dfcb83ab6f"
+      ],
+      "scope": "bug",
+      "match_kind": "sweep",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "cal_dot_com:cal.com:10600:1",
+        "3f7aaa661989d9bba12b8ee60125dfd4ef84bc34b31ea2c2144d81ed16a4a86e",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/calcom/cal.com/pull/10600",
+      "bug_ids": [
+        "g:61316c36c48355460f9f4676a938c1691fad6244fb07b48bda956ee5b8ca9878"
+      ],
+      "scope": "bug",
+      "match_kind": "sweep",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "cal_dot_com:cal.com:10600:3",
+        "ab0caf776de281d4d000497d8745b2936c7db221960831cd15f23ff0b1a52ef9",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/calcom/cal.com/pull/14740",
+      "bug_ids": [
+        "g:0cd64b33ea8da836bb622bc752b14720caeb3a70e14c305b1ba1040c9c77d52d"
+      ],
+      "scope": "bug",
+      "match_kind": "sweep",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "cal_dot_com:cal.com:14740:1",
+        "3ba2c875765f8da5b66599d91ff7849fe350e9b7879b27cef40202e35462ea9a",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/10",
+      "bug_ids": [
+        "g:1005a489170c716c5d590f68d8b72e405e011e80c355d30cf2474f03356c0412"
+      ],
+      "scope": "bug",
+      "match_kind": "sweep",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "discourse:discourse-graphite:10:3",
+        "6babf6401998b67d6ac0346ca7d0eac52eb43f918b8bcb48e5b1d22e18273cf8",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/2",
+      "bug_ids": [
+        "g:110d69880e01612ea03212fde2d6212628046ff7965b883377b582f0dc37baff"
+      ],
+      "scope": "bug",
+      "match_kind": "sweep",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "discourse:discourse-graphite:2:2",
+        "d577c03c0105b18ecd5d33dccf0dc4ec15ab93dbd32feefe7227e8cfecedce54",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/3",
+      "bug_ids": [
+        "g:7498c5fb7a8d23d5ed141579035ff0717598f579c03ba0bac66559f88b6a99a5"
+      ],
+      "scope": "bug",
+      "match_kind": "sweep",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "discourse:discourse-graphite:3:2",
+        "7a7e926d435045dcd2a18a391727bf6ee838c692f823dace88d3ea724e9db997",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/3",
+      "bug_ids": [
+        "g:b3088aa3d8be66cb07ffd8a43f0f62c085175883d8e26c80f704c6816fafd136"
+      ],
+      "scope": "bug",
+      "match_kind": "sweep",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "discourse:discourse-graphite:3:3",
+        "b9e9f9443872bf8ac3b575e747f169c589f831b30ef84d8378d515b4e7229bd0",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/4",
+      "bug_ids": [
+        "g:711335b855bb418a26e3ce9b8c11e4603b407bcca4755c8231a330d06310eead"
+      ],
+      "scope": "bug",
+      "match_kind": "sweep",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "discourse:discourse-graphite:4:1",
+        "167baf40885838b24bda5d2da73ab808f65735f08ca29e1a35a98f9c3176e108",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/4",
+      "bug_ids": [
+        "g:395e263f3d6112ace9e3bcc1fa0f7c8f43a5f6d3e92eac45cbc66ba0cc049027"
+      ],
+      "scope": "bug",
+      "match_kind": "sweep",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "discourse:discourse-graphite:4:4",
+        "297c252d2530a6cfe24b52b88c391d569231477ebb406d8001e3448c3ce01745",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/keycloak/keycloak/pull/37429",
+      "bug_ids": [
+        "g:06681a7ad87541fd2cf14b9d31ff923b57c2e1cecfac59622036f554258fe204"
+      ],
+      "scope": "bug",
+      "match_kind": "sweep",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "keycloak:keycloak:37429:4",
+        "5b9ad2d078b4a9ac48b4bf79ce91c308d27bdf80ee61e140d818673950f1c946",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/getsentry/sentry/pull/77754",
+      "bug_ids": [
+        "g:9ec2afb48970216450b6dcd7eab301fe9ac62cabe6500a27b8689637fa31adfc"
+      ],
+      "scope": "bug",
+      "match_kind": "sweep",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "sentry:sentry:77754:2",
+        "980e554f4c62ab8976316cb55d6cf264b84b18161be7164b2528e56ef5c9c14e",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/getsentry/sentry/pull/77754",
+      "bug_ids": [
+        "g:b0c44e79affed8457ab6948575220554fe4196b0821976f46f7f3832c480411e"
+      ],
+      "scope": "bug",
+      "match_kind": "sweep",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "sentry:sentry:77754:3",
+        "b411ea173b7d804f4d0be8c14b89498c04b130f4eac7185299835f31e2305de0",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    },
+    {
+      "pr_url": "https://github.com/getsentry/sentry/pull/93824",
+      "bug_ids": [
+        "g:b1d2b73d9fb63f07d56acd5d0a64ffec08f4929cd428e01f5ca7f9c576471d04"
+      ],
+      "scope": "bug",
+      "match_kind": "sweep",
+      "evidence_refs": [
+        "sha256:8a3f5f13f79abad8ac66644baa7eb121993d2c230fe5dab5cb8d92a8946b4192",
+        "sentry:sentry:93824:1",
+        "3a590f06d864bcdfb807581d51246af3ee298475ca6d71dfbeb02ef200e80ac5",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015"
+      ],
+      "rationale": "identifier or scenario match: exclude the whole PR. Narrow sweep added to dispatch text (registry.js promptExtra): exclude its matched golden comments. Textbook bug-class catalogue entry: no exclusion, recorded for the leakage lens."
+    }
+  ],
+  "criterion_version": "leak-manifest-v2",
+  "status": "unfrozen",
+  "frozen_at": null,
+  "agent_read_sha256": "",
+  "baseline_treatment_sha": "",
+  "leak_report_sha256": ""
+}

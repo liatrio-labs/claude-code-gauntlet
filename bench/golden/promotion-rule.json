@@ -1,0 +1,11 @@
+{
+  "kind": "wave",
+  "profile": "core",
+  "margin_pp": null,
+  "nonmini_margin_pp": null,
+  "initial_runs": null,
+  "extension_runs": null,
+  "stability_min_runs": null,
+  "bootstrap": null,
+  "frozen": false
+}
