@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.45.0 (2026-10-21)
+
+### Bug Fixes
+
+- **bench**: Windowed runs pass their own drift check, and the model probe reads its argument
+  ([#541](https://github.com/liatrio-labs/claude-code-gauntlet/pull/541),
+  [`0f12d27`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0f12d275901b7dc088cd4fe469e5b77610277d3d))
+
+### Features
+
+- **bench**: Measurement windows, immutable attempts and trace collection (#46 stack 3/5)
+  ([#541](https://github.com/liatrio-labs/claude-code-gauntlet/pull/541),
+  [`0f12d27`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0f12d275901b7dc088cd4fe469e5b77610277d3d))
+
+- **bench**: Measurement windows, immutable attempts and trace collection on the run path
+  ([#541](https://github.com/liatrio-labs/claude-code-gauntlet/pull/541),
+  [`0f12d27`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0f12d275901b7dc088cd4fe469e5b77610277d3d))
+
+
 ## v3.44.0 (2026-10-21)
 
 ### Bug Fixes
