@@ -1,1065 +1,132 @@
-"""Tests for bench/runner/score.py.
-
-No network, no keys, no ``uv`` subprocess: the models API, the vendored scorer,
-and the adjudicator are all injected or monkeypatched. Covers judge-pin
-resolution + idempotency, the pin-mismatch/null refusals, the bucket-join
-bijection (including its raise paths), metric arithmetic on a hand-built
-evaluations fixture, and one fully wired ``score_run`` over a fabricated run dir.
-"""
+"""Scoring boundary controls and recorded charge semantics."""
 
 import json
-import tempfile
-import unittest
 from pathlib import Path
-from types import SimpleNamespace
-from typing import ClassVar
-from unittest import mock
 
-from bench.runner import (
-    ledger,
-    score,
-)
-from bench.runner.ledger import REQUIRED_KEYS
-from bench.runner.score import (
-    bucket_join,
-    compute_metrics,
-    resolve_judge_pin,
-    score_run,
-)
+import pytest
+
+from bench.runner import observations, score
+from bench.runner.contracts import pr_dir_name
+from bench.runner.epochs import read_json
 
 
-def write_json(path, data):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data), encoding="utf-8")
+@pytest.mark.parametrize("kind", ["duplicate", "missing_payload", "unresolved", "pin"])
+def test_score_refuses_incomplete_or_inconsistent_inputs(score_case, monkeypatch, kind):
+    options = {}
+    if kind == "duplicate":
+        (score_case.run / "run.json").write_text(
+            json.dumps({"urls": [score_case.url] * 2}), encoding="utf-8"
+        )
+    elif kind == "missing_payload":
+        score_case.payload.unlink()
+    elif kind == "unresolved":
+        (score_case.run / "state/a.json").write_text(
+            json.dumps({"url": score_case.url, "status": "failed"}), encoding="utf-8"
+        )
+    else:
+        options["env"] = {
+            "BENCH_JUDGE_API_KEY": "synthetic",
+            "MARTIAN_MODEL": "different",
+        }
+    with pytest.raises((ValueError, RuntimeError)):
+        score_case.execute(**options)
+    assert not score_case.calls
 
 
-def ev_result(tp, fp, fn, matched):
-    """A minimal step3 per-(url,tool) evaluation result."""
-    return {
-        "skipped": False,
-        "true_positives": [{"matched_candidate": t} for t in matched],
-        "false_positives": [],
-        "false_negatives": [],
-        "tp": tp,
-        "fp": fp,
-        "fn": fn,
-        "errors_count": 0,
+def test_a_run_copied_to_another_checkout_keeps_its_recorded_payload(tmp_path):
+    run = tmp_path / "copy" / "runs" / "mini-x"
+    (run / "state").mkdir(parents=True)
+    (run / "pr-a").mkdir()
+    (run / "pr-a" / "post-review-payload.json").write_text("{}", encoding="utf-8")
+    recorded = "/elsewhere/bench/workspace/runs/mini-x/pr-a/post-review-payload.json"
+    (run / "state" / "a.json").write_text(
+        '{"url": "https://github.com/o/r/pull/1", "status": "ok", '
+        f'"detail": {{"payload_path": "{recorded}"}}}}',
+        encoding="utf-8",
+    )
+    from bench.runner.score import _resolve_pr_dir, _run_pr_records
+
+    ((url, _, hint),) = _run_pr_records(run)
+    assert _resolve_pr_dir(run, url, hint) == run / "pr-a"
+
+
+def test_scoring_resolves_recorded_current_legacy_and_nested_payloads_in_order(
+    score_case,
+):
+    current = score_case.payload.parent
+    number = pr_dir_name({"url": score_case.url}).rsplit("-", 1)[1]
+    legacy = score_case.run / ("pr-" + number)
+    recorded = score_case.run / "recorded"
+    score_case.hits["*"] = ()
+
+    def payload(path, text):
+        score._write_json(
+            path,
+            {"platform": "github", "payload": {"comments": [dict(body=text)]}},
+        )
+
+    def resolved_text(hint=None):
+        score._write_json(
+            score_case.run / "state/a.json",
+            dict(url=score_case.url, status="ok", detail={"payload_path": hint}),
+        )
+        result = score_case.execute()
+        packet = observations.load_packet(Path(result["ledger_row"]["packet_path"]))
+        return [c.text for c in packet.candidates]
+
+    payload(current / "post-review-payload.json", "current")
+    payload(legacy / "post-review-payload.json", "legacy")
+    payload(recorded / "post-review-payload.json", "recorded")
+    assert resolved_text() == ["current"]
+    assert resolved_text(str(recorded / "post-review-payload.json")) == ["recorded"]
+    stale = str(score_case.run / "missing/post-review-payload.json")
+    assert resolved_text(stale) == ["current"]
+    current.rename(score_case.run / "archived-current")
+    assert resolved_text(stale) == ["legacy"]
+    (legacy / "post-review-payload.json").unlink()
+    payload(legacy / "0/superseded/post-review-payload.json", "superseded")
+    payload(legacy / "1/nested/post-review-payload.json", "nested")
+    assert resolved_text(stale) == ["nested"]
+
+
+def test_same_text_comments_receive_their_own_context_and_independent_verdicts(
+    score_case,
+):
+    score_case.hits["*"] = ()
+    comments = [dict(body="same claim", path=p, line=2) for p in ("a.py", "b.py")]
+    score._write_json(
+        score_case.payload, dict(platform="github", payload={"comments": comments})
+    )
+    pr = score_case.payload.parent
+    (pr / "diff.patch").write_text(
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+        "@@ -1,2 +1,2 @@\n context-a\n+only-a\n"
+        "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n"
+        "@@ -1,2 +1,2 @@\n context-b\n+only-b\n",
+        encoding="utf-8",
+    )
+    (pr / "worktree").mkdir()
+    for name in ("a", "b"):
+        (pr / "worktree" / (name + ".py")).write_text(
+            f"context-{name}\nonly-{name}\n", encoding="utf-8"
+        )
+    calls = []
+
+    def adjudicate(text, hunk, context, pin, key):
+        calls.append((text, hunk, context))
+        return {"bucket": "valid_extra" if "+only-b" in hunk else "noise"}
+
+    result = score_case.execute(adjudicator=adjudicate)
+    packet = observations.load_packet(Path(result["ledger_row"]["packet_path"]))
+    assert len(calls) == 2
+    assert calls[0][0] == calls[1][0] == "same claim"
+    assert "+only-a" in calls[0][1] and "only-b" not in calls[0][1]
+    assert "+only-b" in calls[1][1] and "only-a" not in calls[1][1]
+    assert "only-a" in calls[0][2] and "only-b" in calls[1][2]
+    paths = {c.candidate_id: c.path for c in packet.candidates}
+    assert {paths[a.candidate_id]: a.bucket for a in packet.adjudications} == {
+        "a.py": "noise",
+        "b.py": "valid_extra",
     }
-
-
-# --------------------------------------------------------------- judge pin
-
-
-class ResolveJudgePinTests(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.baselines = Path(self._tmp.name) / "baselines.json"
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def test_idempotent_returns_existing_without_api_call(self):
-        write_json(self.baselines, {"judge_pin": "claude-opus-4-8-20260101"})
-
-        def boom(*a, **k):
-            raise AssertionError("models API must not be called when pin exists")
-
-        with mock.patch.object(score, "_http_get_json", boom):
-            pin = resolve_judge_pin(env={}, baselines_path=self.baselines)
-        self.assertEqual(pin, "claude-opus-4-8-20260101")
-
-    def test_force_reresolves_and_writes_newest_dated_snapshot(self):
-        write_json(self.baselines, {"judge_pin": "claude-opus-4-8-20250101"})
-        models = {
-            "data": [
-                {"id": "claude-opus-4-8-20260101"},
-                {"id": "claude-opus-4-8-20260315"},  # newest
-                {"id": "claude-opus-4-8"},  # alias, no date -> ignored
-                {"id": "claude-opus-4-8[1m]"},  # variant, no date -> ignored
-                {"id": "claude-sonnet-5-20260101"},  # wrong family -> ignored
-            ]
-        }
-        with mock.patch.object(score, "_http_get_json", lambda url, headers: models):
-            pin = resolve_judge_pin(
-                env={"ANTHROPIC_API_KEY": "k"},
-                force=True,
-                baselines_path=self.baselines,
-            )
-        self.assertEqual(pin, "claude-opus-4-8-20260315")
-        # Persisted back into baselines.json.
-        self.assertEqual(
-            json.loads(self.baselines.read_text(encoding="utf-8"))["judge_pin"], pin
-        )
-
-    def test_no_key_raises(self):
-        write_json(self.baselines, {"judge_pin": None})
-        # env has no key and BENCH_DIR points at a keyless tmp dir, so the bench/.env
-        # fallback finds nothing either -> genuinely keyless, no network call.
-        with (
-            mock.patch.object(score, "BENCH_DIR", Path(self._tmp.name)),
-            self.assertRaises(RuntimeError),
-        ):
-            resolve_judge_pin(env={}, baselines_path=self.baselines)
-
-    def test_no_dated_snapshot_raises(self):
-        write_json(self.baselines, {"judge_pin": None})
-        models = {"data": [{"id": "claude-opus-4-8"}, {"id": "claude-opus-4-8[1m]"}]}
-        with (
-            mock.patch.object(score, "_http_get_json", lambda url, headers: models),
-            self.assertRaises(RuntimeError),
-        ):
-            resolve_judge_pin(
-                env={"ANTHROPIC_API_KEY": "k"}, baselines_path=self.baselines
-            )
-
-    def test_pick_snapshot_helper_selects_newest(self):
-        self.assertEqual(
-            score._pick_opus_snapshot(
-                {
-                    "data": [
-                        {"id": "claude-opus-4-8-20260101"},
-                        {"id": "claude-opus-4-8-20260901"},
-                    ]
-                }
-            ),
-            "claude-opus-4-8-20260901",
-        )
-        self.assertIsNone(score._pick_opus_snapshot({"data": []}))
-
-    def test_pick_prefers_dated_4_8_over_older_opus(self):
-        # A dated 4.8 wins even when an older-family dated Opus is also present.
-        self.assertEqual(
-            score._pick_opus_snapshot(
-                {
-                    "data": [
-                        {"id": "claude-opus-4-5-20251101"},
-                        {"id": "claude-opus-4-8-20260101"},
-                        {"id": "claude-opus-4-1-20250805"},
-                    ]
-                }
-            ),
-            "claude-opus-4-8-20260101",
-        )
-
-    def test_pick_falls_back_to_newest_dated_opus_when_no_4_8(self):
-        # No dated 4.8 (the real-world case): fall back to the newest dated Opus, which
-        # is the settled claude-opus-4-5-20251101 that baselines.json already ships.
-        self.assertEqual(
-            score._pick_opus_snapshot(
-                {
-                    "data": [
-                        {"id": "claude-opus-4-1-20250805"},
-                        {"id": "claude-opus-4-5-20251101"},
-                        {"id": "claude-opus-4-8"},  # alias, undated -> ignored
-                        {"id": "claude-opus-4-8[1m]"},  # variant, undated -> ignored
-                    ]
-                }
-            ),
-            "claude-opus-4-5-20251101",
-        )
-
-    def test_pick_none_when_no_dated_opus(self):
-        self.assertIsNone(
-            score._pick_opus_snapshot(
-                {
-                    "data": [
-                        {"id": "claude-opus-4-8"},
-                        {"id": "claude-sonnet-5-20260101"},
-                    ]
-                }
-            )
-        )
-
-    def test_fallback_resolves_and_pins_newest_dated_opus(self):
-        # End-to-end resolve with no dated 4.8 available: writes the 4.5 fallback.
-        write_json(self.baselines, {"judge_pin": None})
-        models = {
-            "data": [
-                {"id": "claude-opus-4-8"},
-                {"id": "claude-opus-4-5-20251101"},
-                {"id": "claude-opus-4-1-20250805"},
-            ]
-        }
-        with mock.patch.object(score, "_http_get_json", lambda url, headers: models):
-            pin = resolve_judge_pin(
-                env={"ANTHROPIC_API_KEY": "k"}, baselines_path=self.baselines
-            )
-        self.assertEqual(pin, "claude-opus-4-5-20251101")
-        self.assertEqual(
-            json.loads(self.baselines.read_text(encoding="utf-8"))["judge_pin"], pin
-        )
-
-
-# ------------------------------------------------------------- bucket join
-
-
-class BucketJoinTests(unittest.TestCase):
-    def test_partitions_matched_and_unmatched(self):
-        candidates = {
-            "u": {
-                "deep-review": [
-                    {"text": "m1"},
-                    {"text": "m2"},
-                    {"text": "extra"},
-                ]
-            }
-        }
-        evaluations = {"u": {"deep-review": ev_result(2, 1, 0, ["m1", "m2"])}}
-        out = bucket_join(candidates, evaluations)
-        self.assertEqual(out["u"]["golden_matched"], ["m1", "m2"])
-        self.assertEqual(out["u"]["adjudicator"], ["extra"])
-
-    def test_matched_text_not_in_candidates_raises(self):
-        candidates = {"u": {"deep-review": [{"text": "a"}, {"text": "b"}]}}
-        # TP references a candidate we never submitted -> bijection violation.
-        evaluations = {"u": {"deep-review": ev_result(1, 1, 0, ["ghost"])}}
-        with self.assertRaises(ValueError) as ctx:
-            bucket_join(candidates, evaluations)
-        self.assertIn("bijection", str(ctx.exception))
-
-    def test_ambiguous_duplicate_candidate_text_raises(self):
-        candidates = {"u": {"deep-review": [{"text": "dup"}, {"text": "dup"}]}}
-        evaluations = {"u": {"deep-review": ev_result(1, 1, 0, ["dup"])}}
-        with self.assertRaises(ValueError) as ctx:
-            bucket_join(candidates, evaluations)
-        self.assertIn("ambiguous", str(ctx.exception))
-
-    def test_candidates_without_evaluation_raises(self):
-        candidates = {"u": {"deep-review": [{"text": "a"}]}}
-        with self.assertRaises(ValueError):
-            bucket_join(candidates, {})
-
-    def test_empty_candidates_without_evaluation_is_empty_buckets(self):
-        candidates = {"u": {"deep-review": []}}
-        out = bucket_join(candidates, {})
-        self.assertEqual(out["u"], {"golden_matched": [], "adjudicator": []})
-
-
-# ---------------------------------------------------------------- metrics
-
-
-class ComputeMetricsTests(unittest.TestCase):
-    def test_two_tp_one_valid_extra_one_noise(self):
-        # 4 candidates: m1,m2 matched (2 TP), plus 2 extras (fp=2). One golden
-        # unmatched (fn=1). Adjudicator splits the extras 1 valid_extra / 1 noise.
-        candidates = {
-            "u": {
-                "deep-review": [
-                    {"text": "[HIGH] m1"},
-                    {"text": "[MEDIUM] m2"},
-                    {"text": "[LOW] e1"},
-                    {"text": "[HIGH] e2"},
-                ]
-            }
-        }
-        evaluations = {
-            "u": {"deep-review": ev_result(2, 2, 1, ["[HIGH] m1", "[MEDIUM] m2"])}
-        }
-        buckets = bucket_join(candidates, evaluations)
-        adjudications = [
-            {"bucket": "valid_extra", "candidate": "[LOW] e1"},
-            {"bucket": "noise", "candidate": "[HIGH] e2"},
-        ]
-        m = compute_metrics(evaluations, candidates, buckets, adjudications)
-
-        self.assertAlmostEqual(m["golden_recall"], 2 / 3)
-        self.assertAlmostEqual(m["precision_strict"], 0.5)
-        self.assertAlmostEqual(m["valid_extra_rate"], 0.25)
-        self.assertAlmostEqual(m["noise_rate"], 0.25)
-        self.assertAlmostEqual(m["f1_strict"], 2 * 0.5 * (2 / 3) / (0.5 + 2 / 3))
-        self.assertEqual(
-            m["per_bucket"], {"golden_matched": 2, "valid_extra": 1, "noise": 1}
-        )
-        self.assertEqual(m["total_candidates"], 4)
-        self.assertEqual(m["n_prs"], 1)
-        # Buckets partition the tool's total candidates.
-        self.assertEqual(
-            m["per_bucket"]["golden_matched"]
-            + m["per_bucket"]["valid_extra"]
-            + m["per_bucket"]["noise"],
-            m["total_candidates"],
-        )
-
-    def test_severity_dist_and_desc_len(self):
-        candidates = {
-            "u": {
-                "deep-review": [
-                    {"text": "[HIGH] aaaa"},
-                    {"text": "[HIGH] bbbb"},
-                    {"text": "no tag"},
-                ]
-            }
-        }
-        evaluations = {"u": {"deep-review": ev_result(0, 3, 0, [])}}
-        buckets = bucket_join(candidates, evaluations)
-        adjudications = [
-            {"bucket": "noise", "candidate": c["text"]}
-            for c in candidates["u"]["deep-review"]
-        ]
-        m = compute_metrics(evaluations, candidates, buckets, adjudications)
-        self.assertEqual(m["drift"]["severity_dist"], {"HIGH": 2, "UNKNOWN": 1})
-        self.assertAlmostEqual(m["drift"]["desc_len_mean"], (11 + 11 + 6) / 3)
-
-
-# ----------------------------------------------------------- adjudicate identity
-
-
-class AdjudicateBucketIdentityTests(unittest.TestCase):
-    """Duplicate unmatched candidate texts are adjudicated per-candidate.
-
-    bucket_join permits duplicate UNMATCHED texts (only matched texts must be
-    unique). Each such candidate must be adjudicated with ITS OWN path/line
-    context, not collapsed to a single text-keyed record, so two same-body
-    comments at different locations get separate calls and independent verdicts.
-    """
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def test_duplicate_texts_get_distinct_contexts_and_verdicts(self):
-        url = "https://github.com/o/r/pull/1"
-        pr_dir = self.tmp / "pr-1"
-        pr_dir.mkdir()
-        # Two files/hunks so each location slices to a distinct hunk.
-        diff = (
-            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
-            "@@ -1,3 +1,3 @@\n line1\n+AAA marker\n line3\n"
-            "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n"
-            "@@ -9,3 +9,3 @@\n line9\n+BBB marker\n line11\n"
-        )
-        (pr_dir / "diff.patch").write_text(diff, encoding="utf-8")
-
-        # Same body text, different locations.
-        candidates = [
-            {"text": "same body", "path": "a.py", "line": 2, "source": "extracted"},
-            {"text": "same body", "path": "b.py", "line": 10, "source": "extracted"},
-        ]
-        per_pr = {url: {"pr_dir": str(pr_dir), "number": 1, "candidates": candidates}}
-        # bucket_join emits the unmatched text once per candidate occurrence.
-        buckets = {
-            url: {"golden_matched": [], "adjudicator": ["same body", "same body"]}
-        }
-
-        seen = []
-
-        def adjudicator(text, hunk, ctx, pin, api_key):
-            seen.append({"text": text, "hunk": hunk})
-            return {
-                "bucket": "valid_extra" if "AAA" in hunk else "noise",
-                "failed_check": None,
-                "reason": "t",
-            }
-
-        verdicts = score._adjudicate_bucket(buckets, per_pr, "pin", "key", adjudicator)
-
-        # One call per candidate, each with its own (distinct) hunk.
-        self.assertEqual(len(seen), 2)
-        self.assertTrue(any("AAA" in s["hunk"] for s in seen))
-        self.assertTrue(any("BBB" in s["hunk"] for s in seen))
-        self.assertNotEqual(seen[0]["hunk"], seen[1]["hunk"])
-        # Independent verdicts: the two locations bucket differently.
-        self.assertEqual(
-            sorted(v["bucket"] for v in verdicts), ["noise", "valid_extra"]
-        )
-
-        # Metrics tally per candidate: 2 candidates -> 1 valid_extra + 1 noise.
-        candidates_map = {url: {"deep-review": candidates}}
-        evaluations = {url: {"deep-review": ev_result(0, 2, 0, [])}}
-        m = compute_metrics(evaluations, candidates_map, buckets, verdicts)
-        self.assertEqual(m["total_candidates"], 2)
-        self.assertEqual(
-            m["per_bucket"], {"golden_matched": 0, "valid_extra": 1, "noise": 1}
-        )
-        self.assertAlmostEqual(m["valid_extra_rate"], 0.5)
-        self.assertAlmostEqual(m["noise_rate"], 0.5)
-
-    def test_ledger_invocation_labels_naive_and_skill(self):
-        metrics = {
-            "n_prs": 1,
-            "golden_recall": 0.0,
-            "valid_extra_rate": 0.0,
-            "noise_rate": 0.0,
-            "precision_strict": 0.0,
-            "f1_strict": 0.0,
-            "per_bucket": {},
-            "per_dimension": {},
-            "drift": {},
-        }
-        costs = {"tokens_total": 0, "cost_usd": 0.0, "per_model": {}}
-        # Explicit manifest invocation wins.
-        row = score._build_ledger_row(
-            "/tmp/r",
-            metrics,
-            costs,
-            {
-                "run_id": "r",
-                "tier": "smoke",
-                "git_sha": "abc",
-                "invocation": "naive:single-pass max-turns=40",
-                "anchor": "naive",
-            },
-            "pin",
-            "pin",
-            "sha",
-        )
-        self.assertEqual(
-            row["envelope"]["invocation"], "naive:single-pass max-turns=40"
-        )
-        # Legacy naive manifest without invocation falls back by anchor.
-        row = score._build_ledger_row(
-            "/tmp/r",
-            metrics,
-            costs,
-            {"run_id": "r", "tier": "smoke", "git_sha": "abc", "anchor": "naive"},
-            "pin",
-            "pin",
-            "sha",
-        )
-        self.assertEqual(row["envelope"]["invocation"], "naive:single-pass")
-        self.assertEqual(row["tool"], "naive-anchor")
-        # Skill run keeps the headless label.
-        row = score._build_ledger_row(
-            "/tmp/r",
-            metrics,
-            costs,
-            {"run_id": "r", "tier": "smoke", "git_sha": "abc", "anchor": None},
-            "pin",
-            "pin",
-            "sha",
-        )
-        self.assertEqual(row["envelope"]["invocation"], "headless:/code-gauntlet")
-
-    def test_string_line_is_normalized_not_crashing(self):
-        url = "https://github.com/o/r/pull/1"
-        pr_dir = self.tmp / "pr-1"
-        pr_dir.mkdir()
-        diff = (
-            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
-            "@@ -1,3 +1,3 @@\n line1\n+AAA marker\n line3\n"
-        )
-        (pr_dir / "diff.patch").write_text(diff, encoding="utf-8")
-        # A rendered comment can carry a string line (copied end_line) or garbage.
-        candidates = [
-            {"text": "numeric-ish", "path": "a.py", "line": "2", "source": "extracted"},
-            {
-                "text": "garbage-line",
-                "path": "a.py",
-                "line": "n/a",
-                "source": "extracted",
-            },
-        ]
-        per_pr = {url: {"pr_dir": str(pr_dir), "number": 1, "candidates": candidates}}
-        buckets = {
-            url: {"golden_matched": [], "adjudicator": ["numeric-ish", "garbage-line"]}
-        }
-
-        seen = []
-
-        def adjudicator(text, hunk, ctx, pin, api_key):
-            seen.append({"text": text, "hunk": hunk})
-            return {"bucket": "noise", "failed_check": 1, "reason": "t"}
-
-        verdicts = score._adjudicate_bucket(buckets, per_pr, "pin", "key", adjudicator)
-        self.assertEqual(len(verdicts), 2)
-        by_text = {s["text"]: s for s in seen}
-        # "2" normalizes to int 2 -> hunk sliced; "n/a" drops context, no crash.
-        self.assertIn("AAA", by_text["numeric-ish"]["hunk"])
-        self.assertEqual(by_text["garbage-line"]["hunk"], "")
-
-
-# --------------------------------------------------------------- score_run
-
-
-class ScoreRunRefusalTests(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-        self.run_dir = self.tmp / "run"
-        self.run_dir.mkdir()
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def test_null_pin_refuses(self):
-        baselines = self.tmp / "baselines.json"
-        write_json(baselines, {"judge_pin": None})
-        with self.assertRaises(RuntimeError) as ctx:
-            score_run(self.run_dir, env={}, baselines_path=baselines)
-        self.assertIn("judge_pin", str(ctx.exception))
-
-    def test_martian_model_mismatch_refuses(self):
-        baselines = self.tmp / "baselines.json"
-        write_json(baselines, {"judge_pin": "claude-opus-4-8-20260101"})
-        with self.assertRaises(RuntimeError) as ctx:
-            score_run(
-                self.run_dir,
-                env={"MARTIAN_MODEL": "claude-opus-4-8-20259999"},
-                baselines_path=baselines,
-            )
-        self.assertIn("MARTIAN_MODEL", str(ctx.exception))
-
-    def test_no_ok_prs_raises_actionable(self):
-        # A run whose only PR failed -> zero candidates -> the scorer would write no
-        # evaluations.json (FileNotFoundError downstream). score_run must refuse first.
-        state = self.run_dir / "state"
-        state.mkdir()
-        write_json(
-            state / "a.json",
-            {"url": "https://github.com/o/r/pull/1", "status": "failed"},
-        )
-        baselines = self.tmp / "baselines.json"
-        write_json(baselines, {"judge_pin": "claude-opus-4-8-20260101"})
-        with self.assertRaises(RuntimeError) as ctx:
-            score_run(self.run_dir, env={}, baselines_path=baselines)
-        self.assertIn("no scorable PRs", str(ctx.exception))
-
-
-# ----------------------------------------------------- scorer-stage failure surface
-
-
-class ScorerStageFailureTests(unittest.TestCase):
-    def test_stage_nonzero_exit_raises_runtimeerror_naming_stage(self):
-        pin = "claude-opus-4-8-20260101"
-        fake = SimpleNamespace(
-            returncode=1, stdout="", stderr="Traceback: boom in dedup"
-        )
-        with (
-            mock.patch.object(score.subprocess, "run", return_value=fake),
-            self.assertRaises(RuntimeError) as ctx,
-        ):
-            score.run_scorer_stages(pin, "api-key", Path("/tmp/model-dir"))
-        msg = str(ctx.exception)
-        self.assertIn("dedup", msg)  # the failing stage is named
-        self.assertIn("boom", msg)  # stderr tail is surfaced
-
-
-# ------------------------------------------------------------- _read_run_costs
-
-
-class ReadRunCostsTests(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def test_reads_raw_naive_envelope(self):
-        # A naive-anchor PR dir carries only raw-naive.json (never raw.json).
-        pr = self.tmp / "run" / "pr-9"
-        pr.mkdir(parents=True)
-        write_json(
-            pr / "raw-naive.json",
-            {
-                "type": "result",
-                "total_cost_usd": 0.7,
-                "usage": {"input_tokens": 10, "output_tokens": 5},
-            },
-        )
-        costs = score._read_run_costs(self.tmp / "run")
-        self.assertAlmostEqual(costs["cost_usd"], 0.7)
-        self.assertEqual(costs["tokens_total"], 15)
-
-    def test_delegates_to_canonical_envelope_parser(self):
-        # score.py must not re-implement the tolerant envelope parser; it delegates to
-        # the shared invoke.parse_result_envelope. Spy-wrap it and confirm _read_run_costs
-        # routes through it.
-        pr = self.tmp / "run" / "pr-3"
-        pr.mkdir(parents=True)
-        write_json(
-            pr / "raw.json",
-            {
-                "type": "result",
-                "total_cost_usd": 0.5,
-                "usage": {"input_tokens": 4, "output_tokens": 2},
-            },
-        )
-        real = score.invoke.parse_result_envelope
-        calls = []
-
-        def spy(text):
-            calls.append(text)
-            return real(text)
-
-        with mock.patch.object(score.invoke, "parse_result_envelope", spy):
-            costs = score._read_run_costs(self.tmp / "run")
-        self.assertTrue(calls)
-        self.assertAlmostEqual(costs["cost_usd"], 0.5)
-
-
-# ------------------------------------------------------------- _assemble_candidates
-
-
-class AssembleCandidatesTests(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def test_finds_nested_payload(self):
-        # The flat post-review-payload.json is absent; a nested one under output/
-        # must still be discovered (mirrors invoke._find_payload's rglob fallback).
-        run_dir = self.tmp / "run"
-        url = "https://github.com/o/r/pull/12"
-        nested = run_dir / "pr-12" / "output"
-        nested.mkdir(parents=True)
-        write_json(
-            nested / "post-review-payload.json",
-            {
-                "platform": "github",
-                "payload": {"comments": [{"body": "c1", "path": "f.py", "line": 3}]},
-                "skipped": [],
-            },
-        )
-        candidates, per_pr = score._assemble_candidates(run_dir, [(url, "ok")])
-        self.assertIn(url, candidates)
-        self.assertEqual(len(candidates[url]["deep-review"]), 1)
-        self.assertEqual(per_pr[url]["candidates"][0]["text"], "c1")
-
-    def test_ignores_nested_payload_under_superseded(self):
-        run_dir = self.tmp / "run"
-        url = "https://github.com/o/r/pull/13"
-        archived = run_dir / "pr-13" / "superseded" / "post-review-payload.json"
-        archived.parent.mkdir(parents=True)
-        write_json(
-            archived,
-            {
-                "platform": "github",
-                "payload": {
-                    "comments": [{"body": "archived", "path": "f.py", "line": 3}]
-                },
-                "skipped": [],
-            },
-        )
-        candidates, per_pr = score._assemble_candidates(run_dir, [(url, "ok")])
-        self.assertEqual(candidates[url]["deep-review"], [])
-        self.assertEqual(per_pr[url]["candidates"], [])
-
-
-class ResolvePrDirTests(unittest.TestCase):
-    """FIX 1: pr-dir resolution across the new pr-{owner}-{repo}-{n} name, the legacy
-    pr-{n} name, and an authoritative checkpoint payload_path hint."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.run_dir = Path(self._tmp.name) / "run"
-        self.run_dir.mkdir(parents=True)
-        # A URL whose pull number (1) collides across repos in the real golden set.
-        self.url = "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1"
-        self.new_dir = self.run_dir / "pr-ai-code-review-evaluation-sentry-greptile-1"
-        self.legacy = self.run_dir / "pr-1"
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def _payload(self, pr_dir):
-        pr_dir.mkdir(parents=True, exist_ok=True)
-        write_json(
-            pr_dir / "post-review-payload.json",
-            {
-                "platform": "github",
-                "payload": {"comments": [{"body": "c1", "path": "f.py", "line": 3}]},
-                "skipped": [],
-            },
-        )
-
-    def test_resolves_new_owner_repo_key(self):
-        self._payload(self.new_dir)
-        _c, per_pr = score._assemble_candidates(self.run_dir, [(self.url, "ok", None)])
-        self.assertEqual(per_pr[self.url]["pr_dir"], str(self.new_dir))
-
-    def test_legacy_pr_n_rescorable_despite_stale_output_hint(self):
-        # Reproduces the committed baseline subset-20260718-031746-27875ca: the payload
-        # lives in the legacy pr-{n} dir, but the recorded detail payload_path points at
-        # the now-empty shared output dir. Resolution must skip the dead hint and fall
-        # through to pr-{n}, keeping that run re-scorable.
-        self._payload(self.legacy)
-        stale_hint = str(
-            self.run_dir / "output" / "post-review-payload.json"
-        )  # never written
-        cands, per_pr = score._assemble_candidates(
-            self.run_dir, [(self.url, "ok", stale_hint)]
-        )
-        self.assertIn(self.url, cands)
-        self.assertEqual(per_pr[self.url]["pr_dir"], str(self.legacy))
-
-    def test_payload_hint_parent_is_authoritative(self):
-        self._payload(self.new_dir)
-        hint = str(self.new_dir / "post-review-payload.json")
-        _c, per_pr = score._assemble_candidates(self.run_dir, [(self.url, "ok", hint)])
-        self.assertEqual(per_pr[self.url]["pr_dir"], str(self.new_dir))
-
-    def test_new_name_wins_over_legacy_when_both_exist(self):
-        self._payload(self.new_dir)
-        self._payload(self.legacy)
-        _c, per_pr = score._assemble_candidates(self.run_dir, [(self.url, "ok", None)])
-        self.assertEqual(per_pr[self.url]["pr_dir"], str(self.new_dir))
-
-
-class ToolLabelTests(unittest.TestCase):
-    """The ledger row's tool label is derived from the run manifest's anchor field."""
-
-    def test_naive_and_default_labels(self):
-        self.assertEqual(score._tool_label({"anchor": "naive"}), "naive-anchor")
-        self.assertEqual(score._tool_label({"anchor": None}), "deep-review-v2")
-        self.assertEqual(score._tool_label({}), "deep-review-v2")
-
-    def test_explicit_tool_overrides_anchor(self):
-        self.assertEqual(
-            score._tool_label({"tool": "deep-review-v3", "anchor": "naive"}),
-            "deep-review-v3",
-        )
-
-    def test_label_read_from_run_json(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        run_dir = Path(tmp.name)
-
-        write_json(run_dir / "run.json", {"run_id": "smoke-x", "anchor": "naive"})
-        self.assertEqual(
-            score._tool_label(score._read_run_manifest(run_dir)), "naive-anchor"
-        )
-
-        write_json(run_dir / "run.json", {"run_id": "smoke-x"})  # no anchor
-        self.assertEqual(
-            score._tool_label(score._read_run_manifest(run_dir)), "deep-review-v2"
-        )
-
-
-class AuthModeTests(unittest.TestCase):
-    """The ledger row records which credential served the review children.
-
-    ``cost_usd``/``tokens_total`` are the envelope's own figures in every mode --
-    a subscription run's cost is documented as not relevant for billing, but the
-    ledger's job is to LABEL it, not to rewrite it. Zeroing or scaling the figure
-    here would silently destroy the only record of what the run consumed.
-    """
-
-    METRICS: ClassVar[dict] = {
-        "n_prs": 1,
-        "golden_recall": 0.0,
-        "valid_extra_rate": 0.0,
-        "noise_rate": 0.0,
-        "precision_strict": 0.0,
-        "f1_strict": 0.0,
-        "per_bucket": {},
-        "per_dimension": {},
-        "drift": {},
-    }
-    COSTS: ClassVar[dict] = {
-        "tokens_total": 4321,
-        "cost_usd": 27.0,
-        "per_model": {},
-    }
-
-    def _row(self, manifest):
-        return score._build_ledger_row(
-            "/tmp/r", self.METRICS, self.COSTS, manifest, "pin", "pin", "sha"
-        )
-
-    def test_reads_the_shared_manifest_chain(self):
-        # The manifest -> mode chain itself is pinned in test_ledger.py; what matters here
-        # is that the row writer reads THAT one, not a copy of it, so a resumed run and
-        # its ledger row can never disagree about which credential was spent.
-        self.assertIs(score.manifest_auth_mode, ledger.manifest_auth_mode)
-
-    def test_row_carries_manifest_mode(self):
-        row = self._row({"run_id": "r", "tier": "smoke", "child_auth": "subscription"})
-        self.assertEqual(row["auth_mode"], "subscription")
-
-    def test_row_carries_fingerprint_mode(self):
-        row = self._row(
-            {
-                "run_id": "r",
-                "tier": "smoke",
-                "env_fingerprint": {"child_auth": "subscription"},
-            }
-        )
-        self.assertEqual(row["auth_mode"], "subscription")
-
-    def test_row_defaults_to_api(self):
-        row = self._row({"run_id": "r", "tier": "smoke"})
-        self.assertEqual(row["auth_mode"], "api")
-
-    def test_cost_and_tokens_are_recorded_verbatim_in_both_modes(self):
-        api = self._row({"run_id": "r", "tier": "smoke", "child_auth": "api"})
-        sub = self._row({"run_id": "r", "tier": "smoke", "child_auth": "subscription"})
-        self.assertEqual(sub["cost_usd"], self.COSTS["cost_usd"])
-        self.assertEqual(sub["tokens_total"], self.COSTS["tokens_total"])
-        self.assertEqual(sub["cost_usd"], api["cost_usd"])
-        self.assertEqual(sub["tokens_total"], api["tokens_total"])
-
-    def test_mode_read_from_run_json(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        run_dir = Path(tmp.name)
-
-        write_json(
-            run_dir / "run.json", {"run_id": "smoke-x", "child_auth": "subscription"}
-        )
-        row = self._row(score._read_run_manifest(run_dir))
-        self.assertEqual(row["auth_mode"], "subscription")
-
-        write_json(run_dir / "run.json", {"run_id": "smoke-x"})  # pre-flag manifest
-        row = self._row(score._read_run_manifest(run_dir))
-        self.assertEqual(row["auth_mode"], "api")
-
-
-class ScoreRunEndToEndTests(unittest.TestCase):
-    """One fully wired run: scorer + adjudicator injected, no network."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-        self.pin = "claude-opus-4-8-20260101"
-
-        # Two scored PRs + one failed PR (must be excluded from scoring).
-        self.uA = "https://github.com/keycloak/keycloak/pull/101"
-        self.uB = "https://github.com/grafana/grafana/pull/202"
-        self.uC = "https://github.com/discourse/discourse/pull/303"
-
-        self.run_dir = self.tmp / "subset-20260717T000000Z-abc1234"
-        self.run_dir.mkdir()
-
-        # checkpoint state.
-        state = self.run_dir / "state"
-        state.mkdir()
-        write_json(state / "a.json", {"url": self.uA, "status": "ok"})
-        write_json(state / "b.json", {"url": self.uB, "status": "ok"})
-        write_json(state / "c.json", {"url": self.uC, "status": "failed"})
-
-        # PR A: 3 comments (2 will match goldens, 1 is an extra).
-        self._pr(
-            self.uA,
-            [
-                ("cA1 body", "src/a.py", 11),
-                ("cA2 body", "src/a.py", 12),
-                ("cA3 body", "src/a.py", 13),
-            ],
-            cost=0.5,
-            tokens={"input_tokens": 100, "output_tokens": 50},
-        )
-        # PR B: 1 comment, unmatched (an extra to adjudicate).
-        self._pr(
-            self.uB,
-            [
-                ("cB1 body", "src/b.py", 5),
-            ],
-            cost=0.5,
-            tokens={"input_tokens": 60, "output_tokens": 40},
-        )
-
-        # golden data the scorer would read (2 goldens per PR).
-        self.golden = self.tmp / "golden.json"
-        write_json(
-            self.golden,
-            {
-                self.uA: {
-                    "source_repo": "keycloak",
-                    "golden_comments": [
-                        {"comment": "gA1", "severity": "High"},
-                        {"comment": "gA2", "severity": "Medium"},
-                    ],
-                    "reviews": [],
-                },
-                self.uB: {
-                    "source_repo": "grafana",
-                    "golden_comments": [
-                        {"comment": "gB1", "severity": "High"},
-                        {"comment": "gB2", "severity": "Low"},
-                    ],
-                    "reviews": [],
-                },
-                self.uC: {
-                    "source_repo": "discourse",
-                    "golden_comments": [
-                        {"comment": "gC1", "severity": "Low"},
-                    ],
-                    "reviews": [],
-                },
-            },
-        )
-
-        self.baselines = self.tmp / "baselines.json"
-        write_json(
-            self.baselines,
-            {
-                "judge_pin": self.pin,
-                "adjudicator_pin": self.pin,
-                "scorer_sha": "dfc6cb42",
-            },
-        )
-        self.ledger = self.tmp / "experiments.jsonl"
-
-        self.vendor = self.tmp / "vendor"
-        (self.vendor / "results").mkdir(parents=True)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def _pr(self, url, comments, cost, tokens):
-        # New runs key each PR dir on pr-{owner}-{repo}-{n} (FIX 1); a fresh run's
-        # scoring resolves that name directly.
-        pr_dir = self.run_dir / score.invoke.pr_dir_name({"url": url})
-        pr_dir.mkdir()
-        payload = {
-            "platform": "github",
-            "payload": {
-                "comments": [
-                    {"body": body, "path": path, "line": line}
-                    for body, path, line in comments
-                ]
-            },
-            "skipped": [],
-        }
-        write_json(pr_dir / "post-review-payload.json", payload)
-        # a diff touching each commented path/line so slice_hunk succeeds.
-        paths = {}
-        for _body, path, line in comments:
-            paths.setdefault(path, []).append(line)
-        diff = []
-        for path, lines in paths.items():
-            start = min(lines)
-            span = max(lines) - start + 1 + 2
-            diff.append(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n")
-            diff.append(f"@@ -{start},{span} +{start},{span} @@\n")
-            for ln in range(start, start + span):
-                diff.append(f"+code line {ln}\n")
-        (pr_dir / "diff.patch").write_text("".join(diff), encoding="utf-8")
-        # cost/token envelope the runner would have written.
-        write_json(
-            pr_dir / "raw.json",
-            {
-                "type": "result",
-                "total_cost_usd": cost,
-                "usage": tokens,
-            },
-        )
-
-    def _fake_scorer(self, model_dir):
-        """Return a run_scorer that writes an evaluations.json into model_dir."""
-
-        def run_scorer(pin, api_key, md):
-            self.assertEqual(pin, self.pin)
-            self.assertEqual(str(md), str(model_dir))
-            evaluations = {
-                self.uA: {"deep-review": ev_result(2, 1, 0, ["cA1 body", "cA2 body"])},
-                self.uB: {"deep-review": ev_result(0, 1, 2, [])},
-            }
-            write_json(model_dir / "evaluations.json", evaluations)
-
-        return run_scorer
-
-    def _fake_adjudicator(self, seen):
-        def adjudicator(comment_text, diff_hunk, file_ctx, pin, api_key):
-            seen.append({"text": comment_text, "hunk": diff_hunk, "pin": pin})
-            bucket = "valid_extra" if comment_text == "cA3 body" else "noise"
-            return {"bucket": bucket, "failed_check": None, "reason": "test"}
-
-        return adjudicator
-
-    def test_full_pipeline(self):
-        sanitized = self.pin.replace("/", "_")
-        model_dir = self.vendor / "results" / sanitized
-        seen = []
-
-        with (
-            mock.patch.object(score, "VENDOR_DIR", self.vendor),
-            mock.patch.object(score, "GOLDEN_DATA", self.golden),
-        ):
-            scores = score_run(
-                self.run_dir,
-                env={},
-                baselines_path=self.baselines,
-                ledger_path=self.ledger,
-                run_scorer=self._fake_scorer(model_dir),
-                adjudicator=self._fake_adjudicator(seen),
-            )
-
-        m = scores["metrics"]
-        # tp=2, fp=2, fn=2 across the two scored PRs.
-        self.assertAlmostEqual(m["golden_recall"], 0.5)
-        self.assertAlmostEqual(m["precision_strict"], 0.5)
-        self.assertAlmostEqual(m["valid_extra_rate"], 0.25)  # cA3 -> valid_extra, /4
-        self.assertAlmostEqual(m["noise_rate"], 0.25)  # cB1 -> noise, /4
-        self.assertEqual(
-            m["per_bucket"], {"golden_matched": 2, "valid_extra": 1, "noise": 1}
-        )
-        self.assertEqual(m["n_prs"], 2)
-
-        # Adjudicator saw exactly the two unmatched comments, with real hunks.
-        adj_texts = sorted(s["text"] for s in seen)
-        self.assertEqual(adj_texts, ["cA3 body", "cB1 body"])
-        for s in seen:
-            self.assertTrue(s["hunk"].startswith("@@ "))
-            self.assertEqual(s["pin"], self.pin)
-
-        # Costs summed from per-PR raw.json envelopes.
-        row = scores["ledger_row"]
-        self.assertAlmostEqual(row["cost_usd"], 1.0)
-        self.assertEqual(row["tokens_total"], 250)  # 150 + 100
-        self.assertEqual(row["tier"], "subset")
-        self.assertEqual(
-            row["tool"], "deep-review-v2"
-        )  # no anchor manifest -> v2 label
-        self.assertEqual(row["auth_mode"], "api")  # no manifest -> API-keyed default
-        self.assertEqual(row["judge_pin"], self.pin)
-        self.assertEqual(row["scorer_sha"], "dfc6cb42")
-        self.assertEqual(row["envelope"]["cap"], 25)
-
-        # Ledger row carries every required key and was appended.
-        for key in REQUIRED_KEYS:
-            self.assertIn(key, row)
-        appended = [
-            json.loads(line)
-            for line in self.ledger.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        self.assertEqual(len(appended), 1)
-        self.assertEqual(appended[0]["run_id"], row["run_id"])
-
-        # scores.json written next to the run.
-        self.assertTrue((self.run_dir / "scores.json").is_file())
-
-        # The failed PR (uC) was excluded from scoring.
-        self.assertNotIn(self.uC, scores["buckets"])
-
-        # candidates.json + injected benchmark_data.json staged for the scorer.
-        staged = json.loads((model_dir / "candidates.json").read_text(encoding="utf-8"))
-        self.assertEqual(set(staged), {self.uA, self.uB})
-        bench_data = json.loads(
-            (self.vendor / "results" / "benchmark_data.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        self.assertEqual(bench_data[self.uA]["reviews"][0]["tool"], "deep-review")
-        self.assertEqual(bench_data[self.uC]["reviews"], [])  # not scored -> no stub
-
-
-class PrepareScorerInputsStaleTests(unittest.TestCase):
-    def test_stale_stage_outputs_removed_before_run(self):
-        import shutil as _shutil
-
-        tmp = Path(tempfile.mkdtemp(prefix="bench-score-stale-"))
-        self.addCleanup(_shutil.rmtree, tmp, ignore_errors=True)
-        results = tmp / "results"
-        model = results / "pin"
-        model.mkdir(parents=True)
-        (model / "evaluations.json").write_text('{"stale": true}', encoding="utf-8")
-        (model / "dedup_groups.json").write_text('{"stale": true}', encoding="utf-8")
-        url = "https://github.com/grafana/grafana/pull/80329"
-        score._prepare_scorer_inputs({url: {"deep-review": []}}, results, model)
-        self.assertFalse((model / "evaluations.json").exists())
-        self.assertFalse((model / "dedup_groups.json").exists())
-        self.assertTrue((model / "candidates.json").exists())
-
-
-if __name__ == "__main__":
-    unittest.main()
+    assert len({c.context_sha256 for c in packet.contexts}) == 2
+    assert read_json(packet.root / "scores.json")["costs"]["adjudicator"] is None

@@ -12,3 +12,89 @@ def forge_factory(monkeypatch, request):
     if request.instance is not None:
         request.instance.forge_factory = factory
     return factory
+
+
+@pytest.fixture
+def score_case(tmp_path):
+    from dataclasses import dataclass
+    from pathlib import Path
+
+    from bench.runner import score
+    from bench.runner.epochs import DEFAULT_ROOT, load_epoch, read_json
+
+    @dataclass(frozen=True, slots=True)
+    class ScoreCase:
+        run: Path
+        ledger: Path
+        url: str
+        payload: Path
+        calls: list
+        hits: dict
+
+        def execute(self, **kwargs):
+            adjudicator = kwargs.pop(
+                "adjudicator", lambda *args: {"bucket": "noise", "reason": "synthetic"}
+            )
+            return score.score_run(
+                self.run,
+                env=kwargs.pop("env", {"BENCH_JUDGE_API_KEY": "synthetic"}),
+                ledger_path=self.ledger,
+                run_scorer=self.scorer,
+                adjudicator=adjudicator,
+                **kwargs,
+            )
+
+        def scorer(self, pin, key, model_dir):
+            self.calls.append(model_dir)
+            golden = read_json(model_dir.parent / "benchmark_data.json")
+            candidates = read_json(model_dir / "candidates.json")
+            evaluations, groups = {}, {}
+            for url, tools in candidates.items():
+                for tool, entries in tools.items():
+                    claims = golden[url]["golden_comments"]
+                    hits = (
+                        self.hits.get(tool, self.hits.get("*", (0, 1)))
+                        if entries
+                        else ()
+                    )
+                    tp, fn = [], []
+                    for i, claim in enumerate(claims):
+                        row = dict(golden_comment=claim["comment"])
+                        if i in hits:
+                            row["matched_candidate"] = entries[0]["text"]
+                        (tp if i in hits else fn).append(row)
+                    evaluations.setdefault(url, {})[tool] = dict(
+                        true_positives=tp,
+                        false_negatives=fn,
+                        tp=len(tp),
+                        fn=len(fn),
+                        fp=max(0, len(entries) - 2),
+                        errors=[],
+                    )
+                    groups.setdefault(url, {})[tool] = (
+                        [[0, 1]] if len(entries) >= 2 and not self.hits else []
+                    )
+            for name, value in (
+                ("evaluations.json", evaluations),
+                ("dedup_groups.json", groups),
+            ):
+                score._write_json(model_dir / name, value)
+
+    epoch = load_epoch(root=DEFAULT_ROOT)
+    gate = read_json(DEFAULT_ROOT / "subsets.json")["gate"]
+    url = next(u for u in gate if sum(b.pr_url == u for b in epoch.bugs) >= 3)
+    run = tmp_path / "run"
+    (run / "state").mkdir(parents=True)
+    score._write_json(run / "state/a.json", dict(url=url, status="ok"))
+    pr = run / score.io.pr_dir_name({"url": url})
+    pr.mkdir()
+    payload = pr / "post-review-payload.json"
+    texts = ("matched candidate", "dedup sibling", "extra candidate")
+    comments = [dict(body=t, path="a.py", line=i) for i, t in enumerate(texts, 1)]
+    score._write_json(payload, dict(platform="github", payload={"comments": comments}))
+    (pr / "diff.patch").write_text(
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1,3 @@\n+one\n+two\n+three\n",
+        encoding="utf-8",
+    )
+    score._write_json(run / "run.json", dict(run_id="run", urls=[url]))
+    return ScoreCase(run, tmp_path / "ledger.jsonl", url, payload, [], {})

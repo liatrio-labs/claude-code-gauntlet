@@ -1089,7 +1089,7 @@ def _resume(run_id, args, retry):
     return _exit_code(final, urls)
 
 
-def _score_only(run_id):
+def _score_only(run_id, *, epoch_id=None, attribution=False):
     run_dir = RUNS_ROOT / run_id
     try:
         from bench.runner import score
@@ -1104,11 +1104,16 @@ def _score_only(run_id):
         print(f"No run dir at {run_dir} to score.", file=sys.stderr)
         return 2
     try:
-        score.score_run(str(run_dir))
+        options = {
+            "epoch_id": epoch_id,
+        }
+        if attribution:
+            options["attribution"] = True
+        result = score.score_run(str(run_dir), **options)
     except (ValueError, RuntimeError) as exc:
         print(f"--score-only failed for {run_id}: {exc}", file=sys.stderr)
         return 2
-    print("Scored {}: wrote {}".format(run_id, run_dir / "scores.json"))
+    print("Scored {}: {}".format(run_id, result["score_ref"]))
     return 0
 
 
@@ -1188,8 +1193,11 @@ def parse_args(argv=None):
         dest="retry_failed",
         help="re-run the timeout+failed PRs of RUN_ID",
     )
-    # Default calibrated from the Task 16 smoke shakedown: full-skill reviews ran
-    # 971-1345s, peaking at 75% of the original 30-min budget (plan threshold: >50%).
+    parser.add_argument(
+        "--attribution",
+        action="store_true",
+        help="score eliminated discovery claims for stage attribution",
+    )
     parser.add_argument("--timeout-mins", type=int, default=45, dest="timeout_mins")
     parser.add_argument(
         "--anchor", choices=["naive"], help="bare single-pass anchor review"
@@ -1224,6 +1232,7 @@ def parse_args(argv=None):
         "or the operator's Claude subscription via CLAUDE_CODE_OAUTH_TOKEN",
     )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
+    parser.add_argument("--golden-epoch", metavar="EPOCH_ID")
     parser.add_argument(
         "--check",
         metavar="RUN_ID",
@@ -1278,7 +1287,12 @@ def main(argv=None):
     # --score-only / --check have different prerequisites (no claude/gh invocation) and
     # are handled before the run prereq checks.
     if args.score_only:
-        return _score_only(args.score_only)
+        options = {}
+        if args.golden_epoch is not None:
+            options["epoch_id"] = args.golden_epoch
+        if args.attribution:
+            options["attribution"] = True
+        return _score_only(args.score_only, **options)
     if args.check:
         # --check inspects an existing run; combining it with new-run flags is always a
         # mistake (the flags would be silently ignored). Fail loud.
@@ -1289,7 +1303,7 @@ def main(argv=None):
         # passing one is redundant rather than contradictory, and neither mode invokes
         # claude, so nothing is spent on the wrong credential. Adding them here would also
         # break `--check` for anyone who keeps the flags in a shell alias.
-        if args.tier or args.prs or args.anchor or args.runs != 1:
+        if args.tier or args.prs or args.anchor or args.runs != 1 or args.attribution:
             print(
                 "--check does not accept --tier / --prs / --anchor / --runs "
                 "(pass only --check RUN_ID).",
@@ -1297,6 +1311,10 @@ def main(argv=None):
             )
             return 2
         return _check_only(args.check)
+
+    if args.attribution:
+        print("--attribution requires --score-only", file=sys.stderr)
+        return 2
 
     child_auth = _child_auth_for(args)
     # Only reachable on a resume, where the run's own recorded mode wins: for a new run

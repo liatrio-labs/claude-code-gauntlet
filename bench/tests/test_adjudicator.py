@@ -260,6 +260,8 @@ class AdjudicateTests(unittest.TestCase):
             ['{"bucket":"noise","failed_check":3,"reason":"vague"}']
         )
         verdict = adjudicate("c", "hunk", "ctx", "pin-x", "key-x", transport=transport)
+        self.assertIsNone(verdict.pop("cost_usd"))
+        self.assertEqual(verdict.pop("usage"), [{"model": "pin-x", "usage": None}])
         self.assertEqual(
             verdict, {"bucket": "noise", "failed_check": 3, "reason": "vague"}
         )

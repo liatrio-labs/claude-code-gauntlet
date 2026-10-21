@@ -270,3 +270,35 @@ in a closed issue. The observed failure mode, once a run shows one, belongs in
 - **Paired mini / full-15 / holdout:** owner-triggered only.
 
 See also [`CONTRIBUTING.md`](../CONTRIBUTING.md).
+
+## Measurement protocol and status
+
+The active epoch is `e616e84-v1`: 173 golden bugs over 50 PRs. Core is primary (158
+full, 66 gate); all (173, 73) and strict (139, 58) are descriptive reported lines.
+Scoring identity is independent of original review provenance. A golden correction
+requires rescoring every run of both arms on the same corrected epoch. Historical
+epoch scores remain recorded but do not enter active comparisons. Operating commands
+and file shapes live in [README.md](README.md).
+Without optional attribution, discovery recall remains unknown. Delivered dimension recall
+uses delivered candidate provenance. Funnels retain unavailable cells for every
+selected run. No eliminated discovery findings means no attribution run or charge.
+
+The unit is a golden bug. Core recall is primary; all and strict profiles are
+reported descriptively. Category and overlapping dimension recall are descriptive.
+Unavailable provenance remains unknown. Loss funnels retain the complete selected
+denominator, including unavailable traces.
+
+Each score execution records dedup, judge and adjudicator charges from response usage
+at pinned prices. Attribution charges are separate. Unknown costs remain null.
+Review costs come from captured invocation receipts. Historical rescoring remains
+descriptive and does not establish attempt validity. Subscription review consumption
+is recorded but is not API spend; scoring still runs on API. A paid projection above
+$500 requires an owner ruling. No paid run is scheduled by this document.
+
+## Recorded status
+
+The historical baseline mini has 19/30 recall, 56/77 valid-extra and 5/77 noise on its
+historical epoch. Free replay reproduced the buckets; missing pair judgments prevent
+exact recall replay. Both new-epoch mini rejudgments, rebuilt anchors and judge
+variability/noise calibration remain external acceptance. No new paid result is
+asserted here.

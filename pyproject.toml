@@ -56,7 +56,7 @@ warn_return_any = true
 no_implicit_optional = true
 explicit_package_bases = true
 mypy_path = "scripts"
-exclude = "(?x)(^(bench/vendor|bench/workspace)/)"
+exclude = "^(bench/vendor|bench/workspace)/"
 
 [[tool.mypy.overrides]]
 module = ["gauntlet.*", "tests.support.delivery"]

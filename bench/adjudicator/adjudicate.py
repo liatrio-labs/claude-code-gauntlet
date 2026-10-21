@@ -13,6 +13,8 @@ from pathlib import Path
 
 from gauntlet.diff import RawHunk, raw_hunks
 
+from bench.runner.scoring_costs import total_cost, usage_record
+
 __all__ = ["FROZEN_PROMPT", "adjudicate", "file_context", "slice_hunk"]
 
 CHAT_COMPLETIONS_URL = "https://api.anthropic.com/v1/chat/completions"
@@ -224,10 +226,14 @@ def adjudicate(comment_text, diff_hunk, file_context, pin, api_key, transport=No
     }
 
     last_error = None
+    usage = []
     for _attempt in range(2):
         reply = post(CHAT_COMPLETIONS_URL, headers, payload)
+        usage.append(usage_record(reply, pin))
         try:
-            return _parse_verdict(_extract_content(reply))
+            verdict = _parse_verdict(_extract_content(reply))
+            verdict.update(cost_usd=total_cost(usage), usage=usage)
+            return verdict
         except (ValueError, json.JSONDecodeError) as exc:
             last_error = exc
     raise ValueError(f"adjudicator returned unparseable JSON twice: {last_error}")
