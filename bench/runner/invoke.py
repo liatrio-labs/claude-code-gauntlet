@@ -23,15 +23,10 @@ import shutil
 import signal
 import subprocess
 import sys
-from collections.abc import Mapping
 from contextlib import suppress
-from dataclasses import dataclass, field, replace
-from functools import wraps
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict
-
-if TYPE_CHECKING:
-    from bench.runner.validity import Validity
+from typing import Literal, TypedDict
 
 from gauntlet.config import (
     ResolverError,
@@ -221,59 +216,14 @@ class ModelUsageWire(TypedDict):
 
 
 @dataclass(frozen=True, slots=True)
-class ModelUsage:
-    model_id: str
-    tokens: int
-    cost_usd: float
-
-
-@dataclass(frozen=True, slots=True)
-class ModelUsageMap(Mapping):
-    entries: tuple[ModelUsage, ...] = ()
-
-    def __iter__(self):
-        return (m.model_id for m in self.entries)
-
-    def __len__(self):
-        return len(self.entries)
-
-    def __getitem__(self, key):
-        for record in self.entries:
-            if record.model_id == key:
-                return record
-        raise KeyError(key)
-
-
-@dataclass(frozen=True, slots=True)
 class InvokeResult:
     status: InvokeStatus
     cost_usd: float = 0.0
-    per_model: ModelUsageMap = field(default_factory=ModelUsageMap)
+    per_model: dict[str, ModelUsageWire] = field(default_factory=dict)
     echo_ok: bool = False
     payload_path: str | None = None
     raw_json_path: str | None = None
     reason: str | None = None
-    validity: "Validity | None" = None
-    child_dispatched: bool = True
-
-    def __post_init__(self):
-        if isinstance(self.per_model, dict):
-            object.__setattr__(
-                self,
-                "per_model",
-                ModelUsageMap(
-                    tuple(
-                        ModelUsage(k, v["tokens"], v["cost_usd"])
-                        for k, v in sorted(self.per_model.items())
-                    )
-                ),
-            )
-
-    def model_usage_wire(self) -> dict[str, ModelUsageWire]:
-        return {
-            m.model_id: {"tokens": m.tokens, "cost_usd": m.cost_usd}
-            for m in self.per_model.entries
-        }
 
 
 # --------------------------------------------------------------------------- env
@@ -1552,80 +1502,17 @@ def _v3_preflight(claude_bin):
 
 def pinned_cli(run_dir):
     """Use the manifest pin after rechecking it at the final spend boundary."""
-    from bench.runner.validity import fingerprint_from_wire, recheck_cli
+    from bench.runner.validity import measurement_context, recheck_cli
 
     path = Path(run_dir) / "run.json"
     manifest = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     if manifest.get("measurement_window"):
-        fingerprint = fingerprint_from_wire(manifest["provenance"])
+        fingerprint = measurement_context(manifest)
         recheck_cli(fingerprint)
         return fingerprint.cli_realpath
     return None
 
 
-def track_child_dispatch(function):
-    @wraps(function)
-    def tracked(*args, **kwargs):
-        dispatched = False
-
-        def launch(
-            cmd,
-            *,
-            cwd,
-            env,
-            stdout,
-            stderr,
-            start_new_session,
-            stdin=None,
-            text=False,
-            encoding=None,
-        ):
-            nonlocal dispatched
-            # Children run either binary or UTF-8 text; the text-I/O guard needs both
-            # spelled as literals, so the two shapes are separate calls.
-            if text:
-                if encoding != "utf-8":
-                    raise ValueError(f"unsupported child encoding: {encoding!r}")
-                process = subprocess.Popen(
-                    cmd,
-                    cwd=cwd,
-                    env=env,
-                    stdin=stdin,
-                    stdout=stdout,
-                    stderr=stderr,
-                    start_new_session=start_new_session,
-                    text=True,
-                    encoding="utf-8",
-                )
-            else:
-                process = subprocess.Popen(
-                    cmd,
-                    cwd=cwd,
-                    env=env,
-                    stdin=stdin,
-                    stdout=stdout,
-                    stderr=stderr,
-                    start_new_session=start_new_session,
-                )
-            dispatched = True
-            return process
-
-        try:
-            result = function(*args, **kwargs, _popen=launch)
-        except Exception as exc:
-            if dispatched:
-                raise
-            return InvokeResult(
-                "failed",
-                reason=f"pre_dispatch_error:{type(exc).__name__}: {str(exc)[:200]}",
-                child_dispatched=False,
-            )
-        return replace(result, child_dispatched=dispatched)
-
-    return tracked
-
-
-@track_child_dispatch
 def invoke_review(
     worktree,
     pr,
@@ -1634,8 +1521,6 @@ def invoke_review(
     tool="deep-review-v3",
     child_model="inherit",
     child_auth=API_AUTH_MODE,
-    *,
-    _popen=None,
 ):
     """Run the headless review for one PR and classify the outcome.
 
@@ -1695,7 +1580,7 @@ def invoke_review(
     cmd = [
         claude_bin,
         "-p",
-        f"/{SKILL_COMMAND} {number}",
+        f"/{SKILL_COMMAND} {number}. Set measurementTrace=true in every Workflow args object for this benchmark review.",
         "--output-format",
         "json",
         "--dangerously-skip-permissions",
@@ -1708,7 +1593,7 @@ def invoke_review(
         cmd += ["--model", child_model]
 
     with open(raw_path, "w", encoding="utf-8") as fh:
-        proc = _popen(
+        proc = subprocess.Popen(
             cmd,
             cwd=str(worktree),
             env=env,

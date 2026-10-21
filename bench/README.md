@@ -401,30 +401,27 @@ Attribution cost is separate; unknown costs remain null. See [MEASUREMENT.md](ME
 
 ## Measurement windows and comparisons
 
-Operational runs require a reviewed window and explicit service model IDs. Freeze a
-window without invoking a review:
+Operational runs require a reviewed JSON window and explicit service model IDs.
+Validate and freeze the reviewed declaration without invoking a review:
 
 ```sh
-python3 -m bench.runner.validity freeze-window --out window.json \
-  --cli-path /absolute/path/to/claude --child-model claude-opus-5-5 \
-  --judge-pin JUDGE_ID --adjudicator-pin ADJUDICATOR_ID --epoch e616e84-v1 \
-  --opens-at ISO_TIMESTAMP --closes-at ISO_TIMESTAMP --window-id WINDOW_ID \
-  --policy policy.json --pr-urls gate-urls.json --run-indices 0,1,2,3 --auth-mode api
+python3 -c 'from pathlib import Path; from bench.runner.validity import load_window, exclusive_json; exclusive_json(Path("window.json"), load_window(Path("reviewed-window.json")).wire())'
 ```
 
-The policy JSON must equal `validity.benchmark_policy(timeout_seconds)`. The local
-workflow registry resolves every dispatch model. Effort environment controls retain
-absent values as null. Measurement preflight refuses ambient model and effort overrides,
-including `CLAUDE_CODE_SUBAGENT_MODEL`, before mirror work or dispatch.
-The window pins the CLI real path, version, bytes, epoch,
-evaluators, model map, auxiliary model allowlist, effort fields and benchmark policy.
-The orchestrator must verify the installed CLI honors the auto-update control.
+`MeasurementWindow.expected` pins shared CLI version, binary path and bytes,
+auto-update off, evaluator pins, golden epoch and auth mode. Its `arms` map declares
+exactly two treatments. Each `Treatment` pins its git SHA, dispatch roster and model
+map, per-agent effort values, effort environment, auxiliary model allowlist and
+benchmark policy digest. Build declarations from `capture_fingerprint()` and review
+both arm entries before freezing. A removed discovery agent changes its arm's
+roster, not the shared controls. Ambient model, effort and provider overrides are
+refused before mirror work. Verify installed CLI update/effort behavior separately.
 
 Start with `python3 bench/run.py --tier subset --measurement-window window.json
 --child-model claude-opus-5-5 --arm baseline --run-index 0`. Resume and retry require
 that same window. Every child rechecks its binary before dispatch. A baseline run also
 accepts `--baseline-equivalence-receipt PATH`; its reviewed JSON binds `release_sha`
-(`94ea095a`), `merge_sha` and `evidence_refs` to the instrumented Wave 0a merge.
+(`839b1886`), `merge_sha` and `evidence_refs` to the instrumented Wave 0a merge.
 Tracked files must be clean at entry and before each PR. Treatment identity hashes
 the index entries under `.claude-plugin`, `agents`, `skills`, `workflows` and `scripts`,
 including the shipped bundle and gauntlet helpers.
@@ -432,11 +429,12 @@ including the shipped bundle and gauntlet helpers.
 Attempts are immutable under `attempts/<pr-key>/<attempt-id>/`. Checkpoints select the
 latest scheduling outcome. Retrying preserves raw output, payloads, workflow records,
 model provenance, hashes and consumption from every prior attempt. Subscription
-stalls require `--retry-failed RUN --measurement-window window.json
---reset-confirmed-at ISO_TIMESTAMP --reset-evidence public-reset.json`. API transients
-honor their structured backoff. An initial non-ok attempt never becomes recall misses.
-Only a repeated normalized review failure on a separate admissible confirmation can
-produce a full zero cell. Generic watchdog timeouts cannot establish that fingerprint.
+failures require `--retry-failed RUN --measurement-window window.json
+--reset-confirmed-at ISO_TIMESTAMP`. The operator-recorded reset time must follow
+the first attempt and precede the subscription retry. Any first non-ok attempt is
+invalid and retryable. Any second non-ok for the same PR and window on API, or after
+the recorded subscription reset, is an operational failure with all bugs missed.
+Diagnostics do not have to match. Attempt records and review provenance stay immutable.
 
 Contamination and population manifests ship unfrozen. The supplied v2 leak manifest
 must be prepared against pinned upstream data, then ingested into the epoch:
@@ -477,10 +475,3 @@ The only optional extended look requires `initial_report_path`, preserves its ex
 initial score prefix and recomputes the initial decision before permitting extension.
 Exit 0 means a report was computed, including a quality fail or inconclusive result.
 Exit 2 writes a structured input refusal.
-
-For a separate API confirmation of a subscription review failure, call
-`validity.record_failure_confirmation(original_attempt_path, api_attempt_path,
-reset_evidence=(public_receipt_ref,))` after capturing the API attempt under its own
-window. This publishes an immutable confirmation receipt and updates the scheduling
-selection. It preserves both original attempt records and keeps the selected cell's
-subscription fingerprint. The scorer checks both source attempts and the receipt.

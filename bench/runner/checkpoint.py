@@ -80,16 +80,10 @@ class Checkpoint:
         return [u for u in urls if self.status(u) not in _RESUME_SKIP]
 
     def failed(self, urls):
-        from bench.runner.validity import RETRY_REASONS
-
-        def retryable(url):
-            validity = self.detail(url).get("validity")
-            if validity is not None:
-                return (
-                    validity.get("retryable") is True
-                    and bool(validity.get("reasons"))
-                    and set(validity["reasons"]) <= RETRY_REASONS
-                )
-            return self.status(url) in _FAILED
-
-        return [u for u in urls if retryable(u)]
+        return [
+            u
+            for u in urls
+            if self.detail(u)
+            .get("validity", {})
+            .get("retryable", self.status(u) in _FAILED)
+        ]

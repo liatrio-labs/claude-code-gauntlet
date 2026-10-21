@@ -1098,7 +1098,13 @@ def compare_arms(
             if operational:
                 assert window is not None and spec.window_path is not None
                 if (
-                    run.get("provenance") != window.expected.wire()
+                    validity.check_window(
+                        window,
+                        validity.fingerprint_from_wire(run["provenance"]),
+                        arm=arm.name,
+                        now=run["started"],
+                    ).state
+                    != "valid"
                     or not validity.same_pr_set(run.get("pr_urls") or (), scope)
                     or run.get("window_id") != window.window_id
                     or run.get("window_sha256")
@@ -1115,7 +1121,7 @@ def compare_arms(
                     receipt = run.get("baseline_equivalence_receipt")
                     if (
                         not receipt
-                        or receipt.get("release_sha") != "94ea095a"
+                        or receipt.get("release_sha") != "839b1886"
                         or receipt.get("merge_sha") != arm.treatment_git_sha
                         or not receipt.get("evidence_refs")
                     ):
@@ -1283,7 +1289,7 @@ def compare_arms(
                 "window_sha256": validity.file_hash(Path(spec.window_path))
                 if window and spec.window_path is not None
                 else None,
-                "fingerprint": window.expected.wire() if window else None,
+                "fingerprint": asdict(window.expected) if window else None,
                 "instrumentation_version": instrumentation,
                 "treatments": {
                     a.name: {

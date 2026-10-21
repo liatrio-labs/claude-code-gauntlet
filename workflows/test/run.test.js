@@ -22,7 +22,7 @@ test('happy contract: compact envelope and complete dispatch inventory', async (
   const { out, ctx, payload } = await runAndCapture(validArgs());
   assert.equal(out.ok, true);
   assert.equal(out.phaseReached, 'report');
-  assert.deepEqual(Object.keys(out), ['ok', 'phaseReached', 'stats', 'artifactPaths', 'resolvedPolicy', 'checkpoints', 'gaps', 'measurement', 'persistReturn']);
+  assert.deepEqual(Object.keys(out), ['ok', 'phaseReached', 'stats', 'artifactPaths', 'resolvedPolicy', 'checkpoints', 'gaps']);
   assert.deepEqual(out.artifactPaths, PATHS);
   assert.deepEqual(out.checkpoints, { completed: PHASES });
   assert.equal(Object.hasOwn(out, 'findings'), false);

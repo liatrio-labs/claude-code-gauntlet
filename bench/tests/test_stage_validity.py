@@ -38,8 +38,8 @@ def test_archived_named_workflow_failure_survives_treatment_bundle_switch(tmp_pa
     [
         (None, "ok"),
         *(
-            (stage, status)
-            for stage in ("discover", "verify", "validate", "challenge")
+            (s, status)
+            for s in ("discover", "verify", "validate", "challenge")
             for status in ("ok", "failed", "timeout")
         ),
     ],
@@ -130,8 +130,6 @@ process.stdout.write(JSON.stringify(out));
         assert any("challenge cap" in text for text in attempt.validity.limitations)
     if replay:
         assert any("Checkpoint replay" in text for text in attempt.validity.limitations)
-    # Old collectors could stamp this same evidence valid. Score selection,
-    # operational comparison and simulation all load it through selected_attempt.
     path = next((run / "attempts").glob(f"*/{attempt.attempt_id}/attempt.json"))
     if stage:
         old = replace(

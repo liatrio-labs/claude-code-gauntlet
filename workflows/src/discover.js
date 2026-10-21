@@ -1,4 +1,3 @@
-import { stampDiscovery, recordStage, traceDecision } from './measurementTrace.js';
 // Summary and discovery stages, finding schemas, and scope flags.
 import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISPATCH_RESULTS, modelFor, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { computeLightEligible } from './knobs.js';
@@ -7,6 +6,7 @@ import { effectiveBucketSize } from './capacity.js';
 import { deepClone } from './wire.js';
 import { checkRemovedTestAudit } from './removedTests.js';
 import { repoRelativeFindingPath } from './paths.js';
+import { stampDiscovery, recordStage, traceDecision } from './measurementTrace.js';
 
 // StructuredOutput requires an object wrapper around summary prose.
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
@@ -242,7 +242,7 @@ export async function discover(ctx, input) {
       removedTestAudit = checked.audit;
       auditLosses = checked.findings;
       if (trace) auditLosses = auditLosses.map((f, n) => stampDiscovery(trace, f, spec, i, `synthetic-${n}`));
-      intake.push(...auditLosses);
+      if (trace) intake.push(...auditLosses);
       findings.push(...auditLosses);
     }
     if (res === null || res === undefined) {
@@ -263,7 +263,7 @@ export async function discover(ctx, input) {
     }
     for (const [occurrence, raw] of list.entries()) {
       const f = trace ? stampDiscovery(trace, raw, spec, i, occurrence) : raw;
-      intake.push(f);
+      if (trace) intake.push(f);
       // The audit already represents coverage lost at this anchor within this dispatch.
       const normalized = repoRelativeFindingPath(inp.repoRoot, f.file);
       // Same start line only: a wider range at that anchor may describe a different untested behaviour.
@@ -284,7 +284,6 @@ export async function discover(ctx, input) {
   });
 
   if (trace) recordStage(trace, 'discover', intake, { decisions,
-    dispatched_dimensions: specs.flatMap((spec) => spec.dimensions), degraded_dimensions: [...new Set(degradedDims)],
     coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
 
   if (droppedAuditOverlaps > 0) removedTestAudit.duplicates_dropped = droppedAuditOverlaps;

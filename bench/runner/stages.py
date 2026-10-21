@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-import math
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal, TypedDict, get_args
+from typing import Any, Literal, TypedDict, get_args
 
 from bench.runner.decode import decode
 from bench.runner.epochs import file_hash, read_json
@@ -14,7 +13,6 @@ from bench.runner.observations import (
     Coverage,
     Decision,
     Dimension,
-    FrozenJson,
     LossStage,
     ReasonCode,
     ScoreRef,
@@ -22,65 +20,25 @@ from bench.runner.observations import (
     TraceCollection,
     artifact_allowed,
 )
-from bench.runner.observations import freeze_json as freeze
-from bench.runner.observations import thaw_json as thaw
-
-TRACE_VERSION = "1"
-
-
-class FindingProjectionWire(TypedDict, total=False):
-    id: str
-    dimension: str
-    agent: str
-    file: str
-    title: str
-    description: str
-    body: str
-    evidence: str
-    severity: str
-    line_start: int
-    line: int
-    end_line: int
-    line_end: int
-    confidence: int | float
-    suggestion: str
-    rule_source: str
-    claude_md_rule: str
-    spec_text: str
-    suggested_fix_code: str
-    consolidation_key: str
-    consolidation_primary: bool
-    report_tag: str
-    report_destination: str
-    origin: str
-    validation: str
-    challenge: str
-    trace_id: str
-    discovery_agent: str
-    discovery_dimension: Dimension
 
 
 @dataclass(frozen=True, slots=True)
 class FindingVersion:
     version_id: str
     trace_id: str
-    model_finding_id: str | None
     discovery_agent: str
     discovery_dimension: Dimension
-    finding: FrozenJson
-    base_version_id: str | None
-    set_fields: FrozenJson
-    unset_fields: tuple[str, ...]
+    finding: dict[str, Any]
 
     def projection(self):
-        return thaw(self.finding)
+        return dict(self.finding)
 
 
 @dataclass(frozen=True, slots=True)
 class StageDecision:
     trace_id: str
     decision: Decision
-    reason_code: ReasonCode | None
+    reason_code: ReasonCode
     reason: str | None
     related_trace_ids: tuple[str, ...]
 
@@ -94,8 +52,6 @@ class StageSnapshot:
     executed: bool
     replayed: bool
     coverage: Coverage
-    dispatched_dimensions: tuple[Dimension, ...]
-    degraded_dimensions: tuple[Dimension, ...]
     cap: int | None
     cap_hit: bool
 
@@ -103,11 +59,9 @@ class StageSnapshot:
 @dataclass(frozen=True, slots=True)
 class MeasurementTrace:
     schema_version: Literal[1]
-    trace_version: str
     run_nonce: str
     versions: tuple[FindingVersion, ...]
     snapshots: tuple[StageSnapshot, ...]
-    resolved_models: tuple[tuple[str, str], ...]
     complete: bool
 
 
@@ -162,102 +116,34 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
         "denied artifact",
     )
     _require(file_hash(trace_path) == expected_sha256, "byte hash mismatch")
-    raw = read_json(trace_path)
-    _require(isinstance(raw, dict), "object envelope")
-    _require(
-        raw.get("schema_version") == 1 and raw.get("trace_version") == TRACE_VERSION,
-        "unsupported version",
-    )
-    _require(isinstance(raw.get("run_nonce"), str) and raw["run_nonce"], "nonce")
-    _require(type(raw.get("complete")) is bool, "completion flag")
-    versions: list[FindingVersion] = []
+    trace: MeasurementTrace = decode(MeasurementTrace, read_json(trace_path))
     by_id: dict[str, FindingVersion] = {}
-    identities: dict[str, tuple[str, Dimension]] = {}
-    for row in raw["versions"]:
-        vid, tid, base = row["version_id"], row["trace_id"], row["base_version_id"]
-        _require(isinstance(vid, str) and vid not in by_id, "duplicate version")
+    identities: dict[str, object] = {}
+    for version in trace.versions:
+        _require(version.version_id not in by_id, "duplicate version")
         _require(
-            isinstance(tid, str) and tid.startswith(raw["run_nonce"] + ":"),
-            "occurrence identity",
+            version.trace_id.startswith(trace.run_nonce + ":"), "occurrence identity"
         )
-        _require(row["discovery_dimension"] in get_args(Dimension), "dimension")
-        _require(isinstance(row["discovery_agent"], str), "agent")
+        identity = (version.discovery_agent, version.discovery_dimension)
         _require(
-            isinstance(row["set_fields"], dict)
-            and isinstance(row["unset_fields"], list),
-            "patch",
+            identities.setdefault(version.trace_id, identity) == identity,
+            "changed provenance",
         )
-        if base is None:
-            _require(
-                isinstance(row["finding"], dict)
-                and not row["set_fields"]
-                and not row["unset_fields"],
-                "initial finding",
-            )
-            finding = dict(row["finding"])
-        else:
-            _require(
-                base in by_id
-                and by_id[base].trace_id == tid
-                and row["finding"] is None,
-                "backwards patch reference",
-            )
-            finding = by_id[base].projection()
-            _require(
-                len(set(row["unset_fields"])) == len(row["unset_fields"]),
-                "duplicate unset",
-            )
-            for key in row["unset_fields"]:
-                _require(
-                    key in finding and key not in row["set_fields"], "unset reference"
+        _require(
+            all(
+                version.finding.get(k) == v
+                for k, v in zip(
+                    ("trace_id", "discovery_agent", "discovery_dimension"),
+                    (version.trace_id, *identity),
+                    strict=True,
                 )
-                del finding[key]
-            finding.update(row["set_fields"])
-        identity = (row["discovery_agent"], row["discovery_dimension"])
-        _require(
-            tid not in identities or identities[tid] == identity, "changed provenance"
-        )
-        identities[tid] = identity
-        _require(
-            finding.get("trace_id") == tid
-            and finding.get("discovery_agent") == identity[0]
-            and finding.get("discovery_dimension") == identity[1],
+            ),
             "finding provenance",
         )
-        _require(
-            row["model_finding_id"]
-            == (finding.get("id") if isinstance(finding.get("id"), str) else None),
-            "model id",
-        )
-        for name in FindingProjectionWire.__annotations__:
-            if name not in finding or finding[name] is None:
-                continue
-            value = finding[name]
-            if name in ("line_start", "line", "end_line", "line_end", "confidence"):
-                _require(
-                    type(value) in (int, float) and math.isfinite(value),
-                    "numeric projection",
-                )
-            elif name == "consolidation_primary":
-                _require(type(value) is bool, "consolidation primary")
-            else:
-                _require(isinstance(value, str), "text projection")
-        version = FindingVersion(
-            vid,
-            tid,
-            row["model_finding_id"],
-            *identity,
-            freeze(finding),
-            base,
-            freeze(row["set_fields"]),
-            tuple(row["unset_fields"]),
-        )
-        versions.append(version)
-        by_id[vid] = version
-    snapshots: list[StageSnapshot] = []
-    for row in raw["snapshots"]:
-        snapshot = decode(StageSnapshot, row)
-        _require(snapshot.sequence == len(snapshots), "stage sequence")
+        identities[version.trace_id] = identity
+        by_id[version.version_id] = version
+    for sequence, snapshot in enumerate(trace.snapshots):
+        _require(snapshot.sequence == sequence, "stage sequence")
         ids = snapshot.finding_version_ids
         _require(
             len(set(ids)) == len(ids) and all(v in by_id for v in ids),
@@ -266,34 +152,22 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
         _require(
             len({by_id[v].trace_id for v in ids}) == len(ids), "duplicate occurrence"
         )
-        _require(snapshot.cap is None or snapshot.cap >= 0, "cap")
         for decision in snapshot.decisions:
             _require(
                 decision.trace_id in identities
                 and all(t in identities for t in decision.related_trace_ids),
                 "decision reference",
             )
-        snapshots.append(snapshot)
-    models = raw["resolved_models"]
     _require(
-        isinstance(models, dict)
-        and all(isinstance(k, str) and isinstance(v, str) for k, v in models.items()),
-        "resolved models",
+        tuple(s.stage for s in trace.snapshots)
+        == get_args(Stage)[: len(trace.snapshots)],
+        "physical stage order",
     )
-    if raw["complete"]:
-        _require(
-            tuple(s.stage for s in snapshots) == get_args(Stage),
-            "complete physical stage order",
-        )
-    return MeasurementTrace(
-        1,
-        TRACE_VERSION,
-        raw["run_nonce"],
-        tuple(versions),
-        tuple(snapshots),
-        tuple(sorted(models.items())),
-        raw["complete"],
+    _require(
+        not trace.complete or len(trace.snapshots) == len(get_args(Stage)),
+        "complete stages",
     )
+    return trace
 
 
 def render_claim(finding):
@@ -540,6 +414,15 @@ def loss_funnel(observations, *, population) -> FunnelReport:
         delivered + sum(losses.values()) + unavailable == denominator,
         "funnel partition",
     )
+    coverage: Coverage = (
+        "complete"
+        if not unavailable
+        and not any(unjudged.values())
+        and all(row.coverage == "complete" for row in observations)
+        else "partial"
+    )
+    if denominator and unavailable == denominator and not delivered:
+        coverage = "unavailable"
     return FunnelReport(
         denominator,
         delivered,
@@ -550,13 +433,7 @@ def loss_funnel(observations, *, population) -> FunnelReport:
         tuple(survivors.items()),
         tuple(caps.items()),
         tuple(unjudged.items()),
-        "unavailable"
-        if denominator and unavailable == denominator and not delivered
-        else "complete"
-        if not unavailable
-        and not any(unjudged.values())
-        and all(row.coverage == "complete" for row in observations)
-        else "partial",
+        coverage,
     )
 
 
@@ -671,95 +548,57 @@ class CollectedTraceWire(TypedDict):
 
 
 def _collect_trace(pr_dir: Path) -> CollectedTraceWire | None:
-    """Materialize only a current Workflow return entry, verifying its original bytes."""
+    import hashlib
+
     from gauntlet import tasks
 
+    from bench.runner.observations import exclusive_json
+
     pr_dir = Path(pr_dir)
-    delivered = list(pr_dir.glob("code-gauntlet-post-review-*.json"))
-    if not delivered:
-        return None
-    if len(delivered) != 1 or delivered[0].is_symlink():
-        raise ValueError("delivered post-review artifact is ambiguous or a symlink")
-    payload = read_json(delivered[0])
-    findings = payload.get("findings", []) if isinstance(payload, dict) else payload
-    nonces = {f["trace_id"].split(":", 1)[0] for f in findings if f.get("trace_id")}
-    if isinstance(payload, dict) and payload.get("run_nonce"):
-        nonces.add(payload["run_nonce"])
-    if len(nonces) != 1:
-        return None
-    delivered_nonce = nonces.pop()
     current = []
     for record in sorted((pr_dir / "workflows").glob("wf_*.json")):
         if record.is_symlink():
             raise ValueError("workflow trace record is a symlink")
         terminal, _, _ = tasks.find_terminal(tasks.read_task(str(record)))
-        if (
-            isinstance(terminal, dict)
-            and terminal.get("ok") is True
-            and (terminal.get("persistReturn") or {}).get("nonce") == delivered_nonce
-        ):
+        if isinstance(terminal, dict) and terminal.get("ok") is True:
             current.append((record, terminal))
-    if len(current) > 1:
-        raise ValueError("multiple successful Workflow records for delivered nonce")
-    found: list[CollectedTraceWire] = []
-    for record, terminal in current:
-        measurement = terminal.get("measurement") or {}
-        if measurement.get("status") != "available":
-            raise ValueError(
-                measurement.get("reason") or "Workflow measurement unavailable"
-            )
-        channel = terminal.get("persistReturn") or {}
-        entries = [
-            e
-            for e in channel.get("entries", [])
-            if e.get("path") == measurement.get("path")
-        ]
-        if len(entries) != 1:
-            raise ValueError("measurement return entry is missing or ambiguous")
-        entry = entries[0]
-        name = Path(entry["path"]).name
-        import re
-
-        if not re.fullmatch(r"code-gauntlet-measurement-[A-Za-z0-9]+\.json", name):
-            raise ValueError("invalid trace artifact name")
-        data = entry["text"].encode("utf-8")
-        import hashlib
-
-        actual = hashlib.sha256(data).hexdigest()
-        if actual != measurement.get("sha256") or actual != entry.get("sha256"):
-            raise ValueError("measurement return byte hash mismatch")
-        path = pr_dir / name
-        if path.is_symlink():
-            raise ValueError("trace artifact is a symlink")
-        if path.exists():
-            if file_hash(path) != actual:
-                raise ValueError("collected trace differs from return entry")
-        else:
-            with path.open("xb") as stream:
-                stream.write(data)
-        trace = load_trace(path, expected_sha256=actual)
-        if trace.run_nonce != channel.get("nonce"):
-            raise ValueError("measurement attempt nonce mismatch")
-        found.append(
-            {
-                "path": name,
-                "sha256": actual,
-                "run_nonce": trace.run_nonce,
-                "workflow_record": str(record.relative_to(pr_dir)),
-                "workflow_sha256": file_hash(record),
-            }
+    if not current:
+        return None
+    if len(current) != 1:
+        raise ValueError("multiple successful Workflow records")
+    record, terminal = current[0]
+    measurement = terminal.get("measurement") or {}
+    if measurement.get("status") != "available":
+        raise ValueError(
+            measurement.get("reason") or "Workflow measurement unavailable"
         )
-    if found:
-        from bench.runner.observations import exclusive_json
-
-        receipt = pr_dir / "measurement-artifact.json"
-        if receipt.exists():
-            if read_json(receipt) != found[0]:
-                raise ValueError("measurement attempt binding changed")
-        else:
-            exclusive_json(receipt, found[0])
-        return found[0]
-    return None
+    data = decode(str, measurement["text"]).encode("utf-8")
+    actual = hashlib.sha256(data).hexdigest()
+    name = "code-gauntlet-measurement-trace.json"
+    path = pr_dir / name
+    if path.is_symlink() or (path.exists() and file_hash(path) != actual):
+        raise ValueError("collected trace differs from Workflow return")
+    if not path.exists():
+        with path.open("xb") as stream:
+            stream.write(data)
+    trace = load_trace(path, expected_sha256=actual)
+    channel = terminal.get("persistReturn") or {}
+    if channel and trace.run_nonce != channel.get("nonce"):
+        raise ValueError("measurement attempt nonce mismatch")
+    binding: CollectedTraceWire = dict(
+        path=name,
+        sha256=actual,
+        run_nonce=trace.run_nonce,
+        workflow_record=str(record.relative_to(pr_dir)),
+        workflow_sha256=file_hash(record),
+    )
+    receipt = pr_dir / "measurement-artifact.json"
+    if receipt.exists():
+        if read_json(receipt) != binding:
+            raise ValueError("measurement attempt binding changed")
+    else:
+        exclusive_json(receipt, binding)
+    return binding
 
 
 def collect_trace(pr_dir: Path) -> TraceCollection:

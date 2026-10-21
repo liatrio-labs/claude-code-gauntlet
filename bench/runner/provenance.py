@@ -175,10 +175,24 @@ def trace_delivery(trace, selected, payload, diff):
         for v in s.finding_version_ids
     ]
     if len(selected) != len(expected) or any(
-        any(f.get(k) != v for k, v in original.items())
+        any(
+            f.get(k) != v
+            for k, v in original.items()
+            if k not in ("trace_id", "discovery_agent", "discovery_dimension")
+        )
         for f, original in zip(selected, expected, strict=True)
     ):
         raise ValueError("selected findings disagree with trace")
+    selected = [
+        {
+            **f,
+            **{
+                k: original[k]
+                for k in ("trace_id", "discovery_agent", "discovery_dimension")
+            },
+        }
+        for f, original in zip(selected, expected, strict=True)
+    ]
     mapped = map_delivery(payload, selected, diff)
     omissions = reconstruct_delivery(
         selected, diff, platform=payload["platform"]

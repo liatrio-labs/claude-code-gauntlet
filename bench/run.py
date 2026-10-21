@@ -77,16 +77,6 @@ def _git_short_sha():
     return result.stdout.strip() or "nogit"
 
 
-def _git_full_sha():
-    result = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    return result.stdout.strip() if result.returncode == 0 else "nogit"
-
-
 def _utc_stamp():
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
@@ -531,7 +521,6 @@ def _naive_payload_from_result(result_text, pr_dir):
     return dest
 
 
-@invoke.track_child_dispatch
 def _invoke_naive(
     worktree,
     pr,
@@ -540,8 +529,6 @@ def _invoke_naive(
     bench_entry,
     timeout_s,
     child_auth=ledger.API_AUTH_MODE,
-    *,
-    _popen=None,
 ):
     """Run the bare single-pass anchor review; return an :class:`invoke.InvokeResult`.
 
@@ -589,7 +576,7 @@ def _invoke_naive(
         cmd += ["--model", requested_model]
     prompt = _naive_prompt(pr, diff_text, bench_entry)
 
-    proc = _popen(
+    proc = subprocess.Popen(
         cmd,
         cwd=str(worktree),
         env=env,
@@ -671,13 +658,7 @@ def _checkpoint_attempt(
 ):
     result = replace(result, payload_path=payload_path or result.payload_path)
     prior_ref = cp.detail(url).get("attempt_ref")
-    prior = (
-        validity.load_attempt(validity.confined(run_dir, prior_ref))
-        if prior_ref
-        else None
-    )
-    reset_path = Path(run_dir) / "reset-evidence.json"
-    reset = _load_json(reset_path) if reset_path.is_file() else {}
+    reset_path = Path(run_dir) / "reset-time.json"
     attempt = validity.collect_attempt(
         run_dir,
         pr_dir,
@@ -685,14 +666,15 @@ def _checkpoint_attempt(
         result=result,
         started_at=started_at,
         manifest=manifest,
-        prior=prior,
-        reset_at=reset.get("confirmed_at"),
-        reset_ref=reset.get("sha256"),
+        prior=validity.load_attempt(validity.confined(run_dir, prior_ref))
+        if prior_ref
+        else None,
+        reset_at=_load_json(reset_path)["confirmed_at"]
+        if reset_path.is_file()
+        else None,
     )
-    attempt_ref = str(
-        next(
-            (Path(run_dir) / "attempts").glob(f"*/{attempt.attempt_id}/attempt.json")
-        ).relative_to(run_dir)
+    attempt_path = next(
+        (Path(run_dir) / "attempts").glob(f"*/{attempt.attempt_id}/attempt.json")
     )
     cp.mark(
         url,
@@ -710,7 +692,7 @@ def _checkpoint_attempt(
             "reason": result.reason or ",".join(attempt.validity.reasons) or None,
             "payload_path": result.payload_path,
             "attempt_id": attempt.attempt_id,
-            "attempt_ref": attempt_ref,
+            "attempt_ref": str(attempt_path.relative_to(run_dir)),
             "validity": attempt.validity.wire(),
             "countable_operational_failure": attempt.validity.state
             == "operational_failure",
@@ -755,24 +737,22 @@ def _run_prs(
     for url in urls:
         if manifest.get("measurement_window"):
             try:
-                validity.refuse_ambient_model_overrides(os.environ)
                 validity.require_clean_treatment()
+                validity.measurement_context(manifest)
                 observed = validity.run_provenance(
                     child_model=child_model,
                     child_auth=child_auth,
                     timeout_s=timeout_s,
                     epoch_id=manifest["epoch_id"],
                     window=validity.load_window(Path(manifest["measurement_window"])),
+                    arm=manifest["arm"],
                 )
-                if observed != manifest["provenance"]:
-                    raise ValueError(
-                        "window_mismatch: immutable run fingerprint changed"
-                    )
                 if (
-                    manifest.get("treatment_git_sha") != _git_full_sha()
+                    observed != manifest["provenance"]
+                    or manifest.get("treatment_git_sha") != validity.treatment_sha()
                     or manifest.get("agent_read_sha256") != validity.agent_read_hash()
                 ):
-                    raise ValueError("input_drift: treatment changed within this run")
+                    raise ValueError("input_drift: immutable run context changed")
             except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 print(str(exc), file=sys.stderr)
                 raise ValueError(
@@ -840,9 +820,7 @@ def _run_prs(
                 pr_dir,
                 cp,
                 url,
-                invoke.InvokeResult(
-                    "failed", reason="mirror_error", child_dispatched=False
-                ),
+                invoke.InvokeResult("failed", reason="mirror_error"),
                 started_at,
                 manifest,
                 extra={"error": f"{type(exc).__name__}: {str(exc)[:200]}"},
@@ -850,7 +828,6 @@ def _run_prs(
             counts["failed"] += 1
             continue
 
-        child_dispatched = False
         result = None
         try:
             if url in fixture_urls:
@@ -868,7 +845,6 @@ def _run_prs(
             wf_baseline = (
                 {} if is_naive else invoke.snapshot_workflow_records(claude_home)
             )
-            child_dispatched = True
             if is_naive:
                 result = _invoke_naive(
                     worktree,
@@ -914,9 +890,7 @@ def _run_prs(
                 url,
                 replace(result, status="failed", reason=reason)
                 if result is not None
-                else invoke.InvokeResult(
-                    "failed", reason=reason, child_dispatched=child_dispatched
-                ),
+                else invoke.InvokeResult("failed", reason=reason),
                 started_at,
                 manifest,
                 extra={"traceback": traceback.format_exc()},
@@ -1070,9 +1044,7 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         epoch_id=provenance["golden_epoch_id"],
         golden_sha256=provenance["golden_sha256"],
         measurement_window=getattr(args, "measurement_window", None),
-        window_id=getattr(args, "_window", None).window_id
-        if getattr(args, "_window", None)
-        else None,
+        window_id=args._window.window_id if getattr(args, "_window", None) else None,
         window_sha256=validity.file_hash(Path(args.measurement_window))
         if getattr(args, "measurement_window", None)
         else None,
@@ -1082,7 +1054,7 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         agent_read_sha256=validity.agent_read_hash(),
         pr_identities={u: load_epoch(root=GOLDEN_DIR).shas[u] for u in urls},
     )
-    manifest["treatment_git_sha"] = _git_full_sha()
+    manifest["treatment_git_sha"] = validity.treatment_sha()
     manifest["requested_models"] = {
         "orchestrator": _resolve_child_model(args.tool, args.child_model)
     }
@@ -1232,29 +1204,15 @@ def _resume(run_id, args, retry):
                 validity.check_retry(
                     original,
                     now=validity.utc_now(),
-                    reset_evidence=args.reset_evidence,
                     reset_confirmed_at=args.reset_confirmed_at,
                 )
             elif child_auth == "subscription":
                 raise ValueError(
                     "reset_not_confirmed: legacy subscription failure has no immutable attempt evidence"
                 )
-        if args.reset_evidence:
-            evidence = Path(args.reset_evidence)
-            if not validity.artifact_allowed(evidence):
-                raise ValueError("denied reset evidence")
-            copy = run_dir / (
-                "reset-evidence-" + validity.file_hash(evidence) + ".json"
-            )
-            if not copy.exists():
-                validity.copy_exclusive(evidence, copy)
+        if args.reset_confirmed_at:
             validity.atomic_json(
-                run_dir / "reset-evidence.json",
-                {
-                    "confirmed_at": args.reset_confirmed_at,
-                    "sha256": validity.file_hash(evidence),
-                    "path": copy.name,
-                },
+                run_dir / "reset-time.json", {"confirmed_at": args.reset_confirmed_at}
             )
     # Archive every todo PR's prior wf records and deliverables before re-invoke so
     # the checker gates the current attempt only, for every deliverable, not just wf
@@ -1443,7 +1401,6 @@ def parse_args(argv=None):
     parser.add_argument("--run-index", type=int)
     parser.add_argument("--arm")
     parser.add_argument("--reset-confirmed-at")
-    parser.add_argument("--reset-evidence")
     parser.add_argument("--baseline-equivalence-receipt")
     args = parser.parse_args(argv)
     # Validate --prs against the golden set at parse time so an unknown URL is a hard
@@ -1546,10 +1503,11 @@ def main(argv=None):
             args.measurement_window = str(Path(args.measurement_window).resolve())
             window = validity.load_window(Path(args.measurement_window))
             args._window = window
-            model = (prior_manifest or {}).get("child_model") or _resolve_child_model(
+            prior = prior_manifest or {}
+            model = prior.get("child_model") or _resolve_child_model(
                 args.tool, args.child_model
             )
-            timeout_s = ((prior_manifest or {}).get("env_fingerprint") or {}).get(
+            timeout_s = prior.get("env_fingerprint", {}).get(
                 "timeout_s", args.timeout_mins * 60
             )
             args._provenance = validity.run_provenance(
@@ -1558,10 +1516,9 @@ def main(argv=None):
                 timeout_s=timeout_s,
                 epoch_id=args.golden_epoch,
                 window=window,
+                arm=prior.get("arm") or args.arm,
             )
-            urls = (prior_manifest or {}).get("pr_urls") or _target_urls(
-                args.tier, args.prs
-            )
+            urls = prior.get("pr_urls") or _target_urls(args.tier, args.prs)
             if not validity.same_pr_set(urls, window.pr_urls):
                 raise ValueError("window requested PR matrix mismatch")
             if prior_manifest:

@@ -1,5 +1,4 @@
 // Pipeline sequencing, replay, diagnostics, and return envelopes.
-import { appendMeasurement, createMeasurementTrace, recordStage, finishMeasurementTrace, traceDecision, traceModels, eliminationDecisions } from './measurementTrace.js';
 import { setupContext } from './contextPlan.js';
 import { coarsenLimits } from './capacity.js';
 import { summarize, deriveAgentFlags, discover, allActiveDimensionsDegraded } from './discover.js';
@@ -18,6 +17,7 @@ import { writeArtifacts } from './persist.js';
 import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
 import { checkpointChecksumErrors, checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
 import { holdBackIncomplete } from './holdBackIncomplete.js';
+import { appendMeasurement, createMeasurementTrace, recordStage, finishMeasurementTrace, traceDecision, eliminationDecisions, stripTraceFields } from './measurementTrace.js';
 
 // The host injects runtime globals, while tests supply context explicitly.
 function defaultCtx() {
@@ -153,10 +153,9 @@ export async function runWith(ctx, rawArgs) {
   const gaps = [...nullArgGaps, ...contextSizeGap, ...discardGap];
   const completed = [];
   const phaseOutputs = {};
-  const measurementTrace = createMeasurementTrace(A.nonce);
-  traceModels(measurementTrace, policy);
+  const measurementTrace = A.measurementTrace === true ? createMeasurementTrace(A.nonce) : null;
   let discoveryDecisions = [];
-  const measured = (envelope) => appendMeasurement(envelope, measurementTrace, A);
+  const measured = (envelope) => appendMeasurement(envelope, measurementTrace);
   let phaseReached = 'start';
   // Track the attempted phase separately so a failure names the phase that threw.
   let phaseAttempting = null;
@@ -170,7 +169,7 @@ export async function runWith(ctx, rawArgs) {
     const rejected = [];
     if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A, rejected);
     if (name === 'discover') discoveryDecisions = rejected;
-    if (['merge', 'verify', 'validate', 'filter', 'challenge'].includes(name)) {
+    if (measurementTrace && ['merge', 'verify', 'validate', 'filter', 'challenge'].includes(name)) {
       recordStage(measurementTrace, name, out, { replayed,
         ...(!replayed && ((name === 'verify' && out.verified === false) || (name === 'validate' && out.stats?.skipped > 0) || (name === 'challenge' && out.stats?.skipped > 0)) ? { coverage: 'partial' } : {}),
         ...(name === 'merge' ? { decisions: [...discoveryDecisions, ...rejected] } : rejected.length ? { decisions: rejected } : {}),
@@ -239,7 +238,7 @@ export async function runWith(ctx, rawArgs) {
     limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || [], A.baseBranch, A);
 
     const verifyOut = await runPhase('verify', () => verifyStage(c, {
-      findings: mergeOut.findings || [], limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
+      findings: mergeOut.findings || [], measurementTrace, limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
       python: A.python, repoRoot: A.repoRoot, outputDir: A.outputDir, pluginRoot: A.pluginRoot,
       verify: { ...(A.verify || {}), baseBranch: A.baseBranch, diffPath: A.diffPath },
     }));
@@ -276,7 +275,7 @@ export async function runWith(ctx, rawArgs) {
     // Keep replay disclosures outside checkpoints so resumes cannot duplicate them.
     const markedCount = applyChallengeReplayBelt(challengeOut);
     holdBackIncomplete(challengeOut);
-    recordStage(measurementTrace, 'holdback', challengeOut, {
+    if (measurementTrace) recordStage(measurementTrace, 'holdback', challengeOut, {
       decisions: [
         ...(challengeOut.eliminated || []).filter((f) => f.replay_belt && f.trace_id).map((f) => traceDecision(f, 'injection', f.elimination_reason)),
         ...(challengeOut.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f,
@@ -296,13 +295,14 @@ export async function runWith(ctx, rawArgs) {
 
     const deliveryTier = A.delivery && A.delivery.tier;
     const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
-    recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
+    if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
       cap_hit: challengeOut.findings.length > postReview.length,
       decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,
         deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
         'delivery selection', [], 'not_selected')),
     });
     finishMeasurementTrace(measurementTrace, postReview);
+    if (measurementTrace) stripTraceFields(phaseOutputs);
     const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
     const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
       && (A.mode !== 'headless'

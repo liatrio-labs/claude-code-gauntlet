@@ -1,9 +1,9 @@
-import { measurementDecisions, traceDecision } from './measurementTrace.js';
 import { hostPlatformForRoots } from './paths.js';
 import { modelFor } from './registry.js';
 import { firstUnsafeNumber } from './wire.js';
 import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum } from './verifyWire.js';
 import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
+import { measurementDecisions, traceDecision } from './measurementTrace.js';
 
 // Allow honest failures in the schema to avoid fabricated successes under retry
 // pressure. Deltas avoid retranscribing finding fields.
@@ -164,7 +164,7 @@ export async function verifyStage(ctx, input) {
       else if (attempt.inputFault === 'missing') inputProof.missing += 1;
     }
     out.push(...attempt.verified);
-    eliminated.push(...attempt.eliminated);
+    if (inp.measurementTrace) eliminated.push(...attempt.eliminated);
     if (attempt.degraded) {
       degradedSlices += 1;
       gaps.push(verifyDegradeGap(`slice ${i}: ${attempt.reason}`, attempt.degraded, findings.length));
@@ -218,8 +218,8 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
   }
   const degraded = slice.length - accepted.size;
   return {
-    eliminated: slice.filter((f) => accepted.get(f.id)?.verified === false)
-      .map((f) => ({ ...f, elimination_reason: accepted.get(f.id).elimination_reason })),
+    eliminated: inp.measurementTrace ? slice.filter((f) => accepted.get(f.id)?.verified === false)
+      .map((f) => ({ ...f, elimination_reason: accepted.get(f.id).elimination_reason })) : [],
     // Accepted membership includes trusted eliminations exactly once after retry.
     verified: slice.flatMap((f) => accepted.has(f.id)
       ? joinVerifyDeltas([f], [accepted.get(f.id)]) : degradedSlice([f])),

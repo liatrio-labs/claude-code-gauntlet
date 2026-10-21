@@ -476,10 +476,14 @@ def operational_case(population_case, score_case, tmp_path, request, monkeypatch
         "operational",
         "2026-10-20T00:00:00Z",
         "2026-10-21T00:00:00Z",
-        fp,
+        fp.controls(),
         tuple(subsets["gate"]),
         (0, 1, 2),
         1,
+        {
+            a: replace(fp, treatment_git_sha=a).treatment()
+            for a in ("baseline", "candidate")
+        },
     )
     window_path = tmp_path / "window.json"
     validity.exclusive_json(window_path, window.wire())
@@ -496,16 +500,19 @@ def operational_case(population_case, score_case, tmp_path, request, monkeypatch
                 active_window = replace(
                     window,
                     window_id="subscription-window",
-                    expected=replace(fp, auth_mode="subscription"),
+                    expected=replace(fp.controls(), auth_mode="subscription"),
                 )
                 active_path = tmp_path / "subscription-window.json"
                 validity.exclusive_json(active_path, active_window.wire())
-            active_fp = active_window.expected
+            active_fp = replace(
+                fp, auth_mode=active_window.expected.auth_mode, treatment_git_sha=arm
+            )
             directory = tmp_path / f"{arm}-{r}"
             directory.mkdir()
             (directory / "state").mkdir()
             run_manifest = {
                 "run_id": directory.name,
+                "started": "2026-10-20T10:00:00Z",
                 "child_auth": active_fp.auth_mode,
                 "child_model": "claude-session-1",
                 "pr_urls": list(window.pr_urls),
@@ -525,7 +532,7 @@ def operational_case(population_case, score_case, tmp_path, request, monkeypatch
                     u: read_json(DEFAULT_ROOT / "shas.json")[u] for u in window.pr_urls
                 },
                 "baseline_equivalence_receipt": {
-                    "release_sha": "94ea095a",
+                    "release_sha": "839b1886",
                     "merge_sha": arm,
                     "evidence_refs": ["synthetic equivalence"],
                 },
@@ -647,7 +654,12 @@ def test_operational_compare_complete_matrix_and_extension_prefix_refusal(
 ):
     spec, packets, window = operational_case
     for packet in packets.values():
-        assert c._packet_run(packet)["provenance"] == window.expected.wire()
+        assert (
+            validity.fingerprint_from_wire(
+                c._packet_run(packet)["provenance"]
+            ).controls()
+            == window.expected
+        )
         assert observations.load_packet(packet.root).score_ref == packet.score_ref
     report = c.compare_arms(spec, packet_loader=packets.__getitem__)
     assert report.promotion.verdict == "pass"

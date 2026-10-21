@@ -32,6 +32,14 @@ def emit_trace(tmp_path, mode="return"):
         encoding="utf-8",
     )
     receipt = read_json(path.with_suffix(".json.receipt.json"))
+    raw = read_json(path)
+    by_id = {v["version_id"]: v for v in raw["versions"]}
+    receipt["payload"]["postReview"]["findings"] = [
+        by_id[v]["finding"]
+        for s in raw["snapshots"]
+        if s["stage"] == "select"
+        for v in s["finding_version_ids"]
+    ]
     return stages.load_trace(path, expected_sha256=receipt["sha256"]), path, receipt
 
 
@@ -45,7 +53,7 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
     assert tuple(s.stage for s in trace.snapshots) == stages.get_args(stages.Stage)
     assert set(receipt["payload"]["checkpoints"]["phases"]) == {"challenge"}
     assert "snapshots" not in receipt["payload"]["checkpoints"]
-    first = next(v for v in trace.versions if v.model_finding_id == "FILTER")
+    first = next(v for v in trace.versions if v.finding.get("id") == "FILTER")
     assert first.projection()["confidence"] == 65
     changed = [
         v
@@ -57,7 +65,17 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
 
 @pytest.mark.parametrize(
     "mutation",
-    ["hash", "cycle", "reference", "dimension", "provenance", "stage", "flag", "nan"],
+    [
+        "hash",
+        "duplicate_version",
+        "reference",
+        "dimension",
+        "provenance",
+        "stage",
+        "flag",
+        "duplicate_occurrence",
+        "reason",
+    ],
 )
 def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
     _, path, receipt = emit_trace(tmp_path)
@@ -66,8 +84,8 @@ def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
     if mutation == "hash":
         expected = "0" * 64
     else:
-        if mutation == "cycle":
-            version["base_version_id"] = version["version_id"]
+        if mutation == "duplicate_version":
+            raw["versions"].append(dict(version))
         elif mutation == "reference":
             snapshot["finding_version_ids"].append("absent")
         elif mutation == "dimension":
@@ -76,10 +94,12 @@ def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
             version["finding"]["trace_id"] = "forged"
         elif mutation == "stage":
             snapshot["stage"] = "deliver"
+        elif mutation == "reason":
+            raw["snapshots"][1]["decisions"][0]["reason_code"] = None
         elif mutation == "flag":
             snapshot["executed"] = 1
         else:
-            version["finding"]["confidence"] = float("nan")
+            snapshot["finding_version_ids"].append(snapshot["finding_version_ids"][0])
         path.write_text(json.dumps(raw), encoding="utf-8")
         expected = file_hash(path)
     with pytest.raises((ValueError, KeyError, TypeError)):
@@ -120,7 +140,9 @@ def test_score_to_dimension_credit_and_loss_funnel(
         stages.collect_trace(pr)
     if trace_status == "holdback":
         raw = read_json(path)
-        tid = next(v.trace_id for v in trace.versions if v.model_finding_id == "FILTER")
+        tid = next(
+            v.trace_id for v in trace.versions if v.finding.get("id") == "FILTER"
+        )
         decision = stages.StageDecision(
             tid, "held_back", "validation_skipped", None, ()
         )
@@ -139,7 +161,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
         )
     discovery = next(s for s in trace.snapshots if s.stage == "discover")
     versions = {v.version_id: v for v in trace.versions}
-    initial = {versions[v].model_finding_id: v for v in discovery.finding_version_ids}
+    initial = {versions[v].finding.get("id"): v for v in discovery.finding_version_ids}
     keep, lost = initial["GROUP"], initial["FILTER"]
     score_case.hits.update({"*": (), "deep-review": (0,), "discover:" + lost: (2,)})
     if trace_status == "judge_failed":
@@ -195,3 +217,40 @@ def test_score_to_dimension_credit_and_loss_funnel(
         assert funnel.unavailable_count == len(loaded.observations) - 1
         assert sum(dict(funnel.losses).values()) == 0
         assert all(r.survives is None for r in rows if r.stage == "discover")
+
+
+def test_trace_vocabularies_match_workflow_source():
+    values = json.loads(
+        subprocess.check_output(
+            [
+                "node",
+                "--input-type=module",
+                "-e",
+                "import {TRACE_STAGES,TRACE_REASONS} from './workflows/src/measurementTrace.js'; console.log(JSON.stringify([TRACE_STAGES,TRACE_REASONS]));",
+            ],
+            cwd=ROOT,
+            text=True,
+            encoding="utf-8",
+        )
+    )
+    assert values == [
+        list(stages.get_args(stages.Stage)),
+        list(stages.get_args(stages.ReasonCode)),
+    ]
+
+
+def test_collection_hashes_top_level_trace_and_persists_availability(tmp_path):
+    _, trace_path, receipt = emit_trace(tmp_path)
+    directory = tmp_path / "pr"
+    (directory / "workflows").mkdir(parents=True)
+    (directory / "workflows/wf_current.json").write_text(
+        json.dumps({"result": receipt["out"]}), encoding="utf-8"
+    )
+    collected = stages.collect_trace(directory)
+    assert collected.status == "available" and collected.reason is None
+    binding = read_json(directory / "measurement-artifact.json")
+    assert binding["sha256"] == file_hash(trace_path)
+    assert (directory / binding["path"]).read_bytes() == trace_path.read_bytes()
+    assert stages.collect_trace(directory) == collected
+    missing = stages.collect_trace(tmp_path / "missing")
+    assert missing.status == "unavailable" and missing.reason

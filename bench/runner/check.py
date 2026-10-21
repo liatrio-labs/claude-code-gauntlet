@@ -532,20 +532,15 @@ def _finding_identity(finding):
 
 
 def workflow_stage_outcomes(pr_dir):
-    """Read execution outcomes from Workflow returns, independently of optional traces."""
-    failures, disclosures = set(), set()
-    reports = []
-    phases = []
+    """Execution failures remain invalid even when optional tracing is off."""
+    failures, disclosures, reports, phases = set(), set(), [], []
     for path in (Path(pr_dir) / "workflows").glob("*.json"):
         try:
             record = _load_json(path)
         except json.JSONDecodeError:
-            # Legacy smoke artifacts can carry only a recoverable scriptPath.
-            # Identity and writer gates still inspect those raw carriers.
             continue
         script_path, name, _ = workflow_record_fields(record)
-        # Collection proves bundle identity. Archived outcomes must remain readable
-        # after the operator switches to the other treatment's bundle bytes.
+        # Captured outcomes must stay readable after switching treatment bundles.
         if name != PIPELINE_META_NAME and not (
             isinstance(script_path, str)
             and script_path_matches_repo(
@@ -559,18 +554,16 @@ def workflow_stage_outcomes(pr_dir):
         reports.append(out)
         phases.append((out.get("checkpoints") or {}).get("phases") or {})
         holder = record.get("args") or {}
-        if isinstance(holder, str):
-            holder = json.loads(holder)
+        holder = json.loads(holder) if isinstance(holder, str) else holder
         if isinstance(holder, dict) and holder.get("checkpoints"):
             disclosures.add(
                 "Checkpoint replay used; recorded stage failures remain invalid."
             )
     for path in Path(pr_dir).glob("code-gauntlet-checkpoint-all-*.json"):
         try:
-            checkpoint = _load_json(path)
+            phases.append(_load_json(path).get("phases") or {})
         except json.JSONDecodeError:
             continue
-        phases.append(checkpoint.get("phases") or {})
     for phase in phases:
         discover, verify = phase.get("discover") or {}, phase.get("verify") or {}
         reports.append(
@@ -691,6 +684,14 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
             "stats": stats,
             "refused": True,
         }
+
+    if manifest and manifest.get("measurement_window"):
+        from bench.runner.validity import measurement_context
+
+        try:
+            measurement_context(manifest)
+        except (ValueError, TypeError, KeyError, OSError) as exc:
+            failures.append(str(exc))
 
     # G1: every declared pr_urls entry must have a terminal ok checkpoint.
     # Absence of a state file means pending (crash/kill mid-run) — must fail.

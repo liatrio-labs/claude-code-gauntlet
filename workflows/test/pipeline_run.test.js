@@ -98,14 +98,13 @@ for (const row of WRAPPER_ROWS) test(`persisted wrapper bytes: ${row.name}`, asy
   assert.equal(out.ok, true);
   if (row.name === 'benign context') {
     assert.deepEqual(Object.keys(payload), ['findings', 'postReview', 'report', 'checkpoints']);
-    assert.deepEqual(Object.keys(payload.postReview), ['owner', 'repo', 'pr_number', 'sha', 'platform', 'web_origin', 'review_body', 'run_nonce', 'findings']);
+    assert.deepEqual(Object.keys(payload.postReview), ['owner', 'repo', 'pr_number', 'sha', 'platform', 'web_origin', 'review_body', 'findings']);
     assert.equal(payload.postReview.owner, 'o');
     assert.equal(payload.postReview.repo, 'r');
     assert.equal(payload.postReview.pr_number, 279);
     assert.equal(payload.postReview.sha, '0123456789abcdef0123456789abcdef01234567');
     assert.equal(payload.postReview.platform, 'github');
     assert.equal(payload.postReview.web_origin, 'https://github.com');
-    assert.equal(payload.postReview.run_nonce, args.nonce);
   }
   const body = payload.postReview.review_body;
   assert.equal(body, WRAPPER_BODY);

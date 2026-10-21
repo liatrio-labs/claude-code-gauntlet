@@ -941,7 +941,13 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
             raise ValueError("simulation source run lacks its auth-specific window")
         window = validity.load_window(Path(run["measurement_window"]))
         if (
-            run.get("provenance") != window.expected.wire()
+            validity.check_window(
+                window,
+                validity.fingerprint_from_wire(run["provenance"]),
+                arm=run["arm"],
+                now=run["started"],
+            ).state
+            != "valid"
             or run.get("window_id") != window.window_id
             or run.get("window_sha256")
             != validity.file_hash(Path(run["measurement_window"]))
@@ -954,7 +960,7 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
             or run.get("child_auth") != window.expected.auth_mode
         ):
             raise ValueError("invalid simulation source window/run identity")
-        fp = window.expected.wire()
+        fp = asdict(window.expected)
         fp.pop("auth_mode")
         shared = {
             "fingerprint_without_auth": fp,
@@ -962,7 +968,7 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
             "epoch_hashes": dict(packet.manifest.epoch_hashes),
             "profile": value["profile"],
             "populations": {p.name: p.content_sha256 for p in pops},
-            "treatment": run.get("treatment_git_sha", run.get("git_sha")),
+            "treatment": asdict(window.arms[run["arm"]]),
             "agent_read_sha256": run["agent_read_sha256"],
             "instrumentation_version": run["instrumentation_version"],
             "pr_identities": run.get("pr_identities"),
@@ -987,7 +993,8 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
             if (
                 attempt.run_id != ref.run_id
                 or attempt.pr_url != url
-                or attempt.validity.observed != window.expected
+                or attempt.validity.observed
+                != validity.fingerprint_from_wire(run["provenance"])
                 or attempt.validity.window_id != window.window_id
                 or attempt.validity.state not in ("valid", "operational_failure")
             ):

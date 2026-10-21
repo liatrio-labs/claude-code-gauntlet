@@ -50,6 +50,6 @@ def test_proxy_relays_plain_json_and_records_only_usage(tmp_path):
                 assert json.loads(response.read()) == REPLY
     finally:
         server.shutdown()
-    text = receipt.read_text()
+    text = receipt.read_text(encoding="utf-8")
     assert "SECRET-KEY" not in text and "PROMPT-TEXT" not in text
     assert total_cost(json.loads(text)) == (1000 * 5.0 + 100 * 25.0) / 1_000_000

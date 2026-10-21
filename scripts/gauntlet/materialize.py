@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TypedDict
@@ -36,7 +34,7 @@ class SourceSelection:
 @dataclass(frozen=True, slots=True)
 class MaterializePlan:
     entries: list[PlanEntry]
-    plan_path: str | None
+    plan_path: str
 
 
 class MaterializeReceipt(TypedDict):
@@ -113,23 +111,8 @@ def plan_entries(
                 f"inside {output_root}"
             )
             return None
-        if (
-            "sha256" in entry
-            and entry["sha256"] != hashlib.sha256(text.encode("utf-8")).hexdigest()
-        ):
-            errors.append(f"entry {index} byte hash mismatch")
-            return None
         checked.append(PlanEntry(path, text))
     plan_path = payload.get("planPath")
-    if plan_path is None and all(
-        re.fullmatch(
-            r"code-gauntlet-measurement-[A-Za-z0-9]+\.json",
-            os.path.basename(entry.path),
-        )
-        and isinstance(raw.get("sha256"), str)
-        for entry, raw in zip(checked, entries, strict=True)
-    ):
-        return MaterializePlan(checked, None)
     if not isinstance(plan_path, str) or not plan_path:
         errors.append("persistReturn names no persist plan to derive from")
         return None
@@ -232,8 +215,6 @@ def _materialize(
     if not write_entries(entries, materialized, errors):
         return _receipt(False, source, scanned, materialized, None, gaps, errors)
 
-    if plan_path is None:
-        return _receipt(True, source, scanned, materialized, None, gaps, errors)
     receipt = assemble(plan_path)
     # plan_entries proved plan_path is among the entries; the default is unreachable.
     plan_text = {entry.path: entry.text for entry in entries}.get(plan_path, "")

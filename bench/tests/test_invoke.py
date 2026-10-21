@@ -982,7 +982,10 @@ class InvokeReviewTest(InvokeTestBase):
         self.assertIn("-p", argv)
         prompt = argv[argv.index("-p") + 1]
         self.assertEqual(
-            prompt, "/code-gauntlet:code-gauntlet {}".format(PR["pr_number"])
+            prompt,
+            "/code-gauntlet:code-gauntlet {}. Set measurementTrace=true in every Workflow args object for this benchmark review.".format(
+                PR["pr_number"]
+            ),
         )
         # Guard the exact regression: the bare/flat command must not reappear.
         self.assertNotEqual(prompt, "/code-gauntlet {}".format(PR["pr_number"]))

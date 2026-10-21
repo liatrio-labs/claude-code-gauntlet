@@ -25,7 +25,8 @@ candidates before recording new baselines. No paid result is asserted here.
 
 Stage trace, complete attempt/window validity, comparisons, simulation and leak
 coverage are subsequent code stages. No real trusted usage-limit/reset fixture
-exists; synthetic detector fixtures and an empty positive-signature registry
+exists. Limit recognition is unnecessary: every non-ok outcome is retryable,
+and recurrence uses the recorded reset time rather than diagnostic signatures.
 are required in the validity stage. Live migration smoke and a known-loss trace
 remain external acceptance. Holdout reviews are excluded from migration tuning.
 
@@ -155,20 +156,10 @@ reported the outcome. They remain unscored but are retryable with
 `--retry-failed`; an all-degraded result is self-describing and commonly
 transient.
 
-Failure confirmation uses CLI result-envelope fields `api_error_status`,
-`terminal_reason`, `subtype`, and `errors`. Request identifiers, timestamps, and
-byte offsets are normalized before hashing diagnostics. API status 429 or any
-status at least 500 (including 529) is retryable `provider_transient`.
-A matching failure after the registered API retry or a documented subscription
-reset becomes an all-missed `operational_failure` cell. If neither attempt has a
-stable fingerprint, recurrence on the same PR counts with that basis and both
-failure reasons retained in the attempt evidence. Changed fingerprints remain
-invalid. Recorded failure-envelope fixtures do not establish quota detection;
-the production usage-limit signature registry remains empty.
+Any non-ok attempt is invalid and retryable. A second non-ok for the same PR
+in the same window is an all-missed `operational_failure` on API, or when its
+subscription retry started after the operator-recorded reset time. Attempt diagnostics do not affect this rule.
 
-Failures before child dispatch with no child spend, including `mirror_error`,
-are retryable setup attempts and require no subscription reset. They never count
-as operational misses. Incomplete SHA entries and input drift remain invalid.
 Measurement PR identity uses equal-length URL sets at preflight, comparison,
 and simulation. New measurement manifests and dispatch use window URL order.
 
@@ -286,18 +277,10 @@ and record the convention-dimension `rule_source` histogram for `documented_rule
 code-simplifier malformed StructuredOutput (PR-310 one-off) — not reproduced:
 9 dispatches across the 3 V3.1 measured runs, zero events.
 
-subscription usage-limit stall — unclassified: a limit hit is expected to block
-until the window resets, which surfaces as a watchdog `timeout` and is therefore
-indistinguishable from a genuine hang. Deferred deliberately: classifying it as
-its own invalid reason needs a reliable transcript signature, and no subscription
-run has produced one yet. `--retry-failed` after the reset recovers either way.
+subscription usage-limit stall: retry after the operator-recorded reset.
 ```
 
 The code-simplifier watch-item drop relies on this fact surviving issue deletion.
-The subscription entry is here for the same reason: it is the one idea the
-`--child-auth` work deferred rather than built, and it would otherwise live only
-in a closed issue. The observed failure mode, once a run shows one, belongs in
-[`README.md` → Usage limits](README.md#usage-limits).
 
 ## Contributor rule
 
@@ -318,27 +301,20 @@ The merge SHA is pending the orchestrator commit and merge.
 The historical mini baseline remains a separate captured run.
 The measurement trace input format is version `1`; discovery claims use the
 same pinned scorer as delivered findings.
-The reference bundle SHA256 is
-`966bd2e29926a0d632d151ee83ffc5ae1ff08c15db71c2ec636cdc05f79b653f`.
-The instrumented bundle SHA256 is
-`959f92cb29da616e4d65eaf39f9b6ff3285d7c9c1238c434b97e1ba4a996c45e`.
-Bundle equivalence is a one-time receipt for the trace stage. It compares review
-prompts, schemas, dispatch order and ordered GitHub and GitLab comment bytes
-without forge access or measurement model calls. The receipt remains pending.
+A one-time A2 receipt compares every agent prompt and schema, dispatch order and
+persisted artifacts against the v3.42.49 bundle at `839b1886`, with tracing on and
+off. All digests agree across three persistence modes and oversized-trace fallback.
+The PR body carries the commands and digest inventory; tests retain on/off identity
+and trace-leak checks without depending on historical git objects.
 
-Workflow capture is automatic and generic.
-Its `code-gauntlet-measurement-<sha>.json` artifact travels through
-`persistReturn.entries`, with its original byte SHA256, separately from the signed
-checkpoint.
-Primary persistence and recovery budgets take priority.
-An oversized trace is unavailable and cannot select a different persistence fallback.
-Replayed checkpoints give partial stage coverage.
-The post-review wrapper carries `run_nonce`, including for an empty delivery.
-Collection selects the successful Workflow return matching that nonce before
-binding trace bytes and the Workflow record hash to the captured attempt.
-Earlier records remain forensic evidence and do not invalidate the selected trace.
-Cap-hit counts count distinct PR attempts with a stage cap hit, including discovery,
-independently of bug-level terminal losses.
+Tracing is opt-in through `args.measurementTrace`. The bench requests it on both
+arms. The top-level `measurement.text` return stays outside `persistReturn`, so no
+measurement file enters a user's output directory. The bench hashes collected UTF-8
+bytes and records available/unavailable with a reason. Primary persistence and
+recovery budgets take priority; oversized traces become unavailable. Replay coverage
+is partial. Collection binds the single current successful Workflow return and its
+hash to the attempt. Multiple successful returns are unavailable rather than guessed.
+Cap-hit counts count distinct PR attempts independently of terminal bug losses.
 
 With `--attribution`, scoring evaluates only eliminated discovery versions as
 pseudo-tools in a separate vendored scorer pass. Delivered hits credit their
@@ -360,13 +336,11 @@ Synthetic code tests do not replace that live acceptance receipt.
 
 ## Window validity and planning status
 
-No real usage-limit/reset fixture exists. Production positive-signature recognition
-is disabled. Every validity record prints this limitation. Unknown subscription fast
-exits, timeouts and non-ok outcomes remain invalid and need explicit public reset
-evidence. Quoted quota notices, tool text and evaluator errors are never quota evidence.
-A single API overload remains invalid. Only the same structured code, phase and
-normalized diagnostic fingerprint recurring on a separate admissible attempt can
-be counted as an operational failure. Its full PR denominator remains present.
+Shared window controls are independent of each arm's git SHA, roster, models and
+effort declaration. Preflight checks both before mirrors or child spend. Reviews
+run one PR at a time. The immutable selected attempt retains review provenance;
+scoring context belongs to each score packet. First failures remain invalid and
+retryable, and admissible second failures retain the complete PR denominator.
 
 CLI auto-update control, effective effort behavior and provider snapshot availability
 remain UNVERIFIED until the orchestrator checks the installed CLI. New non-record runs

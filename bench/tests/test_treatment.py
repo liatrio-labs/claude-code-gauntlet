@@ -1,6 +1,6 @@
-"""Measurement refuses ambiguous treatments before any mirror or child work."""
+"""Treatment controls are checked before mirror or child work."""
 
-import subprocess
+import os
 from contextlib import nullcontext
 
 import pytest
@@ -32,7 +32,7 @@ def test_treatment_hash_covers_the_index_tree_and_dirty_files_are_refused(
     git("commit", "-qm", "baseline")
     original = v.agent_read_hash(root)
     v.require_clean_treatment(root)
-    (root / "untracked.txt").write_text("harmless untracked artifact", encoding="utf-8")
+    (root / "untracked.txt").write_text("scratch", encoding="utf-8")
     v.require_clean_treatment(root)
     target.write_text("dirty", encoding="utf-8")
     with pytest.raises(ValueError, match="clean tracked"):
@@ -41,32 +41,37 @@ def test_treatment_hash_covers_the_index_tree_and_dirty_files_are_refused(
     assert v.agent_read_hash(root) != original
     with pytest.raises(ValueError, match="clean tracked"):
         v.require_clean_treatment(root)
-    git("commit", "-qm", "candidate")
-    v.require_clean_treatment(root)
 
 
-@pytest.mark.parametrize("key", (*v.MODEL_OVERRIDE_KEYS, *v.EFFORT_KEYS))
-@pytest.mark.parametrize("value", ["ambient-override", ""])
+@pytest.mark.parametrize(
+    "key",
+    (
+        *v.MODEL_OVERRIDE_KEYS,
+        *v.EFFORT_KEYS,
+        "ANTHROPIC_BASE_URL",
+        "CLAUDE_CODE_USE_VERTEX",
+    ),
+)
+@pytest.mark.parametrize("value", ["override", ""])
 def test_ambient_model_or_effort_override_cannot_launch_a_child(
-    tmp_path, monkeypatch, window, key, value
+    tmp_path, monkeypatch, window, fingerprint, key, value
 ):
+    monkeypatch.setattr(v, "utc_now", lambda: "2026-10-20T12:00:00Z")
     for override in (*v.MODEL_OVERRIDE_KEYS, *v.EFFORT_KEYS):
         monkeypatch.delenv(override, raising=False)
     monkeypatch.setenv(key, value)
     path = tmp_path / "window.json"
     v.exclusive_json(path, window.wire())
     monkeypatch.setattr(v, "require_clean_treatment", lambda: None)
-    monkeypatch.setattr(v, "run_provenance", lambda **kw: window.expected.wire())
+    monkeypatch.setattr(
+        v,
+        "capture_fingerprint",
+        lambda **kw: (v.refuse_ambient_model_overrides(os.environ), fingerprint)[1],
+    )
     monkeypatch.setattr(run, "_gh_token_scope", lambda env: nullcontext())
     monkeypatch.setattr(run, "_judge_key_note", lambda *a: None)
-    calls = []
-    monkeypatch.setattr(
-        run.mirrors, "ensure_mirror", lambda *a, **kw: calls.append("mirror")
-    )
-    monkeypatch.setattr(
-        run.invoke, "invoke_review", lambda *a, **kw: calls.append("child")
-    )
     monkeypatch.setattr(run, "check_prereqs", lambda **kw: [])
+    calls = []
     monkeypatch.setattr(run, "_new_run", lambda *a: calls.append("child"))
     args = [
         "--measurement-window",
@@ -80,92 +85,25 @@ def test_ambient_model_or_effort_override_cannot_launch_a_child(
         "--child-model",
         "claude-session-1",
     ]
-    assert run.main(args) == 2
-    assert calls == []
-    monkeypatch.delenv(key)
-    assert run.main(args) == 0
-    assert calls == ["child"]
-
-
-@pytest.mark.parametrize("key", (*v.MODEL_OVERRIDE_KEYS, *v.EFFORT_KEYS))
-def test_fingerprint_refuses_ambient_overrides_before_policy_or_cli_probe(
-    tmp_path, key
-):
-    with pytest.raises(ValueError, match="ambient model/effort"):
-        v.capture_fingerprint(
-            cli_path=tmp_path / "absent-cli",
-            child_model="claude-session-1",
-            auth_mode="api",
-            epoch=None,
-            judge_pin="judge",
-            adjudicator_pin="judge",
-            env={key: "override"},
-            policy={},
-            model_probe=lambda *a: pytest.fail("policy probe launched"),
-            cli_probe=lambda *a: pytest.fail("CLI probe launched"),
-        )
-
-
-def test_dirty_treatment_refused_at_entry_before_loading_window(
-    tmp_path, monkeypatch, capsys
-):
-    def status(argv, **kwargs):
-        assert argv == ["git", "status", "--porcelain", "--untracked-files=no"]
-        return subprocess.CompletedProcess(argv, 0, " M workflows/pipeline.js\n")
-
-    monkeypatch.setattr(v.subprocess, "run", status)
-    assert (
-        run.main(
-            [
-                "--measurement-window",
-                str(tmp_path / "absent-window"),
-                "--tier",
-                "subset",
-            ]
-        )
-        == 2
-    )
-    assert "clean tracked files" in capsys.readouterr().err
+    # Empty provider selectors are inactive; empty model selectors are still overrides.
+    refused = value != "" or key in (*v.MODEL_OVERRIDE_KEYS, *v.EFFORT_KEYS)
+    assert run.main(args) == (2 if refused else 0)
+    assert calls == ([] if refused else ["child"])
 
 
 def test_dirty_treatment_stops_per_pr_guard_before_mirror_or_dispatch(
     tmp_path, monkeypatch
 ):
-    from bench.runner import checkpoint
+    from bench.runner.checkpoint import Checkpoint
 
-    manifest = {
-        "measurement_window": "synthetic-window",
-        "epoch_id": "epoch",
-        "provenance": {},
-        "treatment_git_sha": "treatment",
-        "agent_read_sha256": "tree",
-    }
-    v.exclusive_json(tmp_path / "run.json", manifest)
-    monkeypatch.setattr(v, "run_provenance", lambda **kw: {})
-    monkeypatch.setattr(v, "load_window", lambda path: None)
-    monkeypatch.setattr(v, "agent_read_hash", lambda: "tree")
-    monkeypatch.setattr(run, "_git_full_sha", lambda: "treatment")
+    v.exclusive_json(tmp_path / "run.json", {"measurement_window": "window"})
     monkeypatch.setattr(
         v,
         "require_clean_treatment",
         lambda: (_ for _ in ()).throw(ValueError("dirty tracked file")),
     )
-    calls = []
     monkeypatch.setattr(
-        run.mirrors, "ensure_mirror", lambda *a, **kw: calls.append("mirror")
-    )
-    monkeypatch.setattr(
-        run.invoke, "invoke_review", lambda *a, **kw: calls.append("child")
+        run.mirrors, "ensure_mirror", lambda *a: pytest.fail("mirror before preflight")
     )
     with pytest.raises(ValueError, match="before mirror/child"):
-        run._run_prs(
-            tmp_path,
-            ["synthetic-pr"],
-            checkpoint.Checkpoint(tmp_path),
-            {},
-            set(),
-            60,
-            None,
-            {},
-        )
-    assert calls == []
+        run._run_prs(tmp_path, ["u"], Checkpoint(tmp_path), {}, set(), 60, None, {})

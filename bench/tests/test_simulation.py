@@ -358,7 +358,7 @@ def test_mixed_auth_library_validates_separate_windows_and_shared_model_identity
     run = read_json(path)
     own_path = Path(run["measurement_window"])
     own = validity.load_window(own_path)
-    fp = own.expected
+    fp = validity.fingerprint_from_wire(run["provenance"])
     planning = replace(spec.rule, frozen=False)
     value = {
         "schema_version": 1,
@@ -392,7 +392,7 @@ def test_mixed_auth_library_validates_separate_windows_and_shared_model_identity
     changed_fp = replace(
         fp, resolved_models=(*fp.resolved_models, ("unexpected", "claude-new-model"))
     )
-    changed = replace(own, expected=changed_fp)
+    changed = replace(own, arms={**own.arms, run["arm"]: changed_fp.treatment()})
     own_path.write_text(json.dumps(changed.wire()), encoding="utf-8")
     run.update(provenance=changed_fp.wire(), window_sha256=validity.file_hash(own_path))
     path.write_text(json.dumps(run), encoding="utf-8")
