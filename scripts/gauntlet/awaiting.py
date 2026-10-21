@@ -100,20 +100,27 @@ def default_timeout_seconds(environ: Mapping[str, str] | None = None) -> int:
 
 # Replace entries with a different key so a byte-consuming caller cannot write hollow
 # files.
-# Materialize reads the original task file; every other terminal key stays untouched.
+# Materialize and benchmark collection read the original task file.
 def elide_persist_return(
     terminal: Mapping[str, object], resolved_path: str | None
 ) -> Mapping[str, object]:
+    out = dict(terminal)
+    measurement = out.get("measurement")
+    if isinstance(measurement, dict):
+        out["measurement"] = {
+            "status": measurement.get("status"),
+            "chars": len(measurement.get("text", "")),
+            **({"reason": measurement["reason"]} if "reason" in measurement else {}),
+        }
     payload = terminal.get("persistReturn")
     if not isinstance(payload, dict):
-        return terminal
+        return out
     entries = payload.get("entries")
     entries = entries if isinstance(entries, list) else []
     slim = dict((k, v) for (k, v) in payload.items() if k != "entries")
     slim["elided"] = True
     slim["resolvedPath"] = resolved_path
     slim["paths"] = [e.get("path") for e in entries if isinstance(e, dict)]
-    out = dict(terminal)
     out["persistReturn"] = slim
     return out
 

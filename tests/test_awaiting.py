@@ -210,6 +210,37 @@ def test_scan_reason_marker(tmp_path, monkeypatch, capsys):
     assert "searched" not in marker
 
 
+@pytest.mark.parametrize("persist", [False, True])
+@pytest.mark.parametrize(
+    "measurement",
+    [
+        {"status": "available", "text": "trace-only-" * 5000},
+        {"status": "unavailable", "reason": "return_budget"},
+    ],
+)
+def test_measurement_text_never_reaches_orchestrator_stdout(
+    tmp_path, capsys, persist, measurement
+):
+    target = tmp_path / "task.output"
+    terminal = {
+        "ok": True,
+        "stats": {},
+        "measurement": measurement,
+        **({"persistReturn": {"entries": []}} if persist else {}),
+    }
+    original = json.dumps({"result": terminal})
+    target.write_text(original, encoding="utf-8")
+    assert awaiting.CLI.invoke([str(target), "--timeout-seconds", "0"]) == 0
+    stdout = capsys.readouterr().out
+    assert "trace-only-" not in stdout and '"text"' not in stdout
+    assert json.loads(stdout)["measurement"] == {
+        "status": measurement["status"],
+        "chars": len(measurement.get("text", "")),
+        **({"reason": measurement["reason"]} if "reason" in measurement else {}),
+    }
+    assert target.read_text(encoding="utf-8") == original
+
+
 def test_elision(tmp_path, capsys):
     target = tmp_path / "task.output"
     terminal = {

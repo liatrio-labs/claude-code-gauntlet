@@ -323,6 +323,7 @@ const DIMENSIONS = deepFreeze([
       promptExtra: null },
 ]);
 const PIPELINE_FINDING_FIELDS = deepFreeze([
+  'trace_id', 'discovery_agent', 'discovery_dimension',
   'removed_test',
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
@@ -1431,6 +1432,79 @@ function validateConfigEcho(args, errors, table = KNOB_REGISTRY) {
     }
   }
 }
+// --- measurementTrace.js ---
+const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'holdback', 'select', 'deliver'];
+const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'unknown'];
+const traceHistory = new WeakMap();
+const stageDecisions = new WeakMap();
+const decisionsFor = (output) => stageDecisions.get(output) || [];
+function createMeasurementTrace(nonce) {
+  const trace = { schema_version: 1, run_nonce: nonce,
+    versions: [], snapshots: [], complete: false };
+  traceHistory.set(trace, new Map());
+  return trace;
+}
+function measurementDecisions(output, decisions) {
+  if (decisions.length) stageDecisions.set(output, deepClone(decisions));
+  return output;
+}
+function traceDecision(finding, reason_code, reason, related = [], decision = 'eliminated') {
+  return { trace_id: finding.trace_id, decision, reason_code, reason: reason || null, related_trace_ids: related };
+}
+function eliminationDecisions(output) {
+  const codes = { threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
+    'suppressed:intentional': 'suppression', 'suppressed:generated': 'suppression',
+    'challenge:removed': 'challenge_removed', 'challenge:downgraded': 'challenge_downgraded_removed' };
+  return (output.eliminated || []).filter((f) => f.trace_id)
+    .map((f) => traceDecision(f, codes[f.eliminated_by] || 'unknown', f.elimination_reason));
+}
+function stampDiscovery(trace, finding, spec, dispatch, occurrence) {
+  if (!finding || typeof finding !== 'object' || Array.isArray(finding)) return finding;
+  const out = finding;
+  out.trace_id = `${trace.run_nonce}:${dispatch}:${occurrence}`;
+  out.discovery_agent = spec.agentType.split(':').pop();
+  out.discovery_dimension = spec.dimensions.includes(out.dimension) ? out.dimension : 'unknown';
+  return out;
+}
+function traceVersion(trace, finding) {
+  if (!finding || typeof finding.trace_id !== 'string') return null;
+  const copy = deepClone(finding);
+  const fingerprint = JSON.stringify(copy);
+  const repeated = traceHistory.get(trace).get(fingerprint);
+  if (repeated) return repeated;
+  const version_id = `v${trace.versions.length}`;
+  trace.versions.push({ version_id, trace_id: copy.trace_id,
+    discovery_agent: copy.discovery_agent || 'unknown', discovery_dimension: copy.discovery_dimension || 'unknown', finding: copy });
+  traceHistory.get(trace).set(fingerprint, version_id);
+  return version_id;
+}
+function recordStage(trace, stage, output, details = {}) {
+  if (!trace) return;
+  if (!TRACE_STAGES.includes(stage)) throw new Error('unknown measurement stage');
+  const existing = trace.snapshots.findIndex((s) => s.stage === stage);
+  if (existing >= 0 && details.replayed) { trace.snapshots[existing].replayed = true; return; }
+  if (existing >= 0) trace.snapshots = trace.snapshots.slice(0, existing);
+  const findings = Array.isArray(output) ? output : output.findings || output.filtered || [];
+  const decisions = [...decisionsFor(output), ...(details.decisions || [])];
+  for (const finding of details.removed || output.eliminated || []) traceVersion(trace, finding);
+  trace.snapshots.push({ sequence: trace.snapshots.length, stage,
+    finding_version_ids: findings.map((f) => traceVersion(trace, f)).filter((id) => id !== null),
+    decisions: deepClone(decisions), executed: details.executed !== false, replayed: !!details.replayed,
+    coverage: details.coverage || (details.replayed ? 'partial' : 'complete'),
+    cap: details.cap ?? null, cap_hit: !!details.cap_hit });
+}
+function appendMeasurement(envelope, trace) {
+  if (!trace) return envelope;
+  const candidate = { ...envelope, measurement: { status: 'available', text: JSON.stringify(trace) } };
+  if (JSON.stringify(candidate).length <= RETURN_CHAR_BUDGET) return candidate;
+  const fallback = { ...envelope, measurement: { status: 'unavailable', reason: 'return_budget' } };
+  return JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET ? fallback : envelope;
+}
+function stripTraceFields(value) {
+  if (!value || typeof value !== 'object') return;
+  for (const key of ['trace_id', 'discovery_agent', 'discovery_dimension']) delete value[key];
+  for (const child of Object.values(value)) stripTraceFields(child);
+}
 // --- discover.js ---
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
 async function summarize(ctx, input) {
@@ -1604,6 +1678,9 @@ async function discover(ctx, input) {
   const results = await ctx.parallel(thunks);
   const gaps = [];
   const findings = [];
+  const intake = [];
+  const decisions = [];
+  const trace = inp.measurementTrace;
   const degradedDims = [];
   let droppedAuditOverlaps = 0;
   const schemaActive = conditionalSchemaActive(policy);
@@ -1614,6 +1691,8 @@ async function discover(ctx, input) {
       const checked = checkRemovedTestAudit(inventory, res.removed_test_audit, inp.repoRoot);
       removedTestAudit = checked.audit;
       auditLosses = checked.findings;
+      if (trace) auditLosses = auditLosses.map((f, n) => stampDiscovery(trace, f, spec, i, `synthetic-${n}`));
+      if (trace) intake.push(...auditLosses);
       findings.push(...auditLosses);
     }
     if (res === null || res === undefined) {
@@ -1630,10 +1709,13 @@ async function discover(ctx, input) {
       degradedDims.push(...spec.dimensions);
       return;
     }
-    for (const f of list) {
+    for (const [occurrence, raw] of list.entries()) {
+      const f = trace ? stampDiscovery(trace, raw, spec, i, occurrence) : raw;
+      if (trace) intake.push(f);
       const normalized = repoRelativeFindingPath(inp.repoRoot, f.file);
       if (auditLosses.some((loss) => normalized.file === loss.file && f.line_start === loss.line_start)) {
         droppedAuditOverlaps += 1;
+        if (trace) decisions.push(traceDecision(f, 'audit_overlap', 'removed-test audit represents this anchor'));
         continue;
       }
       delete f.removed_test;
@@ -1645,6 +1727,8 @@ async function discover(ctx, input) {
       gaps.push(`${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
     }
   });
+  if (trace) recordStage(trace, 'discover', intake, {
+    coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
   if (droppedAuditOverlaps > 0) removedTestAudit.duplicates_dropped = droppedAuditOverlaps;
   if (inventory.omitted > 0) removedTestAudit.omitted = inventory.omitted;
   if (removedTestAudit.status !== 'ran-clean') {
@@ -1677,13 +1761,13 @@ async function discover(ctx, input) {
   if (droppedNoLineEnd > 0) {
     gaps.push(`discover: ${droppedNoLineEnd} finding(s) emitted suggested_fix_code without line_end — field dropped (a patch must state its range)`);
   }
-  return {
+  return measurementDecisions({
     findings,
     gaps,
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
-  };
+  }, decisions);
 }
 function discoverPrompt(inp, spec) {
   const ctxLine = inp.contextLine || '';
@@ -4509,7 +4593,7 @@ function normalizeFindingPath(finding, repoRoot) {
   }
   return { valid: true, rewritten: false };
 }
-function normalizeFindingPaths(findings, repoRoot) {
+function normalizeFindingPaths(findings, repoRoot, decisions = []) {
   const valid = [];
   const warnings = [];
   let pathRewrites = 0;
@@ -4521,6 +4605,7 @@ function normalizeFindingPaths(findings, repoRoot) {
     const result = normalizeFindingPath(finding, repoRoot);
     if (!result.valid) {
       warnings.push(result.warning);
+      if (finding.trace_id) decisions.push(traceDecision(finding, 'invalid_path', result.warning));
       continue;
     }
     if (result.rewritten) pathRewrites += 1;
@@ -4547,7 +4632,7 @@ function normalizeFindingPaths(findings, repoRoot) {
   }
   return { valid, warnings, path_rewrites: pathRewrites };
 }
-function validateFindings(findings) {
+function validateFindings(findings, decisions = []) {
   const valid = [];
   const warnings = [];
   for (const f of findings) {
@@ -4561,7 +4646,10 @@ function validateFindings(findings) {
         break;
       }
     }
-    if (reject) continue;
+    if (reject) {
+      if (f.trace_id) decisions.push(traceDecision(f, 'invalid_shape', warnings[warnings.length - 1]));
+      continue;
+    }
     const dim = 'dimension' in f ? f.dimension : undefined;
     if (dim === null || dim === undefined) {
       warnings.push(`[${fid}] Missing 'dimension' field — finding kept with warning`);
@@ -4576,6 +4664,7 @@ function merge(findingsByAgent, meta) {
   const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
   const agents = M.agents;
   const allWarnings = [];
+  const decisions = [];
   const selected = {};
   for (const agent of agents) {
     const group = (findingsByAgent || {})[agent] || [];
@@ -4597,15 +4686,15 @@ function merge(findingsByAgent, meta) {
   }
   for (const [agent, findings] of Object.entries(selected)) injectAgentField(findings, agent);
   const allFlat = Object.values(selected).flat();
-  const { valid, warnings: preValWarnings } = validateFindings(allFlat);
+  const { valid, warnings: preValWarnings } = validateFindings(allFlat, decisions);
   let droppedNoId = 0;
   for (const f of allFlat) {
     const fid = f.id;
     if (fid === undefined || fid === null || fid === '') droppedNoId += 1;
   }
-  const { merged, duplicatesResolved } = dedupById(valid);
+  const { merged, duplicatesResolved } = dedupById(valid, decisions);
   const validationWarnings = allWarnings.concat(preValWarnings);
-  return {
+  return measurementDecisions({
     findings: merged,
     base_branch: M.base_branch,
     head_sha: M.head_sha,
@@ -4623,7 +4712,7 @@ function merge(findingsByAgent, meta) {
       truncation_warnings: [],
       validation_warnings: validationWarnings,
     },
-  };
+  }, decisions);
 }
 function mergeStage(discoverOut, meta) {
   const out = discoverOut || { findings: [] };
@@ -4640,14 +4729,17 @@ function mergeStage(discoverOut, meta) {
     : (Object.keys(byAgent).length ? Object.keys(byAgent) : AGENTS.map(shortAgentName));
   return merge(byAgent, { ...M, agents });
 }
-function dedupById(findings) {
+function dedupById(findings, decisions = []) {
   const seen = new Map();
   let duplicatesResolved = 0;
   let droppedNoId = 0;
   for (const finding of findings) {
     const fid = finding.id;
     if (fid === undefined || fid === null) { droppedNoId += 1; continue; }
-    if (seen.has(fid)) duplicatesResolved += 1;
+    if (seen.has(fid)) {
+      duplicatesResolved += 1;
+      if (finding.trace_id) decisions.push(traceDecision(finding, 'duplicate_id', 'first id wins', [seen.get(fid).trace_id].filter(Boolean)));
+    }
     else seen.set(fid, finding);
   }
   return { merged: [...seen.values()], duplicatesResolved, droppedNoId };
@@ -4714,7 +4806,7 @@ async function verifyStage(ctx, input) {
   const findings = inp.findings || [];
   const sliceSize = effectiveSliceSize(inp.limits || {}, findings.length);
   if (findings.length === 0) {
-    return { findings: [], verified: true, gaps: [], inputProof: emptyInputProof() };
+    return { findings: [], eliminated: [], verified: true, gaps: [], inputProof: emptyInputProof() };
   }
   const model = modelFor('code-gauntlet:executor', inp.policy || {});
   const baseBranch = effectiveVerifyBaseBranch((inp.verify || {}).baseBranch);
@@ -4735,6 +4827,7 @@ async function verifyStage(ctx, input) {
       + `executor dispatches at ${VERIFY_ATTEMPTS_PER_SLICE} attempts per slice. ${fanoutAdvice}`);
   }
   const out = [];
+  const eliminated = [];
   let degradedSlices = 0;
   const inputProof = { ...emptyInputProof(), slices: slices.length };
   const units = [
@@ -4791,6 +4884,7 @@ async function verifyStage(ctx, input) {
       else if (attempt.inputFault === 'missing') inputProof.missing += 1;
     }
     out.push(...attempt.verified);
+    if (inp.measurementTrace) eliminated.push(...attempt.eliminated);
     if (attempt.degraded) {
       degradedSlices += 1;
       gaps.push(verifyDegradeGap(`slice ${i}: ${attempt.reason}`, attempt.degraded, findings.length));
@@ -4798,7 +4892,8 @@ async function verifyStage(ctx, input) {
       gaps.push(`verify-slice-retry: slice ${i}'s first executor dispatch left ${attempt.retriedFindings} of ${slice.length} finding(s) unresolved (${attempt.reason}); a second dispatch repaired them`);
     }
   }
-  return { findings: out, verified: degradedSlices === 0, gaps, inputProof };
+  return measurementDecisions({ findings: out, eliminated, verified: degradedSlices === 0, gaps, inputProof },
+    eliminated.filter((f) => f.trace_id).map((f) => traceDecision(f, 'verify_eliminated', f.elimination_reason)));
 }
 function degradedSlice(slice) {
   return slice.map((f) => ({ ...pinNumericFields(f), origin: 'unknown' }));
@@ -4834,6 +4929,8 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
   }
   const degraded = slice.length - accepted.size;
   return {
+    eliminated: inp.measurementTrace ? slice.filter((f) => accepted.get(f.id)?.verified === false)
+      .map((f) => ({ ...f, elimination_reason: accepted.get(f.id).elimination_reason })) : [],
     verified: slice.flatMap((f) => accepted.has(f.id)
       ? joinVerifyDeltas([f], [accepted.get(f.id)]) : degradedSlice([f])),
     degraded,
@@ -5005,6 +5102,7 @@ const ARGS_FIELD_CHECKS = deepFreeze({
       message: `invalid {label}: {value} (expected distinct values from ${MODEL_ALIASES.join(', ')})` },
   ],
   changed: [
+    { key: 'measurementTrace', domain: 'boolean', message: 'measurementTrace must be a boolean when present' },
     { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
     { key: 'changedLines', domain: 'number', message: 'changedLines must be a number' },
   ],
@@ -6469,14 +6567,14 @@ function beltPartitionList(list) {
 function stripEliminatedList(list) {
   return list.map((finding) => applyInjectedProseStrip(finding));
 }
-function normalizePhaseFindings(name, out, replayed, args) {
+function normalizePhaseFindings(name, out, replayed, args, decisions = []) {
   if (!out || typeof out !== 'object') return;
   const warnings = [];
   let rejected = 0;
   let pathRewrites = 0;
   for (const [, field] of checkpointFindingListsForPhase(name)) {
     if (!Array.isArray(out[field])) continue;
-    const normalized = normalizeFindingPaths(out[field], args.repoRoot);
+    const normalized = normalizeFindingPaths(out[field], args.repoRoot, decisions);
     rejected += out[field].length - normalized.valid.length;
     pathRewrites += normalized.path_rewrites;
     out[field] = normalized.valid;
@@ -6670,14 +6768,32 @@ async function runWith(ctx, rawArgs) {
   const gaps = [...nullArgGaps, ...contextSizeGap, ...discardGap];
   const completed = [];
   const phaseOutputs = {};
+  const measurementTrace = A.measurementTrace === true ? createMeasurementTrace(A.nonce) : null;
+  let discoveryDecisions = [];
+  const measured = (envelope) => appendMeasurement(envelope, measurementTrace);
   let phaseReached = 'start';
   let phaseAttempting = null;
   const runPhase = async (name, thunk) => {
     phaseAttempting = name;
     const replayed = checkpoints[name] !== undefined;
     const out = replayed ? checkpoints[name] : await thunk();
-    if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A);
-    phaseOutputs[name] = out;
+    const rejected = [];
+    if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A, rejected);
+    if (name === 'discover') discoveryDecisions = [...decisionsFor(out), ...rejected];
+    if (measurementTrace && ['merge', 'verify', 'validate', 'filter', 'challenge'].includes(name)) {
+      recordStage(measurementTrace, name, out, { replayed,
+        ...(!replayed && ((name === 'verify' && out.verified === false) || (name === 'validate' && out.stats?.skipped > 0) || (name === 'challenge' && out.stats?.skipped > 0)) ? { coverage: 'partial' } : {}),
+        ...(name === 'merge' ? { decisions: [...discoveryDecisions, ...rejected] } : rejected.length ? { decisions: rejected } : {}),
+        ...(name === 'filter' || name === 'challenge' ? { decisions: [
+          ...rejected, ...eliminationDecisions(out),
+          ...(name === 'challenge' ? (out.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f, f.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed', f.challenge, [], 'held_back')) : []),
+        ], cap_hit: (out.unverified || []).some((f) => f.challenge === 'capped') } : {}),
+      });
+    } else if (name === 'discover' && replayed) recordStage(measurementTrace, name, out, { replayed });
+    if (name === 'verify') {
+      const { eliminated: _eliminated, ...recovery } = out;
+      phaseOutputs[name] = recovery;
+    } else phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
     return out;
@@ -6690,7 +6806,7 @@ async function runWith(ctx, rawArgs) {
     }));
     const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      agentFlags: derivedAgentFlags, limits, policy, contextLine, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
+      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
     }));
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
     gaps.push(...(summaryOut.gaps || []));
@@ -6702,7 +6818,7 @@ async function runWith(ctx, rawArgs) {
       gaps.push(`all-degraded: every active discovery dimension degraded (${(discoverOut.degraded || []).join(', ')}) — no discovery agent completed, so nothing was reviewed; failing loud instead of returning an empty clean review (see the per-agent gaps above; a model/provider mismatch is the most likely cause — the envelope's resolvedPolicy names the resolution)`);
       const resumable = { ...phaseOutputs };
       delete resumable.discover;
-      return {
+      return measured({
         ok: false,
         error: 'all-degraded: every active discovery dimension degraded — no review was performed',
         phaseReached,
@@ -6712,7 +6828,7 @@ async function runWith(ctx, rawArgs) {
         resolvedPolicy: resolvedPolicyEnvelope(policy),
         checkpoints: buildResumeCheckpoints(resumable),
         gaps,
-      };
+      });
     }
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
       base_branch: A.baseBranch, head_sha: A.headShaShort,
@@ -6720,7 +6836,7 @@ async function runWith(ctx, rawArgs) {
     gaps.push(...(mergeOut.gaps || []));
     limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || [], A.baseBranch, A);
     const verifyOut = await runPhase('verify', () => verifyStage(c, {
-      findings: mergeOut.findings || [], limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
+      findings: mergeOut.findings || [], measurementTrace, limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
       python: A.python, repoRoot: A.repoRoot, outputDir: A.outputDir, pluginRoot: A.pluginRoot,
       verify: { ...(A.verify || {}), baseBranch: A.baseBranch, diffPath: A.diffPath },
     }));
@@ -6750,6 +6866,14 @@ async function runWith(ctx, rawArgs) {
     gaps.push(...(challengeOut.gaps || []));
     const markedCount = applyChallengeReplayBelt(challengeOut);
     holdBackIncomplete(challengeOut);
+    if (measurementTrace) recordStage(measurementTrace, 'holdback', challengeOut, {
+      decisions: [
+        ...(challengeOut.eliminated || []).filter((f) => f.replay_belt && f.trace_id).map((f) => traceDecision(f, 'injection', f.elimination_reason)),
+        ...(challengeOut.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f,
+          f.validation === 'skipped' ? 'validation_skipped' : f.origin === 'unknown' ? 'verify_unproven' :
+            f.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed', f.validation === 'skipped' ? 'validation skipped' : f.origin === 'unknown' ? 'verification unproven' : f.challenge, [], 'held_back')),
+      ],
+    });
     if (markedCount > 0) {
       gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
     }
@@ -6760,6 +6884,14 @@ async function runWith(ctx, rawArgs) {
     ));
     const deliveryTier = A.delivery && A.delivery.tier;
     const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
+    if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
+      cap_hit: challengeOut.findings.length > postReview.length,
+      decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,
+        deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
+        'delivery selection', [], 'not_selected')),
+    });
+    if (measurementTrace) measurementTrace.complete = true;
+    if (measurementTrace) stripTraceFields(phaseOutputs);
     const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
     const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
       && (A.mode !== 'headless'
@@ -6819,7 +6951,7 @@ async function runWith(ctx, rawArgs) {
       policy,
     });
     gaps.push(...(writeOut.gaps || []));
-    return {
+    return measured({
       ok: true,
       phaseReached,
       stats: {
@@ -6850,9 +6982,9 @@ async function runWith(ctx, rawArgs) {
       checkpoints: writeOut.partial ? buildResumeCheckpoints(phaseOutputs) : { completed },
       gaps,
       ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
-    };
+    });
   } catch (e) {
-    return {
+    return measured({
       ok: false,
       error: (e && e.message) || String(e),
       phaseReached,
@@ -6861,7 +6993,7 @@ async function runWith(ctx, rawArgs) {
       stats: {},
       checkpoints: buildResumeCheckpoints(phaseOutputs),
       gaps,
-    };
+    });
   }
 }
 // --- pipeline_entry.js ---

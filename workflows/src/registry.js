@@ -160,6 +160,7 @@ export const DIMENSIONS = deepFreeze([
 
 // Keep pipeline stamp names code-owned so disclosure can use a safe other fallback for unknown fields.
 const PIPELINE_FINDING_FIELDS = deepFreeze([
+  'trace_id', 'discovery_agent', 'discovery_dimension',
   'removed_test',
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
