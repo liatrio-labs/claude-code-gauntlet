@@ -6,7 +6,7 @@ import { effectiveBucketSize } from './capacity.js';
 import { deepClone } from './wire.js';
 import { checkRemovedTestAudit } from './removedTests.js';
 import { repoRelativeFindingPath } from './paths.js';
-import { stampDiscovery, recordStage, traceDecision } from './measurementTrace.js';
+import { stampDiscovery, recordStage, traceDecision, measurementDecisions } from './measurementTrace.js';
 
 // StructuredOutput requires an object wrapper around summary prose.
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
@@ -283,7 +283,7 @@ export async function discover(ctx, input) {
     }
   });
 
-  if (trace) recordStage(trace, 'discover', intake, { decisions,
+  if (trace) recordStage(trace, 'discover', intake, {
     coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
 
   if (droppedAuditOverlaps > 0) removedTestAudit.duplicates_dropped = droppedAuditOverlaps;
@@ -326,13 +326,13 @@ export async function discover(ctx, input) {
     gaps.push(`discover: ${droppedNoLineEnd} finding(s) emitted suggested_fix_code without line_end — field dropped (a patch must state its range)`);
   }
 
-  return {
+  return measurementDecisions({
     findings,
     gaps,
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
-  };
+  }, decisions);
 }
 
 // Concrete evidence requirements make absence claims auditable; registry-scoped prompt extras preserve each agent's investigation breadth.

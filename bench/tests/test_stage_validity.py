@@ -12,6 +12,7 @@ from bench.runner import check, compare, invoke, validity
 from bench.runner.epochs import read_json
 from bench.tests.test_check import _build_ok_run, _plant_raw_identity
 from bench.tests.test_validity import fingerprint as fingerprint
+from bench.tests.test_validity import window as window
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -85,9 +86,6 @@ process.stdout.write(JSON.stringify(out));
     wire = read_json(record)
     out.pop("persistReturn", None)
     out.pop("measurement", None)
-    out["resolvedPolicy"]["resolvedModels"] = {
-        k: v for k, v in fingerprint.resolved_models if k != "orchestrator"
-    }
     wire["result"] = out
     wire["args"] = {
         "outputDir": str(run / "output"),
@@ -100,7 +98,7 @@ process.stdout.write(JSON.stringify(out));
     envelope["modelUsage"] = {"claude-session-1": {}}
     raw.write_text(json.dumps(envelope), encoding="utf-8")
     assert not list(pr.glob("code-gauntlet-measurement-*"))
-    assert check.check_attempt(pr) == (("pipeline_degraded",) if stage else ())
+    assert check.check_attempt(pr) == ()
     smoke = check.check_run(run)
     assert smoke["ok"] is (stage is None)
     if stage is None:
@@ -153,3 +151,54 @@ process.stdout.write(JSON.stringify(out));
             compare.load_selected_attempt(packet, attempt.pr_url, attempt.attempt_id)
     else:
         assert validity.selected_attempt(path).validity.state == "valid"
+
+
+@pytest.mark.parametrize(
+    "measurement",
+    [
+        None,
+        {},
+        {"status": "available"},
+        {"status": "unavailable", "reason": "return_budget"},
+    ],
+)
+def test_window_attempt_requires_terminal_measurement_status(
+    tmp_path, fingerprint, window, monkeypatch, measurement
+):
+    monkeypatch.setattr(validity, "utc_now", lambda: "2026-10-20T12:00:00Z")
+    monkeypatch.setattr(validity, "recheck_cli", lambda fp: None)
+    path = tmp_path / "window.json"
+    validity.exclusive_json(path, window.wire())
+    run = tmp_path / "run"
+    run.mkdir()
+    _build_ok_run(run)
+    pr = next(run.glob("pr-*"))
+    record = pr / "workflows/wf_test-0001.json"
+    wire = read_json(record)
+    wire["result"] = {"ok": True, "stats": {}, "measurement": measurement}
+    record.write_text(json.dumps(wire), encoding="utf-8")
+    raw = pr / "raw.json"
+    _plant_raw_identity(pr)
+    raw.write_text(
+        json.dumps({**read_json(raw), "modelUsage": {"claude-session-1": {}}}),
+        encoding="utf-8",
+    )
+    attempt = validity.collect_attempt(
+        run,
+        pr,
+        url="u",
+        result=invoke.InvokeResult(
+            "ok",
+            payload_path=str(pr / "post-review-payload.json"),
+            raw_json_path=str(raw),
+        ),
+        started_at="2026-10-20T10:00:00Z",
+        manifest={
+            "provenance": fingerprint.wire(),
+            "measurement_window": str(path),
+            "arm": "baseline",
+        },
+    )
+    missing = not measurement
+    assert attempt.validity.state == ("invalid" if missing else "valid")
+    assert ("measurement_trace_missing" in attempt.validity.reasons) is missing

@@ -4,6 +4,7 @@ export const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter'
 export const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'unknown'];
 const traceHistory = new WeakMap();
 const stageDecisions = new WeakMap();
+export const decisionsFor = (output) => stageDecisions.get(output) || [];
 export function createMeasurementTrace(nonce) {
   const trace = { schema_version: 1, run_nonce: nonce,
     versions: [], snapshots: [], complete: false };
@@ -52,18 +53,13 @@ export function recordStage(trace, stage, output, details = {}) {
   if (existing >= 0 && details.replayed) { trace.snapshots[existing].replayed = true; return; }
   if (existing >= 0) trace.snapshots = trace.snapshots.slice(0, existing);
   const findings = Array.isArray(output) ? output : output.findings || output.filtered || [];
-  const decisions = [...(stageDecisions.get(output) || []), ...(details.decisions || [])];
+  const decisions = [...decisionsFor(output), ...(details.decisions || [])];
   for (const finding of details.removed || output.eliminated || []) traceVersion(trace, finding);
   trace.snapshots.push({ sequence: trace.snapshots.length, stage,
     finding_version_ids: findings.map((f) => traceVersion(trace, f)).filter((id) => id !== null),
     decisions: deepClone(decisions), executed: details.executed !== false, replayed: !!details.replayed,
     coverage: details.coverage || (details.replayed ? 'partial' : 'complete'),
     cap: details.cap ?? null, cap_hit: !!details.cap_hit });
-}
-export function finishMeasurementTrace(trace, selection) {
-  if (!trace) return;
-  recordStage(trace, 'deliver', selection);
-  trace.complete = true;
 }
 export function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;

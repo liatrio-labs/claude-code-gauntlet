@@ -4,7 +4,7 @@ import { runWith } from '../../src/run.js';
 import { measurementScenario, persistedScenario } from '../helpers/measurementScenario.js';
 
 const [outPath, mode = 'return', outputDir] = process.argv.slice(2);
-const { args, ctx, state } = measurementScenario(mode, { measurementTrace: true, ...(outputDir ? { outputDir } : {}) });
+const { args, ctx, state } = measurementScenario(mode === 'audit' ? 'return' : mode, { measurementTrace: true, ...(outputDir ? { outputDir } : {}) }, { auditOverlap: mode === 'audit' });
 const out = await runWith(ctx, args);
 if (!out.ok || out.measurement?.status !== 'available') throw new Error(JSON.stringify(out));
 const entry = { text: out.measurement.text };

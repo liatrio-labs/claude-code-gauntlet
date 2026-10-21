@@ -50,7 +50,7 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
     trace, path, receipt = emit_trace(tmp_path, mode)
     assert trace.complete
     assert trace.run_nonce == "nonce-xyz"
-    assert tuple(s.stage for s in trace.snapshots) == stages.get_args(stages.Stage)
+    assert tuple(s.stage for s in trace.snapshots) == stages.get_args(stages.Stage)[:-1]
     assert set(receipt["payload"]["checkpoints"]["phases"]) == {"challenge"}
     assert "snapshots" not in receipt["payload"]["checkpoints"]
     first = next(v for v in trace.versions if v.finding.get("id") == "FILTER")
@@ -116,6 +116,7 @@ def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
         "holdback",
         "disabled",
         "judge_failed",
+        "audit_overlap",
     ],
 )
 def test_score_to_dimension_credit_and_loss_funnel(
@@ -123,7 +124,9 @@ def test_score_to_dimension_credit_and_loss_funnel(
 ):
     from bench.tests.test_provenance import captured_diff, payload_for
 
-    trace, path, receipt = emit_trace(tmp_path)
+    trace, path, receipt = emit_trace(
+        tmp_path, "audit" if trace_status == "audit_overlap" else "return"
+    )
     pr = score_case.payload.parent
     review = receipt["payload"]["postReview"]
     selected = review["findings"]
@@ -162,7 +165,10 @@ def test_score_to_dimension_credit_and_loss_funnel(
     discovery = next(s for s in trace.snapshots if s.stage == "discover")
     versions = {v.version_id: v for v in trace.versions}
     initial = {versions[v].finding.get("id"): v for v in discovery.finding_version_ids}
-    keep, lost = initial["GROUP"], initial["FILTER"]
+    keep, lost = (
+        initial["GROUP"],
+        initial["AUDIT" if trace_status == "audit_overlap" else "FILTER"],
+    )
     score_case.hits.update({"*": (), "deep-review": (0,), "discover:" + lost: (2,)})
     if trace_status == "judge_failed":
         original = type(score_case).scorer
@@ -177,7 +183,9 @@ def test_score_to_dimension_credit_and_loss_funnel(
     loaded = observations.load_packet(Path(packet["ledger_row"]["packet_path"]))
     assert packet["profiles"]["all"]["tp"] == 1
     assert len(score_case.calls) == (
-        2 if trace_status in ("readable", "holdback", "judge_failed") else 1
+        2
+        if trace_status in ("readable", "holdback", "judge_failed", "audit_overlap")
+        else 1
     )
     tools = read_json(loaded.root / "candidates.json")[score_case.url]
     assert list(tools) == ["deep-review"]
@@ -200,11 +208,25 @@ def test_score_to_dimension_credit_and_loss_funnel(
     funnel = stages.loss_funnel(
         rows, population={b.bug_id for b in loaded.observations}
     )
-    if trace_status in ("readable", "holdback"):
+    if trace_status in ("readable", "holdback", "audit_overlap"):
         assert (
-            dict(funnel.losses)["validate" if trace_status == "holdback" else "filter"]
+            dict(funnel.losses)[
+                "validate"
+                if trace_status == "holdback"
+                else "merge"
+                if trace_status == "audit_overlap"
+                else "filter"
+            ]
             == 1
         )
+        if trace_status == "audit_overlap":
+            assert any(
+                r.loss
+                and r.loss.reason_code == "audit_overlap"
+                and r.loss.physical_stage == "merge"
+                and r.loss.status == "established"
+                for r in rows
+            )
         dimension = versions[keep].discovery_dimension
         assert packet["metrics"]["per_dimension"][dimension]["delivered_bug_hits"] == 1
         assert (
@@ -226,7 +248,7 @@ def test_trace_vocabularies_match_workflow_source():
                 "node",
                 "--input-type=module",
                 "-e",
-                "import {TRACE_STAGES,TRACE_REASONS} from './workflows/src/measurementTrace.js'; console.log(JSON.stringify([TRACE_STAGES,TRACE_REASONS]));",
+                "import {TRACE_STAGES,TRACE_REASONS} from './workflows/src/measurementTrace.js'; import {DIMENSIONS} from './workflows/src/registry.js'; console.log(JSON.stringify([TRACE_STAGES,TRACE_REASONS,[...new Set(DIMENSIONS.map(d => d.dimension)), 'unknown']]));",
             ],
             cwd=ROOT,
             text=True,
@@ -236,6 +258,7 @@ def test_trace_vocabularies_match_workflow_source():
     assert values == [
         list(stages.get_args(stages.Stage)),
         list(stages.get_args(stages.ReasonCode)),
+        list(stages.get_args(observations.Dimension)),
     ]
 
 

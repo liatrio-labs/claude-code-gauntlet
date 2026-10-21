@@ -613,8 +613,6 @@ def check_attempt(pr_dir, *, naive=False):
     try:
         failures = _validate_payload_fields(_load_json(payload), pr_dir.name)
         if not naive:
-            stage_failures, _ = workflow_stage_outcomes(pr_dir)
-            failures.extend(stage_failures)
             artifacts, _ = _check_artifact_completeness(pr_dir, pr_dir.name)
             identity, identity_ok = _check_echo_identity(
                 pr_dir, Path(__file__).resolve().parents[2], pr_dir.name

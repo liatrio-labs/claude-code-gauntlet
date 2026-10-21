@@ -894,6 +894,7 @@ class MultiRunTest(RunTestBase):
                 "CODE_GAUNTLET_REVIEWED_POLICY",
                 "CODE_GAUNTLET_PR_NOT_FOUND_POLICY",
                 "CODE_GAUNTLET_TRIVIAL_SCOPE",
+                "CODE_GAUNTLET_MEASUREMENT_TRACE",
                 "timeout_s",
                 "child_auth",
                 "config_echo",

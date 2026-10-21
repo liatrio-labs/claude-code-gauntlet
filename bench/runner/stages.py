@@ -164,7 +164,7 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
         "physical stage order",
     )
     _require(
-        not trace.complete or len(trace.snapshots) == len(get_args(Stage)),
+        not trace.complete or len(trace.snapshots) == len(get_args(Stage)) - 1,
         "complete stages",
     )
     return trace
@@ -507,36 +507,35 @@ def bind_delivery_trace(trace, candidates, *, omissions=()):
     delivered = {tid for c in candidates for tid in c.source_trace_ids}
     versions = {v.version_id: v for v in trace.versions}
     omitted = {tid: o for o in omissions for tid in o.trace_ids}
-    snapshots = []
-    for snapshot in trace.snapshots:
-        if snapshot.stage == "deliver":
-            ids = snapshot.finding_version_ids
-            removed = [
-                versions[v].trace_id
-                for v in ids
-                if versions[v].trace_id not in delivered
-            ]
-            decisions = tuple(
-                StageDecision(
-                    tid,
-                    "not_selected",
-                    omitted[tid].reason_code if tid in omitted else "post_omission",
-                    omitted[tid].reason
-                    if tid in omitted
-                    else "selected source omitted from scored inline comments",
-                    (),
-                )
-                for tid in removed
+    selection = trace.snapshots[-1]
+    _require(selection.stage == "select", "delivery requires selection")
+    delivery = replace(
+        selection,
+        sequence=selection.sequence + 1,
+        stage="deliver",
+        finding_version_ids=tuple(
+            v
+            for v in selection.finding_version_ids
+            if versions[v].trace_id in delivered
+        ),
+        decisions=tuple(
+            StageDecision(
+                tid,
+                "not_selected",
+                omitted[tid].reason_code if tid in omitted else "post_omission",
+                omitted[tid].reason
+                if tid in omitted
+                else "selected source omitted from scored inline comments",
+                (),
             )
-            snapshot = replace(
-                snapshot,
-                finding_version_ids=tuple(
-                    v for v in ids if versions[v].trace_id in delivered
-                ),
-                decisions=snapshot.decisions + decisions,
-            )
-        snapshots.append(snapshot)
-    return replace(trace, snapshots=tuple(snapshots))
+            for v in selection.finding_version_ids
+            for tid in [versions[v].trace_id]
+            if tid not in delivered
+        ),
+        cap=None,
+        cap_hit=False,
+    )
+    return replace(trace, snapshots=(*trace.snapshots, delivery))
 
 
 class CollectedTraceWire(TypedDict):

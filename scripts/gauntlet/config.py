@@ -256,7 +256,15 @@ def resolve(
             resolved[key] = _typed_value(row, str(value))
     return {
         "configEcho": config_echo,
-        "waist": {"configEcho": config_echo},
+        "waist": {
+            "configEcho": config_echo,
+            **(
+                {"measurementTrace": True}
+                if mode == "headless"
+                and environ.get("CODE_GAUNTLET_MEASUREMENT_TRACE") == "1"
+                else {}
+            ),
+        },
         "resolved": resolved,
     }
 

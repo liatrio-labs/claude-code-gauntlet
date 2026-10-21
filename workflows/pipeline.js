@@ -366,7 +366,7 @@ const RULE_SOURCE_LABELS = deepFreeze({
 });
 const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 const STAGE_DEFAULTS = deepFreeze({
-  'change-summarizer': 'sonnet', validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
+  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
 });
 const MODEL_IDS = deepFreeze({ sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' });
@@ -392,7 +392,7 @@ function modelFor(agentType, policy, dimensions = DIMENSIONS) {
   }, dimensions).model;
 }
 function resolvedDispatchModels(policy) {
-  const types = [...new Set([...AGENTS, ...Object.keys(STAGE_DEFAULTS).map((name) => `code-gauntlet:${name}`)])];
+  const types = [...AGENTS, 'code-gauntlet:change-summarizer', ...Object.keys(STAGE_DEFAULTS).map((name) => `code-gauntlet:${name}`)];
   return Object.fromEntries(types.map((type) => [type, modelFor(type, policy)]));
 }
 const REQUIRED = deepFreeze(['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles',
@@ -1441,6 +1441,7 @@ const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'chal
 const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'unknown'];
 const traceHistory = new WeakMap();
 const stageDecisions = new WeakMap();
+const decisionsFor = (output) => stageDecisions.get(output) || [];
 function createMeasurementTrace(nonce) {
   const trace = { schema_version: 1, run_nonce: nonce,
     versions: [], snapshots: [], complete: false };
@@ -1488,18 +1489,13 @@ function recordStage(trace, stage, output, details = {}) {
   if (existing >= 0 && details.replayed) { trace.snapshots[existing].replayed = true; return; }
   if (existing >= 0) trace.snapshots = trace.snapshots.slice(0, existing);
   const findings = Array.isArray(output) ? output : output.findings || output.filtered || [];
-  const decisions = [...(stageDecisions.get(output) || []), ...(details.decisions || [])];
+  const decisions = [...decisionsFor(output), ...(details.decisions || [])];
   for (const finding of details.removed || output.eliminated || []) traceVersion(trace, finding);
   trace.snapshots.push({ sequence: trace.snapshots.length, stage,
     finding_version_ids: findings.map((f) => traceVersion(trace, f)).filter((id) => id !== null),
     decisions: deepClone(decisions), executed: details.executed !== false, replayed: !!details.replayed,
     coverage: details.coverage || (details.replayed ? 'partial' : 'complete'),
     cap: details.cap ?? null, cap_hit: !!details.cap_hit });
-}
-function finishMeasurementTrace(trace, selection) {
-  if (!trace) return;
-  recordStage(trace, 'deliver', selection);
-  trace.complete = true;
 }
 function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;
@@ -1735,7 +1731,7 @@ async function discover(ctx, input) {
       gaps.push(`${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
     }
   });
-  if (trace) recordStage(trace, 'discover', intake, { decisions,
+  if (trace) recordStage(trace, 'discover', intake, {
     coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
   if (droppedAuditOverlaps > 0) removedTestAudit.duplicates_dropped = droppedAuditOverlaps;
   if (inventory.omitted > 0) removedTestAudit.omitted = inventory.omitted;
@@ -1769,13 +1765,13 @@ async function discover(ctx, input) {
   if (droppedNoLineEnd > 0) {
     gaps.push(`discover: ${droppedNoLineEnd} finding(s) emitted suggested_fix_code without line_end — field dropped (a patch must state its range)`);
   }
-  return {
+  return measurementDecisions({
     findings,
     gaps,
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
-  };
+  }, decisions);
 }
 function discoverPrompt(inp, spec) {
   const ctxLine = inp.contextLine || '';
@@ -4193,10 +4189,10 @@ function methodologyRows(input, rawFindings) {
   if (pinsModelIds(provider) && policy.mappedAliases?.length) {
     rows.push(['User tier mapping', policy.mappedAliases.map((alias) => inline(alias)).join(', ')]);
   }
-  const stageTypes = [...new Set([
+  const stageTypes = [
     'change-summarizer', ...AGENTS.map((agentType) => agentType.split(':').pop()),
     ...Object.keys(STAGE_DEFAULTS),
-  ])];
+  ];
   const models = stageTypes.map((agentType) => {
     const model = resolvePolicy(`code-gauntlet:${agentType}`, {
       subagentModelEnv: policy.subagentModel,
@@ -6726,7 +6722,6 @@ function resolvedPolicyEnvelope(policy) {
     gateway: !!policy.gateway,
     mappedAliases: policy.mappedAliases || [],
     conditionalSchema: conditionalSchemaActive(policy),
-    resolvedModels: resolvedDispatchModels(policy),
   };
 }
 const METHODOLOGY_COUNT_ONLY_FIELDS = ['truncation_warnings', 'validation_warnings'];
@@ -6788,7 +6783,7 @@ async function runWith(ctx, rawArgs) {
     const out = replayed ? checkpoints[name] : await thunk();
     const rejected = [];
     if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A, rejected);
-    if (name === 'discover') discoveryDecisions = rejected;
+    if (name === 'discover') discoveryDecisions = [...decisionsFor(out), ...rejected];
     if (measurementTrace && ['merge', 'verify', 'validate', 'filter', 'challenge'].includes(name)) {
       recordStage(measurementTrace, name, out, { replayed,
         ...(!replayed && ((name === 'verify' && out.verified === false) || (name === 'validate' && out.stats?.skipped > 0) || (name === 'challenge' && out.stats?.skipped > 0)) ? { coverage: 'partial' } : {}),
@@ -6899,7 +6894,7 @@ async function runWith(ctx, rawArgs) {
         deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
         'delivery selection', [], 'not_selected')),
     });
-    finishMeasurementTrace(measurementTrace, postReview);
+    if (measurementTrace) measurementTrace.complete = true;
     if (measurementTrace) stripTraceFields(phaseOutputs);
     const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
     const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)

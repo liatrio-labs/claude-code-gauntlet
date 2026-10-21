@@ -32,7 +32,7 @@ def fingerprint(tmp_path):
         epoch=load_epoch(root=DEFAULT_ROOT),
         judge_pin="judge",
         adjudicator_pin="adjudicator",
-        env={},
+        env={"DISABLE_AUTOUPDATER": "1"},
         policy={},
         cli_probe=lambda p: "2.1.200",
         model_probe=lambda root, policy: {
@@ -48,18 +48,25 @@ def window(fingerprint):
         "test-window",
         "2026-10-20T00:00:00Z",
         "2026-10-21T00:00:00Z",
-        fingerprint.controls(),
+        fingerprint.controls,
         tuple(read_json(DEFAULT_ROOT / "subsets.json")["gate"]),
         (0, 1, 2, 3),
         1,
-        {a: fingerprint.treatment() for a in ("baseline", "candidate")},
+        {a: fingerprint.treatment for a in ("baseline", "candidate")},
     )
 
 
 @pytest.mark.parametrize("mode", ["new", "resume", "retry-failed"])
-@pytest.mark.parametrize("field", list(v.RunFingerprint.__dataclass_fields__))
+@pytest.mark.parametrize(
+    "group,field",
+    [
+        (g, f)
+        for g, cls in (("controls", v.SharedControls), ("treatment", v.Treatment))
+        for f in cls.__dataclass_fields__
+    ],
+)
 def test_run_main_refuses_identity_before_any_dispatch(
-    tmp_path, monkeypatch, window, fingerprint, field, mode
+    tmp_path, monkeypatch, window, fingerprint, group, field, mode
 ):
     path = tmp_path / "window.json"
     v.exclusive_json(path, window.wire())
@@ -91,14 +98,15 @@ def test_run_main_refuses_identity_before_any_dispatch(
             },
         )
         args += ["--" + mode, "prior"]
-    value = getattr(fingerprint, field)
+    record = getattr(fingerprint, group)
+    value = getattr(record, field)
     changed = (
-        (("changed", "claude-changed"),)
-        if field == "resolved_models"
-        else (("changed", None),)
-        if field == "effort_env"
+        {"changed": "claude-changed"}
+        if isinstance(value, dict)
         else ("changed",)
         if isinstance(value, tuple)
+        else False
+        if isinstance(value, bool)
         else "subscription"
         if field == "auth_mode"
         else "changed"
@@ -106,7 +114,9 @@ def test_run_main_refuses_identity_before_any_dispatch(
     monkeypatch.setattr(
         v,
         "capture_fingerprint",
-        lambda **kwargs: replace(fingerprint, **{field: changed}),
+        lambda **kwargs: replace(
+            fingerprint, **{group: replace(record, **{field: changed})}
+        ),
     )
     monkeypatch.setattr(
         run, "check_prereqs", lambda **kwargs: pytest.fail("spent before preflight")
@@ -119,13 +129,16 @@ def test_each_arm_can_remove_an_agent_but_cannot_change_undeclared_treatment(
 ):
     candidate = replace(
         fingerprint,
-        treatment_git_sha="candidate",
-        resolved_models=(("orchestrator", "claude-session-1"),),
-        agent_efforts=(("orchestrator", "high"),),
+        treatment=replace(
+            fingerprint.treatment,
+            treatment_git_sha="candidate",
+            resolved_models={"orchestrator": "claude-session-1"},
+            agent_efforts={"orchestrator": "high"},
+        ),
     )
     window = replace(
         window,
-        arms={"baseline": fingerprint.treatment(), "candidate": candidate.treatment()},
+        arms={"baseline": fingerprint.treatment, "candidate": candidate.treatment},
     )
     assert v.check_window(window, fingerprint, arm="baseline", now=NOW).state == "valid"
     assert v.check_window(window, candidate, arm="candidate", now=NOW).state == "valid"
@@ -140,7 +153,7 @@ def test_each_arm_can_remove_an_agent_but_cannot_change_undeclared_treatment(
 def test_attempt_collection_two_strikes_preserves_first_bytes(
     tmp_path, monkeypatch, fingerprint, auth, second
 ):
-    fp = replace(fingerprint, auth_mode=auth)
+    fp = replace(fingerprint, controls=replace(fingerprint.controls, auth_mode=auth))
     monkeypatch.setattr(v, "recheck_cli", lambda fp: None)
     directory = tmp_path / "run"
     pr = directory / "pr-1"
@@ -216,7 +229,9 @@ def test_unrelated_or_unreset_retry_cannot_become_operational_failure(
     tmp_path, monkeypatch, fingerprint, change
 ):
     monkeypatch.setattr(v, "utc_now", lambda: "2026-10-20T15:00:00Z")
-    fp = replace(fingerprint, auth_mode="subscription")
+    fp = replace(
+        fingerprint, controls=replace(fingerprint.controls, auth_mode="subscription")
+    )
     directory, pr = tmp_path / "run", tmp_path / "run/pr-1"
     manifest = {"provenance": fp.wire(), "child_auth": "subscription", "window_id": "w"}
     first = v.collect_attempt(
@@ -254,16 +269,22 @@ def test_unrelated_or_unreset_retry_cannot_become_operational_failure(
 
 def test_boundary_decoder_and_binary_pin_reject_wrong_inputs(fingerprint):
     assert v.fingerprint_from_wire(fingerprint.wire()) == fingerprint
-    for field, wrong in [
-        ("auth_mode", "other"),
-        ("cli_version", 42),
-        ("resolved_models", {"a": "inherit"}),
+    for group, field, wrong in [
+        ("controls", "auth_mode", "other"),
+        ("controls", "cli_version", 42),
+        ("controls", "auto_update_disabled", False),
+        ("treatment", "resolved_models", {"a": "inherit"}),
     ]:
         with pytest.raises(ValueError):
-            v.fingerprint_from_wire({**fingerprint.wire(), field: wrong})
-    Path(fingerprint.cli_realpath).write_text("replacement", encoding="utf-8")
+            v.fingerprint_from_wire(
+                {
+                    **fingerprint.wire(),
+                    group: {**fingerprint.wire()[group], field: wrong},
+                }
+            )
+    Path(fingerprint.controls.cli_realpath).write_text("replacement", encoding="utf-8")
     with pytest.raises(ValueError, match="cli_mismatch"):
-        v.recheck_cli(fingerprint, probe=lambda p: fingerprint.cli_version)
+        v.recheck_cli(fingerprint, probe=lambda p: fingerprint.controls.cli_version)
 
 
 def test_complete_matrix_requires_every_arm_pr_cell_and_zero_failure_hits(
@@ -291,10 +312,8 @@ def test_complete_matrix_requires_every_arm_pr_cell_and_zero_failure_hits(
                 "ok",
                 None,
                 v.Validity("valid", window_id=window.window_id, observed=fingerprint),
-                (),
+                {},
                 1,
-                (),
-                (),
             )
             row = v.MatrixObservation(arm, 0, pr, pr, True, rid, aid)
             cells.append(

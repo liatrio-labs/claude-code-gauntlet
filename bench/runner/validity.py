@@ -90,82 +90,36 @@ class SharedControls:
 @dataclass(frozen=True, slots=True)
 class Treatment:
     treatment_git_sha: str
-    resolved_models: tuple[tuple[str, str], ...]
+    resolved_models: dict[str, str]
     allowed_auxiliary_model_ids: tuple[str, ...]
-    effort_env: tuple[tuple[str, str | None], ...]
-    agent_efforts: tuple[tuple[str, str | None], ...]
+    agent_efforts: dict[str, str | None]
     bench_policy_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
 class RunFingerprint:
-    cli_version: str
-    cli_realpath: str
-    cli_sha256: str
-    resolved_models: tuple[tuple[str, str], ...]
-    allowed_auxiliary_model_ids: tuple[str, ...]
-    effort_env: tuple[tuple[str, str | None], ...]
-    agent_efforts: tuple[tuple[str, str | None], ...]
-    judge_pin: str
-    adjudicator_pin: str
-    golden_epoch_id: str
-    golden_sha256: str
-    scorer_tree: str
-    auth_mode: AuthMode
-    bench_policy_sha256: str
-    treatment_git_sha: str
+    controls: SharedControls
+    treatment: Treatment
 
     def wire(self):
-        value = asdict(self)
-        for key in ("resolved_models", "effort_env", "agent_efforts"):
-            value[key] = dict(value[key])
-        value["allowed_auxiliary_model_ids"] = list(self.allowed_auxiliary_model_ids)
-        return value
-
-    def controls(self):
-        return SharedControls(
-            **{
-                k: getattr(self, k)
-                for k in SharedControls.__dataclass_fields__
-                if k != "auto_update_disabled"
-            }
-        )
-
-    def treatment(self):
-        return Treatment(
-            **{k: getattr(self, k) for k in Treatment.__dataclass_fields__}
-        )
+        return asdict(self)
 
 
 def fingerprint_from_wire(value):
-    value = dict(value)
-    for key in ("resolved_models", "effort_env", "agent_efforts"):
-        value[key] = sorted(value[key].items())
     fp = decode(RunFingerprint, value)
-    if not all(
-        (
-            fp.cli_version,
-            fp.cli_realpath,
-            fp.cli_sha256,
-            fp.judge_pin,
-            fp.adjudicator_pin,
-            fp.golden_epoch_id,
-            fp.golden_sha256,
-            fp.scorer_tree,
-            fp.treatment_git_sha,
-        )
+    if (
+        any(not v for v in asdict(fp.controls).values())
+        or not fp.treatment.treatment_git_sha
     ):
         raise ValueError("incomplete measurement pins")
-    if not fp.resolved_models or any(
+    if not fp.treatment.resolved_models or any(
         not re.fullmatch(r"claude-[A-Za-z0-9_.-]+(?:\[1m\])?", m)
-        for m in (*dict(fp.resolved_models).values(), *fp.allowed_auxiliary_model_ids)
+        for m in (
+            *fp.treatment.resolved_models.values(),
+            *fp.treatment.allowed_auxiliary_model_ids,
+        )
     ):
         raise ValueError("unresolved model fingerprint")
-    if (
-        set(dict(fp.effort_env)) != {*EFFORT_KEYS, "DISABLE_AUTOUPDATER"}
-        or dict(fp.effort_env)["DISABLE_AUTOUPDATER"] != "1"
-    ):
-        raise ValueError("auto-update must be disabled; incomplete effort fingerprint")
     return fp
 
 
@@ -241,9 +195,9 @@ class Validity:
 
 def check_window(window, observed, *, arm, now):
     reasons = []
-    if observed.controls() != window.expected:
+    if observed.controls != window.expected:
         reasons.append("window_mismatch")
-    if observed.treatment() != window.arms.get(arm):
+    if observed.treatment != window.arms.get(arm):
         reasons.append("treatment_mismatch")
     if not timestamp(window.opens_at) <= timestamp(now) <= timestamp(window.closes_at):
         reasons.append("window_closed")
@@ -298,55 +252,50 @@ def capture_fingerprint(
     refuse_ambient_model_overrides(env)
     path = Path(cli_path).resolve(strict=True)
     models = {**model_probe(root, policy), "orchestrator": child_model}
-    efforts = tuple(
-        (
-            p.stem,
-            next(
-                (
-                    line.split(":", 1)[1].strip()
-                    for line in p.read_text(encoding="utf-8")
-                    .split("---", 2)[1]
-                    .splitlines()
-                    if line.startswith("effort:")
-                ),
-                None,
+    efforts = {
+        p.stem: next(
+            (
+                line.split(":", 1)[1].strip()
+                for line in p.read_text(encoding="utf-8")
+                .split("---", 2)[1]
+                .splitlines()
+                if line.startswith("effort:")
             ),
+            None,
         )
         for p in sorted((Path(root) / "agents").glob("*.md"))
         if p.read_text(encoding="utf-8").startswith("---")
-    )
+    }
+    if env.get("DISABLE_AUTOUPDATER") != "1":
+        raise ValueError("auto-update must be disabled")
     fp = RunFingerprint(
-        cli_probe(path),
-        str(path),
-        file_hash(path),
-        tuple(sorted(models.items())),
-        tuple(sorted(auxiliary_models)),
-        tuple(
-            sorted(
-                {
-                    **{k: env.get(k) for k in EFFORT_KEYS},
-                    "DISABLE_AUTOUPDATER": "1",
-                }.items()
-            )
+        SharedControls(
+            cli_probe(path),
+            str(path),
+            file_hash(path),
+            judge_pin,
+            adjudicator_pin,
+            epoch.epoch_id,
+            epoch.golden_sha256,
+            epoch.scorer_tree,
+            auth_mode,
         ),
-        efforts,
-        judge_pin,
-        adjudicator_pin,
-        epoch.epoch_id,
-        epoch.golden_sha256,
-        epoch.scorer_tree,
-        auth_mode,
-        digest(policy),
-        treatment_sha(root),
+        Treatment(
+            treatment_sha(root),
+            models,
+            tuple(sorted(auxiliary_models)),
+            efforts,
+            digest(policy),
+        ),
     )
     return fingerprint_from_wire(fp.wire())
 
 
 def recheck_cli(fingerprint, *, probe=cli_probe):
-    path = Path(fingerprint.cli_realpath)
+    path = Path(fingerprint.controls.cli_realpath)
     if (
-        file_hash(path) != fingerprint.cli_sha256
-        or probe(path) != fingerprint.cli_version
+        file_hash(path) != fingerprint.controls.cli_sha256
+        or probe(path) != fingerprint.controls.cli_version
     ):
         raise ValueError("cli_mismatch: pinned CLI changed before child dispatch")
 
@@ -355,7 +304,7 @@ def same_pr_set(actual, expected):
     return len(actual) == len(expected) and set(actual) == set(expected)
 
 
-def classify_attempt(result, *, auth_mode):
+def classify_attempt(result):
     return (
         Validity("valid")
         if result.status == "ok"
@@ -374,30 +323,17 @@ class AttemptRecord:
     checkpoint_status: CheckpointStatus
     checkpoint_reason: str | None
     validity: Validity
-    source_artifact_hashes: tuple[tuple[str, str], ...]
+    source_artifact_hashes: dict[str, str]
     sequence: int
-    requested_models: tuple[tuple[str, str], ...]
-    observed_model_ids: tuple[str, ...]
 
     def wire(self):
-        return {
-            **asdict(self),
-            "validity": self.validity.wire(),
-            "source_artifact_hashes": dict(self.source_artifact_hashes),
-            "requested_models": dict(self.requested_models),
-        }
+        return asdict(self)
 
 
 def attempt_from_wire(value):
-    value = dict(value)
-    value["validity"] = dict(value["validity"])
-    if value["validity"]["observed"]:
-        value["validity"]["observed"] = asdict(
-            fingerprint_from_wire(value["validity"]["observed"])
-        )
-    for key in ("source_artifact_hashes", "requested_models"):
-        value[key] = sorted(value[key].items())
     result = decode(AttemptRecord, value)
+    if result.validity.observed:
+        fingerprint_from_wire(asdict(result.validity.observed))
     if result.sequence < 1 or timestamp(result.started_at) > timestamp(
         result.completed_at
     ):
@@ -412,7 +348,7 @@ def check_retry(original, *, now, reset_confirmed_at=None):
         raise ValueError("attempt cannot retry")
     if (
         original.validity.observed
-        and original.validity.observed.auth_mode == "subscription"
+        and original.validity.observed.controls.auth_mode == "subscription"
         and (
             not reset_confirmed_at
             or not timestamp(original.completed_at)
@@ -440,7 +376,7 @@ def load_attempt(path):
     result = attempt_from_wire(read_json(path))
     if result.attempt_id != path.parent.name:
         raise ValueError("attempt identity mismatch")
-    for name, expected in result.source_artifact_hashes:
+    for name, expected in result.source_artifact_hashes.items():
         if (
             not artifact_allowed(Path(name))
             or file_hash(confined(path.parent, name)) != expected
@@ -546,10 +482,8 @@ def snapshot_attempt(
         result.status,
         result.reason,
         validity,
-        tuple(sorted(hashes.items())),
+        hashes,
         sequence,
-        tuple(sorted(dict(requested_models).items())),
-        tuple(sorted(observed_model_ids)),
     )
     exclusive_json(target / "attempt.json", record.wire())
     return record
@@ -754,7 +688,7 @@ def run_provenance(
             epoch=epoch,
             judge_pin=epoch.judge_pin,
             adjudicator_pin=epoch.adjudicator_pin,
-            env=os.environ,
+            env={**os.environ, "DISABLE_AUTOUPDATER": "1"},
             policy=policy,
             root=root,
             auxiliary_models=window.arms[arm].allowed_auxiliary_model_ids
@@ -815,23 +749,25 @@ def collect_attempt(
             errors.append("artifact_missing")
         if fp:
             allowed = {
-                *dict(fp.resolved_models).values(),
-                *fp.allowed_auxiliary_model_ids,
+                *fp.treatment.resolved_models.values(),
+                *fp.treatment.allowed_auxiliary_model_ids,
             }
             if not observed or set(observed) - allowed:
                 errors.append("model_mismatch")
-            if manifest.get("anchor") != "naive":
-                maps = [
-                    r["result"].get("resolvedPolicy", {}).get("resolvedModels")
-                    for p in (Path(pr_dir) / "workflows").glob("*.json")
-                    for r in [read_json(p)]
-                    if isinstance(r.get("result"), dict)
-                    and invoke.record_identifies_repo_bundle(r, ROOT)
-                ]
-                expected = {k: m for k, m in fp.resolved_models if k != "orchestrator"}
-                if not maps or any(m != expected for m in maps):
-                    errors.append("model_mismatch")
     if fp and manifest.get("measurement_window"):
+        terminals = [
+            r["result"]
+            for p in (Path(pr_dir) / "workflows").glob("*.json")
+            for r in [read_json(p)]
+            if isinstance(r.get("result"), dict)
+            and invoke.record_identifies_repo_bundle(r, ROOT)
+        ]
+        if not terminals or any(
+            not isinstance(m := t.get("measurement"), dict)
+            or m.get("status") not in ("available", "unavailable")
+            for t in terminals
+        ):
+            errors.append("measurement_trace_missing")
         errors.extend(
             check_window(
                 load_window(Path(manifest["measurement_window"])),
@@ -847,7 +783,7 @@ def collect_attempt(
     if errors:
         result = replace(result, status="invalid", reason=",".join(sorted(set(errors))))
     value = replace(
-        classify_attempt(result, auth_mode=manifest.get("child_auth", "api")),
+        classify_attempt(result),
         observed=fp,
         window_id=manifest.get("window_id"),
         retry_of=prior.attempt_id if prior else None,

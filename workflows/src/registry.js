@@ -211,7 +211,7 @@ export const RULE_SOURCE_LABELS = deepFreeze({
 export const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 
 export const STAGE_DEFAULTS = deepFreeze({
-  'change-summarizer': 'sonnet', validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
+  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
 });
 
@@ -247,7 +247,7 @@ export function modelFor(agentType, policy, dimensions = DIMENSIONS) {
 }
 
 export function resolvedDispatchModels(policy) {
-  const types = [...new Set([...AGENTS, ...Object.keys(STAGE_DEFAULTS).map((name) => `code-gauntlet:${name}`)])];
+  const types = [...AGENTS, 'code-gauntlet:change-summarizer', ...Object.keys(STAGE_DEFAULTS).map((name) => `code-gauntlet:${name}`)];
   return Object.fromEntries(types.map((type) => [type, modelFor(type, policy)]));
 }
 

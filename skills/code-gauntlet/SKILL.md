@@ -145,7 +145,7 @@ The resolver owns precedence and validation. It renders the configuration block 
 
 That stderr block is the Phase 2 entry gate. Retain the JSON as `configResult`, including `mode`, `waist`, `resolved`, and `identity`.
 
-Copy `configResult.waist.configEcho` verbatim. For later decisions, use only `configResult.resolved.<knob>`.
+Copy `configResult.waist` verbatim into args. For later decisions, use only `configResult.resolved.<knob>`.
 
 The resolver returns its JSON on stdout. A resolver failure stops the composite with `config: FAILED`.
 
@@ -479,7 +479,7 @@ Producer commands:
 The title and URL reach the script only through the pipe.
 <!-- /generated-from-registry-identity:pr_identity_fields -->
 
-Copy `configResult.waist.configEcho` verbatim.
+Copy `configResult.waist` verbatim into args.
 <!-- generated-from-registry-identity:derived_waist_fields — do not edit; run scripts/generate_contract_requirements.py -->
 The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; when a listed derivation applies, a stamped value that disagrees with its receipt is refused before dispatch.
 
@@ -516,7 +516,7 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
   scopeAnswer: "light" | "full",  // interactive answer only when the trivial-scope question fires
   policy: { tier, subagentModel, provider, gateway, mappedAliases },
-  configEcho: configResult.waist.configEcho,  // REQUIRED; copy verbatim from the resolver
+  ...configResult.waist,  // REQUIRED; copy verbatim from the resolver
   pluginRoot: configResult.identity.plugin_root,
   reviewScope: { requested: "incremental" | "full", kind: "incremental" | "full", since: string | null,
                  commits: integer | null, detector: null | { previously_reviewed, sha_resolvable,

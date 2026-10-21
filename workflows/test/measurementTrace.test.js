@@ -15,12 +15,14 @@ for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves
   assert.deepEqual(measured.ctx.calls, plain.ctx.calls);
   assert.deepEqual(persistedScenario(on, measured.state), persistedScenario(off, plain.state));
   assert.deepEqual(on.persistReturn, off.persistReturn);
+  const { measurement, ...terminal } = on;
+  assert.deepEqual(terminal, off);
   for (const call of measured.ctx.calls) {
     assert.equal(/trace_id|discovery_dimension|snapshots/.test(call.prompt), false);
     assert.equal(/trace_id|discovery_dimension|snapshots/.test(JSON.stringify(call.schema)), false);
   }
   const trace = JSON.parse(on.measurement.text);
-  assert.deepEqual(trace.snapshots.map((s) => s.stage), TRACE_STAGES);
+  assert.deepEqual(trace.snapshots.map((s) => s.stage), TRACE_STAGES.slice(0, -1));
   assert.equal(trace.schema_version, 1);
   assert.equal(trace.complete, true);
   const first = trace.versions.find((v) => v.finding.id === 'FILTER');

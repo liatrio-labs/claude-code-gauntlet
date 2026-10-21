@@ -301,16 +301,18 @@ The merge SHA is pending the orchestrator commit and merge.
 The historical mini baseline remains a separate captured run.
 The measurement trace input format is version `1`; discovery claims use the
 same pinned scorer as delivered findings.
-A one-time A2 receipt compares every agent prompt and schema, dispatch order and
-persisted artifacts against the v3.42.49 bundle at `839b1886`, with tracing on and
+A one-time A2 receipt compares every agent prompt, schema and model, dispatch order,
+persisted artifacts and terminal envelope minus measurement against the v3.42.49 bundle at `839b1886`, with tracing on and
 off. All digests agree across three persistence modes and oversized-trace fallback.
 The PR body carries the commands and digest inventory; tests retain on/off identity
 and trace-leak checks without depending on historical git objects.
 
-Tracing is opt-in through `args.measurementTrace`. The bench requests it on both
+Tracing is opt-in through `args.measurementTrace`. The bench resolver enables it on both
 arms. The top-level `measurement.text` return stays outside `persistReturn`, so no
 measurement file enters a user's output directory. The bench hashes collected UTF-8
-bytes and records available/unavailable with a reason. Primary persistence and
+bytes from the original task file; await stdout carries only status, chars and any reason.
+A window attempt missing terminal measurement status is invalid (`measurement_trace_missing`).
+Collection records available/unavailable with a reason. Primary persistence and
 recovery budgets take priority; oversized traces become unavailable. Replay coverage
 is partial. Collection binds the single current successful Workflow return and its
 hash to the attempt. Multiple successful returns are unavailable rather than guessed.

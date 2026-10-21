@@ -1,3 +1,4 @@
+import ast
 import re
 from pathlib import Path
 
@@ -149,6 +150,19 @@ def is_referenced(name: str, defining: Path) -> bool:
             if path == defining and declaration and declaration.group(1) == name:
                 continue
             return True
+    # Bench probes execute JavaScript imports embedded in Python string literals.
+    imported = re.compile(
+        rf"import\s*\{{[^}}]*\b{re.escape(name)}\b[^}}]*\}}\s*from\s*"
+        rf"['\"]\./workflows/src/{re.escape(defining.name)}['\"]"
+    )
+    for path in (REPO / "bench/runner").glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and imported.search(node.value)
+            ):
+                return True
     return False
 
 

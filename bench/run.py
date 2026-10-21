@@ -694,8 +694,6 @@ def _checkpoint_attempt(
             "attempt_id": attempt.attempt_id,
             "attempt_ref": str(attempt_path.relative_to(run_dir)),
             "validity": attempt.validity.wire(),
-            "countable_operational_failure": attempt.validity.state
-            == "operational_failure",
             **(extra or {}),
         },
     )
@@ -1041,8 +1039,8 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
     )
     manifest.update(
         provenance=provenance,
-        epoch_id=provenance["golden_epoch_id"],
-        golden_sha256=provenance["golden_sha256"],
+        epoch_id=provenance.get("controls", provenance)["golden_epoch_id"],
+        golden_sha256=provenance.get("controls", provenance)["golden_sha256"],
         measurement_window=getattr(args, "measurement_window", None),
         window_id=args._window.window_id if getattr(args, "_window", None) else None,
         window_sha256=validity.file_hash(Path(args.measurement_window))

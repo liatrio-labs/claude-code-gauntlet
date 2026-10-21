@@ -145,7 +145,10 @@ def build_bench_env(pins, registry):
     return env
 
 
-BENCH_ENV = build_bench_env(BENCH_PINS, KNOB_REGISTRY)
+BENCH_ENV = {
+    **build_bench_env(BENCH_PINS, KNOB_REGISTRY),
+    "CODE_GAUNTLET_MEASUREMENT_TRACE": "1",
+}
 
 
 try:
@@ -1509,7 +1512,7 @@ def pinned_cli(run_dir):
     if manifest.get("measurement_window"):
         fingerprint = measurement_context(manifest)
         recheck_cli(fingerprint)
-        return fingerprint.cli_realpath
+        return fingerprint.controls.cli_realpath
     return None
 
 
@@ -1580,7 +1583,7 @@ def invoke_review(
     cmd = [
         claude_bin,
         "-p",
-        f"/{SKILL_COMMAND} {number}. Set measurementTrace=true in every Workflow args object for this benchmark review.",
+        f"/{SKILL_COMMAND} {number}",
         "--output-format",
         "json",
         "--dangerously-skip-permissions",

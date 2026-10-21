@@ -411,7 +411,7 @@ python3 -c 'from pathlib import Path; from bench.runner.validity import load_win
 `MeasurementWindow.expected` pins shared CLI version, binary path and bytes,
 auto-update off, evaluator pins, golden epoch and auth mode. Its `arms` map declares
 exactly two treatments. Each `Treatment` pins its git SHA, dispatch roster and model
-map, per-agent effort values, effort environment, auxiliary model allowlist and
+map, per-agent effort values, auxiliary model allowlist and
 benchmark policy digest. Build declarations from `capture_fingerprint()` and review
 both arm entries before freezing. A removed discovery agent changes its arm's
 roster, not the shared controls. Ambient model, effort and provider overrides are

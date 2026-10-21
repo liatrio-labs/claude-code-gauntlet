@@ -4,6 +4,7 @@ import { dispatchedFindings, deltaEnvelope, sliceInputRecorder } from './verifyD
 import { parseWriterPayload } from '../../src/persist.js';
 import { persistCtx } from './persistFixtures.js';
 import { deriveFromPlan } from './deriveFromPlan.js';
+import { fnv1a32 } from '../../src/wire.js';
 
 export function measurementScenario(mode = 'return', overrides = {}, options = {}) {
   const id = { owner: 'synthetic', repo: 'fixture', pr_number: 1, sha_full: 'a'.repeat(40), platform: 'github', web_origin: 'https://github.com' };
@@ -13,6 +14,8 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
     ...overrides,
   });
   if (mode === 'legacy') delete args.persist;
+  const removed = { status: 'available', items: [{ id: '0123456789abcdef', path: 'tests/removed', old_start: 3, old_end: 7, kind: 'deleted_file' }], omitted: 0 };
+  if (options.auditOverlap) args.removedTests = { ...removed, checksum: fnv1a32(JSON.stringify(removed, null, 2)) };
   const seed = [makeFinding('DUP', { description: 'The winner claim survives for a distinct benign defect that breaks the ordinary public call and returns an incorrect value.', file: 'winner.js' }),
     makeFinding('DUP', { description: 'merge loss describes a different concrete defect', file: 'merge.js' }),
     makeFinding('VERIFY'), makeFinding('FILTER', { confidence: 65 }), makeFinding('REMOVE'),
@@ -28,6 +31,13 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
   const state = { payload: null, entries: null };
   ctx.agent = async (prompt, dispatch) => {
     const label = dispatch.label;
+    if (options.auditOverlap && dispatch.agentType === 'code-gauntlet:test-analyzer') {
+      ctx.calls.push({ prompt, ...dispatch });
+      const finding = makeFinding('AUDIT', { file: 'audit.js', dimension: 'test_coverage' });
+      return { findings: [finding], complete: true, total_seen: 1, removed_test_audit: [{ id: removed.items[0].id, status: 'lost', covered_by: [],
+        losses: [{ file: finding.file, line: finding.line_start, title: finding.title, description: finding.description,
+          severity: 'high', confidence: 90, criticality: 8, failure_scenario: 'Override precedence silently chooses the wrong value.' }] }] };
+    }
     if (dispatch.agentType === 'code-gauntlet:conventions-and-intent') {
       ctx.calls.push({ prompt, ...dispatch });
       return { findings: [structuredClone(convention)], complete: true, total_seen: 1 };

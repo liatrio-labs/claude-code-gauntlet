@@ -756,10 +756,10 @@ function methodologyRows(input, rawFindings) {
   if (pinsModelIds(provider) && policy.mappedAliases?.length) {
     rows.push(['User tier mapping', policy.mappedAliases.map((alias) => inline(alias)).join(', ')]);
   }
-  const stageTypes = [...new Set([
+  const stageTypes = [
     'change-summarizer', ...AGENTS.map((agentType) => agentType.split(':').pop()),
     ...Object.keys(STAGE_DEFAULTS),
-  ])];
+  ];
   const models = stageTypes.map((agentType) => {
     const model = resolvePolicy(`code-gauntlet:${agentType}`, {
       subagentModelEnv: policy.subagentModel,

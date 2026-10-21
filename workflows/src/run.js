@@ -5,7 +5,7 @@ import { summarize, deriveAgentFlags, discover, allActiveDimensionsDegraded } fr
 import { validateStage, filterStage, challengeStage, selectDelivery } from './reviewStages.js';
 import { mergeStage } from './mergeFindings.js';
 import { verifyStage } from './verifyStage.js';
-import { FINDING_TEXT_FIELD_NAMES, FINDING_REWRITE_EXEMPT_FIELDS, conditionalSchemaActive, resolvedDispatchModels } from './registry.js';
+import { FINDING_TEXT_FIELD_NAMES, FINDING_REWRITE_EXEMPT_FIELDS, conditionalSchemaActive } from './registry.js';
 import { mentionsPreparedHostRoot, prepareHostRootPatterns, rewritePreparedRepoRoot, safeFindingLabel } from './paths.js';
 import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs } from './args.js';
 import { resolveReviewConfig, resolveRemovedTestsArgs } from './args.js';
@@ -17,7 +17,7 @@ import { writeArtifacts } from './persist.js';
 import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
 import { checkpointChecksumErrors, checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
 import { holdBackIncomplete } from './holdBackIncomplete.js';
-import { appendMeasurement, createMeasurementTrace, recordStage, finishMeasurementTrace, traceDecision, eliminationDecisions, stripTraceFields } from './measurementTrace.js';
+import { appendMeasurement, createMeasurementTrace, recordStage, traceDecision, eliminationDecisions, stripTraceFields, decisionsFor } from './measurementTrace.js';
 
 // The host injects runtime globals, while tests supply context explicitly.
 function defaultCtx() {
@@ -89,7 +89,6 @@ function resolvedPolicyEnvelope(policy) {
     gateway: !!policy.gateway,
     mappedAliases: policy.mappedAliases || [],
     conditionalSchema: conditionalSchemaActive(policy),
-    resolvedModels: resolvedDispatchModels(policy),
   };
 }
 
@@ -168,7 +167,7 @@ export async function runWith(ctx, rawArgs) {
     // Discovery intake covers fresh findings before downstream readers; replayed outputs need the same normalization at every phase.
     const rejected = [];
     if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A, rejected);
-    if (name === 'discover') discoveryDecisions = rejected;
+    if (name === 'discover') discoveryDecisions = [...decisionsFor(out), ...rejected];
     if (measurementTrace && ['merge', 'verify', 'validate', 'filter', 'challenge'].includes(name)) {
       recordStage(measurementTrace, name, out, { replayed,
         ...(!replayed && ((name === 'verify' && out.verified === false) || (name === 'validate' && out.stats?.skipped > 0) || (name === 'challenge' && out.stats?.skipped > 0)) ? { coverage: 'partial' } : {}),
@@ -301,7 +300,7 @@ export async function runWith(ctx, rawArgs) {
         deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
         'delivery selection', [], 'not_selected')),
     });
-    finishMeasurementTrace(measurementTrace, postReview);
+    if (measurementTrace) measurementTrace.complete = true;
     if (measurementTrace) stripTraceFields(phaseOutputs);
     const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
     const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)

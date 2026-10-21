@@ -455,7 +455,7 @@ def operational_case(population_case, score_case, tmp_path, request, monkeypatch
         epoch=epoch,
         judge_pin=pins["judge_pin"],
         adjudicator_pin=pins["adjudicator_pin"],
-        env={},
+        env={"DISABLE_AUTOUPDATER": "1"},
         policy={},
         cli_probe=lambda path: "2.1.200",
         model_probe=lambda root, policy: {
@@ -465,23 +465,26 @@ def operational_case(population_case, score_case, tmp_path, request, monkeypatch
     if getattr(request, "param", None) == "corrected":
         fp = replace(
             fp,
-            golden_epoch_id="original-review-epoch",
-            golden_sha256="a" * 64,
-            judge_pin="original-judge",
-            adjudicator_pin="original-adjudicator",
-            scorer_tree="b" * 40,
+            controls=replace(
+                fp.controls,
+                golden_epoch_id="original-review-epoch",
+                golden_sha256="a" * 64,
+                judge_pin="original-judge",
+                adjudicator_pin="original-adjudicator",
+                scorer_tree="b" * 40,
+            ),
         )
     window = validity.MeasurementWindow(
         1,
         "operational",
         "2026-10-20T00:00:00Z",
         "2026-10-21T00:00:00Z",
-        fp.controls(),
+        fp.controls,
         tuple(subsets["gate"]),
         (0, 1, 2),
         1,
         {
-            a: replace(fp, treatment_git_sha=a).treatment()
+            a: replace(fp.treatment, treatment_git_sha=a)
             for a in ("baseline", "candidate")
         },
     )
@@ -500,12 +503,14 @@ def operational_case(population_case, score_case, tmp_path, request, monkeypatch
                 active_window = replace(
                     window,
                     window_id="subscription-window",
-                    expected=replace(fp.controls(), auth_mode="subscription"),
+                    expected=replace(fp.controls, auth_mode="subscription"),
                 )
                 active_path = tmp_path / "subscription-window.json"
                 validity.exclusive_json(active_path, active_window.wire())
             active_fp = replace(
-                fp, auth_mode=active_window.expected.auth_mode, treatment_git_sha=arm
+                fp,
+                controls=active_window.expected,
+                treatment=replace(fp.treatment, treatment_git_sha=arm),
             )
             directory = tmp_path / f"{arm}-{r}"
             directory.mkdir()
@@ -513,7 +518,7 @@ def operational_case(population_case, score_case, tmp_path, request, monkeypatch
             run_manifest = {
                 "run_id": directory.name,
                 "started": "2026-10-20T10:00:00Z",
-                "child_auth": active_fp.auth_mode,
+                "child_auth": active_fp.controls.auth_mode,
                 "child_model": "claude-session-1",
                 "pr_urls": list(window.pr_urls),
                 "provenance": active_fp.wire(),
@@ -522,8 +527,8 @@ def operational_case(population_case, score_case, tmp_path, request, monkeypatch
                 "measurement_window": str(active_path),
                 "run_index": r,
                 "arm": arm,
-                "epoch_id": active_fp.golden_epoch_id,
-                "golden_sha256": active_fp.golden_sha256,
+                "epoch_id": active_fp.controls.golden_epoch_id,
+                "golden_sha256": active_fp.controls.golden_sha256,
                 "instrumentation_version": "stage-trace-v1",
                 "git_sha": arm,
                 "treatment_git_sha": arm,
@@ -655,9 +660,7 @@ def test_operational_compare_complete_matrix_and_extension_prefix_refusal(
     spec, packets, window = operational_case
     for packet in packets.values():
         assert (
-            validity.fingerprint_from_wire(
-                c._packet_run(packet)["provenance"]
-            ).controls()
+            validity.fingerprint_from_wire(c._packet_run(packet)["provenance"]).controls
             == window.expected
         )
         assert observations.load_packet(packet.root).score_ref == packet.score_ref
@@ -813,7 +816,9 @@ def test_operational_matrix_rejects_every_missing_or_mismatched_identity(
                 ),
             )
         elif mutation == "model":
-            value["provenance"]["resolved_models"]["orchestrator"] = "claude-unpinned"
+            value["provenance"]["treatment"]["resolved_models"]["orchestrator"] = (
+                "claude-unpinned"
+            )
         elif mutation == "instrumentation":
             value["instrumentation_version"] = "changed"
         elif mutation == "treatment":

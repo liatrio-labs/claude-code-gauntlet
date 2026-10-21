@@ -390,9 +390,16 @@ def test_mixed_auth_library_validates_separate_windows_and_shared_model_identity
     report = s.simulate_rule(library, config)
     assert report.auth_label == "auth-mixed library"
     changed_fp = replace(
-        fp, resolved_models=(*fp.resolved_models, ("unexpected", "claude-new-model"))
+        fp,
+        treatment=replace(
+            fp.treatment,
+            resolved_models={
+                **fp.treatment.resolved_models,
+                "unexpected": "claude-new-model",
+            },
+        ),
     )
-    changed = replace(own, arms={**own.arms, run["arm"]: changed_fp.treatment()})
+    changed = replace(own, arms={**own.arms, run["arm"]: changed_fp.treatment})
     own_path.write_text(json.dumps(changed.wire()), encoding="utf-8")
     run.update(provenance=changed_fp.wire(), window_sha256=validity.file_hash(own_path))
     path.write_text(json.dumps(run), encoding="utf-8")
