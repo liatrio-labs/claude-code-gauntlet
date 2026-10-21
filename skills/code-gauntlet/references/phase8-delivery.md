@@ -111,8 +111,9 @@ to; deliver markdown-only and say so.
   Never invent a root-level `./code-gauntlet-{date}.md` (or any other default path outside
   `{output_dir}`).
 
-Interactive runs print a short completion summary to chat: finding counts by severity, the report path,
-and the methodology pointer. Headless chat delivery includes the full report per [delivery-guide.md: Chat](delivery-guide.md#chat).
+Every run except headless chat delivery prints a short completion summary to chat: finding counts by
+severity, the report path, and the methodology pointer. Headless chat delivery includes the full report
+per [delivery-guide.md: Chat](delivery-guide.md#chat).
 
 **Post via post_review.py — only on a "Post to PR/MR" answer.** A "Markdown only" answer ends Stage 1 at
 the completion summary above: skip this whole posting step, run nothing, and go straight to Stage 2. (A
