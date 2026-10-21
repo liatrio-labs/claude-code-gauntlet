@@ -730,6 +730,8 @@ def _run_prs(
         else {"run_id": run_dir.name}
     )
 
+    decision_hook("reserve", manifest=manifest, epoch=epoch)
+
     # A scorable entry has each key present, truthy, and not the fetch_shas "missing"
     # sentinel (owner/repo are needed to build the clone URL; the SHAs/ref to check out).
     required = ("owner", "repo", "head_sha", "base_sha", "base_ref", "pr_number")
@@ -1044,6 +1046,12 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
     )
     manifest.update(
         provenance=provenance,
+        unseal_holdout=getattr(args, "unseal_holdout", None),
+        rule=getattr(args, "rule", None),
+        contamination=getattr(args, "contamination", None),
+        contamination_sha256=validity.digest(_load_json(args.contamination))
+        if getattr(args, "contamination", None)
+        else None,
         epoch_id=provenance.get("controls", provenance)["golden_epoch_id"],
         golden_sha256=provenance.get("controls", provenance)["golden_sha256"],
         measurement_window=getattr(args, "measurement_window", None),
@@ -1391,6 +1399,7 @@ def parse_args(argv=None):
     )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
     parser.add_argument("--golden-epoch", metavar="EPOCH_ID")
+    parser.add_argument("--unseal-holdout", help="one-time final-SHA unseal receipt")
     parser.add_argument(
         "--check",
         metavar="RUN_ID",
@@ -1405,6 +1414,8 @@ def parse_args(argv=None):
         "resolution and labels the run 'custom'. Every URL must exist in shas.json. "
         "The alias 'mini' expands to the pre-registered 6-PR mini subset.",
     )
+    parser.add_argument("--rule", metavar="PATH")
+    parser.add_argument("--contamination", metavar="PATH")
     parser.add_argument("--measurement-window", metavar="PATH")
     parser.add_argument("--run-index", type=int)
     parser.add_argument("--arm")
@@ -1421,6 +1432,11 @@ def parse_args(argv=None):
         if urls == ["mini"]:
             subsets = _run_epoch(args).subsets
             urls = list(subsets["mini"])
+        if urls in (["dev-slice"], ["dev-pool"]):
+            try:
+                urls = decision_hook("population", args=args, epoch=_run_epoch(args))
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         shas = _run_epoch(args).shas
         unknown = [u for u in urls if u not in shas]
         if unknown:
@@ -1429,6 +1445,18 @@ def parse_args(argv=None):
             )
         args.prs = urls
     return args
+
+
+_decision_hook = None
+
+
+def decision_hook(event, **context):
+    global _decision_hook
+    if _decision_hook is None:
+        import importlib
+
+        importlib.import_module("bench.runner.populations").register_run_hook(globals())
+    return _decision_hook(event, **context)
 
 
 def main(argv=None):
@@ -1498,6 +1526,15 @@ def main(argv=None):
             if (args.resume or args.retry_failed)
             else None
         )
+        for key in ("unseal_holdout", "contamination", "rule"):
+            value = getattr(args, key) or (prior_manifest or {}).get(key)
+            setattr(args, key, str(Path(value).resolve()) if value else None)
+        urls = (prior_manifest or {}).get("pr_urls") or (
+            _target_urls(args.tier, args.prs, epoch=_run_epoch(args))
+            if args.tier or args.prs
+            else ()
+        )
+        decision_hook("preflight", args=args, urls=urls, epoch=_run_epoch(args))
         if args.measurement_window:
             validity.refuse_ambient_model_overrides(os.environ)
             validity.require_clean_treatment()
@@ -1553,6 +1590,9 @@ def main(argv=None):
                 != validity.file_hash(Path(args.measurement_window))
             ):
                 raise ValueError("immutable run/window provenance mismatch")
+            decision_hook(
+                "window", args=args, window=window, prior=prior, epoch=_run_epoch(args)
+            )
     except (
         OSError,
         ValueError,

@@ -42,7 +42,7 @@ There is nothing to `pip install`.
 The pipeline pins the review agents' models, so your own session's model and effort do not change them.
 We recommend Sonnet at low effort for that session.
 
-Full reviews took 16 to 22 minutes per PR in our [benchmark runs](bench/MEASUREMENT.md#ledger-sourced-costs).
+Historical full reviews took 16 to 22 minutes per PR in our [benchmark runs](bench/MEASUREMENT.md#planning-and-spend).
 The v3.0 measurement used 20.9 million tokens across 15 PRs, about 1.4 million per PR ([results](#benchmark-results)).
 
 ## How it reviews

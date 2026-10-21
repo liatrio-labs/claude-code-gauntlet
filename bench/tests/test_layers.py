@@ -44,6 +44,12 @@ def test_imports_follow_stack_layers_and_trace_is_independent():
                 ):
                     target = module.removeprefix("bench.runner.").removeprefix("bench.")
                     assert rank[target] <= level, (path, node.lineno, module)
+    # The CLI composition seam loads precisely one registered decisions hook.
+    source = (ROOT / "bench/run.py").read_text(encoding="utf-8")
+    assert (
+        source.count("import_module(") == 1
+        and ".register_run_hook(globals())" in source
+    )
     for directory in ("workflows/src", "workflows/test", "scripts/gauntlet", "skills"):
         for path in (ROOT / directory).rglob("*"):
             if path.suffix in (".py", ".js", ".mjs", ".md"):

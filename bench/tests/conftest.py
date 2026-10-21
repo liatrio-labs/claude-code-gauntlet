@@ -135,6 +135,33 @@ def score_case(tmp_path):
     return ScoreCase(run, tmp_path / "ledger.jsonl", url, payload, [], {})
 
 
+@pytest.fixture
+def pop_case(tmp_path):
+    from pathlib import Path
+
+    from bench.runner import populations
+    from bench.runner.epochs import load_epoch
+
+    epoch = load_epoch()
+    contamination = populations.import_dispositions(
+        Path(__file__).parent / "fixtures/leak-manifest-v2.json", epoch
+    )
+    contamination.update(
+        status="frozen",
+        agent_read_sha256="baseline",
+        baseline_treatment_sha="baseline",
+        leak_report_sha256="synthetic-report-digest",
+        frozen_at="2026-10-19T00:00:00Z",
+    )
+    return epoch, contamination
+
+
+def write(path, value):
+    from bench.runner.epochs import canonical
+
+    path.write_bytes(canonical(value))
+
+
 def refuses(call, *args, match=None, **kwargs):
     with pytest.raises(ValueError, match=match):
         call(*args, **kwargs)

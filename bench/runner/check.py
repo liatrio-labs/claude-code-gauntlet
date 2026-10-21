@@ -531,6 +531,14 @@ def _finding_identity(finding):
     return json.dumps(key, sort_keys=True)
 
 
+# These producer diagnostics distinguish dispatch failure from audit limitations.
+_DISCOVERY_FAILURE_RE = re.compile(
+    r"^[^\s]+: (?:agent returned null \(dispatch failed\)|"
+    r"malformed result \(no findings array\))"
+)
+_REMOVED_TEST_AUDIT_PREFIX = "removed-test audit: "
+
+
 def workflow_stage_outcomes(pr_dir):
     """Execution failures remain invalid even when optional tracing is off."""
     failures, disclosures, reports, phases = set(), set(), [], []
@@ -568,21 +576,44 @@ def workflow_stage_outcomes(pr_dir):
         discover, verify = phase.get("discover") or {}, phase.get("verify") or {}
         reports.append(
             {
+                "gaps": discover.get("gaps") or [],
+                "dimensions": {"removedTestAudit": discover.get("removedTestAudit")},
                 "stats": {
                     "degraded": discover.get("degraded"),
                     "verified": verify.get("verified"),
                     "inputProof": verify.get("inputProof"),
                     "validate": (phase.get("validate") or {}).get("stats"),
                     "challenge": (phase.get("challenge") or {}).get("stats"),
-                }
+                },
             }
         )
     for out in reports:
         stats = out.get("stats") or {}
         if out.get("ok") is False:
             failures.add("workflow execution failed")
-        if stats.get("degraded"):
+        gaps = [gap for gap in out.get("gaps", []) if isinstance(gap, str)]
+        dimensions = out.get("dimensions") or {}
+        audit = dimensions.get("removedTestAudit") or {}
+        audit_gaps = [gap for gap in gaps if gap.startswith(_REMOVED_TEST_AUDIT_PREFIX)]
+        audit_limited = bool(audit_gaps) or (
+            bool(audit.get("status")) and audit["status"] != "ran-clean"
+        )
+        degraded = set(stats.get("degraded") or ()) | set(
+            dimensions.get("degraded") or ()
+        )
+        if any(_DISCOVERY_FAILURE_RE.match(gap) for gap in gaps) or (
+            degraded - ({"test_coverage"} if audit_limited else set())
+        ):
             failures.add("discovery execution failed")
+        if audit_limited:
+            if not audit_gaps:
+                detail = audit["status"]
+                if audit.get("reason"):
+                    detail += f" ({audit['reason']})"
+                if audit.get("omitted"):
+                    detail += f" ({audit['omitted']} omitted)"
+                audit_gaps = [_REMOVED_TEST_AUDIT_PREFIX + detail]
+            disclosures.update(f"Recorded limitation: {gap}" for gap in audit_gaps)
         if (
             stats.get("verified") is False
             or (stats.get("inputProof") or {}).get("degradedFindings", 0) > 0
