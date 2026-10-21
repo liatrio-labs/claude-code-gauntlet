@@ -98,8 +98,18 @@ def _run_pr_records(run_dir):
             url = rec.get("url")
             if url:
                 payload_hint = (rec.get("detail") or {}).get("payload_path")
-                records.append((url, rec.get("status"), payload_hint))
+                records.append((url, rec.get("status"), _anchor(run_dir, payload_hint)))
     return records
+
+
+def _anchor(run_dir, recorded):
+    """Re-root a recorded absolute path under ``run_dir`` so a run copied to another checkout still scores."""
+    if not recorded:
+        return recorded
+    parts = Path(recorded).parts
+    if run_dir.name not in parts:
+        return recorded
+    return str(run_dir.joinpath(*parts[parts.index(run_dir.name) + 1 :]))
 
 
 def _resolve_pr_dir(run_dir, url, payload_hint=None):
