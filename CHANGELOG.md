@@ -2,6 +2,57 @@
 
 <!-- version list -->
 
+## v3.43.0 (2026-10-21)
+
+### Bug Fixes
+
+- **workflows**: Trace fields never reach checkpoints, cap_hit means the cap, and reason codes stay
+  closed ([#539](https://github.com/liatrio-labs/claude-code-gauntlet/pull/539),
+  [`d810a63`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d810a63735654d04a6217ce1b8b7190cc440e78f))
+
+### Chores
+
+- **bench**: Mint mini-20261020-030509-839b1886 as the baseline of record
+  ([#536](https://github.com/liatrio-labs/claude-code-gauntlet/pull/536),
+  [`94ea095`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/94ea095a89bfc2430814ff4e65db4ba790654fc7))
+
+- **bench**: Mint the v3.42.49 paired mini as the baseline of record
+  ([#536](https://github.com/liatrio-labs/claude-code-gauntlet/pull/536),
+  [`94ea095`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/94ea095a89bfc2430814ff4e65db4ba790654fc7))
+
+- **skills**: Drop a stray blank line
+  ([#537](https://github.com/liatrio-labs/claude-code-gauntlet/pull/537),
+  [`eb062a8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/eb062a84e935945a5f8de698c285fd802641b27c))
+
+- **skills**: Fold the build lessons into existing next-issue sentences
+  ([#537](https://github.com/liatrio-labs/claude-code-gauntlet/pull/537),
+  [`eb062a8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/eb062a84e935945a5f8de698c285fd802641b27c))
+
+- **skills**: Next-issue carries the build lessons from #46 Wave 0a
+  ([#537](https://github.com/liatrio-labs/claude-code-gauntlet/pull/537),
+  [`eb062a8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/eb062a84e935945a5f8de698c285fd802641b27c))
+
+- **skills**: Next-issue settles rulings before the spec and checks them on real data
+  ([#537](https://github.com/liatrio-labs/claude-code-gauntlet/pull/537),
+  [`eb062a8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/eb062a84e935945a5f8de698c285fd802641b27c))
+
+### Documentation
+
+- **bench**: State the paired-mini leg cost from the ledger
+  ([#536](https://github.com/liatrio-labs/claude-code-gauntlet/pull/536),
+  [`94ea095`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/94ea095a89bfc2430814ff4e65db4ba790654fc7))
+
+### Features
+
+- **workflows**: An opt-in measurement trace that leaves every review unchanged
+  ([#539](https://github.com/liatrio-labs/claude-code-gauntlet/pull/539),
+  [`d810a63`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d810a63735654d04a6217ce1b8b7190cc440e78f))
+
+- **workflows**: Opt-in measurement trace that leaves every review unchanged (#46 stack 1/5)
+  ([#539](https://github.com/liatrio-labs/claude-code-gauntlet/pull/539),
+  [`d810a63`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d810a63735654d04a6217ce1b8b7190cc440e78f))
+
+
 ## v3.42.49 (2026-10-20)
 
 ### Bug Fixes
