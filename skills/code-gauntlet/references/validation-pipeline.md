@@ -69,7 +69,7 @@ These proofs check consistency against transcription errors; an executor that re
 
 ## Validate stage (`validateStage`)
 
-Independent re-scoring by fresh agents, defaulting to Sonnet subject to the resolved override. A separate disproof pass checks the discovery claims against code evidence.
+Independent re-scoring by fresh agents, defaulting to Sonnet subject to the resolved override; each validator tries to disprove the finding against the code within that dispatch.
 
 The stage batches findings into `limits.validateBatch` chunks and dispatches one `validator` per batch through `parallel()`. Each validator attempts to **disprove** each finding and returns `[{ id, confidence, justification, reachability }]` (confidence 0–100). Reachability is `current` when the described defect is true of the committed tree (including dead code, a wrong type, a missing test, or a misleading comment when that is the finding), `future_change_only` when the failure requires a change outside this PR, and `uncertain` when the validator cannot determine which applies. `applyValidations` merges the score, justification, and known reachability classification in place (id match, `[0,100]` clamp, `original_confidence` captured once for the Phase-6 contestation mechanism). The validator's shipped output uses `finding_id`; the stage accepts both `finding_id` and `id`.
 

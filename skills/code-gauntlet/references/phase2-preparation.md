@@ -6,6 +6,7 @@
 - [Phase 2 Composite B — gather (diff, changed-files, line count, misc)](#phase-2-composite-b--gather-diff-changed-files-line-count-misc)
 - [Discover REVIEW.md and stamp its raw text](#discover-reviewmd-and-stamp-its-raw-text)
 - [Write the shared agent context file](#write-the-shared-agent-context-file)
+- [Args object shape](#args-object-shape)
 
 Read with [phase2-triage.md](phase2-triage.md) after the Phase 1 resolver result.
 Use these literal recipes for target preparation and the raw-input handoff.
@@ -149,7 +150,7 @@ After this call: interpret `prior_review`'s JSON per `references/phase1-prefligh
 
 Stamp `reviewScope` from this resolved state before assembling the waist.
 Local and branch targets stamp `{ requested: "full", kind: "full", since: null, commits: null, detector: null }`.
-Headless PR/MR targets omit `requested` (see the derived waist fields under "Assemble the args object").
+Headless PR/MR targets omit `requested` (see the derived waist fields in [SKILL.md: Assemble the args object](../SKILL.md#assemble-the-args-object)).
 Interactive targets stamp the recorded gate answer, or `"full"` when no prior review existed.
 PR/MR targets copy detector values verbatim into `detector`.
 Copy `previously_reviewed`, `sha_resolvable`, `head_advanced`, `sha_is_ancestor`, and `incremental_safe`.
@@ -162,7 +163,7 @@ The renderer derives the fallback explanation from retained detector facts.
 
 > Headless mode: apply the prior-review policy in [headless-mode.md](headless-mode.md#prior-review-policy) before continuing.
 
-All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (REVIEW.md provenance and CLAUDE.md/AGENTS.md/QODO.md import resolution from `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` by `scripts/write_shared_context.py` before measurement and writing). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see "Assemble the args object" below). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. `scripts/stale_truncate.py` covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
+All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (REVIEW.md provenance and CLAUDE.md/AGENTS.md/QODO.md import resolution from `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` by `scripts/write_shared_context.py` before measurement and writing). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see [SKILL.md: Assemble the args object](../SKILL.md#assemble-the-args-object)). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. `scripts/stale_truncate.py` covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
 
 ## Phase 2 Composite B — gather (diff, changed-files, line count, misc)
 
@@ -304,3 +305,49 @@ An exit 2 wrote no usable context; stop and report its one-line error.
 The workflow's Summarize stage produces the change summary internally.
 
 Discovery agents return findings through structured output (`agent()`/`parallel()` schema).
+
+## Args object shape
+
+```
+{
+  argsVersion: 1,
+  mode: "interactive" | "headless",
+  repoRoot: configResult.identity.repo_root, outputDir, headShaShort, nonce, generatedAt,
+  python,
+  diffPath, changedFilesPath, reviewConfigPath,
+  removedTests: contextReceipt.removedTests,  // verbatim saved-diff inventory and checksum
+  riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
+  scopeAnswer: "light" | "full",  // interactive answer only when the trivial-scope question fires
+  policy: { tier, subagentModel, provider, gateway, mappedAliases },
+  ...configResult.waist,  // REQUIRED; copy verbatim from the resolver
+  pluginRoot: configResult.identity.plugin_root,
+  reviewScope: { requested: "incremental" | "full", kind: "incremental" | "full", since: string | null,
+                 commits: integer | null, detector: null | { previously_reviewed, sha_resolvable,
+                 head_advanced, sha_is_ancestor, incremental_safe, error } },  // REQUIRED
+  limits: {},  // stamp {} unless a genuine REVIEW.md override exists
+  delivery: { prIdentity },  // PR/MR targets only; see SKILL.md, "Assemble the args object"
+                                             // the artifact-writer then persists postReview as the post_review-ready
+                                             // wrapper { owner, repo, pr_number, sha, platform, web_origin, review_body, findings } so
+                                             // Phase 8 posts it without hand-assembly
+
+  // by-value inputs the in-memory stages need (the workflow has no disk):
+  changedFiles, changedLines, baseBranch, reviewMd, reviewMdSetChecksum, exclusionsText,
+
+  // the shared context file's measured size, from write_shared_context.py's receipt,
+  // verbatim. contextChars may not be stamped without contextLines.
+  contextLines, contextChars,
+
+  // how the run's artifacts reach disk. `returnPrimaries: true` is the default and the
+  // only path on which no model transcribes them — see phase2-triage.md, "Args Preparation". Omit `persist`
+  // entirely to fall back to the legacy by-value writer; artifactPaths are the same either way.
+  persist: {
+    returnPrimaries: true
+  },
+
+  // verify handoff (sha-scoped) for the executor's pinned command:
+  verify: {
+    inputPathBase: "{output_dir}/code-gauntlet-phase4-input-{head_sha_short}",
+    outputPathBase: "{output_dir}/code-gauntlet-phase4-output-{head_sha_short}"
+  }
+}
+```

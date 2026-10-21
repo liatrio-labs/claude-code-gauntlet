@@ -24,13 +24,13 @@ The Phase 3 `Workflow` call returned a compact object that always includes a `ch
 
 **All-degraded mode:** an `error` prefixed `all-degraded:` means every active discovery dimension failed and **no review was performed** — deliver it as a hard failure via resume-from-checkpoint below, never as a clean/empty report. The per-agent `gaps` and `resolvedPolicy` (model/provider actually resolved) carry the diagnosis — a model/provider mismatch is the usual cause. The resume re-dispatches discovery because the `discover` checkpoint is deliberately absent from `return.checkpoints`.
 
-**When `persistReturn` is present, run `materialize_artifacts.py` before anything below** — the artifacts do not exist yet. SKILL.md Phase 8 → "Materialize the artifacts" owns the command and its exit-code table. The short version: the pipeline returned its primaries instead of dictating them to an artifact-writer, the harness put that return on disk at `tasks/<task-id>.output`, and this one command writes the primaries out of it and derives `post-review.json` + `checkpoint-all.json` from them. Exit 0 means everything landed and every content proof matched.
+**When `persistReturn` is present, run `materialize_artifacts.py` before anything below** — the artifacts do not exist yet. [SKILL.md: Phase 8: Materialize, collect, patch, deliver](../SKILL.md#phase-8-materialize-collect-patch-deliver) owns the command and its exit-code table. The short version: the pipeline returned its primaries instead of dictating them to an artifact-writer, the harness put that return on disk at `tasks/<task-id>.output`, and this one command writes the primaries out of it and derives `post-review.json` + `checkpoint-all.json` from them. Exit 0 means everything landed and every content proof matched.
 
 Never hand-write an artifact from `persistReturn`; `await_workflow.py` elides its entries so the original serialized text reaches `materialize_artifacts.py` without model transcription.
 
 Findings with skipped validation or unknown verify origin are challenged, then held back to the report's Unverified / pipeline-degraded section alongside capped or failed challenges. They are absent from findings.json, PR comments, patches, and fix tasks. Old challenge checkpoints pass through the same holdback before delivery.
 
-**Then render the apply-checked patches** whenever `artifactPaths.findings` is non-null — SKILL.md Phase 8 → "Render apply-checked patches" owns the command, the exit-code table, and where the patches path is surfaced in delivery.
+**Then render the apply-checked patches** whenever `artifactPaths.findings` is non-null — [SKILL.md: Phase 8: Materialize, collect, patch, deliver](../SKILL.md#phase-8-materialize-collect-patch-deliver) owns the command, its exit-code rules, and where the patches path is surfaced in delivery.
 
 **On `ok: true` after materialization or writer persistence:** read the artifacts — they are the source of truth for delivery. Do not reconstruct, re-filter, or re-rank findings from the return value or from memory.
 
@@ -111,8 +111,8 @@ to; deliver markdown-only and say so.
   Never invent a root-level `./code-gauntlet-{date}.md` (or any other default path outside
   `{output_dir}`).
 
-Either way, print a short completion summary to chat: finding counts by severity, the report path, and the
-methodology pointer. Never dump the full report into the conversation unprompted.
+Interactive runs print a short completion summary to chat: finding counts by severity, the report path,
+and the methodology pointer. Headless chat delivery includes the full report per [delivery-guide.md: Chat](delivery-guide.md#chat).
 
 **Post via post_review.py — only on a "Post to PR/MR" answer.** A "Markdown only" answer ends Stage 1 at
 the completion summary above: skip this whole posting step, run nothing, and go straight to Stage 2. (A

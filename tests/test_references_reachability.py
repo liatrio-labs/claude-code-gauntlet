@@ -1,9 +1,93 @@
+import re
 from pathlib import Path
+from urllib.parse import unquote
 
 REPO = Path(__file__).resolve().parents[1]
 REFS = REPO / "skills" / "code-gauntlet" / "references"
 SKILL = REPO / "skills" / "code-gauntlet" / "SKILL.md"
 AGENTS = REPO / "agents"
+
+
+def heading_slug(text: str) -> str:
+    return re.sub(r"[^\w -]", "", text.lower()).replace(" ", "-")
+
+
+def heading_anchors(path: Path) -> set[str]:
+    anchors: set[str] = set()
+    counts: dict[str, int] = {}
+    fence = ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        marker = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if marker:
+            run = marker[1]
+            if not fence:
+                fence = run
+            elif (
+                run[0] == fence[0]
+                and len(run) >= len(fence)
+                and not line.strip()[len(run) :]
+            ):
+                fence = ""
+            continue
+        if fence:
+            continue
+        heading = re.match(r"^#{1,6}\s+(.+?)\s*#*\s*$", line)
+        if heading:
+            slug = heading_slug(heading[1])
+            count = counts.get(slug, 0)
+            anchors.add(f"{slug}-{count}" if count else slug)
+            counts[slug] = count + 1
+    return anchors
+
+
+def section_target(source: Path, name: str, files: list[Path]) -> Path | None:
+    if not name:
+        return source
+    for base in (source.parent, source.parent.parent, REPO):
+        candidate = (base / name).resolve()
+        if candidate.is_file():
+            return candidate
+    matches = [path for path in files if path.name == Path(name).name]
+    return matches[0] if len(matches) == 1 else None
+
+
+def test_skill_section_references_resolve():
+    files = sorted((REPO / "skills").rglob("*.md"))
+    links = re.compile(r"\]\(([^\s()#]*\.md)?#([^\s()]+)\)")
+    filename = r"[\w./-]+\.md"
+    prose = re.compile(
+        rf"(?P<file>{filename})`?"
+        r"(?:(?:'s)?(?:\s+Phase\s+\d+)?\s*(?:\u2192|->|section)\s*"
+        r"|\s*(?:'s|,|under)\s*(?=\"))"
+        r'(?:"(?P<quoted>[^"\n]+)"|(?P<bare>[\w-]+))'
+    )
+    below = re.compile(r'(?:see|under)\s+"([^"\n]+)"\s+below')
+    missing = []
+    for source in files:
+        text = source.read_text(encoding="utf-8")
+        references = [
+            (match.start(), match[1] or "", unquote(match[2]), True)
+            for match in links.finditer(text)
+        ]
+        references.extend(
+            (match.start(), match["file"], match["quoted"] or match["bare"], False)
+            for match in prose.finditer(text)
+        )
+        references.extend(
+            (match.start(), "", match[1], False) for match in below.finditer(text)
+        )
+        for start, name, section, anchor in references:
+            target = section_target(source, name, files)
+            headings = heading_anchors(target) if target else set()
+            slug = section if anchor else heading_slug(section)
+            # Prose often names just the numbered or short prefix of a full heading.
+            found = slug in headings or (
+                not anchor and any(h.startswith(slug + "-") for h in headings)
+            )
+            if not found:
+                line = text.count("\n", 0, start) + 1
+                missing.append(f"{source.relative_to(REPO)}:{line}: {name}#{slug}")
+    assert not missing, "missing skill section targets:\n" + "\n".join(missing)
 
 
 def reference_files() -> list[Path]:

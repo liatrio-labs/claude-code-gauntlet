@@ -152,14 +152,13 @@ def test_task_board_gate_states_the_action_boundary():
         for line in skill.splitlines()
         if "MANDATORY GATE" in line and "task-board question" in line
     )
-    assert "the only creation call is TaskCreate" in gate_line
-    assert "never creates issues, pull requests, or branches" in gate_line
+    assert "only TaskCreate makes one task per delivered finding" in gate_line
+    assert "never issues, PRs, or branches" in gate_line
     gate = skill.index("task-board question below")
     paragraph_end = skill.index("\n", gate)
     exception = skill.index(
-        "> Partial-artifacts exception: when `artifactPaths.postReview` is null, "
-        "do not present the offer; say that no delivery set was persisted, so no "
-        "tasks can be created."
+        "> If `artifactPaths.postReview` is null, skip the offer; say no delivery "
+        "set was persisted, so no tasks can be created."
     )
     block = skill.index(
         'question: "Create fix tasks on the task board from these findings?"'

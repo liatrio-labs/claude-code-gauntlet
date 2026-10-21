@@ -512,10 +512,10 @@ def test_caller_fix_protocol():
     block = skill[invocation:methodology]
     for phrase in (
         "Parse stdout as a JSON array",
-        "assert that its length equals the delivered count",
+        "assert its length equals the delivered count",
         "TaskCreate(subject, description)",
-        "and then `TaskUpdate(taskId, metadata)`",
-        "Stop on any parse, count, or call failure",
-        "Never fall back to hand composition",
+        "then `TaskUpdate(taskId, metadata)`",
+        "Stop and report any parse, count, or call failure",
+        "Never hand-compose",
     ):
         assert phrase in block

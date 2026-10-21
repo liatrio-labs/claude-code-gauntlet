@@ -165,14 +165,8 @@ lead-in:
 No change summary was produced for this run.
 ```
 
-`post_review.py` bounds the summary comment, and every inline
-comment, discussion and note, with a per-platform UTF-8 byte budget. Each includes its trailer;
-GitLab discussions and notes also include a live marker when one is appended. Inline folds happen
-in place at a line boundary with a fold line and may keep or drop a whole committable suggestion;
-summary folds do not apply that suggestion rule. Every fold emits a stderr notice. The header and footer are reserved first; the
-summary folds only when it cannot fit beside the skipped-section frame and footer. Skipped groups
-appear whole or not at all in list order, followed by one closing count line when any group is
-omitted; the footer stays last.
+Posted comment budgets and folding follow [Posted body budgets](#posted-body-budgets).
+
 Evidence folds after 40 lines or 8,000 code points, whichever comes first. One-line display
 values fold after 512 code points. Finding cardinality and whole severity buckets never fold.
 Full confirmed finding values remain in `findings.json`; full unverified finding values remain
@@ -217,10 +211,4 @@ characters. The structured permalink destination percent-encodes the original va
 including any `<` or `@`. Normalization or redaction of the original path suppresses
 the permalink.
 The complete posted comment is assembled in this order: header, body, skipped section, footer.
-`post_review.py` bounds the summary comment, and every inline comment, discussion and note, with a
-per-platform UTF-8 byte budget. Each includes its trailer; GitLab discussions and notes also include
-a live marker when one is appended. Inline folds happen in place at a line boundary with a fold
-line and may keep or drop a whole committable suggestion; summary folds do not apply that suggestion
-rule. Every fold emits a stderr notice. The header and footer are reserved first; the summary folds only when it cannot fit beside
-the skipped-section frame and footer. Skipped groups appear whole or not at all in list order,
-followed by one closing count line when any group is omitted; the footer stays last.
+For byte budgets and folding, see [Posted body budgets](#posted-body-budgets).
