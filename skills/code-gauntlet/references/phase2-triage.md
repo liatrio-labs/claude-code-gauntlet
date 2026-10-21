@@ -403,7 +403,7 @@ The workflow derives the host platform from `repoRoot`, `outputDir`, and `plugin
 | `changedFiles` | the changed-file array, by value (Summarize bucketing; the workflow has no disk access) |
 | `changedLines` | total changed line count, by value (Summarize bucketing threshold) |
 | `riskTable` | the Phase 2e per-file risk classification, by value, as `[{ path, risk }]` — `path` set must equal `changedFiles` exactly (missing or extra paths fail loud; see Phase 2e's risk-level table for the `risk` contract) |
-| `configEcho` | Copy `configResult.waist.configEcho` verbatim. It is the only model-stamped configuration receipt. |
+| `configEcho` | Copy `configResult.waist` verbatim into args, including all fields it carries. |
 | `pluginRoot` | `configResult.identity.plugin_root`; the workflow derives its script paths from this root. |
 | `python` | Phase 1 selection: `python3`, `python`, or `py -3`; optional, defaults to `python3`. |
 | `reviewScope` | Headless PR/MR targets omit `requested` (see the derived waist fields under "Args Preparation"). Interactive PR/MR targets stamp the gate answer, or `full` when no prior review exists. Local and branch targets stamp `full`. Copy detector facts verbatim for PR/MR targets. Use `kind=incremental` only for an incremental request with `detector.incremental_safe=true`. Set `since` to the detector's safe `last_reviewed_sha` only for incremental kind. Set `since` to `null` otherwise. Retain detector facts when an incremental request becomes full. The renderer computes the fallback reason from retained detector facts. |

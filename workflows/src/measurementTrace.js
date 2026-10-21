@@ -16,7 +16,9 @@ export function measurementDecisions(output, decisions) {
   return output;
 }
 export function traceDecision(finding, reason_code, reason, related = [], decision = 'eliminated') {
-  return { trace_id: finding.trace_id, decision, reason_code, reason: reason || null, related_trace_ids: related };
+  // An unlisted code would fail the bench's closed decoder and lose the whole trace; record it as unknown instead.
+  const code = TRACE_REASONS.includes(reason_code) ? reason_code : 'unknown';
+  return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related };
 }
 export function eliminationDecisions(output) {
   const codes = { threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',

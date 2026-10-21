@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runWith } from '../src/run.js';
 import { measurementScenario, persistedScenario } from './helpers/measurementScenario.js';
-import { createMeasurementTrace, stampDiscovery, recordStage, appendMeasurement, TRACE_REASONS, TRACE_STAGES } from '../src/measurementTrace.js';
+import { createMeasurementTrace, stampDiscovery, recordStage, appendMeasurement, traceDecision, TRACE_REASONS, TRACE_STAGES } from '../src/measurementTrace.js';
+import { validArgs } from './helpers/argsFixtures.js';
+import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 
 for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves every prompt, schema and user artifact: ${mode}`, async () => {
   const plain = measurementScenario(mode);
@@ -80,4 +82,51 @@ test('malformed discovery keeps the same review failure with tracing on and off'
     captured.push({ out, calls: ctx.calls });
   }
   assert.deepEqual(captured[0], captured[1]);
+});
+
+test('main_only tier exclusions do not count as a delivery cap hit', async () => {
+  const args = validArgs({ measurementTrace: true, delivery: { tier: 'main_only' },
+    limits: { deliveryCap: 25 }, persist: { returnPrimaries: true } });
+  const ctx = makeCtx(args, { findings: [makeFinding('MAIN'),
+    makeFinding('SUGGESTION', { dimension: 'comment_accuracy' })] });
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  const trace = JSON.parse(out.measurement.text);
+  const selected = trace.snapshots.find((s) => s.stage === 'select');
+  assert.equal(selected.finding_version_ids.length, 1);
+  assert.equal(selected.cap_hit, false);
+  assert.deepEqual(selected.decisions.map((d) => d.reason_code), ['delivery_tier']);
+});
+
+test('mid-pipeline failure checkpoints are identical with tracing on and off', async () => {
+  const captured = [];
+  for (const measurementTrace of [false, true]) {
+    const args = validArgs({ measurementTrace });
+    const ctx = makeCtx(args);
+    const parallel = ctx.parallel;
+    let dispatches = 0;
+    ctx.parallel = (thunks) => {
+      if (++dispatches === 2) throw new Error('synthetic mid-pipeline failure');
+      return parallel(thunks);
+    };
+    const out = await runWith(ctx, args);
+    assert.equal(out.ok, false);
+    assert.equal(out.phaseReached, 'verify');
+    assert.equal(out.failingPhase, 'validate');
+    assert.ok(out.checkpoints.phases.discover.findings.length > 0);
+    if (measurementTrace) {
+      const trace = JSON.parse(out.measurement.text);
+      assert.equal(trace.complete, false);
+      assert.ok(trace.versions.some((v) => v.finding.trace_id));
+    }
+    delete out.measurement;
+    assert.equal(/trace_id|discovery_agent|discovery_dimension/.test(JSON.stringify(out)), false);
+    captured.push({ out, calls: ctx.calls });
+  }
+  assert.deepEqual(captured[0], captured[1]);
+});
+
+test('an unlisted reason code is recorded as unknown', () => {
+  assert.equal(traceDecision({ trace_id: 't1' }, 'threshold').reason_code, 'threshold');
+  assert.equal(traceDecision({ trace_id: 't1' }, 'not-a-listed-code').reason_code, 'unknown');
 });

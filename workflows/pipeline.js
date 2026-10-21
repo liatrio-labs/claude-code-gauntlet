@@ -1449,7 +1449,8 @@ function measurementDecisions(output, decisions) {
   return output;
 }
 function traceDecision(finding, reason_code, reason, related = [], decision = 'eliminated') {
-  return { trace_id: finding.trace_id, decision, reason_code, reason: reason || null, related_trace_ids: related };
+  const code = TRACE_REASONS.includes(reason_code) ? reason_code : 'unknown';
+  return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related };
 }
 function eliminationDecisions(output) {
   const codes = { threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
@@ -6816,6 +6817,7 @@ async function runWith(ctx, rawArgs) {
       && (discoverOut.findings || []).length === 0
       && checkpoints.challenge === undefined) {
       gaps.push(`all-degraded: every active discovery dimension degraded (${(discoverOut.degraded || []).join(', ')}) — no discovery agent completed, so nothing was reviewed; failing loud instead of returning an empty clean review (see the per-agent gaps above; a model/provider mismatch is the most likely cause — the envelope's resolvedPolicy names the resolution)`);
+      stripTraceFields(phaseOutputs);
       const resumable = { ...phaseOutputs };
       delete resumable.discover;
       return measured({
@@ -6885,13 +6887,13 @@ async function runWith(ctx, rawArgs) {
     const deliveryTier = A.delivery && A.delivery.tier;
     const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
     if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
-      cap_hit: challengeOut.findings.length > postReview.length,
+      cap_hit: selectDelivery(challengeOut.findings, null, deliveryTier).length > postReview.length,
       decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,
         deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
         'delivery selection', [], 'not_selected')),
     });
     if (measurementTrace) measurementTrace.complete = true;
-    if (measurementTrace) stripTraceFields(phaseOutputs);
+    stripTraceFields(phaseOutputs);
     const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
     const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
       && (A.mode !== 'headless'
@@ -6984,6 +6986,7 @@ async function runWith(ctx, rawArgs) {
       ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
     });
   } catch (e) {
+    stripTraceFields(phaseOutputs);
     return measured({
       ok: false,
       error: (e && e.message) || String(e),

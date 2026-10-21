@@ -24,6 +24,14 @@ class ConfigEchoEntry(TypedDict):
     source: str
 
 
+class _ConfigWaistRequired(TypedDict):
+    configEcho: dict[str, ConfigEchoEntry]
+
+
+class ConfigWaist(_ConfigWaistRequired, total=False):
+    measurementTrace: bool
+
+
 _CONTROL_RE = re.compile(r"[\u0000-\u001f\u007f]")
 _CANDIDATE_RE = re.compile(r"^[a-z_]+(,[a-z_]+)*$")
 _PIPELINE_VERSION_RE = re.compile(
@@ -254,17 +262,12 @@ def resolve(
         config_echo[key] = {"value": str(value), "source": str(source)}
         if row.get("resolvedKey"):
             resolved[key] = _typed_value(row, str(value))
+    waist: ConfigWaist = {"configEcho": config_echo}
+    if mode == "headless" and environ.get("CODE_GAUNTLET_MEASUREMENT_TRACE") == "1":
+        waist["measurementTrace"] = True
     return {
         "configEcho": config_echo,
-        "waist": {
-            "configEcho": config_echo,
-            **(
-                {"measurementTrace": True}
-                if mode == "headless"
-                and environ.get("CODE_GAUNTLET_MEASUREMENT_TRACE") == "1"
-                else {}
-            ),
-        },
+        "waist": waist,
         "resolved": resolved,
     }
 

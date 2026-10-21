@@ -414,6 +414,15 @@ def test_receipt_rendering_parity(
         pytest.param("headless", {}, False, False, 6, "all", id="headless"),
         pytest.param(
             "headless",
+            {"CODE_GAUNTLET_MEASUREMENT_TRACE": "1"},
+            False,
+            False,
+            6,
+            "all",
+            id="measurement-trace",
+        ),
+        pytest.param(
+            "headless",
             {
                 "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
                 "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
@@ -491,7 +500,7 @@ def test_resolver_payload_crosses_args_waist(
             + READ_INPUT
             + "const {payload,lightEligible}=JSON.parse(source);"
             "const args=validArgs();"
-            "args.mode=payload.mode; args.configEcho=payload.waist.configEcho;"
+            "args.mode=payload.mode; Object.assign(args,payload.waist);"
             "args.limits={...args.limits}; delete args.limits.deliveryCap;"
             "delete args.delivery; delete args.scopeAnswer;"
             "if (Object.hasOwn(payload,'reviewScope')) "
@@ -506,6 +515,9 @@ def test_resolver_payload_crosses_args_waist(
     )
     assert result["result"] == {"ok": True, "errors": []}
     args = result["args"]
+    for key, value in payload["waist"]["configEcho"].items():
+        assert args["configEcho"][key] == value
+    assert args.get("measurementTrace") == payload["waist"].get("measurementTrace")
     assert args["limits"]["deliveryCap"] == cap
     assert args["delivery"]["tier"] == tier
     assert args["reviewScope"]["requested"] == "full"
