@@ -285,6 +285,17 @@ Scoring identity is independent of original review provenance. A golden correcti
 requires rescoring every run of both arms on the same corrected epoch. Historical
 epoch scores remain recorded but do not enter active comparisons. Operating commands
 and file shapes live in [README.md](README.md).
+
+The lexical guard scans agent and skill text, shared context, workflow literals, and
+emitted source/bundle prompts and schemas. A finite exact vocabulary predicate
+excludes ordinary terms. Allowances bind surface, source, exact passage/hash and
+expected count. Unlisted and stale hits fail. From Wave 2a, identifier allowances must
+be empty. Passage hashes stay in the policy with expected_count zero, so retained
+passage text fails the scan. Holdout diagnostics use salted hashes and redact matching
+lines. A holdout match must be deleted; its wording and suggested rewrites never enter
+build briefs. Semantic dispositions are reviewed separately from a passing lexical
+scan.
+
 Without optional attribution, discovery recall remains unknown. Delivered dimension recall
 uses delivered candidate provenance. Funnels retain unavailable cells for every
 selected run. No eliminated discovery findings means no attribution run or charge.
