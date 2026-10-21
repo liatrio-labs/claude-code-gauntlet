@@ -21,10 +21,12 @@ from bench.runner.contracts import (
     artifact_allowed,
     copy_exclusive,
     exclusive_json,
+    selected_attempt_path,
 )
 from bench.runner.decode import decode
 from bench.runner.epochs import (
     DEFAULT_ROOT,
+    canonical,
     confined,
     digest,
     file_hash,
@@ -120,6 +122,11 @@ def fingerprint_from_wire(value):
     ):
         raise ValueError("unresolved model fingerprint")
     return fp
+
+
+def same_provenance(actual, expected):
+    # JSON persistence changes tuple fields to lists without changing their identity.
+    return canonical(actual) == canonical(expected)
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,10 +232,17 @@ def cli_probe(path):
 
 
 def model_probe(root, policy):
-    script = "import {resolvedDispatchModels} from './workflows/src/registry.js'; console.log(JSON.stringify(resolvedDispatchModels(JSON.parse(process.argv[1]))));"
+    script = "import {resolvedDispatchModels} from './workflows/src/registry.js'; console.log(JSON.stringify(resolvedDispatchModels(JSON.parse(process.argv[2]))));"
     return json.loads(
         subprocess.run(
-            ["node", "--input-type=module", "-e", script, json.dumps(policy)],
+            [
+                "node",
+                "--input-type=module",
+                "-e",
+                script,
+                "measurement-model-probe",
+                json.dumps(policy),
+            ],
             cwd=root,
             capture_output=True,
             text=True,
@@ -236,6 +250,20 @@ def model_probe(root, policy):
             check=True,
         ).stdout
     )
+
+
+def agent_efforts(root):
+    efforts = {}
+    for path in sorted((Path(root) / "agents").glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        if not text.startswith("---"):
+            continue
+        efforts[path.stem] = None
+        for line in text.split("---", 2)[1].splitlines():
+            if line.startswith("effort:"):
+                efforts[path.stem] = line.split(":", 1)[1].strip()
+                break
+    return efforts
 
 
 def capture_fingerprint(
@@ -256,20 +284,6 @@ def capture_fingerprint(
     refuse_ambient_model_overrides(env)
     path = Path(cli_path).resolve(strict=True)
     models = {**model_probe(root, policy), "orchestrator": child_model}
-    efforts = {
-        p.stem: next(
-            (
-                line.split(":", 1)[1].strip()
-                for line in p.read_text(encoding="utf-8")
-                .split("---", 2)[1]
-                .splitlines()
-                if line.startswith("effort:")
-            ),
-            None,
-        )
-        for p in sorted((Path(root) / "agents").glob("*.md"))
-        if p.read_text(encoding="utf-8").startswith("---")
-    }
     if env.get("DISABLE_AUTOUPDATER") != "1":
         raise ValueError("auto-update must be disabled")
     fp = RunFingerprint(
@@ -288,7 +302,7 @@ def capture_fingerprint(
             treatment_sha(root),
             models,
             tuple(sorted(auxiliary_models)),
-            efforts,
+            agent_efforts(root),
             digest(policy),
         ),
     )
@@ -548,8 +562,11 @@ def run_provenance(
     window=None,
     arm=None,
     root=ROOT,
+    epoch=None,
 ):
-    epoch = load_epoch(epoch_id, root=DEFAULT_ROOT)
+    epoch = epoch if epoch is not None else load_epoch(epoch_id, root=DEFAULT_ROOT)
+    if epoch_id is not None and epoch_id != epoch.epoch_id:
+        raise ValueError("only the active golden epoch is runnable")
     policy = benchmark_policy(timeout_s, resolve_limits=window is not None)
     cli = window.expected.cli_realpath if window else shutil.which("claude")
     try:
@@ -652,10 +669,14 @@ def collect_attempt(
             recheck_cli(fp)
         except (OSError, ValueError, subprocess.SubprocessError):
             errors.append("cli_mismatch")
-    if errors:
+    classified = classify_attempt(result)
+    if errors and result.status == "ok":
         result = replace(result, status="invalid", reason=",".join(sorted(set(errors))))
     value = replace(
-        classify_attempt(result),
+        classified,
+        state="invalid" if errors else classified.state,
+        reasons=tuple(sorted(set((*classified.reasons, *errors)))),
+        retryable=bool(errors) or classified.retryable,
         observed=fp,
         window_id=manifest.get("window_id"),
         retry_of=prior.attempt_id if prior else None,
@@ -714,10 +735,5 @@ def scoring_selection(run_dir):
         row = read_json(path)
         aid = row.get("detail", {}).get("attempt_id")
         if aid:
-            if not isinstance(aid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", aid):
-                raise ValueError("invalid selected attempt identity")
-            paths = list((Path(run_dir) / "attempts").glob(f"*/{aid}/attempt.json"))
-            if len(paths) != 1:
-                raise ValueError("selected attempt is missing or ambiguous")
-            selected[row["url"]] = load_attempt(paths[0])
+            selected[row["url"]] = load_attempt(selected_attempt_path(run_dir, aid))
     return selected or None

@@ -126,16 +126,17 @@ def _clear_dir(directory):
             child.unlink()
 
 
-def _target_urls(tier, explicit=None):
-    return (
-        list(explicit)
-        if explicit
-        else _resolve_tier(
-            tier,
-            load_epoch(root=GOLDEN_DIR).subsets,
-            load_epoch(root=GOLDEN_DIR).shas,
-        )
-    )
+def _run_epoch(args):
+    if getattr(args, "_epoch", None) is None:
+        args._epoch = load_epoch(root=GOLDEN_DIR)
+    return args._epoch
+
+
+def _target_urls(tier, explicit=None, *, epoch=None):
+    if explicit:
+        return list(explicit)
+    epoch = epoch if epoch is not None else load_epoch(root=GOLDEN_DIR)
+    return _resolve_tier(tier, epoch.subsets, epoch.shas)
 
 
 def _read_run_manifest(run_id):
@@ -154,10 +155,12 @@ def _first_target_pr(args):
             return None
         manifest = _read_run_manifest(run_id) or {}
         urls = _target_urls(
-            manifest.get("tier") or run_id.split("-", 1)[0], manifest.get("pr_urls")
+            manifest.get("tier") or run_id.split("-", 1)[0],
+            manifest.get("pr_urls"),
+            epoch=_run_epoch(args),
         )
     elif args.prs or args.tier:
-        urls = _target_urls(args.tier, args.prs)
+        urls = _target_urls(args.tier, args.prs, epoch=_run_epoch(args))
     else:
         return None
     return {"url": urls[0]} if urls else None
@@ -673,9 +676,7 @@ def _checkpoint_attempt(
         if reset_path.is_file()
         else None,
     )
-    attempt_path = next(
-        (Path(run_dir) / "attempts").glob(f"*/{attempt.attempt_id}/attempt.json")
-    )
+    attempt_path = validity.selected_attempt_path(run_dir, attempt.attempt_id)
     cp.mark(
         url,
         checkpoint_status or attempt.checkpoint_status,
@@ -712,6 +713,7 @@ def _run_prs(
     tool="deep-review-v3",
     child_model="inherit",
     child_auth=ledger.API_AUTH_MODE,
+    epoch=None,
 ):
     """Execute only scheduled URLs; preserve failed setup and review attempts alike."""
     run_dir = Path(run_dir)
@@ -744,9 +746,10 @@ def _run_prs(
                     epoch_id=manifest["epoch_id"],
                     window=validity.load_window(Path(manifest["measurement_window"])),
                     arm=manifest["arm"],
+                    epoch=epoch,
                 )
                 if (
-                    observed != manifest["provenance"]
+                    not validity.same_provenance(observed, manifest["provenance"])
                     or manifest.get("treatment_git_sha") != validity.treatment_sha()
                     or manifest.get("agent_read_sha256") != validity.agent_read_hash()
                 ):
@@ -988,6 +991,7 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
 
     A resume in a different shell does not rewrite this manifest.
     """
+    epoch = _run_epoch(args)
     env_fingerprint = dict(invoke.BENCH_ENV)  # the registry CODE_GAUNTLET_* values
     env_fingerprint["timeout_s"] = timeout_s
     child_auth = _resolve_child_auth(getattr(args, "child_auth", None))
@@ -1036,6 +1040,7 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         child_auth=child_auth,
         timeout_s=timeout_s,
         epoch_id=getattr(args, "golden_epoch", None),
+        epoch=epoch,
     )
     manifest.update(
         provenance=provenance,
@@ -1050,7 +1055,7 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         arm=getattr(args, "arm", None),
         instrumentation_version="stage-trace-v1",
         agent_read_sha256=validity.agent_read_hash(),
-        pr_identities={u: load_epoch(root=GOLDEN_DIR).shas[u] for u in urls},
+        pr_identities={u: epoch.shas[u] for u in urls},
     )
     manifest["treatment_git_sha"] = validity.treatment_sha()
     manifest["requested_models"] = {
@@ -1111,15 +1116,14 @@ def _exit_code(final, urls):
 
 
 def _new_run(args):
-    subsets = load_epoch(root=GOLDEN_DIR).subsets
-    shas = load_epoch(root=GOLDEN_DIR).shas
-    bench_data = load_epoch(root=GOLDEN_DIR).scorer_input
+    epoch = _run_epoch(args)
+    subsets, shas, bench_data = epoch.subsets, epoch.shas, epoch.scorer_input
     # An explicit --prs list overrides --tier's subset resolution and labels the run
     # "custom"; the URLs were validated against shas.json at parse time.
     if args.prs:
-        tier, urls = "custom", _target_urls(args.tier, args.prs)
+        tier, urls = "custom", _target_urls(args.tier, args.prs, epoch=epoch)
     else:
-        tier, urls = args.tier, _target_urls(args.tier)
+        tier, urls = args.tier, _target_urls(args.tier, epoch=epoch)
     if getattr(args, "_window", None):
         urls = list(args._window.pr_urls)
     fixture_urls = set(subsets.get("review_md_fixtures", []))
@@ -1141,6 +1145,7 @@ def _new_run(args):
         tool=args.tool,
         child_model=_resolve_child_model(args.tool, args.child_model),
         child_auth=_resolve_child_auth(args.child_auth),
+        epoch=epoch,
     )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
     return _exit_code(final, urls)
@@ -1156,10 +1161,9 @@ def _resume(run_id, args, retry):
     manifest_path = run_dir / "run.json"
     manifest = _load_json(manifest_path) if manifest_path.exists() else {}
     tier = manifest.get("tier") or run_id.split("-", 1)[0]
-    subsets = load_epoch(root=GOLDEN_DIR).subsets
-    shas = load_epoch(root=GOLDEN_DIR).shas
-    bench_data = load_epoch(root=GOLDEN_DIR).scorer_input
-    urls = _target_urls(tier, manifest.get("pr_urls"))
+    epoch = _run_epoch(args)
+    subsets, shas, bench_data = epoch.subsets, epoch.shas, epoch.scorer_input
+    urls = _target_urls(tier, manifest.get("pr_urls"), epoch=epoch)
     fixture_urls = set(subsets.get("review_md_fixtures", []))
     fingerprint = manifest.get("env_fingerprint") or {}
     timeout_s = fingerprint.get("timeout_s") or args.timeout_mins * 60
@@ -1237,6 +1241,7 @@ def _resume(run_id, args, retry):
         tool=tool,
         child_model=child_model,
         child_auth=child_auth,
+        epoch=epoch,
     )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
     return _exit_code(final, urls)
@@ -1414,9 +1419,9 @@ def parse_args(argv=None):
         if not urls:
             parser.error("--prs was given but parsed no URLs")
         if urls == ["mini"]:
-            subsets = load_epoch(root=GOLDEN_DIR).subsets
+            subsets = _run_epoch(args).subsets
             urls = list(subsets["mini"])
-        shas = load_epoch(root=GOLDEN_DIR).shas
+        shas = _run_epoch(args).shas
         unknown = [u for u in urls if u not in shas]
         if unknown:
             parser.error(
@@ -1503,10 +1508,23 @@ def main(argv=None):
                 "resume/retry requires the original --measurement-window path"
             )
         if args.measurement_window:
-            args.measurement_window = str(Path(args.measurement_window).resolve())
             window = validity.load_window(Path(args.measurement_window))
             args._window = window
             prior = prior_manifest or {}
+            arm = prior.get("arm") or args.arm
+            run_index = prior.get("run_index") if prior_manifest else args.run_index
+            run_count = 1 if prior_manifest else max(1, args.runs)
+            if (
+                arm not in window.arms
+                or run_index is None
+                or any(
+                    index not in window.planned_run_indices
+                    for index in range(run_index, run_index + run_count)
+                )
+            ):
+                raise ValueError(
+                    "measurement requires a planned --run-index and explicit --arm"
+                )
             model = prior.get("child_model") or _resolve_child_model(
                 args.tool, args.child_model
             )
@@ -1519,26 +1537,22 @@ def main(argv=None):
                 timeout_s=timeout_s,
                 epoch_id=args.golden_epoch,
                 window=window,
-                arm=prior.get("arm") or args.arm,
+                arm=arm,
+                epoch=_run_epoch(args),
             )
-            urls = prior.get("pr_urls") or _target_urls(args.tier, args.prs)
+            urls = prior.get("pr_urls") or _target_urls(
+                args.tier, args.prs, epoch=_run_epoch(args)
+            )
             if not validity.same_pr_set(urls, window.pr_urls):
                 raise ValueError("window requested PR matrix mismatch")
-            if prior_manifest:
-                if prior_manifest.get(
-                    "provenance"
-                ) != args._provenance or prior_manifest.get(
-                    "window_sha256"
-                ) != validity.file_hash(Path(args.measurement_window)):
-                    raise ValueError("immutable run/window provenance mismatch")
-            elif (
-                args.run_index not in window.planned_run_indices
-                or not args.arm
-                or args.run_index + args.runs - 1 not in window.planned_run_indices
-            ):
-                raise ValueError(
-                    "measurement requires a planned --run-index and explicit --arm"
+            if prior_manifest and (
+                not validity.same_provenance(
+                    prior_manifest.get("provenance"), args._provenance
                 )
+                or prior_manifest.get("window_sha256")
+                != validity.file_hash(Path(args.measurement_window))
+            ):
+                raise ValueError("immutable run/window provenance mismatch")
     except (
         OSError,
         ValueError,

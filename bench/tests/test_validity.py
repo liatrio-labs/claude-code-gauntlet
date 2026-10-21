@@ -95,6 +95,7 @@ def test_run_main_refuses_identity_before_any_dispatch(
                 "provenance": fingerprint.wire(),
                 "child_model": "claude-session-1",
                 "arm": "baseline",
+                "run_index": 0,
             },
         )
         args += ["--" + mode, "prior"]

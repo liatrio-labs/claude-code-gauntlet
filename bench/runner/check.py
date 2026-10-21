@@ -609,7 +609,7 @@ def check_attempt(pr_dir, *, naive=False):
     """Apply artifact and identity gates without the smoke-only nonempty-review gate."""
     payload = pr_dir / "post-review-payload.json"
     if not payload.is_file():
-        return ("artifact_missing",)
+        return ["artifact_missing"]
     try:
         failures = _validate_payload_fields(_load_json(payload), pr_dir.name)
         if not naive:
@@ -624,8 +624,8 @@ def check_attempt(pr_dir, *, naive=False):
             if _scan_degrade_text(pr_dir):
                 failures.append("pipeline degraded")
     except (ValueError, TypeError, KeyError, OSError, AttributeError):
-        return ("artifact_missing",)
-    return ("pipeline_degraded",) if failures else ()
+        return ["artifact_missing"]
+    return failures
 
 
 def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):

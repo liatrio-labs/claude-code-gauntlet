@@ -97,7 +97,7 @@ process.stdout.write(JSON.stringify(out));
     envelope["modelUsage"] = {"claude-session-1": {}}
     raw.write_text(json.dumps(envelope), encoding="utf-8")
     assert not list(pr.glob("code-gauntlet-measurement-*"))
-    assert check.check_attempt(pr) == ()
+    assert check.check_attempt(pr) == []
     smoke = check.check_run(run)
     assert smoke["ok"] is (stage is None)
     if stage is None:

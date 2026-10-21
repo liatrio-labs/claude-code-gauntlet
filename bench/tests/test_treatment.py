@@ -63,11 +63,12 @@ def test_ambient_model_or_effort_override_cannot_launch_a_child(
     path = tmp_path / "window.json"
     v.exclusive_json(path, window.wire())
     monkeypatch.setattr(v, "require_clean_treatment", lambda: None)
-    monkeypatch.setattr(
-        v,
-        "capture_fingerprint",
-        lambda **kw: (v.refuse_ambient_model_overrides(os.environ), fingerprint)[1],
-    )
+
+    def capture_fingerprint(**kwargs):
+        v.refuse_ambient_model_overrides(os.environ)
+        return fingerprint
+
+    monkeypatch.setattr(v, "capture_fingerprint", capture_fingerprint)
     monkeypatch.setattr(run, "_gh_token_scope", lambda env: nullcontext())
     monkeypatch.setattr(run, "_judge_key_note", lambda *a: None)
     monkeypatch.setattr(run, "check_prereqs", lambda **kw: [])

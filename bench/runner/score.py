@@ -20,6 +20,7 @@ from bench.runner.contracts import (
     artifact_allowed,
     copy_exclusive,
     exclusive_json,
+    selected_attempt_path,
 )
 from bench.runner.costs import parse_costs
 from bench.runner.epochs import (
@@ -487,12 +488,7 @@ def score_run(
         records = []
         for url in urls:
             aid = checkpoint_attempts[url]
-            if not isinstance(aid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", aid):
-                raise ValueError("invalid selected attempt identity")
-            paths = list((run_dir / "attempts").glob(f"*/{aid}/attempt.json"))
-            if len(paths) != 1 or not paths[0].resolve().is_relative_to(run_dir):
-                raise ValueError("selected attempt is missing or ambiguous")
-            path = paths[0]
+            path = selected_attempt_path(run_dir, aid)
             record = attempt_selection[url]
             if (
                 record.attempt_id != aid
@@ -814,6 +810,12 @@ def score_run(
         run_dir, costs, manifest, pin, adjudicator_pin, epoch.upstream_sha
     )
     packet_dir = pending.parent / sid
+    if not selected_records or not manifest.get("measurement_window"):
+        validity_state = "historical_descriptive"
+    elif failures:
+        validity_state = "operational_failure"
+    else:
+        validity_state = "valid"
     row.update(
         schema_version=2,
         score_id=sid,
@@ -825,9 +827,7 @@ def score_run(
             b.pr_url in urls and in_profile(b.category, epoch.primary_profile)
             for b in epoch.bugs
         ),
-        validity_state=("operational_failure" if failures else "valid")
-        if selected_records and manifest.get("measurement_window")
-        else "historical_descriptive",
+        validity_state=validity_state,
         population_sha256=digest(urls),
         packet_path=str(packet_dir),
         selected_attempts=attempts,
