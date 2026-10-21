@@ -533,9 +533,7 @@ class CompleteMatrix:
     stage_observations: tuple = ()
 
 
-def validate_matrix(
-    selections, window, population, *, epoch, expected_run_indices, source=False
-):
+def validate_matrix(selections, window, *, epoch, expected_run_indices, source=False):
     selections = tuple(selections)
     arms = tuple(sorted({s.arm for s in selections}))
     if (len(arms) != 1 if source else len(arms) != 2) or (

@@ -377,6 +377,8 @@ That change only adds eliminations.
 These runs do not establish causation.
 
 `report.py` renders release summaries, run-level recall and noise, tokens, cost, and anchor comparisons from the ledger and baselines.
+Active scores and the read-only historical release dashboard appear in separate epoch sections.
+The header identifies the latest ledger entry, so committed inputs reproduce the committed page.
 
 ## What gets written where
 
@@ -401,8 +403,10 @@ Committed:
   `review_md_fixture.md`
 - `bench/vendor/` — pinned MIT-licensed scorer subset plus
   [`VENDORED.md`](vendor/VENDORED.md) (upstream commit, citation, file list)
-- `bench/baselines.json` - anchor table, judge noise SD and `delta_noise`
-  (read-only to any optimizing loop). Both scoring pins live in `golden/epoch.json`.
+- `bench/baselines.json` - pending active-epoch measurement and calibration status.
+  Both scoring pins live in `golden/epoch.json`.
+- `bench/golden/historical_baselines.json` - historical anchor table, judge noise SD
+  and `delta_noise` (read-only to any optimizing loop, historical epoch only).
 - `bench/experiments.jsonl` — the append-only scoring ledger
 
 Stage attribution is opt-in and evaluates only discovery versions eliminated before delivery:

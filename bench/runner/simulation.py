@@ -51,7 +51,8 @@ class SimulationLibrary:
     bug_ids: tuple[str, ...]
     vectors: tuple[RunVector, ...]
     contamination: dict
-    receipt: dict
+    receipt: audit.AuditReceipt
+    baseline_arm: str = "baseline"
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +110,6 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
         validity.validate_matrix(
             selections,
             window,
-            (),
             epoch=epoch,
             expected_run_indices=(run["run_index"],),
             source=True,
@@ -143,14 +143,13 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
             "gate-uncontaminated", epoch, "core", contamination
         ),
     )
-    frozen = read_json(receipt["sources"]["sample_path"])
+    frozen = read_json(receipt.sources.sample_path)
     if frozen["arms"].get(spec.baseline_arm) != [
         asdict(r) for r in spec.baseline_scores
     ]:
         raise ValueError("baseline audit does not bind simulation sources")
-    receipt = {**receipt, "baseline_arm": spec.baseline_arm}
     return SimulationLibrary(
-        epoch.epoch_id, ids, tuple(vectors), contamination, receipt
+        epoch.epoch_id, ids, tuple(vectors), contamination, receipt, spec.baseline_arm
     ), spec
 
 
@@ -184,23 +183,21 @@ def generate_vectors(library, rule, effect, rng, *, feasible=None):
 
 def simulated_audit(library, rng, size=30):
     labels = [
-        r["correct"]
-        for r in library.receipt["agreed"]
-        if r["arm"] == library.receipt["baseline_arm"]
+        r.correct for r in library.receipt.agreed if r.arm == library.baseline_arm
     ]
     if (
-        not library.receipt["resolved"]
+        not library.receipt.resolved
         or not labels
         or any(type(v) is not bool for v in labels)
     ):
         raise ValueError("resolved baseline audit required")
     p = rng.betavariate(sum(labels) + 0.5, len(labels) - sum(labels) + 0.5)
-    rows = [
-        dict(arm=arm, correct=rng.random() < p)
+    rows = tuple(
+        audit.AuditRow(arm=arm, correct=rng.random() < p)
         for arm in ("baseline", "candidate")
         for _ in range(size)
-    ]
-    return dict(resolved=True, agreed=rows, arm_order=["baseline", "candidate"])
+    )
+    return audit.AuditReceipt(("baseline", "candidate"), rows)
 
 
 def trial_reports(library, arms, count, rule):

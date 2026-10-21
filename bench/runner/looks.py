@@ -102,6 +102,8 @@ def record(window, spec, report):
 
 
 def unseal(approved_final_treatment_sha, out):
+    if out is None:
+        raise ValueError("holdout unseal requires --out PATH")
     row = dict(kind="unseal", final_sha=approved_final_treatment_sha, at=utc_now())
 
     def check(rows):
@@ -110,8 +112,9 @@ def unseal(approved_final_treatment_sha, out):
         ) or any(r["kind"] == "unseal" for r in rows):
             raise ValueError("holdout already unsealed or invalid final SHA")
 
-    append(row, check)
+    check(entries())
     exclusive_json(Path(out), row)
+    append(row, check)
 
 
 def holdout(receipt, sha, *, use=None, run_id=None):
@@ -153,6 +156,8 @@ def main():
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     if args.approved_final_sha:
+        if args.out is None:
+            parser.error("--approved-final-sha requires --out PATH")
         unseal(args.approved_final_sha, args.out)
     else:
         from bench.runner.compare import PromotionRule

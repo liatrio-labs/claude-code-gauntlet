@@ -267,10 +267,6 @@ def main(argv=None):
         import_dispositions(args.spec, epoch, args.out)
 
 
-if __name__ == "__main__":
-    main()
-
-
 def check_freeze(manifest, started):
     from bench.runner.validity import timestamp
 
@@ -298,6 +294,7 @@ def run_hook(
             args.unseal_holdout,
             validity.treatment_sha() if args.unseal_holdout else None,
         )
+        return None
     if event == "window" and window.rule_sha256:
         from bench.runner.compare import PromotionRule
         from bench.runner.decode import decode
@@ -306,7 +303,7 @@ def run_hook(
         if (
             not rule
             or digest(asdict(rule)) != window.rule_sha256
-            or len(window.planned_run_indices) < rule.initial_runs
+            or len(window.planned_run_indices) < rule.initial_runs + rule.extension_runs
         ):
             raise ValueError("window requires full preregistered rule run count")
         if (prior.get("arm") or args.arm) == window.candidate_arm:
@@ -318,6 +315,7 @@ def run_hook(
             contamination = read_json(args.contamination)
             contamination_entries(contamination, epoch)
             check_freeze(contamination, validity.utc_now())
+        return None
     if event == "reserve":
         if (
             manifest.get("contamination")
@@ -335,7 +333,13 @@ def run_hook(
                 use="run",
                 run_id=manifest["run_id"],
             )
+        return None
+    return None
 
 
 def register_run_hook(namespace):
     namespace["_decision_hook"] = run_hook
+
+
+if __name__ == "__main__":
+    main()

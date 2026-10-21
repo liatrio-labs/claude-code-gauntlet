@@ -1,7 +1,7 @@
 """Blinded same-size samples and packet-bound auditor receipts."""
 
 import random
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal, TypedDict
 
@@ -10,6 +10,7 @@ from bench.runner.contracts import ScoreRef, exclusive_json
 from bench.runner.decode import decode
 from bench.runner.epochs import digest, file_hash, load_epoch, read_json
 from bench.runner.looks import holdout
+from bench.runner.observations import Candidate
 from bench.runner.populations import check_holdout, resolve_population
 
 
@@ -33,6 +34,35 @@ class Labels:
     auditor: Literal["Sol", "Opus", "owner"]
     packet_sha256: str
     labels: tuple[Label, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AuditSources:
+    sample_path: str
+    label_paths: tuple[str, ...]
+    packet_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class AuditRow:
+    arm: str
+    correct: bool | None
+    sample_id: str | None = None
+    score_ref: ScoreRef | None = None
+    finding: Candidate | None = None
+    evidence_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AuditReceipt:
+    arm_order: tuple[str, ...]
+    agreed: tuple[AuditRow, ...]
+    owner_queue: tuple[AuditRow, ...] = ()
+    sources: AuditSources | None = None
+    resolved: bool = field(init=False)
+
+    def __post_init__(self):
+        object.__setattr__(self, "resolved", not self.owner_queue)
 
 
 def public_packet(frozen):
@@ -189,21 +219,25 @@ def merge(sample_path, label_paths, packet_path):
                 ],
             }
         )
-    return dict(
-        sources=dict(
-            sample_path=sample_path, label_paths=label_paths, packet_path=packet_path
+    return AuditReceipt(
+        arm_order=tuple(frozen["arms"]),
+        sources=AuditSources(
+            str(sample_path), tuple(map(str, label_paths)), str(packet_path)
         ),
-        agreed=agreed,
-        owner_queue=disputed,
-        resolved=not disputed,
+        agreed=tuple(decode(AuditRow, r) for r in agreed),
+        owner_queue=tuple(decode(AuditRow, r) for r in disputed),
     )
 
 
 def load_receipt(path, arms=None, population=None):
-    value = read_json(path)
-    if value != merge(**value["sources"]) or not value["resolved"]:
+    value = decode(AuditReceipt, read_json(path))
+    if (
+        value.sources is None
+        or value != merge(**asdict(value.sources))
+        or not value.resolved
+    ):
         raise ValueError("unresolved or changed audit receipt")
-    frozen = read_json(value["sources"]["sample_path"])
+    frozen = read_json(value.sources.sample_path)
     if population is not None and digest(frozen["population"]) != digest(
         asdict(population)
     ):
@@ -212,6 +246,8 @@ def load_receipt(path, arms=None, population=None):
         a: [asdict(r) for r in refs] for a, refs in arms.items()
     }:
         raise ValueError("audit belongs to different score arms")
+    if arms is not None:
+        return AuditReceipt(tuple(arms), value.agreed, value.owner_queue, value.sources)
     return value
 
 
@@ -225,7 +261,7 @@ def main(argv=None):
         }
         sample(**value, out=args.out)
     else:
-        exclusive_json(Path(args.out), merge(**value))
+        exclusive_json(Path(args.out), asdict(merge(**value)))
 
 
 if __name__ == "__main__":

@@ -151,3 +151,50 @@ def test_holdout_receipt_is_once_and_final_sha_bound(pop_case, tmp_path, monkeyp
             run_id="two",
             match="second use",
         )
+
+
+@pytest.mark.parametrize("entry", ["function", "command"])
+def test_unseal_requires_receipt_output_before_spending(tmp_path, monkeypatch, entry):
+    ledger = tmp_path / "looks.jsonl"
+    ledger.write_bytes(b"")
+    monkeypatch.setattr(looks, "LEDGER", ledger)
+    if entry == "command":
+        monkeypatch.setattr("sys.argv", ["looks", "--approved-final-sha", "a" * 40])
+        with pytest.raises(SystemExit) as exc:
+            looks.main()
+        assert exc.value.code == 2
+    else:
+        refuses(looks.unseal, "a" * 40, None, match="requires --out")
+    assert ledger.read_bytes() == b""
+
+
+@pytest.mark.parametrize("failure", ["existing", "io", None])
+def test_unseal_persists_receipt_before_ledger(tmp_path, monkeypatch, failure):
+    ledger, receipt = tmp_path / "looks.jsonl", tmp_path / "receipt.json"
+    ledger.write_bytes(b"")
+    monkeypatch.setattr(looks, "LEDGER", ledger)
+    if failure == "existing":
+        receipt.write_bytes(b"keep")
+        with pytest.raises(FileExistsError):
+            looks.unseal("a" * 40, receipt)
+        assert receipt.read_bytes() == b"keep"
+    elif failure == "io":
+        with monkeypatch.context() as patch:
+
+            def cannot_write(*args):
+                raise OSError("disk unavailable")
+
+            patch.setattr(looks, "exclusive_json", cannot_write)
+            with pytest.raises(OSError, match="disk unavailable"):
+                looks.unseal("a" * 40, receipt)
+    assert ledger.read_bytes() == b""
+    receipt = tmp_path / "retry.json"
+    append = looks.append
+
+    def require_receipt(row, check):
+        assert read_json(receipt) == row
+        return append(row, check)
+
+    monkeypatch.setattr(looks, "append", require_receipt)
+    looks.unseal("a" * 40, receipt)
+    assert looks.entries() == [read_json(receipt)]

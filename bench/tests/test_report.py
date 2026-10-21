@@ -571,16 +571,6 @@ class TestSubscriptionCostHonesty(unittest.TestCase):
         self.assertIn("‡", out)
         self.assertIn("auth_mode=subscription", out)
 
-    def test_real_ledger_render_carries_no_subscription_marker(self):
-        # Every committed row predates auth_mode; the dashboard must render them
-        # exactly as before so bench/report.html does not churn.
-        rows = report.load_ledger(REAL_LEDGER)
-        baselines = report.load_baselines(REAL_BASELINES)
-        self.assertTrue(all(report.cost_is_billable(r) for r in rows))
-        out = report.render_html(rows, baselines, "abc1234", "2026-07-18")
-        self.assertNotIn("‡", out)
-        self.assertNotIn("auth_mode=subscription", out)
-
     def test_fixture_render_carries_no_subscription_marker(self):
         self.assertNotIn("‡", _render())
 
@@ -671,3 +661,54 @@ def test_report_counts_review_once_and_scoring_and_attribution_per_score(score_c
     rows[1]["review_attempt_costs"] = {"attempt": None}
     totals = report.spend_totals(rows)
     assert totals["scoring_cost_usd"] is None and totals["review_cost_usd"] is None
+
+
+def test_real_ledger_historical_render_carries_no_subscription_marker():
+    rows = report.load_ledger(REAL_LEDGER)
+    baselines = report.load_baselines(report.HISTORICAL_BASELINES)
+    assert all(report.cost_is_billable(r) for r in rows)
+    out = report.render_html(rows, baselines, "abc1234", "2026-07-18")
+    assert "Historical epoch " + baselines["epoch_id"] in out
+    assert "Run ledger" in out and "subset-20260718-031746-27875ca" in out
+    assert "‡" not in out and "auth_mode=subscription" not in out
+
+
+def test_committed_report_is_reproduced_from_committed_inputs(tmp_path):
+    out = tmp_path / "report.html"
+    assert report.main(["--out", str(out)]) == 0
+    assert out.read_bytes() == report.DEFAULT_OUT.read_bytes()
+
+
+def test_active_and_historical_scores_render_in_separate_epoch_sections(score_case):
+    active = score_case.execute()["ledger_row"]
+    historical_rows = report.load_ledger(REAL_LEDGER)
+    baselines = report.load_baselines(report.DEFAULT_BASELINES)
+    historical_baselines = report.load_baselines(report.HISTORICAL_BASELINES)
+    doc = report.render_html([*historical_rows, active], baselines, "sha", "date")
+    active_section, historical_section = doc.split('<section id="epoch-scores">')[
+        1
+    ].split('<section id="historical-epoch">')
+    historical_section = historical_section.split(
+        '<script type="application/json" id="bench-data">'
+    )[0]
+    assert "Active epoch " + active["epoch_id"] in active_section
+    assert active["score_id"] in active_section
+    assert "subset-20260718-031746-27875ca" not in active_section
+    assert "Historical epoch " + historical_baselines["epoch_id"] in historical_section
+    assert "Read-only historical measurements" in historical_section
+    assert (
+        "Release progression" in historical_section
+        and "Run ledger" in historical_section
+    )
+    assert "subset-20260718-031746-27875ca" in historical_section
+    assert active["score_id"] not in historical_section
+    historical_data = json.loads(
+        re.search(
+            r'<script type="application/json" id="bench-data">(.*?)</script>', doc, re.S
+        ).group(1)
+    )
+    assert len(historical_data["ledger"]) == len(historical_rows)
+    assert all(
+        report.score_identity(row).epoch_id == historical_baselines["epoch_id"]
+        for row in historical_data["ledger"]
+    )

@@ -2,8 +2,8 @@
 """bench/report.py — regenerable, self-contained HTML dashboard of deep-review
 benchmark performance over time.
 
-Reads ONLY the committed ledger (``bench/experiments.jsonl``) and baselines
-(``bench/baselines.json``); emits one static HTML file with all CSS inline in a
+Reads ONLY the committed ledger (``bench/experiments.jsonl``) and active and
+historical baselines; emits one static HTML file with all CSS inline in a
 single ``<style>``, charts as inline SVG, and a small inline tooltip script —
 zero external requests. Re-run after appending a scored ledger row to refresh
 the page::
@@ -19,7 +19,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
 BENCH_DIR = Path(__file__).resolve().parent
@@ -45,6 +45,7 @@ TIP_BREAK = "\u2028"
 
 DEFAULT_LEDGER = BENCH_DIR / "experiments.jsonl"
 DEFAULT_BASELINES = BENCH_DIR / "baselines.json"
+HISTORICAL_BASELINES = BENCH_DIR / "golden/historical_baselines.json"
 DEFAULT_OUT = BENCH_DIR / "report.html"
 
 # Cost-honesty marker. A subscription-served run's cost_usd is a consumption
@@ -2254,13 +2255,13 @@ def _thresholds(baselines):
     return top_anchor, v2_base, ceiling
 
 
-def _render_historical_html(rows, baselines, sha, generated):
+def _render_historical_html(rows, baselines, sha, generated, *, active_html=""):
     top_anchor, v2_base, ceiling = _thresholds(baselines)
     points = scored_run_points(rows, top_anchor, ceiling)
     groups = ledger_groups(rows)
     judge = html.escape(str(baselines.get("judge_pin", "—")))
     subtitle = (
-        f"Generated {html.escape(generated)} · commit "
+        f"Ledger through {html.escape(generated)} · commit "
         f'<span class="mono">{html.escape(sha)}</span> · judge '
         f'<span class="mono">{judge}</span>'
     )
@@ -2335,6 +2336,12 @@ def _render_historical_html(rows, baselines, sha, generated):
         "<h1>code-gauntlet bench — release progression</h1>",
         f'<p class="subtitle">{subtitle}</p>',
         "</header>",
+        active_html,
+        '<section id="historical-epoch">',
+        "<h2>Historical epoch "
+        + html.escape(baselines.get("epoch_id", "unknown"))
+        + "</h2>",
+        "<p>Read-only historical measurements. Comparisons below stay within this epoch.</p>",
         "<h2>Release progression</h2>",
         build_releases_html(rows, top_anchor, v2_base, ceiling),
         build_explainer_html(top_anchor, v2_base, ceiling),
@@ -2353,6 +2360,7 @@ def _render_historical_html(rows, baselines, sha, generated):
         build_table_html(groups, top_anchor, ceiling),
         "<h2>Notes</h2>",
         build_footnotes_html(baselines, rows),
+        "</section>",
         f'<script type="application/json" id="bench-data">{embedded}</script>',
         "</div>",
     ]
@@ -2402,17 +2410,19 @@ def render_html(rows, baselines, sha, generated):
             (score_identity(r).epoch_id for r in rows if score_identity(r).epoch_id),
             None,
         )
-    rows = [
+    epoch_rows = [
         r for r in rows if (r.get("epoch_id") or score_identity(r).epoch_id) == epoch_id
     ]
     if not active:
-        return _render_historical_html(rows, baselines, sha, generated)
+        return _render_historical_html(epoch_rows, baselines, sha, generated)
     parts = [
-        "<!doctype html><html><body>",
-        "<h1>Active epoch " + html.escape(epoch_id) + "</h1>",
+        '<section id="epoch-scores">',
+        "<h2>Active epoch " + html.escape(epoch_id) + "</h2>",
     ]
-    parts += ["<p>" + html.escape(str(spend_totals(rows))) + "</p>"]
-    for group in ledger_groups(rows):
+    parts += ["<p>" + html.escape(str(spend_totals(epoch_rows))) + "</p>"]
+    if not epoch_rows:
+        parts.append("<p>Active-epoch measurements pending.</p>")
+    for group in ledger_groups(epoch_rows):
         row = group["row"]
         label = " / ".join(
             str(row.get(k, ""))
@@ -2425,7 +2435,19 @@ def render_html(rows, baselines, sha, generated):
             + fmt_pct(row.get("golden_recall"))
             + "; descriptive score.</article>"
         )
-    return "\n".join([*parts, "</body></html>"])
+    historical = load_baselines(HISTORICAL_BASELINES)
+    historical_rows = [
+        r
+        for r in rows
+        if (r.get("epoch_id") or score_identity(r).epoch_id) == historical["epoch_id"]
+    ]
+    return _render_historical_html(
+        historical_rows,
+        historical,
+        sha,
+        generated,
+        active_html="\n".join([*parts, "</section>"]),
+    )
 
 
 def _normalize(text):
@@ -2449,7 +2471,13 @@ def main(argv=None):
 
     rows = load_ledger(args.ledger)
     baselines = load_baselines(args.baselines)
-    doc = render_html(rows, baselines, git_short_sha(), date.today().isoformat())
+    latest = max(rows, key=lambda r: r.get("ts", ""), default={})
+    doc = render_html(
+        rows,
+        baselines,
+        latest.get("git_sha", "uncommitted"),
+        latest.get("ts", "unknown")[:10],
+    )
     out = _normalize(doc)
     with open(args.out, "w", encoding="utf-8") as fh:
         fh.write(out)

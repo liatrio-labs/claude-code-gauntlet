@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from bench.runner import audit as a
 from bench.runner import compare as c
 from bench.runner import observations as o
 from bench.runner import populations as p
@@ -262,10 +263,8 @@ def test_rule_kinds_margins_guards_and_reported_improvement(case, kind):
         )
         for name in ("gate-uncontaminated", "gate-uncontaminated-non-mini")
     )
-    receipt = dict(
-        resolved=True,
-        agreed=[dict(arm=a, correct=True) for a in matrix.arms],
-        arm_order=list(matrix.arms),
+    receipt = a.AuditReceipt(
+        matrix.arms, tuple(a.AuditRow(arm, True) for arm in matrix.arms)
     )
     r = rule(
         kind,
@@ -292,10 +291,9 @@ def test_rule_kinds_margins_guards_and_reported_improvement(case, kind):
         )
         for p in reports
     )
-    labels = {
-        **receipt,
-        "agreed": [dict(arm=a, correct=a == "baseline") for a in matrix.arms],
-    }
+    labels = replace(
+        receipt, agreed=tuple(a.AuditRow(arm, arm == "baseline") for arm in matrix.arms)
+    )
     decision = c.evaluate_promotion(bad, labels, r)
     guards = (
         ("primary_recall", "non-mini")
@@ -350,7 +348,6 @@ def test_descriptive_populations_accept_the_actual_named_scope(case, population)
 def test_operational_comparison_refuses_verdict_corruption(case, bad, tmp_path):
     from bench.tests.test_audit import resolve_audit
 
-    case = case
     spec, packets = case.build()
     _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
     spec = replace(spec, audit_path=str(receipt))
@@ -406,7 +403,6 @@ def test_operational_comparison_refuses_verdict_corruption(case, bad, tmp_path):
 def test_extension_recomputes_its_initial_prefix(case, tmp_path):
     from bench.tests.test_audit import resolve_audit
 
-    case = case
     spec, packets = case.build(count=4, promotion_rule=rule(extension_runs=1))
     for ref in spec.candidate.scores:
         packets[ref] = replace(packets[ref], candidates=())
@@ -557,3 +553,104 @@ def test_candidate_dispatch_requires_registration_before_prerequisites(
         )
         == 2
     )
+
+
+@pytest.mark.parametrize("population", ["gate", "holdout"])
+@pytest.mark.parametrize("failure", ["existing", "io", None])
+def test_comparison_persists_report_before_spending(
+    case, tmp_path, monkeypatch, population, failure
+):
+    from bench.tests.test_audit import resolve_audit
+
+    spec, packets = case.build(population, population == "gate")
+    if population == "gate":
+        _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
+        spec = replace(spec, audit_path=str(receipt))
+    path = tmp_path / "spec.json"
+    write(path, asdict(spec))
+    compare = c.compare_arms
+    monkeypatch.setattr(
+        c, "compare_arms", lambda s: compare(s, packet_loader=packets.__getitem__)
+    )
+    out = tmp_path / "report.json"
+    before = case.ledger.read_bytes()
+    argv = ["--spec", str(path), "--out", str(out)]
+    if failure == "existing":
+        out.write_bytes(b"keep")
+        with pytest.raises(FileExistsError):
+            c.main(argv)
+        assert out.read_bytes() == b"keep"
+    elif failure == "io":
+        with monkeypatch.context() as patch:
+
+            def cannot_write(*args):
+                raise OSError("disk unavailable")
+
+            patch.setattr(c, "exclusive_json", cannot_write)
+            with pytest.raises(OSError, match="disk unavailable"):
+                c.main(argv)
+    assert case.ledger.read_bytes() == before
+    out = tmp_path / "retry.json"
+    append = c.looks.append
+
+    def require_report(row, check):
+        saved = read_json(out)
+        if row["kind"] == "look":
+            assert digest(saved) == row["report_sha256"]
+            assert saved["identity"]["look"] == row["look"] == 1
+        else:
+            assert row["kind"] == "holdout-use" and row["use"] == "compare"
+            assert saved["population_reports"][0]["population"] == "holdout"
+        return append(row, check)
+
+    monkeypatch.setattr(c.looks, "append", require_report)
+    assert c.main(["--spec", str(path), "--out", str(out)]) == 0
+    assert len(c.looks.entries()) == len(before.splitlines()) + 1
+
+
+@pytest.mark.parametrize("boundary", ["preflight", "compare"])
+def test_extension_capacity_is_required_before_initial_runs(
+    case, fingerprint, tmp_path, monkeypatch, boundary
+):
+    from bench import run
+    from bench.tests.test_audit import resolve_audit
+
+    spec, packets = case.build(promotion_rule=rule(extension_runs=1))
+    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
+    spec = replace(spec, audit_path=str(receipt))
+    window = v.load_window(case.window_path)
+    window = replace(
+        window,
+        planned_run_indices=(0, 1, 2),
+        planned_order=tuple((a, i) for a, i in window.planned_order if i < 3),
+    )
+    write(case.window_path, window.wire())
+    for row in case.runs.values():
+        row["window_sha256"] = v.file_hash(case.window_path)
+    if boundary == "compare":
+        refuses(paired, spec, packets, match="full rule run count")
+    else:
+        monkeypatch.setattr(v, "require_clean_treatment", lambda: None)
+        monkeypatch.setattr(v, "run_provenance", lambda **kw: fingerprint.wire())
+        monkeypatch.setattr(
+            run, "check_prereqs", lambda **kw: pytest.fail("prerequisites reached")
+        )
+        assert (
+            run.main(
+                [
+                    "--measurement-window",
+                    str(case.window_path),
+                    "--tier",
+                    "subset",
+                    "--arm",
+                    "baseline",
+                    "--run-index",
+                    "0",
+                    "--child-model",
+                    "claude-session-1",
+                    "--rule",
+                    str(case.rule_path),
+                ]
+            )
+            == 2
+        )

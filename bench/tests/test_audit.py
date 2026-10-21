@@ -1,6 +1,6 @@
 """Auditors see separate public packets and receipts bind their exact bytes."""
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -55,7 +55,7 @@ def resolve_audit(spec, packets, directory, *, dispute=False, planning=False):
         label_paths=label_files(frozen, directory, dispute),
     )
     receipt = directory / "receipt.json"
-    write(receipt, a.merge(**paths))
+    write(receipt, asdict(a.merge(**paths)))
     return frozen, paths, receipt
 
 
@@ -88,8 +88,8 @@ def test_seeded_blind_audit_owner_queue_and_receipt_binding(case, tmp_path):
     )
     write(owner, value)
     paths["label_paths"].append(str(owner))
-    write(receipt, a.merge(**paths))
-    assert a.load_receipt(receipt)["resolved"]
+    write(receipt, asdict(a.merge(**paths)))
+    assert a.load_receipt(receipt).resolved
     refuses(a.load_receipt, receipt, {"other": ()})
     public.write_bytes(public.read_bytes() + b" ")
     refuses(a.merge, **paths, match="packet")
@@ -119,7 +119,7 @@ def test_same_size_census_and_empty_arm_recall(case, tmp_path, count):
         write(Path(paths["sample_path"]), frozen)
         write(Path(paths["packet_path"]), a.public_packet(frozen))
         paths["label_paths"] = label_files(frozen, tmp_path / "audit")
-        write(receipt, a.merge(**paths))
+        write(receipt, asdict(a.merge(**paths)))
         refuses(
             paired, replace(spec, audit_path=str(receipt)), packets, match="same-size"
         )

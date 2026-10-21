@@ -2,7 +2,9 @@
 
 import random
 from dataclasses import asdict, replace
+from pathlib import Path
 
+from bench.runner import audit
 from bench.runner import simulation as s
 from bench.runner import validity as v
 from bench.tests.conftest import refuses, write
@@ -95,11 +97,7 @@ def test_vectors_remain_whole_and_ceiling_is_explicit(pop_case):
         ids,
         vectors,
         contamination,
-        dict(
-            resolved=True,
-            baseline_arm="baseline",
-            agreed=[dict(arm="baseline", correct=True)],
-        ),
+        audit.AuditReceipt(("baseline",), (audit.AuditRow("baseline", True),)),
     )
     arms = s.generate_vectors(library, rule(), 0, random.Random(7))
     assert all(len(set(vector)) == 1 for arm in arms for vector in arm)
@@ -111,3 +109,52 @@ def test_vectors_remain_whole_and_ceiling_is_explicit(pop_case):
         random.Random(7),
         match="ceiling",
     )
+
+
+def test_loaded_and_simulated_audits_share_the_evaluator_contract(case, tmp_path):
+    from bench.runner import compare
+    from bench.runner.decode import decode
+    from bench.runner.epochs import read_json
+    from bench.tests.test_compare import paired
+
+    spec, packets = case.build()
+    frozen, paths, receipt_path = resolve_audit(spec, packets, tmp_path / "audit")
+    report = paired(replace(spec, audit_path=str(receipt_path)), packets)
+    correct = {r["sample_id"]: r["arm"] == spec.baseline.name for r in frozen["rows"]}
+    for path in paths["label_paths"]:
+        value = read_json(path)
+        for label in value["labels"]:
+            label["correct"] = correct[label["sample_id"]]
+        write(Path(path), value)
+    merged = audit.merge(**paths)
+    assert isinstance(merged, audit.AuditReceipt)
+    write(receipt_path, asdict(merged))
+    arms = {arm.name: arm.scores for arm in (spec.baseline, spec.candidate)}
+    receipt = audit.load_receipt(receipt_path, arms)
+    assert isinstance(receipt, audit.AuditReceipt)
+    assert receipt.arm_order == tuple(arms)
+    assert receipt.resolved and all(
+        isinstance(r, audit.AuditRow) for r in receipt.agreed
+    )
+    assert decode(audit.AuditReceipt, read_json(receipt_path)) == receipt
+    decision = compare.evaluate_promotion(report.population_reports, receipt, rule())
+    assert decision.guards["groundedness"] == "fail"
+    reversed_receipt = audit.load_receipt(
+        receipt_path, dict(reversed(list(arms.items())))
+    )
+    assert reversed_receipt.arm_order == tuple(reversed(arms))
+    assert (
+        compare.evaluate_promotion(
+            report.population_reports, reversed_receipt, rule()
+        ).guards["groundedness"]
+        == "pass"
+    )
+    library = s.SimulationLibrary(spec.epoch_id, (), (), case.contamination, receipt)
+    simulated = s.simulated_audit(library, random.Random(7))
+    assert isinstance(simulated, audit.AuditReceipt)
+    assert simulated.arm_order == ("baseline", "candidate")
+    assert simulated.resolved and len(simulated.agreed) == 60
+    assert all(isinstance(r, audit.AuditRow) for r in simulated.agreed)
+    assert compare.evaluate_promotion(
+        report.population_reports, simulated, rule()
+    ).guards["groundedness"] in ("pass", "fail")

@@ -34,6 +34,7 @@ from bench.runner.validity import load_selected_attempt
 ROOT = Path(__file__).resolve().parents[2]
 
 Verdict = Literal["pass", "fail", "inconclusive"]
+Stability = Literal["insufficient_runs", "stable_found", "stable_missed", "flaky"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,8 +121,8 @@ class BugComparison:
     baseline_rate: float
     candidate_rate: float
     difference: float
-    baseline_label: str
-    candidate_label: str
+    baseline_label: Stability
+    candidate_label: Stability
     stable_loss: bool
 
 
@@ -196,21 +197,32 @@ def cluster_bootstrap(bugs, config):
     )
 
 
-def stability(hits, n, minimum):
+def stability(hits, n, minimum) -> Stability:
     if n < minimum:
         return "insufficient_runs"
-    return "stable_found" if hits == n else "stable_missed" if hits == 0 else "flaky"
+    if hits == n:
+        return "stable_found"
+    if hits == 0:
+        return "stable_missed"
+    return "flaky"
 
 
 def reduce_population(
-    matrix, population, epoch, profile, config, minimum=3, receipt=None
+    matrix,
+    population,
+    epoch,
+    profile,
+    config,
+    minimum=3,
+    receipt: audit.AuditReceipt | None = None,
 ):
     names = matrix.arms
     runs = dict(matrix.run_indices_by_arm)
     index = {(r.arm, r.run_index, r.bug_id): r for r in matrix.observations}
     if len(index) != len(matrix.observations):
         raise ValueError("duplicate bug observation")
-    bugs, members = [], {}
+    bugs: list[BugComparison] = []
+    members: dict[str, list[validity.MatrixObservation]] = {}
     for bug in epoch.bugs:
         if bug.bug_id not in population.bug_ids:
             continue
@@ -224,59 +236,74 @@ def reduce_population(
         ]
         bugs.append(
             BugComparison(
-                bug.bug_id,
-                bug.pr_url,
-                bug.category,
-                *rates,
-                rates[1] - rates[0],
-                *labels,
-                labels[0] == "stable_found" and hits[1] == 0,
+                bug_id=bug.bug_id,
+                pr_url=bug.pr_url,
+                category=bug.category,
+                baseline_rate=rates[0],
+                candidate_rate=rates[1],
+                difference=rates[1] - rates[0],
+                baseline_label=labels[0],
+                candidate_label=labels[1],
+                stable_loss=labels[0] == "stable_found" and hits[1] == 0,
             )
         )
         for name, arm in zip(names, rows, strict=True):
             members.setdefault(name, []).extend(arm)
 
-    def means(rows):
-        return tuple(
-            sum(getattr(b, field) for b in rows) / len(rows) if rows else None
-            for field in ("baseline_rate", "candidate_rate", "difference")
+    def means(
+        rows: list[BugComparison],
+    ) -> tuple[float | None, float | None, float | None]:
+        return (
+            sum(b.baseline_rate for b in rows) / len(rows) if rows else None,
+            sum(b.candidate_rate for b in rows) / len(rows) if rows else None,
+            sum(b.difference for b in rows) / len(rows) if rows else None,
         )
 
     categories = {
         str(cat): means([b for b in bugs if b.category == cat])
         for cat in (*get_args(Category), None)
     }
-    dimensions, funnels = {}, {}
+    dimensions: dict[str, dict[str, dict[str, float | None]]] = {}
+    funnels: dict[str, dict[str, object]] = {}
     for name in names:
-        rows = members.get(name, [])
+        arm_rows = members.get(name, [])
         sampled = [
             r
-            for r in (receipt["agreed"] if receipt else ())
-            if r["arm"] == name and r["finding"]["pr_url"] in population.pr_urls
+            for r in (receipt.agreed if receipt else ())
+            if r.arm == name and r.finding and r.finding.pr_url in population.pr_urls
         ]
-        known = all(r["finding"]["provenance_status"] == "complete" for r in sampled)
+        findings = []
+        for row in sampled:
+            finding = row.finding
+            if finding is None:
+                raise ValueError("sampled audit row is missing its finding")
+            findings.append((row, finding))
+        known = all(finding.provenance_status == "complete" for _, finding in findings)
         dimensions[name] = {}
         for d in get_args(observations.Dimension):
-            selected = [r for r in sampled if d in r["finding"]["discovery_dimensions"]]
+            selected = [
+                row for row, finding in findings if d in finding.discovery_dimensions
+            ]
             dimensions[name][d] = {
                 kind: sum(
                     (r.detected or kind == "discovery")
                     and d in getattr(r, kind + "_dimensions")
-                    for r in rows
+                    for r in arm_rows
                 )
-                / len(rows)
-                if rows
+                / len(arm_rows)
+                if arm_rows
                 and all(
                     r.delivered_provenance_available
                     if kind == "delivered"
                     else r.provenance_available
-                    for r in rows
+                    for r in arm_rows
                 )
                 else None
                 for kind in ("delivered", "discovery")
             }
             dimensions[name][d]["groundedness"] = (
-                sum(r["correct"] for r in selected) / len(selected)
+                sum(r.correct for r in selected if r.correct is not None)
+                / len(selected)
                 if selected and known
                 else None
             )
@@ -288,21 +315,26 @@ def reduce_population(
                 score_refs=refs,
             )
         )
+    baseline_recall, candidate_recall, difference = means(bugs)
     return PopulationComparison(
-        population.name,
-        population.content_sha256,
-        profile,
-        len(bugs),
-        *means(bugs),
-        cluster_bootstrap(bugs, config),
-        tuple(bugs),
-        categories,
-        dimensions,
-        funnels,
+        population=population.name,
+        content_sha256=population.content_sha256,
+        profile=profile,
+        denominator=len(bugs),
+        baseline_recall=baseline_recall,
+        candidate_recall=candidate_recall,
+        difference=difference,
+        interval=cluster_bootstrap(bugs, config),
+        bugs=tuple(bugs),
+        categories=categories,
+        dimensions=dimensions,
+        funnels=funnels,
     )
 
 
-def evaluate_promotion(reports, receipt, rule, *, extended=False):
+def evaluate_promotion(
+    reports, receipt: audit.AuditReceipt | None, rule, *, extended=False
+):
     primary, nonmini = (
         next(
             (p for p in reports if p.profile == rule.profile and p.population == name),
@@ -310,7 +342,7 @@ def evaluate_promotion(reports, receipt, rule, *, extended=False):
         )
         for name in ("gate-uncontaminated", "gate-uncontaminated-non-mini")
     )
-    guards = {}
+    guards: dict[str, Verdict] = {}
     for name, pop, margin in (
         ("primary_recall", primary, rule.margin_pp),
         ("non-mini", nonmini, rule.nonmini_margin_pp),
@@ -319,53 +351,49 @@ def evaluate_promotion(reports, receipt, rule, *, extended=False):
             guards[name] = "inconclusive"
             continue
         threshold = (-margin if rule.kind == "ship" else margin) / 100
-        guards[name] = (
-            "pass"
-            if pop.interval.lower > threshold
-            else "fail"
-            if pop.interval.upper <= threshold
-            else "inconclusive"
-        )
+        if pop.interval.lower > threshold:
+            guards[name] = "pass"
+        elif pop.interval.upper <= threshold:
+            guards[name] = "fail"
+        else:
+            guards[name] = "inconclusive"
     losses = tuple(b.bug_id for b in primary.bugs if b.stable_loss) if primary else ()
     if rule.kind == "wave":
-        if not receipt or not receipt["resolved"]:
+        if not receipt or not receipt.resolved:
             raise ValueError("resolved blinded audit required")
-        if len(receipt["arm_order"]) != 2:
+        if len(receipt.arm_order) != 2:
             raise ValueError("wave requires two audit arms")
         base, candidate = (
-            [r["correct"] for r in receipt["agreed"] if r["arm"] == a]
-            for a in receipt["arm_order"]
+            [r.correct for r in receipt.agreed if r.arm == a] for a in receipt.arm_order
         )
         if len(base) != len(candidate) or any(
             type(v) is not bool for v in base + candidate
         ):
             raise ValueError("incomplete or unequal audit")
-        guards["groundedness"] = (
-            "inconclusive"
-            if not base
-            else "pass"
-            if sum(candidate) >= sum(base)
-            else "fail"
-        )
-        guards["stable_loss"] = (
-            "fail"
-            if losses
-            else "pass"
-            if primary
-            and all(
-                b.baseline_label != "insufficient_runs"
-                and b.candidate_label != "insufficient_runs"
-                for b in primary.bugs
-            )
-            else "inconclusive"
-        )
-    verdict = (
-        "fail"
-        if "fail" in guards.values()
-        else "inconclusive"
-        if "inconclusive" in guards.values()
-        else "pass"
-    )
+        if not base:
+            guards["groundedness"] = "inconclusive"
+        elif sum(value for value in candidate if value is not None) >= sum(
+            value for value in base if value is not None
+        ):
+            guards["groundedness"] = "pass"
+        else:
+            guards["groundedness"] = "fail"
+        if losses:
+            guards["stable_loss"] = "fail"
+        elif primary and all(
+            b.baseline_label != "insufficient_runs"
+            and b.candidate_label != "insufficient_runs"
+            for b in primary.bugs
+        ):
+            guards["stable_loss"] = "pass"
+        else:
+            guards["stable_loss"] = "inconclusive"
+    if "fail" in guards.values():
+        verdict: Verdict = "fail"
+    elif "inconclusive" in guards.values():
+        verdict = "inconclusive"
+    else:
+        verdict = "pass"
     improvement = bool(
         primary
         and primary.difference is not None
@@ -438,7 +466,7 @@ def matrix_for_arm(
             or ref.epoch_id != epoch.epoch_id
             or dict(p.manifest.epoch_hashes) != observations.epoch_hashes(epoch)
         ):
-            raise ValueError("p scoring context mismatch")
+            raise ValueError("packet scoring context mismatch")
         if not validity.same_pr_set(p.manifest.requested_pr_urls, scope):
             raise ValueError("incomplete PR scope")
         expected = {b.bug_id for b in epoch.bugs if b.pr_url in scope}
@@ -603,7 +631,7 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
         else None
     )
     if gate and (
-        len(window.planned_run_indices) < count
+        len(window.planned_run_indices) < rule.initial_runs + rule.extension_runs
         or any(len(a.scores) != count for a in arms)
     ):
         raise ValueError("full rule run count required in window and both arms")
@@ -652,7 +680,6 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
         matrix = validity.validate_matrix(
             selections,
             window,
-            (),
             epoch=epoch,
             expected_run_indices=tuple(window.planned_run_indices[:count]),
         )
@@ -692,23 +719,18 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
             if c.pr_url in audit_population.pr_urls
         }
         if any(
-            candidates.get(
-                (decode(ScoreRef, r["score_ref"]), r["finding"]["candidate_id"])
-            )
-            != digest(r["finding"])
-            for r in receipt["agreed"]
+            candidates.get((r.score_ref, r.finding.candidate_id))
+            != digest(asdict(r.finding))
+            for r in receipt.agreed
         ):
             raise ValueError("audit sample differs from delivered findings")
         expected = min(
             30, *(sum(ref in a.scores for ref, _ in candidates) for a in arms)
         )
-        if any(
-            sum(r["arm"] == a.name for r in receipt["agreed"]) != expected for a in arms
-        ):
+        if any(sum(r.arm == a.name for r in receipt.agreed) != expected for a in arms):
             raise ValueError(
                 "audit requires same-size samples capped by the smaller census"
             )
-        receipt = {**receipt, "arm_order": [a.name for a in arms]}
     names = (
         tuple(n for n in get_args(PopulationName) if n.startswith("gate"))
         if gate
@@ -782,7 +804,7 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
             else None,
             contamination_sha256=digest(manifest),
             rule_sha256=digest(asdict(rule)) if rule else None,
-            audit_sha256=digest(receipt) if receipt else None,
+            audit_sha256=digest(asdict(receipt)) if receipt else None,
         ),
         spend_totals([p.ledger_row() for p in packets]),
         decision,
@@ -793,11 +815,11 @@ def main(argv=None):
     args = spec_output_args(__doc__, argv)
     spec = load_comparison_spec(args.spec)
     report = compare_arms(spec)
+    exclusive_json(args.out, asdict(report))
     if report.promotion:
         looks.record(validity.load_window(Path(spec.window_path)), spec, report)
     if spec.population == "holdout":
         looks.holdout(spec.unseal, spec.candidate.treatment_git_sha, use="compare")
-    exclusive_json(args.out, asdict(report))
     return 0
 
 
