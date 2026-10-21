@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v3.44.0 (2026-10-21)
+
+### Bug Fixes
+
+- **bench**: A run copied to another checkout keeps resolving its recorded payload
+  ([#540](https://github.com/liatrio-labs/claude-code-gauntlet/pull/540),
+  [`825af97`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/825af9786dfcc9735541add1ee01b5626362e3d3))
+
+- **bench**: Review fixes for the scoring PR, and dead code removed to hold the coverage floor
+  ([#540](https://github.com/liatrio-labs/claude-code-gauntlet/pull/540),
+  [`825af97`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/825af9786dfcc9735541add1ee01b5626362e3d3))
+
+### Features
+
+- **bench**: One active golden epoch and immutable, cost-measured scoring (#46 stack 2/5)
+  ([#540](https://github.com/liatrio-labs/claude-code-gauntlet/pull/540),
+  [`825af97`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/825af9786dfcc9735541add1ee01b5626362e3d3))
+
+- **bench**: One active golden epoch behind a value API, scored by the vendored upstream scorer
+  ([#540](https://github.com/liatrio-labs/claude-code-gauntlet/pull/540),
+  [`825af97`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/825af9786dfcc9735541add1ee01b5626362e3d3))
+
+
 ## v3.43.0 (2026-10-21)
 
 ### Bug Fixes
