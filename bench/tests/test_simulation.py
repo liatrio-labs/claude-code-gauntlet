@@ -15,7 +15,7 @@ from bench.tests.test_validity import window as window
 
 def test_source_windows_audit_binding_and_null_pass_rate(case, tmp_path):
     spec, packets = case.build()
-    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
+    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit", planning=True)
     sim = tmp_path / "simulation.json"
     value = dict(
         baseline_scores=[asdict(r) for r in spec.baseline.scores],

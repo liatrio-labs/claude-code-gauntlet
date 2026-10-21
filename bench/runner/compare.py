@@ -7,11 +7,9 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal, get_args
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from bench.runner import (  # noqa: E402
+from bench.runner import (
     audit,
     looks,
     observations,
@@ -19,9 +17,9 @@ from bench.runner import (  # noqa: E402
     stages,
     validity,
 )
-from bench.runner.cli import spec_output_args  # noqa: E402
-from bench.runner.decode import decode  # noqa: E402
-from bench.runner.epochs import (  # noqa: E402
+from bench.runner.cli import spec_output_args
+from bench.runner.decode import decode
+from bench.runner.epochs import (
     Category,
     Profile,
     digest,
@@ -29,9 +27,11 @@ from bench.runner.epochs import (  # noqa: E402
     load_epoch,
     read_json,
 )
-from bench.runner.observations import ScoreRef  # noqa: E402
-from bench.runner.populations import PopulationName  # noqa: E402
-from bench.runner.validity import load_selected_attempt  # noqa: E402
+from bench.runner.observations import ScoreRef
+from bench.runner.populations import PopulationName
+from bench.runner.validity import load_selected_attempt
+
+ROOT = Path(__file__).resolve().parents[2]
 
 Verdict = Literal["pass", "fail", "inconclusive"]
 
@@ -258,7 +258,13 @@ def reduce_population(
                     for r in rows
                 )
                 / len(rows)
-                if rows and all(r.provenance_available for r in rows)
+                if rows
+                and all(
+                    r.delivered_provenance_available
+                    if kind == "delivered"
+                    else r.provenance_available
+                    for r in rows
+                )
                 else None
                 for kind in ("delivered", "discovery")
             }
@@ -272,6 +278,7 @@ def reduce_population(
             stages.loss_funnel(
                 [s for s in matrix.stage_observations if s.score_ref in refs],
                 population=population.bug_ids,
+                score_refs=refs,
             )
         )
     return PopulationComparison(
@@ -316,6 +323,8 @@ def evaluate_promotion(reports, receipt, rule, *, extended=False):
     if rule.kind == "wave":
         if not receipt or not receipt["resolved"]:
             raise ValueError("resolved blinded audit required")
+        if len(receipt["arm_order"]) != 2:
+            raise ValueError("wave requires two audit arms")
         base, candidate = (
             [r["correct"] for r in receipt["agreed"] if r["arm"] == a]
             for a in receipt["arm_order"]
@@ -502,6 +511,11 @@ def matrix_for_arm(
                     dims,
                     (),
                     bool(discovery and discovery.coverage == "complete"),
+                    all(
+                        c.provenance_status == "complete"
+                        for c in p.candidates
+                        if c.pr_url == bug.pr_url
+                    ),
                 )
             )
         indices.append(index)
@@ -567,6 +581,16 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
             spec.baseline.agent_read_sha256,
         )
     arms = (spec.baseline, spec.candidate)
+    count = (
+        rule.initial_runs + (rule.extension_runs if spec.initial_spec_path else 0)
+        if gate
+        else None
+    )
+    if gate and (
+        len(window.planned_run_indices) < count
+        or any(len(a.scores) != count for a in arms)
+    ):
+        raise ValueError("full rule run count required in window and both arms")
     packets, selections, cells, stage_rows, runs = [], [], [], [], []
     for arm in arms:
         ps, ss, cs, sr, indices = load_arm(
@@ -609,9 +633,6 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
     ):
         raise ValueError("duplicate review or mixed scoring contexts")
     if gate:
-        count = rule.initial_runs + (
-            rule.extension_runs if spec.initial_spec_path else 0
-        )
         matrix = validity.validate_matrix(
             selections,
             window,
@@ -622,6 +643,9 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
         validity.validate_interleaving(selections, window, runs)
         for packet in packets:
             if packet.score_ref in spec.candidate.scores:
+                populations.check_freeze(manifest, _packet_run(packet)["started"])
+                if _packet_run(packet).get("contamination_sha256") != digest(manifest):
+                    raise ValueError("candidate contamination binding mismatch")
                 looks.registration(
                     window.wave_id,
                     digest(asdict(rule)),
@@ -634,8 +658,13 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
     matrix = replace(
         matrix, arms=tuple(a.name for a in arms), stage_observations=tuple(stage_rows)
     )
+    audit_population = resolve("gate-uncontaminated", "core") if gate else pop
     receipt = (
-        audit.load_receipt(spec.audit_path, {a.name: a.scores for a in arms})
+        audit.load_receipt(
+            spec.audit_path,
+            {a.name: a.scores for a in arms},
+            audit_population,
+        )
         if spec.audit_path
         else None
     )
@@ -644,6 +673,7 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
             (p.score_ref, c.candidate_id): digest(asdict(c))
             for p in packets
             for c in p.candidates
+            if c.pr_url in audit_population.pr_urls
         }
         if any(
             candidates.get(
@@ -654,11 +684,7 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
         ):
             raise ValueError("audit sample differs from delivered findings")
         expected = min(
-            30,
-            *(
-                sum(len(p.candidates) for p in packets if p.score_ref in a.scores)
-                for a in arms
-            ),
+            30, *(sum(ref in a.scores for ref, _ in candidates) for a in arms)
         )
         if any(
             sum(r["arm"] == a.name for r in receipt["agreed"]) != expected for a in arms
@@ -722,7 +748,7 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
             or not snapshot["promotion"]["extension_allowed"]
         ):
             raise ValueError("initial report, rule, audit or decision changed")
-    from bench.report import spend_totals
+    from bench.runner.ledger import spend_totals
 
     return ComparisonReport(
         spec.comparison_id,

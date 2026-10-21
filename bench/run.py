@@ -728,6 +728,8 @@ def _run_prs(
         else {"run_id": run_dir.name}
     )
 
+    decision_hook("reserve", manifest=manifest)
+
     # A scorable entry has each key present, truthy, and not the fetch_shas "missing"
     # sentinel (owner/repo are needed to build the clone URL; the SHAs/ref to check out).
     required = ("owner", "repo", "head_sha", "base_sha", "base_ref", "pr_number")
@@ -1039,6 +1041,12 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
     )
     manifest.update(
         provenance=provenance,
+        unseal_holdout=getattr(args, "unseal_holdout", None),
+        rule=getattr(args, "rule", None),
+        contamination=getattr(args, "contamination", None),
+        contamination_sha256=validity.digest(_load_json(args.contamination))
+        if getattr(args, "contamination", None)
+        else None,
         epoch_id=provenance.get("controls", provenance)["golden_epoch_id"],
         golden_sha256=provenance.get("controls", provenance)["golden_sha256"],
         measurement_window=getattr(args, "measurement_window", None),
@@ -1257,7 +1265,10 @@ def _score_only(run_id, *, epoch_id=None, attribution=False):
         print(f"No run dir at {run_dir} to score.", file=sys.stderr)
         return 2
     try:
-        options = {"epoch_id": epoch_id}
+        options = {
+            "epoch_id": epoch_id,
+            "attempt_selection": validity.scoring_selection(run_dir),
+        }
         if attribution:
             options["attribution"] = True
         result = score.score_run(str(run_dir), **options)
@@ -1398,6 +1409,8 @@ def parse_args(argv=None):
         "resolution and labels the run 'custom'. Every URL must exist in shas.json. "
         "The alias 'mini' expands to the pre-registered 6-PR mini subset.",
     )
+    parser.add_argument("--rule", metavar="PATH")
+    parser.add_argument("--contamination", metavar="PATH")
     parser.add_argument("--measurement-window", metavar="PATH")
     parser.add_argument("--run-index", type=int)
     parser.add_argument("--arm")
@@ -1414,6 +1427,13 @@ def parse_args(argv=None):
         if urls == ["mini"]:
             subsets = load_epoch(root=GOLDEN_DIR).subsets
             urls = list(subsets["mini"])
+        if urls in (["dev-slice"], ["dev-pool"]):
+            try:
+                urls = decision_hook(
+                    "population", args=args, epoch=load_epoch(root=GOLDEN_DIR)
+                )
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         shas = load_epoch(root=GOLDEN_DIR).shas
         unknown = [u for u in urls if u not in shas]
         if unknown:
@@ -1422,6 +1442,18 @@ def parse_args(argv=None):
             )
         args.prs = urls
     return args
+
+
+_decision_hook = None
+
+
+def decision_hook(event, **context):
+    global _decision_hook
+    if _decision_hook is None:
+        import importlib
+
+        importlib.import_module("bench.runner.populations").register_run_hook(globals())
+    return _decision_hook(event, **context)
 
 
 def main(argv=None):
@@ -1491,27 +1523,15 @@ def main(argv=None):
             if (args.resume or args.retry_failed)
             else None
         )
-        from bench.runner.populations import check_holdout
-
-        urls = (
-            (prior_manifest or {}).get("pr_urls") or _target_urls(args.tier, args.prs)
-            if (prior_manifest or args.tier or args.prs)
-            else ()
+        for key in ("unseal_holdout", "contamination", "rule"):
+            value = getattr(args, key) or (prior_manifest or {}).get(key)
+            setattr(args, key, str(Path(value).resolve()) if value else None)
+        urls = (prior_manifest or {}).get("pr_urls") or (
+            _target_urls(args.tier, args.prs) if args.tier or args.prs else ()
         )
-        check_holdout(
-            urls,
-            load_epoch(root=GOLDEN_DIR),
-            args.unseal_holdout,
-            validity.treatment_sha() if args.unseal_holdout else None,
+        decision_hook(
+            "preflight", args=args, urls=urls, epoch=load_epoch(root=GOLDEN_DIR)
         )
-        if args.unseal_holdout:
-            check_holdout(
-                urls,
-                load_epoch(root=GOLDEN_DIR),
-                args.unseal_holdout,
-                validity.treatment_sha(),
-                use="run",
-            )
         if args.measurement_window:
             validity.refuse_ambient_model_overrides(os.environ)
             validity.require_clean_treatment()
@@ -1540,14 +1560,7 @@ def main(argv=None):
                 window=window,
                 arm=prior.get("arm") or args.arm,
             )
-            if (prior.get("arm") or args.arm) == window.candidate_arm and set(
-                window.pr_urls
-            ) & set(load_epoch(root=GOLDEN_DIR).subsets["gate"]):
-                from bench.runner.looks import registration
-
-                registration(
-                    window.wave_id, window.rule_sha256, started=validity.utc_now()
-                )
+            decision_hook("window", args=args, window=window, prior=prior)
             urls = prior.get("pr_urls") or _target_urls(args.tier, args.prs)
             if not validity.same_pr_set(urls, window.pr_urls):
                 raise ValueError("window requested PR matrix mismatch")

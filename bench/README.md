@@ -114,14 +114,15 @@ headroom.
 python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelity dry-run|live]
                       [--resume RUN_ID] [--retry-failed RUN_ID]
                       [--timeout-mins 45] [--anchor naive] [--score-only RUN_ID]
-                      [--check RUN_ID] [--prs URL[,URL...]|mini]
+                      [--check RUN_ID] [--prs URL[,URL...]|mini|dev-slice|dev-pool]
+                      [--contamination PATH] [--rule PATH]
                       [--child-auth api|subscription]
 ```
 
 | Flag | Values | Default | What it does |
 |---|---|---|---|
 | `--tier` | `smoke` \| `mini` \| `subset` \| `holdout` \| `full` | — (required for a new run unless `--prs`) | Which PR set to run. `smoke` = 3 PRs (functional smoke). `mini` = 6-PR paired cut. `subset` = 15-PR gate. `holdout` = 10 sealed PRs. `full` includes sealed PRs. Both require `--unseal-holdout RECEIPT.json` at that close. |
-| `--prs` | URL list or `mini` | — | Explicit golden PR list; labels the run `custom`. The alias `mini` expands to the pre-registered 6-PR mini subset. |
+| `--prs` | URL list, `mini`, `dev-slice`, `dev-pool` | - | Explicit or named PR list; labels the run `custom`. Dev aliases require `--contamination PATH` and resolve through the named populations. |
 | `--runs` | int | `1` | Number of sequential runs, each getting its own run directory under `bench/workspace/runs/`. |
 | `--fidelity` | `dry-run` \| `live` | `dry-run` | Recorded in the run manifest. |
 | `--resume` | `RUN_ID` | — | Re-run only the PRs of `RUN_ID` still `pending` (skips `ok`/`invalid`/`drifted` and also `timeout`/`failed` — use `--retry-failed` for those). |
@@ -381,7 +382,7 @@ python3 -c 'from pathlib import Path; from bench.runner.validity import load_win
 
 `MeasurementWindow.expected` pins shared CLI version, binary path and bytes,
 auto-update off, evaluator pins, golden epoch and auth mode. Its `arms` map declares
-exactly two treatments. Each `Treatment` pins its git SHA, dispatch roster and model
+exactly two treatments. Each `Treatment` pins its plugin input tree identity, dispatch roster and model
 map, per-agent effort values, auxiliary model allowlist and
 benchmark policy digest. Build declarations from `capture_fingerprint()` and review
 both arm entries before freezing. `planned_order` lists `[arm, run_index]` pairs
@@ -393,13 +394,23 @@ roster, not the shared controls. Ambient model, effort and provider overrides ar
 refused before mirror work. Verify installed CLI update/effort behavior separately.
 
 Start with `python3 bench/run.py --tier subset --measurement-window window.json
---child-model claude-opus-5-5 --arm baseline --run-index 0`. Resume and retry require
+--child-model claude-opus-5-5 --arm baseline --run-index 0 --rule frozen-rule.json`.
+Candidates also pass `--contamination contamination.json`. The window must contain the
+rule's full initial run count before either arm spends. A comparison requires exactly
+that many independent scores per arm (including the extension when selected).
+Resume and retry require
 that same window. Every child rechecks its binary before dispatch. A baseline run also
 accepts `--baseline-equivalence-receipt PATH`; its reviewed JSON binds `release_sha`
 (`839b1886`), `merge_sha` and `evidence_refs` to the instrumented Wave 0a merge.
-Tracked files must be clean at entry and before each PR. Treatment identity hashes
-the index entries under `.claude-plugin`, `agents`, `skills`, `workflows` and `scripts`,
-including the shipped bundle and gauntlet helpers.
+Only tracked plugin inputs must be clean at entry and before each PR. Treatment
+identity hashes the index entries under `.claude-plugin`, `agents`, `skills`,
+`workflows` and `scripts`, including the shipped bundle and gauntlet helpers.
+The legacy fields `treatment_git_sha`, `baseline_treatment_sha`, receipt `merge_sha`
+and `final_sha` carry this tree digest, independent of HEAD. `agent_read_sha256`
+carries the same digest. The tracked append-only evidence ledgers
+`bench/golden/looks.jsonl` and `bench/experiments.jsonl` are outside those inputs.
+Registration, scoring and look recording therefore need no intervening commit,
+including before an extension run.
 
 Attempts are immutable under `attempts/<pr-key>/<attempt-id>/`. Checkpoints select the
 latest scheduling outcome. Retrying preserves raw output, payloads, workflow records,
@@ -427,17 +438,22 @@ python3 -m bench.runner.populations --spec leak-manifest-v2.json --out proposal.
 ```
 
 The population freeze spec has `manifest` (the imported proposal object),
-`baseline_treatment_sha` (the eventual Wave 0a merge SHA), and `frozen_at` (an ISO
-timestamp). The baseline plugin tree must match the scanned clean checkout. HEAD
-itself need not equal the baseline SHA. The freeze runs the leak scan itself, refuses
-failing evidence, and binds its digest.
+`baseline_treatment_sha` (the Wave 0a plugin input tree digest), and `frozen_at`
+(an ISO timestamp). The baseline tree digest must match the scanned clean checkout.
+The freeze runs the leak scan itself, refuses failing evidence, and binds its digest.
+Every candidate captures the frozen contamination digest before dispatch. Comparison
+requires that binding and a freeze time strictly before every candidate run.
 
 ```sh
 python3 -m bench.runner.populations --spec freeze-spec.json --out contamination.json
 ```
 
-A sample spec has `seed` and `arms`, a mapping from each arm's name to its score
-references. Each reference has `run_id`, `epoch_id`, and `score_id`.
+A sample spec has `seed`, `contamination_path`, `population` (default
+`gate-uncontaminated`) and `arms`, a mapping from arm names to score references.
+Each reference has `run_id`, `epoch_id`, and `score_id`. Wave 0b planning uses one
+baseline arm, capped at 30 findings, accepted by simulation. Wave comparisons require
+two equal-size samples capped at 30 and the smaller uncontaminated census. Excluded
+PRs never enter the sampler or groundedness guard. Receipts bind that population.
 
 ```sh
 python3 -m bench.runner.audit --spec sample-spec.json --out audit/
@@ -488,8 +504,10 @@ python3 -m bench.runner.looks --approved-final-sha FINAL_SHA --out unseal.json
 ```
 
 Pass it to run's `--unseal-holdout`, comparison's `unseal`, and the audit sample's
-`unseal` with `final_sha`. Each step can use the receipt once. Receipt loading and
-label merge revalidate its authorization. Another SHA or unseal is refused.
+`unseal` with `final_sha`. Review authorization is reserved after preflight for one
+immutable run id. That run may resume or retry with its recorded receipt; another run
+is refused. Audit and comparison each use the receipt once. Receipt loading and
+label merge revalidate its authorization. Another treatment or unseal is refused.
 
 A simulation spec has `baseline_scores`, `epoch_id`, `contamination_path`,
 `rule_paths`, `audit_path`, `baseline_arm`, `trials`, `seed`, `power_target`, and

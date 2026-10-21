@@ -47,9 +47,10 @@ lines. A holdout match must be deleted; its wording and suggested rewrites never
 build briefs. Semantic dispositions are reviewed separately from a passing lexical
 scan.
 
-The freeze binds its passing recomputed scan to an explicit baseline treatment SHA and
-identical plugin tree, rather than requiring HEAD to be that SHA. It precedes
-candidate runs. The checked-in contamination manifest remains unfrozen pending the
+The freeze binds its passing recomputed scan to the baseline plugin input tree digest.
+Evidence ledgers are outside that identity and HEAD does not identify a treatment.
+Candidate dispatch captures the frozen contamination digest. Comparison requires
+that digest and a freeze timestamp strictly before every candidate run. The checked-in contamination manifest remains unfrozen pending the
 Wave 0a merge commit and owner-reviewed evidence. There is no untouched set for issue
 
 # 46's own confirmation. Gate transcripts are read only to explain a lost bug after its
@@ -68,7 +69,9 @@ no new independent run. Selected attempts and their provenance remain immutable.
 A first non-ok outcome is invalid and retryable. A second non-ok outcome for the same
 PR/window is an all-missed operational failure on API, or on subscription when the
 retry follows the operator-recorded reset. Diagnostic text need not match. Missing
-optional attribution disables dimension/funnel evidence, never recall.
+optional attribution leaves discovery recall unknown. Delivered dimension recall
+uses delivered candidate provenance. Funnels retain unavailable cells for every
+selected run. No eliminated discovery findings means no attribution run or charge.
 
 The unit is a golden bug. The statistic is the mean of per-bug differences between arm
 detection means. A seeded PR-cluster bootstrap resamples whole PR clusters, weights
@@ -81,7 +84,9 @@ denominator, including unavailable traces and operational failures.
 
 ## Audit and decisions
 
-A seeded sampler uses one count for both arms, capped at 30 and at the smaller census.
+A seeded sampler binds the uncontaminated decision population. Wave comparisons use
+two equal-size samples capped at 30 and the smaller uncontaminated census. Wave 0b
+planning uses one baseline sample capped at 30, with the same receipt format.
 An empty census makes sampled groundedness unavailable; recall is still reported and
 the groundedness guard is inconclusive. Public auditor packets carry repository and
 code references while hiding arm and score identities. Public packets and the private
@@ -107,8 +112,9 @@ cannot inspect gate populations. The look count comes from this ledger, includin
 failed looks; there are currently zero recorded looks.
 
 The holdout opens once at issue #101 close through a receipt bound to the approved
-final treatment SHA. The ledger refuses another unseal, another review use, another
-audit sample, or another comparison. Audit and comparison verify the receipt and final
+final plugin input tree digest. After preflight, the ledger reserves review use for
+one run identity and permits its resume and retry. It refuses another unseal, another
+independent review run, another audit sample, or another comparison. Audit and comparison verify the receipt and final
 treatment, and refuse another SHA.
 
 Final confirmation uses API 3+3, baseline versus final tip, gate only. The ship rule

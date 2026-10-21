@@ -35,6 +35,7 @@ from bench.runner.ledger import (  # noqa: E402
     read_rows,
     row_auth_mode,
     score_identity,
+    spend_totals,
 )
 
 # Section break inside a tooltip / aria string. U+2028 (LINE SEPARATOR) renders as
@@ -2389,26 +2390,6 @@ def _row_key(row):
         row.get("run_id"),
         row.get("scorer_sha"),
     )
-
-
-def spend_totals(rows):
-    amounts = {"review": {}, "scoring": {}, "attribution": {}}
-    for row in rows:
-        identity = (row["run_id"], row.get("epoch_id"), row.get("score_id"))
-        attempts = row.get("review_attempt_costs") or {"unknown": None}
-        for aid, amount in attempts.items():
-            amounts["review"][(row["run_id"], aid)] = (
-                amount if cost_is_billable(row) else 0
-            )
-        for field in ("dedup", "judge", "adjudicator", "attribution"):
-            group = "attribution" if field == "attribution" else "scoring"
-            amounts[group][(identity, field)] = row.get(field + "_cost_usd")
-    return {
-        group + "_cost_usd": sum(values.values())
-        if all(v is not None for v in values.values())
-        else None
-        for group, values in amounts.items()
-    }
 
 
 def render_html(rows, baselines, sha, generated):

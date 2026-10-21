@@ -28,6 +28,7 @@ class LookEntry(TypedDict, total=False):
     report_sha256: str
     final_sha: str
     use: Literal["run", "audit", "compare"]
+    run_id: str
     receipt_sha256: str
 
 
@@ -41,7 +42,8 @@ def append(row: LookEntry, check):
     with LEDGER.open("a+", encoding="utf-8") as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
         stream.seek(0)
-        check([json.loads(line) for line in stream])
+        if check([json.loads(line) for line in stream]) is False:
+            return
         stream.write(canonical(row).decode() + "\n")
         stream.flush()
         os.fsync(stream.fileno())
@@ -103,16 +105,16 @@ def unseal(approved_final_treatment_sha, out):
     row = dict(kind="unseal", final_sha=approved_final_treatment_sha, at=utc_now())
 
     def check(rows):
-        if not re.fullmatch(r"[0-9a-f]{40}", approved_final_treatment_sha) or any(
-            r["kind"] == "unseal" for r in rows
-        ):
+        if not re.fullmatch(
+            r"(?:[0-9a-f]{40}|[0-9a-f]{64})", approved_final_treatment_sha
+        ) or any(r["kind"] == "unseal" for r in rows):
             raise ValueError("holdout already unsealed or invalid final SHA")
 
     append(row, check)
     exclusive_json(Path(out), row)
 
 
-def holdout(receipt, sha, *, use=None):
+def holdout(receipt, sha, *, use=None, run_id=None):
     row = read_json(receipt) if receipt else None
     if (
         not row
@@ -122,13 +124,23 @@ def holdout(receipt, sha, *, use=None):
     ):
         raise ValueError("holdout sealed: approved final SHA receipt required")
     if use:
+        if use == "run" and not run_id:
+            raise ValueError("holdout run identity required")
 
         def check(rows):
-            if any(r["kind"] == "holdout-use" and r["use"] == use for r in rows):
+            prior = [r for r in rows if r["kind"] == "holdout-use" and r["use"] == use]
+            if any(use != "run" or r.get("run_id") != run_id for r in prior):
                 raise ValueError("holdout second use refused")
+            return not prior
 
         append(
-            dict(kind="holdout-use", use=use, receipt_sha256=digest(row), at=utc_now()),
+            dict(
+                kind="holdout-use",
+                use=use,
+                run_id=run_id,
+                receipt_sha256=digest(row),
+                at=utc_now(),
+            ),
             check,
         )
 

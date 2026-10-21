@@ -12,7 +12,9 @@ from pathlib import Path
 from bench.adapter.adapt import merge_candidates, payload_to_candidates
 from bench.adjudicator.adjudicate import adjudicate as _adjudicate
 from bench.adjudicator.adjudicate import file_context, slice_hunk
-from bench.runner import invoke, observations, provenance, scorer, stages
+from bench.runner import contracts as io
+from bench.runner import observations, provenance, scorer, stages
+from bench.runner.contracts import _is_superseded
 from bench.runner.costs import parse_costs
 from bench.runner.epochs import (
     DEFAULT_ROOT,
@@ -21,7 +23,6 @@ from bench.runner.epochs import (
     load_epoch,
     read_json,
 )
-from bench.runner.invoke import _is_superseded
 from bench.runner.ledger import manifest_auth_mode, replay_packet, review_attempt_costs
 from bench.runner.observations import (
     Adjudication,
@@ -55,7 +56,7 @@ def _judge_api_key(env=None):
 
     Falls back to ``bench/.env`` for whichever is not already in the environment
     (the owner runs single-key: the judge uses the ANTHROPIC_API_KEY fallback).
-    Delegates to :func:`invoke._load_dotenv_key` — the single dotenv parser — so
+    Delegates to :func:`io._load_dotenv_key` — the single dotenv parser — so
     prereqs, build_env, and the judge can never disagree on an edge case.
     """
     env = os.environ if env is None else env
@@ -64,7 +65,7 @@ def _judge_api_key(env=None):
         if value:
             return value
     for name in ("BENCH_JUDGE_API_KEY", "ANTHROPIC_API_KEY"):
-        value = invoke._load_dotenv_key(BENCH_DIR / ".env", name)
+        value = io._load_dotenv_key(BENCH_DIR / ".env", name)
         if value:
             return value
     return None
@@ -121,7 +122,7 @@ def _resolve_pr_dir(run_dir, url, payload_hint=None):
         hint = Path(payload_hint)
         if hint.is_file():
             return hint.parent
-    current = run_dir / invoke.pr_dir_name({"url": url})
+    current = run_dir / io.pr_dir_name({"url": url})
     if current.is_dir():
         return current
     legacy = run_dir / f"pr-{_pull_number(url)}"
@@ -259,7 +260,7 @@ def _read_pr_costs(pr_dir):
     for raw_name in ("raw.json", "raw-naive.json"):
         raw = pr_dir / raw_name
         if raw.is_file():
-            envelope = invoke.parse_result_envelope(
+            envelope = io.parse_result_envelope(
                 raw.read_text(errors="replace", encoding="utf-8")
             )
             if envelope is not None:
@@ -457,42 +458,43 @@ def score_run(
         raise ValueError("duplicate or unknown requested PR identity")
     manifest = _read_run_manifest(run_dir)
     requested = manifest.get("urls", manifest.get("pr_urls", urls))
-    from bench.runner import validity
-
-    if not validity.same_pr_set(requested, urls):
+    if len(requested) != len(urls) or set(requested) != set(urls):
         raise ValueError("requested PR matrix is incomplete")
 
     selected = {}
     selected_records = {}
-    if attempt_selection is None:
-        checkpoint_attempts = {
-            state["url"]: state.get("detail", {}).get("attempt_id")
-            for path in (run_dir / "state").glob("*.json")
-            if (state := read_json(path)).get("detail", {}).get("attempt_id")
-        }
-        if checkpoint_attempts:
-            attempt_selection = checkpoint_attempts
+    checkpoint_attempts = {
+        state["url"]: state.get("detail", {}).get("attempt_id")
+        for path in (run_dir / "state").glob("*.json")
+        if (state := read_json(path)).get("detail", {}).get("attempt_id")
+    }
     failures = set()
-    if attempt_selection is not None:
-        if set(attempt_selection) != set(urls):
+    if checkpoint_attempts:
+        if (
+            attempt_selection is None
+            or set(attempt_selection) != set(urls)
+            or set(checkpoint_attempts) != set(urls)
+        ):
             raise ValueError("attempt selection must cover the requested PR matrix")
         records = []
         for url in urls:
-            aid = attempt_selection[url]
+            aid = checkpoint_attempts[url]
             if not isinstance(aid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", aid):
                 raise ValueError("invalid selected attempt identity")
             paths = list((run_dir / "attempts").glob(f"*/{aid}/attempt.json"))
             if len(paths) != 1 or not paths[0].resolve().is_relative_to(run_dir):
                 raise ValueError("selected attempt is missing or ambiguous")
             path = paths[0]
-            record = validity.selected_attempt(path)
-            if record.pr_url != url or record.run_id != (
-                manifest.get("run_id") or run_dir.name
+            record = attempt_selection[url]
+            if (
+                record.attempt_id != aid
+                or record.pr_url != url
+                or record.run_id != (manifest.get("run_id") or run_dir.name)
             ):
                 raise ValueError("selected attempt identity mismatch")
             value = record.validity
             if value.state == "operational_failure":
-                if not validity.confirmed_failure(record):
+                if not record.validity.retry_of:
                     raise ValueError("unconfirmed operational failure")
                 failures.add(url)
             elif record.checkpoint_status != "ok" or value.state == "invalid":
@@ -642,8 +644,8 @@ def score_run(
         )
         for url in urls
     }
-    if attempt_selection is not None:
-        attempts = dict(attempt_selection)
+    if checkpoint_attempts:
+        attempts = checkpoint_attempts
     sid, pending = observations.begin_packet(run_dir, epoch, score_id)
     ref = ScoreRef(manifest.get("run_id") or run_dir.name, epoch.epoch_id, sid)
     evaluator = evaluator_for(epoch, pin, adjudicator_pin)
@@ -858,8 +860,7 @@ def score_run(
             for url, (path, trace) in traces.items()
         },
     )
-    if manifest.get("provenance"):
-        observations.exclusive_json(pending / "run-provenance.json", manifest)
+    observations.exclusive_json(pending / "run-provenance.json", manifest)
     for record in selected_records.values():
         observations.exclusive_json(
             pending / "attempts" / (record.attempt_id + ".json"), record.wire()

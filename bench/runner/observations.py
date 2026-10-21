@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import uuid
 from collections import Counter
 from dataclasses import asdict, astuple, dataclass, fields, is_dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
+from bench.runner.contracts import ScoreRef, exclusive_json
+from bench.runner.contracts import artifact_allowed as artifact_allowed
+from bench.runner.contracts import copy_exclusive as copy_exclusive
 from bench.runner.decode import decode
 from bench.runner.epochs import (
     Category,
@@ -90,13 +91,6 @@ ReasonCode = Literal[
     "unknown",
 ]
 Coverage = Literal["complete", "partial", "unavailable"]
-
-
-@dataclass(frozen=True, slots=True)
-class ScoreRef:
-    run_id: str
-    epoch_id: str
-    score_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,31 +236,6 @@ def wire_record(value):
     if isinstance(value, (tuple, list)):
         return [wire_record(v) for v in value]
     return value
-
-
-def artifact_allowed(path: Path) -> bool:
-    return not any(
-        part == "pairing"
-        or part == "auth.json"
-        or part.startswith(".env")
-        or "credential" in part.lower()
-        or part == ".codex"
-        for part in path.parts
-    ) and not ("backups" in path.parts and path.suffix == ".gpg")
-
-
-def exclusive_json(path: Path, value: object):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("xb") as stream:
-        stream.write(canonical(value) + b"\n")
-        stream.flush()
-        os.fsync(stream.fileno())
-
-
-def copy_exclusive(source: Path, target: Path):
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with source.open("rb") as incoming, target.open("xb") as outgoing:
-        shutil.copyfileobj(incoming, outgoing)
 
 
 def publish_packet(pending: Path, final: Path):

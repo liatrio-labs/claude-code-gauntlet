@@ -10,7 +10,7 @@ from bench.runner.decode import decode
 from bench.runner.epochs import digest, file_hash, load_epoch, read_json
 from bench.runner.looks import holdout
 from bench.runner.observations import ScoreRef, exclusive_json
-from bench.runner.populations import check_holdout
+from bench.runner.populations import check_holdout, resolve_population
 
 
 class SampleWire(TypedDict):
@@ -18,6 +18,7 @@ class SampleWire(TypedDict):
     arms: dict[str, list[dict]]
     rows: list[dict]
     unseal: str | None
+    population: dict
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,12 +51,40 @@ def public_packet(frozen):
     return dict(sample_sha256=digest(frozen), findings=findings)
 
 
-def sample(arms, *, seed, out, size=30, load=None, unseal=None, final_sha=None):
+def sample(
+    arms,
+    *,
+    seed,
+    out,
+    contamination_path,
+    population="gate-uncontaminated",
+    size=30,
+    load=None,
+    unseal=None,
+    final_sha=None,
+):
     from bench.runner.compare import _packet_run, default_packet_loader
 
     loader = load or default_packet_loader
-    if len(arms) != 2 or type(seed) is not int or type(size) is not int or size < 1:
-        raise ValueError("two arms, seed and positive sample size required")
+    if (
+        len(arms) not in (1, 2)
+        or type(seed) is not int
+        or type(size) is not int
+        or not 1 <= size <= 30
+    ):
+        raise ValueError("one or two arms, seed and sample size 1..30 required")
+    refs = [ref for refs in arms.values() for ref in refs]
+    if not refs or len({ref.epoch_id for ref in refs}) != 1:
+        raise ValueError("audit requires one epoch")
+    epoch = load_epoch(refs[0].epoch_id)
+    pop = resolve_population(
+        population,
+        epoch,
+        "core",
+        read_json(contamination_path),
+        unseal=unseal,
+        treatment_sha=final_sha,
+    )
     pools, final = {}, False
     for name, refs in sorted(arms.items()):
         if len(set(refs)) != len(refs):
@@ -66,14 +95,14 @@ def sample(arms, *, seed, out, size=30, load=None, unseal=None, final_sha=None):
                 _packet_run(p)["treatment_git_sha"] == final_sha for p in packets
             )
         for packet in packets:
-            check_holdout(
-                packet.manifest.requested_pr_urls,
-                load_epoch(packet.score_ref.epoch_id),
-                unseal,
-                final_sha,
-            )
+            check_holdout(packet.manifest.requested_pr_urls, epoch, unseal, final_sha)
         pools[name] = sorted(
-            [(p.score_ref, f) for p in packets for f in p.candidates],
+            [
+                (p.score_ref, f)
+                for p in packets
+                for f in p.candidates
+                if f.pr_url in pop.pr_urls
+            ],
             key=lambda pair: (pair[0].run_id, pair[0].score_id, pair[1].candidate_id),
         )
     count = min(size, *(len(pool) for pool in pools.values()))
@@ -94,6 +123,7 @@ def sample(arms, *, seed, out, size=30, load=None, unseal=None, final_sha=None):
         arms={a: [asdict(r) for r in refs] for a, refs in arms.items()},
         rows=rows,
         unseal=unseal,
+        population=asdict(pop),
     )
     if unseal:
         if not final:
@@ -114,8 +144,16 @@ def merge(sample_path, label_paths, packet_path):
     packet_hash = file_hash(Path(packet_path))
     ids = {r["sample_id"] for r in frozen["rows"]}
     counts = [sum(r["arm"] == arm for r in frozen["rows"]) for arm in frozen["arms"]]
-    if len(ids) != len(frozen["rows"]) or len(counts) != 2 or counts[0] != counts[1]:
-        raise ValueError("duplicate sample or unequal arm counts")
+    if (
+        len(ids) != len(frozen["rows"])
+        or len(counts) not in (1, 2)
+        or any(n > 30 for n in counts)
+        or any(
+            r["finding"]["pr_url"] not in frozen["population"]["pr_urls"]
+            for r in frozen["rows"]
+        )
+    ):
+        raise ValueError("duplicate sample or invalid audit population/counts")
     labels = []
     for seat, path in zip(("Sol", "Opus", "owner"), label_paths, strict=False):
         value = decode(Labels, read_json(path))
@@ -161,11 +199,15 @@ def merge(sample_path, label_paths, packet_path):
     )
 
 
-def load_receipt(path, arms=None):
+def load_receipt(path, arms=None, population=None):
     value = read_json(path)
     if value != merge(**value["sources"]) or not value["resolved"]:
         raise ValueError("unresolved or changed audit receipt")
     frozen = read_json(value["sources"]["sample_path"])
+    if population is not None and digest(frozen["population"]) != digest(
+        asdict(population)
+    ):
+        raise ValueError("audit belongs to different decision population")
     if arms is not None and frozen["arms"] != {
         a: [asdict(r) for r in refs] for a, refs in arms.items()
     }:

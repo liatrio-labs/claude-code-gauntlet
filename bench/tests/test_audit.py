@@ -33,13 +33,19 @@ def label_files(frozen, directory, dispute=False):
     return paths
 
 
-def resolve_audit(spec, packets, directory, *, dispute=False):
+def resolve_audit(spec, packets, directory, *, dispute=False, planning=False):
     arms = {arm.name: arm.scores for arm in (spec.baseline, spec.candidate)}
+    if planning:
+        arms = {spec.baseline.name: spec.baseline.scores}
     frozen = a.sample(
         arms,
         seed=17,
         out=directory,
         load=packets.__getitem__,
+        contamination_path=spec.contamination_path,
+        population="gate-uncontaminated"
+        if spec.purpose != "descriptive"
+        else spec.population,
         unseal=spec.unseal,
         final_sha=spec.candidate.treatment_git_sha,
     )
@@ -59,7 +65,11 @@ def test_seeded_blind_audit_owner_queue_and_receipt_binding(case, tmp_path):
     frozen, paths, receipt = resolve_audit(spec, packets, directory, dispute=True)
     arms = {arm.name: arm.scores for arm in (spec.baseline, spec.candidate)}
     assert frozen == a.sample(
-        arms, seed=17, out=tmp_path / "again", load=packets.__getitem__
+        arms,
+        seed=17,
+        out=tmp_path / "again",
+        load=packets.__getitem__,
+        contamination_path=spec.contamination_path,
     )
     public = Path(paths["packet_path"])
     assert public.parent != Path(paths["sample_path"]).parent
@@ -109,7 +119,10 @@ def test_same_size_census_and_empty_arm_recall(case, tmp_path, count):
         write(Path(paths["sample_path"]), frozen)
         write(Path(paths["packet_path"]), a.public_packet(frozen))
         paths["label_paths"] = label_files(frozen, tmp_path / "audit")
-        refuses(a.merge, **paths, match="unequal")
+        write(receipt, a.merge(**paths))
+        refuses(
+            paired, replace(spec, audit_path=str(receipt)), packets, match="same-size"
+        )
 
 
 def test_operational_audit_is_required_and_finding_sample_is_bound(case, tmp_path):

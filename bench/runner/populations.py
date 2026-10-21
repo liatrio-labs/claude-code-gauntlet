@@ -2,27 +2,24 @@
 
 from __future__ import annotations
 
-import re
-import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal, TypedDict, get_args
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from bench.runner.cli import spec_output_args  # noqa: E402
-from bench.runner.epochs import (  # noqa: E402
+from bench.runner.cli import spec_output_args
+from bench.runner.epochs import (
     digest,
     file_hash,
     included_bugs,
     load_epoch,
     read_json,
 )
-from bench.runner.observations import exclusive_json  # noqa: E402
+from bench.runner.observations import exclusive_json
 
+ROOT = Path(__file__).resolve().parents[2]
 PopulationName = Literal[
     "gate",
     "gate-uncontaminated",
@@ -170,28 +167,13 @@ def freeze_contamination(
     from bench.runner import leaks, validity
 
     contamination_entries(manifest, epoch, require_frozen=False)
-    if (
-        manifest["status"] != "unfrozen"
-        or not frozen_at
-        or not re.fullmatch(r"[0-9a-f]{40}", baseline_treatment_sha)
-    ):
-        raise ValueError(
-            "unfrozen manifest, explicit baseline SHA and timestamp required"
-        )
-    # A scan of this checkout can bind a future merge only when its plugin tree is identical.
-    trees = [
-        subprocess.run(
-            ["git", "ls-tree", "-r", ref, "--", *validity.PLUGIN_PATHS],
-            cwd=root,
-            capture_output=True,
-            check=True,
-        ).stdout
-        for ref in (baseline_treatment_sha, "HEAD")
-    ]
+    if manifest["status"] != "unfrozen" or not frozen_at:
+        raise ValueError("unfrozen manifest and timestamp required")
+    validity.timestamp(frozen_at)
     validity.require_clean_treatment(root)
-    if not trees[0] or trees[0] != trees[1]:
-        raise ValueError("baseline agent-read tree differs from scanned checkout")
     agent_hash = validity.agent_read_hash(root)
+    if baseline_treatment_sha != agent_hash:
+        raise ValueError("baseline agent-read tree differs from scanned checkout")
     report = leaks.scan_repository(root)
     if not report.passed:
         raise ValueError("freeze requires a passing scan")
@@ -219,11 +201,13 @@ def check_baseline_binding(manifest, treatment_sha, agent_read_sha256):
         raise ValueError("contamination baseline treatment/hash/report mismatch")
 
 
-def check_holdout(urls, epoch, unseal=None, treatment_sha=None, *, use=None):
+def check_holdout(
+    urls, epoch, unseal=None, treatment_sha=None, *, use=None, run_id=None
+):
     if set(urls) & set(epoch.subsets["holdout"]):
         from bench.runner.looks import holdout
 
-        holdout(unseal, treatment_sha, use=use)
+        holdout(unseal, treatment_sha, use=use, run_id=run_id)
 
 
 def resolve_population(
@@ -285,3 +269,73 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+
+
+def check_freeze(manifest, started):
+    from bench.runner.validity import timestamp
+
+    if timestamp(manifest["frozen_at"]) >= timestamp(started):
+        raise ValueError("contamination freeze must precede every candidate run")
+
+
+def run_hook(
+    event, *, args=None, epoch=None, urls=(), window=None, prior=None, manifest=None
+):
+    from bench.runner import looks, validity
+
+    if event == "population":
+        if not args.contamination:
+            raise ValueError("named populations require --contamination PATH")
+        return list(
+            resolve_population(
+                args.prs, epoch, "core", read_json(args.contamination)
+            ).pr_urls
+        )
+    if event == "preflight":
+        check_holdout(
+            urls,
+            epoch,
+            args.unseal_holdout,
+            validity.treatment_sha() if args.unseal_holdout else None,
+        )
+    if event == "window" and window.rule_sha256:
+        from bench.runner.compare import PromotionRule
+        from bench.runner.decode import decode
+
+        rule = decode(PromotionRule, read_json(args.rule)) if args.rule else None
+        if (
+            not rule
+            or digest(asdict(rule)) != window.rule_sha256
+            or len(window.planned_run_indices) < rule.initial_runs
+        ):
+            raise ValueError("window requires full preregistered rule run count")
+        if (prior.get("arm") or args.arm) == window.candidate_arm:
+            looks.registration(
+                window.wave_id, window.rule_sha256, started=validity.utc_now()
+            )
+            if not args.contamination:
+                raise ValueError("candidate requires --contamination PATH")
+            contamination = read_json(args.contamination)
+            contamination_entries(contamination, load_epoch())
+            check_freeze(contamination, validity.utc_now())
+    if event == "reserve":
+        if (
+            manifest.get("contamination")
+            and digest(read_json(manifest["contamination"]))
+            != manifest["contamination_sha256"]
+        ):
+            raise ValueError("immutable contamination binding changed")
+        if manifest.get("unseal_holdout"):
+            validity.require_clean_treatment()
+            check_holdout(
+                manifest.get("pr_urls", ()),
+                load_epoch(manifest.get("epoch_id")),
+                manifest["unseal_holdout"],
+                manifest["treatment_git_sha"],
+                use="run",
+                run_id=manifest["run_id"],
+            )
+
+
+def register_run_hook(namespace):
+    namespace["_decision_hook"] = run_hook

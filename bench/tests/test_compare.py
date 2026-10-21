@@ -98,6 +98,7 @@ def case(pop_case, score_case, tmp_path, fingerprint, window, monkeypatch):
                     treatment_git_sha=sha,
                     agent_read_sha256="baseline",
                     child_auth="api",
+                    contamination_sha256=digest(manifest),
                     pr_identities={u: epoch.shas[u] for u in scope},
                     baseline_equivalence_receipt=dict(
                         release_sha="839b1886", merge_sha=sha, evidence_refs=["fixture"]
@@ -127,8 +128,16 @@ def case(pop_case, score_case, tmp_path, fingerprint, window, monkeypatch):
                     for b in epoch.bugs
                     if b.pr_url in scope
                 )
+                clean_url = next(
+                    u
+                    for u in scope
+                    if not any(
+                        e["pr_url"] == u and e["scope"] == "pr"
+                        for e in manifest["entries"]
+                    )
+                )
                 findings = tuple(
-                    replace(f, pr_url=scope[0], attempt_id=sel[scope[0]])
+                    replace(f, pr_url=clean_url, attempt_id=sel[clean_url])
                     for f in base.candidates
                 )
                 m = replace(
@@ -213,7 +222,7 @@ def test_bug_means_cluster_bootstrap_labels_and_unknown_attribution(case):
     assert {(b.baseline_label, b.candidate_label) for b in result.bugs} == {
         ("flaky", "stable_found")
     }
-    assert result.categories and result.funnels["baseline"]["unavailable_count"] == 50
+    assert result.categories and result.funnels["baseline"]["unavailable_count"] == 150
     assert all(d["delivered"] is None for d in result.dimensions["candidate"].values())
     rows = tuple(
         replace(result.bugs[i], pr_url=u, difference=d)

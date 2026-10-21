@@ -8,21 +8,19 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from bench.runner import (  # noqa: E402
+from bench.runner import (
     audit,
     compare,
     observations,
     populations,
     validity,
 )
-from bench.runner.cli import spec_output_args  # noqa: E402
-from bench.runner.decode import decode  # noqa: E402
-from bench.runner.epochs import digest, load_epoch, read_json  # noqa: E402
-from bench.runner.observations import ScoreRef  # noqa: E402
+from bench.runner.cli import spec_output_args
+from bench.runner.decode import decode
+from bench.runner.epochs import digest, load_epoch, read_json
+from bench.runner.observations import ScoreRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +138,12 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
         )
     if len(vectors) < 2 or len({v.score_ref.run_id for v in vectors}) != len(vectors):
         raise ValueError("independent baseline vectors required")
-    receipt = audit.load_receipt(spec.audit_path)
+    receipt = audit.load_receipt(
+        spec.audit_path,
+        population=populations.resolve_population(
+            "gate-uncontaminated", epoch, "core", contamination
+        ),
+    )
     frozen = read_json(receipt["sources"]["sample_path"])
     if frozen["arms"].get(spec.baseline_arm) != [
         asdict(r) for r in spec.baseline_scores

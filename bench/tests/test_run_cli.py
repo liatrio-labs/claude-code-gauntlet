@@ -2345,7 +2345,18 @@ def test_score_only_forwards_explicit_epoch_and_prints_score_identity(
 
     monkeypatch.setattr(score, "score_run", fake)
     assert run.main(["--score-only", "r", "--golden-epoch", "dfc6cb4-v1"]) == 0
-    assert calls == [(str(tmp_path / "r"), {"epoch_id": "dfc6cb4-v1"})]
+    assert calls == [
+        (
+            str(tmp_path / "r"),
+            {
+                "epoch_id": "dfc6cb4-v1",
+                "attempt_selection": None,
+            },
+        )
+    ]
     assert "dfc6cb4-v1" in capsys.readouterr().out
     assert run.main(["--score-only", "r"]) == 0
-    assert calls[-1][1] == {"epoch_id": None}
+    assert calls[-1][1] == {
+        "epoch_id": None,
+        "attempt_selection": None,
+    }

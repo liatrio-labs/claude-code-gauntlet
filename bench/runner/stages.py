@@ -182,7 +182,7 @@ def render_claim(finding):
 
 
 def discovery_inputs(traces, errors):
-    return {
+    inputs = {
         url: {
             "discover:" + vid: [
                 {
@@ -207,6 +207,7 @@ def discovery_inputs(traces, errors):
         for snapshot in trace.snapshots
         if snapshot.stage == "discover" and snapshot.executed
     }
+    return {url: tools for url, tools in inputs.items() if tools}
 
 
 def capture_score(traces, bugs, request, evaluations, raw_groups, inputs, errors):
@@ -364,7 +365,7 @@ def capture_score(traces, bugs, request, evaluations, raw_groups, inputs, errors
     return tuple(rows)
 
 
-def loss_funnel(observations, *, population) -> FunnelReport:
+def loss_funnel(observations, *, population, score_refs=None) -> FunnelReport:
     members = set(population)
     cells: dict[tuple[ScoreRef, str, str, str], dict[Stage, StageBugObservation]] = {}
     for row in observations:
@@ -405,7 +406,11 @@ def loss_funnel(observations, *, population) -> FunnelReport:
             losses[final.loss.stage] += 1
         else:
             unavailable += 1
-    denominator = len(members) * max(1, len({key[0] for key in cells}))
+    denominator = len(members) * (
+        len(score_refs)
+        if score_refs is not None
+        else max(1, len({key[0] for key in cells}))
+    )
     missing = denominator - len(cells)
     unavailable += missing
     for stage in unjudged:

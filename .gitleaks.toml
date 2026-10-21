@@ -5,6 +5,6 @@ useDefault = true
 
 [[allowlists]]
 description = "SHA-256 digests in golden-epoch manifests"
-paths = ['''^bench/golden/epochs/[^/]+/epoch\.json$''']
+paths = ['''^bench/golden/epoch\.json$''']
 regexTarget = "match"
 regexes = ['''"[0-9a-f]{64}"''']

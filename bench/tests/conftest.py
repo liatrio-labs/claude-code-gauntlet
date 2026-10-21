@@ -54,6 +54,7 @@ def score_case(tmp_path):
 
     from bench.runner import score
     from bench.runner.epochs import DEFAULT_ROOT, load_epoch, read_json
+    from bench.runner.validity import scoring_selection
 
     @dataclass(frozen=True, slots=True)
     class ScoreCase:
@@ -74,6 +75,7 @@ def score_case(tmp_path):
                 ledger_path=self.ledger,
                 run_scorer=self.scorer,
                 adjudicator=adjudicator,
+                attempt_selection=scoring_selection(self.run),
                 **kwargs,
             )
 
@@ -119,7 +121,7 @@ def score_case(tmp_path):
     run = tmp_path / "run"
     (run / "state").mkdir(parents=True)
     score._write_json(run / "state/a.json", dict(url=url, status="ok"))
-    pr = run / score.invoke.pr_dir_name({"url": url})
+    pr = run / score.io.pr_dir_name({"url": url})
     pr.mkdir()
     payload = pr / "post-review-payload.json"
     texts = ("matched candidate", "dedup sibling", "extra candidate")
@@ -149,7 +151,7 @@ def pop_case(tmp_path):
         agent_read_sha256="baseline",
         baseline_treatment_sha="baseline",
         leak_report_sha256="synthetic-report-digest",
-        frozen_at="fixture",
+        frozen_at="2026-10-19T00:00:00Z",
     )
     return epoch, contamination
 

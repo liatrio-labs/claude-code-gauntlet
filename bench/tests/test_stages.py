@@ -110,6 +110,7 @@ def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
     "trace_status",
     [
         "readable",
+        "no_eliminations",
         "missing",
         "unreadable",
         "collection_failed",
@@ -129,6 +130,15 @@ def test_score_to_dimension_credit_and_loss_funnel(
     )
     pr = score_case.payload.parent
     review = receipt["payload"]["postReview"]
+    if trace_status == "no_eliminations":
+        raw = read_json(path)
+        ids = raw["snapshots"][0]["finding_version_ids"]
+        review["findings"] = [
+            v.projection() for v in trace.versions if v.version_id in ids
+        ]
+        for snapshot in raw["snapshots"]:
+            snapshot.update(finding_version_ids=ids, decisions=[])
+        path.write_text(json.dumps(raw), encoding="utf-8")
     selected = review["findings"]
     diff = captured_diff(selected)
     (pr / "diff.patch").write_text(diff, encoding="utf-8")
@@ -201,6 +211,10 @@ def test_score_to_dimension_credit_and_loss_funnel(
         assert loaded.manifest.trace_collection[
             score_case.url
         ] == stages.TraceCollection("unavailable", "collection exploded")
+    if trace_status == "no_eliminations":
+        assert loaded.costs["attribution"] == 0 and len(score_case.calls) == 1
+        assert not (loaded.root / "work/attribution").exists()
+        return
     if trace_status == "disabled":
         assert stages.read_rows(loaded.root) == ()
         return

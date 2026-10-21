@@ -17,14 +17,16 @@ DEFAULT_AUTH_MODE = API_AUTH_MODE
 
 def review_attempt_costs(run_dir):
     """Retain failed-attempt consumption even when a successful retry is selected."""
-    from bench.runner.validity import load_attempt
-
     result = {}
     for path in sorted((Path(run_dir) / "attempts").glob("*/*/attempt.json")):
-        attempt = load_attempt(path)
         receipt = path.parent / "artifacts/attempt-result.json"
         if receipt.is_file():
-            result[attempt.attempt_id] = read_json(receipt)["cost_usd"]
+            attempt = read_json(path)
+            if attempt["source_artifact_hashes"].get(
+                "artifacts/attempt-result.json"
+            ) != file_hash(receipt):
+                raise ValueError("attempt cost receipt hash mismatch")
+            result[attempt["attempt_id"]] = read_json(receipt)["cost_usd"]
     return result
 
 
@@ -186,3 +188,23 @@ def replay_packet(ledger_path, packet_path):
     }
     append_row(str(ledger_path), row)
     return row
+
+
+def spend_totals(rows):
+    amounts = {"review": {}, "scoring": {}, "attribution": {}}
+    for row in rows:
+        identity = (row["run_id"], row.get("epoch_id"), row.get("score_id"))
+        attempts = row.get("review_attempt_costs") or {"unknown": None}
+        for aid, amount in attempts.items():
+            amounts["review"][(row["run_id"], aid)] = (
+                amount if cost_is_billable(row) else 0
+            )
+        for field in ("dedup", "judge", "adjudicator", "attribution"):
+            group = "attribution" if field == "attribution" else "scoring"
+            amounts[group][(identity, field)] = row.get(field + "_cost_usd")
+    return {
+        group + "_cost_usd": sum(values.values())
+        if all(v is not None for v in values.values())
+        else None
+        for group, values in amounts.items()
+    }

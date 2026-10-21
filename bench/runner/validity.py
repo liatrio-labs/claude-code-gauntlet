@@ -16,12 +16,16 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Literal
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from bench.runner.decode import decode  # noqa: E402
-from bench.runner.epochs import (  # noqa: E402
+from bench.runner.contracts import (
+    ScoreRef,
+    artifact_allowed,
+    copy_exclusive,
+    exclusive_json,
+)
+from bench.runner.decode import decode
+from bench.runner.epochs import (
     DEFAULT_ROOT,
     confined,
     digest,
@@ -29,12 +33,8 @@ from bench.runner.epochs import (  # noqa: E402
     load_epoch,
     read_json,
 )
-from bench.runner.observations import (  # noqa: E402
-    ScoreRef,
-    artifact_allowed,
-    copy_exclusive,
-    exclusive_json,
-)
+
+ROOT = Path(__file__).resolve().parents[2]
 
 AuthMode = Literal["api", "subscription"]
 CheckpointStatus = Literal["pending", "ok", "timeout", "invalid", "drifted", "failed"]
@@ -520,6 +520,7 @@ class MatrixObservation:
     discovery_dimensions: tuple[str, ...] = ()
     stage_outcomes: tuple[tuple[str, bool | None], ...] = ()
     provenance_available: bool = False
+    delivered_provenance_available: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -690,7 +691,7 @@ PLUGIN_PATHS = (".claude-plugin", "agents", "skills", "workflows", "scripts")
 
 def require_clean_treatment(root=ROOT):
     status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
+        ["git", "status", "--porcelain", "--untracked-files=no", "--", *PLUGIN_PATHS],
         cwd=root,
         capture_output=True,
         text=True,
@@ -699,17 +700,6 @@ def require_clean_treatment(root=ROOT):
     )
     if status.stdout.strip():
         raise ValueError("input_drift: measurement requires clean tracked files")
-
-
-def treatment_sha(root=ROOT):
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
-    ).stdout.strip()
 
 
 def agent_read_hash(root=ROOT):
@@ -888,3 +878,22 @@ def measurement_context(manifest):
     ):
         raise ValueError("invalid measurement context")
     return fp
+
+
+def treatment_sha(root=ROOT):
+    return agent_read_hash(root)
+
+
+def scoring_selection(run_dir):
+    selected = {}
+    for path in (Path(run_dir) / "state").glob("*.json"):
+        row = read_json(path)
+        aid = row.get("detail", {}).get("attempt_id")
+        if aid:
+            if not isinstance(aid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", aid):
+                raise ValueError("invalid selected attempt identity")
+            paths = list((Path(run_dir) / "attempts").glob(f"*/{aid}/attempt.json"))
+            if len(paths) != 1:
+                raise ValueError("selected attempt is missing or ambiguous")
+            selected[row["url"]] = selected_attempt(paths[0])
+    return selected or None

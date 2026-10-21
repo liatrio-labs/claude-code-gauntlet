@@ -2,7 +2,6 @@
 
 from dataclasses import asdict, replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -93,29 +92,22 @@ def test_freeze_binds_explicit_baseline_and_exact_passing_scan(
     )
     monkeypatch.setattr(validity, "require_clean_treatment", lambda root: None)
     monkeypatch.setattr(validity, "agent_read_hash", lambda root: "scanned-tree")
-    calls = []
-
-    def git(args, **kw):
-        calls.append(args)
-        return SimpleNamespace(stdout=b"identical plugin tree")
-
-    monkeypatch.setattr(p.subprocess, "run", git)
     monkeypatch.setattr(leaks, "scan_repository", lambda root: report)
     kw = dict(
-        baseline_treatment_sha="a" * 40,
-        frozen_at="fixture",
+        baseline_treatment_sha="scanned-tree",
+        frozen_at="2026-10-19T00:00:00Z",
         out=tmp_path / "frozen.json",
     )
     frozen = p.freeze_contamination(m, e, **kw)
-    assert frozen["baseline_treatment_sha"] == "a" * 40 and any(
-        "a" * 40 in c for c in calls
-    )
+    assert frozen["baseline_treatment_sha"] == "scanned-tree"
     assert frozen["leak_report_sha256"] == digest(asdict(report))
-    monkeypatch.setattr(
-        p.subprocess, "run", lambda args, **kw: SimpleNamespace(stdout=args[3].encode())
+    refuses(
+        p.freeze_contamination,
+        m,
+        e,
+        **{**kw, "baseline_treatment_sha": "other"},
+        match="tree",
     )
-    refuses(p.freeze_contamination, m, e, **kw, match="tree")
-    monkeypatch.setattr(p.subprocess, "run", git)
     report = replace(report, passed=False)
     refuses(p.freeze_contamination, m, e, **kw, match="scan")
 
@@ -148,7 +140,7 @@ def test_holdout_receipt_is_once_and_final_sha_bound(pop_case, tmp_path, monkeyp
     assert len(p.resolve_population("holdout", e, "core", m, **kw).pr_urls) == 10
     refuses(p.check_holdout, e.subsets["holdout"], e, receipt, "b" * 40)
     for use in ["run", "audit", "compare"]:
-        p.check_holdout(e.subsets["holdout"], e, receipt, sha, use=use)
+        p.check_holdout(e.subsets["holdout"], e, receipt, sha, use=use, run_id="one")
         refuses(
             p.check_holdout,
             e.subsets["holdout"],
@@ -156,5 +148,6 @@ def test_holdout_receipt_is_once_and_final_sha_bound(pop_case, tmp_path, monkeyp
             receipt,
             sha,
             use=use,
+            run_id="two",
             match="second use",
         )

@@ -36,6 +36,15 @@ from gauntlet.config import (
 )
 from gauntlet.registry import KNOB_REGISTRY, MODEL_ALIASES
 
+from bench.runner.contracts import (
+    _is_superseded,
+    _load_dotenv_key,
+    _owner,
+    _pr_number,
+    _repo,
+    parse_result_envelope,
+    pr_dir_name,
+)
 from bench.runner.costs import parse_costs
 from bench.runner.ledger import API_AUTH_MODE, AUTH_MODES, SUBSCRIPTION_AUTH_MODE
 
@@ -230,76 +239,6 @@ class InvokeResult:
 
 
 # --------------------------------------------------------------------------- env
-
-
-def _pr_number(pr):
-    for key in ("pr_number", "number", "n"):
-        value = pr.get(key)
-        if value is not None:
-            return value
-    _owner_name, _repo_name, number = _parse_url(pr.get("url", ""))
-    if number is not None:
-        return number
-    raise KeyError("pr dict has no pr_number/number and no parseable url")
-
-
-def _parse_url(url):
-    m = re.search(r"github\.com/([^/]+)/([^/]+)/pull/(\d+)", url or "")
-    if not m:
-        return (None, None, None)
-    return (m.group(1), m.group(2), int(m.group(3)))
-
-
-def _owner(pr):
-    return pr.get("owner") or _parse_url(pr.get("url", ""))[0]
-
-
-def _repo(pr):
-    return pr.get("repo") or _parse_url(pr.get("url", ""))[1]
-
-
-# Anything outside this set is collapsed to a hyphen so the dir name is safe on any
-# filesystem; GitHub owner/repo already stay within it (alnum, dot, hyphen, underscore).
-_PR_KEY_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
-
-
-def _slug(part):
-    return _PR_KEY_UNSAFE.sub("-", str(part or "")).strip("-")
-
-
-def pr_dir_name(pr):
-    """Per-PR artifact dir name: ``pr-{owner}-{repo}-{n}`` (filesystem-safe).
-
-    Golden URLs reuse pull numbers across repos (e.g. ``/pull/1`` exists in three
-    forks), so a bare ``pr-{n}`` collides -- ``--tier full`` would overwrite one
-    PR's artifacts with another's and mis-join candidates at scoring time. Keying on
-    owner/repo/number keeps every PR's dir distinct. Owner/repo come from the ``pr``
-    dict when present, else are parsed from its ``url`` -- the identical resolution
-    ``build_env`` uses -- so run.py, invoke.py, and score.py all derive the same key.
-    """
-    return f"pr-{_slug(_owner(pr))}-{_slug(_repo(pr))}-{_pr_number(pr)}"
-
-
-def _load_dotenv_key(path, key):
-    """Return ``key``'s value from a simple ``KEY=VALUE`` .env file, or None.
-
-    Blank lines and ``#`` comments are ignored and surrounding quotes are stripped.
-    A missing/unreadable file, an absent key, or an empty value all yield None. The
-    value is never printed or logged (it is a live API credential).
-    """
-    value = None
-    try:
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                name, _, raw = line.partition("=")
-                if name.strip() == key:
-                    value = raw.strip().strip("'\"") or None
-    except OSError:
-        return None
-    return value
 
 
 def resolve_claude_home(workspace_dir, base_env):
@@ -861,38 +800,6 @@ def _reset_plugin_repo(repo_root, mutations):
             _git(["checkout", "--", path], repo_root)
 
 
-def parse_result_envelope(text):
-    """Return the ``type=="result"`` envelope dict from raw stdout, or None.
-
-    The canonical tolerant parser shared by the whole runner (``run.py`` and
-    ``score.py`` delegate here rather than re-implementing it). Real ``-p`` stdout is
-    pure JSON; a fake (or any future preamble) may print the echo block or other
-    non-JSON lines first, and there may be trailing output after the envelope -- so if
-    the whole text is not a single JSON object, scan for the first parseable object
-    that is the ``type=="result"`` envelope. Returns None on empty/unparseable input.
-    """
-    text = (text or "").strip()
-    if not text:
-        return None
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            return obj
-    except ValueError:
-        pass
-    decoder = json.JSONDecoder()
-    idx = text.find("{")
-    while idx != -1:
-        try:
-            obj, _ = decoder.raw_decode(text[idx:])
-        except ValueError:
-            obj = None
-        if isinstance(obj, dict) and obj.get("type") == "result":
-            return obj
-        idx = text.find("{", idx + 1)
-    return None
-
-
 def _has_askuserquestion(raw_text, envelope):
     if envelope:
         for denial in envelope.get("permission_denials") or []:
@@ -995,11 +902,6 @@ def _transcript_bash_results(config_dir, worktree, envelope):
             content = _tool_result_text(block)
             if content is not None:
                 yield content
-
-
-def _is_superseded(path):
-    """True when *path* is under an archived prior-attempt tree."""
-    return "superseded" in Path(path).parts
 
 
 def _echo_in_reports(report_dirs):
