@@ -173,7 +173,7 @@ class RunTestBase(unittest.TestCase):
 
         self.shas = run._load_json(run.GOLDEN_DIR / "shas.json")
         self.subsets = run._load_json(run.GOLDEN_DIR / "subsets.json")
-        self.bench_data = run._load_json(run.GOLDEN_DIR / "benchmark_data.min.json")
+        self.bench_data = run.load_epoch(root=run.GOLDEN_DIR).scorer_input
 
     def _patch_global(self, name, value):
         patcher = patch.object(run, name, value)
@@ -894,6 +894,7 @@ class MultiRunTest(RunTestBase):
                 "CODE_GAUNTLET_REVIEWED_POLICY",
                 "CODE_GAUNTLET_PR_NOT_FOUND_POLICY",
                 "CODE_GAUNTLET_TRIVIAL_SCOPE",
+                "CODE_GAUNTLET_MEASUREMENT_TRACE",
                 "timeout_s",
                 "child_auth",
                 "config_echo",
@@ -2349,6 +2350,7 @@ def test_score_only_forwards_explicit_epoch_and_prints_score_identity(
             str(tmp_path / "r"),
             {
                 "epoch_id": "dfc6cb4-v1",
+                "attempt_selection": None,
             },
         )
     ]
@@ -2356,4 +2358,5 @@ def test_score_only_forwards_explicit_epoch_and_prints_score_identity(
     assert run.main(["--score-only", "r"]) == 0
     assert calls[-1][1] == {
         "epoch_id": None,
+        "attempt_selection": None,
     }

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from bench.runner.contracts import LedgerRow, ScoreRef
 from bench.runner.decode import decode
-from bench.runner.epochs import digest, file_hash
+from bench.runner.epochs import digest, file_hash, read_json
 from bench.runner.observations import LegacyScoreIdentity, load_packet
 
 # Auth semantics must agree across invocation, scoring and reports.
@@ -15,6 +15,21 @@ API_AUTH_MODE = "api"
 SUBSCRIPTION_AUTH_MODE = "subscription"
 AUTH_MODES = (API_AUTH_MODE, SUBSCRIPTION_AUTH_MODE)
 DEFAULT_AUTH_MODE = API_AUTH_MODE
+
+
+def review_attempt_costs(run_dir):
+    """Retain failed-attempt consumption even when a successful retry is selected."""
+    result = {}
+    for path in sorted((Path(run_dir) / "attempts").glob("*/*/attempt.json")):
+        receipt = path.parent / "artifacts/attempt-result.json"
+        if receipt.is_file():
+            attempt = read_json(path)
+            if attempt["source_artifact_hashes"].get(
+                "artifacts/attempt-result.json"
+            ) != file_hash(receipt):
+                raise ValueError("attempt cost receipt hash mismatch")
+            result[attempt["attempt_id"]] = read_json(receipt)["cost_usd"]
+    return result
 
 
 # Historical rows may omit auth mode, so absence keeps its original API semantics.

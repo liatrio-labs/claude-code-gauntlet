@@ -39,8 +39,9 @@ rescoring. `bench.runner.ledger.replay_packet` recovers a completed packet after
 a failed ledger append without judging again.
 
 Historical captured reviews are descriptive rescoring inputs with unresolved
-provenance. Scoring cannot make those runs valid measurement records. Live
-attempt validity and stage capture are separate integrations.
+provenance. Scoring cannot make those runs valid measurement records. New reviews
+preserve immutable attempts, validate window identity when supplied, and collect
+stage traces on the run path.
 See [vendoring](vendor/VENDORED.md) for active inputs and historical scores.
 
 ## Quickstart
@@ -118,6 +119,10 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
                       [--check RUN_ID] [--prs URL[,URL...]|mini]
                       [--child-auth api|subscription]
                       [--golden-epoch EPOCH_ID] [--attribution]
+                      [--tool deep-review-v2|deep-review-v3] [--child-model MODEL_ID]
+                      [--measurement-window PATH --arm ARM --run-index N]
+                      [--reset-confirmed-at ISO_TIMESTAMP]
+                      [--baseline-equivalence-receipt PATH]
 ```
 
 | Flag | Values | Default | What it does |
@@ -126,9 +131,16 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 | `--prs` | `URL[,URL...]` \| `mini` | - | Explicit golden PR list, overriding `--tier`. `mini` selects the paired six-PR cut. |
 | `--runs` | int | `1` | Number of sequential runs, each getting its own run directory under `bench/workspace/runs/`. |
 | `--fidelity` | `dry-run` \| `live` | `dry-run` | Recorded in the run manifest. |
+| `--tool` | `deep-review-v2` \| `deep-review-v3` | `deep-review-v3` | Pipeline to invoke and record. |
+| `--child-model` | model ID | `inherit` | Child orchestrator model. A measurement window requires resolved service IDs matching its declared treatment. |
+| `--measurement-window` | JSON path | off | Validate shared controls, arm treatment, time bounds and requested PRs before mirror work. Resume and retry require the original path and unchanged bytes. |
+| `--arm` | declared arm name | - | Arm in the window. Required for a new windowed run. |
+| `--run-index` | nonnegative integer | - | Planned run index in the window. Required for a new windowed run; `--runs` advances it for each sequential run. |
+| `--reset-confirmed-at` | timezone-aware timestamp | - | Operator-recorded subscription reset after the failed attempt completed and no later than retry start. |
+| `--baseline-equivalence-receipt` | JSON path | - | Copy the supplied JSON into the new run manifest. This runner does not validate its contents. |
 | `--resume` | `RUN_ID` | — | Re-run only the PRs of `RUN_ID` still `pending` (skips `ok`/`invalid`/`drifted` and also `timeout`/`failed` — use `--retry-failed` for those). |
-| `--retry-failed` | `RUN_ID` | — | Re-run only the `timeout`/`failed` PRs of `RUN_ID`, including failures with reasons `all_degraded` and `pipeline_failed`. |
-| `--timeout-mins` | int | `45` | Per-PR watchdog: a PR whose invocation exceeds this is killed (whole process group) and marked `timeout`. No auto-retry — use `--retry-failed`. Default calibrated from the smoke shakedown, where full-skill per-PR reviews ran 16–22 minutes. |
+| `--retry-failed` | `RUN_ID` | — | Re-run attempts whose validity marks them retryable, including `invalid` and `drifted` outcomes. Legacy checkpoints without validity use `timeout`/`failed`. Confirmed operational failures are terminal. |
+| `--timeout-mins` | int | `45` | Per-PR watchdog: a PR whose invocation exceeds this is killed (whole process group) and marked `timeout`. Attempt validity separately records whether it is retryable or a confirmed operational failure. No auto-retry — use `--retry-failed`. Default calibrated from the smoke shakedown, where full-skill per-PR reviews ran 16–22 minutes. |
 | `--anchor` | `naive` | — | Instead of the code-gauntlet skill, run a bare single-pass same-model review (no plugin, pinned turn budget) through the same adapter, for comparison. The naive prompt requires the model to end its reply with a fenced ```` ```json ```` block containing a `comments` list; a reply where that block can't be parsed is marked `failed` with reason `naive_output_unparseable` (retryable via `--retry-failed`). |
 | `--child-auth` | `api` \| `subscription` | `api` | Which credential the **review children** spend: the metered `bench/.env` key, or your own Claude subscription capacity via `CLAUDE_CODE_OAUTH_TOKEN`. Recorded in `run.json` and as the ledger row's `auth_mode`. A `--resume`/`--retry-failed` run keeps the mode it started with; passing a flag that contradicts it is refused (exit 2) rather than mixing credentials within one run. Scoring is unaffected and stays API-keyed. See [Child auth modes](#child-auth-modes). |
 | `--score-only` | `RUN_ID` | - | Score captured payloads on the active epoch without invoking review children. Each execution writes a fresh immutable packet and appends its ledger projection. |
@@ -302,16 +314,17 @@ further `-p` requests are blocked until the window resets. No machine-readable
 error shape is documented, so the predicted symptom in bench terms — the
 per-PR watchdog firing (status `timeout`, reason `watchdog_timeout`) rather
 than a clean error — remains unexercised; this run didn't trip the window.
-Either way, `--retry-failed RUN_ID` after a reset is expected to recover the
-affected PRs.
+A subscription retry requires `--retry-failed RUN_ID` with
+`--reset-confirmed-at ISO_TIMESTAMP` after the recorded failure completed.
 
 ### Pipeline failure envelopes
 
 The pipeline's Workflow return envelope can classify a child as `failed` with
 reason `all_degraded` when every active discovery dimension degrades, or
-`pipeline_failed` for another `ok: false` return. Both statuses are unscored,
-like `invalid`; the difference is retry eligibility, since `failed` is included
-in `--retry-failed` while `invalid` is not. An `all_degraded` child is
+`pipeline_failed` for another `ok: false` return. Attempt validity separately
+controls retry eligibility.
+A first non-ok attempt is invalid and retryable, including a checkpoint status of
+`invalid`; a confirmed second failure is terminal. An `all_degraded` child is
 self-describing and often transient, so retrying it after the underlying service
 recovers is appropriate.
 
@@ -402,3 +415,61 @@ discovery and delivery. Missing or unreadable traces leave attribution unavailab
 and preserve delivered recall. Collection status and its reason remain in the score packet.
 Scoring records dedup, judge and adjudicator costs from response usage with pinned prices.
 Attribution cost is separate; unknown costs remain null. See [MEASUREMENT.md](MEASUREMENT.md).
+
+## Measurement windows and immutable attempts
+
+Ordinary smoke and development runs can omit a window; their provenance is
+recorded as `non_record`. Windowed runs use a reviewed JSON declaration decoded
+by `bench.runner.validity.load_window`. A window declares its time bounds,
+shared controls, PR URLs, planned run indices, sequential execution
+(`max_parallel_prs: 1`) and two arm treatments. Shared controls pin the CLI real
+path, binary hash and version, judge and adjudicator, golden epoch and scorer,
+auth mode and disabled auto-update. Each arm pins its plugin tree, resolved
+model roster, allowed auxiliary model IDs, agent efforts and bench policy hash.
+
+Start a declared run with the arm's resolved orchestrator model ID:
+
+```bash
+python3 bench/run.py --tier subset --measurement-window window.json \
+  --child-model MODEL_ID --arm baseline --run-index 0
+```
+
+The requested tier or explicit PR list must match the window's PR set. Ambient
+model, effort and provider overrides are refused before mirror work. Each PR
+rechecks window identity and treatment before mirror work; the pinned CLI is
+rechecked immediately before dispatch and after collection. The child gets
+`DISABLE_AUTOUPDATER=1`. Installed CLI update and effective effort behavior still
+require live verification. Resume and retry require the original window path,
+unchanged window bytes and matching provenance.
+
+Tracked plugin inputs must be clean at entry and before each windowed PR.
+Treatment identity hashes index entries (names, modes and blob IDs) under
+`.claude-plugin`, `agents`, `skills`, `workflows` and `scripts`, including the
+shipped bundle and gauntlet helpers. The manifest's `treatment_git_sha` and
+`agent_read_sha256` carry this digest, independent of HEAD. Bench evidence and
+ledgers lie outside these plugin inputs.
+
+Each outcome is preserved under `attempts/<pr-key>/<attempt-id>/` with an
+`attempt.json` and hashed artifact copies: raw output, payloads, workflow records,
+traces, model provenance and consumption receipts when available. Checkpoints
+select the latest scheduling outcome; retries preserve prior attempt bytes.
+The run path collects optional traces and records collection status and reason.
+Windowed skill attempts require a terminal measurement status of `available` or
+`unavailable`; a missing status is invalid. A declared unavailable trace remains
+unknown for attribution. Stage execution failures invalidate the attempt even
+when no optional trace was captured.
+
+A first non-ok attempt is invalid and retryable. A second non-ok attempt for the
+same PR, window and observed fingerprint becomes a terminal operational failure
+with all golden bugs missed. The diagnostic text need not match. API retries
+require no reset declaration. Subscription retries require a recorded reset time
+after the first attempt completed and no later than retry start:
+
+```bash
+python3 bench/run.py --retry-failed RUN_ID --measurement-window window.json \
+  --reset-confirmed-at ISO_TIMESTAMP
+```
+
+Selected attempts and review provenance remain immutable. Scoring uses the
+checkpoint-selected attempt artifacts and retains prior-attempt consumption;
+rescoring does not create an independent review run.

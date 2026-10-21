@@ -391,6 +391,10 @@ function modelFor(agentType, policy, dimensions = DIMENSIONS) {
     subagentModelEnv: policy.subagentModel, provider: policy.provider, mappedAliases: policy.mappedAliases,
   }, dimensions).model;
 }
+function resolvedDispatchModels(policy) {
+  const types = [...AGENTS, 'code-gauntlet:change-summarizer', ...Object.keys(STAGE_DEFAULTS).map((name) => `code-gauntlet:${name}`)];
+  return Object.fromEntries(types.map((type) => [type, modelFor(type, policy)]));
+}
 const REQUIRED = deepFreeze(['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles',
   'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope']);
 const DELIVERY_TIERS = deepFreeze(['all', 'main_only']);

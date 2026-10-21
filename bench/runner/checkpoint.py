@@ -1,22 +1,4 @@
-"""PR-granular checkpointing for bench runs (spec H3).
-
-A run's per-PR status lives in one JSON file per golden URL under
-``{run_dir}/state/``. The on-disk files are the source of truth, so a
-killed pass loses at most the single PR that was mid-flight and a fresh
-process can resume by reading state back.
-
-Resume semantics
------------------
-Valid statuses: ``pending | ok | timeout | invalid | drifted | failed``.
-
-* Plain ``--resume`` re-runs only URLs still in ``pending`` — ``ok``,
-  ``invalid`` and ``drifted`` are terminal, and ``timeout``/``failed`` are
-  deliberately *not* retried without an explicit opt-in.
-* ``--retry-failed`` re-runs exactly the ``timeout`` and ``failed`` set.
-
-``pending(urls)`` and ``failed(urls)`` expose those two sets; both preserve
-the caller's input order.
-"""
+"""Mutable scheduling index; immutable attempts retain the outcome evidence."""
 
 import hashlib
 import json
@@ -24,13 +6,12 @@ import os
 import re
 import time
 
+from bench.runner.validity import CheckpointStatus
+
 VALID_STATUSES = ("pending", "ok", "timeout", "invalid", "drifted", "failed")
 
-# Statuses that a plain resume treats as "done" and skips. Everything else
-# (i.e. only "pending") still needs a run.
 _RESUME_SKIP = frozenset({"ok", "invalid", "drifted", "timeout", "failed"})
 
-# Statuses that --retry-failed re-runs.
 _FAILED = frozenset({"timeout", "failed"})
 
 
@@ -72,7 +53,7 @@ class Checkpoint:
             detail = json.load(fh).get("detail")
         return detail if isinstance(detail, dict) else {}
 
-    def mark(self, url, status, detail=None):
+    def mark(self, url, status: CheckpointStatus, detail=None):
         """Persist ``status`` (and optional ``detail``) for ``url``.
 
         Raises ``ValueError`` for a status outside ``VALID_STATUSES``; no file
@@ -99,5 +80,10 @@ class Checkpoint:
         return [u for u in urls if self.status(u) not in _RESUME_SKIP]
 
     def failed(self, urls):
-        """URLs that ``--retry-failed`` re-runs (timeout or failed)."""
-        return [u for u in urls if self.status(u) in _FAILED]
+        return [
+            u
+            for u in urls
+            if self.detail(u)
+            .get("validity", {})
+            .get("retryable", self.status(u) in _FAILED)
+        ]

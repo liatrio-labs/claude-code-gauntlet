@@ -246,6 +246,11 @@ export function modelFor(agentType, policy, dimensions = DIMENSIONS) {
   }, dimensions).model;
 }
 
+export function resolvedDispatchModels(policy) {
+  const types = [...AGENTS, 'code-gauntlet:change-summarizer', ...Object.keys(STAGE_DEFAULTS).map((name) => `code-gauntlet:${name}`)];
+  return Object.fromEntries(types.map((type) => [type, modelFor(type, policy)]));
+}
+
 export const REQUIRED = deepFreeze(['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles',
   'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope']);
 

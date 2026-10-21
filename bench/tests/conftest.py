@@ -7,6 +7,39 @@ from tests.support.forge import install_forge_factory
 
 
 @pytest.fixture
+def git_repo(tmp_path):
+    """A disposable local history, including real index and squash semantics."""
+    import subprocess
+
+    root = tmp_path / "git-fixture"
+    root.mkdir()
+
+    def git(*args):
+        return subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                *args,
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        ).stdout.strip()
+
+    git("init", "-q", "-b", "main")
+    return root, git
+
+
+@pytest.fixture
 def forge_factory(monkeypatch, request):
     factory = install_forge_factory(monkeypatch, post)
     if request.instance is not None:
@@ -21,6 +54,7 @@ def score_case(tmp_path):
 
     from bench.runner import score
     from bench.runner.epochs import DEFAULT_ROOT, load_epoch, read_json
+    from bench.runner.validity import scoring_selection
 
     @dataclass(frozen=True, slots=True)
     class ScoreCase:
@@ -41,6 +75,7 @@ def score_case(tmp_path):
                 ledger_path=self.ledger,
                 run_scorer=self.scorer,
                 adjudicator=adjudicator,
+                attempt_selection=scoring_selection(self.run),
                 **kwargs,
             )
 
