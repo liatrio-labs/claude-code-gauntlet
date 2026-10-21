@@ -17,6 +17,7 @@ import { writeArtifacts } from './persist.js';
 import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
 import { checkpointChecksumErrors, checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
 import { holdBackIncomplete } from './holdBackIncomplete.js';
+import { appendMeasurement, createMeasurementTrace, recordStage, traceDecision, eliminationDecisions, stripTraceFields, decisionsFor } from './measurementTrace.js';
 
 // The host injects runtime globals, while tests supply context explicitly.
 function defaultCtx() {
@@ -151,6 +152,9 @@ export async function runWith(ctx, rawArgs) {
   const gaps = [...nullArgGaps, ...contextSizeGap, ...discardGap];
   const completed = [];
   const phaseOutputs = {};
+  const measurementTrace = A.measurementTrace === true ? createMeasurementTrace(A.nonce) : null;
+  let discoveryDecisions = [];
+  const measured = (envelope) => appendMeasurement(envelope, measurementTrace);
   let phaseReached = 'start';
   // Track the attempted phase separately so a failure names the phase that threw.
   let phaseAttempting = null;
@@ -161,8 +165,23 @@ export async function runWith(ctx, rawArgs) {
     const replayed = checkpoints[name] !== undefined;
     const out = replayed ? checkpoints[name] : await thunk();
     // Discovery intake covers fresh findings before downstream readers; replayed outputs need the same normalization at every phase.
-    if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A);
-    phaseOutputs[name] = out;
+    const rejected = [];
+    if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A, rejected);
+    if (name === 'discover') discoveryDecisions = [...decisionsFor(out), ...rejected];
+    if (measurementTrace && ['merge', 'verify', 'validate', 'filter', 'challenge'].includes(name)) {
+      recordStage(measurementTrace, name, out, { replayed,
+        ...(!replayed && ((name === 'verify' && out.verified === false) || (name === 'validate' && out.stats?.skipped > 0) || (name === 'challenge' && out.stats?.skipped > 0)) ? { coverage: 'partial' } : {}),
+        ...(name === 'merge' ? { decisions: [...discoveryDecisions, ...rejected] } : rejected.length ? { decisions: rejected } : {}),
+        ...(name === 'filter' || name === 'challenge' ? { decisions: [
+          ...rejected, ...eliminationDecisions(out),
+          ...(name === 'challenge' ? (out.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f, f.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed', f.challenge, [], 'held_back')) : []),
+        ], cap_hit: (out.unverified || []).some((f) => f.challenge === 'capped') } : {}),
+      });
+    } else if (name === 'discover' && replayed) recordStage(measurementTrace, name, out, { replayed });
+    if (name === 'verify') {
+      const { eliminated: _eliminated, ...recovery } = out;
+      phaseOutputs[name] = recovery;
+    } else phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
     return out;
@@ -179,7 +198,7 @@ export async function runWith(ctx, rawArgs) {
     // Derive scope flags from validated inputs so callers cannot stamp a different decision.
     const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      agentFlags: derivedAgentFlags, limits, policy, contextLine, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
+      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
     }));
 
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
@@ -194,10 +213,11 @@ export async function runWith(ctx, rawArgs) {
       && (discoverOut.findings || []).length === 0
       && checkpoints.challenge === undefined) {
       gaps.push(`all-degraded: every active discovery dimension degraded (${(discoverOut.degraded || []).join(', ')}) — no discovery agent completed, so nothing was reviewed; failing loud instead of returning an empty clean review (see the per-agent gaps above; a model/provider mismatch is the most likely cause — the envelope's resolvedPolicy names the resolution)`);
+      stripTraceFields(phaseOutputs);
       const resumable = { ...phaseOutputs };
       // Preserve phaseOutputs for diagnostics while removing failed discovery from the resumable return.
       delete resumable.discover;
-      return {
+      return measured({
         ok: false,
         error: 'all-degraded: every active discovery dimension degraded — no review was performed',
         phaseReached,
@@ -207,7 +227,7 @@ export async function runWith(ctx, rawArgs) {
         resolvedPolicy: resolvedPolicyEnvelope(policy),
         checkpoints: buildResumeCheckpoints(resumable),
         gaps,
-      };
+      });
     }
 
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
@@ -218,7 +238,7 @@ export async function runWith(ctx, rawArgs) {
     limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || [], A.baseBranch, A);
 
     const verifyOut = await runPhase('verify', () => verifyStage(c, {
-      findings: mergeOut.findings || [], limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
+      findings: mergeOut.findings || [], measurementTrace, limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
       python: A.python, repoRoot: A.repoRoot, outputDir: A.outputDir, pluginRoot: A.pluginRoot,
       verify: { ...(A.verify || {}), baseBranch: A.baseBranch, diffPath: A.diffPath },
     }));
@@ -255,6 +275,14 @@ export async function runWith(ctx, rawArgs) {
     // Keep replay disclosures outside checkpoints so resumes cannot duplicate them.
     const markedCount = applyChallengeReplayBelt(challengeOut);
     holdBackIncomplete(challengeOut);
+    if (measurementTrace) recordStage(measurementTrace, 'holdback', challengeOut, {
+      decisions: [
+        ...(challengeOut.eliminated || []).filter((f) => f.replay_belt && f.trace_id).map((f) => traceDecision(f, 'injection', f.elimination_reason)),
+        ...(challengeOut.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f,
+          f.validation === 'skipped' ? 'validation_skipped' : f.origin === 'unknown' ? 'verify_unproven' :
+            f.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed', f.validation === 'skipped' ? 'validation skipped' : f.origin === 'unknown' ? 'verification unproven' : f.challenge, [], 'held_back')),
+      ],
+    });
     if (markedCount > 0) {
       gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
     }
@@ -267,6 +295,14 @@ export async function runWith(ctx, rawArgs) {
 
     const deliveryTier = A.delivery && A.delivery.tier;
     const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
+    if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
+      cap_hit: selectDelivery(challengeOut.findings, null, deliveryTier).length > postReview.length,
+      decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,
+        deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
+        'delivery selection', [], 'not_selected')),
+    });
+    if (measurementTrace) measurementTrace.complete = true;
+    stripTraceFields(phaseOutputs);
     const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
     const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
       && (A.mode !== 'headless'
@@ -335,7 +371,7 @@ export async function runWith(ctx, rawArgs) {
     });
     gaps.push(...(writeOut.gaps || []));
 
-    return {
+    return measured({
       ok: true,
       phaseReached,
       stats: {
@@ -372,9 +408,10 @@ export async function runWith(ctx, rawArgs) {
       // Keep bulk persistence data last so a truncated return still includes status and gaps.
       // scripts/gauntlet/awaiting.py elides persistReturn.entries from the terminal response; materialization reads the original task file.
       ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
-    };
+    });
   } catch (e) {
-    return {
+    stripTraceFields(phaseOutputs);
+    return measured({
       ok: false,
       error: (e && e.message) || String(e),
       phaseReached,
@@ -383,6 +420,6 @@ export async function runWith(ctx, rawArgs) {
       stats: {},
       checkpoints: buildResumeCheckpoints(phaseOutputs),
       gaps,
-    };
+    });
   }
 }

@@ -17,7 +17,11 @@ SCANNED_ROOTS = (
     "workflows/test/tools/",
     "conftest.py",
 )
-EXCLUDED_ROOTS = ("bench/vendor/", "bench/workspace/", "tests/fixtures/")
+EXCLUDED_ROOTS = (
+    "bench/vendor/",
+    "bench/workspace/",
+    "tests/fixtures/",
+)
 NEWLINE_ROOTS = ("scripts/", "workflows/test/tools/", "tests/tools/")
 NON_TEXT_OPEN_RECEIVERS = frozenset({"os", "tarfile", "zipfile", "webbrowser"})
 GUARDED_STAR_IMPORTS = frozenset(

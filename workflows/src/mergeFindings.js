@@ -1,6 +1,7 @@
 // Finding path normalization, validation, deduplication, and merge envelopes.
 import { repoRelativeFindingPath, safeFindingLabel } from './paths.js';
 import { AGENTS, DIMENSIONS, FINDING_PATH_ARRAY_FIELDS } from './registry.js';
+import { measurementDecisions, traceDecision } from './measurementTrace.js';
 import { deepClone } from './wire.js';
 
 const KNOWN_DIMENSIONS = new Set(DIMENSIONS.map((d) => d.dimension));
@@ -41,7 +42,7 @@ function normalizeFindingPath(finding, repoRoot) {
   return { valid: true, rewritten: false };
 }
 
-export function normalizeFindingPaths(findings, repoRoot) {
+export function normalizeFindingPaths(findings, repoRoot, decisions = []) {
   const valid = [];
   const warnings = [];
   let pathRewrites = 0;
@@ -53,6 +54,7 @@ export function normalizeFindingPaths(findings, repoRoot) {
     const result = normalizeFindingPath(finding, repoRoot);
     if (!result.valid) {
       warnings.push(result.warning);
+      if (finding.trace_id) decisions.push(traceDecision(finding, 'invalid_path', result.warning));
       continue;
     }
     if (result.rewritten) pathRewrites += 1;
@@ -80,7 +82,7 @@ export function normalizeFindingPaths(findings, repoRoot) {
   return { valid, warnings, path_rewrites: pathRewrites };
 }
 
-export function validateFindings(findings) {
+export function validateFindings(findings, decisions = []) {
   const valid = [];
   const warnings = [];
 
@@ -97,7 +99,10 @@ export function validateFindings(findings) {
       }
     }
 
-    if (reject) continue;
+    if (reject) {
+      if (f.trace_id) decisions.push(traceDecision(f, 'invalid_shape', warnings[warnings.length - 1]));
+      continue;
+    }
 
     const dim = 'dimension' in f ? f.dimension : undefined;
     if (dim === null || dim === undefined) {
@@ -116,6 +121,7 @@ export function merge(findingsByAgent, meta) {
   const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
   const agents = M.agents;
   const allWarnings = [];
+  const decisions = [];
 
   // Dictionary selection preserves repeated roster keys and integer-key enumeration.
   const selected = {};
@@ -141,7 +147,7 @@ export function merge(findingsByAgent, meta) {
 
   // Validate before deduplication so warnings cover every raw finding.
   const allFlat = Object.values(selected).flat();
-  const { valid, warnings: preValWarnings } = validateFindings(allFlat);
+  const { valid, warnings: preValWarnings } = validateFindings(allFlat, decisions);
 
   let droppedNoId = 0;
   for (const f of allFlat) {
@@ -149,10 +155,10 @@ export function merge(findingsByAgent, meta) {
     if (fid === undefined || fid === null || fid === '') droppedNoId += 1;
   }
 
-  const { merged, duplicatesResolved } = dedupById(valid);
+  const { merged, duplicatesResolved } = dedupById(valid, decisions);
   const validationWarnings = allWarnings.concat(preValWarnings);
 
-  return {
+  return measurementDecisions({
     findings: merged,
     base_branch: M.base_branch,
     head_sha: M.head_sha,
@@ -170,7 +176,7 @@ export function merge(findingsByAgent, meta) {
       truncation_warnings: [],
       validation_warnings: validationWarnings,
     },
-  };
+  }, decisions);
 }
 
 export function mergeStage(discoverOut, meta) {
@@ -192,7 +198,7 @@ export function mergeStage(discoverOut, meta) {
   return merge(byAgent, { ...M, agents });
 }
 
-export function dedupById(findings) {
+export function dedupById(findings, decisions = []) {
   const seen = new Map();
   let duplicatesResolved = 0;
   let droppedNoId = 0;
@@ -200,7 +206,10 @@ export function dedupById(findings) {
   for (const finding of findings) {
     const fid = finding.id;
     if (fid === undefined || fid === null) { droppedNoId += 1; continue; }
-    if (seen.has(fid)) duplicatesResolved += 1;
+    if (seen.has(fid)) {
+      duplicatesResolved += 1;
+      if (finding.trace_id) decisions.push(traceDecision(finding, 'duplicate_id', 'first id wins', [seen.get(fid).trace_id].filter(Boolean)));
+    }
     else seen.set(fid, finding);
   }
 

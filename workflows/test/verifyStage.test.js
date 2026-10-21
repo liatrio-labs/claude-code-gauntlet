@@ -328,7 +328,7 @@ for (const [name, receipt, fault] of [
 });
 test('empty input emits the complete zero ledger', async () => {
   const ctx = verifyCtx(() => { throw new Error('must not dispatch'); });
-  assert.deepEqual(await verifyStage(ctx, verifyInput([])), { findings: [], verified: true, gaps: [], inputProof: ZERO });
+  assert.deepEqual(await verifyStage(ctx, verifyInput([])), { findings: [], eliminated: [], verified: true, gaps: [], inputProof: ZERO });
 });
 
 const bulk = (prefix, length, chars) => Array.from({ length }, (_, i) => ({

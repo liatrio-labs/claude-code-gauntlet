@@ -268,6 +268,25 @@ def test_cli_shape_identity_and_stderr_block(config_cli, mode):
     assert result.stderr.decode() == block + "\n"
 
 
+@pytest.mark.parametrize("mode", ["headless", "interactive"])
+@pytest.mark.parametrize("value", ["1", "0", "true", " 1 ", ""])
+def test_measurement_trace_gate(config_cli, mode, value):
+    result = config_cli(
+        ["--target", "pr"],
+        CODE_GAUNTLET_HEADLESS="1" if mode == "headless" else "0",
+        CODE_GAUNTLET_MEASUREMENT_TRACE=value,
+    )
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    expected = mode == "headless" and value == "1"
+    assert ("measurementTrace" in payload["waist"]) is expected
+    if expected:
+        assert payload["waist"]["measurementTrace"] is True
+    assert payload["waist"]["configEcho"] == (
+        HEADLESS_ECHO if mode == "headless" else INTERACTIVE_ECHO
+    )
+
+
 def test_cli_identity_separates_plugin_and_repository_roots(config_cli, tmp_path):
     repo = tmp_path / "consumer"
     repo.mkdir()

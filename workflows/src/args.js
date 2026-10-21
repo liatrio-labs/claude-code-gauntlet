@@ -69,6 +69,7 @@ const ARGS_FIELD_CHECKS = deepFreeze({
       message: `invalid {label}: {value} (expected distinct values from ${MODEL_ALIASES.join(', ')})` },
   ],
   changed: [
+    { key: 'measurementTrace', domain: 'boolean', message: 'measurementTrace must be a boolean when present' },
     { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
     { key: 'changedLines', domain: 'number', message: 'changedLines must be a number' },
   ],
