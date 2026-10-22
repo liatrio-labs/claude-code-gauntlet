@@ -446,13 +446,14 @@ def test_conditional_paragraphs():
 
 def test_block_anchor():
     assert gen.splice(
-        "before\n`a` is required by the dispatch schema - old wording.\nafter\n",
-        gen._SINGLE_SENTENCE_ANCHOR,
+        "before\nReturn JSON Schema (first-party direct dispatch):\n"
+        "old schema\n\nOnly report findings\nafter\n",
+        gen._DISCOVERY_ANCHOR,
         "new",
     ) == (
         "before\n<!-- generated-from-registry: do not edit; "
         "scripts/generate_contract_requirements.py -->\nnew\n"
-        "<!-- /generated-from-registry -->\nafter\n"
+        "<!-- /generated-from-registry -->\n\nOnly report findings\nafter\n"
     )
 
 
@@ -465,7 +466,7 @@ def test_block_anchor():
 )
 def test_block_diagnostic(text, message):
     with pytest.raises(CliError, match=re.escape(message)):
-        gen.splice(text, gen._SINGLE_SENTENCE_ANCHOR, "new")
+        gen.splice(text, gen._DISCOVERY_ANCHOR, "new")
 
 
 @pytest.fixture

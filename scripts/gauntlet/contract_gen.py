@@ -268,12 +268,6 @@ _EXISTING_BLOCK = re.compile(
     re.escape(MARKER_OPEN) + r"\n.*?\n" + re.escape(MARKER_CLOSE), re.DOTALL
 )
 
-# Unfenced contracts need anchors so regeneration can introduce ownership markers.
-_SINGLE_SENTENCE_ANCHOR = re.compile(
-    "`[a-z_]+`(?:, `[a-z_]+`)*(?:,? and `[a-z_]+`)? (?:is|are) required by "
-    "the dispatch "
-    r"schema[^\n]*"
-)
 _DISCOVERY_ANCHOR = re.compile(
     r"Return JSON Schema \(first-party direct dispatch\):\n.*?"
     r"(?=\n\n(?:Only report|For ordinary findings)|\Z)",
