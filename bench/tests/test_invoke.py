@@ -2117,7 +2117,9 @@ def test_host_auth_strips_credentials_and_checks_prerequisites(
     budget = {**host, **dict.fromkeys(invoke.HOST_SET_ENV, "1")}
     validity.refuse_ambient_model_overrides(budget, "host")
     with pytest.raises(ValueError, match="ambient"):
-        validity.refuse_ambient_model_overrides(budget, "api")
+        validity.refuse_ambient_model_overrides(
+            dict.fromkeys(invoke.HOST_SET_ENV, "1"), "api"
+        )
     monkeypatch.setattr(run.shutil, "which", lambda *a: None)
     monkeypatch.setattr(run, "_free_gb", lambda *a: 100)
     monkeypatch.setattr(run, "_read_env_key", lambda *a: pytest.fail("credential read"))
