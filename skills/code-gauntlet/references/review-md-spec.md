@@ -281,7 +281,7 @@ For rules in REVIEW.md, these principles follow research on AI reviewer effectiv
 
 ## Scaffolding Templates
 
-When the user opts to create a REVIEW.md during Phase 2d, use these templates. The templates set sensible defaults and provide structural guidance without guessing at repo-specific content.
+Starting points for writing a REVIEW.md by hand. They set sensible defaults and leave repository-specific content to the author.
 
 ### Root REVIEW.md template
 
