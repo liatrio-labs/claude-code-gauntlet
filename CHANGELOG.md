@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.49.1 (2026-10-22)
+
+### Bug Fixes
+
+- **bench**: Host runs strip the cloud session's thinking budget instead of refusing it
+  ([#548](https://github.com/liatrio-labs/claude-code-gauntlet/pull/548),
+  [`ecb859d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ecb859dad50b270ba6d64f599fa59971739615f8))
+
+- **bench**: Host runs strip the cloud session's thinking budget instead of refusing it (#46)
+  ([#548](https://github.com/liatrio-labs/claude-code-gauntlet/pull/548),
+  [`ecb859d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ecb859dad50b270ba6d64f599fa59971739615f8))
+
+### Testing
+
+- **bench**: The api-mode refusal case holds only the thinking budget
+  ([#548](https://github.com/liatrio-labs/claude-code-gauntlet/pull/548),
+  [`ecb859d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ecb859dad50b270ba6d64f599fa59971739615f8))
+
+
 ## v3.49.0 (2026-10-22)
 
 ### Bug Fixes
