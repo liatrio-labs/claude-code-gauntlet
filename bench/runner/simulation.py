@@ -353,10 +353,7 @@ def simulate_rule(library, spec, *, rule_evaluator=compare.evaluate_promotion):
         mde_pp=mde,
         sources=[asdict(v) for v in library.vectors],
         seed=spec.seed,
-        auth_counts={
-            a: sum(v.auth == a for v in library.vectors)
-            for a in AUTH_MODES
-        },
+        auth_counts={a: sum(v.auth == a for v in library.vectors) for a in AUTH_MODES},
         lane_counts={
             key: sum(
                 v.lane is not None and digest(asdict(v.lane)) == key
