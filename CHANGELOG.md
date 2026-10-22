@@ -2,6 +2,51 @@
 
 <!-- version list -->
 
+## v3.48.0 (2026-10-22)
+
+### Bug Fixes
+
+- **bench**: Early pass needs every harm check, ship keeps its non-mini test, precision skips
+  excluded bugs ([#546](https://github.com/liatrio-labs/claude-code-gauntlet/pull/546),
+  [`d96d824`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d96d824a62dcc1c0b9f450334f934137dfcc484c))
+
+### Chores
+
+- **skills**: Retire the build-review-md skill; the report tips toward REVIEW.md (#46 Wave 4)
+  ([#545](https://github.com/liatrio-labs/claude-code-gauntlet/pull/545),
+  [`1254267`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1254267ea627a3465bb7d9e4e843514ee3d7e0aa))
+
+- **skills**: Retire the build-review-md skill; the report tips toward REVIEW.md instead
+  ([#545](https://github.com/liatrio-labs/claude-code-gauntlet/pull/545),
+  [`1254267`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1254267ea627a3465bb7d9e4e843514ee3d7e0aa))
+
+### Documentation
+
+- **skills**: Drop the preflight's pointer to the retired REVIEW.md notice
+  ([#545](https://github.com/liatrio-labs/claude-code-gauntlet/pull/545),
+  [`1254267`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1254267ea627a3465bb7d9e4e843514ee3d7e0aa))
+
+- **skills**: REVIEW.md templates are starting points for writing one by hand
+  ([#545](https://github.com/liatrio-labs/claude-code-gauntlet/pull/545),
+  [`1254267`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1254267ea627a3465bb7d9e4e843514ee3d7e0aa))
+
+### Features
+
+- **bench**: Two-stage non-inferiority wave rule with harm checks, frozen with the contamination
+  manifest ([#546](https://github.com/liatrio-labs/claude-code-gauntlet/pull/546),
+  [`d96d824`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d96d824a62dcc1c0b9f450334f934137dfcc484c))
+
+- **bench**: Two-stage non-inferiority wave rule with harm checks; freeze rule and contamination
+  (#46) ([#546](https://github.com/liatrio-labs/claude-code-gauntlet/pull/546),
+  [`d96d824`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d96d824a62dcc1c0b9f450334f934137dfcc484c))
+
+### Testing
+
+- **bench**: Consolidate the decision-rule proofs into transition data
+  ([#546](https://github.com/liatrio-labs/claude-code-gauntlet/pull/546),
+  [`d96d824`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d96d824a62dcc1c0b9f450334f934137dfcc484c))
+
+
 ## v3.47.1 (2026-10-21)
 
 ### Bug Fixes
