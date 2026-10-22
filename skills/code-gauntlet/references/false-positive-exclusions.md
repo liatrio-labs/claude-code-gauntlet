@@ -35,7 +35,7 @@ Do not flag problems that already existed in the codebase before this change. Th
 
 ## 2. Issues on lines the author did not modify
 
-Unless the author's changes in another file create a cross-file impact (e.g., changing a function signature that breaks a caller), do not flag issues on lines the author did not touch.
+Unless the author's changes in another file create a cross-file impact (e.g., changing a function signature that breaks a caller), do not flag issues on lines the author did not touch. Removed-test coverage-loss findings may anchor surviving behavior outside changed lines; deleted paths belong only to the audit inventory.
 
 **Examples:**
 
@@ -157,7 +157,7 @@ Lockfile diffs are mechanical and reviewing individual line changes in them is n
 
 ## 13. Latent issues not triggerable by current code paths
 
-If a finding describes a problem that cannot be reached by any current code path — no existing caller, no reachable entry point, no current configuration that exercises it — it is a latent concern, not an actionable finding. Only flag issues that are reachable today.
+Exclude runtime failures that require a future caller, configuration change or code path. A static defect already demonstrable in today's tree needs evidence appropriate to that claim, rather than a runtime trigger.
 
 **Examples:**
 
@@ -166,7 +166,7 @@ If a finding describes a problem that cannot be reached by any current code path
 - A missing validation in a helper that is only used via a wrapper that already enforces the invariant.
 - A pattern deviation (e.g., missing idempotency key) in code that is never invoked by any current trigger (no job scheduler, no API route, no event handler calls it).
 
-**Rationale:** Latent issues have zero probability of causing a bug until someone adds a caller or changes surrounding code. Reporting them as findings inflates noise and diverts attention from issues that are triggerable today. They may be worth a comment in a code walkthrough, but not in a PR review focused on catching regressions.
+**Rationale:** Future-change-only runtime failures need a caller or surrounding-code change before they can occur. Reporting them as findings inflates noise and diverts attention from issues that are triggerable today. They may be worth a comment in a code walkthrough, but not in a PR review focused on catching regressions.
 
 ---
 

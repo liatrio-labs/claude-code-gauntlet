@@ -13,22 +13,10 @@ from tests.support.repository import tracked_paths
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_FORMAT = ROOT / "skills/code-gauntlet/references/report-format.md"
 
-RULE_SOURCES = (
-    "documented_rule",
-    "code_comment",
-    "repo_precedent",
-    "self_inconsistency",
-)
-
 # Fence casing affects Markdown display, so only the marker is case-insensitive.
 _JSON_BLOCK = re.compile("```(?i:json)\\n(.*?)\\n```", re.DOTALL)
 
-# Match value positions so a quoted string containing an angle bracket stays intact.
-_UNQUOTED_PLACEHOLDER = re.compile("(?<=:)\\s*<[^>]*>")
-
 _FIELD_ROW = re.compile("^\\|\\s*`([a-z_][a-z0-9_]*)`\\s*\\|(.+)\\|\\s*$")
-
-_BACKTICKED_FIELD = re.compile("`([a-z_][a-z0-9_]*)`")
 
 
 def registry() -> dict:
@@ -55,74 +43,6 @@ def all_extras():
         for field in row["extras"]:
             owner[field] = row["dimension"]
     return owner
-
-
-def field_carries_omit_instruction(raw_block, field, source=None):
-    # Scope OMIT to this field so a neighbouring placeholder cannot satisfy the guard.
-    key_match = re.compile('"' + re.escape(field) + '"\\s*:\\s*').search(raw_block)
-    if not key_match:
-        return False
-    rest = raw_block[key_match.end() :]
-    quoted = re.match('"((?:[^"\\\\]|\\\\.)*)"', rest)
-    if quoted:
-        return "omit" in quoted.group(1).lower()
-    # Mandatory commas keep unclosed whitespace-separated arrays from backtracking.
-    array_of_strings = re.match(
-        '\\[\\s*(?:"(?:[^"\\\\]|\\\\.)*"(?:\\s*,\\s*"(?:[^"\\\\]|\\\\.)*")*\\s*)?\\]',
-        rest,
-    )
-    if array_of_strings:
-        return "omit" in array_of_strings.group(0).lower()
-    angle_bracket = re.match("<[^>]*>", rest)
-    if angle_bracket:
-        return "omit" in angle_bracket.group(0).lower()
-    bare_literal = re.match("(?:-?\\d+(?:\\.\\d+)?|true|false|null)\\s*(?=[,}])", rest)
-    if bare_literal:
-        return False
-    raise AssertionError(f"unsupported value for {field!r} in {source}: {rest[:80]!r}")
-
-
-_DISPATCH_REQUIRED_PHRASE = "required by the dispatch schema"
-
-_DIMENSION_CONDITIONAL_PHRASE = "dimension-conditional dispatch requirement"
-
-
-def phrase_claims(name, phrase):
-    text = (ROOT / "agents" / f"{name}.md").read_text(encoding="utf-8")
-    claimed = set()
-    for line in text.splitlines():
-        if phrase in line:
-            claimed |= set(_BACKTICKED_FIELD.findall(line))
-    return claimed
-
-
-def raw_contract_blocks(name):
-    text = (ROOT / "agents" / f"{name}.md").read_text(encoding="utf-8")
-    raw_blocks = _JSON_BLOCK.findall(text)
-    assert raw_blocks
-    finding_blocks = []
-    for raw in raw_blocks:
-        obj = json.loads(_UNQUOTED_PLACEHOLDER.sub(" 0", raw))
-        if obj.get("type") == "object" and "properties" in obj:
-            fields = python_registry.DISPATCH_RESULTS[f"code-gauntlet:{name}"]
-            assert obj == {
-                "type": "object",
-                "properties": fields,
-                "required": list(fields),
-            }
-        else:
-            finding_blocks.append(raw)
-    return finding_blocks
-
-
-def contract_blocks(name):
-    blocks = []
-    for raw in raw_contract_blocks(name):
-        normalized = _UNQUOTED_PLACEHOLDER.sub(" 0", raw)
-        obj = json.loads(normalized)
-        assert isinstance(obj, dict)
-        blocks.append(obj)
-    return blocks
 
 
 def report_format_tables():
@@ -242,106 +162,60 @@ def tracked(*patterns: str) -> list[str]:
 
 @pytest.mark.parametrize("agent_type", sorted(declared_by_agent()), ids=agent_name)
 def test_contract_schema(agent_type: str) -> None:
-    declared = declared_by_agent()[agent_type]
-    name = agent_name(agent_type)
-    text = read(f"agents/{name}.md")
-    blocks = contract_blocks(name)
-    fields = {key for block in blocks for key in block}
-    assert fields == set(declared) - {"origin"}
-    assert "origin" in declared
-    templates = [
-        block
-        for block in blocks
-        if any(
-            isinstance(value, str) and value.startswith("<") for value in block.values()
+    live = gen.load_registry(str(ROOT))
+    contract = next(
+        c for c in live["discoveryContracts"] if c["agentType"] == agent_type
+    )
+    text = read(f"agents/{agent_name(agent_type)}.md")
+    body = text.split(gen.MARKER_OPEN)[1].split(gen.MARKER_CLOSE)[0]
+    blocks = _JSON_BLOCK.findall(body)
+    assert len(blocks) == 1
+    schema = json.loads(blocks[0])
+    assert schema == contract["schema"]
+    item = schema["properties"]["findings"]["items"]
+    rows = [r for r in live["dimensions"] if r["agentType"] == agent_type]
+    required = [*live["required"], *contract["requiredExtra"]]
+    assert item["required"] == required
+    optional = [f for f in item["properties"] if f not in required]
+    for label, fields in (("Required", required), ("Optional", optional)):
+        line = next(
+            line
+            for line in body.splitlines()
+            if line.startswith(label + " finding fields:")
         )
-    ]
-    examples = [block for block in blocks if block not in templates]
-    for block in blocks:
-        assert all(value is not None for value in block.values())
-        for value in block.values():
-            if isinstance(value, str):
-                assert not re.search(
-                    r"\b(?:otherwise|or)\s*,?\s+null\b", value, re.IGNORECASE
-                )
-                assert "\\'" not in value
-    for field in (set(all_extras()) | {"claude_md_rule"}) & declared.keys():
-        if declared[field] == "string":
-            assert not re.search(r'"' + re.escape(field) + r'"\s*:\s*null', text), (
-                agent_type,
-                field,
-            )
-            if field in text:
-                assert "otherwise null" not in text.split(field, 1)[1][:120], (
-                    agent_type,
-                    field,
-                )
-    for template in templates:
-        for field, value in template.items():
-            if (
-                isinstance(value, str)
-                and examples
-                and not all(field in example for example in examples)
-            ):
-                assert "OMIT this field" in value
-    for row in registry()["dimensions"]:
-        if row["agentType"] != agent_type:
-            continue
-        assert phrase_claims(name, _DISPATCH_REQUIRED_PHRASE) & set(
-            row["extras"]
-        ) == set(row["requiredExtra"])
-        for field in row["requiredExtra"]:
-            assert not any(
-                field_carries_omit_instruction(raw, field, source=name)
-                for raw in raw_contract_blocks(name)
-            )
+        assert re.findall(r"`([^`]+)`", line) == fields
+    assert "Omit inapplicable optional fields; never send null." in body
+    if contract["requiredExtra"]:
+        assert "required by the dispatch schema" in body
+    declared = declared_by_agent()[agent_type]
+    for field in optional:
+        assert item["properties"][field]["type"] == declared[field]
+    for row in rows:
         for field in row["requiredWhenDimension"]:
-            assert any(
-                field_carries_omit_instruction(raw, field, source=name)
-                for raw in raw_contract_blocks(name)
+            assert f"`{field}` is a dimension-conditional dispatch requirement" in body
+            assert (
+                f"For {row['dimension']} findings: the `{field}` field must be non-null"
+                in body
             )
-            assert f"REQUIRED for {row['dimension']}" in text
-    expected_conditional = {
-        field
-        for row in registry()["dimensions"]
-        if row["agentType"] == agent_type
-        for field in row["requiredWhenDimension"]
-    }
-    assert phrase_claims(name, _DIMENSION_CONDITIONAL_PHRASE) == expected_conditional
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        ('{"field": "<OMIT this field when inapplicable>"}', True),
-        ('{"field": "live", "neighbour": "<OMIT this field>"}', False),
-    ],
-)
-def test_omit_parser(raw, expected):
-    assert field_carries_omit_instruction(raw, "field") is expected
+            siblings = [r["dimension"] for r in rows if r != row]
+            assert "/".join(siblings) in body or "on the same terms" in body
+    if contract["conditionalRequired"]:
+        assert (
+            "third-party providers" in body
+            and "gateway sessions where the schema stays flat" in body
+        )
+    assert "line_start` through `line_end`" in text
+    assert "Include `line_end` with every patch" in text
 
 
 def test_convention_vocabulary() -> None:
-    assert _DISPATCH_REQUIRED_PHRASE not in _DIMENSION_CONDITIONAL_PHRASE
     text = read("agents/conventions-and-intent.md")
-    section = re.search(
-        r"^### Convention output requirements\n(.*?)(?=^## )",
-        text,
-        re.MULTILINE | re.DOTALL,
-    )
-    assert section is not None
-    values = re.search(r"^Allowed values are (.+)\.$", section.group(1), re.MULTILINE)
+    body = text.split(gen.MARKER_OPEN)[1].split(gen.MARKER_CLOSE)[0]
+    values = re.search(r"^Allowed rule_source values: (.+)\.$", body, re.MULTILINE)
     assert values is not None
-    assert set(re.findall(r"`([^`]+)`", values.group(1))) == set(RULE_SOURCES)
-    examples = [
-        block
-        for block in contract_blocks("conventions-and-intent")
-        if not any(
-            isinstance(value, str) and value.startswith("<") for value in block.values()
-        )
-    ]
-    assert len(examples) == 1
-    assert examples[0]["rule_source"] in RULE_SOURCES
+    assert set(re.findall(r"`([^`]+)`", values.group(1))) == set(
+        python_registry.RULE_SOURCE_LABELS
+    )
 
 
 def test_handwritten_field_tables():
@@ -506,7 +380,7 @@ def test_machine_string_registry():
     composite = [
         row
         for row in parse_composite_rows(text)
-        if set(row["strings"]) == set(RULE_SOURCES)
+        if set(row["strings"]) == set(python_registry.RULE_SOURCE_LABELS)
     ]
     assert len(composite) == 1
     assert composite[0]["producers"] == ["agents/conventions-and-intent.md"]
