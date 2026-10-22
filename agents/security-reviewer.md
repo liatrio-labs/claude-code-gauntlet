@@ -68,7 +68,6 @@ Sensitive data exposure
 Broken access control
 
 - Missing authorization checks on endpoints or functions
-- Check authorization of the actor behind any inbound message, event or callback.
 - IDOR (Insecure Direct Object Reference) — user-supplied IDs used without ownership verification
 - Privilege escalation paths — lower-privileged users accessing admin functionality
 - Missing CSRF protection on state-changing operations
@@ -106,7 +105,6 @@ Cryptographic issues
 - Predictable random number generation for security-sensitive operations (Math.random vs crypto)
 - Rolling your own crypto instead of using established libraries
 - Missing integrity checks on downloaded or transmitted data
-- Check comparisons of secrets or security identities for correct normalisation and resistance to timing disclosure.
 
 Dependency and supply chain
 
