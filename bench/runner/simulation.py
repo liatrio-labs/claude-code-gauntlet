@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import random
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -43,6 +43,7 @@ class RunVector:
     window_sha256: str
     auth: str
     hits: tuple[bool, ...]
+    precision: tuple[compare.PrecisionCount, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +68,7 @@ class SimulationRow:
     extension_rate: float | None
     guards: dict
     infeasible: str | None
+    expected_runs_per_arm: float | None
 
 
 def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
@@ -79,6 +81,9 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
     epoch = load_epoch(spec.epoch_id)
     contamination = read_json(spec.contamination_path)
     populations.contamination_entries(contamination, epoch)
+    primary = populations.resolve_population(
+        "gate-uncontaminated", epoch, "core", contamination
+    )
     ids = tuple(
         sorted(b.bug_id for b in epoch.bugs if b.pr_url in epoch.subsets["gate"])
     )
@@ -133,6 +138,7 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
                 run["window_sha256"],
                 run["child_auth"],
                 tuple(by_id[b] for b in ids),
+                compare.packet_precision(packet, primary),
             )
         )
     if len(vectors) < 2 or len({v.score_ref.run_id for v in vectors}) != len(vectors):
@@ -162,22 +168,27 @@ def feasibility(library, effect):
     r0 = sum(v.hits[i] for v in library.vectors for i in indices) / (
         len(library.vectors) * len(indices)
     )
-    if effect < 0 or effect / 100 > 1 - r0 + 1e-12:
-        raise ValueError("uplift exceeds empirical recall ceiling")
+    if not math.isfinite(effect) or not -r0 - 1e-12 <= effect / 100 <= 1 - r0 + 1e-12:
+        raise ValueError("effect exceeds empirical recall floor or ceiling")
     return indices, r0
 
 
-def generate_vectors(library, rule, effect, rng, *, feasible=None):
+def generate_vectors(library, rule, effect, rng, *, feasible=None, sampled=None):
     indices, r0 = feasible if feasible is not None else feasibility(library, effect)
     delta = effect / 100
     total = rule.initial_runs + rule.extension_runs
-    arms = [
-        [list(rng.choice(library.vectors).hits) for _ in range(total)] for _ in range(2)
+    sampled = sampled or [
+        [rng.choice(library.vectors) for _ in range(total)] for _ in range(2)
     ]
+    arms = [[list(v.hits) for v in arm] for arm in sampled]
     for vector in arms[1]:
         for i in indices:
-            if not vector[i] and rng.random() < (delta / (1 - r0) if r0 < 1 else 0):
-                vector[i] = True
+            eligible = vector[i] if delta < 0 else not vector[i]
+            probability = (
+                -delta / r0 if delta < 0 else delta / (1 - r0) if r0 < 1 else 0
+            )
+            if eligible and rng.random() < probability:
+                vector[i] = delta >= 0
     return arms
 
 
@@ -200,7 +211,7 @@ def simulated_audit(library, rng, size=30):
     return audit.AuditReceipt(("baseline", "candidate"), rows)
 
 
-def trial_reports(library, arms, count, rule):
+def trial_reports(library, arms, count, rule, *, sampled=None):
     epoch = load_epoch(library.epoch_id)
     meta = {b.bug_id: b.pr_url for b in epoch.bugs}
     rows = tuple(
@@ -213,7 +224,7 @@ def trial_reports(library, arms, count, rule):
     )
     runs = tuple((a, tuple(range(count))) for a in ("baseline", "candidate"))
     matrix = validity.CompleteMatrix((), rows, ("baseline", "candidate"), runs)
-    return tuple(
+    reports = tuple(
         compare.reduce_population(
             matrix,
             populations.resolve_population(name, epoch, "core", library.contamination),
@@ -224,13 +235,19 @@ def trial_reports(library, arms, count, rule):
         )
         for name in ("gate-uncontaminated", "gate-uncontaminated-non-mini")
     )
+    if sampled:
+        precision = compare.precision_comparison(
+            [[v.precision for v in arm[:count]] for arm in sampled], rule.bootstrap
+        )
+        reports = (replace(reports[0], precision=precision), reports[1])
+    return reports
 
 
 def simulate_rule(library, spec, *, rule_evaluator=compare.evaluate_promotion):
     if (
         spec.trials < 1
         or not 0 < spec.power_target <= 1
-        or any(not math.isfinite(e) or e < 0 for e in spec.mde_grid_pp)
+        or any(not math.isfinite(e) for e in spec.mde_grid_pp)
     ):
         raise ValueError("invalid simulation grid")
     rows, mde = [], {}
@@ -258,20 +275,31 @@ def simulate_rule(library, spec, *, rule_evaluator=compare.evaluate_promotion):
                 error = str(exc)
             if not error:
                 for _ in range(spec.trials):
+                    sampled = [
+                        [
+                            rng.choice(library.vectors)
+                            for _ in range(rule.initial_runs + rule.extension_runs)
+                        ]
+                        for _ in range(2)
+                    ]
                     arms = generate_vectors(
-                        library, rule, effect, rng, feasible=feasible
+                        library, rule, effect, rng, feasible=feasible, sampled=sampled
                     )
                     receipt = simulated_audit(library, rng)
-                    reports = trial_reports(library, arms, rule.initial_runs, rule)
+                    reports = trial_reports(
+                        library, arms, rule.initial_runs, rule, sampled=sampled
+                    )
                     decision = rule_evaluator(reports, receipt, rule)
                     if decision.extension_allowed:
                         extended += 1
                         reports = trial_reports(
-                            library, arms, rule.initial_runs + rule.extension_runs, rule
+                            library,
+                            arms,
+                            rule.initial_runs + rule.extension_runs,
+                            rule,
+                            sampled=sampled,
                         )
-                        decision = rule_evaluator(
-                            reports, simulated_audit(library, rng), rule, extended=True
-                        )
+                        decision = rule_evaluator(reports, receipt, rule, extended=True)
                     decisions.append(decision)
             rate = (
                 sum(d.verdict == "pass" for d in decisions) / spec.trials
@@ -283,7 +311,13 @@ def simulate_rule(library, spec, *, rule_evaluator=compare.evaluate_promotion):
                     v: sum(d.guards[g] == v for d in decisions)
                     for v in ("pass", "fail", "inconclusive")
                 }
-                for g in ("primary_recall", "non-mini", "groundedness", "stable_loss")
+                for g in (
+                    "primary_recall",
+                    "non-mini",
+                    "groundedness",
+                    "stable_loss",
+                    "precision",
+                )
             }
             rows.append(
                 SimulationRow(
@@ -299,6 +333,9 @@ def simulate_rule(library, spec, *, rule_evaluator=compare.evaluate_promotion):
                     extended / spec.trials if not error else None,
                     guards,
                     error,
+                    rule.initial_runs + rule.extension_runs * extended / spec.trials
+                    if not error
+                    else None,
                 )
             )
         matching = [
@@ -308,6 +345,7 @@ def simulate_rule(library, spec, *, rule_evaluator=compare.evaluate_promotion):
             and r.rule_sha256 == digest(asdict(rule))
             and r.pass_rate is not None
             and r.pass_rate >= spec.power_target
+            and r.effect_pp >= 0
         ]
         mde[digest([asdict(rule), auth_mode])] = min(matching) if matching else None
     return dict(

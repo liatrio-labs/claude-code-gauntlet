@@ -156,7 +156,9 @@ def test_freeze_precedes_every_candidate(case):
     refuses(paired, replace(spec, purpose="final"), packets, match="freeze")
 
 
-def test_golden_correction_keeps_review_binding(case, score_case, monkeypatch):
+def test_golden_correction_keeps_review_binding(
+    case, score_case, monkeypatch, tmp_path
+):
     from bench.runner import epochs, score
 
     spec, packets = case.build(promotion_rule=rule("ship"))
@@ -182,6 +184,15 @@ def test_golden_correction_keeps_review_binding(case, score_case, monkeypatch):
                 replace(b, category=labels[b.bug_id]) for b in packet.observations
             )
             packets[ref] = replace(packet, manifest=manifest, observations=rows)
+    monkeypatch.setattr(audit, "load_epoch", lambda *args: epoch)
+    audit_manifest = tmp_path / "audit-contamination.json"
+    write(audit_manifest, {**case.contamination, "golden_sha256": epoch.golden_sha256})
+    _, _, receipt = resolve_audit(
+        replace(spec, contamination_path=str(audit_manifest)),
+        packets,
+        tmp_path / "audit",
+    )
+    spec = replace(spec, audit_path=str(receipt))
     report = paired(spec, packets)
     assert report.identity["contamination_sha256"] == digest(case.contamination)
     assert report.identity["golden_sha256"] == epoch.golden_sha256

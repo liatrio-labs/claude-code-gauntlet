@@ -166,6 +166,7 @@ def freeze_contamination(
 ):
     from bench.runner import leaks, validity
 
+    root = Path(root)
     contamination_entries(manifest, epoch, require_frozen=False)
     if manifest["status"] != "unfrozen" or not frozen_at:
         raise ValueError("unfrozen manifest and timestamp required")

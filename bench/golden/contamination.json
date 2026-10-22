@@ -312,9 +312,9 @@
     }
   ],
   "criterion_version": "leak-manifest-v2",
-  "status": "unfrozen",
-  "frozen_at": null,
-  "agent_read_sha256": "",
-  "baseline_treatment_sha": "",
-  "leak_report_sha256": ""
+  "status": "frozen",
+  "frozen_at": "2026-10-22T03:22:18.523456+00:00",
+  "agent_read_sha256": "f59cdb9e255a729b2c8f27cb67e992e80ace4c1f5fcd0521ee31956c1669485e",
+  "baseline_treatment_sha": "f59cdb9e255a729b2c8f27cb67e992e80ace4c1f5fcd0521ee31956c1669485e",
+  "leak_report_sha256": "fd10438ad126d77d26ffcd0ed97d0bcb92846ae3d10ab022c95822d679eff7c5"
 }

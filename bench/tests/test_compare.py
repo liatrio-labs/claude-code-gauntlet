@@ -21,9 +21,7 @@ from bench.tests.test_validity import window as window
 
 
 def rule(kind="wave", **kw):
-    r = c.PromotionRule(
-        kind, "core", -10.0, -10.0, 3, 0, 3, c.BootstrapConfig(80, 7), True
-    )
+    r = c.PromotionRule(kind, "core", 7.0, 0.0, 3, 0, 3, c.BootstrapConfig(80, 7), True)
     return c.decode(c.PromotionRule, asdict(replace(r, **kw)))
 
 
@@ -248,71 +246,6 @@ def test_bug_means_cluster_bootstrap_labels_and_unknown_attribution(case):
     )
 
 
-@pytest.mark.parametrize("kind", ["wave", "ship"])
-def test_rule_kinds_margins_guards_and_reported_improvement(case, kind):
-    e, manifest = case.epoch, case.contamination
-    n = sum(b.pr_url in e.subsets["gate"] for b in e.bugs)
-    matrix = matrix_for(case, [[0] * n] * 3, [[1] * n] * 3)
-    reports = tuple(
-        c.reduce_population(
-            matrix,
-            p.resolve_population(name, e, "core", manifest),
-            e,
-            "core",
-            c.BootstrapConfig(50),
-        )
-        for name in ("gate-uncontaminated", "gate-uncontaminated-non-mini")
-    )
-    receipt = a.AuditReceipt(
-        matrix.arms, tuple(a.AuditRow(arm, True) for arm in matrix.arms)
-    )
-    r = rule(
-        kind,
-        margin_pp=10 if kind == "ship" else -10,
-        nonmini_margin_pp=10 if kind == "ship" else -10,
-    )
-    assert (
-        c.evaluate_promotion(reports, receipt if kind == "wave" else None, r).verdict
-        == "pass"
-    )
-    assert c.evaluate_promotion(reports, receipt, r).improvement
-    equal = tuple(
-        replace(p, difference=0, interval=c.Interval(0, 0, 0, 0, 13)) for p in reports
-    )
-    assert c.evaluate_promotion(
-        equal, receipt, replace(r, margin_pp=10, nonmini_margin_pp=10)
-    ).verdict == ("pass" if kind == "ship" else "fail")
-    assert not c.evaluate_promotion(equal, receipt, r).improvement
-    bad = tuple(
-        replace(
-            p,
-            interval=c.Interval(-0.5, -0.5, -0.5, -0.5, 13),
-            bugs=tuple(replace(b, stable_loss=True) for b in p.bugs),
-        )
-        for p in reports
-    )
-    labels = replace(
-        receipt, agreed=tuple(a.AuditRow(arm, arm == "baseline") for arm in matrix.arms)
-    )
-    decision = c.evaluate_promotion(bad, labels, r)
-    guards = (
-        ("primary_recall", "non-mini")
-        if kind == "ship"
-        else ("primary_recall", "non-mini", "groundedness", "stable_loss")
-    )
-    assert decision.verdict == "fail" and decision.guards == dict.fromkeys(
-        guards, "fail"
-    )
-    uncertain = tuple(
-        replace(p, interval=c.Interval(-0.2, 0.2, -0.3, 0.3, 13)) for p in reports
-    )
-    assert c.evaluate_promotion(
-        uncertain, receipt, replace(r, extension_runs=1) if kind == "wave" else r
-    ).extension_allowed == (kind == "wave")
-    if kind == "wave":
-        refuses(c.evaluate_promotion, reports, None, r, match="audit")
-
-
 @pytest.mark.parametrize("population", ["dev-slice", "dev-pool", "mini"])
 def test_descriptive_populations_accept_the_actual_named_scope(case, population):
     spec, packets = case.build(population, False)
@@ -403,7 +336,9 @@ def test_operational_comparison_refuses_verdict_corruption(case, bad, tmp_path):
 def test_extension_recomputes_its_initial_prefix(case, tmp_path):
     from bench.tests.test_audit import resolve_audit
 
-    spec, packets = case.build(count=4, promotion_rule=rule(extension_runs=1))
+    spec, packets = case.build(
+        count=4, promotion_rule=rule(margin_pp=0, extension_runs=1)
+    )
     for ref in spec.candidate.scores:
         packets[ref] = replace(packets[ref], candidates=())
     initial = replace(
@@ -447,7 +382,11 @@ def test_extension_recomputes_its_initial_prefix(case, tmp_path):
 def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, first):
     from bench.tests.test_audit import resolve_audit
 
-    r = rule(margin_pp=0, nonmini_margin_pp=0) if first == "fail" else rule()
+    r = (
+        rule(margin_pp=0, extension_runs=int(first == "inconclusive"))
+        if first != "pass"
+        else rule()
+    )
     spec, packets = case.build(promotion_rule=r)
     if first == "inconclusive":
         packets = {ref: replace(p, candidates=()) for ref, p in packets.items()}
@@ -466,8 +405,6 @@ def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, firs
     assert rows[-1]["score_refs"] == [
         asdict(r) for a in (spec.baseline, spec.candidate) for r in a.scores
     ]
-    if first != "pass":
-        c.main(["--spec", str(path), "--out", str(tmp_path / "two.json")])
     refuses(
         c.main,
         ["--spec", str(path), "--out", str(tmp_path / "three.json")],
@@ -654,3 +591,249 @@ def test_extension_capacity_is_required_before_initial_runs(
             )
             == 2
         )
+
+
+@pytest.fixture
+def decision_case():
+    def build(differences=(0.0, 0.0), losses=0, correct=29):
+        bugs = tuple(
+            c.BugComparison(
+                str(i),
+                str(i),
+                None,
+                0.5,
+                0.5 + d,
+                d,
+                "stable_found",
+                "stable_missed",
+                i < losses,
+            )
+            for i, d in enumerate(differences)
+        )
+        interval = c.cluster_bootstrap(bugs, c.BootstrapConfig(1000))
+        precision = c.PrecisionComparison(
+            0.8, 0.8, 0, c.Interval(-0.1, 0, -0.2, 0.1, 2)
+        )
+        primary = c.PopulationComparison(
+            "gate-uncontaminated",
+            "h",
+            "core",
+            len(bugs),
+            0.5,
+            0.5 + sum(differences) / len(bugs),
+            sum(differences) / len(bugs),
+            interval,
+            bugs,
+            {},
+            {},
+            {},
+            precision,
+        )
+        nonmini = replace(
+            primary,
+            population="gate-uncontaminated-non-mini",
+            interval=c.Interval(-0.2, 0, -0.3, 0.1, 2),
+        )
+        receipt = a.AuditReceipt(
+            ("baseline", "candidate"),
+            tuple(
+                a.AuditRow(arm, i < (30 if arm == "baseline" else correct))
+                for arm in ("baseline", "candidate")
+                for i in range(30)
+            ),
+        )
+        return (
+            (primary, nonmini),
+            receipt,
+            rule(extension_runs=3, bootstrap=c.BootstrapConfig(1000)),
+        )
+
+    return build
+
+
+def test_primary_pass_stops_early_and_reports_improvement(decision_case):
+    reports, receipt, r = decision_case((0.06, 0.06))
+    result = c.evaluate_promotion(reports, receipt, r)
+    assert (
+        result.verdict == "pass" and not result.extension_allowed and result.improvement
+    )
+    refuses(c.evaluate_promotion, reports, None, r, match="audit")
+    assert result.bounds["primary_recall"] == 0.06
+    assert (
+        set(result.guards)
+        == set(result.bounds)
+        == {"primary_recall", "non-mini", "stable_loss", "precision", "groundedness"}
+    )
+    reports, receipt, r = decision_case((0.04, 0.04))
+    assert not c.evaluate_promotion(reports, receipt, r).improvement
+
+
+def test_primary_point_below_margin_stops_for_futility(decision_case):
+    reports, receipt, r = decision_case((-0.3, 0.1))
+    result = c.evaluate_promotion(reports, receipt, r)
+    assert result.verdict == "fail" and not result.extension_allowed
+    assert result.guards["primary_recall"] == "fail"
+
+
+@pytest.mark.parametrize(
+    "final_differences, verdict", [((0, 0), "pass"), ((-0.2, 0.2), "fail")]
+)
+def test_extension_decides_once_without_final_inconclusive(
+    decision_case, final_differences, verdict
+):
+    reports, receipt, r = decision_case((-0.2, 0.2))
+    initial = c.evaluate_promotion(reports, receipt, r)
+    assert initial.verdict == "inconclusive" and initial.extension_allowed
+    final, _, _ = decision_case(final_differences)
+    result = c.evaluate_promotion(final, receipt, r, extended=True)
+    assert result.verdict == verdict and not result.extension_allowed
+
+
+@pytest.mark.parametrize("kind", ["wave", "ship"])
+@pytest.mark.parametrize(
+    "guard", ["non-mini", "stable_loss", "precision", "groundedness"]
+)
+@pytest.mark.parametrize("harm", [False, True])
+def test_secondary_checks_fail_only_on_harm(decision_case, kind, guard, harm):
+    reports, receipt, r = decision_case(
+        losses=2 if guard == "stable_loss" else 1,
+        correct=15 if guard == "groundedness" and harm else 29,
+    )
+    primary, nonmini = reports
+    upper = -0.001 if harm else 0
+    if guard == "non-mini":
+        nonmini = replace(nonmini, interval=replace(nonmini.interval, upper=upper))
+    if guard == "precision":
+        primary = replace(
+            primary,
+            precision=replace(
+                primary.precision,
+                interval=replace(primary.precision.interval, upper=upper),
+            ),
+        )
+    r = replace(
+        r,
+        kind=kind,
+        extension_runs=3 if kind == "wave" else 0,
+        stable_loss_min=2 if harm else 3,
+    )
+    result = c.evaluate_promotion((primary, nonmini), receipt, r)
+    assert result.guards[guard] == ("fail" if harm else "pass")
+    assert (
+        result.verdict == ("fail" if harm else "pass") and not result.extension_allowed
+    )
+    if guard in ("non-mini", "precision"):
+        assert result.bounds[guard] == upper
+    if guard == "groundedness":
+        # Independent Newcombe upper for 30/30 versus 15/30, or 29/30.
+        assert result.bounds[guard] == pytest.approx(
+            -0.33409524363041554 if harm else 0.053339188189749906
+        )
+
+
+def test_stage_alpha_controls_the_primary_bound(decision_case):
+    reports, receipt, r = decision_case(
+        (-0.15, -0.12, -0.08, -0.06, -0.04, 0.02, 0.04, 0.09)
+    )
+    bounds = [
+        c.cluster_bootstrap(reports[0].bugs, replace(r.bootstrap, alpha=alpha)).lower
+        for alpha in (0.0294, 0.2)
+    ]
+    margin = -100 * sum(bounds) / 2
+    decisions = [
+        c.evaluate_promotion(
+            reports, receipt, replace(r, stage_alpha=alpha, margin_pp=margin)
+        )
+        for alpha in (0.0294, 0.2)
+    ]
+    assert [d.bounds["primary_recall"] for d in decisions] == bounds
+    assert [d.verdict for d in decisions] == ["inconclusive", "pass"]
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"stage_alpha": 0},
+        {"stage_alpha": 0.5},
+        {"stage_alpha": float("nan")},
+        {"stable_loss_min": 0},
+        {"stable_loss_min": 1.5},
+        {"initial_runs": 0},
+        {"extension_runs": -1},
+        {"stability_min_runs": 0},
+        {"kind": "ship", "extension_runs": 3},
+    ],
+)
+def test_rule_validation_rejects_invalid_designs(kw):
+    refuses(rule, **kw)
+
+
+def test_precision_pools_stored_core_counts_and_bootstraps_paired_prs(case, tmp_path):
+    from bench.tests.test_audit import resolve_audit
+
+    spec, packets = case.build()
+    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
+    spec = replace(spec, audit_path=str(receipt))
+    population = p.resolve_population(
+        "gate-uncontaminated", case.epoch, "core", case.contamination
+    )
+    urls = population.pr_urls[:2]
+    totals = {arm.name: {} for arm in (spec.baseline, spec.candidate)}
+    for arm in (spec.baseline, spec.candidate):
+        for run, ref in enumerate(arm.scores):
+            packet = packets[ref]
+            root = tmp_path / ref.run_id
+            root.mkdir()
+            raw = {
+                u: {
+                    "deep-review": {
+                        "fp": (run + 1) * (j + 1) * (1 if arm.name == "baseline" else 2)
+                    }
+                }
+                for j, u in enumerate(urls)
+            }
+            raw.update(
+                {
+                    u: {"deep-review": {"fp": 10000}}
+                    for u in case.epoch.subsets["gate"]
+                    if u not in population.pr_urls
+                }
+            )
+            write(root / "evaluations.json", raw)
+            bugs = tuple(
+                replace(b, outcome="matched")
+                if b.pr_url in urls and b.category == "bug"
+                else b
+                for b in packet.observations
+            )
+            packets[ref] = replace(packet, root=root, observations=bugs)
+            for url in population.pr_urls:
+                tp = sum(
+                    b.pr_url == url and b.outcome == "matched" and b.category == "bug"
+                    for b in bugs
+                )
+                fp = raw.get(url, {}).get("deep-review", {}).get("fp", 0)
+                old = totals[arm.name].get(url, (0, 0))
+                totals[arm.name][url] = (old[0] + tp, old[1] + fp)
+    report = next(
+        r
+        for r in paired(spec, packets).population_reports
+        if r.population == "gate-uncontaminated" and r.profile == "core"
+    ).precision
+
+    def ratio(rows):
+        tp, fp = map(sum, zip(*rows, strict=True))
+        return tp / (tp + fp) if tp + fp else 0
+
+    prs = sorted(totals["baseline"])
+    rng = random.Random(0)
+    draws = []
+    for _ in range(10000):
+        sample = [prs[rng.randrange(len(prs))] for _ in prs]
+        draws.append(
+            ratio([totals["candidate"][u] for u in sample])
+            - ratio([totals["baseline"][u] for u in sample])
+        )
+    assert report.baseline_precision == ratio(totals["baseline"].values())
+    assert report.candidate_precision == ratio(totals["candidate"].values())
+    assert report.interval.upper == c.quantile(sorted(draws), 0.95)
