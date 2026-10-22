@@ -352,8 +352,6 @@ The workflow fills these receipt entries itself; never stamp them.
 - `configEcho.review_md` (interactive runs): `present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`.
 <!-- /generated-from-registry-identity:derived_waist_fields -->
 
-Discovery emits the canonical REVIEW.md notice (see `references/review-md-spec.md` -> Discovery).
-
 **Resolved-config echo.** The generated `config_receipt` fence in SKILL.md contains both resolver fixtures. Phase 1 uses the resolver block in the Bash result, and Phase 2 gates on that result.
 
 ---
