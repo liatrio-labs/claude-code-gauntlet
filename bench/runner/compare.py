@@ -3,8 +3,9 @@
 import math
 import random
 import sys
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
+from statistics import NormalDist
 from typing import Literal, get_args
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -14,6 +15,7 @@ from bench.runner import (
     looks,
     observations,
     populations,
+    profiles,
     stages,
     validity,
 )
@@ -59,14 +61,20 @@ class PromotionRule:
     stability_min_runs: int
     bootstrap: BootstrapConfig
     frozen: bool = False
+    stage_alpha: float = 0.0294
+    stable_loss_min: int = 2
 
     def __post_init__(self):
         if (
             self.initial_runs < 1
             or self.extension_runs < 0
             or self.stability_min_runs < 1
+            or type(self.stable_loss_min) is not int
+            or self.stable_loss_min < 1
         ):
             raise ValueError("invalid rule counts")
+        if not 0 < self.stage_alpha < 0.5:
+            raise ValueError("invalid stage alpha")
         if self.kind == "ship" and (self.initial_runs != 3 or self.extension_runs):
             raise ValueError("ship requires 3+3 and no extension")
 
@@ -136,6 +144,21 @@ class Interval:
 
 
 @dataclass(frozen=True, slots=True)
+class PrecisionCount:
+    pr_url: str
+    tp: int
+    fp: int
+
+
+@dataclass(frozen=True, slots=True)
+class PrecisionComparison:
+    baseline_precision: float
+    candidate_precision: float
+    difference: float
+    interval: Interval
+
+
+@dataclass(frozen=True, slots=True)
 class PopulationComparison:
     population: PopulationName
     content_sha256: str
@@ -149,6 +172,7 @@ class PopulationComparison:
     categories: dict
     dimensions: dict
     funnels: dict
+    precision: PrecisionComparison | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +182,7 @@ class PromotionDecision:
     stable_loss_bug_ids: tuple[str, ...]
     extension_allowed: bool
     improvement: bool
+    bounds: dict[str, float | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +220,80 @@ def cluster_bootstrap(bugs, config):
         ),
         len(packed),
     )
+
+
+def packet_precision(packet, population):
+    raw = read_json(packet.root / "evaluations.json")
+    counts = []
+    for url in sorted(population.pr_urls):
+        metrics = profiles.profile_metrics(
+            [
+                o
+                for o in packet.observations
+                if o.pr_url == url and o.bug_id in population.bug_ids
+            ],
+            raw.get(url, {}).get("deep-review", {}).get("fp", 0),
+            "core",
+        )
+        counts.append(PrecisionCount(url, metrics.tp, metrics.fp))
+    return tuple(counts)
+
+
+def precision_comparison(arms, config):
+    counts = []
+    for runs in arms:
+        pooled = {}
+        for run in runs:
+            for row in run:
+                tp, fp = pooled.get(row.pr_url, (0, 0))
+                pooled[row.pr_url] = (tp + row.tp, fp + row.fp)
+        counts.append(pooled)
+    baseline, candidate = counts
+    if set(baseline) != set(candidate):
+        raise ValueError("precision requires paired PR clusters")
+    packed = [(baseline[u], candidate[u]) for u in sorted(baseline)]
+
+    def precision(rows):
+        tp, fp = map(sum, zip(*rows, strict=True))
+        return tp / (tp + fp) if tp + fp else 0.0
+
+    if not packed:
+        return PrecisionComparison(0, 0, 0, Interval(None, None, None, None, 0))
+    b, c = (precision([p[i] for p in packed]) for i in (0, 1))
+    rng, replicates = random.Random(config.seed), []
+    for _ in range(config.draws):
+        sample = [packed[rng.randrange(len(packed))] for _ in packed]
+        replicates.append(
+            precision([p[1] for p in sample]) - precision([p[0] for p in sample])
+        )
+    replicates.sort()
+    return PrecisionComparison(
+        b,
+        c,
+        c - b,
+        Interval(
+            *(
+                quantile(replicates, q)
+                for q in (config.alpha, 1 - config.alpha, 0.025, 0.975)
+            ),
+            len(packed),
+        ),
+    )
+
+
+def groundedness_upper(base, candidate, alpha):
+    n, z = len(base), NormalDist().inv_cdf(1 - alpha)
+
+    def wilson(labels):
+        p = sum(labels) / n
+        den = 1 + z * z / n
+        center = (p + z * z / (2 * n)) / den
+        half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / den
+        return p, center - half, center + half
+
+    pb, lb, _ = wilson(base)
+    pc, _, uc = wilson(candidate)
+    return pc - pb + math.hypot(uc - pc, pb - lb)
 
 
 def stability(hits, n, minimum) -> Stability:
@@ -332,6 +431,25 @@ def reduce_population(
     )
 
 
+def noninferiority_verdict(interval, margin) -> Verdict:
+    if interval.cluster_count < 2 or interval.lower is None:
+        return "inconclusive"
+    threshold = -margin / 100
+    if interval.lower > threshold:
+        return "pass"
+    if interval.upper <= threshold:
+        return "fail"
+    return "inconclusive"
+
+
+def harm_verdict(upper, margin=0, available=True) -> Verdict:
+    if upper is None or not available:
+        return "inconclusive"
+    if upper < -margin / 100:
+        return "fail"
+    return "pass"
+
+
 def evaluate_promotion(
     reports, receipt: audit.AuditReceipt | None, rule, *, extended=False
 ):
@@ -342,63 +460,87 @@ def evaluate_promotion(
         )
         for name in ("gate-uncontaminated", "gate-uncontaminated-non-mini")
     )
-    guards: dict[str, Verdict] = {}
-    for name, pop, margin in (
-        ("primary_recall", primary, rule.margin_pp),
-        ("non-mini", nonmini, rule.nonmini_margin_pp),
-    ):
-        if pop is None or pop.interval.cluster_count < 2:
-            guards[name] = "inconclusive"
-            continue
-        threshold = (-margin if rule.kind == "ship" else margin) / 100
-        if pop.interval.lower > threshold:
-            guards[name] = "pass"
-        elif pop.interval.upper <= threshold:
-            guards[name] = "fail"
-        else:
-            guards[name] = "inconclusive"
-    losses = tuple(b.bug_id for b in primary.bugs if b.stable_loss) if primary else ()
-    if rule.kind == "wave":
-        if not receipt or not receipt.resolved:
-            raise ValueError("resolved blinded audit required")
-        if len(receipt.arm_order) != 2:
-            raise ValueError("wave requires two audit arms")
-        base, candidate = (
-            [r.correct for r in receipt.agreed if r.arm == a] for a in receipt.arm_order
+    interval = primary.interval if primary else Interval(None, None, None, None, 0)
+    if rule.kind == "wave" and primary and interval.cluster_count >= 2:
+        interval = cluster_bootstrap(
+            primary.bugs, replace(rule.bootstrap, alpha=rule.stage_alpha)
         )
-        if len(base) != len(candidate) or any(
-            type(v) is not bool for v in base + candidate
-        ):
-            raise ValueError("incomplete or unequal audit")
-        if not base:
-            guards["groundedness"] = "inconclusive"
-        elif sum(value for value in candidate if value is not None) >= sum(
-            value for value in base if value is not None
-        ):
-            guards["groundedness"] = "pass"
-        else:
-            guards["groundedness"] = "fail"
-        if losses:
-            guards["stable_loss"] = "fail"
-        elif primary and all(
-            b.baseline_label != "insufficient_runs"
-            and b.candidate_label != "insufficient_runs"
-            for b in primary.bugs
-        ):
-            guards["stable_loss"] = "pass"
-        else:
-            guards["stable_loss"] = "inconclusive"
-    if "fail" in guards.values():
-        verdict: Verdict = "fail"
-    elif "inconclusive" in guards.values():
-        verdict = "inconclusive"
+    bounds = {"primary_recall": interval.lower}
+    guards: dict[str, Verdict] = {}
+    threshold = -rule.margin_pp / 100
+    if (
+        rule.kind == "wave"
+        and primary is not None
+        and primary.difference is not None
+        and primary.difference < threshold
+    ):
+        guards["primary_recall"] = "fail"
+    elif interval.cluster_count < 2 or interval.lower is None:
+        guards["primary_recall"] = "inconclusive"
+    elif interval.lower > threshold:
+        guards["primary_recall"] = "pass"
+    elif rule.kind == "ship" and interval.upper <= threshold:
+        guards["primary_recall"] = "fail"
     else:
-        verdict = "pass"
+        guards["primary_recall"] = "inconclusive"
+
+    nonmini_interval = (
+        nonmini.interval if nonmini else Interval(None, None, None, None, 0)
+    )
+    nonmini_harm = "non-mini"
+    if rule.kind == "ship":
+        guards["non-mini"] = noninferiority_verdict(
+            nonmini_interval, rule.nonmini_margin_pp
+        )
+        bounds["non-mini"] = nonmini_interval.lower
+        nonmini_harm = "non-mini_harm"
+    bounds[nonmini_harm] = nonmini_interval.upper
+    guards[nonmini_harm] = harm_verdict(
+        nonmini_interval.upper,
+        rule.nonmini_margin_pp,
+        nonmini_interval.cluster_count >= 2,
+    )
+    precision = primary.precision if primary else None
+    bounds["precision"] = precision.interval.upper if precision else None
+    guards["precision"] = harm_verdict(
+        bounds["precision"],
+        available=bool(precision and precision.interval.cluster_count >= 2),
+    )
+    losses = tuple(b.bug_id for b in primary.bugs if b.stable_loss) if primary else ()
+    bounds["stable_loss"] = len(losses)
+    guards["stable_loss"] = "fail" if len(losses) >= rule.stable_loss_min else "pass"
+    if not receipt or not receipt.resolved:
+        raise ValueError("resolved blinded audit required")
+    if len(receipt.arm_order) != 2:
+        raise ValueError("requires two audit arms")
+    base, candidate = (
+        [r.correct for r in receipt.agreed if r.arm == a] for a in receipt.arm_order
+    )
+    if len(base) != len(candidate) or any(
+        type(v) is not bool for v in base + candidate
+    ):
+        raise ValueError("incomplete or unequal audit")
+    bounds["groundedness"] = (
+        groundedness_upper(base, candidate, rule.bootstrap.alpha) if base else None
+    )
+    guards["groundedness"] = harm_verdict(bounds["groundedness"])
+    verdict: Verdict = guards["primary_recall"]
+    if "fail" in guards.values():
+        verdict = "fail"
+    elif (rule.kind == "ship" or not extended) and "inconclusive" in guards.values():
+        verdict = "inconclusive"
+    if (
+        rule.kind == "wave"
+        and (extended or not rule.extension_runs)
+        and verdict != "pass"
+    ):
+        verdict = "fail"
     improvement = bool(
         primary
         and primary.difference is not None
         and primary.difference >= 0.05
-        and primary.interval.lower > 0
+        and interval.lower is not None
+        and interval.lower > 0
     )
     return PromotionDecision(
         verdict,
@@ -406,9 +548,10 @@ def evaluate_promotion(
         losses,
         rule.kind == "wave"
         and not extended
-        and verdict in ("fail", "inconclusive")
+        and verdict == "inconclusive"
         and rule.extension_runs > 0,
         improvement,
+        bounds,
     )
 
 
@@ -610,6 +753,8 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
     ):
         raise ValueError("descriptive comparison has no gate rule/window")
     look = looks.next_look(window.wave_id, digest(asdict(rule))) if gate else None
+    if look == 2 and not spec.initial_spec_path:
+        raise ValueError("wave has no remaining gate look without extension prefix")
     if gate and window.rule_sha256 != digest(asdict(rule)):
         raise ValueError("window rule differs from preregistration")
     scope = tuple(epoch.subsets["gate"]) if gate else pop.pr_urls
@@ -748,6 +893,23 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
         )
         for profile in ("core", "all", "strict")
         for name in names
+    )
+    precision = precision_comparison(
+        [
+            [
+                packet_precision(p, audit_population)
+                for p in packets
+                if p.score_ref in arm.scores
+            ]
+            for arm in arms
+        ],
+        rule.bootstrap if rule else BootstrapConfig(),
+    )
+    reports = tuple(
+        replace(r, precision=precision)
+        if r.profile == "core" and r.population == audit_population.name
+        else r
+        for r in reports
     )
     decision = (
         evaluate_promotion(

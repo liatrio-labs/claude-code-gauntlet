@@ -330,8 +330,8 @@ The freeze binds its passing recomputed scan to the baseline plugin input tree d
 Evidence ledgers are outside that identity and HEAD does not identify a treatment.
 Candidate dispatch captures the frozen contamination digest. Comparison requires
 that digest and a freeze timestamp strictly before every candidate run. The checked-in
-contamination manifest remains unfrozen pending the Wave 0a baseline tree and
-owner-reviewed evidence. There is no untouched set for issue #46's own confirmation.
+contamination manifest is frozen against the baseline tree at `465011c1`. There is no
+untouched set for issue #46's own confirmation.
 Gate transcripts are read only to explain a lost bug after its verdict. The final
 improvement claim is labelled as measured on a reused set.
 
@@ -361,7 +361,7 @@ Comparison first averages each bug's Boolean detections over independent runs in
 its arm, then averages those rates over the population. A seeded percentile bootstrap
 resamples whole PR clusters of paired bug-rate differences. It reports lower and
 upper one-sided bounds at the rule's alpha and a descriptive two-sided 95% interval.
-Fewer than two PR clusters makes a recall guard inconclusive. Stability labels require
+Fewer than two PR clusters cannot establish primary passage. Stability labels require
 the rule's minimum run count; bugs found in every baseline run and no candidate run
 are stable losses.
 
@@ -374,7 +374,7 @@ $500 requires an owner ruling. No paid run is scheduled by this document.
 
 ## Audit and decisions
 
-A seeded sampler binds the uncontaminated decision population. Wave comparisons use
+A seeded sampler binds the uncontaminated decision population. Gate comparisons use
 two equal-size samples capped at 30 and the smaller uncontaminated census. Wave 0b
 planning uses one baseline sample capped at 30, with the same receipt format.
 An empty census makes sampled groundedness unavailable; recall is still reported and
@@ -384,20 +384,32 @@ arm map occupy separate directories. Sol and Opus seats run outside the bench wi
 repository access. Agreed labels merge directly; disputes enter an owner queue. A
 resolved receipt binds the frozen sample, both label files and owner resolutions. Each
 label file binds the exact public packet bytes the auditor reviewed. Changed,
-incomplete or unresolved evidence is refused for an operational wave or simulation.
+incomplete or unresolved evidence is refused for an operational gate or simulation.
 
-A wave passes when both uncontaminated gate and non-mini lower bounds clear the owner
-margins, sampled groundedness is no worse than baseline, and no stable-found
-uncontaminated bug is lost in every candidate run. A failure fails the wave; mixed
-bounds yield inconclusive. A failed or inconclusive initial look may use the
-registered extension once, preserving its initial prefix and binding the saved initial
-report to the recorded verdict. Failed or inconclusive waves return to dev.
+A wave starts with three runs per arm. Its PR-cluster bootstrap lower bound for
+candidate minus baseline core recall must exceed -7 points, using one-sided
+stage alpha 0.0294 at both looks. It passes early when that bound clears and every harm
+check passes. It fails early when the recall point estimate is below -7 points or a
+harm check fails. Otherwise it adds three runs per arm, preserving the initial
+prefix and saved report, and passes only if the primary bound clears without harm.
+An inconclusive harm check is recorded at the final look and does not fail it.
+The final look always passes or fails. A fail is final.
+
+Secondary checks fail only on evidence of harm: the non-mini recall upper bound is
+below zero, at least two bugs found in every baseline run are found in no candidate
+run, the pooled core strict-precision PR-cluster bootstrap upper bound is below zero,
+or the blinded audit's Newcombe hybrid Wilson upper bound for correct share is below
+zero. Upper bounds use one-sided alpha 0.05. This avoids requiring small secondary
+samples to prove equality. Simulation passed about 1.5 percent when truly 7 points
+worse, 76 percent when equal, and 91 percent at +5, averaging about 3.8 runs per arm
+across equal and +5 scenarios. These rates depend on the empirical packet library
+and proxy audit labels.
 
 Before the first candidate run, the append-only [look ledger](golden/looks.jsonl)
 registers the wave and frozen rule digest. Run preflight and comparison enforce that
 registration. The compare command appends each operational verdict with its look
-number, treatment SHAs, score references and report digest. The ledger allows a second
-look only after fail or inconclusive and refuses every third look. Descriptive specs
+number, treatment SHAs, score references and report digest. A second look requires an
+extendable initial report and its unchanged prefix; every third look is refused. Descriptive specs
 cannot inspect gate populations. The look count comes from this ledger, including
 failed looks; there are currently zero recorded looks.
 
@@ -408,24 +420,25 @@ independent review run, another audit sample, or another comparison. Audit and
 comparison verify the receipt and final treatment, and refuse another SHA.
 
 Final confirmation uses API 3+3, baseline versus final tip, gate only. The ship rule
-requires non-inferiority on uncontaminated gate and non-mini at the owner margins. It
-has no audit, stable-loss or extension requirement. Improvement is a point estimate of
+requires primary and non-mini recall lower bounds to exceed their negative owner
+margins. It also uses the harm checks and requires a resolved audit. It has no
+extension. Improvement is a point estimate of
 at least +5 points and lower bound above zero, reported but not required. Passing the
 ship line establishes the new baseline. Marketplace bumps are held from Wave 2a until
-this line passes; failure returns to the last passing tip. Margins, counts and
-bootstrap policy remain null and unfrozen until the owner fixes them after Wave 0b. No
-current template can issue a verdict.
+this line passes; failure returns to the last passing tip.
 
 ## Planning and spend
 
 One empirical simulator resamples whole baseline run vectors and runs the complete
-wave evaluator, including audit uncertainty, stable losses and a permitted extension.
+wave evaluator.
 It reports null pass rate, power at +5/+10 points, Monte Carlo standard errors, guard
 counts, extension use and MDE on the declared effect grid. Groundedness uses a shared
 beta latent rate from the resolved baseline sample, followed by independent same-size
-arm samples. Judge noise buckets do not supply audit labels. Candidate uplifts flip
-eligible misses diffusely; infeasible effects above the empirical ceiling are reported
-explicitly. Auth-specific source windows remain attached to each vector. A mixed-auth
+arm samples. Judge noise buckets do not supply audit labels. Candidate effects flip
+eligible misses to hits or hits to misses diffusely; effects outside the empirical
+recall floor and ceiling are reported explicitly. Precision uses sampled packets
+unchanged, and both looks reuse the same simulated audit. Auth-specific source windows
+remain attached to each vector. A mixed-auth
 library assumes comparable review distributions and reports its auth counts.
 
 With K=3, empirical per-bug rates have 1/3 granularity: 0, 1/3, 2/3, or 1. Resampling
@@ -476,5 +489,5 @@ manifest as supplied JSON, without content validation by this runner.
 
 The dev-slice subscription run through scoring, audit, comparison and simulation, and
 the two-mini A/A comparison remain external acceptance. Synthetic boundary fixtures do
-not replace these receipts. Frozen margins, run counts, MDE, a passing baseline
-scan/freeze, and resolved repository-backed baseline audit are pending.
+not replace these receipts. MDE and a resolved repository-backed baseline audit remain
+pending. The rule and contamination manifest are frozen.

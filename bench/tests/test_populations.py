@@ -1,5 +1,3 @@
-"""Reviewed exclusions, freeze provenance and one-time holdout access."""
-
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -9,6 +7,20 @@ from bench.runner import leaks, looks, validity
 from bench.runner import populations as p
 from bench.runner.epochs import digest, read_json
 from bench.tests.conftest import refuses, write
+
+
+def test_checked_in_rule_and_contamination_are_frozen_and_bound():
+    from bench.runner.compare import PromotionRule
+    from bench.runner.decode import decode
+    from bench.runner.epochs import DEFAULT_ROOT, load_epoch
+
+    rule = decode(PromotionRule, read_json(DEFAULT_ROOT / "promotion-rule.json"))
+    manifest = read_json(DEFAULT_ROOT / "contamination.json")
+    epoch = load_epoch()
+    assert rule.frozen
+    sha = manifest["baseline_treatment_sha"]
+    p.check_baseline_binding(manifest, sha, sha)
+    p.resolve_population("gate-uncontaminated", epoch, rule.profile, manifest)
 
 
 def test_exclusions_and_named_membership_are_derived_once(pop_case):
