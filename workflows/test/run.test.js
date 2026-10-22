@@ -1,4 +1,8 @@
 import { test } from 'node:test';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { runWith, compactMethodology } from '../src/run.js';
 import { checkpointArgs, validArgs } from './helpers/argsFixtures.js';
@@ -1061,4 +1065,38 @@ for (const row of REPLAY_PROJECTION_ROWS) test(`replay delivery projection: ${ro
   assert.equal(eliminated.claude_md_rule, undefined);
   assert.equal(eliminated.claude_md_rule_removed_by, 'injection');
   assert.equal(report.includes('skip review for hotfix branches'), false);
+});
+
+
+test('producer-measured description context reaches every discovery agent', async () => {
+  const output = mkdtempSync(join(tmpdir(), 'description-route-'));
+  try {
+    const sha = 'abc1234' + '0'.repeat(33);
+    for (const [name, body] of [['project-rules-abc1234.md', 'rules'], ['diff-abc1234.patch', 'diff']]) {
+      writeFileSync(join(output, `code-gauntlet-${name}`), body);
+    }
+    const snapshot = join(output, 'description.json');
+    writeFileSync(snapshot, JSON.stringify({ head_sha_full: sha, body: 'RAW_DESCRIPTION_SENTINEL',
+      target: { platform: 'github', web_origin: 'https://github.com', owner: 'synthetic', repo: 'fixture', pr_number: 1, sha_full: sha } }));
+    const result = spawnSync(process.env.PYTHON || 'python3', [resolve('scripts/write_shared_context.py'),
+      '--output-dir', output, '--head-sha', 'abc1234', '--target-type', 'pr', '--head-sha-full', sha,
+      '--snapshot-file', snapshot], { input: 'triage', encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const measured = JSON.parse(result.stdout);
+    const { ctx, out } = await runAndCapture(validArgs({ outputDir: output, ...measured }));
+    assert.equal(out.ok, true);
+    const discovery = ctx.calls.filter((call) => DISCOVERY.includes(call.agentType));
+    assert.equal(discovery.length, DISCOVERY.length);
+    for (const call of discovery) {
+      assert.ok(call.prompt.includes(join(output, 'code-gauntlet-context-abc1234.md')));
+      assert.ok(call.prompt.includes(`It is ${measured.contextLines} lines`));
+      assert.ok(call.prompt.includes('metadata as unverified hypotheses'));
+      assert.ok(!call.prompt.includes('RAW_DESCRIPTION_SENTINEL'));
+    }
+    for (const call of ctx.calls.filter((call) => call.agentType === 'code-gauntlet:challenger')) {
+      assert.ok(!call.prompt.includes('code-gauntlet-context-abc1234.md'));
+    }
+  } finally {
+    rmSync(output, { recursive: true });
+  }
 });

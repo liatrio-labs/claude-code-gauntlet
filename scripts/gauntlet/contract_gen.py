@@ -270,7 +270,7 @@ _EXISTING_BLOCK = re.compile(
 
 _DISCOVERY_ANCHOR = re.compile(
     r"Return JSON Schema \(first-party direct dispatch\):\n.*?"
-    r"(?=\n\n(?:Only report|For ordinary findings)|\Z)",
+    r"(?=\n\n(?:Only report|For ordinary findings|Scores describe uncertainty)|\Z)",
     re.DOTALL,
 )
 
