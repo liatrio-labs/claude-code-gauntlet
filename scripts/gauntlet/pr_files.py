@@ -30,9 +30,14 @@ class FileListing:
         return self.reason is None
 
 
-def fetch_pr_view(platform: Platform, number: int) -> dict[str, object]:
+def fetch_pr_view(
+    platform: Platform, number: int, *, capture_description: bool = False
+) -> dict[str, object]:
     try:
-        stdout, stderr, status = make_forge(platform).pr_view(number)
+        adapter = make_forge(platform)
+        stdout, stderr, status = adapter.pr_view(
+            number, capture_description=capture_description
+        )
         if status:
             raise ValueError(stderr.strip() or f"forge exited {status}")
         payload = json.loads(stdout)

@@ -146,7 +146,7 @@ def test_repository_scan_and_no_deleted_allowance_policy(monkeypatch):
     assert report.passed and not report.stale_allowances
     assert not report.hits and not report.unallowed_hits and calls == [l.ROOT]
     policy = read_json(l.ROOT / "bench/golden/leak_allowlist.json")
-    assert policy["current_wave"] == "2a"
+    assert policy["current_wave"] == "2b"
     assert policy["entries"] == []
     assert all(p["expected_count"] == 0 for p in policy["passages"])
     assert all("expires_wave" not in e for e in policy["entries"] + policy["passages"])
