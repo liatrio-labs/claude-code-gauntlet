@@ -1,19 +1,5 @@
 // Shared contract rows belong here; knob descriptors, injection patterns, and stage orchestration belong in their modules.
 import { deepFreeze } from './wire.js';
-const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs ' +
-  'reaching http/request/fetch clients without allowlist validation); frame and embedding ' +
-  'policy gaps (missing X-Frame-Options or frame-ancestors, clickjacking exposure); ' +
-  'postMessage handlers that do not validate event.origin or check it with weak substring ' +
-  'matching; and string-matching bypass patterns where a security decision uses containment ' +
-  'checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme instead of ' +
-  'exact parsing — these are bypassable (e.g. a host "evil.com/trusted.com" still contains ' +
-  '"trusted.com").';
-const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and naming sweep: identifier misspellings; typos in ' +
-  'user-facing strings, messages, and log output; case-sensitivity mistakes in string ' +
-  'comparisons (comparing mixed-case values without normalizing case); and copy-paste ' +
-  'plural/singular or off-by-one naming mismatches (a field, key, or variable named for one ' +
-  'thing but holding another).';
-
 // Scope gating is opt-out so absent flags preserve full review; null flags keep core agents ungateable.
 const DEEP = 'deep';
 
@@ -132,9 +118,9 @@ export const DISPATCH_RESULTS = deepFreeze({
 // would force fabricated fields. Conditional enforcement is provider-gated.
 export const DIMENSIONS = deepFreeze([
   { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' },
-    requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+    requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' },
-    requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
+    requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: null },
   { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
     schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'],
       requiredWhenDimension: [], modelOverride: null, promptExtra: null },
@@ -144,12 +130,12 @@ export const DIMENSIONS = deepFreeze([
     requiredExtra: ['criticality', 'failure_scenario'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
     schemaExtra: { rule_source: 'string' }, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null,
-    promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+    promptExtra: null },
   { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
     schemaExtra: { spec_text: 'string' }, requiredExtra: [], requiredWhenDimension: ['spec_text'], modelOverride: null,
-      promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+      promptExtra: null },
   { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {},
-    requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+    requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: DEEP,
     schemaExtra: { invalid_state_example: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
       promptExtra: null },

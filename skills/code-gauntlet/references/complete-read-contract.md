@@ -41,20 +41,18 @@ dispatch prompt carries no measurement.
 <!-- BEGIN CANONICAL BLOCK -->
 ## Reading a file completely
 
-A `Read` can return only PART of a file and tell you nothing about it. There is no
-truncation notice, and a partial result looks exactly like a complete file. One `Read`
-is never proof you have the whole file.
+A `Read` can return only part of a file without a truncation notice. Completion
+requires checking that the result reaches the measured end or exhausting the file.
+One successful `Read` suffices when its end is checked.
 
-- **When your dispatch prompt names a shared context file, it is mandatory reading in full.** When your dispatch prompt
-  lists the `Read` calls that cover it, make every one of them. When it instead states
-  a line count, read until you reach that line. When it gives neither, keep issuing
-  `Read` with `offset` set past the last line you received until a call returns no
-  further content.
-- **For any other file your conclusion depends on**, check where the result stopped
-  against where the content should end. Output that breaks off mid-hunk, mid-function,
-  or inside an unclosed tag, bracket, or quote means the file continues — read on from
-  that offset before you judge it.
-- **Stopping early is a silent failure.** You will analyze only the portion you saw and
-  report as though you had seen all of it. Never treat "I read the file" as settled
-  because one call returned something plausible.
+- When your dispatch prompt names a shared context file, it is mandatory reading in full.
+  Make every listed `Read` call in its coverage plan. If a call stops early, continue
+  with `offset` past the last line received until that chunk is covered. When only a
+  line count is given, reach that line. When neither is given, continue issuing
+  `Read` with `offset` past the last line received until a call returns no further content.
+- For any other file your conclusion depends on, check where the result stopped
+  against where the content should end. A result ending mid-hunk, mid-function or
+  inside an unclosed tag, bracket or quote requires continuation from that offset.
+- Stopping early leaves unseen content outside your analysis. A plausible result
+  alone does not establish that the file was read completely.
 <!-- END CANONICAL BLOCK -->

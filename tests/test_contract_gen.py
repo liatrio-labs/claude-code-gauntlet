@@ -1,5 +1,6 @@
 """Contract rendering and the developer command's generated-target boundary."""
 
+import json
 import re
 import shutil
 import sys
@@ -22,6 +23,8 @@ PREFLIGHT = "skills/code-gauntlet/references/phase1-preflight.md"
 HEADLESS = "skills/code-gauntlet/references/headless-mode.md"
 DELIVER_PHASE = "skills/code-gauntlet/references/phase8-delivery.md"
 TARGETS = (
+    "agents/bug-detector.md",
+    "agents/type-design-analyzer.md",
     "agents/security-reviewer.md",
     "agents/cross-file-impact.md",
     "agents/test-analyzer.md",
@@ -54,6 +57,10 @@ def test_dispatch_result_descriptor_generates_agent_contract_and_python_registry
         "export const DISPATCH_RESULTS = deepFreeze({\n"
         f"  'code-gauntlet:{agent}': {{ audit_note: {{ type: 'string' }} }},",
     )
+    text = text.replace(
+        "schemaExtra: { hidden_errors: 'string' }",
+        "schemaExtra: { extension_field: 'string', hidden_errors: 'string' }",
+    ).replace("requiredExtra: []", "requiredExtra: ['extension_field']", 1)
     source.write_text(text, encoding="utf-8")
     (registry_tree / "agents" / f"{agent}.md").write_text(
         (ROOT / "agents" / f"{agent}.md").read_text(encoding="utf-8"), encoding="utf-8"
@@ -62,8 +69,21 @@ def test_dispatch_result_descriptor_generates_agent_contract_and_python_registry
     result = invoke("generate_contract_requirements", args, registry_tree)
     assert result.returncode == 0, result.stderr
     contract = (registry_tree / "agents" / f"{agent}.md").read_text(encoding="utf-8")
-    assert '"audit_note": {\n      "type": "string"' in contract
-    assert '"required": [\n    "audit_note"' in contract
+    block = contract.split(gen.MARKER_OPEN)[1].split(gen.MARKER_CLOSE)[0]
+    schema = json.loads(re.search(r"```json\n(.*?)\n```", block, re.DOTALL).group(1))
+    assert schema["properties"]["audit_note"] == {"type": "string"}
+    assert "audit_note" in schema["required"]
+    bug_contract = (registry_tree / "agents/bug-detector.md").read_text(
+        encoding="utf-8"
+    )
+    block = bug_contract.split(gen.MARKER_OPEN)[1].split(gen.MARKER_CLOSE)[0]
+    schema = json.loads(re.search(r"```json\n(.*?)\n```", block, re.DOTALL).group(1))
+    item = schema["properties"]["findings"]["items"]
+    assert item["properties"]["extension_field"] == {"type": "string"}
+    assert "extension_field" in item["required"]
+    assert (
+        "`extension_field`" in block.split("Required finding fields:")[1].split("\n")[0]
+    )
     generated = (registry_tree / "scripts/gauntlet/registry.py").read_text(
         encoding="utf-8"
     )
@@ -406,7 +426,7 @@ def test_conditional_paragraphs():
     )
     assert len(paragraphs) == 2
     assert paragraphs[0] == (
-        "For convention findings: the `claude_md_rule` field MUST be non-null and MUST "
+        "For convention findings: the `claude_md_rule` field must be non-null and must "
         "quote the specific rule. Findings without a cited rule will be rejected. "
         "`claude_md_rule` is a dimension-conditional dispatch requirement. "
         "On a dispatch that targets the first-party API directly (no third-party "
@@ -416,7 +436,7 @@ def test_conditional_paragraphs():
         "and this contract is the enforcement floor on every run, including "
         "third-party providers "
         "and gateway sessions where the schema stays flat. This agent's dispatch mixes "
-        "convention, intent, and comment_accuracy findings in ONE schema, so a "
+        "convention, intent, and comment_accuracy findings in one schema, so a "
         "dimension-blind schema requirement (the flat `requiredExtra` mechanism, which "
         "only single-dimension agents can use) was never an option here — omitting "
         "the field on the wrong dimension is correct while omitting it on this one is "
@@ -426,13 +446,14 @@ def test_conditional_paragraphs():
 
 def test_block_anchor():
     assert gen.splice(
-        "before\n`a` is required by the dispatch schema - old wording.\nafter\n",
-        gen._SINGLE_SENTENCE_ANCHOR,
+        "before\nReturn JSON Schema (first-party direct dispatch):\n"
+        "old schema\n\nOnly report findings\nafter\n",
+        gen._DISCOVERY_ANCHOR,
         "new",
     ) == (
         "before\n<!-- generated-from-registry: do not edit; "
         "scripts/generate_contract_requirements.py -->\nnew\n"
-        "<!-- /generated-from-registry -->\nafter\n"
+        "<!-- /generated-from-registry -->\n\nOnly report findings\nafter\n"
     )
 
 
@@ -445,7 +466,7 @@ def test_block_anchor():
 )
 def test_block_diagnostic(text, message):
     with pytest.raises(CliError, match=re.escape(message)):
-        gen.splice(text, gen._SINGLE_SENTENCE_ANCHOR, "new")
+        gen.splice(text, gen._DISCOVERY_ANCHOR, "new")
 
 
 @pytest.fixture

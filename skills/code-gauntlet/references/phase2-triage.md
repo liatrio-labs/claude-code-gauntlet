@@ -226,7 +226,7 @@ Pass raw `args.reviewMd` as described in [phase2-preparation.md: Discover REVIEW
 
 ## 2e. Classify Changed Files by Risk Level
 
-- **High risk** — auth, security, payment, data access, public APIs, DB migrations, crypto, infra/deploy, permission/RBAC. Also >200 lines changed. Also: files implementing a cache, proxy, decorator, or delegation pattern (caching proxies are a common source of recursive delegation and stale-data bugs — flag these even if the diff appears mechanical).
+- **High risk** — auth, security, payment, data access, public APIs, DB migrations, crypto, infra/deploy, permission/RBAC. Also >200 lines changed. Also: files implementing a cache, proxy, decorator, or delegation pattern (indirection can obscure contracts and state ownership — flag these even if the diff appears mechanical).
 - **Medium risk** — business logic, services, controllers, middleware, state management. 50-200 lines changed.
 - **Low risk** — tests, docs, config, generated code, lockfiles, formatting-only. <50 lines changed.
 
