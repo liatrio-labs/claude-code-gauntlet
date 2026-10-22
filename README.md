@@ -109,7 +109,7 @@ See [PRIVACY.md](PRIVACY.md).
 
 ## Configuration: REVIEW.md
 
-Use `REVIEW.md` to set project rules, confidence thresholds, and findings to ignore. Run `/build-review-md` to create one.
+Use `REVIEW.md` to set project rules, confidence thresholds, and findings to ignore.
 Root settings apply project-wide, while matching subdirectory settings override thresholds and add ignores.
 
 ````markdown

@@ -339,6 +339,7 @@ export async function runWith(ctx, rawArgs) {
       pluginRoot: A.pluginRoot,
       pipelineVersion: c.pipelineVersion,
       reviewScope: A.reviewScope,
+      hasReviewMd: Array.isArray(A.reviewMd) ? A.reviewMd.length > 0 : A.reviewConfigPath != null,
       policy,
       deliveryTier: deliveryTier ?? 'all',
       deliveryCap: limits.deliveryCap ?? null,

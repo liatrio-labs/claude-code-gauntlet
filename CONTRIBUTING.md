@@ -136,8 +136,7 @@ claude-code-gauntlet/
 |-- tests/                   # Python tests and cross-runtime fixtures
 |-- bench/                   # Golden PRs, judge, anchors, ledger, reports
 |-- skills/
-|   |-- code-gauntlet/        # Review orchestration and phase references
-|   `-- build-review-md/      # REVIEW.md setup
+|   `-- code-gauntlet/        # Review orchestration and phase references
 `-- docs/research/           # Design evidence
 ```
 

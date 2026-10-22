@@ -36,7 +36,7 @@ to move the tree; an intended-head mismatch stops with `HEADLESS INPUT ERROR:` b
 
 Read [headless-mode.md](references/headless-mode.md) when Phase 1 prints `Headless config:`
 (`configResult.mode == "headless"`).
-Headless asks no questions, creates no tasks, never invokes `build-review-md` or writes REVIEW.md.
+Headless asks no questions, creates no tasks, and never writes REVIEW.md.
 Decide from `configResult.resolved`; copy `configResult.waist` verbatim into args. Phase 2 requires
 `Resolved config:` or `Headless config:` in Phase 1's `=== config ===` Bash result.
 `output_dir: FAILED`, `config: FAILED`, or eligibility `stop` stops before dispatch; never stamp

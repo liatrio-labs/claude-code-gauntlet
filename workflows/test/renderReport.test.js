@@ -7,6 +7,22 @@ import { validArgs } from './helpers/argsFixtures.js';
 import { corpus, finding, reportInput } from './helpers/reportFixtures.js';
 
 const rendered = (input) => report.renderReport(reportInput(input));
+
+test('the report ends with a REVIEW.md tip only when discovery says none exists', () => {
+  const tip = 'A REVIEW.md at the repository root is the preferred way to state review rules: focus, ignore paths, and severity.\n'
+    + 'Format reference: https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/skills/code-gauntlet/references/review-md-spec.md';
+  for (const mode of ['interactive', 'headless']) {
+    const absent = reportInput({ mode, hasReviewMd: false });
+    const present = reportInput({ mode, hasReviewMd: true });
+    const withoutTip = report.renderReport(present);
+    assert.equal(report.renderReport(absent), `${withoutTip}\n\n${tip}`);
+    assert.equal(withoutTip.includes(tip), false);
+    assert.equal(rendered({ mode }).includes(tip), false);
+    assert.equal(report.renderSummaryBody(absent), report.renderSummaryBody(present));
+    assert.equal(report.renderSummaryBody(absent).includes(tip), false);
+  }
+});
+
 const { dimensionsSummaryTable } = report;
 const identity = {
   owner: 'o', repo: 'r', pr_number: 7, sha_full: '0123456789abcdef0123456789abcdef01234567',

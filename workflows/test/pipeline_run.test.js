@@ -114,7 +114,9 @@ for (const row of WRAPPER_ROWS) test(`persisted wrapper bytes: ${row.name}`, asy
   assert.equal((payload.report.match(/^## Review Methodology$/gm) || []).length, 1);
   if (row.name === 'benign context') {
     assert.ok(payload.report.includes(DIMENSIONS_TABLE));
-    assert.ok(payload.report.endsWith('orchestrator at delivery.'));
+    assert.ok(payload.report.endsWith('orchestrator at delivery.\n\n'
+      + 'A REVIEW.md at the repository root is the preferred way to state review rules: focus, ignore paths, and severity.\n'
+      + 'Format reference: https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/skills/code-gauntlet/references/review-md-spec.md'));
     assert.ok(payload.report.includes('pipeline_version=3.26.0 (bundle)'));
     assert.ok(payload.report.includes('plugin_root=/plugin (resolved)'));
     assert.ok(payload.report.includes('merge: per-channel: ndjson=2, text_fallback=0; duplicates resolved=0; '

@@ -208,7 +208,6 @@ Check for `docs/`, `specs/`, and `research/` directories. Use only the collector
    Project rules remain additive: more specific directories win on conflict, with CLAUDE.md before AGENTS.md before QODO.md at equal specificity. REVIEW.md settings retain the separate pipeline precedence in `references/review-md-spec.md`.
 3. **Stamp REVIEW.md raw inputs from the receipt.** Read exactly the paths in `receipt.review_md`, in receipt order, and stamp `args.reviewMd` as `[{ path, text, checksum }, ...]`, using each repo-relative path and the full raw file text, copying `checksum` from its receipt entry and `args.reviewMdSetChecksum` from `receipt.review_md_checksum`. Do not sort, walk directories, or parse the files yourself. An empty list stamps `[]`, an authoritative "discovered nothing", not an omitted field. Keep the text by value because the workflow has no filesystem. Set `reviewConfigPath` to the root REVIEW.md path when the list contains `REVIEW.md`, otherwise null.
    A capped REVIEW.md remains listed: Read its full raw text for settings, retain the cap gap, and do not add its text separately to the shared context. A failed raw Read stops this handoff; never replace it with empty text. See `references/review-md-spec.md` for format and hierarchy; `resolveReviewConfig` owns parsing and subtree settings.
-4. **Derive the optional notice from the receipt.** In interactive mode, use only `receipt.review_md` and `receipt.review_md_dirs`. If `review_md` is empty, emit the spec's "No REVIEW.md found" notice. Otherwise, when an entry's path is exactly `REVIEW.md`, select the first directory in `review_md_dirs` other than `.` whose {directory}/REVIEW.md path is absent from `review_md` and whose REVIEW.md does not appear in the receipt's skipped list, and emit the spec's root notice with that directory. If no such directory exists, or only subdirectory REVIEW.md files exist, emit no optional notice. Emit at most one, alongside triage. Suppress these notices headless. Receipt failures stop the handoff; all receipt gaps are disclosed separately. Never reconstruct a directory walk or ask a configuration question.
 
 Do not `Glob(pattern: "**/REVIEW.md")`; use the collector's receipt, not a second search. Never use `find` from Bash for locating these files. Never Read or Glob CLAUDE.md/AGENTS.md/QODO.md directly here.
 
@@ -216,12 +215,11 @@ Do not `Glob(pattern: "**/REVIEW.md")`; use the collector's receipt, not a secon
 
 Complete 2d's collector and raw-input handoff before proceeding to 2e. REVIEW.md thresholds and ignore patterns apply to matching finding subtrees through the pipeline. Every context-reading agent receives all source-path-tagged `review-rules` blocks; each block's prose is advisory for its source directory's subtree.
 
-Use only `receipt.review_md` and `receipt.review_md_dirs` from step 2 for the optional notice in step 4. A successful empty discovery never blocks or asks a question. Report the result alongside triage and continue. Collector or raw Read failures stop the handoff. `references/review-md-spec.md` -> Discovery owns the exact notice wording.
+A successful empty discovery never blocks or asks a question. Collector or raw Read failures stop the handoff.
 
 Pass raw `args.reviewMd` as described in [phase2-preparation.md: Discover REVIEW.md and stamp its raw text](phase2-preparation.md#discover-reviewmd-and-stamp-its-raw-text). The pipeline merges thresholds and ignore patterns per matching finding subtree; the shared context retains every source-path-tagged prose block as advisory guidance for its source subtree. Never hand-parse here.
 
-> Headless mode has identical behavior, minus the notice — REVIEW.md is
-> read-only headless and `build-review-md` is never invoked. The hierarchical parse still runs. See
+> Headless mode has identical behavior. REVIEW.md is read-only in both modes. See
 > `references/headless-mode.md`.
 
 ---
