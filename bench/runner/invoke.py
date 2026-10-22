@@ -213,6 +213,7 @@ SKILL_COMMAND = "code-gauntlet:code-gauntlet"
 _OUTRANKING_CREDENTIAL_VARS = (
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_API_KEY",
 )
@@ -281,7 +282,7 @@ def api_key_helper_files(claude_home):
 
     An ``apiKeyHelper`` outranks ``CLAUDE_CODE_OAUTH_TOKEN`` in the documented
     precedence chain, and unlike an env var it cannot be stripped from the child env --
-    so subscription mode has to refuse the run instead, naming the offending file. This
+    so subscription and host modes refuse the run instead, naming the offending file. This
     is a preflight-only inspection: it runs on every prereq check, including on machines
     with no claude home at all, so a missing dir, an unreadable file, corrupt JSON, or a
     non-object document all read as "no helper" rather than raising. Paths are returned

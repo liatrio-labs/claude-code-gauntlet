@@ -61,15 +61,17 @@ LIMITATIONS = (
 
 
 def refuse_ambient_model_overrides(env, auth_mode=None):
+    provider_keys = {
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+    }
+    if auth_mode == "host":
+        provider_keys.remove("ANTHROPIC_BASE_URL")
     if any(k in env for k in (*MODEL_OVERRIDE_KEYS, *EFFORT_KEYS)) or any(
-        env.get(k) and env[k].lower() not in ("0", "false")
-        for k in (
-            "CLAUDE_CODE_USE_BEDROCK",
-            "CLAUDE_CODE_USE_VERTEX",
-            "CLAUDE_CODE_USE_FOUNDRY",
-            "ANTHROPIC_AUTH_TOKEN",
-            *(("ANTHROPIC_BASE_URL",) if auth_mode != "host" else ()),
-        )
+        env.get(k) and env[k].lower() not in ("0", "false") for k in provider_keys
     ):
         raise ValueError(
             "measurement refuses ambient model/effort/provider/auth overrides"

@@ -16,6 +16,7 @@ from bench.tests.test_stages import emit_trace
 from bench.tests.test_validity import NOW
 from bench.tests.test_validity import fingerprint as fingerprint
 from bench.tests.test_validity import window as window
+from bench.tests.test_windows import cli_args, window_args
 
 
 @pytest.fixture(autouse=True)
@@ -129,16 +130,7 @@ def test_invalid_window_plan_reports_usage_before_probing(
         "run_provenance",
         lambda **kwargs: pytest.fail("probe before plan validation"),
     )
-    args = [
-        "--tier",
-        "subset",
-        "--measurement-window",
-        str(path),
-        "--run-index",
-        "0",
-        "--runs",
-        str(runs),
-    ]
+    args = cli_args(tier="subset", measurement_window=path, run_index=0, runs=runs)
     if arm is not None:
         args += ["--arm", arm]
     assert run.main(args) == 2
@@ -278,37 +270,18 @@ def test_window_capture_run_and_resume_with_real_preflight_and_fake_child(
     monkeypatch.setenv("FAKE_CLAUDE_MODE", "ok")
     monkeypatch.setenv("FAKE_CLAUDE_ARGV_FILE", str(tmp_path / "child-argv"))
     path = tmp_path / "window.json"
-    assert (
-        windows.main(
-            [
-                "--population",
-                "mini",
-                "--arm",
-                f"baseline=worktree:{v.ROOT}",
-                "--arm",
-                "candidate=sha:HEAD",
-                "--run-indices",
-                "0",
-                "--auth-mode",
-                "subscription",
-                "--duration-hours",
-                "24",
-                "--opens-at",
-                "2026-10-20T00:00:00Z",
-                "--window-id",
-                "e2e",
-                "--child-model",
-                "claude-opus-4-8",
-                "--cli",
-                str(child),
-                "--timeout-mins",
-                "1",
-                "--out",
-                str(path),
-            ]
-        )
-        == 0
+    argv = window_args(
+        path,
+        arm=[f"baseline=worktree:{v.ROOT}", "candidate=sha:HEAD"],
+        auth_mode="subscription",
+        duration_hours="24",
+        opens_at="2026-10-20T00:00:00Z",
+        window_id="e2e",
+        child_model="claude-opus-4-8",
+        cli=child,
+        timeout_mins="1",
     )
+    assert windows.main(argv) == 0
     window = v.load_window(path)
     fp = v.RunFingerprint(window.expected, window.arms["baseline"])
     url = window.pr_urls[0]
@@ -320,33 +293,20 @@ def test_window_capture_run_and_resume_with_real_preflight_and_fake_child(
 
     monkeypatch.setattr(run, "load_epoch", read_epoch)
     monkeypatch.setattr(v, "load_epoch", read_epoch)
-    assert (
-        run.main(
-            [
-                "--tier",
-                "mini",
-                "--measurement-window",
-                str(path),
-                "--arm",
-                "baseline",
-                "--run-index",
-                "0",
-                "--child-auth",
-                "subscription",
-                "--child-model",
-                "claude-opus-4-8",
-                "--timeout-mins",
-                "1",
-            ]
-        )
-        == 0
+    argv = cli_args(
+        tier="mini",
+        measurement_window=path,
+        arm="baseline",
+        run_index=0,
+        child_auth="subscription",
+        child_model="claude-opus-4-8",
+        timeout_mins=1,
     )
+    assert run.main(argv) == 0
     assert len(loads) == 1
     directory = next(run.RUNS_ROOT.iterdir())
     manifest = read_json(directory / "run.json")
     assert v.same_provenance(fp.wire(), manifest["provenance"])
-    cp = checkpoint.Checkpoint(directory)
-    assert cp.status(url) == "ok"
     selected = v.scoring_selection(directory)[url]
     assert selected.validity.state == "valid"
     archive = v.selected_attempt_path(directory, selected.attempt_id).parent

@@ -519,6 +519,7 @@ class BuildEnvChildAuthTest(InvokeTestBase):
             (
                 "CLAUDE_CODE_USE_BEDROCK",
                 "CLAUDE_CODE_USE_VERTEX",
+                "CLAUDE_CODE_USE_FOUNDRY",
                 "ANTHROPIC_AUTH_TOKEN",
                 "ANTHROPIC_API_KEY",
             ),
@@ -1545,6 +1546,7 @@ class ChildProcessCredentialEnvTest(InvokeTestBase):
         "ANTHROPIC_AUTH_TOKEN": "at-ambient-should-not-arrive",
         "CLAUDE_CODE_USE_BEDROCK": "1",
         "CLAUDE_CODE_USE_VERTEX": "1",
+        "CLAUDE_CODE_USE_FOUNDRY": "1",
         "CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient",
     }
 
@@ -1572,6 +1574,7 @@ class ChildProcessCredentialEnvTest(InvokeTestBase):
     MUST_NOT_REACH_CHILD = (
         "CLAUDE_CODE_USE_BEDROCK",
         "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_API_KEY",
     )
@@ -2083,41 +2086,40 @@ def test_bench_resolver_sets_trace_without_prompt_instructions():
         assert "measurementTrace" not in resolve(mode, {}, None, "pr")["waist"]
 
 
-def test_host_auth_strips_credentials_and_preserves_host_transport(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("marker,helper", [(True, False), (False, False), (True, True)])
+def test_host_auth_strips_credentials_and_checks_prerequisites(
+    tmp_path, monkeypatch, marker, helper
 ):
     from bench import run
 
     host = dict(
-        CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST="1",
         ANTHROPIC_BASE_URL="https://host.invalid",
         CLAUDE_SESSION_INGRESS_TOKEN_FILE="/synthetic/ingress",
     )
-    base = {
-        **host,
-        **dict.fromkeys(
-            (*invoke._OUTRANKING_CREDENTIAL_VARS, invoke.OAUTH_TOKEN_VAR), "synthetic"
-        ),
-    }
+    if marker:
+        host["CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"] = "1"
+    stripped = (*invoke._OUTRANKING_CREDENTIAL_VARS, invoke.OAUTH_TOKEN_VAR)
     monkeypatch.setattr(
-        invoke,
-        "_load_dotenv_key",
-        lambda *a: pytest.fail("host must not load credentials"),
+        invoke, "_load_dotenv_key", lambda *a: pytest.fail("credential read")
     )
-    env = build_env(PR, tmp_path, base, child_auth="host")
+    env = build_env(
+        PR,
+        tmp_path,
+        {**host, **dict.fromkeys(stripped, "synthetic")},
+        child_auth="host",
+    )
     assert {k: env[k] for k in host} == host
-    assert (
-        not set((*invoke._OUTRANKING_CREDENTIAL_VARS, invoke.OAUTH_TOKEN_VAR))
-        & env.keys()
-    )
+    assert not set(stripped) & env.keys()
     monkeypatch.setattr(run.shutil, "which", lambda *a: None)
     monkeypatch.setattr(run, "_free_gb", lambda *a: 100)
-    monkeypatch.setattr(
-        run, "_read_env_key", lambda *a: pytest.fail("host must not load credentials")
-    )
-    failures = run.check_prereqs(workspace_dir=tmp_path, child_auth="host", env={})
-    assert "host auth requires CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST" in failures
-    assert (
-        "host auth requires CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"
-        not in run.check_prereqs(workspace_dir=tmp_path, child_auth="host", env=host)
-    )
+    monkeypatch.setattr(run, "_read_env_key", lambda *a: pytest.fail("credential read"))
+    if helper:
+        config = invoke.resolve_claude_home(tmp_path, host) / "config"
+        config.mkdir(parents=True)
+        (config / "settings.json").write_text(
+            '{"apiKeyHelper":"synthetic-helper"}', encoding="utf-8"
+        )
+    failures = run.check_prereqs(workspace_dir=tmp_path, child_auth="host", env=host)
+    assert any("PROVIDER_MANAGED_BY_HOST" in f for f in failures) == (not marker)
+    assert any("apiKeyHelper" in f for f in failures) == helper
+    assert "synthetic-helper" not in str(failures)

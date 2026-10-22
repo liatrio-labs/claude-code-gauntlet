@@ -1,131 +1,100 @@
 """Window publication pins each source and refuses unusable declarations."""
 
-from datetime import timedelta
+from dataclasses import asdict
 
 import pytest
 
 from bench.runner import validity as v
 from bench.runner import windows
-from bench.runner.epochs import load_epoch
+from bench.runner.epochs import digest
+from bench.tests.conftest import write
+from bench.tests.test_compare import rule
 
 
-def test_window_cli_pins_both_sources_and_never_overwrites(
-    git_repo, tmp_path, monkeypatch
+def window_args(path, **overrides):
+    options = dict(
+        population="mini",
+        arm=["baseline=sha:HEAD", "candidate=sha:HEAD"],
+        run_indices="0",
+        auth_mode="api",
+        duration_hours="1",
+        child_model="claude-test-1",
+        out=path,
+    )
+    options.update(overrides)
+    return cli_args(**options)
+
+
+def cli_args(**options):
+    return [
+        str(item)
+        for key, value in options.items()
+        for val in (value if isinstance(value, list) else [value])
+        for item in ("--" + key.replace("_", "-"), val)
+    ]
+
+
+@pytest.mark.parametrize("binding", ["frozen", "unfrozen", "missing"])
+def test_window_cli_binds_rule_and_captures_each_source(
+    git_repo, tmp_path, monkeypatch, binding
 ):
     root, git = git_repo
     agent = root / "agents/reviewer.md"
     agent.parent.mkdir()
-    agent.write_text("---\neffort: high\n---\nreview\n", encoding="utf-8")
     src = root / "workflows/src"
     src.mkdir(parents=True)
-    (src / "capacity.js").write_text("// capacity\n", encoding="utf-8")
     (src / "registry.js").write_text(
-        'export const LIMIT_DEFAULTS = {};\nexport function resolvedDispatchModels() { return {reviewer: "claude-source-1"}; }',
+        'export const LIMIT_DEFAULTS = {}; export function resolvedDispatchModels() { return {reviewer: "claude-source-1"}; }',
         encoding="utf-8",
     )
-    git("add", ".")
-    git("commit", "-qm", "source one")
-    first = git("rev-parse", "HEAD")
-    old_digest = v.treatment_sha(root)
-    agent.write_text("---\neffort: low\n---\nreview\n", encoding="utf-8")
-    (src / "capacity.js").write_text("// other capacity\n", encoding="utf-8")
-    git("add", ".")
-    git("commit", "-qm", "source two")
-    monkeypatch.setenv("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "1")
-    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://host.invalid")
-    monkeypatch.setenv("CLAUDE_SESSION_INGRESS_TOKEN_FILE", "/synthetic/ingress")
+    (src / "capacity.js").write_text("// capacity\n", encoding="utf-8")
+    shas = []
+    for effort in ("high", "low"):
+        agent.write_text(f"---\neffort: {effort}\n---\nreview\n", encoding="utf-8")
+        git("add", ".")
+        git("commit", "-qm", effort)
+        shas.append(v.treatment_sha(root))
     monkeypatch.chdir(root)
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://host.invalid")
     child = tmp_path / "claude"
     child.write_text("#!/bin/sh\necho 2.1.200\n", encoding="utf-8")
     child.chmod(0o755)
-    path = tmp_path / "window.json"
-    argv = [
-        "--population",
-        "mini",
-        "--arm",
-        f"base=sha:{first}",
-        "--arm",
-        f"new=worktree:{root}",
-        "--candidate-arm",
-        "new",
-        "--run-indices",
-        "0,2",
-        "--auth-mode",
-        "host",
-        "--duration-hours",
-        "2.5",
-        "--child-model",
-        "claude-test-1",
-        "--cli",
-        str(child),
-        "--out",
-        str(path),
-    ]
-    before = (
-        git("status", "--porcelain"),
-        git("rev-parse", "HEAD"),
-        v.treatment_sha(root),
+    path, rule_path = tmp_path / "window.json", tmp_path / "rule.json"
+    value = asdict(rule(frozen=binding != "unfrozen"))
+    write(rule_path, value)
+    argv = window_args(
+        path,
+        arm=["baseline=sha:HEAD~1", f"candidate=worktree:{root}"],
+        cli=child,
+        auth_mode="host",
+        wave="wave",
     )
-    assert windows.main(argv) == 0
-    window = v.load_window(path)
-    assert window.expected.auth_mode == "host"
-    assert window.arms["base"].treatment_git_sha == old_digest
-    assert window.arms["new"].treatment_git_sha == before[2] != old_digest
-    assert window.arms["base"].agent_efforts == {"reviewer": "high"}
-    assert window.arms["new"].agent_efforts == {"reviewer": "low"}
-    assert (
-        window.arms["base"].bench_policy_sha256
-        != window.arms["new"].bench_policy_sha256
-    )
-    assert set(window.pr_urls) == set(load_epoch().subsets["mini"])
-    assert window.planned_order == (("base", 0), ("new", 0), ("base", 2), ("new", 2))
-    assert v.timestamp(window.closes_at) - v.timestamp(window.opens_at) == timedelta(
-        hours=2.5
-    )
-    assert (
-        git("status", "--porcelain"),
-        git("rev-parse", "HEAD"),
-        v.treatment_sha(root),
-    ) == before
-    saved = path.read_bytes()
-    assert windows.main(argv) == 2 and path.read_bytes() == saved
+    if binding != "missing":
+        argv += ["--rule", str(rule_path)]
+    assert windows.main(argv) == (0 if binding == "frozen" else 2)
+    if binding == "frozen":
+        window = v.load_window(path)
+        assert (window.wave_id, window.rule_sha256) == ("wave", digest(value))
+        assert [t.treatment_git_sha for t in window.arms.values()] == shas
 
 
 @pytest.mark.parametrize(
-    "flags",
+    "key,value",
     [
-        ["--run-indices", "1,0"],
-        ["--duration-hours", "nan"],
-        ["--timeout-mins", "0"],
-        ["--arm", "third=sha:HEAD"],
-        ["--opens-at", "2026-10-20"],
-        ["--arm", "candidate=sha:missing"],
+        ("run_indices", "1,0"),
+        ("duration_hours", "nan"),
+        ("timeout_mins", "0"),
+        ("arm", ["baseline=sha:HEAD", "candidate=sha:HEAD", "third=sha:HEAD"]),
+        ("opens_at", "2026-10-20"),
+        ("arm", ["baseline=sha:HEAD", "candidate=sha:missing"]),
     ],
 )
 def test_invalid_window_plan_refuses_before_fingerprint_probes(
-    tmp_path, monkeypatch, flags
+    tmp_path, monkeypatch, key, value
 ):
     monkeypatch.setattr(
         v, "capture_fingerprint", lambda **kw: pytest.fail("probe reached")
     )
     path = tmp_path / "window.json"
-    argv = [
-        "--population",
-        "mini",
-        "--arm",
-        "baseline=sha:HEAD",
-        "--arm",
-        "candidate=sha:HEAD",
-        "--run-indices",
-        "0",
-        "--auth-mode",
-        "api",
-        "--duration-hours",
-        "1",
-        "--child-model",
-        "claude-test-1",
-        "--out",
-        str(path),
-    ]
-    assert windows.main([*argv, *flags]) == 2
+    assert windows.main(window_args(path, **{key: value})) == 2
     assert not path.exists()

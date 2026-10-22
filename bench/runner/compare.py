@@ -6,7 +6,7 @@ import sys
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from statistics import NormalDist
-from typing import Literal, TypedDict, get_args
+from typing import Literal, get_args
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -87,19 +87,6 @@ class Arm:
     agent_read_sha256: str
 
 
-class ScoreRefWire(TypedDict):
-    run_id: str
-    epoch_id: str
-    score_id: str
-
-
-class ArmWire(TypedDict):
-    name: str
-    scores: list[ScoreRefWire]
-    treatment_git_sha: str
-    agent_read_sha256: str
-
-
 @dataclass(frozen=True, slots=True)
 class GoldenCorrection:
     review_contamination_sha256: str
@@ -126,25 +113,6 @@ class ComparisonSpec:
     window_paths: tuple[str, ...] = ()
 
 
-class ComparisonSpecWire(TypedDict, total=False):
-    comparison_id: str
-    purpose: Literal["wave", "final", "descriptive"]
-    population: PopulationName
-    profile: Literal["core"]
-    baseline: ArmWire
-    candidate: ArmWire
-    epoch_id: str
-    contamination_path: str
-    window_path: str | None
-    window_paths: list[str]
-    rule_path: str | None
-    audit_path: str | None
-    initial_spec_path: str | None
-    initial_report_path: str | None
-    unseal: str | None
-    golden_correction: dict[str, str] | None
-
-
 def load_comparison_spec(path):
     path = Path(path).resolve()
     value = read_json(path)
@@ -163,16 +131,6 @@ def load_comparison_spec(path):
 @dataclass(frozen=True, slots=True)
 class Lane:
     auth_mode: validity.AuthMode
-    host_id: str | None
-    cli_version: str
-    cli_realpath: str
-    cli_sha256: str
-    max_parallel_prs: Literal[1]
-
-
-class LaneWire(TypedDict):
-    auth_mode: validity.AuthMode
-    host_id: str | None
     cli_version: str
     cli_realpath: str
     cli_sha256: str
@@ -183,7 +141,6 @@ def lane_for(window):
     c = window.expected
     return Lane(
         c.auth_mode,
-        None,
         c.cli_version,
         c.cli_realpath,
         c.cli_sha256,
@@ -207,13 +164,6 @@ class RunListing:
     pooled_index: int
 
 
-class RunListingWire(TypedDict):
-    score_ref: ScoreRefWire
-    run_id: str
-    run_index: int
-    pooled_index: int
-
-
 @dataclass(frozen=True, slots=True)
 class BlockReport:
     window_id: str
@@ -222,16 +172,6 @@ class BlockReport:
     lane_id: str
     lane: Lane
     arms: dict[str, list[RunListing]]
-    run_counts: dict[str, int]
-
-
-class BlockReportWire(TypedDict):
-    window_id: str
-    window_path: str
-    window_sha256: str
-    lane_id: str
-    lane: LaneWire
-    arms: dict[str, list[RunListingWire]]
     run_counts: dict[str, int]
 
 

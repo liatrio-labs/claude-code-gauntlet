@@ -23,6 +23,12 @@ def rule(kind="wave", **kw):
     return c.decode(c.PromotionRule, asdict(replace(r, **kw)))
 
 
+def audited(spec, packets, out):
+    from bench.tests.test_audit import resolve_audit
+
+    return replace(spec, audit_path=str(resolve_audit(spec, packets, out)[2]))
+
+
 def paired(spec, packets):
     return c.compare_arms(spec, packet_loader=packets.__getitem__)
 
@@ -76,6 +82,8 @@ def case(pop_case, score_case, tmp_path, fingerprint, window, monkeypatch):
                 population, epoch, "core", manifest, unseal=unseal, treatment_sha=sha
             ).pr_urls
         )
+        if not operational:
+            write(paths["window"], replace(w, pr_urls=scope).wire())
         packets, arms = {}, []
         for arm in w.arms:
             refs = tuple(
@@ -273,37 +281,33 @@ def test_descriptive_populations_accept_the_actual_named_scope(case, population)
         "order",
         "late",
         "rule",
+        "unbalanced",
+        "undeclared",
+        "duplicate-window",
+        "provenance",
+        "scoring-controls",
     ],
 )
 def test_operational_comparison_refuses_verdict_corruption(case, bad, tmp_path):
-    from bench.tests.test_audit import resolve_audit
-
     spec, packets = case.build()
-    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
-    spec = replace(spec, audit_path=str(receipt))
-    assert paired(spec, packets).promotion
+    spec = split_blocks(case, spec, ((0,), (1, 2)))
+    spec = audited(spec, packets, tmp_path / "audit")
     ref = spec.candidate.scores[0]
     packet = packets[ref]
-    if bad == "context":
+    manifest_changes = {
+        "context": dict(
+            evaluator=replace(packet.manifest.evaluator, judge_pin="other")
+        ),
+        "epoch": dict(epoch_hashes={}),
+        "scope": dict(requested_pr_urls=()),
+        "attempts": dict(selected_attempts={}),
+    }
+    if bad in manifest_changes:
         packet = replace(
-            packet,
-            manifest=replace(
-                packet.manifest,
-                evaluator=replace(packet.manifest.evaluator, judge_pin="other"),
-            ),
-        )
-    if bad == "epoch":
-        packet = replace(packet, manifest=replace(packet.manifest, epoch_hashes={}))
-    if bad == "scope":
-        packet = replace(
-            packet, manifest=replace(packet.manifest, requested_pr_urls=())
+            packet, manifest=replace(packet.manifest, **manifest_changes[bad])
         )
     if bad == "bugs":
         packet = replace(packet, observations=packet.observations[:-1])
-    if bad == "attempts":
-        packet = replace(
-            packet, manifest=replace(packet.manifest, selected_attempts={})
-        )
     if bad == "independence":
         spec = replace(
             spec, candidate=replace(spec.candidate, scores=spec.baseline.scores)
@@ -312,7 +316,7 @@ def test_operational_comparison_refuses_verdict_corruption(case, bad, tmp_path):
         for (r, u), attempt in list(case.attempts.items()):
             if r == ref:
                 case.attempts[r, u] = replace(
-                    attempt, started_at="2026-10-20T13:00:00Z"
+                    attempt, started_at="2026-10-20T11:00:00Z"
                 )
     if bad == "late":
         row = c.looks.entries()[0]
@@ -322,18 +326,35 @@ def test_operational_comparison_refuses_verdict_corruption(case, bad, tmp_path):
     if bad == "rule":
         value = asdict(rule(margin_pp=20))
         write(case.rule_path, value)
-        w = read_json(case.window_path)
-        write(case.window_path, {**w, "rule_sha256": digest(value)})
+        for path in map(Path, spec.window_paths):
+            write(path, {**read_json(path), "rule_sha256": digest(value)})
         for run in case.runs.values():
-            run["window_sha256"] = v.file_hash(case.window_path)
+            run["window_sha256"] = v.file_hash(Path(run["measurement_window"]))
+    if bad == "unbalanced":
+        path = Path(spec.window_paths[0])
+        bind_run(case, spec.candidate.scores[-1], v.load_window(path), path, 1)
+    if bad == "undeclared":
+        case.runs[ref]["window_id"] = "undeclared"
+    if bad == "duplicate-window":
+        spec = replace(spec, window_paths=(*spec.window_paths, spec.window_paths[0]))
+    if bad == "provenance":
+        case.runs[spec.candidate.scores[-1]]["provenance"]["controls"]["auth_mode"] = (
+            "api"
+        )
+    if bad == "scoring-controls":
+        path = Path(spec.window_paths[1])
+        block = v.load_window(path)
+        block = replace(block, expected=replace(block.expected, judge_pin="other"))
+        write(path, block.wire())
+        for arm in (spec.baseline, spec.candidate):
+            for index, other in enumerate(arm.scores[1:]):
+                bind_run(case, other, block, path, index)
     packets[ref] = packet
     refuses(paired, spec, packets)
 
 
 @pytest.mark.parametrize("first", ["pass", "fail", "inconclusive"])
 def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, first):
-    from bench.tests.test_audit import resolve_audit
-
     r = (
         rule(margin_pp=0, extension_runs=int(first == "inconclusive"))
         if first != "pass"
@@ -354,10 +375,12 @@ def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, firs
         )
     if first == "inconclusive":
         packets = {ref: replace(p, candidates=()) for ref, p in packets.items()}
-    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
-    spec = replace(spec, audit_path=str(receipt))
+    spec = audited(spec, packets, tmp_path / "audit")
     path = tmp_path / "spec.json"
-    write(path, asdict(spec))
+    write(
+        path,
+        {**asdict(spec), "window_paths": [Path(p).name for p in spec.window_paths]},
+    )
     compare = c.compare_arms
 
     def compare_with_packets(value, **kwargs):
@@ -369,14 +392,13 @@ def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, firs
     rows = c.looks.entries()
     assert [r["kind"] for r in rows] == ["registration", "look"]
     assert rows[-1]["look"] == 1 and rows[-1]["verdict"] == first
+    assert rows[-1]["window_ids"] == [str(i) for i in range(len(spec.window_paths))]
     assert rows[-1]["score_refs"] == [
         asdict(r) for a in (spec.baseline, spec.candidate) for r in a.scores
     ]
     if first == "inconclusive":
-        _, _, receipt = resolve_audit(full, packets, tmp_path / "extended-audit")
         extended = replace(
-            full,
-            audit_path=str(receipt),
+            audited(full, packets, tmp_path / "extended-audit"),
             initial_spec_path=str(path),
             initial_report_path=str(tmp_path / "one.json"),
         )
@@ -414,44 +436,46 @@ def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, firs
     )
 
 
-def test_selected_attempt_loads_real_immutable_evidence(case, tmp_path):
+@pytest.mark.parametrize(
+    "changed,field,value",
+    [
+        ("attempt", "sequence", 2),
+        ("selection", "detail", {"attempt_id": "other"}),
+        ("confirmation", "proof", "changed"),
+    ],
+)
+def test_selected_attempt_loads_real_immutable_evidence(
+    case, tmp_path, changed, field, value
+):
     spec, packets = case.build()
     ref = spec.baseline.scores[0]
-    url = next(iter(packets[ref].manifest.selected_attempts))
+    url, aid = next(iter(packets[ref].manifest.selected_attempts.items()))
     attempt = case.attempts[ref, url]
-    run = tmp_path / "actual"
-    path = run / "attempts/pr" / attempt.attempt_id / "attempt.json"
-    exclusive_json(path, asdict(attempt))
-    state = run / "state/pr.json"
-    exclusive_json(state, dict(url=url, detail=dict(attempt_id=attempt.attempt_id)))
-    m = replace(
-        packets[ref].manifest,
-        source_artifact_hashes={str(path.relative_to(run)): v.file_hash(path)},
-    )
-    packet = replace(packets[ref], root=run / "scores/epoch/score", manifest=m)
-    assert c.load_selected_attempt(packet, url, attempt.attempt_id) == attempt
-    confirmation = run / "failure-confirmations" / (attempt.attempt_id + ".json")
-    exclusive_json(confirmation, {"proof": "original"})
-    hashes = {
-        **m.source_artifact_hashes,
-        str(confirmation.relative_to(run)): v.file_hash(confirmation),
+    paths = {
+        "attempt": tmp_path / "attempts/pr" / aid / "attempt.json",
+        "selection": tmp_path / "state/pr.json",
+        "confirmation": tmp_path / "failure-confirmations" / (aid + ".json"),
     }
-    packet = replace(packet, manifest=replace(m, source_artifact_hashes=hashes))
-    original_confirmation = confirmation.read_bytes()
-    write(confirmation, {"proof": "changed"})
-    refuses(
-        c.load_selected_attempt,
-        packet,
-        url,
-        attempt.attempt_id,
-        match="failure confirmation",
+    values = dict(
+        attempt=asdict(attempt),
+        selection=dict(url=url, detail=dict(attempt_id=aid)),
+        confirmation=dict(proof="original"),
     )
-    confirmation.write_bytes(original_confirmation)
-    write(state, dict(url=url, detail=dict(attempt_id="other")))
-    refuses(c.load_selected_attempt, packet, url, attempt.attempt_id, match="current")
-    write(state, dict(url=url, detail=dict(attempt_id=attempt.attempt_id)))
-    write(path, {**asdict(attempt), "sequence": 2})
-    refuses(c.load_selected_attempt, packet, url, attempt.attempt_id, match="immutable")
+    for key, path in paths.items():
+        exclusive_json(path, values[key])
+    hashes = {
+        str(path.relative_to(tmp_path)): v.file_hash(path)
+        for key, path in paths.items()
+        if key != "selection"
+    }
+    packet = replace(
+        packets[ref],
+        root=tmp_path / "scores/epoch/score",
+        manifest=replace(packets[ref].manifest, source_artifact_hashes=hashes),
+    )
+    assert c.load_selected_attempt(packet, url, aid) == attempt
+    write(paths[changed], {**values[changed], field: value})
+    refuses(c.load_selected_attempt, packet, url, aid)
 
 
 def test_descriptive_gate_is_refused_before_loading(case):
@@ -496,12 +520,9 @@ def test_candidate_dispatch_requires_registration_before_prerequisites(
 def test_comparison_persists_report_before_spending(
     case, tmp_path, monkeypatch, population, failure
 ):
-    from bench.tests.test_audit import resolve_audit
-
     spec, packets = case.build(population, population == "gate")
     if population == "gate":
-        _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
-        spec = replace(spec, audit_path=str(receipt))
+        spec = audited(spec, packets, tmp_path / "audit")
     path = tmp_path / "spec.json"
     write(path, asdict(spec))
     compare = c.compare_arms
@@ -550,11 +571,9 @@ def test_rule_capacity_is_checked_at_the_schema_boundary(
     case, fingerprint, tmp_path, monkeypatch, boundary, schema_version
 ):
     from bench import run
-    from bench.tests.test_audit import resolve_audit
 
     spec, packets = case.build(promotion_rule=rule(extension_runs=1))
-    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
-    spec = replace(spec, audit_path=str(receipt))
+    spec = audited(spec, packets, tmp_path / "audit")
     window = v.load_window(case.window_path)
     window = replace(
         window,
@@ -774,10 +793,8 @@ def test_rule_validation_rejects_invalid_designs(kw):
 
 
 def test_precision_pools_stored_core_counts_and_filters_bug_ids(case, tmp_path):
-    from bench.tests.test_audit import resolve_audit
-
     spec, packets = case.build()
-    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
+    spec = audited(spec, packets, tmp_path / "audit")
     population = p.resolve_population(
         "gate-uncontaminated", case.epoch, "core", case.contamination
     )
@@ -820,9 +837,7 @@ def test_precision_pools_stored_core_counts_and_filters_bug_ids(case, tmp_path):
             )
     report = next(
         r
-        for r in paired(
-            replace(spec, audit_path=str(receipt)), packets
-        ).population_reports
+        for r in paired(spec, packets).population_reports
         if r.population == "gate-uncontaminated" and r.profile == "core"
     ).precision
     assert (report.baseline_precision, report.candidate_precision) == pytest.approx(
@@ -831,7 +846,22 @@ def test_precision_pools_stored_core_counts_and_filters_bug_ids(case, tmp_path):
     assert (report.interval.lower, report.interval.upper) == pytest.approx((-2 / 15, 0))
 
 
-REAL_LOAD_ARM = c.load_arm
+def bind_run(case, ref, block, path, index):
+    fp = v.RunFingerprint(block.expected, block.arms[case.runs[ref]["arm"]])
+    case.runs[ref].update(
+        run_index=index,
+        window_id=block.window_id,
+        window_sha256=v.file_hash(path),
+        measurement_window=str(path),
+        child_auth=block.expected.auth_mode,
+        provenance=fp.wire(),
+    )
+    for url in block.pr_urls:
+        attempt = case.attempts[ref, url]
+        case.attempts[ref, url] = replace(
+            attempt,
+            validity=replace(attempt.validity, window_id=block.window_id, observed=fp),
+        )
 
 
 def split_blocks(case, spec, groups):
@@ -839,57 +869,27 @@ def split_blocks(case, spec, groups):
     paths = []
     for number, group in enumerate(groups):
         path = case.window_path.with_name(f"block-{number}.json")
-        controls = replace(
-            original.expected,
-            auth_mode="host" if number else "api",
-            cli_version=str(number),
-        )
+        indices = tuple(range(len(group)))
         block = replace(
             original,
             schema_version=2,
             window_id=str(number),
-            expected=controls,
-            planned_run_indices=tuple(range(len(group))),
-            planned_order=tuple(
-                (a, i) for i in range(len(group)) for a in original.arms
-            ),
+            expected=replace(original.expected, auth_mode="host" if number else "api"),
+            planned_run_indices=indices,
+            planned_order=tuple((a, i) for i in indices for a in original.arms),
         )
         write(path, block.wire())
         paths.append(str(path))
         for arm in (spec.baseline, spec.candidate):
             for local, ordinal in enumerate(group):
-                if ordinal >= len(arm.scores):
-                    continue
-                ref = arm.scores[ordinal]
-                case.runs[ref].update(
-                    run_index=local,
-                    window_id=block.window_id,
-                    window_sha256=v.file_hash(path),
-                    measurement_window=str(path),
-                    child_auth=controls.auth_mode,
-                    provenance=v.RunFingerprint(
-                        controls, original.arms[arm.name]
-                    ).wire(),
-                )
-                for url in block.pr_urls:
-                    attempt = case.attempts[ref, url]
-                    case.attempts[ref, url] = replace(
-                        attempt,
-                        validity=replace(
-                            attempt.validity,
-                            window_id=block.window_id,
-                            observed=v.RunFingerprint(
-                                controls, original.arms[arm.name]
-                            ),
-                        ),
-                    )
+                if ordinal < len(arm.scores):
+                    bind_run(case, arm.scores[ordinal], block, path, local)
     return replace(spec, window_path=None, window_paths=tuple(paths))
 
 
-def test_blocks_pool_runs_before_the_unchanged_pr_cluster_rule(
-    case, tmp_path, monkeypatch
-):
-    spec, packets = case.build()
+@pytest.mark.parametrize("operational", [False, True])
+def test_blocks_pool_independent_runs_before_the_rule(case, tmp_path, operational):
+    spec, packets = case.build("gate" if operational else "mini", operational)
     for arm, hits in ((spec.baseline, (1, 0, 0)), (spec.candidate, (0, 1, 1))):
         for ref, hit in zip(arm.scores, hits, strict=True):
             packets[ref] = replace(
@@ -899,195 +899,20 @@ def test_blocks_pool_runs_before_the_unchanged_pr_cluster_rule(
                     for b in packets[ref].observations
                 ),
             )
-    from bench.tests.test_audit import resolve_audit
-
-    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
-    spec = replace(spec, audit_path=str(receipt))
+    if operational:
+        spec = audited(spec, packets, tmp_path / "audit")
     expected = paired(spec, packets)
-    spec = split_blocks(case, spec, ((0,), (1, 2), (3,)))
-    # Exercise immutable selection loading as well as pooling, without a load_arm stub.
-    for ref, packet in list(packets.items()):
-        run = tmp_path / ref.run_id
-        root = run / "scores/epoch/score"
-        root.mkdir(parents=True)
-        write(root / "evaluations.json", read_json(packet.root / "evaluations.json"))
-        write(root / "stage_trace_bindings.json", {})
-        (root / "stages.jsonl").touch()
-        hashes = {}
-        for url, aid in packet.manifest.selected_attempts.items():
-            path = run / "attempts/pr" / aid / "attempt.json"
-            exclusive_json(path, asdict(case.attempts[ref, url]))
-            hashes[str(path.relative_to(run))] = v.file_hash(path)
-            exclusive_json(
-                run / "state" / (aid + ".json"),
-                dict(url=url, detail=dict(attempt_id=aid)),
-            )
-        packets[ref] = replace(
-            packet,
-            root=root,
-            manifest=replace(packet.manifest, source_artifact_hashes=hashes),
-        )
-    monkeypatch.setattr(c, "load_arm", REAL_LOAD_ARM)
-    report = paired(spec, packets)
+    report = paired(split_blocks(case, spec, ((0,), (1, 2), (3,))), packets)
     assert report.population_reports == expected.population_reports
-    assert report.promotion == expected.promotion
-    assert report.spend == expected.spend
-    assert all(
-        b.baseline_rate == pytest.approx(1 / 3)
-        and b.candidate_rate == pytest.approx(2 / 3)
-        and b.difference == pytest.approx(1 / 3)
-        for b in report.population_reports[0].bugs
-    )
     assert [b.run_counts for b in report.blocks] == [
         dict(baseline=n, candidate=n) for n in (1, 2, 0)
     ]
-    assert [r.pooled_index for b in report.blocks for r in b.arms["candidate"]] == [
-        0,
-        1,
-        2,
-    ]
+    assert [r.pooled_index for b in report.blocks for r in b.arms["candidate"]] == list(
+        range(3)
+    )
     assert [r.run_index for b in report.blocks for r in b.arms["candidate"]] == [
         0,
         0,
         1,
     ]
     assert report.blocks[0].lane_id != report.blocks[1].lane_id
-
-
-def audited_blocks(case):
-    from bench.tests.test_audit import resolve_audit
-
-    spec, packets = case.build()
-    spec = split_blocks(case, spec, ((0,), (1, 2)))
-    _, _, receipt = resolve_audit(spec, packets, case.rule_path.parent / "audit")
-    spec = replace(spec, audit_path=str(receipt))
-    paired(spec, packets)
-    return spec, packets
-
-
-def test_global_balance_cannot_hide_an_unbalanced_block(case):
-    spec, packets = audited_blocks(case)
-    ref = spec.candidate.scores[-1]
-    case.runs[ref]["window_id"] = "0"
-    case.runs[ref]["window_sha256"] = v.file_hash(Path(spec.window_paths[0]))
-    first = v.load_window(spec.window_paths[0])
-    fp = v.RunFingerprint(first.expected, first.arms[spec.candidate.name])
-    case.runs[ref]["provenance"] = fp.wire()
-    for url in first.pr_urls:
-        attempt = case.attempts[ref, url]
-        case.attempts[ref, url] = replace(
-            attempt,
-            validity=replace(attempt.validity, window_id=first.window_id, observed=fp),
-        )
-    refuses(paired, spec, packets, match="unbalanced block")
-
-
-@pytest.mark.parametrize("duplicate", [False, True])
-def test_each_run_requires_one_declared_window(case, duplicate):
-    spec, packets = audited_blocks(case)
-    if duplicate:
-        spec = replace(spec, window_paths=(*spec.window_paths, spec.window_paths[0]))
-    else:
-        case.runs[spec.candidate.scores[-1]]["window_id"] = "undeclared"
-    refuses(paired, spec, packets, match="duplicate window|undeclared window")
-
-
-def test_rescoring_across_blocks_is_not_an_independent_review_run(case):
-    spec, packets = audited_blocks(case)
-    duplicate = replace(
-        spec.candidate.scores[-1],
-        run_id=spec.baseline.scores[0].run_id,
-        score_id="rescored",
-    )
-    spec = replace(
-        spec,
-        candidate=replace(
-            spec.candidate, scores=(*spec.candidate.scores[:-1], duplicate)
-        ),
-    )
-    refuses(paired, spec, packets, match="duplicate score reference or review run")
-
-
-def test_candidate_provenance_uses_its_own_block_controls(case):
-    spec, packets = audited_blocks(case)
-    case.runs[spec.candidate.scores[-1]]["provenance"]["controls"]["auth_mode"] = "api"
-    refuses(paired, spec, packets, match="review window/treatment mismatch")
-
-
-def test_individually_valid_blocks_require_common_scoring_controls(case):
-    spec, packets = audited_blocks(case)
-    path = Path(spec.window_paths[1])
-    block = v.load_window(path)
-    controls = replace(block.expected, judge_pin="other")
-    write(path, replace(block, expected=controls).wire())
-    for ref, run in case.runs.items():
-        if run["window_id"] != block.window_id:
-            continue
-        run["window_sha256"] = v.file_hash(path)
-        run["provenance"]["controls"]["judge_pin"] = "other"
-        for url in block.pr_urls:
-            attempt = case.attempts[ref, url]
-            case.attempts[ref, url] = replace(
-                attempt,
-                validity=replace(
-                    attempt.validity,
-                    observed=replace(attempt.validity.observed, controls=controls),
-                ),
-            )
-    refuses(paired, spec, packets, match="mixed block comparison contexts")
-
-
-def test_each_block_requires_alternating_selected_starts(case):
-    spec, packets = audited_blocks(case)
-    for key, attempt in list(case.attempts.items()):
-        if key[0] == spec.candidate.scores[-1]:
-            case.attempts[key] = replace(attempt, started_at="2026-10-20T12:00:00Z")
-    refuses(paired, spec, packets, match="planned interleaving")
-
-
-def test_block_report_spends_one_look_and_resolves_relative_aliases(
-    case, tmp_path, monkeypatch
-):
-    spec, packets = case.build()
-    from bench.tests.test_audit import resolve_audit
-
-    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
-    spec = replace(spec, audit_path=str(receipt))
-    original = paired(spec, packets).population_reports
-    path = tmp_path / "spec.json"
-    write(path, {**asdict(spec), "window_path": "window.json"})
-    assert paired(c.load_comparison_spec(path), packets).population_reports == original
-    spec = split_blocks(case, spec, ((0,), (1, 2)))
-    write(
-        path,
-        {**asdict(spec), "window_paths": [Path(p).name for p in spec.window_paths]},
-    )
-    compare = c.compare_arms
-    monkeypatch.setattr(
-        c, "compare_arms", lambda s: compare(s, packet_loader=packets.__getitem__)
-    )
-    out = tmp_path / "report.json"
-    assert c.main(["--spec", str(path), "--out", str(out)]) == 0
-    row = c.looks.entries()[-1]
-    assert len(c.looks.entries()) == 2
-    assert (
-        row["window_ids"] == ["0", "1"] and row["comparison_id"] == spec.comparison_id
-    )
-    assert row["report_sha256"] == digest(read_json(out))
-    assert row["score_refs"] == [
-        asdict(r) for a in (spec.baseline, spec.candidate) for r in a.scores
-    ]
-
-
-def test_descriptive_blocks_validate_windows_without_spending_a_look(case):
-    spec, packets = case.build("mini", False)
-    expected = paired(spec, packets).population_reports
-    population = p.resolve_population("mini", case.epoch, "core", case.contamination)
-    write(
-        case.window_path,
-        replace(v.load_window(case.window_path), pr_urls=population.pr_urls).wire(),
-    )
-    spec = split_blocks(case, spec, ((0,), (1, 2)))
-    before = case.ledger.read_bytes()
-    assert paired(spec, packets).population_reports == expected
-    assert case.ledger.read_bytes() == before

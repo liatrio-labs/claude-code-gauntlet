@@ -365,9 +365,12 @@ schema-1 windows retain full-rule preflight capacity checks. Both schemas keep
 operator's existing cloud session; no cloud orchestration or host identity capture is added.
 
 A comparison's `window_paths` list declares balanced blocks, including reserved empty
-blocks. Lane reports retain auth and CLI identity (host identity remains unknown).
-Treatments, scoring context and the common wave/rule remain fixed. Extensions bind
-initial score prefixes and every original block's bytes and local run assignments.
+blocks; `window_path` is the singleton alias. Each block uses its own local planned
+prefix. Top-level arm score lists retain their order. Reports list lanes, local and
+pooled indices, and zero-run blocks. Lanes may differ in auth and CLI identity (host
+identity remains unknown). Treatments, scoring context and the common wave/rule remain
+fixed. Extensions bind initial score prefixes and every original block's bytes and
+local run assignments, then fill balanced reserved capacity or append blocks.
 Aggregate capacity covers the initial and extension counts. One verdict records one look.
 
 Comparison first averages each bug's Boolean detections over all independent runs in

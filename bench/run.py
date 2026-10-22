@@ -315,23 +315,24 @@ def check_prereqs(
                 f"CLAUDE_CODE_OAUTH_TOKEN missing or empty in {env_path} and in the "
                 "environment -- run `claude setup-token` and add the token to bench/.env."
             )
-        helper_files = invoke.api_key_helper_files(
-            invoke.resolve_claude_home(workspace_dir, env)
-        )
-        if helper_files:
-            failures.append(
-                "apiKeyHelper set in {files} -- it outranks CLAUDE_CODE_OAUTH_TOKEN, so "
-                "the child would authenticate with that key and never reach the "
-                "subscription; remove it or run --child-auth api.".format(
-                    files=", ".join(helper_files)
-                )
-            )
     elif not _read_env_key(env_path, "ANTHROPIC_API_KEY"):
         failures.append(
             f"ANTHROPIC_API_KEY missing or empty in {env_path} -- "
             "copy bench/.env.example to bench/.env and add the metered key."
         )
 
+    if child_auth in (ledger.SUBSCRIPTION_AUTH_MODE, "host"):
+        helper_files = invoke.api_key_helper_files(
+            invoke.resolve_claude_home(workspace_dir, env)
+        )
+        if helper_files:
+            failures.append(
+                "apiKeyHelper set in {files} -- it outranks CLAUDE_CODE_OAUTH_TOKEN "
+                "and host auth; "
+                "remove it or run --child-auth api.".format(
+                    files=", ".join(helper_files)
+                )
+            )
     if not shutil.which("uv"):
         failures.append(
             "uv not found on PATH -- install uv (https://docs.astral.sh/uv/) for the vendored scorer."
