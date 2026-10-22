@@ -233,7 +233,8 @@ how the candidates were produced and how the row is labeled.
 Use `--child-auth host` inside an operator-launched Claude Code cloud session.
 It requires `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`, injects no credential, and strips
 over-ranking API/provider credentials and OAuth. `ANTHROPIC_BASE_URL` and
-`CLAUDE_SESSION_INGRESS_TOKEN_FILE` pass through unchanged. Select `--auth-mode host`
+`CLAUDE_SESSION_INGRESS_TOKEN_FILE` pass through unchanged. The session's own
+thinking budget (`MAX_THINKING_TOKENS`) is stripped from the child, not refused. Select `--auth-mode host`
 when creating its window; that auth mode identifies a separate lane. Final ship
 comparisons still require API auth.
 

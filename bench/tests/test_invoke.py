@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 import pytest
 
-from bench.runner import invoke
+from bench.runner import invoke, validity
 from bench.runner.costs import parse_costs
 from bench.runner.invoke import InvokeResult, build_env, invoke_review
 
@@ -2098,7 +2098,11 @@ def test_host_auth_strips_credentials_and_checks_prerequisites(
     )
     if marker:
         host["CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"] = "1"
-    stripped = (*invoke._OUTRANKING_CREDENTIAL_VARS, invoke.OAUTH_TOKEN_VAR)
+    stripped = (
+        *invoke._OUTRANKING_CREDENTIAL_VARS,
+        invoke.OAUTH_TOKEN_VAR,
+        *invoke.HOST_SET_ENV,
+    )
     monkeypatch.setattr(
         invoke, "_load_dotenv_key", lambda *a: pytest.fail("credential read")
     )
@@ -2110,6 +2114,12 @@ def test_host_auth_strips_credentials_and_checks_prerequisites(
     )
     assert {k: env[k] for k in host} == host
     assert not set(stripped) & env.keys()
+    budget = {**host, **dict.fromkeys(invoke.HOST_SET_ENV, "1")}
+    validity.refuse_ambient_model_overrides(budget, "host")
+    with pytest.raises(ValueError, match="ambient"):
+        validity.refuse_ambient_model_overrides(
+            dict.fromkeys(invoke.HOST_SET_ENV, "1"), "api"
+        )
     monkeypatch.setattr(run.shutil, "which", lambda *a: None)
     monkeypatch.setattr(run, "_free_gb", lambda *a: 100)
     monkeypatch.setattr(run, "_read_env_key", lambda *a: pytest.fail("credential read"))
