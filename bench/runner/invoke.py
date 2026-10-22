@@ -213,6 +213,7 @@ SKILL_COMMAND = "code-gauntlet:code-gauntlet"
 _OUTRANKING_CREDENTIAL_VARS = (
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_API_KEY",
 )
@@ -281,7 +282,7 @@ def api_key_helper_files(claude_home):
 
     An ``apiKeyHelper`` outranks ``CLAUDE_CODE_OAUTH_TOKEN`` in the documented
     precedence chain, and unlike an env var it cannot be stripped from the child env --
-    so subscription mode has to refuse the run instead, naming the offending file. This
+    so subscription and host modes refuse the run instead, naming the offending file. This
     is a preflight-only inspection: it runs on every prereq check, including on machines
     with no claude home at all, so a missing dir, an unreadable file, corrupt JSON, or a
     non-object document all read as "no helper" rather than raising. Paths are returned
@@ -614,6 +615,9 @@ def _claude_auth_env(base_env, child_auth):
       and cannot be stripped here; ``check_prereqs`` refuses the run instead (see
       :func:`api_key_helper_files`). No token in either source is unrecoverable at
       invocation time, so it raises rather than falling back to the metered key.
+    - ``"host"``: inject nothing and strip the same over-ranking credentials plus
+      OAuth. Preserve CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST, ANTHROPIC_BASE_URL and
+      CLAUDE_SESSION_INGRESS_TOKEN_FILE so a cloud session uses host authentication.
 
     Raises ``RuntimeError`` for a subscription run with no token and ``ValueError`` for
     an unknown mode. Neither message -- nor anything else here -- may carry a credential
@@ -622,6 +626,8 @@ def _claude_auth_env(base_env, child_auth):
     if child_auth == API_AUTH_MODE:
         api_key = _load_dotenv_key(ENV_PATH, "ANTHROPIC_API_KEY")
         return ({"ANTHROPIC_API_KEY": api_key} if api_key else {}, ())
+    if child_auth == "host":
+        return ({}, (*_OUTRANKING_CREDENTIAL_VARS, OAUTH_TOKEN_VAR))
     if child_auth == SUBSCRIPTION_AUTH_MODE:
         token = _load_dotenv_key(ENV_PATH, OAUTH_TOKEN_VAR) or base_env.get(
             OAUTH_TOKEN_VAR

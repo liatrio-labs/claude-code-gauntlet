@@ -12,7 +12,7 @@ LAYERS = [
     "scorer score observations provenance stages ledger anchors scoring_costs profiles",
     "validity invoke check checkpoint run",
     "leaks",
-    "populations looks audit compare simulation report",
+    "populations looks audit compare simulation report windows",
 ]
 
 

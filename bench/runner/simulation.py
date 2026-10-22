@@ -41,9 +41,10 @@ class RunVector:
     score_ref: ScoreRef
     window_id: str
     window_sha256: str
-    auth: str
+    auth: validity.AuthMode
     hits: tuple[bool, ...]
     precision: tuple[compare.PrecisionCount, ...] = ()
+    lane: compare.Lane | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,8 +120,7 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
             expected_run_indices=(run["run_index"],),
             source=True,
         )
-        controls = asdict(window.expected)
-        controls.pop("auth_mode")
+        controls = compare.common_controls(window)
         identity = (
             controls,
             window.arms[arm.name],
@@ -139,6 +139,7 @@ def load_simulation_spec(path, *, packet_loader=compare.default_packet_loader):
                 run["child_auth"],
                 tuple(by_id[b] for b in ids),
                 compare.packet_precision(packet, primary),
+                compare.lane_for(window),
             )
         )
     if len(vectors) < 2 or len({v.score_ref.run_id for v in vectors}) != len(vectors):
@@ -353,9 +354,18 @@ def simulate_rule(library, spec, *, rule_evaluator=compare.evaluate_promotion):
         seed=spec.seed,
         auth_counts={
             a: sum(v.auth == a for v in library.vectors)
-            for a in ("api", "subscription")
+            for a in ("api", "subscription", "host")
         },
-        limitation="K=3 empirical rates have 1/3 granularity; unseen failures and correlated treatment effects are unmodeled. Planning only.",
+        lane_counts={
+            key: sum(
+                v.lane is not None and digest(asdict(v.lane)) == key
+                for v in library.vectors
+            )
+            for key in sorted(
+                {digest(asdict(v.lane)) for v in library.vectors if v.lane is not None}
+            )
+        },
+        limitation="Pooled source lanes assume comparable run vectors. K=3 empirical rates have 1/3 granularity; unseen failures and correlated treatment effects are unmodeled. Planning only.",
     )
 
 

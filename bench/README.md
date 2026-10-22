@@ -117,7 +117,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
                       [--timeout-mins 45] [--anchor naive] [--score-only RUN_ID]
                       [--check RUN_ID] [--prs URL[,URL...]|mini|dev-slice|dev-pool]
                       [--contamination PATH] [--rule PATH] [--unseal-holdout RECEIPT]
-                      [--child-auth api|subscription]
+                      [--child-auth api|subscription|host]
                       [--golden-epoch EPOCH_ID] [--attribution]
                       [--tool deep-review-v2|deep-review-v3] [--child-model MODEL_ID]
                       [--measurement-window PATH --arm ARM --run-index N]
@@ -145,7 +145,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 | `--retry-failed` | `RUN_ID` | — | Re-run attempts whose validity marks them retryable, including `invalid` and `drifted` outcomes. Legacy checkpoints without validity use `timeout`/`failed`. Confirmed operational failures are terminal. |
 | `--timeout-mins` | int | `45` | Per-PR watchdog: a PR whose invocation exceeds this is killed (whole process group) and marked `timeout`. Attempt validity separately records whether it is retryable or a confirmed operational failure. No auto-retry — use `--retry-failed`. Default calibrated from the smoke shakedown, where full-skill per-PR reviews ran 16–22 minutes. |
 | `--anchor` | `naive` | — | Instead of the code-gauntlet skill, run a bare single-pass same-model review (no plugin, pinned turn budget) through the same adapter, for comparison. The naive prompt requires the model to end its reply with a fenced ```` ```json ```` block containing a `comments` list; a reply where that block can't be parsed is marked `failed` with reason `naive_output_unparseable` (retryable via `--retry-failed`). |
-| `--child-auth` | `api` \| `subscription` | `api` | Which credential the **review children** spend: the metered `bench/.env` key, or your own Claude subscription capacity via `CLAUDE_CODE_OAUTH_TOKEN`. Recorded in `run.json` and as the ledger row's `auth_mode`. A `--resume`/`--retry-failed` run keeps the mode it started with; passing a flag that contradicts it is refused (exit 2) rather than mixing credentials within one run. Scoring is unaffected and stays API-keyed. See [Child auth modes](#child-auth-modes). |
+| `--child-auth` | `api` \| `subscription` \| `host` | `api` | Which credential the **review children** spend: the metered `bench/.env` key, subscription capacity via `CLAUDE_CODE_OAUTH_TOKEN`, or host-managed cloud capacity (requires `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`). Recorded in `run.json` and as the ledger row's `auth_mode`. A `--resume`/`--retry-failed` run keeps the mode it started with; passing a flag that contradicts it is refused (exit 2) rather than mixing credentials within one run. Scoring is unaffected and stays API-keyed. See [Child auth modes](#child-auth-modes). |
 | `--score-only` | `RUN_ID` | - | Score captured payloads on the active epoch without invoking review children. Each execution writes a fresh immutable packet and appends its ledger projection. |
 | `--golden-epoch` | `EPOCH_ID` | active epoch | Select the epoch for `--score-only`. Only the active epoch is runnable. |
 | `--attribution` | flag | off | With `--score-only`, also judge eliminated discovery claims and record stage losses. Missing traces leave attribution unavailable. |
@@ -230,9 +230,16 @@ how the candidates were produced and how the row is labeled.
 
 ## Child auth modes
 
+Use `--child-auth host` inside an operator-launched Claude Code cloud session.
+It requires `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`, injects no credential, and strips
+over-ranking API/provider credentials and OAuth. `ANTHROPIC_BASE_URL` and
+`CLAUDE_SESSION_INGRESS_TOKEN_FILE` pass through unchanged. Select `--auth-mode host`
+when creating its window; that auth mode identifies a separate lane. Final ship
+comparisons still require API auth.
+
 `--child-auth` selects the credential the **review children** spend. Nothing
 else changes: the isolation envelope, the pinned knobs, the watchdog, and the
-whole scoring path are identical in both modes.
+whole scoring path are identical in all three modes.
 
 ```bash
 claude setup-token                 # one-time; prints a long-lived OAuth token
@@ -241,25 +248,25 @@ python3 bench/run.py --tier smoke --child-auth subscription
 python3 bench/run.py --check <RUN_ID>
 ```
 
-| | `api` (default) | `subscription` |
-|---|---|---|
-| Credential | `ANTHROPIC_API_KEY` from `bench/.env`, force-injected | `CLAUDE_CODE_OAUTH_TOKEN` from `bench/.env`, else the ambient env |
-| Marginal cost | metered API spend | none — absorbed by an existing Pro/Max plan |
-| Ledger `auth_mode` | `api` | `subscription` |
-| `cost_usd` | billable spend | recorded, but **not** billable — see below |
+| | `api` (default) | `subscription` | `host` |
+|---|---|---|---|
+| Credential | `ANTHROPIC_API_KEY` from `bench/.env`, force-injected | `CLAUDE_CODE_OAUTH_TOKEN` from `bench/.env`, else the ambient env | Host-managed session; requires `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` |
+| Marginal cost | metered API spend | absorbed by an existing Pro/Max plan | cloud credit first, then plan capacity |
+| Ledger `auth_mode` | `api` | `subscription` | `host` |
+| `cost_usd` | billable spend | recorded consumption, not API spend | recorded consumption, not API spend |
 
-### Why subscription mode strips env vars
+### Why subscription and host modes strip env vars
 
 Claude Code resolves credentials in a fixed order — cloud providers
-(`CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX`) → `ANTHROPIC_AUTH_TOKEN`
+(`CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX` / `CLAUDE_CODE_USE_FOUNDRY`) → `ANTHROPIC_AUTH_TOKEN`
 → `ANTHROPIC_API_KEY` → `apiKeyHelper` → `CLAUDE_CODE_OAUTH_TOKEN` → the
 interactive `/login` session. The child inherits your full environment, so any
 one of those higher-ranked sources surviving would silently defeat the mode and
-bill the API anyway. Subscription mode therefore **removes** all four env vars
-rather than merely not setting them.
+bill the API anyway. Subscription and host modes therefore **remove** these five env vars. Host mode
+also removes `CLAUDE_CODE_OAUTH_TOKEN`.
 
 `apiKeyHelper` lives in a settings file, not the environment, so it cannot be
-stripped. Instead the prereq check refuses the run and names the offending file
+stripped. For subscription and host modes, the prereq check refuses the run and names the offending file
 (`settings.json` / `settings.local.json` under the isolated claude home, both in
 its `config/` dir — the `CLAUDE_CONFIG_DIR` the child gets — and in a
 HOME-relative `.claude/`; `BENCH_CLAUDE_HOME` can relocate that home).
@@ -437,8 +444,20 @@ model roster, allowed auxiliary model IDs, agent efforts and bench policy hash.
 `planned_order` declares alternating `[arm, run_index]` pairs. `wave_id` and
 `rule_sha256` bind a window to its preregistered promotion rule. `candidate_arm`
 identifies the candidate entry (default `candidate`); its preflight requires rule
-registration and a frozen contamination manifest. Build declarations from
-`capture_fingerprint()` and review both arm entries before freezing.
+registration and a frozen contamination manifest. Create a window with both local
+sources (SHA sources are materialized temporarily without switching the checkout):
+
+```sh
+python3 -m bench.runner.windows --population mini \
+  --arm baseline=sha:HEAD --arm candidate=worktree:/path/to/plugin \
+  --run-indices 0,1,2 --auth-mode api --duration-hours 24 \
+  --child-model claude-opus-4-8 --out window.json
+```
+
+For gate windows add `--wave WAVE --rule RULE.json`; registration remains separate.
+`--cli`, `--timeout-mins`, `--opens-at`, `--contamination`, and `--unseal` are optional.
+Creation captures both fingerprints with the epoch's judge pins and disabled updater.
+New windows use schema 2, with sequential PRs; schema-1 declarations remain readable.
 
 Start a declared run with the arm's resolved orchestrator model ID:
 
@@ -491,10 +510,15 @@ rescoring does not create an independent review run.
 
 The operating inputs use explicit immutable score references. Commands compute reports
 and never select a latest score. A descriptive comparison names `dev-slice`,
-`dev-pool`, or `mini` (the historical A/A), uses `profile: "core"`, and omits window
-and rule paths. Holdout comparisons additionally require `unseal`, the final-SHA
+`dev-pool`, or `mini` (the historical A/A), uses `profile: "core"`, and omits rule
+paths. It may declare windows or retain pathless historical evidence. Holdout comparisons additionally require `unseal`, the final-SHA
 receipt path, and the approved candidate treatment. Operational comparisons name a
 gate population and require a full gate matrix.
+
+Comparisons can name `"window_paths": ["windows/api.json", "windows/host.json"]`;
+`window_path` remains the singleton alias. See the
+[blocked-comparison protocol](MEASUREMENT.md#validity-and-statistics) for balancing,
+pooling, lanes, extensions and look accounting.
 
 Import the leakage lens's reviewed v2 dispositions:
 

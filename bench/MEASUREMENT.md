@@ -340,7 +340,7 @@ improvement claim is labelled as measured on a reused set.
 A window pins CLI binary/version, disabled auto-update, effective model controls,
 judge pins and auth. Each arm separately pins its treatment, roster, models and
 effort. Preflight precedes spend. Gate PRs run sequentially and each comparison
-requires a complete PR-by-run matrix of independent review runs. The window freezes a
+requires a complete PR-by-run matrix of independent review runs. Each window is a block and freezes a
 cross-arm run order. Selected attempts' start times must follow it. Rescoring creates
 no new independent run. Selected attempts and their provenance remain immutable.
 
@@ -357,8 +357,24 @@ reported descriptively. Category and overlapping dimension recall are descriptiv
 Unavailable provenance remains unknown. Loss funnels retain the complete selected
 denominator, including unavailable traces.
 
-Comparison first averages each bug's Boolean detections over independent runs in
-its arm, then averages those rates over the population. A seeded percentile bootstrap
+Create declarations with `python3 -m bench.runner.windows --population NAME`, two
+`--arm NAME=sha:REV|NAME=worktree:PATH` arguments, `--run-indices`, `--auth-mode`,
+`--duration-hours`, `--child-model`, and `--out`. Schema 2 supports local block plans;
+schema-1 windows retain full-rule preflight capacity checks. Both schemas keep
+`max_parallel_prs: 1`, serial PRs and immutable resume evidence. Host auth uses the
+operator's existing cloud session; no cloud orchestration or host identity capture is added.
+
+A comparison's `window_paths` list declares balanced blocks, including reserved empty
+blocks; `window_path` is the singleton alias. Each block uses its own local planned
+prefix. Top-level arm score lists retain their order. Reports list lanes, local and
+pooled indices, and zero-run blocks. Lanes may differ in auth and CLI identity (host
+identity remains unknown). Treatments, scoring context and the common wave/rule remain
+fixed. Extensions bind initial score prefixes and every original block's bytes and
+local run assignments, then fill balanced reserved capacity or append blocks.
+Aggregate capacity covers the initial and extension counts. One verdict records one look.
+
+Comparison first averages each bug's Boolean detections over all independent runs in
+its arm across blocks (never block means), then averages those rates over the population. A seeded percentile bootstrap
 resamples whole PR clusters of paired bug-rate differences. It reports lower and
 upper one-sided bounds at the rule's alpha and a descriptive two-sided 95% interval.
 Fewer than two PR clusters cannot establish primary passage. Stability labels require
@@ -430,7 +446,8 @@ this line passes; failure returns to the last passing tip.
 ## Planning and spend
 
 One empirical simulator resamples whole baseline run vectors and runs the complete
-wave evaluator.
+wave evaluator. Source lanes retain their own window evidence and counts. Pooling
+assumes source lanes are comparable; this is planning evidence, not a blocked verdict.
 It reports null pass rate, power at +5/+10 points, Monte Carlo standard errors, guard
 counts, extension use and MDE on the declared effect grid. Groundedness uses a shared
 beta latent rate from the resolved baseline sample, followed by independent same-size

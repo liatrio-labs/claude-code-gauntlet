@@ -30,6 +30,8 @@ class LookEntry(TypedDict, total=False):
     use: Literal["run", "audit", "compare"]
     run_id: str
     receipt_sha256: str
+    comparison_id: str
+    window_ids: list[str]
 
 
 def entries() -> list[LookEntry]:
@@ -81,10 +83,10 @@ def register(wave, rule):
     )
 
 
-def record(window, spec, report):
+def record(wave_id, spec, report):
     row = dict(
         kind="look",
-        wave=window.wave_id,
+        wave=wave_id,
         at=utc_now(),
         rule_sha256=report.identity["rule_sha256"],
         look=report.identity["look"],
@@ -92,10 +94,12 @@ def record(window, spec, report):
         score_refs=[asdict(r) for r in report.input_score_refs],
         verdict=report.promotion.verdict,
         report_sha256=digest(asdict(report)),
+        comparison_id=report.comparison_id,
+        window_ids=[b.window_id for b in report.blocks],
     )
 
     def check(rows):
-        if next_look(window.wave_id, row["rule_sha256"], rows=rows) != row["look"]:
+        if next_look(wave_id, row["rule_sha256"], rows=rows) != row["look"]:
             raise ValueError("gate look changed during comparison")
 
     append(row, check)
