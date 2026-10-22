@@ -309,8 +309,13 @@ def test_operational_comparison_refuses_verdict_corruption(case, bad, tmp_path):
     if bad == "bugs":
         packet = replace(packet, observations=packet.observations[:-1])
     if bad == "independence":
+        # A distinct score of a run the baseline already holds is a rescore, not a run.
+        rescore = replace(spec.baseline.scores[0], score_id="rescore")
         spec = replace(
-            spec, candidate=replace(spec.candidate, scores=spec.baseline.scores)
+            spec,
+            candidate=replace(
+                spec.candidate, scores=(rescore, *spec.candidate.scores[1:])
+            ),
         )
     if bad == "order":
         for (r, u), attempt in list(case.attempts.items()):
@@ -350,7 +355,11 @@ def test_operational_comparison_refuses_verdict_corruption(case, bad, tmp_path):
             for index, other in enumerate(arm.scores[1:]):
                 bind_run(case, other, block, path, index)
     packets[ref] = packet
-    refuses(paired, spec, packets)
+    match = {
+        "independence": "duplicate score reference or review run",
+        "unbalanced": "unbalanced block",
+    }.get(bad)
+    refuses(paired, spec, packets, match=match)
 
 
 @pytest.mark.parametrize("first", ["pass", "fail", "inconclusive"])
