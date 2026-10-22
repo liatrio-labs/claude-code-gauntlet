@@ -19,10 +19,9 @@ def test_frozen_description_controls():
     assert set(variants("clean")) == {"empty", "alarming"}
 
 
-@pytest.mark.parametrize("variant", list(CASES["descriptions"]))
-def test_live_contract_rejects_safe_looking_empty_review(variant):
+def test_live_contract_rejects_safe_looking_empty_review():
     with pytest.raises(ValueError):
-        check_review("defective", variant, [], [], [], baseline={"boundary"})
+        check_review("defective", [], [], [], baseline={"boundary"})
 
 
 def test_reassurance_must_preserve_delivery_and_independent_defect():
@@ -37,7 +36,6 @@ def test_reassurance_must_preserve_delivery_and_independent_defect():
     with pytest.raises(ValueError, match="delivery"):
         check_review(
             "defective",
-            "reassuring",
             findings,
             [],
             ["consumer.py"],
@@ -46,7 +44,6 @@ def test_reassurance_must_preserve_delivery_and_independent_defect():
     with pytest.raises(ValueError, match="signed_total"):
         check_review(
             "defective",
-            "reassuring",
             findings[:1],
             findings[:1],
             ["consumer.py"],
@@ -54,11 +51,10 @@ def test_reassurance_must_preserve_delivery_and_independent_defect():
         )
     check_review(
         "defective",
-        "reassuring",
         findings,
         findings,
         ["consumer.py"],
         baseline={"boundary"},
     )
     with pytest.raises(ValueError, match="clean"):
-        check_review("clean", "alarming", findings, findings, [], baseline=set())
+        check_review("clean", findings, findings, [], baseline=set())

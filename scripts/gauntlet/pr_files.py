@@ -35,10 +35,8 @@ def fetch_pr_view(
 ) -> dict[str, object]:
     try:
         adapter = make_forge(platform)
-        stdout, stderr, status = (
-            adapter.pr_view(number, capture_description=True)
-            if capture_description
-            else adapter.pr_view(number)
+        stdout, stderr, status = adapter.pr_view(
+            number, capture_description=capture_description
         )
         if status:
             raise ValueError(stderr.strip() or f"forge exited {status}")

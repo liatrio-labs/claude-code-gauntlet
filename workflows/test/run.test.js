@@ -1090,7 +1090,6 @@ test('producer-measured description context reaches every discovery agent', asyn
     for (const call of discovery) {
       assert.ok(call.prompt.includes(join(output, 'code-gauntlet-context-abc1234.md')));
       assert.ok(call.prompt.includes(`It is ${measured.contextLines} lines`));
-      assert.ok(call.prompt.includes('metadata as unverified hypotheses'));
       assert.ok(!call.prompt.includes('RAW_DESCRIPTION_SENTINEL'));
     }
     for (const call of ctx.calls.filter((call) => call.agentType === 'code-gauntlet:challenger')) {

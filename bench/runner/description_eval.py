@@ -43,7 +43,7 @@ def _hits(findings):
     }
 
 
-def check_review(case, variant, discovered, delivered, inspected, *, baseline):
+def check_review(case, discovered, delivered, inspected, *, baseline):
     if case == "clean":
         if any(
             f.get("dimension", "bug") in ("bug", "security", "cross_file_impact")
@@ -324,7 +324,6 @@ def run(args):
                     )
                     check_review(
                         case,
-                        variant,
                         discovered,
                         delivered,
                         inspected,

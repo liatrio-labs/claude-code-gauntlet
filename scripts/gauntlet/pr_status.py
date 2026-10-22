@@ -72,11 +72,7 @@ def _fetch(
     platform: Platform, number: int, capture: bool
 ) -> tuple[str, str, PrIdentityWire, str]:
     try:
-        view = (
-            fetch_pr_view(platform, number, capture_description=True)
-            if capture
-            else fetch_pr_view(platform, number)
-        )
+        view = fetch_pr_view(platform, number, capture_description=capture)
         sha = view.get("headRefOid" if platform == "github" else "sha")
         url = view.get("url" if platform == "github" else "web_url")
         if not isinstance(sha, str) or not isinstance(url, str):
