@@ -11,7 +11,7 @@ from bench.runner import validity as v
 from bench.tests.conftest import refuses, write
 from bench.tests.test_audit import resolve_audit
 from bench.tests.test_compare import case as case
-from bench.tests.test_compare import rule
+from bench.tests.test_compare import rule, split_blocks
 from bench.tests.test_validity import fingerprint as fingerprint
 from bench.tests.test_validity import window as window
 
@@ -62,6 +62,12 @@ def test_source_windows_audit_binding_and_null_pass_rate(case, simulation_case):
         match="evaluator defect",
     )
 
+    split_blocks(case, spec, ((0,), (1, 2)))
+    mixed, _ = s.load_simulation_spec(sim, packet_loader=packets.__getitem__)
+    assert {v.auth for v in mixed.vectors} == {"api", "host"}
+    planned = s.simulate_rule(mixed, replace(config, trials=1))
+    assert planned["auth_counts"] == {"api": 1, "subscription": 0, "host": 2}
+    assert sorted(planned["lane_counts"].values()) == [1, 2]
     ref = spec.baseline.scores[0]
     original = case.runs[ref]["window_sha256"]
     case.runs[ref]["window_sha256"] = "wrong"

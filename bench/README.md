@@ -117,7 +117,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
                       [--timeout-mins 45] [--anchor naive] [--score-only RUN_ID]
                       [--check RUN_ID] [--prs URL[,URL...]|mini|dev-slice|dev-pool]
                       [--contamination PATH] [--rule PATH] [--unseal-holdout RECEIPT]
-                      [--child-auth api|subscription]
+                      [--child-auth api|subscription|host]
                       [--golden-epoch EPOCH_ID] [--attribution]
                       [--tool deep-review-v2|deep-review-v3] [--child-model MODEL_ID]
                       [--measurement-window PATH --arm ARM --run-index N]
@@ -145,7 +145,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 | `--retry-failed` | `RUN_ID` | — | Re-run attempts whose validity marks them retryable, including `invalid` and `drifted` outcomes. Legacy checkpoints without validity use `timeout`/`failed`. Confirmed operational failures are terminal. |
 | `--timeout-mins` | int | `45` | Per-PR watchdog: a PR whose invocation exceeds this is killed (whole process group) and marked `timeout`. Attempt validity separately records whether it is retryable or a confirmed operational failure. No auto-retry — use `--retry-failed`. Default calibrated from the smoke shakedown, where full-skill per-PR reviews ran 16–22 minutes. |
 | `--anchor` | `naive` | — | Instead of the code-gauntlet skill, run a bare single-pass same-model review (no plugin, pinned turn budget) through the same adapter, for comparison. The naive prompt requires the model to end its reply with a fenced ```` ```json ```` block containing a `comments` list; a reply where that block can't be parsed is marked `failed` with reason `naive_output_unparseable` (retryable via `--retry-failed`). |
-| `--child-auth` | `api` \| `subscription` | `api` | Which credential the **review children** spend: the metered `bench/.env` key, or your own Claude subscription capacity via `CLAUDE_CODE_OAUTH_TOKEN`. Recorded in `run.json` and as the ledger row's `auth_mode`. A `--resume`/`--retry-failed` run keeps the mode it started with; passing a flag that contradicts it is refused (exit 2) rather than mixing credentials within one run. Scoring is unaffected and stays API-keyed. See [Child auth modes](#child-auth-modes). |
+| `--child-auth` | `api` \| `subscription` \| `host` | `api` | Which credential the **review children** spend: the metered `bench/.env` key, or your own Claude subscription capacity via `CLAUDE_CODE_OAUTH_TOKEN`. Recorded in `run.json` and as the ledger row's `auth_mode`. A `--resume`/`--retry-failed` run keeps the mode it started with; passing a flag that contradicts it is refused (exit 2) rather than mixing credentials within one run. Scoring is unaffected and stays API-keyed. See [Child auth modes](#child-auth-modes). |
 | `--score-only` | `RUN_ID` | - | Score captured payloads on the active epoch without invoking review children. Each execution writes a fresh immutable packet and appends its ledger projection. |
 | `--golden-epoch` | `EPOCH_ID` | active epoch | Select the epoch for `--score-only`. Only the active epoch is runnable. |
 | `--attribution` | flag | off | With `--score-only`, also judge eliminated discovery claims and record stage losses. Missing traces leave attribution unavailable. |
@@ -229,6 +229,13 @@ how the candidates were produced and how the row is labeled.
   never imported by the stdlib runner.
 
 ## Child auth modes
+
+Use `--child-auth host` inside an operator-launched Claude Code cloud session.
+It requires `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`, injects no credential, and strips
+over-ranking API/provider credentials and OAuth. `ANTHROPIC_BASE_URL` and
+`CLAUDE_SESSION_INGRESS_TOKEN_FILE` pass through unchanged. Select `--auth-mode host`
+when creating its window; that auth mode identifies a separate lane. Final ship
+comparisons still require API auth. The harness does not launch cloud sessions.
 
 `--child-auth` selects the credential the **review children** spend. Nothing
 else changes: the isolation envelope, the pinned knobs, the watchdog, and the
@@ -437,8 +444,20 @@ model roster, allowed auxiliary model IDs, agent efforts and bench policy hash.
 `planned_order` declares alternating `[arm, run_index]` pairs. `wave_id` and
 `rule_sha256` bind a window to its preregistered promotion rule. `candidate_arm`
 identifies the candidate entry (default `candidate`); its preflight requires rule
-registration and a frozen contamination manifest. Build declarations from
-`capture_fingerprint()` and review both arm entries before freezing.
+registration and a frozen contamination manifest. Create a window with both local
+sources (SHA sources are materialized temporarily without switching the checkout):
+
+```sh
+python3 -m bench.runner.windows --population mini \
+  --arm baseline=sha:HEAD --arm candidate=worktree:/path/to/plugin \
+  --run-indices 0,1,2 --auth-mode api --duration-hours 24 \
+  --child-model claude-opus-4-8 --out window.json
+```
+
+For gate windows add `--wave WAVE --rule RULE.json`; registration remains separate.
+`--cli`, `--timeout-mins`, `--opens-at`, `--contamination`, and `--unseal` are optional.
+Creation captures both fingerprints with the epoch's judge pins and disabled updater.
+New windows use schema 2, with sequential PRs; schema-1 declarations remain readable.
 
 Start a declared run with the arm's resolved orchestrator model ID:
 
@@ -491,10 +510,20 @@ rescoring does not create an independent review run.
 
 The operating inputs use explicit immutable score references. Commands compute reports
 and never select a latest score. A descriptive comparison names `dev-slice`,
-`dev-pool`, or `mini` (the historical A/A), uses `profile: "core"`, and omits window
-and rule paths. Holdout comparisons additionally require `unseal`, the final-SHA
+`dev-pool`, or `mini` (the historical A/A), uses `profile: "core"`, and omits rule
+paths. It may declare windows or retain pathless historical evidence. Holdout comparisons additionally require `unseal`, the final-SHA
 receipt path, and the approved candidate treatment. Operational comparisons name a
 gate population and require a full gate matrix.
+
+Comparisons can name `"window_paths": ["windows/api.json", "windows/host.json"]`;
+`window_path` remains the singleton alias. Each window is a block with balanced arms
+and its own local planned prefix. Top-level arm score lists keep their order. Blocks
+may have different CLI/auth lanes but share treatments and scoring context. Rates pool
+all runs before the rule: two runs carry twice the weight of one. Reports list lanes,
+local and pooled indices, and reserved zero-run blocks. One comparison spends one look.
+Extensions preserve initial references and block identities, then fill balanced reserved
+capacity or append blocks. Aggregate capacity must cover the rule; schema-1 run preflight
+still requires full capacity in its own window. PRs and arm runs remain serial.
 
 Import the leakage lens's reviewed v2 dispositions:
 

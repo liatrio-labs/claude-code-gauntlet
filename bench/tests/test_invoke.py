@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import ClassVar
 from unittest.mock import patch
 
+import pytest
+
 from bench.runner import invoke
 from bench.runner.costs import parse_costs
 from bench.runner.invoke import InvokeResult, build_env, invoke_review
@@ -510,7 +512,7 @@ class BuildEnvChildAuthTest(InvokeTestBase):
     def test_mode_constants(self):
         # The mode names are the ledger's vocabulary, imported rather than restated -- see
         # test_ledger.py for the canonical definition and its drift guards.
-        self.assertEqual(invoke.AUTH_MODES, ("api", "subscription"))
+        self.assertEqual(invoke.AUTH_MODES, ("api", "subscription", "host"))
         self.assertEqual(invoke.OAUTH_TOKEN_VAR, "CLAUDE_CODE_OAUTH_TOKEN")
         self.assertEqual(
             invoke._OUTRANKING_CREDENTIAL_VARS,
@@ -2079,3 +2081,43 @@ def test_bench_resolver_sets_trace_without_prompt_instructions():
     )
     for mode in ("headless", "interactive"):
         assert "measurementTrace" not in resolve(mode, {}, None, "pr")["waist"]
+
+
+def test_host_auth_strips_credentials_and_preserves_host_transport(
+    tmp_path, monkeypatch
+):
+    from bench import run
+
+    host = dict(
+        CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST="1",
+        ANTHROPIC_BASE_URL="https://host.invalid",
+        CLAUDE_SESSION_INGRESS_TOKEN_FILE="/synthetic/ingress",
+    )
+    base = {
+        **host,
+        **dict.fromkeys(
+            (*invoke._OUTRANKING_CREDENTIAL_VARS, invoke.OAUTH_TOKEN_VAR), "synthetic"
+        ),
+    }
+    monkeypatch.setattr(
+        invoke,
+        "_load_dotenv_key",
+        lambda *a: pytest.fail("host must not load credentials"),
+    )
+    env = build_env(PR, tmp_path, base, child_auth="host")
+    assert {k: env[k] for k in host} == host
+    assert (
+        not set((*invoke._OUTRANKING_CREDENTIAL_VARS, invoke.OAUTH_TOKEN_VAR))
+        & env.keys()
+    )
+    monkeypatch.setattr(run.shutil, "which", lambda *a: None)
+    monkeypatch.setattr(run, "_free_gb", lambda *a: 100)
+    monkeypatch.setattr(
+        run, "_read_env_key", lambda *a: pytest.fail("host must not load credentials")
+    )
+    failures = run.check_prereqs(workspace_dir=tmp_path, child_auth="host", env={})
+    assert "host auth requires CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST" in failures
+    assert (
+        "host auth requires CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"
+        not in run.check_prereqs(workspace_dir=tmp_path, child_auth="host", env=host)
+    )

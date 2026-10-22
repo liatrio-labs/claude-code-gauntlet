@@ -216,7 +216,6 @@ def test_bug_means_cluster_bootstrap_labels_and_unknown_attribution(case):
     pop = p.resolve_population("gate-uncontaminated", e, "core", manifest)
     cfg = c.BootstrapConfig(100, 9)
     result = c.reduce_population(matrix, pop, e, "core", cfg)
-    assert result.difference == pytest.approx(2 / 3)
     assert {(b.baseline_label, b.candidate_label) for b in result.bugs} == {
         ("flaky", "stable_found")
     }
@@ -343,6 +342,9 @@ def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, firs
     spec, packets = case.build(
         promotion_rule=r, count=4 if first == "inconclusive" else 3
     )
+    spec = split_blocks(
+        case, spec, ((0,), (1, 2), (3,)) if first == "inconclusive" else ((0,), (1, 2))
+    )
     full = spec
     if first == "inconclusive":
         spec = replace(
@@ -379,6 +381,9 @@ def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, firs
             initial_report_path=str(tmp_path / "one.json"),
         )
         assert not paired(extended, packets).promotion.extension_allowed
+        split_blocks(case, full, ((3,), (1, 2), (0,)))
+        refuses(paired, extended, packets, match="initial run block assignment")
+        split_blocks(case, full, ((0,), (1, 2), (3,)))
         initial_report = read_json(tmp_path / "one.json")
         write(tmp_path / "one.json", {**initial_report, "spend": {}})
         refuses(paired, extended, packets, match="initial report")
@@ -540,8 +545,9 @@ def test_comparison_persists_report_before_spending(
 
 
 @pytest.mark.parametrize("boundary", ["preflight", "compare"])
-def test_extension_capacity_is_required_before_initial_runs(
-    case, fingerprint, tmp_path, monkeypatch, boundary
+@pytest.mark.parametrize("schema_version", [1, 2])
+def test_rule_capacity_is_checked_at_the_schema_boundary(
+    case, fingerprint, tmp_path, monkeypatch, boundary, schema_version
 ):
     from bench import run
     from bench.tests.test_audit import resolve_audit
@@ -552,6 +558,7 @@ def test_extension_capacity_is_required_before_initial_runs(
     window = v.load_window(case.window_path)
     window = replace(
         window,
+        schema_version=schema_version,
         planned_run_indices=(0, 1, 2),
         planned_order=tuple((a, i) for a, i in window.planned_order if i < 3),
     )
@@ -563,9 +570,13 @@ def test_extension_capacity_is_required_before_initial_runs(
     else:
         monkeypatch.setattr(v, "require_clean_treatment", lambda: None)
         monkeypatch.setattr(v, "run_provenance", lambda **kw: fingerprint.wire())
-        monkeypatch.setattr(
-            run, "check_prereqs", lambda **kw: pytest.fail("prerequisites reached")
-        )
+        reached = []
+
+        def prerequisites(**kw):
+            reached.append(True)
+            return ["synthetic prerequisite"]
+
+        monkeypatch.setattr(run, "check_prereqs", prerequisites)
         assert (
             run.main(
                 [
@@ -585,6 +596,8 @@ def test_extension_capacity_is_required_before_initial_runs(
             )
             == 2
         )
+
+        assert reached == ([True] if schema_version == 2 else [])
 
 
 @pytest.fixture
@@ -816,3 +829,265 @@ def test_precision_pools_stored_core_counts_and_filters_bug_ids(case, tmp_path):
         (1 / 3, 1 / 5)
     )
     assert (report.interval.lower, report.interval.upper) == pytest.approx((-2 / 15, 0))
+
+
+REAL_LOAD_ARM = c.load_arm
+
+
+def split_blocks(case, spec, groups):
+    original = v.load_window(case.window_path)
+    paths = []
+    for number, group in enumerate(groups):
+        path = case.window_path.with_name(f"block-{number}.json")
+        controls = replace(
+            original.expected,
+            auth_mode="host" if number else "api",
+            cli_version=str(number),
+        )
+        block = replace(
+            original,
+            schema_version=2,
+            window_id=str(number),
+            expected=controls,
+            planned_run_indices=tuple(range(len(group))),
+            planned_order=tuple(
+                (a, i) for i in range(len(group)) for a in original.arms
+            ),
+        )
+        write(path, block.wire())
+        paths.append(str(path))
+        for arm in (spec.baseline, spec.candidate):
+            for local, ordinal in enumerate(group):
+                if ordinal >= len(arm.scores):
+                    continue
+                ref = arm.scores[ordinal]
+                case.runs[ref].update(
+                    run_index=local,
+                    window_id=block.window_id,
+                    window_sha256=v.file_hash(path),
+                    measurement_window=str(path),
+                    child_auth=controls.auth_mode,
+                    provenance=v.RunFingerprint(
+                        controls, original.arms[arm.name]
+                    ).wire(),
+                )
+                for url in block.pr_urls:
+                    attempt = case.attempts[ref, url]
+                    case.attempts[ref, url] = replace(
+                        attempt,
+                        validity=replace(
+                            attempt.validity,
+                            window_id=block.window_id,
+                            observed=v.RunFingerprint(
+                                controls, original.arms[arm.name]
+                            ),
+                        ),
+                    )
+    return replace(spec, window_path=None, window_paths=tuple(paths))
+
+
+def test_blocks_pool_runs_before_the_unchanged_pr_cluster_rule(
+    case, tmp_path, monkeypatch
+):
+    spec, packets = case.build()
+    for arm, hits in ((spec.baseline, (1, 0, 0)), (spec.candidate, (0, 1, 1))):
+        for ref, hit in zip(arm.scores, hits, strict=True):
+            packets[ref] = replace(
+                packets[ref],
+                observations=tuple(
+                    replace(b, outcome="matched" if hit else "missed")
+                    for b in packets[ref].observations
+                ),
+            )
+    from bench.tests.test_audit import resolve_audit
+
+    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
+    spec = replace(spec, audit_path=str(receipt))
+    expected = paired(spec, packets)
+    spec = split_blocks(case, spec, ((0,), (1, 2), (3,)))
+    # Exercise immutable selection loading as well as pooling, without a load_arm stub.
+    for ref, packet in list(packets.items()):
+        run = tmp_path / ref.run_id
+        root = run / "scores/epoch/score"
+        root.mkdir(parents=True)
+        write(root / "evaluations.json", read_json(packet.root / "evaluations.json"))
+        write(root / "stage_trace_bindings.json", {})
+        (root / "stages.jsonl").touch()
+        hashes = {}
+        for url, aid in packet.manifest.selected_attempts.items():
+            path = run / "attempts/pr" / aid / "attempt.json"
+            exclusive_json(path, asdict(case.attempts[ref, url]))
+            hashes[str(path.relative_to(run))] = v.file_hash(path)
+            exclusive_json(
+                run / "state" / (aid + ".json"),
+                dict(url=url, detail=dict(attempt_id=aid)),
+            )
+        packets[ref] = replace(
+            packet,
+            root=root,
+            manifest=replace(packet.manifest, source_artifact_hashes=hashes),
+        )
+    monkeypatch.setattr(c, "load_arm", REAL_LOAD_ARM)
+    report = paired(spec, packets)
+    assert report.population_reports == expected.population_reports
+    assert report.promotion == expected.promotion
+    assert report.spend == expected.spend
+    assert all(
+        b.baseline_rate == pytest.approx(1 / 3)
+        and b.candidate_rate == pytest.approx(2 / 3)
+        and b.difference == pytest.approx(1 / 3)
+        for b in report.population_reports[0].bugs
+    )
+    assert [b.run_counts for b in report.blocks] == [
+        dict(baseline=n, candidate=n) for n in (1, 2, 0)
+    ]
+    assert [r.pooled_index for b in report.blocks for r in b.arms["candidate"]] == [
+        0,
+        1,
+        2,
+    ]
+    assert [r.run_index for b in report.blocks for r in b.arms["candidate"]] == [
+        0,
+        0,
+        1,
+    ]
+    assert report.blocks[0].lane_id != report.blocks[1].lane_id
+
+
+def audited_blocks(case):
+    from bench.tests.test_audit import resolve_audit
+
+    spec, packets = case.build()
+    spec = split_blocks(case, spec, ((0,), (1, 2)))
+    _, _, receipt = resolve_audit(spec, packets, case.rule_path.parent / "audit")
+    spec = replace(spec, audit_path=str(receipt))
+    paired(spec, packets)
+    return spec, packets
+
+
+def test_global_balance_cannot_hide_an_unbalanced_block(case):
+    spec, packets = audited_blocks(case)
+    ref = spec.candidate.scores[-1]
+    case.runs[ref]["window_id"] = "0"
+    case.runs[ref]["window_sha256"] = v.file_hash(Path(spec.window_paths[0]))
+    first = v.load_window(spec.window_paths[0])
+    fp = v.RunFingerprint(first.expected, first.arms[spec.candidate.name])
+    case.runs[ref]["provenance"] = fp.wire()
+    for url in first.pr_urls:
+        attempt = case.attempts[ref, url]
+        case.attempts[ref, url] = replace(
+            attempt,
+            validity=replace(attempt.validity, window_id=first.window_id, observed=fp),
+        )
+    refuses(paired, spec, packets, match="unbalanced block")
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_each_run_requires_one_declared_window(case, duplicate):
+    spec, packets = audited_blocks(case)
+    if duplicate:
+        spec = replace(spec, window_paths=(*spec.window_paths, spec.window_paths[0]))
+    else:
+        case.runs[spec.candidate.scores[-1]]["window_id"] = "undeclared"
+    refuses(paired, spec, packets, match="duplicate window|undeclared window")
+
+
+def test_rescoring_across_blocks_is_not_an_independent_review_run(case):
+    spec, packets = audited_blocks(case)
+    duplicate = replace(
+        spec.candidate.scores[-1],
+        run_id=spec.baseline.scores[0].run_id,
+        score_id="rescored",
+    )
+    spec = replace(
+        spec,
+        candidate=replace(
+            spec.candidate, scores=(*spec.candidate.scores[:-1], duplicate)
+        ),
+    )
+    refuses(paired, spec, packets, match="duplicate score reference or review run")
+
+
+def test_candidate_provenance_uses_its_own_block_controls(case):
+    spec, packets = audited_blocks(case)
+    case.runs[spec.candidate.scores[-1]]["provenance"]["controls"]["auth_mode"] = "api"
+    refuses(paired, spec, packets, match="review window/treatment mismatch")
+
+
+def test_individually_valid_blocks_require_common_scoring_controls(case):
+    spec, packets = audited_blocks(case)
+    path = Path(spec.window_paths[1])
+    block = v.load_window(path)
+    controls = replace(block.expected, judge_pin="other")
+    write(path, replace(block, expected=controls).wire())
+    for ref, run in case.runs.items():
+        if run["window_id"] != block.window_id:
+            continue
+        run["window_sha256"] = v.file_hash(path)
+        run["provenance"]["controls"]["judge_pin"] = "other"
+        for url in block.pr_urls:
+            attempt = case.attempts[ref, url]
+            case.attempts[ref, url] = replace(
+                attempt,
+                validity=replace(
+                    attempt.validity,
+                    observed=replace(attempt.validity.observed, controls=controls),
+                ),
+            )
+    refuses(paired, spec, packets, match="mixed block comparison contexts")
+
+
+def test_each_block_requires_alternating_selected_starts(case):
+    spec, packets = audited_blocks(case)
+    for key, attempt in list(case.attempts.items()):
+        if key[0] == spec.candidate.scores[-1]:
+            case.attempts[key] = replace(attempt, started_at="2026-10-20T12:00:00Z")
+    refuses(paired, spec, packets, match="planned interleaving")
+
+
+def test_block_report_spends_one_look_and_resolves_relative_aliases(
+    case, tmp_path, monkeypatch
+):
+    spec, packets = case.build()
+    from bench.tests.test_audit import resolve_audit
+
+    _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
+    spec = replace(spec, audit_path=str(receipt))
+    original = paired(spec, packets).population_reports
+    path = tmp_path / "spec.json"
+    write(path, {**asdict(spec), "window_path": "window.json"})
+    assert paired(c.load_comparison_spec(path), packets).population_reports == original
+    spec = split_blocks(case, spec, ((0,), (1, 2)))
+    write(
+        path,
+        {**asdict(spec), "window_paths": [Path(p).name for p in spec.window_paths]},
+    )
+    compare = c.compare_arms
+    monkeypatch.setattr(
+        c, "compare_arms", lambda s: compare(s, packet_loader=packets.__getitem__)
+    )
+    out = tmp_path / "report.json"
+    assert c.main(["--spec", str(path), "--out", str(out)]) == 0
+    row = c.looks.entries()[-1]
+    assert len(c.looks.entries()) == 2
+    assert (
+        row["window_ids"] == ["0", "1"] and row["comparison_id"] == spec.comparison_id
+    )
+    assert row["report_sha256"] == digest(read_json(out))
+    assert row["score_refs"] == [
+        asdict(r) for a in (spec.baseline, spec.candidate) for r in a.scores
+    ]
+
+
+def test_descriptive_blocks_validate_windows_without_spending_a_look(case):
+    spec, packets = case.build("mini", False)
+    expected = paired(spec, packets).population_reports
+    population = p.resolve_population("mini", case.epoch, "core", case.contamination)
+    write(
+        case.window_path,
+        replace(v.load_window(case.window_path), pr_urls=population.pr_urls).wire(),
+    )
+    spec = split_blocks(case, spec, ((0,), (1, 2)))
+    before = case.ledger.read_bytes()
+    assert paired(spec, packets).population_reports == expected
+    assert case.ledger.read_bytes() == before

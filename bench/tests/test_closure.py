@@ -45,7 +45,7 @@ def test_register_score_and_look_leave_treatment_clean(git_repo, monkeypatch):
         compare.PromotionDecision("fail", {}, (), True, False),
     )
     looks.record(
-        SimpleNamespace(wave_id="wave"),
+        "wave",
         SimpleNamespace(baseline=arm, candidate=arm),
         report,
     )

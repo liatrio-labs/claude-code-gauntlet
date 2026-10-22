@@ -6,7 +6,7 @@ import sys
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from statistics import NormalDist
-from typing import Literal, get_args
+from typing import Literal, TypedDict, get_args
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -87,6 +87,19 @@ class Arm:
     agent_read_sha256: str
 
 
+class ScoreRefWire(TypedDict):
+    run_id: str
+    epoch_id: str
+    score_id: str
+
+
+class ArmWire(TypedDict):
+    name: str
+    scores: list[ScoreRefWire]
+    treatment_git_sha: str
+    agent_read_sha256: str
+
+
 @dataclass(frozen=True, slots=True)
 class GoldenCorrection:
     review_contamination_sha256: str
@@ -110,6 +123,26 @@ class ComparisonSpec:
     initial_report_path: str | None = None
     unseal: str | None = None
     golden_correction: GoldenCorrection | None = None
+    window_paths: tuple[str, ...] = ()
+
+
+class ComparisonSpecWire(TypedDict, total=False):
+    comparison_id: str
+    purpose: Literal["wave", "final", "descriptive"]
+    population: PopulationName
+    profile: Literal["core"]
+    baseline: ArmWire
+    candidate: ArmWire
+    epoch_id: str
+    contamination_path: str
+    window_path: str | None
+    window_paths: list[str]
+    rule_path: str | None
+    audit_path: str | None
+    initial_spec_path: str | None
+    initial_report_path: str | None
+    unseal: str | None
+    golden_correction: dict[str, str] | None
 
 
 def load_comparison_spec(path):
@@ -118,7 +151,150 @@ def load_comparison_spec(path):
     for key in (*[k for k in value if k.endswith("_path")], "unseal"):
         if value.get(key):
             value[key] = str((path.parent / value[key]).resolve())
-    return decode(ComparisonSpec, value)
+    value["window_paths"] = [
+        str((path.parent / p).resolve()) for p in value.get("window_paths", [])
+    ]
+    spec = decode(ComparisonSpec, value)
+    if spec.window_path and spec.window_paths:
+        raise ValueError("use only one window path representation")
+    return spec
+
+
+@dataclass(frozen=True, slots=True)
+class Lane:
+    auth_mode: validity.AuthMode
+    host_id: str | None
+    cli_version: str
+    cli_realpath: str
+    cli_sha256: str
+    max_parallel_prs: Literal[1]
+
+
+class LaneWire(TypedDict):
+    auth_mode: validity.AuthMode
+    host_id: str | None
+    cli_version: str
+    cli_realpath: str
+    cli_sha256: str
+    max_parallel_prs: Literal[1]
+
+
+def lane_for(window):
+    c = window.expected
+    return Lane(
+        c.auth_mode,
+        None,
+        c.cli_version,
+        c.cli_realpath,
+        c.cli_sha256,
+        window.max_parallel_prs,
+    )
+
+
+def common_controls(window):
+    return {
+        k: v
+        for k, v in asdict(window.expected).items()
+        if k not in asdict(lane_for(window))
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class RunListing:
+    score_ref: ScoreRef
+    run_id: str
+    run_index: int
+    pooled_index: int
+
+
+class RunListingWire(TypedDict):
+    score_ref: ScoreRefWire
+    run_id: str
+    run_index: int
+    pooled_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class BlockReport:
+    window_id: str
+    window_path: str
+    window_sha256: str
+    lane_id: str
+    lane: Lane
+    arms: dict[str, list[RunListing]]
+    run_counts: dict[str, int]
+
+
+class BlockReportWire(TypedDict):
+    window_id: str
+    window_path: str
+    window_sha256: str
+    lane_id: str
+    lane: LaneWire
+    arms: dict[str, list[RunListingWire]]
+    run_counts: dict[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedBlock:
+    window: validity.MeasurementWindow
+    window_path: str
+    window_sha256: str
+    arms: tuple[Arm, Arm]
+
+
+def comparison_windows(spec):
+    if spec.window_path and spec.window_paths:
+        raise ValueError("use only one window path representation")
+    paths = tuple(
+        str(Path(p).resolve())
+        for p in (
+            spec.window_paths or ((spec.window_path,) if spec.window_path else ())
+        )
+    )
+    windows = tuple((p, validity.load_window(p)) for p in paths)
+    if len(set(paths)) != len(paths) or len({w.window_id for _, w in windows}) != len(
+        windows
+    ):
+        raise ValueError("duplicate window path or ID")
+    return windows
+
+
+def resolve_blocks(spec, packets, *, windows=None):
+    windows = comparison_windows(spec) if windows is None else windows
+    arms = (spec.baseline, spec.candidate)
+    refs = tuple(r for a in arms for r in a.scores)
+    if len(set(refs)) != len(refs) or len({r.run_id for r in refs}) != len(refs):
+        raise ValueError("duplicate score reference or review run")
+    hashes = {w.window_id: file_hash(Path(p)) for p, w in windows}
+    runs = {r: _packet_run(packets[r]) for r in refs}
+    if any(
+        run.get("window_id") not in hashes
+        or run.get("window_sha256") != hashes[run["window_id"]]
+        for run in runs.values()
+    ):
+        raise ValueError("undeclared window or changed window hash")
+    blocks = []
+    for path, w in windows:
+        parts = tuple(
+            replace(
+                a,
+                scores=tuple(
+                    r for r in a.scores if runs[r]["window_id"] == w.window_id
+                ),
+            )
+            for a in arms
+        )
+        indices = [tuple(runs[r]["run_index"] for r in a.scores) for a in parts]
+        if (
+            indices[0] != indices[1]
+            or indices[0] != w.planned_run_indices[: len(indices[0])]
+        ):
+            raise ValueError("unbalanced block or invalid local planned prefix")
+        blocks.append(ResolvedBlock(w, path, hashes[w.window_id], parts))
+    if not any(b.arms[0].scores for b in blocks):
+        raise ValueError("comparison requires a used block")
+    return tuple(blocks)
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +369,7 @@ class ComparisonReport:
     identity: dict
     spend: dict
     promotion: PromotionDecision | None = None
+    blocks: tuple[BlockReport, ...] = ()
 
 
 def quantile(values, q):
@@ -733,7 +910,8 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
     pop = resolve(spec.population, spec.profile)
     gate = spec.purpose != "descriptive"
     rule = decode(PromotionRule, read_json(spec.rule_path)) if spec.rule_path else None
-    window = validity.load_window(Path(spec.window_path)) if spec.window_path else None
+    windows = comparison_windows(spec)
+    window = windows[0][1] if windows else None
     if gate and (
         not window
         or not rule
@@ -746,23 +924,31 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
     if spec.baseline.name == spec.candidate.name or (
         not gate
         and (
-            rule
-            or window
-            or spec.population not in ("dev-slice", "dev-pool", "mini", "holdout")
+            rule or spec.population not in ("dev-slice", "dev-pool", "mini", "holdout")
         )
     ):
-        raise ValueError("descriptive comparison has no gate rule/window")
+        raise ValueError("descriptive comparison has no gate rule")
     look = looks.next_look(window.wave_id, digest(asdict(rule))) if gate else None
     if look == 2 and not spec.initial_spec_path:
         raise ValueError("wave has no remaining gate look without extension prefix")
-    if gate and window.rule_sha256 != digest(asdict(rule)):
+    if gate and any(w.rule_sha256 != digest(asdict(rule)) for _, w in windows):
         raise ValueError("window rule differs from preregistration")
     scope = tuple(epoch.subsets["gate"]) if gate else pop.pr_urls
-    if window and (
-        not validity.same_pr_set(window.pr_urls, scope)
-        or (rule.kind == "ship" and window.expected.auth_mode != "api")
+    if any(
+        not validity.same_pr_set(w.pr_urls, scope)
+        or (rule and rule.kind == "ship" and w.expected.auth_mode != "api")
+        for _, w in windows
     ):
         raise ValueError("gate scope/auth mismatch")
+    if windows and any(
+        common_controls(w) != common_controls(window)
+        or w.arms != window.arms
+        or set(w.arms) != {spec.baseline.name, spec.candidate.name}
+        or w.candidate_arm != spec.candidate.name
+        or (w.wave_id, w.rule_sha256) != (window.wave_id, window.rule_sha256)
+        for _, w in windows
+    ):
+        raise ValueError("mixed block comparison contexts")
     if gate:
         populations.check_baseline_binding(
             manifest,
@@ -776,75 +962,114 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
         else None
     )
     if gate and (
-        len(window.planned_run_indices) < rule.initial_runs + rule.extension_runs
+        sum(len(w.planned_run_indices) for _, w in windows)
+        < rule.initial_runs + rule.extension_runs
         or any(len(a.scores) != count for a in arms)
     ):
         raise ValueError("full rule run count required in window and both arms")
-    packets, selections, cells, stage_rows, runs = [], [], [], [], []
-    for arm in arms:
-        ps, ss, cs, sr, indices = load_arm(
-            arm,
-            scope,
-            epoch,
-            window=window,
-            window_path=spec.window_path,
-            packet_loader=packet_loader,
-        )
-        if (
-            spec.unseal
-            and arm == spec.candidate
-            and any(
-                _packet_run(p)["treatment_git_sha"] != arm.treatment_git_sha for p in ps
+    refs = tuple(r for a in arms for r in a.scores)
+    if len(set(refs)) != len(refs) or len({r.run_id for r in refs}) != len(refs):
+        raise ValueError("duplicate score reference or review run")
+    loaded = {r: packet_loader(r) for r in refs}
+    blocks = resolve_blocks(spec, loaded, windows=windows) if windows else ()
+    selections, cells, stage_rows, block_reports = [], [], [], []
+    ordinals = {(a.name, r.run_id): i for a in arms for i, r in enumerate(a.scores)}
+    for block in blocks or (ResolvedBlock(None, None, None, arms),):
+        ss, local_runs = [], []
+        listing = {}
+        for arm in block.arms:
+            listing[arm.name] = (
+                [
+                    RunListing(
+                        r,
+                        r.run_id,
+                        _packet_run(loaded[r])["run_index"],
+                        ordinals[arm.name, r.run_id],
+                    )
+                    for r in arm.scores
+                ]
+                if window
+                else []
             )
-        ):
-            raise ValueError("holdout final treatment mismatch")
-        if gate and arm == spec.baseline:
+            if not arm.scores:
+                continue
+            ps, selected, _cs, sr, indices = load_arm(
+                arm,
+                scope,
+                epoch,
+                window=block.window,
+                window_path=block.window_path,
+                packet_loader=loaded.__getitem__,
+            )
             for packet in ps:
-                receipt = _packet_run(packet).get("baseline_equivalence_receipt") or {}
-                if (
-                    receipt.get("release_sha") != "839b1886"
-                    or receipt.get("merge_sha") != arm.treatment_git_sha
-                    or not receipt.get("evidence_refs")
-                ):
-                    raise ValueError("missing Wave 0a merge equivalence receipt")
-        packets.extend(ps)
-        selections.extend(ss)
-        cells.extend(cs)
-        stage_rows.extend(sr)
-        runs.append((arm.name, indices))
+                run = _packet_run(packet)
+                if arm.name == spec.candidate.name:
+                    if (
+                        spec.unseal
+                        and run["treatment_git_sha"] != arm.treatment_git_sha
+                    ):
+                        raise ValueError("holdout final treatment mismatch")
+                    if gate:
+                        populations.check_freeze(manifest, run["started"])
+                        if run.get("contamination_sha256") != digest(manifest):
+                            raise ValueError("candidate contamination binding mismatch")
+                        looks.registration(
+                            block.window.wave_id,
+                            digest(asdict(rule)),
+                            started=run["started"],
+                        )
+                elif gate:
+                    receipt = run.get("baseline_equivalence_receipt") or {}
+                    if (
+                        receipt.get("release_sha") != "839b1886"
+                        or receipt.get("merge_sha") != arm.treatment_git_sha
+                        or not receipt.get("evidence_refs")
+                    ):
+                        raise ValueError("missing Wave 0a merge equivalence receipt")
+            ss.extend(selected)
+            stage_rows.extend(sr)
+            local_runs.append((arm.name, indices))
+        if block.window:
+            lane = lane_for(block.window)
+            block_reports.append(
+                BlockReport(
+                    block.window.window_id,
+                    block.window_path,
+                    block.window_sha256,
+                    digest(asdict(lane)),
+                    lane,
+                    listing,
+                    {a.name: len(a.scores) for a in block.arms},
+                )
+            )
+            if not ss:
+                continue
+            validity.validate_matrix(
+                ss, block.window, epoch=epoch, expected_run_indices=local_runs[0][1]
+            )
+            validity.validate_interleaving(ss, block.window, local_runs)
+        for selection in ss:
+            index = ordinals[selection.arm, selection.score_ref.run_id]
+            rows = tuple(replace(r, run_index=index) for r in selection.observations)
+            selections.append(replace(selection, run_index=index, observations=rows))
+            cells.extend(rows)
+    packets = [loaded[r] for r in refs]
     if (
         len({p.run_id for p in packets}) != len(packets)
         or len({p.manifest.evaluator for p in packets}) != 1
         or (
-            gate
+            window
             and len({_packet_run(p)["instrumentation_version"] for p in packets}) != 1
         )
     ):
         raise ValueError("duplicate review or mixed scoring contexts")
-    if gate:
-        matrix = validity.validate_matrix(
-            selections,
-            window,
-            epoch=epoch,
-            expected_run_indices=tuple(window.planned_run_indices[:count]),
-        )
-        validity.validate_interleaving(selections, window, runs)
-        for packet in packets:
-            if packet.score_ref in spec.candidate.scores:
-                populations.check_freeze(manifest, _packet_run(packet)["started"])
-                if _packet_run(packet).get("contamination_sha256") != digest(manifest):
-                    raise ValueError("candidate contamination binding mismatch")
-                looks.registration(
-                    window.wave_id,
-                    digest(asdict(rule)),
-                    started=_packet_run(packet)["started"],
-                )
-    else:
-        matrix = validity.CompleteMatrix(
-            tuple(selections), tuple(cells), tuple(a.name for a in arms), tuple(runs)
-        )
-    matrix = replace(
-        matrix, arms=tuple(a.name for a in arms), stage_observations=tuple(stage_rows)
+    runs = tuple((a.name, tuple(range(len(a.scores)))) for a in arms)
+    matrix = validity.CompleteMatrix(
+        tuple(selections),
+        tuple(cells),
+        tuple(a.name for a in arms),
+        runs,
+        tuple(stage_rows),
     )
     audit_population = resolve("gate-uncontaminated", "core") if gate else pop
     receipt = (
@@ -948,6 +1173,44 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
             or not snapshot["promotion"]["extension_allowed"]
         ):
             raise ValueError("initial report, rule, audit or decision changed")
+        initial_windows = {
+            w.window_id: file_hash(Path(p)) for p, w in comparison_windows(initial)
+        }
+        saved_windows = {
+            b["window_id"]: b["window_sha256"] for b in snapshot.get("blocks", [])
+        }
+        current_windows = {b.window.window_id: b.window_sha256 for b in blocks}
+        if (saved_windows and saved_windows != initial_windows) or any(
+            current_windows.get(wid) != wh for wid, wh in initial_windows.items()
+        ):
+            raise ValueError("substituted initial block identity")
+
+        def assignments(reports):
+            return {
+                (a, r["run_id"]): (b["window_id"], b["window_sha256"], r["run_index"])
+                for b in reports
+                for a, rows in b["arms"].items()
+                for r in rows
+            }
+
+        before = assignments(snapshot.get("blocks", []))
+        after = assignments([asdict(b) for b in block_reports])
+        if before:
+            changed = any(after.get(key) != value for key, value in before.items())
+        else:
+            # Singleton reports written before block listings still bind their window.
+            changed = len(initial_windows) != 1 or any(
+                after.get((a.name, r.run_id))
+                != (
+                    next(iter(initial_windows)),
+                    next(iter(initial_windows.values())),
+                    _packet_run(loaded[r])["run_index"],
+                )
+                for a in (initial.baseline, initial.candidate)
+                for r in a.scores
+            )
+        if changed:
+            raise ValueError("substituted initial run block assignment")
     from bench.runner.ledger import spend_totals
 
     return ComparisonReport(
@@ -956,6 +1219,7 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
         tuple(p.score_ref for p in packets),
         dict(
             look=look,
+            wave_id=window.wave_id if window else None,
             populations={
                 p.population + "/" + p.profile: p.content_sha256 for p in reports
             },
@@ -970,6 +1234,7 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
         ),
         spend_totals([p.ledger_row() for p in packets]),
         decision,
+        tuple(block_reports),
     )
 
 
@@ -979,7 +1244,7 @@ def main(argv=None):
     report = compare_arms(spec)
     exclusive_json(args.out, asdict(report))
     if report.promotion:
-        looks.record(validity.load_window(Path(spec.window_path)), spec, report)
+        looks.record(report.identity["wave_id"], spec, report)
     if spec.population == "holdout":
         looks.holdout(spec.unseal, spec.candidate.treatment_git_sha, use="compare")
     return 0

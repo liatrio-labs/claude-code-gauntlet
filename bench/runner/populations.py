@@ -304,7 +304,12 @@ def run_hook(
         if (
             not rule
             or digest(asdict(rule)) != window.rule_sha256
-            or len(window.planned_run_indices) < rule.initial_runs + rule.extension_runs
+            or not rule.frozen
+            or (
+                window.schema_version == 1
+                and len(window.planned_run_indices)
+                < rule.initial_runs + rule.extension_runs
+            )
         ):
             raise ValueError("window requires full preregistered rule run count")
         if (prior.get("arm") or args.arm) == window.candidate_arm:

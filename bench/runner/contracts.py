@@ -10,6 +10,8 @@ from typing import Any, Literal, TypedDict
 
 from bench.runner.epochs import Profile, canonical
 
+AuthMode = Literal["api", "subscription", "host"]
+
 
 @dataclass(frozen=True, slots=True)
 class ScoreRef:
@@ -55,7 +57,7 @@ class LedgerRow(LedgerProjection):
     tokens_total: int
     cost_usd: float
     per_model: dict[str, Any]
-    auth_mode: Literal["api", "subscription"]
+    auth_mode: AuthMode
     judge_pin: str
     adjudicator_pin: str
     scorer_sha: str

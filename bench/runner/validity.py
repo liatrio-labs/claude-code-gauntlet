@@ -19,6 +19,7 @@ from typing import Literal
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from bench.runner.contracts import (
+    AuthMode,
     ScoreRef,
     artifact_allowed,
     copy_exclusive,
@@ -38,7 +39,6 @@ from bench.runner.epochs import (
 
 ROOT = Path(__file__).resolve().parents[2]
 
-AuthMode = Literal["api", "subscription"]
 CheckpointStatus = Literal["pending", "ok", "timeout", "invalid", "drifted", "failed"]
 ValidityState = Literal["valid", "invalid", "pending", "operational_failure"]
 EFFORT_KEYS = (
@@ -60,15 +60,15 @@ LIMITATIONS = (
 )
 
 
-def refuse_ambient_model_overrides(env):
+def refuse_ambient_model_overrides(env, auth_mode=None):
     if any(k in env for k in (*MODEL_OVERRIDE_KEYS, *EFFORT_KEYS)) or any(
         env.get(k) and env[k].lower() not in ("0", "false")
         for k in (
             "CLAUDE_CODE_USE_BEDROCK",
             "CLAUDE_CODE_USE_VERTEX",
             "CLAUDE_CODE_USE_FOUNDRY",
-            "ANTHROPIC_BASE_URL",
             "ANTHROPIC_AUTH_TOKEN",
+            *(("ANTHROPIC_BASE_URL",) if auth_mode != "host" else ()),
         )
     ):
         raise ValueError(
@@ -133,7 +133,7 @@ def same_provenance(actual, expected):
 
 @dataclass(frozen=True, slots=True)
 class MeasurementWindow:
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     window_id: str
     opens_at: str
     closes_at: str
@@ -178,6 +178,18 @@ def window_from_wire(value):
         or min(window.planned_run_indices) < 0
         or len(window.arms) != 2
         or window.candidate_arm not in window.arms
+        or (
+            window.schema_version == 2
+            and (
+                len(window.planned_order) != 2 * len(window.planned_run_indices)
+                or any(
+                    tuple(i for a, i in window.planned_order if a == arm)
+                    != window.planned_run_indices
+                    for arm in window.arms
+                )
+                or any(a[0] == b[0] for a, b in pairwise(window.planned_order))
+            )
+        )
     ):
         raise ValueError("invalid measurement window")
     return window
@@ -283,7 +295,7 @@ def capture_fingerprint(
     cli_probe=cli_probe,
     model_probe=model_probe,
 ):
-    refuse_ambient_model_overrides(env)
+    refuse_ambient_model_overrides(env, auth_mode)
     path = Path(cli_path).resolve(strict=True)
     models = {**model_probe(root, policy), "orchestrator": child_model}
     if env.get("DISABLE_AUTOUPDATER") != "1":
@@ -655,7 +667,7 @@ def validate_interleaving(selections, window, runs):
         raise ValueError("selected attempts do not follow planned interleaving")
 
 
-def benchmark_policy(timeout_s, *, resolve_limits=True):
+def benchmark_policy(timeout_s, *, resolve_limits=True, root=ROOT):
     from bench.runner.invoke import BENCH_PINS
 
     limits = None
@@ -668,7 +680,7 @@ def benchmark_policy(timeout_s, *, resolve_limits=True):
                     "-e",
                     "import {LIMIT_DEFAULTS} from './workflows/src/registry.js'; console.log(JSON.stringify(LIMIT_DEFAULTS));",
                 ],
-                cwd=ROOT,
+                cwd=root,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -681,7 +693,7 @@ def benchmark_policy(timeout_s, *, resolve_limits=True):
         "pins": dict(BENCH_PINS),
         "timeout_s": timeout_s,
         "stage_limits": limits,
-        "capacity_policy_sha256": file_hash(ROOT / "workflows/src/capacity.js"),
+        "capacity_policy_sha256": file_hash(Path(root) / "workflows/src/capacity.js"),
     }
 
 
@@ -728,7 +740,7 @@ def run_provenance(
     epoch = epoch if epoch is not None else load_epoch(epoch_id, root=DEFAULT_ROOT)
     if epoch_id is not None and epoch_id != epoch.epoch_id:
         raise ValueError("only the active golden epoch is runnable")
-    policy = benchmark_policy(timeout_s, resolve_limits=window is not None)
+    policy = benchmark_policy(timeout_s, resolve_limits=window is not None, root=root)
     cli = window.expected.cli_realpath if window else shutil.which("claude")
     try:
         fp = capture_fingerprint(

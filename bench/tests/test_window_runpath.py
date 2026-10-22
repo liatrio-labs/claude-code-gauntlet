@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 from bench import run
-from bench.runner import check, checkpoint, invoke
+from bench.runner import check, checkpoint, invoke, windows
 from bench.runner import validity as v
 from bench.runner.epochs import load_epoch, read_json
 from bench.tests.test_check import _build_ok_run, _plant_raw_identity
@@ -277,32 +277,41 @@ def test_window_capture_run_and_resume_with_real_preflight_and_fake_child(
     monkeypatch.setenv("BENCH_CLAUDE_HOME", str(workspace / "claude-home"))
     monkeypatch.setenv("FAKE_CLAUDE_MODE", "ok")
     monkeypatch.setenv("FAKE_CLAUDE_ARGV_FILE", str(tmp_path / "child-argv"))
-    epoch = load_epoch(root=run.GOLDEN_DIR)
-    fp = v.capture_fingerprint(
-        cli_path=child,
-        child_model="claude-opus-4-8",
-        auth_mode="subscription",
-        epoch=epoch,
-        judge_pin=epoch.judge_pin,
-        adjudicator_pin=epoch.adjudicator_pin,
-        env={**os.environ, "DISABLE_AUTOUPDATER": "1"},
-        policy=v.benchmark_policy(60),
-    )
-    url = epoch.subsets["smoke"][0]
-    window = v.MeasurementWindow(
-        1,
-        "e2e",
-        "2026-10-20T00:00:00Z",
-        "2026-10-21T00:00:00Z",
-        fp.controls,
-        (url,),
-        (0,),
-        1,
-        {arm: fp.treatment for arm in ("baseline", "candidate")},
-    )
     path = tmp_path / "window.json"
-    v.exclusive_json(path, window.wire())
-    assert v.load_window(path) == window
+    assert (
+        windows.main(
+            [
+                "--population",
+                "mini",
+                "--arm",
+                f"baseline=worktree:{v.ROOT}",
+                "--arm",
+                "candidate=sha:HEAD",
+                "--run-indices",
+                "0",
+                "--auth-mode",
+                "subscription",
+                "--duration-hours",
+                "24",
+                "--opens-at",
+                "2026-10-20T00:00:00Z",
+                "--window-id",
+                "e2e",
+                "--child-model",
+                "claude-opus-4-8",
+                "--cli",
+                str(child),
+                "--timeout-mins",
+                "1",
+                "--out",
+                str(path),
+            ]
+        )
+        == 0
+    )
+    window = v.load_window(path)
+    fp = v.RunFingerprint(window.expected, window.arms["baseline"])
+    url = window.pr_urls[0]
     loads = []
 
     def read_epoch(*args, **kwargs):
@@ -314,8 +323,8 @@ def test_window_capture_run_and_resume_with_real_preflight_and_fake_child(
     assert (
         run.main(
             [
-                "--prs",
-                url,
+                "--tier",
+                "mini",
                 "--measurement-window",
                 str(path),
                 "--arm",

@@ -4,8 +4,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import get_args
 
-from bench.runner.contracts import LedgerRow, ScoreRef
+from bench.runner.contracts import AuthMode, LedgerRow, ScoreRef
 from bench.runner.decode import decode
 from bench.runner.epochs import digest, file_hash, read_json
 from bench.runner.observations import LegacyScoreIdentity, load_packet
@@ -13,7 +14,7 @@ from bench.runner.observations import LegacyScoreIdentity, load_packet
 # Auth semantics must agree across invocation, scoring and reports.
 API_AUTH_MODE = "api"
 SUBSCRIPTION_AUTH_MODE = "subscription"
-AUTH_MODES = (API_AUTH_MODE, SUBSCRIPTION_AUTH_MODE)
+AUTH_MODES = get_args(AuthMode)
 DEFAULT_AUTH_MODE = API_AUTH_MODE
 
 
