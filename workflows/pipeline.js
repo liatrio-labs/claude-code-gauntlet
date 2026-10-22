@@ -4341,6 +4341,11 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
   builder.add();
   builder.add(dimensionsTable);
   renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings, knobs);
+  if (inp.hasReviewMd === false) {
+    builder.add();
+    builder.add('A REVIEW.md at the repository root is the preferred way to state review rules: focus, ignore paths, and severity.');
+    builder.add('Format reference: https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/skills/code-gauntlet/references/review-md-spec.md');
+  }
   return builder.finish();
 }
 // --- reviewStages.js ---
@@ -6932,6 +6937,7 @@ async function runWith(ctx, rawArgs) {
       pluginRoot: A.pluginRoot,
       pipelineVersion: c.pipelineVersion,
       reviewScope: A.reviewScope,
+      hasReviewMd: Array.isArray(A.reviewMd) ? A.reviewMd.length > 0 : A.reviewConfigPath != null,
       policy,
       deliveryTier: deliveryTier ?? 'all',
       deliveryCap: limits.deliveryCap ?? null,

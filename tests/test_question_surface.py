@@ -7,7 +7,7 @@ REPO = Path(__file__).resolve().parents[1]
 SKILLS = REPO / "skills"
 
 # Changing the question surface requires an explicit count change.
-EXPECTED_QUESTION_SITES = 9
+EXPECTED_QUESTION_SITES = 7
 
 MAX_HEADER_CHARS = 12
 MIN_OPTIONS = 2

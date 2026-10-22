@@ -240,23 +240,15 @@ For a file in `legacy/`:
 
 The collector's `review_md` receipt is the authoritative REVIEW.md discovery list: repo root, changed-file directories, and ancestors, in the collector's deterministic order. Phase 2d runs the collector before Reading exactly those paths for the raw workflow waist. The collector copies their bounded prose with source provenance into the shared context; the pipeline separately parses the full raw text and applies thresholds and ignores per subtree. Missing CLAUDE.md/AGENTS.md/QODO.md files do not affect REVIEW.md discovery or precedence. A cap omits prose with a disclosed gap, while the listed file still supplies full raw settings text to the waist.
 
-#### Detection flow (Phase 2d)
-
-Use the successful collector receipt's `review_md` and `review_md_dirs` fields only. `review_md_dirs` is the searched directory list in walk order, repo-relative with root spelled `.`. Do not walk, Glob, or probe again. Run 2d step 4 as follows; emit at most one non-blocking notice alongside triage and never ask a question.
-
-- If `review_md` is empty, say: "No REVIEW.md found - reviewing with built-in defaults. Run `build-review-md` any time to configure thresholds, ignore patterns, and project rules."
-- Otherwise, if `review_md` contains path `REVIEW.md`, choose the first directory in `review_md_dirs` other than `.` whose {directory}/REVIEW.md is absent from `review_md` and whose REVIEW.md does not appear in the receipt's skipped list. If one exists, say: "Root REVIEW.md supplies defaults for this review. {directory} has no REVIEW.md of its own - add one if that area needs different thresholds or suppressions."
-- Otherwise say nothing and proceed. This includes complete directory coverage and subdirectory-only discovery.
-
 A capped file still counts as discovered. A refused candidate is absent from `review_md`; announce its gap separately. Collector or raw Read failure stops the handoff and is never reported as successful empty discovery.
 
-> Headless mode suppresses both optional notices. Discovered configs apply exactly as in interactive mode (root defaults plus matching subtree overrides); `build-review-md` is never invoked and REVIEW.md is read-only. The hierarchical parse still runs; no REVIEW.md is created. See `references/headless-mode.md`.
+REVIEW.md is read-only in both modes. When none is discovered, the report renderer appends a brief tip pointing here. The tip appears only in the report.
 
 ---
 
 ## Rule-Writing Principles
 
-When helping users add rules to REVIEW.md (during scaffolding or when updating), follow these principles drawn from research on AI reviewer effectiveness:
+For rules in REVIEW.md, these principles follow research on AI reviewer effectiveness:
 
 1. **15-25 rules per file, ~50 rules across all REVIEW.md files combined.** Beyond these limits, LLM adherence degrades for ALL rules, not just new ones. The review system's own prompts consume ~50 instruction slots; each rule competes for the remaining capacity. With a root + two subdirectory files (e.g., backend + frontend), budget roughly 15-20 for root and 10-15 per subdirectory.
 2. **Prescriptive for security/correctness, directional for design.** "All async methods MUST accept CancellationToken" (binary pass/fail) vs "Prefer immutable types where practical" (allows edge cases). Prescriptive rules produce low false-positive rates; directional rules handle nuance.
