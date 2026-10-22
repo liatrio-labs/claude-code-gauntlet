@@ -19,7 +19,6 @@ from typing import Literal
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from bench.runner.contracts import (
-    HOST_SET_ENV,
     AuthMode,
     ScoreRef,
     artifact_allowed,
@@ -61,7 +60,7 @@ LIMITATIONS = (
 )
 
 
-def refuse_ambient_model_overrides(env, auth_mode=None):
+def refuse_ambient_model_overrides(env):
     provider_keys = {
         "CLAUDE_CODE_USE_BEDROCK",
         "CLAUDE_CODE_USE_VERTEX",
@@ -70,9 +69,6 @@ def refuse_ambient_model_overrides(env, auth_mode=None):
         "ANTHROPIC_BASE_URL",
     }
     override_keys = {*MODEL_OVERRIDE_KEYS, *EFFORT_KEYS}
-    if auth_mode == "host":
-        provider_keys.remove("ANTHROPIC_BASE_URL")
-        override_keys -= set(HOST_SET_ENV)
     if any(k in env for k in override_keys) or any(
         env.get(k) and env[k].lower() not in ("0", "false") for k in provider_keys
     ):
@@ -300,7 +296,7 @@ def capture_fingerprint(
     cli_probe=cli_probe,
     model_probe=model_probe,
 ):
-    refuse_ambient_model_overrides(env, auth_mode)
+    refuse_ambient_model_overrides(env)
     path = Path(cli_path).resolve(strict=True)
     models = {**model_probe(root, policy), "orchestrator": child_model}
     if env.get("DISABLE_AUTOUPDATER") != "1":

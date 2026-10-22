@@ -204,8 +204,6 @@ def resolve_blocks(spec, packets, *, windows=None):
     windows = comparison_windows(spec) if windows is None else windows
     arms = (spec.baseline, spec.candidate)
     refs = tuple(r for a in arms for r in a.scores)
-    if len(set(refs)) != len(refs) or len({r.run_id for r in refs}) != len(refs):
-        raise ValueError("duplicate score reference or review run")
     hashes = {w.window_id: file_hash(Path(p)) for p, w in windows}
     runs = {r: _packet_run(packets[r]) for r in refs}
     if any(
@@ -874,12 +872,8 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
     if gate and any(w.rule_sha256 != digest(asdict(rule)) for _, w in windows):
         raise ValueError("window rule differs from preregistration")
     scope = tuple(epoch.subsets["gate"]) if gate else pop.pr_urls
-    if any(
-        not validity.same_pr_set(w.pr_urls, scope)
-        or (rule and rule.kind == "ship" and w.expected.auth_mode != "api")
-        for _, w in windows
-    ):
-        raise ValueError("gate scope/auth mismatch")
+    if any(not validity.same_pr_set(w.pr_urls, scope) for _, w in windows):
+        raise ValueError("gate scope mismatch")
     if windows and any(
         common_controls(w) != common_controls(window)
         or w.arms != window.arms

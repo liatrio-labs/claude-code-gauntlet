@@ -883,7 +883,9 @@ def split_blocks(case, spec, groups):
             original,
             schema_version=2,
             window_id=str(number),
-            expected=replace(original.expected, auth_mode="host" if number else "api"),
+            expected=replace(
+                original.expected, auth_mode="subscription" if number else "api"
+            ),
             planned_run_indices=indices,
             planned_order=tuple((a, i) for i in indices for a in original.arms),
         )

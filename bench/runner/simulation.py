@@ -354,7 +354,7 @@ def simulate_rule(library, spec, *, rule_evaluator=compare.evaluate_promotion):
         seed=spec.seed,
         auth_counts={
             a: sum(v.auth == a for v in library.vectors)
-            for a in ("api", "subscription", "host")
+            for a in ("api", "subscription")
         },
         lane_counts={
             key: sum(

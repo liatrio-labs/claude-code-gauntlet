@@ -55,7 +55,6 @@ def test_window_cli_binds_rule_and_captures_each_source(
         git("commit", "-qm", effort)
         shas.append(v.treatment_sha(root))
     monkeypatch.chdir(root)
-    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://host.invalid")
     child = tmp_path / "claude"
     child.write_text("#!/bin/sh\necho 2.1.200\n", encoding="utf-8")
     child.chmod(0o755)
@@ -66,7 +65,7 @@ def test_window_cli_binds_rule_and_captures_each_source(
         path,
         arm=["baseline=sha:HEAD~1", f"candidate=worktree:{root}"],
         cli=child,
-        auth_mode="host",
+        auth_mode="subscription",
         wave="wave",
     )
     if binding != "missing":
