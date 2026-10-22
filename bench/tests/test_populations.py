@@ -11,6 +11,27 @@ from bench.runner.epochs import digest, read_json
 from bench.tests.conftest import refuses, write
 
 
+def test_checked_in_rule_and_contamination_are_frozen_and_bound():
+    from bench.runner.compare import PromotionRule
+    from bench.runner.decode import decode
+    from bench.runner.epochs import DEFAULT_ROOT, load_epoch
+
+    rule = decode(PromotionRule, read_json(DEFAULT_ROOT / "promotion-rule.json"))
+    manifest = read_json(DEFAULT_ROOT / "contamination.json")
+    epoch = load_epoch()
+    assert rule.frozen
+    assert manifest["status"] == "frozen"
+    p.contamination_entries(manifest, epoch)
+    assert manifest["baseline_treatment_sha"] == manifest["agent_read_sha256"]
+    p.check_baseline_binding(
+        manifest, manifest["baseline_treatment_sha"], manifest["agent_read_sha256"]
+    )
+    population = p.resolve_population(
+        "gate-uncontaminated", epoch, rule.profile, manifest
+    )
+    assert population.bug_ids and population.content_sha256
+
+
 def test_exclusions_and_named_membership_are_derived_once(pop_case):
     e, manifest = pop_case
     rows = p.contamination_entries(manifest, e)

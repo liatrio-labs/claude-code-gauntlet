@@ -530,7 +530,7 @@ file has `auditor` (`Sol` or `Opus`), `packet_sha256` (the exact packet file has
 and `labels`: rows with `sample_id`, Boolean `correct`, and nonempty `evidence_refs`.
 A merge spec has `sample_path`, `packet_path`, and `label_paths` in Sol, Opus order.
 An optional third file uses the `owner` seat and labels only disputes. The resulting
-`owner_queue` must be resolved before an operational wave verdict or simulation.
+`owner_queue` must be resolved before an operational wave or ship verdict or simulation.
 
 ```sh
 python3 -m bench.runner.audit --spec merge-spec.json --out audit/receipt.json
@@ -539,7 +539,7 @@ python3 -m bench.runner.audit --spec merge-spec.json --out audit/receipt.json
 A ComparisonSpec has `comparison_id`, `purpose` (`descriptive`, `wave`, or `final`),
 `population`, `profile`, `epoch_id`, `contamination_path`, and `baseline`/`candidate`.
 Each arm has `name`, `scores`, `treatment_git_sha`, and `agent_read_sha256`.
-Operational specs add `window_path` and `rule_path`; wave specs add `audit_path`. All
+Operational specs add `window_path`, `rule_path`, and `audit_path`. All
 relative paths resolve beside the comparison spec. A permitted extension adds
 `initial_spec_path` and `initial_report_path` and preserves the initial score prefix.
 The ledger's first-look report hash binds the saved rule, audit and verdict.
@@ -550,18 +550,25 @@ python3 -m bench.runner.compare --spec comparison.json --out comparison-report.j
 
 Rules use `kind: "wave"` or `"ship"`, `profile: "core"`, `margin_pp`,
 `nonmini_margin_pp`, `initial_runs`, `extension_runs`, `stability_min_runs`,
-`bootstrap` (`draws`, `seed`, `alpha`), and `frozen`. The checked-in rule remains
-unfrozen with null parameters until the owner fixes them after Wave 0b. Ship rules use
-3 runs per arm, zero extension runs, and an API window. Register the frozen rule
-before the first candidate run:
+`stable_loss_min`, `stage_alpha`, `bootstrap` (`draws`, `seed`, `alpha`), and `frozen`.
+The checked-in wave rule is frozen. `stable_loss_min` sets the number of stable losses
+that fails a comparison. `stage_alpha` controls the primary recall bound at both wave
+looks. A wave passes at the first look only when the primary and every harm check
+pass. Inconclusive checks permit the planned extension. At the final look the primary
+must pass; harm checks fail only on evidence of harm and record inconclusive results.
+Ship rules use 3 runs per arm, zero extension runs, and an API window. Both primary
+and non-mini recall lower bounds must exceed their negative margins. The harm checks
+apply separately. Ship also requires a resolved blinded audit. Register the frozen
+rule before the first candidate run:
 
 ```sh
 python3 -m bench.runner.looks --wave WAVE --rule frozen-rule.json
 ```
 
 The append-only `golden/looks.jsonl` is the authoritative look count. The compare
-command appends operational verdicts. A second look requires fail or inconclusive; a
-third is refused. Before the one holdout review at issue #101 close, mint its receipt
+command appends operational verdicts. A fail is final. Only a permitted extension
+allows a second look with the saved initial report and unchanged score prefix. A third
+look is refused. Before the one holdout review at issue #101 close, mint its receipt
 with the approved final SHA:
 
 ```sh

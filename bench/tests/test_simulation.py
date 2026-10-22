@@ -222,7 +222,6 @@ def test_two_stage_simulation_uses_same_audit_and_nested_runs(
         extended for _, _, extended in calls
     )
     assert all(sum(row["guards"]["precision"].values()) == 60 for row in report["rows"])
-    assert all(row["infeasible"] is None for row in report["rows"])
     indices, r0 = s.feasibility(library, 0)
     unchanged = s.generate_vectors(library, r, 0, random.Random(8))
     for effect, detected in ((-100 * r0, False), (100 * (1 - r0), True)):

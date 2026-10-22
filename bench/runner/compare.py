@@ -224,17 +224,19 @@ def cluster_bootstrap(bugs, config):
 
 def packet_precision(packet, population):
     raw = read_json(packet.root / "evaluations.json")
-    return tuple(
-        PrecisionCount(url, metrics.tp, metrics.fp)
-        for url in sorted(population.pr_urls)
-        for metrics in [
-            profiles.profile_metrics(
-                [o for o in packet.observations if o.pr_url == url],
-                raw.get(url, {}).get("deep-review", {}).get("fp", 0),
-                "core",
-            )
-        ]
-    )
+    counts = []
+    for url in sorted(population.pr_urls):
+        metrics = profiles.profile_metrics(
+            [
+                o
+                for o in packet.observations
+                if o.pr_url == url and o.bug_id in population.bug_ids
+            ],
+            raw.get(url, {}).get("deep-review", {}).get("fp", 0),
+            "core",
+        )
+        counts.append(PrecisionCount(url, metrics.tp, metrics.fp))
+    return tuple(counts)
 
 
 def precision_comparison(arms, config):
@@ -429,6 +431,25 @@ def reduce_population(
     )
 
 
+def noninferiority_verdict(interval, margin) -> Verdict:
+    if interval.cluster_count < 2 or interval.lower is None:
+        return "inconclusive"
+    threshold = -margin / 100
+    if interval.lower > threshold:
+        return "pass"
+    if interval.upper <= threshold:
+        return "fail"
+    return "inconclusive"
+
+
+def harm_verdict(upper, margin=0, available=True) -> Verdict:
+    if upper is None or not available:
+        return "inconclusive"
+    if upper < -margin / 100:
+        return "fail"
+    return "pass"
+
+
 def evaluate_promotion(
     reports, receipt: audit.AuditReceipt | None, rule, *, extended=False
 ):
@@ -463,26 +484,26 @@ def evaluate_promotion(
     else:
         guards["primary_recall"] = "inconclusive"
 
-    def harm(name, upper, margin=0, available=True):
-        bounds[name] = upper
-        guards[name] = (
-            "inconclusive"
-            if upper is None or not available
-            else "fail"
-            if upper < -margin / 100
-            else "pass"
+    nonmini_interval = (
+        nonmini.interval if nonmini else Interval(None, None, None, None, 0)
+    )
+    nonmini_harm = "non-mini"
+    if rule.kind == "ship":
+        guards["non-mini"] = noninferiority_verdict(
+            nonmini_interval, rule.nonmini_margin_pp
         )
-
-    harm(
-        "non-mini",
-        nonmini.interval.upper if nonmini else None,
+        bounds["non-mini"] = nonmini_interval.lower
+        nonmini_harm = "non-mini_harm"
+    bounds[nonmini_harm] = nonmini_interval.upper
+    guards[nonmini_harm] = harm_verdict(
+        nonmini_interval.upper,
         rule.nonmini_margin_pp,
-        bool(nonmini and nonmini.interval.cluster_count >= 2),
+        nonmini_interval.cluster_count >= 2,
     )
     precision = primary.precision if primary else None
-    harm(
-        "precision",
-        precision.interval.upper if precision else None,
+    bounds["precision"] = precision.interval.upper if precision else None
+    guards["precision"] = harm_verdict(
+        bounds["precision"],
         available=bool(precision and precision.interval.cluster_count >= 2),
     )
     losses = tuple(b.bug_id for b in primary.bugs if b.stable_loss) if primary else ()
@@ -499,13 +520,16 @@ def evaluate_promotion(
         type(v) is not bool for v in base + candidate
     ):
         raise ValueError("incomplete or unequal audit")
-    harm(
-        "groundedness",
-        groundedness_upper(base, candidate, rule.bootstrap.alpha) if base else None,
+    bounds["groundedness"] = (
+        groundedness_upper(base, candidate, rule.bootstrap.alpha) if base else None
     )
-    harm_failed = any(v == "fail" for k, v in guards.items() if k != "primary_recall")
+    guards["groundedness"] = harm_verdict(bounds["groundedness"])
     verdict: Verdict = guards["primary_recall"]
-    if harm_failed or (
+    if "fail" in guards.values():
+        verdict = "fail"
+    elif (rule.kind == "ship" or not extended) and "inconclusive" in guards.values():
+        verdict = "inconclusive"
+    if (
         rule.kind == "wave"
         and (extended or not rule.extension_runs)
         and verdict != "pass"

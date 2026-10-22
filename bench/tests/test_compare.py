@@ -387,7 +387,16 @@ def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, firs
         if first != "pass"
         else rule()
     )
-    spec, packets = case.build(promotion_rule=r)
+    spec, packets = case.build(
+        promotion_rule=r, count=4 if first == "inconclusive" else 3
+    )
+    full = spec
+    if first == "inconclusive":
+        spec = replace(
+            spec,
+            baseline=replace(spec.baseline, scores=spec.baseline.scores[:3]),
+            candidate=replace(spec.candidate, scores=spec.candidate.scores[:3]),
+        )
     if first == "inconclusive":
         packets = {ref: replace(p, candidates=()) for ref, p in packets.items()}
     _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
@@ -405,6 +414,25 @@ def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, firs
     assert rows[-1]["score_refs"] == [
         asdict(r) for a in (spec.baseline, spec.candidate) for r in a.scores
     ]
+    if first == "inconclusive":
+        _, _, receipt = resolve_audit(full, packets, tmp_path / "extended-audit")
+        extended = replace(
+            full,
+            audit_path=str(receipt),
+            initial_spec_path=str(path),
+            initial_report_path=str(tmp_path / "one.json"),
+        )
+        path = tmp_path / "extended.json"
+        write(path, asdict(extended))
+        assert c.main(["--spec", str(path), "--out", str(tmp_path / "two.json")]) == 0
+        rows = c.looks.entries()
+        assert [r["look"] for r in rows if r["kind"] == "look"] == [1, 2]
+        saved = read_json(tmp_path / "two.json")
+        assert rows[-1]["report_sha256"] == digest(saved)
+        assert rows[-1]["score_refs"] == [
+            asdict(r) for arm in (full.baseline, full.candidate) for r in arm.scores
+        ]
+        assert not saved["promotion"]["extension_allowed"]
     refuses(
         c.main,
         ["--spec", str(path), "--out", str(tmp_path / "three.json")],
@@ -595,7 +623,7 @@ def test_extension_capacity_is_required_before_initial_runs(
 
 @pytest.fixture
 def decision_case():
-    def build(differences=(0.0, 0.0), losses=0, correct=29):
+    def build(differences=(0.0, 0.0), correct=29):
         bugs = tuple(
             c.BugComparison(
                 str(i),
@@ -604,9 +632,9 @@ def decision_case():
                 0.5,
                 0.5 + d,
                 d,
-                "stable_found",
-                "stable_missed",
-                i < losses,
+                "flaky",
+                "flaky",
+                False,
             )
             for i, d in enumerate(differences)
         )
@@ -632,7 +660,7 @@ def decision_case():
         nonmini = replace(
             primary,
             population="gate-uncontaminated-non-mini",
-            interval=c.Interval(-0.2, 0, -0.3, 0.1, 2),
+            interval=c.Interval(0.01, 0.02, 0, 0.03, 2),
         )
         receipt = a.AuditReceipt(
             ("baseline", "candidate"),
@@ -675,6 +703,74 @@ def test_primary_point_below_margin_stops_for_futility(decision_case):
     assert result.guards["primary_recall"] == "fail"
 
 
+@pytest.mark.parametrize("guard", ["non-mini", "precision", "groundedness"])
+def test_unavailable_harm_extends_first_look_but_is_recorded_at_final(
+    decision_case, guard
+):
+    (primary, nonmini), receipt, r = decision_case((0.06, 0.06))
+    if guard == "non-mini":
+        nonmini = replace(nonmini, interval=c.Interval(None, None, None, None, 0))
+    elif guard == "precision":
+        primary = replace(primary, precision=None)
+    else:
+        receipt = replace(receipt, agreed=())
+    reports = (primary, nonmini)
+    initial = c.evaluate_promotion(reports, receipt, r)
+    final = c.evaluate_promotion(reports, receipt, r, extended=True)
+    assert initial.guards["primary_recall"] == final.guards["primary_recall"] == "pass"
+    assert initial.verdict == "inconclusive" and initial.extension_allowed
+    assert final.verdict == "pass" and not final.extension_allowed
+    assert initial.guards[guard] == final.guards[guard] == "inconclusive"
+
+
+@pytest.mark.parametrize("guard", ["primary_recall", "non-mini"])
+@pytest.mark.parametrize(
+    "lower, upper, verdict",
+    [(-0.1, -0.08, "fail"), (-0.08, 0, "inconclusive"), (-0.06, 0, "pass")],
+)
+def test_ship_requires_both_recall_lower_bounds_without_extension(
+    decision_case, guard, lower, upper, verdict
+):
+    reports, receipt, r = decision_case()
+    target = 0 if guard == "primary_recall" else 1
+    reports = tuple(
+        replace(report, interval=c.Interval(lower, upper, lower, upper, 2))
+        if i == target
+        else report
+        for i, report in enumerate(reports)
+    )
+    r = replace(r, kind="ship", extension_runs=0, nonmini_margin_pp=7)
+    result = c.evaluate_promotion(reports, receipt, r)
+    assert result.guards[guard] == result.verdict == verdict
+    assert not result.extension_allowed
+    refuses(c.evaluate_promotion, reports, None, r, match="audit")
+
+
+@pytest.mark.parametrize("loss_count, verdict", [(1, "pass"), (2, "fail")])
+def test_stable_losses_from_reduced_run_matrix_stop_the_wave(
+    case, decision_case, loss_count, verdict
+):
+    epoch = case.epoch
+    population = p.resolve_population(
+        "gate-uncontaminated", epoch, "core", case.contamination
+    )
+    lost = population.bug_ids[:loss_count]
+    gate_bugs = [b for b in epoch.bugs if b.pr_url in epoch.subsets["gate"]]
+    baseline = [[True] * len(gate_bugs)] * 3
+    candidate = [[b.bug_id not in lost for b in gate_bugs]] * 3
+    matrix = matrix_for(case, baseline, candidate)
+    reports, receipt, r = decision_case()
+    primary = c.reduce_population(matrix, population, epoch, "core", r.bootstrap)
+    primary = replace(primary, precision=reports[0].precision)
+    result = c.evaluate_promotion(
+        (primary, reports[1]), receipt, replace(r, margin_pp=100)
+    )
+    assert set(result.stable_loss_bug_ids) == set(lost)
+    assert result.guards["primary_recall"] == "pass"
+    assert result.guards["stable_loss"] == result.verdict == verdict
+    assert not result.extension_allowed
+
+
 @pytest.mark.parametrize(
     "final_differences, verdict", [((0, 0), "pass"), ((-0.2, 0.2), "fail")]
 )
@@ -690,19 +786,16 @@ def test_extension_decides_once_without_final_inconclusive(
 
 
 @pytest.mark.parametrize("kind", ["wave", "ship"])
-@pytest.mark.parametrize(
-    "guard", ["non-mini", "stable_loss", "precision", "groundedness"]
-)
+@pytest.mark.parametrize("guard", ["non-mini", "precision", "groundedness"])
 @pytest.mark.parametrize("harm", [False, True])
 def test_secondary_checks_fail_only_on_harm(decision_case, kind, guard, harm):
     reports, receipt, r = decision_case(
-        losses=2 if guard == "stable_loss" else 1,
-        correct=15 if guard == "groundedness" and harm else 29,
+        correct=15 if guard == "groundedness" and harm else 29
     )
     primary, nonmini = reports
     upper = -0.001 if harm else 0
     if guard == "non-mini":
-        nonmini = replace(nonmini, interval=replace(nonmini.interval, upper=upper))
+        nonmini = replace(nonmini, interval=c.Interval(upper, upper, upper, upper, 2))
     if guard == "precision":
         primary = replace(
             primary,
@@ -715,7 +808,7 @@ def test_secondary_checks_fail_only_on_harm(decision_case, kind, guard, harm):
         r,
         kind=kind,
         extension_runs=3 if kind == "wave" else 0,
-        stable_loss_min=2 if harm else 3,
+        nonmini_margin_pp=0 if harm else 1,
     )
     result = c.evaluate_promotion((primary, nonmini), receipt, r)
     assert result.guards[guard] == ("fail" if harm else "pass")
@@ -731,23 +824,26 @@ def test_secondary_checks_fail_only_on_harm(decision_case, kind, guard, harm):
         )
 
 
-def test_stage_alpha_controls_the_primary_bound(decision_case):
+def test_extension_uses_stage_alpha_for_the_primary_bound(decision_case):
     reports, receipt, r = decision_case(
         (-0.15, -0.12, -0.08, -0.06, -0.04, 0.02, 0.04, 0.09)
     )
     bounds = [
         c.cluster_bootstrap(reports[0].bugs, replace(r.bootstrap, alpha=alpha)).lower
-        for alpha in (0.0294, 0.2)
+        for alpha in (r.stage_alpha, r.bootstrap.alpha)
     ]
     margin = -100 * sum(bounds) / 2
     decisions = [
         c.evaluate_promotion(
-            reports, receipt, replace(r, stage_alpha=alpha, margin_pp=margin)
+            reports,
+            receipt,
+            replace(r, stage_alpha=alpha, margin_pp=margin),
+            extended=True,
         )
-        for alpha in (0.0294, 0.2)
+        for alpha in (r.stage_alpha, r.bootstrap.alpha)
     ]
     assert [d.bounds["primary_recall"] for d in decisions] == bounds
-    assert [d.verdict for d in decisions] == ["inconclusive", "pass"]
+    assert [d.verdict for d in decisions] == ["fail", "pass"]
 
 
 @pytest.mark.parametrize(
@@ -777,7 +873,14 @@ def test_precision_pools_stored_core_counts_and_bootstraps_paired_prs(case, tmp_
     population = p.resolve_population(
         "gate-uncontaminated", case.epoch, "core", case.contamination
     )
-    urls = population.pr_urls[:2]
+    excluded = next(
+        b
+        for b in case.epoch.bugs
+        if b.pr_url in population.pr_urls
+        and b.bug_id not in population.bug_ids
+        and b.category == "bug"
+    )
+    urls = tuple(dict.fromkeys((excluded.pr_url, *population.pr_urls[:2])))
     totals = {arm.name: {} for arm in (spec.baseline, spec.candidate)}
     for arm in (spec.baseline, spec.candidate):
         for run, ref in enumerate(arm.scores):
@@ -809,7 +912,10 @@ def test_precision_pools_stored_core_counts_and_bootstraps_paired_prs(case, tmp_
             packets[ref] = replace(packet, root=root, observations=bugs)
             for url in population.pr_urls:
                 tp = sum(
-                    b.pr_url == url and b.outcome == "matched" and b.category == "bug"
+                    b.pr_url == url
+                    and b.bug_id in population.bug_ids
+                    and b.outcome == "matched"
+                    and b.category == "bug"
                     for b in bugs
                 )
                 fp = raw.get(url, {}).get("deep-review", {}).get("fp", 0)

@@ -388,11 +388,12 @@ incomplete or unresolved evidence is refused for an operational gate or simulati
 
 A wave starts with three runs per arm. Its PR-cluster bootstrap lower bound for
 candidate minus baseline core recall must exceed -7 points, using one-sided
-stage alpha 0.0294 at both looks. It passes early when that bound clears and no harm
-check fails. It fails early when the recall point estimate is below -7 points or a
+stage alpha 0.0294 at both looks. It passes early when that bound clears and every harm
+check passes. It fails early when the recall point estimate is below -7 points or a
 harm check fails. Otherwise it adds three runs per arm, preserving the initial
 prefix and saved report, and passes only if the primary bound clears without harm.
-The final look always passes or fails.
+An inconclusive harm check is recorded at the final look and does not fail it.
+The final look always passes or fails. A fail is final.
 
 Secondary checks fail only on evidence of harm: the non-mini recall upper bound is
 below zero, at least two bugs found in every baseline run are found in no candidate
@@ -419,8 +420,9 @@ independent review run, another audit sample, or another comparison. Audit and
 comparison verify the receipt and final treatment, and refuse another SHA.
 
 Final confirmation uses API 3+3, baseline versus final tip, gate only. The ship rule
-requires its primary recall lower bound to exceed the negative owner margin and
-uses the same harm checks. It has no extension. Improvement is a point estimate of
+requires primary and non-mini recall lower bounds to exceed their negative owner
+margins. It also uses the harm checks and requires a resolved audit. It has no
+extension. Improvement is a point estimate of
 at least +5 points and lower bound above zero, reported but not required. Passing the
 ship line establishes the new baseline. Marketplace bumps are held from Wave 2a until
 this line passes; failure returns to the last passing tip.
@@ -428,7 +430,7 @@ this line passes; failure returns to the last passing tip.
 ## Planning and spend
 
 One empirical simulator resamples whole baseline run vectors and runs the complete
-wave evaluator, including audit uncertainty, stable losses and a permitted extension.
+wave evaluator.
 It reports null pass rate, power at +5/+10 points, Monte Carlo standard errors, guard
 counts, extension use and MDE on the declared effect grid. Groundedness uses a shared
 beta latent rate from the resolved baseline sample, followed by independent same-size
@@ -487,5 +489,5 @@ manifest as supplied JSON, without content validation by this runner.
 
 The dev-slice subscription run through scoring, audit, comparison and simulation, and
 the two-mini A/A comparison remain external acceptance. Synthetic boundary fixtures do
-not replace these receipts. Frozen margins, run counts, MDE, a passing baseline
-scan/freeze, and resolved repository-backed baseline audit are pending.
+not replace these receipts. MDE and a resolved repository-backed baseline audit remain
+pending. The rule and contamination manifest are frozen.

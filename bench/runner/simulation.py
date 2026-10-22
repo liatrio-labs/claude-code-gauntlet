@@ -181,14 +181,12 @@ def generate_vectors(library, rule, effect, rng, *, feasible=None, sampled=None)
         [rng.choice(library.vectors) for _ in range(total)] for _ in range(2)
     ]
     arms = [[list(v.hits) for v in arm] for arm in sampled]
+    eligible_hit = delta < 0
+    probability = -delta / r0 if eligible_hit else delta / (1 - r0) if r0 < 1 else 0
     for vector in arms[1]:
         for i in indices:
-            eligible = vector[i] if delta < 0 else not vector[i]
-            probability = (
-                -delta / r0 if delta < 0 else delta / (1 - r0) if r0 < 1 else 0
-            )
-            if eligible and rng.random() < probability:
-                vector[i] = delta >= 0
+            if vector[i] == eligible_hit and rng.random() < probability:
+                vector[i] = not eligible_hit
     return arms
 
 
