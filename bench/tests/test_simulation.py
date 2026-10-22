@@ -64,9 +64,9 @@ def test_source_windows_audit_binding_and_null_pass_rate(case, simulation_case):
 
     split_blocks(case, spec, ((0,), (1, 2)))
     mixed, _ = s.load_simulation_spec(sim, packet_loader=packets.__getitem__)
-    assert {v.auth for v in mixed.vectors} == {"api", "host"}
+    assert {v.auth for v in mixed.vectors} == {"api", "subscription"}
     planned = s.simulate_rule(mixed, replace(config, trials=1))
-    assert planned["auth_counts"] == {"api": 1, "subscription": 0, "host": 2}
+    assert planned["auth_counts"] == {"api": 1, "subscription": 2}
     assert sorted(planned["lane_counts"].values()) == [1, 2]
     ref = spec.baseline.scores[0]
     original = case.runs[ref]["window_sha256"]

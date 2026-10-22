@@ -361,16 +361,14 @@ Create declarations with `python3 -m bench.runner.windows --population NAME`, tw
 `--arm NAME=sha:REV|NAME=worktree:PATH` arguments, `--run-indices`, `--auth-mode`,
 `--duration-hours`, `--child-model`, and `--out`. Schema 2 supports local block plans;
 schema-1 windows retain full-rule preflight capacity checks. Both schemas keep
-`max_parallel_prs: 1`, serial PRs and immutable resume evidence. Host auth uses the
-operator's existing cloud session; no cloud orchestration or host identity capture is added.
+`max_parallel_prs: 1`, serial PRs and immutable resume evidence.
 
 A comparison's `window_paths` list declares balanced blocks, including reserved empty
 blocks; `window_path` is the singleton alias. Each block uses its own local planned
 prefix. Top-level arm score lists retain their order. Reports list lanes, local and
-pooled indices, and zero-run blocks. Lanes may differ in auth and CLI identity (host
-identity remains unknown). Treatments, scoring context and the common wave/rule remain
-fixed. Extensions bind initial score prefixes and every original block's bytes and
-local run assignments, then fill balanced reserved capacity or append blocks.
+pooled indices, and zero-run blocks. Lanes may differ in auth and CLI identity.
+Treatments, scoring context and the common wave/rule remain fixed. Extensions bind
+initial score prefixes and every original block's bytes and local run assignments, then fill balanced reserved capacity or append blocks.
 Aggregate capacity covers the initial and extension counts. One verdict records one look.
 
 Comparison first averages each bug's Boolean detections over all independent runs in
@@ -435,10 +433,10 @@ one run identity and permits its resume and retry. It refuses another unseal, an
 independent review run, another audit sample, or another comparison. Audit and
 comparison verify the receipt and final treatment, and refuse another SHA.
 
-Final confirmation uses API 3+3, baseline versus final tip, gate only. The ship rule
-requires primary and non-mini recall lower bounds to exceed their negative owner
-margins. It also uses the harm checks and requires a resolved audit. It has no
-extension. Improvement is a point estimate of
+Final confirmation uses 3+3 on API or subscription auth, baseline versus final tip,
+gate only. The ship rule requires primary and non-mini recall lower bounds to exceed
+their negative owner margins. It also uses the harm checks and requires a resolved
+audit. It has no extension. Improvement is a point estimate of
 at least +5 points and lower bound above zero, reported but not required. Passing the
 ship line establishes the new baseline. Marketplace bumps are held from Wave 2a until
 this line passes; failure returns to the last passing tip.
