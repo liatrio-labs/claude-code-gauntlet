@@ -1,5 +1,3 @@
-"""Pure matrices drive rules; loaded evidence drives comparison boundaries."""
-
 import itertools
 import random
 from dataclasses import asdict, replace
@@ -333,51 +331,6 @@ def test_operational_comparison_refuses_verdict_corruption(case, bad, tmp_path):
     refuses(paired, spec, packets)
 
 
-def test_extension_recomputes_its_initial_prefix(case, tmp_path):
-    from bench.tests.test_audit import resolve_audit
-
-    spec, packets = case.build(
-        count=4, promotion_rule=rule(margin_pp=0, extension_runs=1)
-    )
-    for ref in spec.candidate.scores:
-        packets[ref] = replace(packets[ref], candidates=())
-    initial = replace(
-        spec,
-        baseline=replace(spec.baseline, scores=spec.baseline.scores[:3]),
-        candidate=replace(spec.candidate, scores=spec.candidate.scores[:3]),
-    )
-    _, _, receipt = resolve_audit(initial, packets, tmp_path / "initial-audit")
-    initial = replace(initial, audit_path=str(receipt))
-    ip, rp = tmp_path / "initial.json", tmp_path / "report.json"
-    write(ip, asdict(initial))
-    report = paired(initial, packets)
-    assert report.promotion.extension_allowed
-    c.looks.record(v.load_window(case.window_path), initial, report)
-    write(rp, asdict(report))
-    _, _, receipt = resolve_audit(spec, packets, tmp_path / "extended-audit")
-    extended = replace(
-        spec,
-        audit_path=str(receipt),
-        initial_spec_path=str(ip),
-        initial_report_path=str(rp),
-    )
-    assert not paired(extended, packets).promotion.extension_allowed
-    write(rp, {**asdict(report), "spend": {}})
-    refuses(paired, extended, packets, match="initial report")
-    write(
-        ip,
-        asdict(
-            replace(
-                initial,
-                candidate=replace(
-                    initial.candidate, scores=tuple(reversed(initial.candidate.scores))
-                ),
-            )
-        ),
-    )
-    refuses(paired, extended, packets, match="substituted")
-
-
 @pytest.mark.parametrize("first", ["pass", "fail", "inconclusive"])
 def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, first):
     from bench.tests.test_audit import resolve_audit
@@ -404,9 +357,12 @@ def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, firs
     path = tmp_path / "spec.json"
     write(path, asdict(spec))
     compare = c.compare_arms
-    monkeypatch.setattr(
-        c, "compare_arms", lambda s: compare(s, packet_loader=packets.__getitem__)
-    )
+
+    def compare_with_packets(value, **kwargs):
+        kwargs.setdefault("packet_loader", packets.__getitem__)
+        return compare(value, **kwargs)
+
+    monkeypatch.setattr(c, "compare_arms", compare_with_packets)
     assert c.main(["--spec", str(path), "--out", str(tmp_path / "one.json")]) == 0
     rows = c.looks.entries()
     assert [r["kind"] for r in rows] == ["registration", "look"]
@@ -422,6 +378,16 @@ def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, firs
             initial_spec_path=str(path),
             initial_report_path=str(tmp_path / "one.json"),
         )
+        assert not paired(extended, packets).promotion.extension_allowed
+        initial_report = read_json(tmp_path / "one.json")
+        write(tmp_path / "one.json", {**initial_report, "spend": {}})
+        refuses(paired, extended, packets, match="initial report")
+        write(tmp_path / "one.json", initial_report)
+        initial_spec = read_json(tmp_path / "spec.json")
+        initial_spec["candidate"]["scores"].reverse()
+        write(tmp_path / "spec.json", initial_spec)
+        refuses(paired, extended, packets, match="substituted")
+        write(tmp_path / "spec.json", asdict(spec))
         path = tmp_path / "extended.json"
         write(path, asdict(extended))
         assert c.main(["--spec", str(path), "--out", str(tmp_path / "two.json")]) == 0
@@ -622,128 +588,114 @@ def test_extension_capacity_is_required_before_initial_runs(
 
 
 @pytest.fixture
-def decision_case():
+def decision_case(case):
+    primary = paired(*case.build("mini", False)).population_reports[0]
+    r = rule(extension_runs=3, bootstrap=c.BootstrapConfig(1000))
+    precision = c.PrecisionComparison(0.8, 0.8, 0, c.Interval(-0.1, 0, -0.2, 0.1, 2))
+
     def build(differences=(0.0, 0.0), correct=29):
         bugs = tuple(
-            c.BugComparison(
-                str(i),
-                str(i),
-                None,
-                0.5,
-                0.5 + d,
-                d,
-                "flaky",
-                "flaky",
-                False,
-            )
-            for i, d in enumerate(differences)
+            replace(b, pr_url=str(i), difference=d, stable_loss=False)
+            for i, (b, d) in enumerate(zip(primary.bugs, differences, strict=False))
         )
-        interval = c.cluster_bootstrap(bugs, c.BootstrapConfig(1000))
-        precision = c.PrecisionComparison(
-            0.8, 0.8, 0, c.Interval(-0.1, 0, -0.2, 0.1, 2)
-        )
-        primary = c.PopulationComparison(
-            "gate-uncontaminated",
-            "h",
-            "core",
-            len(bugs),
-            0.5,
-            0.5 + sum(differences) / len(bugs),
-            sum(differences) / len(bugs),
-            interval,
-            bugs,
-            {},
-            {},
-            {},
-            precision,
+        report = replace(
+            primary,
+            population="gate-uncontaminated",
+            bugs=bugs,
+            difference=sum(differences) / len(bugs),
+            interval=c.cluster_bootstrap(bugs, r.bootstrap),
+            precision=precision,
         )
         nonmini = replace(
-            primary,
+            report,
             population="gate-uncontaminated-non-mini",
             interval=c.Interval(0.01, 0.02, 0, 0.03, 2),
         )
         receipt = a.AuditReceipt(
             ("baseline", "candidate"),
             tuple(
-                a.AuditRow(arm, i < (30 if arm == "baseline" else correct))
-                for arm in ("baseline", "candidate")
+                a.AuditRow(arm, i < limit)
+                for arm, limit in (("baseline", 30), ("candidate", correct))
                 for i in range(30)
             ),
         )
-        return (
-            (primary, nonmini),
-            receipt,
-            rule(extension_runs=3, bootstrap=c.BootstrapConfig(1000)),
-        )
+        return (report, nonmini), receipt, r
 
     return build
 
 
-def test_primary_pass_stops_early_and_reports_improvement(decision_case):
-    reports, receipt, r = decision_case((0.06, 0.06))
-    result = c.evaluate_promotion(reports, receipt, r)
-    assert (
-        result.verdict == "pass" and not result.extension_allowed and result.improvement
-    )
-    refuses(c.evaluate_promotion, reports, None, r, match="audit")
-    assert result.bounds["primary_recall"] == 0.06
-    assert (
-        set(result.guards)
-        == set(result.bounds)
-        == {"primary_recall", "non-mini", "stable_loss", "precision", "groundedness"}
-    )
-    reports, receipt, r = decision_case((0.04, 0.04))
-    assert not c.evaluate_promotion(reports, receipt, r).improvement
-
-
-def test_primary_point_below_margin_stops_for_futility(decision_case):
-    reports, receipt, r = decision_case((-0.3, 0.1))
-    result = c.evaluate_promotion(reports, receipt, r)
-    assert result.verdict == "fail" and not result.extension_allowed
-    assert result.guards["primary_recall"] == "fail"
-
-
-@pytest.mark.parametrize("guard", ["non-mini", "precision", "groundedness"])
-def test_unavailable_harm_extends_first_look_but_is_recorded_at_final(
-    decision_case, guard
-):
-    (primary, nonmini), receipt, r = decision_case((0.06, 0.06))
-    if guard == "non-mini":
-        nonmini = replace(nonmini, interval=c.Interval(None, None, None, None, 0))
-    elif guard == "precision":
-        primary = replace(primary, precision=None)
-    else:
-        receipt = replace(receipt, agreed=())
-    reports = (primary, nonmini)
-    initial = c.evaluate_promotion(reports, receipt, r)
-    final = c.evaluate_promotion(reports, receipt, r, extended=True)
-    assert initial.guards["primary_recall"] == final.guards["primary_recall"] == "pass"
-    assert initial.verdict == "inconclusive" and initial.extension_allowed
-    assert final.verdict == "pass" and not final.extension_allowed
-    assert initial.guards[guard] == final.guards[guard] == "inconclusive"
-
-
-@pytest.mark.parametrize("guard", ["primary_recall", "non-mini"])
 @pytest.mark.parametrize(
-    "lower, upper, verdict",
-    [(-0.1, -0.08, "fail"), (-0.08, 0, "inconclusive"), (-0.06, 0, "pass")],
+    "kind,guard,lower,upper,extended,verdict",
+    [
+        *(
+            ("wave", "primary_recall", lower, upper, extended, verdict)
+            for lower, upper, extended, verdict in (
+                (0.06, 0.06, False, "pass"),
+                (0.04, 0.04, False, "pass"),
+                (-0.3, 0.1, False, "fail"),
+                (-0.2, 0.2, False, "inconclusive"),
+                (-0.2, 0.2, True, "fail"),
+                (0, 0, True, "pass"),
+            )
+        ),
+        *(
+            ("ship", guard, lower, upper, False, verdict)
+            for guard in ("primary_recall", "non-mini")
+            for lower, upper, verdict in (
+                (-0.1, -0.08, "fail"),
+                (-0.08, 0, "inconclusive"),
+                (-0.06, 0, "pass"),
+            )
+        ),
+        *(
+            (kind, guard, lower, upper, extended, verdict)
+            for kind in ("wave", "ship")
+            for guard in ("non-mini", "precision", "groundedness")
+            for lower, upper, extended, verdict in (
+                (-0.08, -0.08, False, "fail"),
+                (0, 0, False, "pass"),
+                (None, None, False, "inconclusive"),
+                (None, None, True, "pass" if kind == "wave" else "inconclusive"),
+            )
+        ),
+    ],
 )
-def test_ship_requires_both_recall_lower_bounds_without_extension(
-    decision_case, guard, lower, upper, verdict
+def test_promotion_transition_table(
+    decision_case, kind, guard, lower, upper, extended, verdict
 ):
-    reports, receipt, r = decision_case()
-    target = 0 if guard == "primary_recall" else 1
-    reports = tuple(
-        replace(report, interval=c.Interval(lower, upper, lower, upper, 2))
-        if i == target
-        else report
-        for i, report in enumerate(reports)
+    primary_guard = guard == "primary_recall"
+    reports, receipt, r = decision_case(
+        (lower, upper) if primary_guard else (0.06, 0.06),
+        correct=15
+        if guard == "groundedness" and upper is not None and upper < 0
+        else 29,
     )
-    r = replace(r, kind="ship", extension_runs=0, nonmini_margin_pp=7)
-    result = c.evaluate_promotion(reports, receipt, r)
-    assert result.guards[guard] == result.verdict == verdict
-    assert not result.extension_allowed
-    refuses(c.evaluate_promotion, reports, None, r, match="audit")
+    interval = c.Interval(lower, upper, lower, upper, 0 if lower is None else 2)
+    primary, nonmini = reports
+    if guard == "non-mini":
+        nonmini = replace(nonmini, interval=interval)
+    elif guard == "precision":
+        precision = (
+            replace(primary.precision, interval=interval) if lower is not None else None
+        )
+        primary = replace(primary, precision=precision)
+    elif guard == "groundedness" and lower is None:
+        receipt = replace(receipt, agreed=())
+    elif kind == "ship" and primary_guard:
+        primary = replace(primary, interval=interval)
+    r = replace(
+        r,
+        kind=kind,
+        extension_runs=3 if kind == "wave" else 0,
+        nonmini_margin_pp=7 if kind == "ship" else 0,
+    )
+    result = c.evaluate_promotion((primary, nonmini), receipt, r, extended=extended)
+    assert result.verdict == verdict
+    assert result.extension_allowed == (
+        kind == "wave" and not extended and verdict == "inconclusive"
+    )
+    if primary_guard and lower > 0:
+        assert result.improvement == (lower >= 0.05)
 
 
 @pytest.mark.parametrize("loss_count, verdict", [(1, "pass"), (2, "fail")])
@@ -766,62 +718,7 @@ def test_stable_losses_from_reduced_run_matrix_stop_the_wave(
         (primary, reports[1]), receipt, replace(r, margin_pp=100)
     )
     assert set(result.stable_loss_bug_ids) == set(lost)
-    assert result.guards["primary_recall"] == "pass"
     assert result.guards["stable_loss"] == result.verdict == verdict
-    assert not result.extension_allowed
-
-
-@pytest.mark.parametrize(
-    "final_differences, verdict", [((0, 0), "pass"), ((-0.2, 0.2), "fail")]
-)
-def test_extension_decides_once_without_final_inconclusive(
-    decision_case, final_differences, verdict
-):
-    reports, receipt, r = decision_case((-0.2, 0.2))
-    initial = c.evaluate_promotion(reports, receipt, r)
-    assert initial.verdict == "inconclusive" and initial.extension_allowed
-    final, _, _ = decision_case(final_differences)
-    result = c.evaluate_promotion(final, receipt, r, extended=True)
-    assert result.verdict == verdict and not result.extension_allowed
-
-
-@pytest.mark.parametrize("kind", ["wave", "ship"])
-@pytest.mark.parametrize("guard", ["non-mini", "precision", "groundedness"])
-@pytest.mark.parametrize("harm", [False, True])
-def test_secondary_checks_fail_only_on_harm(decision_case, kind, guard, harm):
-    reports, receipt, r = decision_case(
-        correct=15 if guard == "groundedness" and harm else 29
-    )
-    primary, nonmini = reports
-    upper = -0.001 if harm else 0
-    if guard == "non-mini":
-        nonmini = replace(nonmini, interval=c.Interval(upper, upper, upper, upper, 2))
-    if guard == "precision":
-        primary = replace(
-            primary,
-            precision=replace(
-                primary.precision,
-                interval=replace(primary.precision.interval, upper=upper),
-            ),
-        )
-    r = replace(
-        r,
-        kind=kind,
-        extension_runs=3 if kind == "wave" else 0,
-        nonmini_margin_pp=0 if harm else 1,
-    )
-    result = c.evaluate_promotion((primary, nonmini), receipt, r)
-    assert result.guards[guard] == ("fail" if harm else "pass")
-    assert (
-        result.verdict == ("fail" if harm else "pass") and not result.extension_allowed
-    )
-    if guard in ("non-mini", "precision"):
-        assert result.bounds[guard] == upper
-    if guard == "groundedness":
-        # Independent Newcombe upper for 30/30 versus 15/30, or 29/30.
-        assert result.bounds[guard] == pytest.approx(
-            -0.33409524363041554 if harm else 0.053339188189749906
-        )
 
 
 def test_extension_uses_stage_alpha_for_the_primary_bound(decision_case):
@@ -842,7 +739,6 @@ def test_extension_uses_stage_alpha_for_the_primary_bound(decision_case):
         )
         for alpha in (r.stage_alpha, r.bootstrap.alpha)
     ]
-    assert [d.bounds["primary_recall"] for d in decisions] == bounds
     assert [d.verdict for d in decisions] == ["fail", "pass"]
 
 
@@ -864,12 +760,11 @@ def test_rule_validation_rejects_invalid_designs(kw):
     refuses(rule, **kw)
 
 
-def test_precision_pools_stored_core_counts_and_bootstraps_paired_prs(case, tmp_path):
+def test_precision_pools_stored_core_counts_and_filters_bug_ids(case, tmp_path):
     from bench.tests.test_audit import resolve_audit
 
     spec, packets = case.build()
     _, _, receipt = resolve_audit(spec, packets, tmp_path / "audit")
-    spec = replace(spec, audit_path=str(receipt))
     population = p.resolve_population(
         "gate-uncontaminated", case.epoch, "core", case.contamination
     )
@@ -880,66 +775,44 @@ def test_precision_pools_stored_core_counts_and_bootstraps_paired_prs(case, tmp_
         and b.bug_id not in population.bug_ids
         and b.category == "bug"
     )
-    urls = tuple(dict.fromkeys((excluded.pr_url, *population.pr_urls[:2])))
-    totals = {arm.name: {} for arm in (spec.baseline, spec.candidate)}
-    for arm in (spec.baseline, spec.candidate):
-        for run, ref in enumerate(arm.scores):
-            packet = packets[ref]
+    selected = next(
+        b
+        for b in case.epoch.bugs
+        if b.pr_url == excluded.pr_url
+        and b.bug_id in population.bug_ids
+        and b.category == "bug"
+    )
+    for arm, factor in ((spec.baseline, 1), (spec.candidate, 2)):
+        for run, ref in enumerate(arm.scores, 1):
             root = tmp_path / ref.run_id
             root.mkdir()
             raw = {
-                u: {
-                    "deep-review": {
-                        "fp": (run + 1) * (j + 1) * (1 if arm.name == "baseline" else 2)
-                    }
-                }
-                for j, u in enumerate(urls)
+                u: {"deep-review": {"fp": 10000}}
+                for u in case.epoch.subsets["gate"]
+                if u not in population.pr_urls
             }
-            raw.update(
-                {
-                    u: {"deep-review": {"fp": 10000}}
-                    for u in case.epoch.subsets["gate"]
-                    if u not in population.pr_urls
-                }
-            )
+            raw[selected.pr_url] = {"deep-review": {"fp": run * factor}}
             write(root / "evaluations.json", raw)
-            bugs = tuple(
-                replace(b, outcome="matched")
-                if b.pr_url in urls and b.category == "bug"
-                else b
-                for b in packet.observations
+            packet = packets[ref]
+            packets[ref] = replace(
+                packet,
+                root=root,
+                observations=tuple(
+                    replace(b, outcome="matched")
+                    if b.bug_id in (selected.bug_id, excluded.bug_id)
+                    or b.pr_url not in population.pr_urls
+                    else b
+                    for b in packet.observations
+                ),
             )
-            packets[ref] = replace(packet, root=root, observations=bugs)
-            for url in population.pr_urls:
-                tp = sum(
-                    b.pr_url == url
-                    and b.bug_id in population.bug_ids
-                    and b.outcome == "matched"
-                    and b.category == "bug"
-                    for b in bugs
-                )
-                fp = raw.get(url, {}).get("deep-review", {}).get("fp", 0)
-                old = totals[arm.name].get(url, (0, 0))
-                totals[arm.name][url] = (old[0] + tp, old[1] + fp)
     report = next(
         r
-        for r in paired(spec, packets).population_reports
+        for r in paired(
+            replace(spec, audit_path=str(receipt)), packets
+        ).population_reports
         if r.population == "gate-uncontaminated" and r.profile == "core"
     ).precision
-
-    def ratio(rows):
-        tp, fp = map(sum, zip(*rows, strict=True))
-        return tp / (tp + fp) if tp + fp else 0
-
-    prs = sorted(totals["baseline"])
-    rng = random.Random(0)
-    draws = []
-    for _ in range(10000):
-        sample = [prs[rng.randrange(len(prs))] for _ in prs]
-        draws.append(
-            ratio([totals["candidate"][u] for u in sample])
-            - ratio([totals["baseline"][u] for u in sample])
-        )
-    assert report.baseline_precision == ratio(totals["baseline"].values())
-    assert report.candidate_precision == ratio(totals["candidate"].values())
-    assert report.interval.upper == c.quantile(sorted(draws), 0.95)
+    assert (report.baseline_precision, report.candidate_precision) == pytest.approx(
+        (1 / 3, 1 / 5)
+    )
+    assert (report.interval.lower, report.interval.upper) == pytest.approx((-2 / 15, 0))

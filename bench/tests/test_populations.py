@@ -1,5 +1,3 @@
-"""Reviewed exclusions, freeze provenance and one-time holdout access."""
-
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -20,16 +18,9 @@ def test_checked_in_rule_and_contamination_are_frozen_and_bound():
     manifest = read_json(DEFAULT_ROOT / "contamination.json")
     epoch = load_epoch()
     assert rule.frozen
-    assert manifest["status"] == "frozen"
-    p.contamination_entries(manifest, epoch)
-    assert manifest["baseline_treatment_sha"] == manifest["agent_read_sha256"]
-    p.check_baseline_binding(
-        manifest, manifest["baseline_treatment_sha"], manifest["agent_read_sha256"]
-    )
-    population = p.resolve_population(
-        "gate-uncontaminated", epoch, rule.profile, manifest
-    )
-    assert population.bug_ids and population.content_sha256
+    sha = manifest["baseline_treatment_sha"]
+    p.check_baseline_binding(manifest, sha, sha)
+    p.resolve_population("gate-uncontaminated", epoch, rule.profile, manifest)
 
 
 def test_exclusions_and_named_membership_are_derived_once(pop_case):

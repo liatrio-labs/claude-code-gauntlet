@@ -1,5 +1,3 @@
-"""Closure boundaries preserve authorization and verdict populations."""
-
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
