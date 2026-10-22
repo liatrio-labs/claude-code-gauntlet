@@ -19,6 +19,7 @@ from typing import Literal
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from bench.runner.contracts import (
+    HOST_SET_ENV,
     AuthMode,
     ScoreRef,
     artifact_allowed,
@@ -68,9 +69,11 @@ def refuse_ambient_model_overrides(env, auth_mode=None):
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_BASE_URL",
     }
+    override_keys = {*MODEL_OVERRIDE_KEYS, *EFFORT_KEYS}
     if auth_mode == "host":
         provider_keys.remove("ANTHROPIC_BASE_URL")
-    if any(k in env for k in (*MODEL_OVERRIDE_KEYS, *EFFORT_KEYS)) or any(
+        override_keys -= set(HOST_SET_ENV)
+    if any(k in env for k in override_keys) or any(
         env.get(k) and env[k].lower() not in ("0", "false") for k in provider_keys
     ):
         raise ValueError(

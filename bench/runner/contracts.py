@@ -11,6 +11,9 @@ from typing import Any, Literal, TypedDict
 from bench.runner.epochs import Profile, canonical
 
 AuthMode = Literal["api", "subscription", "host"]
+# A cloud session sets these for its own CLI; host runs strip them from the child, so
+# every lane reviews under the same effort and they are not ambient overrides there.
+HOST_SET_ENV = ("MAX_THINKING_TOKENS",)
 
 
 @dataclass(frozen=True, slots=True)
