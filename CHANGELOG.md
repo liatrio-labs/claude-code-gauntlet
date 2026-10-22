@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v3.49.0 (2026-10-22)
+
+### Bug Fixes
+
+- **bench**: Host auth refuses an apiKeyHelper and strips Foundry; trim unused wire shapes and tests
+  ([#547](https://github.com/liatrio-labs/claude-code-gauntlet/pull/547),
+  [`dcc3cb6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/dcc3cb61e02a0b1c5817ce70341f7e512353d091))
+
+### Features
+
+- **bench**: Lane-blocked comparisons, a host auth mode for cloud sessions, and a window CLI
+  ([#547](https://github.com/liatrio-labs/claude-code-gauntlet/pull/547),
+  [`dcc3cb6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/dcc3cb61e02a0b1c5817ce70341f7e512353d091))
+
+- **bench**: Lane-blocked comparisons, host auth for cloud sessions, window CLI (#46)
+  ([#547](https://github.com/liatrio-labs/claude-code-gauntlet/pull/547),
+  [`dcc3cb6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/dcc3cb61e02a0b1c5817ce70341f7e512353d091))
+
+### Testing
+
+- **bench**: The rescore and unbalanced-block cases name the refusal they prove
+  ([#547](https://github.com/liatrio-labs/claude-code-gauntlet/pull/547),
+  [`dcc3cb6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/dcc3cb61e02a0b1c5817ce70341f7e512353d091))
+
+
 ## v3.48.0 (2026-10-22)
 
 ### Bug Fixes
