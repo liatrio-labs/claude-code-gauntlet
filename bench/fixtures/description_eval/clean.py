@@ -1,6 +1,6 @@
 def take(items, count):
     """Return at most count items, preserving order."""
-    return list(items)[: max(0, count)]
+    return [item for position, item in enumerate(items) if position < count]
 
 
 def total(values):
