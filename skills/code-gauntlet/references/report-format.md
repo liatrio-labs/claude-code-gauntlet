@@ -46,13 +46,13 @@ The renderer produces these representative lines from the same templates and enc
 
 Reviewed head `{head_sha_short}` at {generatedAt} for [`{owner}/{repo}#7`](https://github.com/%7Bowner%7D/%7Brepo%7D/pull/7) by Code Gauntlet.
 
-- **Location:** [`{finding.file}:{finding.line_start}-{finding.line_end}`](https://github.com/%7Bowner%7D/%7Brepo%7D/blob/0123456789abcdef0123456789abcdef01234567/%7Bfinding.file%7D)
+- **Location:** [`{finding.file}:10-12`](https://github.com/%7Bowner%7D/%7Brepo%7D/blob/0123456789abcdef0123456789abcdef01234567/%7Bfinding.file%7D#L10-L12)
 
 **GitLab:**
 
 Reviewed head `{head_sha_short}` at {generatedAt} for [`group/sub/{repo}!7`](https://gitlab.com/group/sub/%7Brepo%7D/-/merge_requests/7) by Code Gauntlet.
 
-- **Location:** [`{finding.file}:{finding.line_start}-{finding.line_end}`](https://gitlab.com/group/sub/%7Brepo%7D/-/blob/0123456789abcdef0123456789abcdef01234567/%7Bfinding.file%7D)
+- **Location:** [`{finding.file}:10-12`](https://gitlab.com/group/sub/%7Brepo%7D/-/blob/0123456789abcdef0123456789abcdef01234567/%7Bfinding.file%7D#L10-12)
 <!-- /generated-from-registry-identity:permalink_sample -->
 
 Without a valid identity or linkable file path, the same location renders as a plain code span.
@@ -134,10 +134,10 @@ Reviewed head `{head_sha_short}` at {generatedAt} by Code Gauntlet.
 
 4 findings after the gauntlet — 1 critical, 1 high, 1 medium, 1 low. 1 routed as improvement suggestion. 2 unverified / pipeline-degraded.
 
-- 🔴 [CRITICAL] `{finding.file}:{finding.line_start}-{finding.line_end}`: {finding.title}
-- 🟠 [HIGH] `{finding.file}:{finding.line_start}`: {finding.title}
-- 🟡 [MEDIUM] `{finding.file}:{finding.line_start}`: {finding.title}
-- 💡 [LOW] `{finding.file}:{finding.line_start}` (improvement suggestion): {finding.title}
+- 🔴 [CRITICAL] `{finding.file}:10-12`: {finding.title}
+- 🟠 [HIGH] `{finding.file}:10`: {finding.title}
+- 🟡 [MEDIUM] `{finding.file}:10`: {finding.title}
+- 💡 [LOW] `{finding.file}:10` (improvement suggestion): {finding.title}
 
 ## Change Context
 
@@ -151,7 +151,7 @@ This is the change summary the review agents shared as context.
 
 #### {finding.title}
 
-- **Location:** `{finding.file}:{finding.line_start}-{finding.line_end}`
+- **Location:** `{finding.file}:10-12`
 - **Dimension:** {finding.dimension}
 - **Origin:** surfaced — pre-existing, surfaced by this change
 - **Contested:** the challenger could not confirm the cited location
@@ -189,7 +189,7 @@ This is the change summary the review agents shared as context.
 
 #### {finding.title}
 
-- **Location:** `{finding.file}:{finding.line_start}`
+- **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
 
 {finding.description}
@@ -198,7 +198,7 @@ This is the change summary the review agents shared as context.
 
 #### {finding.title}
 
-- **Location:** `{finding.file}:{finding.line_start}`
+- **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
 
 {finding.description}
@@ -207,7 +207,7 @@ This is the change summary the review agents shared as context.
 
 #### {finding.title}
 
-- **Location:** `{finding.file}:{finding.line_start}`
+- **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
 - **Routing:** improvement suggestion
 - **Reachability:** only under a future change (severity demoted to low)
@@ -222,7 +222,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 
 #### {finding.title}
 
-- **Location:** `{finding.file}:{finding.line_start}`
+- **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
 - **Unverified because:** the validator did not score this finding, so it was not skeptically validated; the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
 
@@ -238,7 +238,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 
 #### {finding.title}
 
-- **Location:** `{finding.file}:{finding.line_start}`
+- **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
 - **Unverified because:** the challenger failed or returned no score, so this finding was not challenge-verified
 

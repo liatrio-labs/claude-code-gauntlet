@@ -11,7 +11,7 @@ def captured_diff(findings):
     paths = sorted({f["file"] for f in findings})
     return "".join(
         f"diff --git a/{p} b/{p}\n--- a/{p}\n+++ b/{p}\n@@ -1,20 +1,20 @@\n"
-        + " context\n" * 20
+        + " return process(value);\n" * 20
         for p in paths
     )
 

@@ -33,6 +33,10 @@ FOOTER = (
 CONTEXT = {
     "file": "src/edited.py",
     "line": 61,
+    "line_start": 61,
+    "line_end": 62,
+    "location_status": "confirmed",
+    "anchor": "unchanged_ctx\nadded",
     "severity": "high",
     "title": "Context-line finding",
     "body": "Body one",
@@ -41,6 +45,10 @@ CONTEXT = {
 ADDED = {
     "file": "src/edited.py",
     "line": 62,
+    "line_start": 62,
+    "line_end": 63,
+    "location_status": "confirmed",
+    "anchor": "added\ntail_ctx",
     "severity": "medium",
     "title": "Added-line finding",
     "body": "Body two",
@@ -49,6 +57,10 @@ ADDED = {
 NEW = {
     "file": "src/app/clients/api/__init__.py",
     "line": 1,
+    "line_start": 1,
+    "line_end": 2,
+    "location_status": "confirmed",
+    "anchor": "added_01\nadded_02",
     "severity": "low",
     "title": "New-file finding",
     "body": "Body three",

@@ -133,8 +133,12 @@ def test_score_to_dimension_credit_and_loss_funnel(
     if trace_status == "no_eliminations":
         raw = read_json(path)
         ids = raw["snapshots"][0]["finding_version_ids"]
+        for version in raw["versions"]:
+            version["finding"].update(
+                location_status="confirmed", line_start=10, line_end=10
+            )
         review["findings"] = [
-            v.projection() for v in trace.versions if v.version_id in ids
+            v["finding"] for v in raw["versions"] if v["version_id"] in ids
         ]
         for snapshot in raw["snapshots"]:
             snapshot.update(finding_version_ids=ids, decisions=[])

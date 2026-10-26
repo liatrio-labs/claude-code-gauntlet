@@ -72,6 +72,10 @@ def test_poster_mode_stdout(
                 "file": "foo.py",
                 "line": 2,
                 "severity": "high",
+                "line_start": 2,
+                "line_end": 2,
+                "location_status": "confirmed",
+                "anchor": "original_source_value()",
                 "title": "Bug A",
                 "body": "Body A",
             }
@@ -96,7 +100,9 @@ def test_poster_mode_stdout(
         if spelling == "relative"
         else str(path)
     )
-    raw_diff = "--- foo.py\n+++ foo.py\n@@ -1,1 +1,2 @@\n context\n+added\n"
+    raw_diff = (
+        "--- foo.py\n+++ foo.py\n@@ -1,1 +1,2 @@\n context\n+original_source_value()\n"
+    )
     fake = forge_factory.configure(
         FakeForge(diffs=[(raw_diff, "", 0)])
         if platform == "github"
@@ -1290,6 +1296,18 @@ def test_patch_serialization_fallback(
 def test_patch_command_boundaries(
     case, findings, sha, code, stdout, stderr, tmp_path, invoke, monkeypatch
 ):
+    if case in ("downgrade", "warning-breaks"):
+        rows = json.loads(findings)
+        for row in rows:
+            row.update(
+                line_start=row["line"],
+                line_end=row["end_line"],
+                location_status="confirmed",
+                claimed_line_start=row["line"],
+                claimed_line_end=row["end_line"],
+                anchor="original_source_value()",
+            )
+        findings = json.dumps(rows)
     (tmp_path / "code-gauntlet-findings-abc1234.json").write_text(
         findings, encoding="utf-8"
     )
@@ -1449,6 +1467,12 @@ def test_patch_stdio(path, line, title, stdout, stderr, tmp_path):
                     "line": line,
                     "end_line": line,
                     "title": title,
+                    "line_start": line,
+                    "line_end": line,
+                    "location_status": "confirmed",
+                    "claimed_line_start": line,
+                    "claimed_line_end": line,
+                    "anchor": "original_source_value()",
                     "suggested_fix_code": "changed",
                 }
             ]

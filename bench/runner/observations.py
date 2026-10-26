@@ -37,7 +37,9 @@ Dimension = Literal[
 ]
 Outcome = Literal["matched", "missed", "operational_failure", "unavailable"]
 ProvenanceStatus = Literal["complete", "legacy_unknown", "ambiguous"]
-ContextStatus = Literal["head_and_hunk", "hunk_only", "full_diff", "missing"]
+ContextStatus = Literal[
+    "head_and_hunk", "hunk_only", "full_diff", "missing", "file_only_unconfirmed"
+]
 
 
 Stage = Literal[

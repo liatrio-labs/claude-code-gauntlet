@@ -383,6 +383,8 @@ def test_summary_containment(title: str, path: str, expected: str) -> None:
                         "title": title,
                         "file": path,
                         "line_start": 1,
+                        "line_end": 1,
+                        "location_status": "confirmed",
                         "severity": "high",
                     }
                 ]

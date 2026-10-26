@@ -655,10 +655,10 @@ def _placeholders(prefix: str, fields: str) -> dict[str, str]:
 
 
 _TEMPLATE_FINDING = {
-    **_placeholders(
-        "finding", "id file line_start title description confidence dimension"
-    ),
+    **_placeholders("finding", "id file title description confidence dimension"),
     "location_status": "confirmed",
+    "line_start": 10,
+    "line_end": 10,
 }
 
 _TEMPLATE_FIXTURE: dict[str, Any] = {
@@ -690,10 +690,11 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
             "origin": "surfaced",
             **_placeholders(
                 "finding",
-                "line_end evidence suggestion claude_md_rule rule_source spec_text "
+                "evidence suggestion claude_md_rule rule_source spec_text "
                 "cross_file_refs affected_consumers attack_vector behavior_preserved "
                 "criticality failure_scenario hidden_errors invalid_state_example",
             ),
+            "line_end": 12,
             "challenge_contested": True,
             "corroborations": [
                 _placeholders(
@@ -858,6 +859,9 @@ def pr_identity_fields_body(identity: Mapping[str, Any]) -> list[str]:
 
 
 _INLINE_SAMPLE_FINDING = {
+    "location_status": "confirmed",
+    "line_start": 10,
+    "line_end": 10,
     "severity": "severity",
     "title": "{finding.title}",
     "body": "{body}",

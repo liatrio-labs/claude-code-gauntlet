@@ -57,6 +57,8 @@ def test_summary_and_skipped_location_bytes(filepath: str, expected: str) -> Non
         "severity": "high",
         "file": filepath,
         "line_start": 12,
+        "line_end": 12,
+        "location_status": "confirmed",
         "title": "Location",
     }
     summary = run_node(
@@ -92,6 +94,8 @@ def test_permalinked_summary_slice_and_guard_equality() -> None:
                 "severity": "high",
                 "file": "app/@modal/<Slot>.tsx",
                 "line_start": 8,
+                "line_end": 8,
+                "location_status": "confirmed",
                 "title": (
                     "Use `foo()` and `<Slot>`; mail dev@example.test; &#\u0666\u0664;"
                 ),
@@ -101,6 +105,8 @@ def test_permalinked_summary_slice_and_guard_equality() -> None:
                 "severity": "low",
                 "file": "src/a<`b.py",
                 "line_start": 1,
+                "line_end": 1,
+                "location_status": "confirmed",
                 "title": "Path boundary",
             },
         ],
@@ -131,6 +137,8 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             "title": "Primary",
             "file": "a.js",
             "line_start": 1,
+            "line_end": 1,
+            "location_status": "confirmed",
             "severity": "high",
             "confidence": 10,
             "consolidation_key": "g",
@@ -141,6 +149,8 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             "title": "Lower ranked child",
             "file": "lower.js",
             "line_start": 11,
+            "line_end": 11,
+            "location_status": "confirmed",
             "severity": "high",
             "confidence": 60,
             "consolidation_key": "g",
@@ -151,6 +161,8 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             "title": "Higher ranked child",
             "file": "higher.js",
             "line_start": 12,
+            "line_end": 12,
+            "location_status": "confirmed",
             "severity": "high",
             "confidence": 95,
             "consolidation_key": "g",
@@ -272,15 +284,15 @@ def test_missing_line_alias_degrades_gracefully_not_a_crash(
     assert result.code == 0, result.err
     assert result.payload is not None
     payload = result.payload["payload"]
-    assert len(payload["comments"]) == 0
-    assert "could not be anchored inline" in payload["body"]
+    assert len(payload["comments"]) == 2
+    assert "could not be anchored inline" not in payload["body"]
 
 
 @pytest.mark.parametrize(
     ("drop_end_alias", "kept", "reasons"),
     [
         pytest.param(False, 2, {}, id="kept"),
-        pytest.param(True, 0, {"missing_end_line": 2}, id="missing-end-alias"),
+        pytest.param(True, 2, {}, id="missing-end-alias"),
     ],
 )
 def test_pipeline_patch_alias_contract(
@@ -647,6 +659,8 @@ def test_verify_localises_real_receipt_input_typo(
             "id": f"F{i}",
             "file": "source",
             "line_start": 1,
+            "line_end": 1,
+            "location_status": "confirmed",
             "severity": "high",
             "confidence": 80,
             "description": "`alpha_token` and `beta_token`",

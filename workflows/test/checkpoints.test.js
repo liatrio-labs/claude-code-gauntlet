@@ -302,7 +302,7 @@ test('late legacy replay remains body only', async () => {
     assert.equal(out.ok, true);
     assert.equal(ctx.calls.some((call) => call.label.startsWith('verify-') && call.prompt.includes('legacy')), false);
     const held = payload.findings[0];
-    assert.match(payload.report, /`legacy\.js`: finding legacy/);
+    assert.match(payload.report, /`legacy\.js \(location unconfirmed\)`: finding legacy/);
     assert.doesNotMatch(payload.report, /:900|-999/);
     assert.equal(held.location_status, 'unconfirmed');
     assert.equal(held.claimed_line_start, 900);

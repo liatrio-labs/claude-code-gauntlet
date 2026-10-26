@@ -195,6 +195,42 @@ def location_allows(finding: Mapping[str, object], right: str) -> bool:
     )
 
 
+def normalize_location(finding: Mapping[str, object]) -> dict[str, object]:
+    """Derive delivery aliases only from coherent pipeline-owned coordinates."""
+    out = dict(finding)
+    span = canonical_range(finding)
+    if span is None:
+        out["location_status"] = "unconfirmed"
+        for key in ("line_start", "line_end", "line", "end_line"):
+            out.pop(key, None)
+    else:
+        out["line"], out["end_line"] = span
+    return out
+
+
+def anchor_matches_span(
+    finding: Mapping[str, object], lines: Sequence[str], *, whole: bool = False
+) -> bool:
+    """Recheck a held quote at its canonical site without searching or relocating."""
+    span = canonical_range(finding)
+    if span is None or len(lines) != span[1] - span[0] + 1:
+        return False
+    quotes = anchor_candidates(finding.get("anchor"))
+    if any(quote.explicit_old for quote in quotes):
+        return False
+    return any(
+        valid_quote(quote)
+        and len(quote.lines) == len(lines)
+        and (
+            tuple(line.strip() for line in quote.lines)
+            == tuple(line.strip() for line in lines)
+            if whole
+            else _matches(quote, lines, 0)
+        )
+        for quote in quotes
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class LoadedContextMap:
     entries: Mapping[int, ContextMapEntry]

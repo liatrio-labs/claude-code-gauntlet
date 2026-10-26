@@ -157,6 +157,9 @@ def test_patch_payload(payload, offsets, expected):
                 "body": "b",
                 "suggested_fix_code": payload,
                 "_fence_offsets": (9, 9),
+                "location_status": "confirmed",
+                "line_start": 2,
+                "line_end": 3,
             },
             fence_offsets=offsets,
         )
@@ -228,6 +231,7 @@ def test_delivery_groups(primary):
         {"title": "A", "consolidation_key": "k", "consolidation_primary": primary},
         {"title": "Second", "consolidation_key": "j"},
     ]
+    findings = [finding(**member) for member in findings]
     before = copy.deepcopy(findings)
     groups = compose.consolidate_delivery(findings)
     assert [
@@ -309,6 +313,12 @@ GROUP_SECTIONS_CASES = {
     ids=GROUP_SECTIONS_CASES,
 )
 def test_group_sections(primary, corroborators, expected):
+    primary = {
+        "location_status": "confirmed",
+        "line_start": 2,
+        "line_end": 3,
+        **primary,
+    }
     assert compose.render_group_sections(primary, corroborators) == expected
     assert compose.render_group_body(primary, corroborators) == expected + TRAILER
 
@@ -496,7 +506,7 @@ SKIPPED_SECTIONS_CASES = {
         )
         + SKIPPED_NOTE
         + (
-            "\n\n#### `src/app.py`\n\n**\U0001f4a1 [LOW] \uff20title &lt;b>**"
+            "\n\n#### `src/app.py (location unconfirmed)`\n\n**\U0001f4a1 [LOW] \uff20title &lt;b>**"
             "\n\ntoken [REDACTED]"
         ),
     ),
@@ -729,7 +739,7 @@ def test_skipped_frame_before_inline_posts() -> None:
     assert "The following 1 finding references lines outside this diff" in section
     assert "inline comment was posted" not in section
     assert "inline comments were posted" not in section
-    assert "#### `src/app.py:9`" in section
+    assert "#### `src/app.py (location unconfirmed)`" in section
 
 
 def test_summary_prose_folds_before_skipped_groups() -> None:

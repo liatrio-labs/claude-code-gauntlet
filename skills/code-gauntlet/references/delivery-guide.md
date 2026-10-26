@@ -51,9 +51,11 @@ whitespace-only all count as absent and produce no heading.
 **`suggestion` always renders as prose; it never becomes a suggestion block.** Only
 `suggested_fix_code` produces the committable ```suggestion fence, and only after
 `post_review.py` runs it through a deterministic pre-render apply-check — the field must be a
-string, non-empty after redaction, ship a matching `end_line`, land inside a valid diff range,
+string, non-empty after redaction, have fence rights and a whole-line anchor matching every
+canonical source line, preserve the held claimed span length, land inside a valid diff range,
 match this render site's actual apply range, differ from the current text, and stay within the
-size bound. Any failure strips the field before render and the finding falls back to the prose
+size bound. Unconfirmed and legacy locations stay in the review body with the label
+`location unconfirmed`; they carry no inline comment, fence, patch artifact, or fix task. Any failure strips the field before render and the finding falls back to the prose
 `suggestion`, with the reason recorded via `warn_skip`. A suggestion fence is a one-click apply action, so it requires a dedicated patch field and a proved apply range.
 
 A multi-line fence on GitLab carries an offsets header, `` ```suggestion:-m+n ``, with `m`/`n`

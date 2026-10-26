@@ -172,7 +172,7 @@ const OUTSIDE_SUMMARY_ROWS = [
       + 'docs/&lt;img src=x onerror=alert(1)>!\uFF3Bc](http://evil.example)\uFF20team.js,x&lt;!--,y-->z,b.js' },
   { name: 'folded normalized Location refuses permalink', finding: {
     file: 'a'.repeat(513), line_start: null, line_end: null,
-  }, prefix: '- **Location:', expected: '- **Location:** `' + 'a'.repeat(512) + ' [folded: 1 more characters]`' },
+  }, prefix: '- **Location:', expected: '- **Location:** `' + 'a'.repeat(512) + ' [folded: 1 more characters] (location unconfirmed)`' },
   { name: 'finding title keeps words separated across CR', finding: { title: 'left\rright <b> @bot' },
     prefix: '#### ', expected: '#### left right &lt;b> \uFF20bot' },
   { name: 'corroborator title uses the line contract and spans preserve visible bytes', finding: { corroborations: [
@@ -280,9 +280,8 @@ const LOCATION_ROWS = [
     expected: '- **Location:** `src/a.js forged:10`' },
   { name: 'redacted path refuses link', finding: { file: 'src/ghp_' + 'A'.repeat(36) + '.js' },
     expected: '- **Location:** `src/[REDACTED].js:10`' },
-  { name: 'reverse range has no anchor', finding: { file: 'src/a.js', line_start: 12, line_end: 10 },
-    expected: '- **Location:** [`src/a.js:12-10`]'
-      + '(https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a.js)' },
+  { name: 'reverse range has no rights', finding: { file: 'src/a.js', line_start: 12, line_end: 10 },
+    expected: '- **Location:** `src/a.js (location unconfirmed)`' },
   { name: 'missing platform refuses link', finding: { file: 'src/a.js' }, identity: { platform: undefined },
     expected: '- **Location:** `src/a.js:10`' },
   { name: 'parent segment refuses link', finding: { file: 'src/../a.js' }, expected: '- **Location:** `src/../a.js:10`' },
@@ -600,4 +599,21 @@ for (const row of SHARED_SUMMARY_ROWS) test(`summary boundary: ${row.name}`, () 
   const text = rendered(row.input);
   assert.equal(surface(text, { start: '## Summary\n\n', end: '\n\n## Change Context' }), row.expected);
   assert.equal(report.renderSummaryBody(row.input), row.expected);
+});
+
+test('location rights govern report and summary links', () => {
+  for (const status of ['confirmed', 'relocated', 'unconfirmed', undefined, 'forged']) {
+    const member = finding('L', { file: 'source.js', line_start: 7, line_end: 8, location_status: status,
+      anchor: 'RAW_SOURCE_QUOTE', claimed_line_start: 987, claimed_line_end: 999 });
+    const input = { ...reportInput(), findings: [member] };
+    const full = report.renderReport(input);
+    const summary = report.renderSummaryBody(input);
+    const resolved = ['confirmed', 'relocated'].includes(status);
+    for (const text of [full, summary]) {
+      assert.equal(text.includes('source.js#L7-L8'), resolved);
+      assert.equal(text.includes('source.js (location unconfirmed)'), !resolved);
+      assert.ok(text.includes(member.title));
+      assert.doesNotMatch(text, /RAW_SOURCE_QUOTE|987|999/);
+    }
+  }
 });

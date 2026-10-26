@@ -16,6 +16,7 @@ from gauntlet.delivery.fold import (
 )
 from gauntlet.delivery.gate import FenceOffsets
 from gauntlet.delivery.input import Finding
+from gauntlet.location import canonical_range, location_allows
 from gauntlet.markdown import fence_run
 from gauntlet.marker import LEGACY_PRODUCT, build_footer, build_prose_footer
 from gauntlet.text import (
@@ -188,7 +189,7 @@ def render_finding_sections(
     # The gate removes ineligible patches at each render site so inline and degraded
     # bodies can differ. Patch content stays exact except for credential redaction.
     # Normalize once: a second pass removes another LF and changes the approved patch.
-    if suggested_fix:
+    if suggested_fix and location_allows(finding, "fence"):
         suggested_fix = redact_secrets(suggested_fix)
         open_f, close_f = _suggestion_fence(suggested_fix, offsets=fence_offsets)
         parts += ["", open_f, suggested_fix, close_f]
@@ -258,14 +259,18 @@ def render_group_sections(
     return f"{body}\n\n---\n\n{section}"
 
 
-def _skipped_location(filepath: object, line: object) -> str:
-    return f"{filepath}:{line}" if line is not None else str(filepath or "?")
+def _skipped_location(filepath: object, finding: Mapping[str, object]) -> str:
+    if not location_allows(finding, "sourceLink"):
+        return f"{filepath or '?'} (location unconfirmed)"
+    span = canonical_range(finding)
+    assert span is not None
+    return f"{filepath}:{span[0]}"
 
 
 def _omitted_entries(entries: Sequence[SkippedEntry]) -> tuple[OmittedEntry, ...]:
     return tuple(
         OmittedEntry(
-            _skipped_location(entry.filepath, entry.line),
+            _skipped_location(entry.filepath, entry.finding),
             entry.finding.get("title", "Finding"),
         )
         for entry in entries
@@ -312,7 +317,7 @@ def _skipped_piece(
     filepath: object, line: object, finding: Mapping[str, object]
 ) -> str:
     # Neutralize the assembled heading as well as its prepared finding fields.
-    location = _skipped_location(filepath, line)
+    location = _skipped_location(filepath, finding)
     piece = (
         f"\n\n#### {prepare_location(location)}\n\n{render_finding_sections(finding)}"
     )
@@ -503,7 +508,7 @@ def consolidate_delivery(findings: Sequence[Finding]) -> list[Group]:
     key_to_group: dict[str, int] = {}
     for finding in findings:
         key = finding.get("consolidation_key")
-        if not key:
+        if not key or not location_allows(finding, "inline"):
             members_by_group.append([finding])
             continue
         index = key_to_group.get(key)

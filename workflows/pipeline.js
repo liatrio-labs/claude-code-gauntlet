@@ -3758,6 +3758,8 @@ function coerceReportFinding(finding, severities) {
     let value;
     if (key === 'severity') {
       value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw, severities);
+    } else if (key === 'line_start' || key === 'line_end') {
+      value = raw;
     } else if (key === 'confidence') {
       value = reportAsConfidence(raw);
     } else if (key === 'corroborations') {
@@ -3878,7 +3880,7 @@ function reportBuilder() {
   return { add, addSpans, addEvidence, finish };
 }
 function joinLocation(finding, preparePart, file = preparePart(finding.file)) {
-  if (!isPresent(finding.line_start)) return file;
+  if (!locationAllows(finding, 'sourceLink')) return `${file} (location unconfirmed)`;
   const start = preparePart(finding.line_start);
   if (!isPresent(finding.line_end) || String(finding.line_end) === String(finding.line_start)) {
     return `${file}:${start}`;
@@ -3923,14 +3925,8 @@ function permalinkContext(identity) {
     : null;
   return { repositoryBase, blobBase, template, values };
 }
-function positiveLine(value) {
-  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? value : null;
-  if (typeof value !== 'string' || !/^[0-9]+$/.test(value)) return null;
-  const number = Number(value);
-  return Number.isSafeInteger(number) && number > 0 ? number : null;
-}
 function locationUrl(finding, permalinks, displayedLocation) {
-  if (!permalinks.blobBase || !isPresent(finding.file)) return null;
+  if (!locationAllows(finding, 'sourceLink') || !permalinks.blobBase || !isPresent(finding.file)) return null;
   const rawFile = reportAsText(finding.file);
   if (outboundBase(rawFile) !== rawFile) return null;
   if (oneLine(rawFile) !== rawFile) return null;
@@ -3938,15 +3934,9 @@ function locationUrl(finding, permalinks, displayedLocation) {
   const segments = rawFile.split('/');
   if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
   const path = segments.map(encodeUrlSegment).join('/');
-  let anchor = '';
-  const start = positiveLine(finding.line_start);
-  const endPresent = isPresent(finding.line_end);
-  const end = positiveLine(finding.line_end);
-  if (start !== null && (!endPresent || end === start)) {
-    anchor = templateValue(permalinks.template.line, { start: String(start) });
-  } else if (start !== null && end !== null && end > start) {
-    anchor = templateValue(permalinks.template.range, { start: String(start), end: String(end) });
-  }
+  const [start, end] = canonicalRange(finding);
+  const anchor = templateValue(start === end ? permalinks.template.line : permalinks.template.range,
+    { start: String(start), end: String(end) });
   return `${permalinks.blobBase}${path}${anchor}`;
 }
 function unverifiedReason(finding) {
