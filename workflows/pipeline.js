@@ -210,7 +210,7 @@ const FINDING_PROP_TYPES = deepFreeze({
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
   dimension: 'string', origin: 'string', evidence: 'string',
-  anchor: { type: 'string', description: 'Exact text of 1 to 4 contiguous source lines at the PR head in file, at most 400 characters; OMIT this field when unavailable.' },
+  anchor: { type: 'string', description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
   suggestion: 'string', claude_md_rule: 'string',
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string' } },
@@ -1687,7 +1687,8 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
   for (const [k, t] of Object.entries({ ...FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
     props[k] = typeof t === 'string' ? { type: t } : deepClone(t);
   }
-  const required = [...FINDING_REQUIRED, ...(requiredExtra || [])];
+  props.anchor.minLength = 1;
+  const required = [...FINDING_REQUIRED, 'anchor', ...(requiredExtra || [])];
   const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
   if (conditionalRequired && conditionalRequired.length) {
     itemSchema.allOf = conditionalRequired.map(({ dimension, required: dimRequired }) => ({

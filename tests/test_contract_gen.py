@@ -50,7 +50,7 @@ def registry_tree(tmp_path: Path) -> Path:
 def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
     before = gen.load_registry(str(registry_tree))
     description = before["findingTypes"]["anchor"]["description"]
-    replacement = "Exact source text; OMIT this field when unavailable."
+    replacement = "Exact source text copied from the reviewed file."
     source = registry_tree / "workflows/src/registry.js"
     source.write_text(
         source.read_text(encoding="utf-8").replace(description, replacement),
@@ -94,8 +94,8 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
     assert set(schemas) == set(after["agents"])
     for schema in schemas.values():
         item = schema["properties"]["findings"]["items"]
-        assert item["properties"]["anchor"] == anchor
-        assert "anchor" not in item["required"]
+        assert item["properties"]["anchor"] == {**anchor, "minLength": 1}
+        assert "anchor" in item["required"]
         assert item["properties"]["line_start"] == {"type": "number"}
         assert item["properties"]["line_end"] == {"type": "number"}
     losses = after["dispatchResults"]["code-gauntlet:test-analyzer"][
@@ -132,7 +132,7 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
     with pytest.raises(TypeError):
         namespace["LOCATION_RIGHTS"]["unconfirmed"]["inline"] = True
     report = (registry_tree / REPORT).read_text(encoding="utf-8")
-    assert f"| `anchor` | string | no | {replacement} |" in report
+    assert f"| `anchor` | string | yes | {replacement} |" in report
     assert gen.location_reference(after) in report
     check = invoke("generate_contract_requirements", [*args, "--check"], registry_tree)
     assert check.returncode == 0, check.stderr

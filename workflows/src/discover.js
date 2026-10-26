@@ -148,8 +148,9 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
     // The host may normalize schema fragments in place; copies keep registry data immutable.
     props[k] = typeof t === 'string' ? { type: t } : deepClone(t);
   }
-  // One missing required field rejects the whole dispatch, so only unconditional fields belong in this shared list.
-  const required = [...FINDING_REQUIRED, ...(requiredExtra || [])];
+  // Only discovery dispatch requires a quote; pipeline-authored and replayed findings can remain unconfirmed.
+  props.anchor.minLength = 1;
+  const required = [...FINDING_REQUIRED, 'anchor', ...(requiredExtra || [])];
   const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
   if (conditionalRequired && conditionalRequired.length) {
     // The platform accepts conditional requirements nested in finding items rather than top-level schema composition.

@@ -385,7 +385,7 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
         if line.startswith("| `evidence` |"):
             anchor = registry["findingTypes"]["anchor"]
             out_lines.append(
-                f"| `anchor` | {anchor['type']} | no | {anchor['description']} |"
+                f"| `anchor` | {anchor['type']} | yes | {anchor['description']} |"
             )
     text_out = "\n".join(out_lines)
     if text.endswith("\n"):
@@ -400,6 +400,7 @@ def location_reference(registry: Mapping[str, Any]) -> str:
         "## Location Status and Rights",
         "",
         "`location_status` is pipeline-owned and excluded from discovery output.",
+        "`anchor` is required only at discovery dispatch; pipeline-authored and replayed findings may omit it.",
         "Unconfirmed findings remain in the review body, labelled `location unconfirmed`.",
         "",
         "| Status | " + " | ".join(columns) + " |",

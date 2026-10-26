@@ -90,7 +90,7 @@ export const FINDING_PROP_TYPES = deepFreeze({
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
   dimension: 'string', origin: 'string', evidence: 'string',
-  anchor: { type: 'string', description: 'Exact text of 1 to 4 contiguous source lines at the PR head in file, at most 400 characters; OMIT this field when unavailable.' },
+  anchor: { type: 'string', description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
   // Optional prose fields must be omitted when inapplicable; emitting null would violate their schema types.
   suggestion: 'string', claude_md_rule: 'string',
   // Delivery applies deterministic fix checks before rendering a committable fence.

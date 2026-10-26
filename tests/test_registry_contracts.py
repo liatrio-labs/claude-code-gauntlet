@@ -257,6 +257,7 @@ def test_contract_schema(agent_type: str) -> None:
         )
     ]
     examples = [block for block in blocks if block not in templates]
+    dispatch_required = set(registry()["required"]) | {"anchor"}
     for block in blocks:
         assert all(value is not None for value in block.values())
         for value in block.values():
@@ -278,8 +279,13 @@ def test_contract_schema(agent_type: str) -> None:
                 )
     for template in templates:
         for field, value in template.items():
+            if field in dispatch_required:
+                assert not field_carries_omit_instruction(
+                    json.dumps(template), field, source=name
+                )
             if (
                 isinstance(value, str)
+                and field not in dispatch_required
                 and examples
                 and not all(field in example for example in examples)
             ):
@@ -351,7 +357,7 @@ def test_handwritten_field_tables():
     per_dimension = table_named(tables, "Per-dimension")
     assert {field for field, cells in canonical} == set(registry()["propTypes"])
     assert {field for field, cells in per_dimension} == set(all_extras())
-    required = set(registry()["required"])
+    required = set(registry()["required"]) | {"anchor"}
     extra_required = {
         field for row in registry()["dimensions"] for field in row["requiredExtra"]
     }

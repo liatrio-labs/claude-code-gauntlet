@@ -172,7 +172,7 @@ DISPATCH_RESULTS = {
                                 },
                                 "anchor": {
                                     "type": "string",
-                                    "description": "Exact text of 1 to 4 contiguous source lines at the PR head in file, at most 400 characters; OMIT this field when unavailable.",
+                                    "description": "Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.",
                                 },
                             },
                             "required": [
@@ -487,7 +487,7 @@ KNOB_REGISTRY = (
 ANCHOR_SCHEMA = MappingProxyType(
     {
         "type": "string",
-        "description": "Exact text of 1 to 4 contiguous source lines at the PR head in file, at most 400 characters; OMIT this field when unavailable.",
+        "description": "Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.",
     }
 )
 
