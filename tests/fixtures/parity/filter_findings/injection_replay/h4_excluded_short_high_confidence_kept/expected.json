@@ -8,7 +8,9 @@
       "id": "RP2",
       "line_start": 5,
       "severity": "low",
-      "title": "Possible issue"
+      "title": "Possible issue",
+      "line_end": 5,
+      "location_status": "confirmed"
     }
   ]
 }

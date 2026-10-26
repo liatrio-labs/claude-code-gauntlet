@@ -16,7 +16,9 @@
       "line_start": 15,
       "security_escalation": false,
       "severity": "critical",
-      "title": "t8"
+      "title": "t8",
+      "line_end": 15,
+      "location_status": "confirmed"
     },
     {
       "agent": "type-design-analyzer",
@@ -34,7 +36,9 @@
       "line_start": 15,
       "security_escalation": false,
       "severity": "low",
-      "title": "t9"
+      "title": "t9",
+      "line_end": 15,
+      "location_status": "confirmed"
     }
   ],
   "boosted_count": 2,

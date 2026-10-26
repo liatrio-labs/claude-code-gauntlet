@@ -104,12 +104,36 @@ def verify_git(monkeypatch):
     def output(argv, **kwargs):
         calls.append((list(argv), kwargs))
         reply = replies[argv[1]]
+        if argv == ["git", "rev-parse", "--show-toplevel"] and reply == (
+            "abcd\n",
+            "",
+            0,
+        ):
+            return str(Path.cwd()), "", 0
         if callable(reply):
             return reply(argv)
         if isinstance(reply, Exception):
             raise reply
         return reply
 
+    def run_bytes(argv, **kwargs):
+        calls.append((list(argv), kwargs))
+        if argv[1] == "rev-parse":
+            return proc.CompletedProcess(argv, 0, b"abcd" + b"0" * 36 + b"\n", b"")
+        root = Path(kwargs.get("cwd", Path.cwd()))
+        if argv[1] == "ls-tree":
+            path = argv[-1].removeprefix(":(literal)")
+            blob = root / path
+            output = (
+                b"100644 blob " + b"1" * 40 + b"\t" + path.encode() + b"\0"
+                if blob.is_file()
+                else b""
+            )
+            replies["blob_path"] = blob
+            return proc.CompletedProcess(argv, 0, output, b"")
+        return proc.CompletedProcess(argv, 0, replies["blob_path"].read_bytes(), b"")
+
+    monkeypatch.setattr(proc, "run_bytes", run_bytes)
     monkeypatch.setattr(proc, "output", output)
     return calls, replies
 

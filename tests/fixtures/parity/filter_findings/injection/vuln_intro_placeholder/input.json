@@ -8,7 +8,9 @@
       "file": "src/auth.py",
       "line_start": 40,
       "severity": "medium",
-      "confidence": 50
+      "confidence": 50,
+      "line_end": 40,
+      "location_status": "confirmed"
     }
   ]
 }

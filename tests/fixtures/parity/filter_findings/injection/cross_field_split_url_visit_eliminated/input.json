@@ -7,7 +7,9 @@
       "file": "docs/changelog/entry.md",
       "line_start": 22,
       "severity": "low",
-      "confidence": 45
+      "confidence": 45,
+      "line_end": 22,
+      "location_status": "confirmed"
     }
   ],
   "fn": "apply_injection_filter"

@@ -75,8 +75,8 @@ const VALIDATE_PROMPT_ROWS = [
     block: '- f1 [bug/high] one.js:42 \u2014 The function returns the wrong result for a real input.' },
   { name: 'single line', fields: { file: 'SENTINEL_VALIDATE_FILE.js', line_start: 42, description: 'SENTINEL_VALIDATE_DESC' },
     block: '- f1 [bug/high] SENTINEL_VALIDATE_FILE.js:42 \u2014 SENTINEL_VALIDATE_DESC' },
-  { name: 'range and evidence', fields: { file: 'range.js', line_start: 12, line_end: 20, evidence: 'INSPECTED_LINES' },
-    block: '- f1 [bug/high] range.js:12-20 \u2014 The function returns the wrong result for a real input. | evidence: INSPECTED_LINES' },
+  { name: 'range and evidence', fields: { file: 'range.js', line_start: 12, line_end: 15, evidence: 'INSPECTED_LINES' },
+    block: '- f1 [bug/high] range.js:12-15 \u2014 The function returns the wrong result for a real input. | evidence: INSPECTED_LINES' },
 ];
 for (const row of VALIDATE_PROMPT_ROWS) test(`validate prompt: ${row.name}`, async () => {
   const ctx = stageCtx({ reply: [] });
@@ -201,7 +201,7 @@ const BLIND_MIDDLE = ' \u2014 open that location and enough surrounding context 
 const BLIND_TAIL = '\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct '
   + '0-100 (higher = the claim holds).';
 const BLIND_ROWS = [
-  { name: 'range', file: 'SENTINEL_FILE.js', start: 12, end: 20, location: 'SENTINEL_FILE.js:12-20' },
+  { name: 'range', file: 'SENTINEL_FILE.js', start: 12, end: 15, location: 'SENTINEL_FILE.js:12-15' },
   { name: 'single line', file: 'src/one.js', start: 9, end: 9, location: 'src/one.js:9' },
 ];
 test('challenger quotes the removed inventory path as JSON data', async () => {
@@ -265,4 +265,15 @@ for (const row of DELIVERY_ROWS) test(`delivery selection: ${row.name}`, () => {
   for (const f of out) assert.strictEqual(f, input.find((original) => original.id === f.id));
   if (row.severity) assert.equal(out[0].severity, row.severity);
   if (out.some((f) => f.id === 'SUGG_HIGH')) assert.equal(out.find((f) => f.id === 'SUGG_HIGH').report_tag, 'suggestion');
+});
+
+test('unconfirmed stage inputs expose no claimed address', async () => {
+  const f = finding({ location_status: 'unconfirmed', line_start: 999, line_end: 1000, claimed_line_start: 999, anchor: 'SECRET_ANCHOR_TEXT' });
+  const ctx = stageCtx({ reply: [] });
+  await validateStage(ctx, { findings: [f] });
+  assert.match(ctx.calls[0].prompt, /src\/x.py:location unconfirmed/);
+  assert.doesNotMatch(ctx.calls[0].prompt, /999|1000|SECRET_ANCHOR_TEXT/);
+  const blind = blindChallengeFields(f);
+  assert.equal(blind.location, 'location unconfirmed');
+  for (const key of ['line_start', 'line_end', 'anchor', 'claimed_line_start']) assert.equal(Object.hasOwn(blind, key), false);
 });

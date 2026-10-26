@@ -179,7 +179,7 @@ const RANGE_ROWS = [
       + ' \u2014 1 of those also carried suggested_fix_code: patch field(s) dropped along with the range'] } },
   { name: 'kept patch', fields: { line_end: 78, suggested_fix_code: 'const x = 1;' },
     expected: { ...RANGE_GOLDEN, end: true, line_end: 78, patch: true, suggested_fix_code: 'const x = 1;' } },
-  { name: 'missing range drops patch', fields: { suggested_fix_code: 'const x = 1;' },
+  { name: 'missing range drops patch', fields: { line_end: undefined, suggested_fix_code: 'const x = 1;' },
     expected: { ...RANGE_GOLDEN, gaps: [
       'discover: 1 finding(s) emitted suggested_fix_code without line_end \u2014 field dropped (a patch must state its range)',
     ] } },
@@ -292,4 +292,21 @@ for (const row of SUMMARY_ROWS) test(`summarize: ${row.name}`, async () => {
   if (row.prompts) assert.deepEqual(ctx.calls.map((call) => call.prompt), row.prompts);
   for (const call of ctx.calls) assert.deepEqual(call.schema, SUMMARY_SCHEMA);
   assert.deepEqual(ctx.violations, []);
+});
+
+test('optional anchor preserves siblings and rejects forged authority', async () => {
+  const ctx = stageCtx({ reply: () => ({ findings: [
+    finding({ id: 'quoted', anchor: 'perform_action(value)', location_status: 'confirmed', claimed_line_start: 1, claimed_line_end: 4, line_end: undefined, suggested_fix_code: 'fixed(value)' }),
+    finding({ id: 'legacy', anchor: undefined, location_status: 'relocated', claimed_line_start: 5 }),
+  ], complete: true, total_seen: 2, removed_test_audit: [] }) });
+  const out = await discover(ctx, {});
+  assert.equal(out.findings.length, ctx.calls.length * 2);
+  for (const f of out.findings) {
+    for (const key of ['location_status', 'claimed_line_start', 'claimed_line_end']) assert.equal(Object.hasOwn(f, key), false);
+    if (f.id === 'quoted') {
+      assert.equal(f.anchor, 'perform_action(value)');
+      assert.equal(Object.hasOwn(f, 'suggested_fix_code'), false);
+    }
+  }
+  for (const call of ctx.calls) assert.equal(call.schema.properties.findings.items.required.includes('anchor'), false);
 });

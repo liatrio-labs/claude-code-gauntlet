@@ -13,7 +13,8 @@
       "evidence": "def getOrderId(self):",
       "suggestion": "Rename to get_order_id for consistency with the rest of the module.",
       "claude_md_rule": "Use snake_case for all method names (CLAUDE.md > Style).",
-      "cross_file_refs": []
+      "cross_file_refs": [],
+      "anchor": "synthetic_source(0);"
     }
   ],
   "result": {
@@ -47,7 +48,11 @@
         "diff_validation": {
           "in_diff": true,
           "reason": "line 42 found in diff"
-        }
+        },
+        "anchor": "synthetic_source(0);",
+        "location_status": "confirmed",
+        "claimed_line_start": 42,
+        "claimed_line_end": 42
       }
     ],
     "eliminated": []

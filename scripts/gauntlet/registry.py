@@ -10,9 +10,25 @@ PolicyProvider = Literal["firstParty", "bedrock", "vertex", "foundry"]
 Reachability = Literal["current", "future_change_only", "uncertain"]
 LocationStatus = Literal["confirmed", "relocated", "unconfirmed"]
 DeltaKey = Literal[
-    "id", "verified", "origin", "severity", "confidence", "elimination_reason"
+    "id",
+    "verified",
+    "origin",
+    "severity",
+    "confidence",
+    "elimination_reason",
+    "line_start",
+    "line_end",
+    "location_status",
 ]
-DeltaValueField = Literal["origin", "severity", "confidence", "elimination_reason"]
+DeltaValueField = Literal[
+    "origin",
+    "severity",
+    "confidence",
+    "elimination_reason",
+    "line_start",
+    "line_end",
+    "location_status",
+]
 
 SEVERITY_ORDER: tuple[Severity, ...] = ("critical", "high", "medium", "low")
 
@@ -44,6 +60,9 @@ DELTA_KEYS: tuple[DeltaKey, ...] = (
     "severity",
     "confidence",
     "elimination_reason",
+    "line_start",
+    "line_end",
+    "location_status",
 )
 
 DELTA_VALUE_FIELDS: tuple[DeltaValueField, ...] = (
@@ -51,6 +70,9 @@ DELTA_VALUE_FIELDS: tuple[DeltaValueField, ...] = (
     "severity",
     "confidence",
     "elimination_reason",
+    "line_start",
+    "line_end",
+    "location_status",
 )
 
 VERIFY_SLICE_FIELDS: tuple[str, ...] = (
@@ -60,6 +82,7 @@ VERIFY_SLICE_FIELDS: tuple[str, ...] = (
     "line_end",
     "severity",
     "confidence",
+    "anchor",
     "has_cross_file_refs",
     "has_removed_test_location",
     "symbols",
@@ -521,6 +544,9 @@ class Delta(_DeltaRequired, total=False):
     severity: object
     confidence: int
     elimination_reason: object
+    line_start: int
+    line_end: int
+    location_status: LocationStatus
 
 
 class VerifySliceFinding(TypedDict, total=False):
@@ -530,6 +556,7 @@ class VerifySliceFinding(TypedDict, total=False):
     line_end: Any
     severity: Any
     confidence: Any
+    anchor: str
     has_cross_file_refs: Any
     has_removed_test_location: Any
     symbols: Any

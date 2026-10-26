@@ -14,7 +14,9 @@
       "line_start": 11,
       "security_escalation": false,
       "severity": "low",
-      "title": "t5"
+      "title": "t5",
+      "line_end": 11,
+      "location_status": "confirmed"
     }
   ],
   "boosted_count": 0,
@@ -30,7 +32,9 @@
       "id": "D4",
       "line_start": 10,
       "severity": "high",
-      "title": "possible null deref"
+      "title": "possible null deref",
+      "line_end": 10,
+      "location_status": "confirmed"
     }
   ]
 }

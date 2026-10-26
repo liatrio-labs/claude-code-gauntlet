@@ -10,7 +10,9 @@
       "id": "api-drop",
       "line_start": 1,
       "severity": "high",
-      "title": "API"
+      "title": "API",
+      "line_end": 1,
+      "location_status": "confirmed"
     },
     {
       "confidence": 80,
@@ -22,7 +24,9 @@
       "id": "web-drop",
       "line_start": 3,
       "severity": "high",
-      "title": "web-only"
+      "title": "web-only",
+      "line_end": 3,
+      "location_status": "confirmed"
     }
   ],
   "filtered": [
@@ -41,7 +45,9 @@
       "report_tag": "main",
       "security_escalation": false,
       "severity": "high",
-      "title": "Legacy"
+      "title": "Legacy",
+      "line_end": 2,
+      "location_status": "confirmed"
     }
   ],
   "generated_at": "2026-07-18T00:00:00Z",

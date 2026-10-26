@@ -1,9 +1,12 @@
 {
-  "checksum": "fnv1a32:0x36c21c9a",
+  "checksum": "fnv1a32:0xbef3b6a2",
   "deltas": [
     {
       "confidence": 80,
       "id": "bug-101",
+      "line_end": 14,
+      "line_start": 12,
+      "location_status": "confirmed",
       "origin": "new",
       "severity": "high",
       "verified": true
@@ -11,6 +14,9 @@
   ],
   "joined": [
     {
+      "anchor": "synthetic_source(0);\nsynthetic_source(1);\nsynthetic_source(2);",
+      "claimed_line_end": 14,
+      "claimed_line_start": 12,
       "confidence": 80,
       "cross_file_refs": [],
       "description": "The retry loop increments the attempt counter before checking it against the configured maximum, allowing one extra retry beyond the intended limit.",
@@ -20,6 +26,7 @@
       "id": "bug-101",
       "line_end": 14,
       "line_start": 12,
+      "location_status": "confirmed",
       "origin": "new",
       "severity": "high",
       "suggestion": "Use range(max_attempts) instead of range(max_attempts + 1).",

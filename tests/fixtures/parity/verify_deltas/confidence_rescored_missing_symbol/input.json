@@ -12,7 +12,8 @@
       "dimension": "bug",
       "evidence": "data = parseResponsePayload(response)",
       "suggestion": "Add a None check before calling parseResponsePayload.",
-      "cross_file_refs": []
+      "cross_file_refs": [],
+      "anchor": "synthetic_source(0);\nsynthetic_source(1);\nsynthetic_source(2);\nsynthetic_source(3);"
     }
   ],
   "result": {
@@ -48,7 +49,11 @@
         "diff_validation": {
           "in_diff": true,
           "reason": "line 30 found in diff"
-        }
+        },
+        "anchor": "synthetic_source(0);\nsynthetic_source(1);\nsynthetic_source(2);\nsynthetic_source(3);",
+        "location_status": "confirmed",
+        "claimed_line_start": 30,
+        "claimed_line_end": 33
       }
     ],
     "eliminated": []

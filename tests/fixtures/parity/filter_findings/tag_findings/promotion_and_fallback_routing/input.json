@@ -9,7 +9,9 @@
       "severity": "medium",
       "confidence": 70,
       "title": "race condition in worker pool",
-      "description": "the counter increment is not synchronized"
+      "description": "the counter increment is not synchronized",
+      "line_end": 100,
+      "location_status": "confirmed"
     },
     {
       "id": "G2",
@@ -20,7 +22,9 @@
       "severity": "low",
       "confidence": 60,
       "title": "stale comment",
-      "description": "comment says X but code does Y"
+      "description": "comment says X but code does Y",
+      "line_end": 200,
+      "location_status": "confirmed"
     },
     {
       "id": "G3",
@@ -30,7 +34,9 @@
       "severity": "medium",
       "confidence": 65,
       "title": "violates naming convention documented in style guide",
-      "description": "uses camelCase instead of snake_case"
+      "description": "uses camelCase instead of snake_case",
+      "line_end": 300,
+      "location_status": "confirmed"
     },
     {
       "id": "G4",
@@ -40,7 +46,9 @@
       "severity": "high",
       "confidence": 75,
       "title": "weird finding",
-      "description": "unclear origin"
+      "description": "unclear origin",
+      "line_end": 400,
+      "location_status": "confirmed"
     },
     {
       "id": "G5",
@@ -50,7 +58,9 @@
       "severity": "low",
       "confidence": 55,
       "title": "redundant code",
-      "description": "this block can be simplified"
+      "description": "this block can be simplified",
+      "line_end": 500,
+      "location_status": "confirmed"
     }
   ]
 }

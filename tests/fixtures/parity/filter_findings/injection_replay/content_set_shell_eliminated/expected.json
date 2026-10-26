@@ -9,7 +9,9 @@
       "id": "RP1",
       "line_start": 12,
       "severity": "medium",
-      "title": "Cleanup step review"
+      "title": "Cleanup step review",
+      "line_end": 12,
+      "location_status": "confirmed"
     }
   ],
   "kept": []

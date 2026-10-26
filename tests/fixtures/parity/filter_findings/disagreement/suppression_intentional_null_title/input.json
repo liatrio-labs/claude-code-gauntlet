@@ -10,7 +10,9 @@
       "severity": "high",
       "confidence": 80,
       "title": "Null pointer dereference on error path",
-      "description": "process_data does not guard against a null client before calling client.send(), causing a crash on the error path."
+      "description": "process_data does not guard against a null client before calling client.send(), causing a crash on the error path.",
+      "line_end": 100,
+      "location_status": "confirmed"
     },
     {
       "id": "DN2",
@@ -21,7 +23,9 @@
       "severity": "low",
       "confidence": 60,
       "title": null,
-      "description": "This behavior is intentional and by design -- the null check is deliberately omitted since upstream always guarantees a non-null client."
+      "description": "This behavior is intentional and by design -- the null check is deliberately omitted since upstream always guarantees a non-null client.",
+      "line_end": 101,
+      "location_status": "confirmed"
     },
     {
       "id": "DN3",
@@ -32,7 +36,9 @@
       "severity": "high",
       "confidence": 75,
       "title": "Off-by-one error in pagination cursor",
-      "description": "The cursor advances past the final page boundary, dropping the last record of every result set."
+      "description": "The cursor advances past the final page boundary, dropping the last record of every result set.",
+      "line_end": 200,
+      "location_status": "confirmed"
     },
     {
       "id": "DN4",
@@ -42,8 +48,12 @@
       "line_start": 201,
       "severity": "low",
       "confidence": 55,
-      "title": ["by design"],
-      "description": "This is unrelated commentary about code style choices in the pagination module."
+      "title": [
+        "by design"
+      ],
+      "description": "This is unrelated commentary about code style choices in the pagination module.",
+      "line_end": 201,
+      "location_status": "confirmed"
     }
   ]
 }

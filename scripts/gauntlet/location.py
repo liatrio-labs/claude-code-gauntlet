@@ -308,7 +308,7 @@ class SourceAdapter:
 
     @classmethod
     def capture(
-        cls, root: Path, target_kind: TargetKind, requested_sha: str
+        cls, root: Path, target_kind: TargetKind, requested_sha: str | None
     ) -> SourceAdapter:
         head = None
         try:
@@ -317,8 +317,13 @@ class SourceAdapter:
             if (
                 result.returncode == 0
                 and re.fullmatch(r"[0-9a-f]{40}", revision)
-                and re.fullmatch(r"[0-9a-f]{4,40}", requested_sha)
-                and revision.startswith(requested_sha)
+                and (
+                    requested_sha is None
+                    or (
+                        re.fullmatch(r"[0-9a-f]{4,40}", requested_sha)
+                        and revision.startswith(requested_sha)
+                    )
+                )
             ):
                 head = revision
         except (OSError, UnicodeError, proc.TimeoutExpired):

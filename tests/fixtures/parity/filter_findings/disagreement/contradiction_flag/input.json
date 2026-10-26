@@ -10,7 +10,9 @@
       "severity": "critical",
       "confidence": 90,
       "title": "t8",
-      "description": "d8"
+      "description": "d8",
+      "line_end": 15,
+      "location_status": "confirmed"
     },
     {
       "id": "D9",
@@ -21,7 +23,9 @@
       "severity": "low",
       "confidence": 50,
       "title": "t9",
-      "description": "d9"
+      "description": "d9",
+      "line_end": 15,
+      "location_status": "confirmed"
     }
   ]
 }

@@ -207,10 +207,10 @@ const BUCKET_ROWS = [
 for (const row of BUCKET_ROWS) test('bucket callers: ' + row.name, () => {
   const consolidated = consolidateCrossAgent([finding({ line_start: row.input }),
     finding({ id: 'other', line_start: row.input, agent: 'security-reviewer' })]);
-  assert.equal(consolidated.findings[0].consolidation_key, row.expected.key);
+  assert.equal(consolidated.findings[0].consolidation_key, Number.isSafeInteger(row.input) && row.input > 0 ? row.expected.key : undefined);
   const disagreement = detectDisagreement([finding({ line_start: row.input }),
     finding({ id: 'other', line_start: row.expected.bucket10, agent: 'security-reviewer' })]);
-  assert.equal(disagreement.active[0].confidence, row.expected.confidence);
+  assert.equal(disagreement.active[0].confidence, Number.isSafeInteger(row.input) && row.input > 0 ? row.expected.confidence : 90);
 });
 
 const DISAGREEMENT_ROWS = [
@@ -293,4 +293,24 @@ for (const row of PIPELINE_ROWS) test(`pipeline: ${row.name}`, () => {
   assert.deepEqual({ filtered: out.filtered.map((item) => item.id), eliminated: out.eliminated.map((item) => item.id),
     stats: out.stats, generated_at: out.generated_at }, row.expected);
   assert.deepEqual(config, row.config);
+});
+
+test('unconfirmed locations do not affect spatial policy', () => {
+  const list = [
+    cleanFinding({ id: 'bug', location_status: 'unconfirmed', agent: 'bug-detector', dimension: 'bug', severity: 'critical' }),
+    cleanFinding({ id: 'conv', location_status: 'unconfirmed', agent: 'conventions-and-intent', dimension: 'convention', severity: 'low', description: 'This intentional behavior is by design and has enough words to describe the claim.' }),
+    cleanFinding({ id: 'same-title', location_status: 'unconfirmed', agent: 'test-analyzer', dimension: 'test_coverage' }),
+  ];
+  for (const f of list) Object.assign(f, { consensus_count: 9, corroborated_by: ['stale'], consolidation_key: 'stale', consolidation_primary: true, contradiction: true });
+  const out = applyFilterPipeline(list, {}, [], 'fixed');
+  assert.equal(out.filtered.length, 3);
+  for (const f of out.filtered) {
+    assert.equal(f.consensus_count, 1);
+    assert.equal(f.consensus_boost, 0);
+    assert.deepEqual(f.corroborated_by, []);
+    assert.equal(f.contradiction, false);
+    assert.equal(f.consolidation_key, undefined);
+    assert.equal(f.confidence, f.id === 'bug' ? 90 : 75);
+  }
+  assert.equal(out.filtered.find((f) => f.id === 'conv').singleton_penalty, true);
 });

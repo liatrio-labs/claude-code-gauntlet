@@ -9,7 +9,9 @@
       "id": "VLC",
       "line_start": 5,
       "severity": "low",
-      "title": "TLS setting flagged capital"
+      "title": "TLS setting flagged capital",
+      "line_end": 5,
+      "location_status": "confirmed"
     }
   ],
   "kept": []

@@ -1,10 +1,10 @@
 """Repository decisions through real files and the process leaf."""
 
 import ast
-import builtins
 import copy
 import importlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -22,6 +22,7 @@ OLD_THEN_NEW = (
     "1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old\n"
     "abcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code"
 )
+HEAD = "abcd" + "0" * 36
 DIFF = "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n"
 
 
@@ -92,7 +93,7 @@ def test_blame(patch, log, blame, expected, tmp_path, monkeypatch, verify_git, c
     severity = expected.get("severity", "high")
     warning = expected.get("warning", "")
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "source").write_text("code\nadded\n", encoding="utf-8")
+    (tmp_path / "source").write_text("perform_action(value)\nadded\n", encoding="utf-8")
     finding = {
         "file": "source",
         "line_start": 1,
@@ -101,6 +102,11 @@ def test_blame(patch, log, blame, expected, tmp_path, monkeypatch, verify_git, c
         **patch,
     }
     finding = project_findings([finding])[0]
+    finding.update(location_status="confirmed", line_start=1, line_end=2)
+    if patch.get("file") == "missing":
+        finding.pop("line_start")
+        finding.pop("line_end")
+        finding["location_status"] = "unconfirmed"
     original_severity = finding["severity"]
     calls, replies = verify_git
     if log is not None:
@@ -121,82 +127,21 @@ def test_blame(patch, log, blame, expected, tmp_path, monkeypatch, verify_git, c
     expected_commands = (
         []
         if patch.get("cross_file_refs") or patch.get("file") == "missing"
-        else [["git", "log", "--format=%H", "--end-of-options", "-base..HEAD"]]
+        else [["git", "log", "--format=%H", "--end-of-options", "-base.." + HEAD]]
     )
     if expected_commands and (log is None or log[2] == 0):
-        expected_commands.append(["git", "blame", "-L1,2", "--", "source"])
-    assert calls == [(cmd, {}) for cmd in expected_commands]
-    assert capsys.readouterr().err == (f"WARNING: {warning}\n" if warning else "")
+        expected_commands.append(["git", "blame", "-L1,2", HEAD, "--", "source"])
+    assert [(cmd, kw) for cmd, kw in calls if cmd[1] in ("log", "blame")] == [
+        (cmd, {}) for cmd in expected_commands
+    ]
+    assert capsys.readouterr().err == (
+        f"WARNING: {warning}\n" if warning and patch.get("file") != "missing" else ""
+    )
 
 
 @pytest.mark.parametrize(
     "patch,mode,keep,confidence,metadata,attempted,warnings",
     [
-        pytest.param(
-            {"line_start": None},
-            "normal",
-            True,
-            80,
-            {
-                "reason": "no line reference — verification skipped",
-                "code_at_lines": None,
-            },
-            [],
-            "",
-            id="FACT-no-line",
-        ),
-        pytest.param(
-            {"file": "missing"},
-            "normal",
-            False,
-            0,
-            dict(
-                verified=False,
-                reason="file not found: 'missing'",
-                code_at_lines=None,
-            ),
-            [],
-            "",
-            id="FACT-missing-path",
-        ),
-        pytest.param(
-            {},
-            "read-error",
-            False,
-            0,
-            {
-                "verified": False,
-                "reason": "could not read file 'source': read denied",
-                "code_at_lines": None,
-            },
-            [],
-            "",
-            id="FACT-read-OSError",
-        ),
-        pytest.param(
-            {},
-            "binary",
-            True,
-            80,
-            {"reason": "binary file — verification skipped", "code_at_lines": None},
-            [],
-            "WARNING: verify_factual: binary file 'source' — "
-            + "skipping factual check.\n",
-            id="FACT-binary",
-        ),
-        pytest.param(
-            {"line_end": 99},
-            "normal",
-            True,
-            80,
-            {
-                "reason": "no extractable symbols — verification skipped",
-                "code_at_lines": "prefix_local_symbol_suffix\ntail",
-            },
-            [],
-            "",
-            id="FACT-end-clamped",
-        ),
         pytest.param(
             {"description": "`alpha` `beta` `gamma` `local_symbol`"},
             "mixed",
@@ -251,16 +196,8 @@ def test_fact(
     }
     finding = {"file": "source", "line_start": 1, "confidence": 80, **patch}
     finding = project_findings([finding])[0]
+    finding.update(location_status="confirmed", line_end=1)
     calls, replies = verify_git
-    if mode == "read-error":
-        original = builtins.open
-
-        def open_file(path, *args, **kwargs):
-            if path == "source":
-                raise OSError("read denied")
-            return original(path, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "open", open_file)
     if mode == "mixed":
         replies["grep"] = lambda argv: {
             "alpha": ["found", "", 0],
@@ -275,7 +212,7 @@ def test_fact(
     )
     assert finding["confidence"] == confidence
     assert finding["factual_verification"] == metadata
-    assert calls == [
+    assert [(cmd, kw) for cmd, kw in calls if cmd[1] == "grep"] == [
         (["git", "grep", "-l", "-e", symbol], {"timeout": 3, "cwd": str(tmp_path)})
         for symbol in attempted
     ]
@@ -296,17 +233,20 @@ def test_fact(
         pytest.param(
             {"line_start": None},
             DIFF,
-            {"in_diff": True, "reason": "no line reference \u2014 validation skipped"},
+            {
+                "in_diff": None,
+                "reason": "location unconfirmed - diff validation skipped",
+            },
             "new",
             "high",
             id="DIFF-no-line",
         ),
         pytest.param(
-            {"line_start": 50, "line_end": 55},
+            {"line_start": 50, "line_end": 53},
             DIFF,
             {
                 "in_diff": False,
-                "reason": "lines 50-55 of 'source' not found in diff — "
+                "reason": "lines 50-53 of 'source' not found in diff — "
                 "tagged as surfaced "
                 "(was: new)",
             },
@@ -315,7 +255,7 @@ def test_fact(
             id="DIFF-out-downgrade",
         ),
         pytest.param(
-            {"line_start": 1, "line_end": 5},
+            {"line_start": 1, "line_end": 4},
             DIFF.replace("-1,1 +1,2", "-3,1 +3,2"),
             {"in_diff": True, "reason": "line 3 found in diff"},
             "new",
@@ -345,6 +285,11 @@ def test_diff(patch, diff, validation, origin, severity):
         "severity": "high",
         **patch,
     }
+    if finding.get("line_start") is not None:
+        finding.update(
+            location_status="confirmed",
+            line_end=finding.get("line_end", finding["line_start"]),
+        )
     facts = None if diff is None else parse_diff(diff, policy="verify-both-spellings")
     assert verify.validate_diff_lines(finding, facts) is True
     assert finding["diff_validation"] == validation
@@ -484,7 +429,7 @@ def test_source(
 
 def test_pipe(tmp_path, monkeypatch, verify_git):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "source").write_text("code\nadded\n", encoding="utf-8")
+    (tmp_path / "source").write_text("perform_action(value)\nadded\n", encoding="utf-8")
     finding = {
         "id": "a",
         "file": "source",
@@ -566,17 +511,14 @@ def test_pipe_projection(tmp_path, monkeypatch, verify_git):
         result = verify.run_verification(
             inputs, verify.VerifyContext(str(tmp_path), "base"), "patch"
         )
-        assert result["stats"] == {"total": 5, "new": 0, "surfaced": 3, "eliminated": 2}
+        assert result["stats"] == {"total": 5, "new": 4, "surfaced": 1, "eliminated": 0}
         assert list(result["stats"]) == ["total", "new", "surfaced", "eliminated"]
         assert all(
-            kept is inputs[index]
-            for kept, index in zip(result["verified"], (0, 1, 4), strict=True)
+            kept is original
+            for kept, original in zip(result["verified"], inputs, strict=True)
         )
-        assert all(
-            gone is inputs[index]
-            for gone, index in zip(result["eliminated"], (2, 3), strict=True)
-        )
-        assert [f["id"] for f in result["verified"]] == ["cross", "symbol", "clean"]
+        assert result["eliminated"] == []
+        assert [f["id"] for f in result["verified"]] == [f["id"] for f in inputs]
         expected = [
             {
                 "id": fid,
@@ -584,6 +526,7 @@ def test_pipe_projection(tmp_path, monkeypatch, verify_git):
                 "origin": origin,
                 "severity": severity,
                 "confidence": confidence,
+                "location_status": "unconfirmed",
                 **(
                     {"elimination_reason": "evidence does not match file content"}
                     if not kept
@@ -592,10 +535,10 @@ def test_pipe_projection(tmp_path, monkeypatch, verify_git):
             }
             for fid, kept, origin, severity, confidence in [
                 ("cross", True, "surfaced", "high", 80),
-                ("symbol", True, "surfaced", "medium", 30),
-                ("range", False, "new", "medium", 0),
-                ("missing", False, "new", "low", 0),
-                ("clean", True, "surfaced", "low", 55),
+                ("symbol", True, "new", "high", 30),
+                ("range", True, "new", "medium", 80),
+                ("missing", True, "new", "low", 80),
+                ("clean", True, "new", "low", 30),
             ]
         ]
         assert wire.build_deltas(inputs, result["verified"]) == expected
@@ -628,13 +571,17 @@ def test_context_log_queries(invoke, tmp_path, verify_git):
     calls, replies = verify_git
     token = (
         '{"findings":[{"file":"source","line_start":1,'
-        '"symbols":"remote_symbol"},{"file":"source","line_start":1}]}'
+        '"symbols":"remote_symbol","anchor":"perform_action%28value%29"},{"file":"source","line_start":1,"anchor":"perform_action%28value%29"}]}'
     )
     warnings = (
         "WARNING: classify_blame: git log failed for base 'base': bad "
         f"{DASH} classifying as 'new' (conservative).\n"
     )
     for root in ["repo-one", "repo-two"]:
+        (tmp_path / root).mkdir()
+        (tmp_path / root / "source").write_text(
+            "perform_action(value)\n", encoding="utf-8"
+        )
         replies["rev-parse"] = (str(tmp_path / root), "", 0)
         replies["log"] = ("", "bad", 1)
         result = receipt(
@@ -650,14 +597,17 @@ def test_context_log_queries(invoke, tmp_path, verify_git):
         }
         assert (
             result.stderr.decode()
-            == warnings * 2 + "Diff source: --diff-file (patch), 55 bytes\n"
+            == "Diff source: --diff-file (patch), 55 bytes\nWARNING: context map unavailable: context/map paths not supplied\n"
+            + warnings * 2
         )
     assert [cmd for cmd, _ in calls if cmd[1] == "log"] == [
-        ["git", "log", "--format=%H", "--end-of-options", "base..HEAD"]
+        ["git", "log", "--format=%H", "--end-of-options", "base.." + HEAD]
     ] * 2
-    assert [cmd for cmd, _ in calls if cmd[1] == "rev-parse"] == [
-        ["git", "rev-parse", "--show-toplevel"]
-    ] * 2
+    assert [
+        cmd
+        for cmd, _ in calls
+        if cmd[1] == "rev-parse" and len(cmd) > 2 and cmd[2] == "--show-toplevel"
+    ] == [["git", "rev-parse", "--show-toplevel"]] * 2
     assert [kwargs for cmd, kwargs in calls if cmd[1] == "grep"] == [
         {"timeout": 3, "cwd": str(tmp_path / "repo-one")},
         {"timeout": 3, "cwd": str(tmp_path / "repo-two")},
@@ -761,13 +711,22 @@ def test_field_guard_added_unprojected_read():
 
 def test_null_line_end_and_diff_policy(tmp_path, monkeypatch, verify_git):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "source").write_text("code\nadded\n", encoding="utf-8")
+    (tmp_path / "source").write_text("perform_action(value)\nadded\n", encoding="utf-8")
     (tmp_path / "patch").write_text(
-        "--- source\n+++ source\n@@ -1 +1 @@\n-code\n+code\n", encoding="utf-8"
+        "--- source\n+++ source\n@@ -1 +1 @@\n-old action\n+perform_action(value)\n",
+        encoding="utf-8",
     )
-    finding = {"id": "a", "file": "b/source", "line_start": 1, "line_end": None}
+    finding = {
+        "id": "a",
+        "file": "b/source",
+        "line_start": 1,
+        "line_end": None,
+        "anchor": "perform_action(value)",
+    }
     (tmp_path / "b").mkdir()
-    (tmp_path / "b/source").write_text("code\nadded\n", encoding="utf-8")
+    (tmp_path / "b/source").write_text(
+        "perform_action(value)\nadded\n", encoding="utf-8"
+    )
     policies = []
     original = verify.parse_diff
 
@@ -780,14 +739,14 @@ def test_null_line_end_and_diff_policy(tmp_path, monkeypatch, verify_git):
         [finding], verify.VerifyContext(str(tmp_path), "base"), "patch"
     )
     assert policies == ["verify-both-spellings"]
-    assert verify_git[0] == [
-        (["git", "log", "--format=%H", "--end-of-options", "base..HEAD"], {}),
-        (["git", "blame", "-L1,1", "--", "b/source"], {}),
+    assert [(cmd, kw) for cmd, kw in verify_git[0] if cmd[1] in ("log", "blame")] == [
+        (["git", "log", "--format=%H", "--end-of-options", "base.." + HEAD], {}),
+        (["git", "blame", "-L1,1", HEAD, "--", "b/source"], {}),
     ]
     assert finding["factual_verification"] == {
         "verified": True,
-        "reason": "no extractable symbols \u2014 verification skipped",
-        "code_at_lines": "code",
+        "reason": "no extractable symbols - verification skipped",
+        "code_at_lines": "perform_action(value)",
     }
     assert finding["diff_validation"] == {
         "in_diff": True,
@@ -806,11 +765,256 @@ def test_blame_default_line(tmp_path, monkeypatch, verify_git):
     )
     assert finding["blame_metadata"] == {
         "classification": "new",
-        "author": "First Author",
-        "date": "2024-01-02",
+        "author": None,
+        "date": None,
         "original_severity": "",
     }
-    assert verify_git[0] == [
-        (["git", "log", "--format=%H", "--end-of-options", "base..HEAD"], {}),
-        (["git", "blame", "-L1,1", "--", "source"], {}),
+    assert verify_git[0] == []
+
+
+@pytest.mark.parametrize("start", [999, 1])
+def test_out_of_range_quote_relocates_before_blame(
+    tmp_path, monkeypatch, verify_git, start
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "source").write_text(
+        "preamble\nperform_action(value)\n", encoding="utf-8"
+    )
+    patch = tmp_path / "patch"
+    patch.write_text(
+        "--- source\n+++ source\n@@ -2 +2 @@\n-old action\n+perform_action(value)\n",
+        encoding="utf-8",
+    )
+    finding = {
+        "file": "source",
+        "line_start": start,
+        "line_end": 1000,
+        "anchor": "perform_action(value)",
+        "confidence": 80,
+        "severity": "high",
+    }
+    result = verify.run_verification(
+        [finding],
+        verify.VerifyContext(str(tmp_path), "base", requested_sha="abcd"),
+        str(patch),
+    )
+    assert result["verified"] == [finding]
+    assert result["eliminated"] == []
+    assert (finding["line_start"], finding["line_end"], finding["location_status"]) == (
+        2,
+        2,
+        "relocated",
+    )
+    assert (finding["claimed_line_start"], finding["claimed_line_end"]) == (start, 1000)
+    assert finding["confidence"] == 80
+    assert finding["diff_validation"]["in_diff"] is True
+    assert [argv for argv, _ in verify_git[0] if argv[1] == "blame"] == [
+        ["git", "blame", "-L2,2", HEAD, "--", "source"]
     ]
+
+
+@pytest.mark.parametrize(
+    "anchor,start",
+    [(None, 900), ("", True), ("no matching source", 2**53), ("short", -1)],
+)
+def test_unconfirmed_survives_without_location_penalty(
+    tmp_path, monkeypatch, verify_git, anchor, start
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "source").write_text("perform_action(value)\n", encoding="utf-8")
+    finding = {
+        "file": "source",
+        "line_start": start,
+        "anchor": anchor,
+        "confidence": 80,
+        "severity": "high",
+    }
+    result = verify.run_verification(
+        [finding], verify.VerifyContext(str(tmp_path), "base", requested_sha="abcd")
+    )
+    assert result["verified"] == [finding] and not result["eliminated"]
+    assert finding["location_status"] == "unconfirmed"
+    assert "line_start" not in finding and "line_end" not in finding
+    assert "claimed_line_end" not in finding
+    assert (finding["confidence"], finding["severity"], finding["origin"]) == (
+        80,
+        "high",
+        "new",
+    )
+    assert finding["diff_validation"]["in_diff"] is None
+    assert not any(argv[1] in ("blame", "log") for argv, _ in verify_git[0])
+
+
+@pytest.mark.parametrize("target_kind", ["pr", "mr", "branch", "local"])
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "regular",
+        "added",
+        "shifted",
+        "missing",
+        "directory",
+        "submodule",
+        "traversal",
+        "absolute",
+        "symlink",
+        "parent_link",
+        "binary",
+        "invalid",
+        "unreadable",
+        "revision_mismatch",
+        "revision_short",
+        "revision_invalid",
+        "revision_empty",
+    ],
+)
+@pytest.mark.parametrize("portable", [False, True])
+def test_resolution_reads_captured_head(
+    tmp_path, monkeypatch, verify_git, target_kind, mode, portable, request
+):
+    if portable:
+        monkeypatch.setattr(os, "supports_dir_fd", set())
+    monkeypatch.chdir(tmp_path)
+    file = "source"
+    (tmp_path / file).write_bytes(b"dirty_action(value)\nunchanged_action(value)\n")
+    if mode in ("symlink", "parent_link"):
+        request.getfixturevalue("symlink_or_skip")
+        if mode == "symlink":
+            (tmp_path / "link").symlink_to(tmp_path / file)
+            file = "link"
+        else:
+            (tmp_path / "folder").mkdir()
+            (tmp_path / "folder/file").write_bytes(b"dirty_action(value)\n")
+            (tmp_path / "link").symlink_to(
+                tmp_path / "folder", target_is_directory=True
+            )
+            file = "link/file"
+    elif mode == "missing":
+        file = "absent"
+    elif mode == "traversal":
+        file = "folder/../source"
+    elif mode == "absolute":
+        file = str(tmp_path / "source")
+    elif mode in ("directory", "submodule"):
+        (tmp_path / "folder").mkdir()
+        file = "folder"
+    elif mode in ("binary", "invalid"):
+        (tmp_path / file).write_bytes(b"bad\0text" if mode == "binary" else b"bad\xff")
+    elif mode == "unreadable" and target_kind == "local":
+        monkeypatch.setattr(
+            os,
+            "open",
+            lambda *a, **kw: (_ for _ in ()).throw(PermissionError("denied")),
+        )
+    calls = []
+    content = b"committed_action(value)\r\nunchanged_action(value)\r\n"
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        assert kwargs["cwd"] == str(tmp_path)
+        if argv[1] == "rev-parse":
+            revision = {
+                "revision_mismatch": b"f" * 40,
+                "revision_short": b"abcd",
+                "revision_invalid": b"\xff",
+                "revision_empty": b"",
+            }.get(mode, HEAD.encode())
+            return proc.CompletedProcess(argv, 0, revision, b"")
+        if mode == "unreadable":
+            raise PermissionError("denied")
+        if argv[1] == "ls-tree":
+            assert argv == ["git", "ls-tree", "-z", HEAD, "--", f":(literal){file}"]
+            kind = (
+                b"120000"
+                if mode in ("symlink", "parent_link")
+                else b"160000"
+                if mode == "submodule"
+                else b"040000"
+                if mode == "directory"
+                else b"100644"
+            )
+            return proc.CompletedProcess(
+                argv,
+                0,
+                b""
+                if mode == "missing"
+                else kind + b" blob " + b"1" * 40 + b"\t" + file.encode() + b"\0",
+                b"",
+            )
+        assert argv == ["git", "cat-file", "blob", "1" * 40]
+        return proc.CompletedProcess(
+            argv,
+            0,
+            b"bad\0"
+            if mode == "binary"
+            else b"bad\xff"
+            if mode == "invalid"
+            else content,
+            b"",
+        )
+
+    monkeypatch.setattr(proc, "run_bytes", run)
+    anchor = (
+        "unchanged_action(value)"
+        if mode == "shifted"
+        else "dirty_action(value)"
+        if target_kind == "local"
+        else "committed_action(value)"
+    )
+    patch = tmp_path / "patch"
+    patch.write_text(
+        f"--- {file}\n+++ {file}\n@@ -1,0 +1 @@\n+dirty_action(value)\n"
+        if mode == "added"
+        else "",
+        encoding="utf-8",
+    )
+    findings = [
+        {
+            "file": file,
+            "line_start": 999,
+            "anchor": anchor,
+            "confidence": 80,
+            "severity": "high",
+        }
+        for _ in range(2)
+    ]
+    context = verify.VerifyContext(
+        str(tmp_path), "base", requested_sha="abcd", target_kind=target_kind
+    )
+    local_diff = target_kind == "local" and mode == "added"
+    if local_diff:
+        verify_git[1]["diff"] = (patch.read_text(encoding="utf-8"), "", 0)
+    result = verify.run_verification(
+        findings, context, None if local_diff else str(patch)
+    )
+    if local_diff:
+        assert [argv for argv, _ in verify_git[0] if argv[1] == "diff"] == [
+            ["git", "diff", *verify.DIFF_FLAGS, "--end-of-options", HEAD]
+        ]
+    assert not result["eliminated"]
+    status = "relocated" if mode in ("regular", "added", "shifted") else "unconfirmed"
+    assert [f["location_status"] for f in findings] == [status, status]
+    assert sum(argv[1] == "rev-parse" for argv in calls) == 1
+    assert sum(argv[1] == "cat-file" for argv in calls) <= 1
+    blame = [argv for argv, _ in verify_git[0] if argv[1] == "blame"]
+    if status == "unconfirmed" or (target_kind == "local" and mode == "added"):
+        assert not blame
+        assert all(f["confidence"] == 80 and f["severity"] == "high" for f in findings)
+    else:
+        line = 2 if mode == "shifted" else 1
+        assert (
+            blame
+            == [
+                [
+                    "git",
+                    "blame",
+                    f"-L{line},{line}",
+                    *([] if target_kind == "local" else [HEAD]),
+                    "--",
+                    file,
+                ]
+            ]
+            * 2
+        )
+    if target_kind == "local":
+        assert all(argv[1] == "rev-parse" for argv in calls)

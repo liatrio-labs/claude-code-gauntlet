@@ -9,7 +9,9 @@
       "id": "VLS",
       "line_start": 5,
       "severity": "low",
-      "title": "TLS setting flagged"
+      "title": "TLS setting flagged",
+      "line_end": 5,
+      "location_status": "confirmed"
     }
   ],
   "kept": []

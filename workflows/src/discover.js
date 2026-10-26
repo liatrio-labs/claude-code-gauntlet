@@ -5,8 +5,7 @@ import { LIMIT_DEFAULTS } from './registry.js';
 import { effectiveBucketSize } from './capacity.js';
 import { deepClone } from './wire.js';
 import { checkRemovedTestAudit } from './removedTests.js';
-import { repoRelativeFindingPath } from './paths.js';
-import { stampDiscovery, recordStage, traceDecision, measurementDecisions } from './measurementTrace.js';
+import { stampDiscovery, recordStage } from './measurementTrace.js';
 
 // StructuredOutput requires an object wrapper around summary prose.
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
@@ -226,10 +225,8 @@ export async function discover(ctx, input) {
   const gaps = [];
   const findings = [];
   const intake = [];
-  const decisions = [];
   const trace = inp.measurementTrace;
   const degradedDims = [];
-  let droppedAuditOverlaps = 0;
 
   const schemaActive = conditionalSchemaActive(policy);
 
@@ -264,15 +261,7 @@ export async function discover(ctx, input) {
     for (const [occurrence, raw] of list.entries()) {
       const f = trace ? stampDiscovery(trace, raw, spec, i, occurrence) : raw;
       if (trace) intake.push(f);
-      // The audit already represents coverage lost at this anchor within this dispatch.
-      const normalized = repoRelativeFindingPath(inp.repoRoot, f.file);
-      // Same start line only: a wider range at that anchor may describe a different untested behaviour.
-      if (auditLosses.some((loss) => normalized.file === loss.file && f.line_start === loss.line_start)) {
-        droppedAuditOverlaps += 1;
-        if (trace) decisions.push(traceDecision(f, 'audit_overlap', 'removed-test audit represents this anchor'));
-        continue;
-      }
-      delete f.removed_test;
+      for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line']) delete f[key];
       // Filtering and merge grouping require canonical short agent names, so dispatch prefixes must be stripped.
       f.agent = spec.agentType.split(':').pop();
       findings.push(f);
@@ -285,8 +274,6 @@ export async function discover(ctx, input) {
 
   if (trace) recordStage(trace, 'discover', intake, {
     coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
-
-  if (droppedAuditOverlaps > 0) removedTestAudit.duplicates_dropped = droppedAuditOverlaps;
 
   if (inventory.omitted > 0) removedTestAudit.omitted = inventory.omitted;
   if (removedTestAudit.status !== 'ran-clean') {
@@ -326,13 +313,13 @@ export async function discover(ctx, input) {
     gaps.push(`discover: ${droppedNoLineEnd} finding(s) emitted suggested_fix_code without line_end — field dropped (a patch must state its range)`);
   }
 
-  return measurementDecisions({
+  return {
     findings,
     gaps,
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
-  }, decisions);
+  };
 }
 
 // Concrete evidence requirements make absence claims auditable; registry-scoped prompt extras preserve each agent's investigation breadth.

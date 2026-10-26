@@ -9,7 +9,9 @@
       "id": "T-instr-1",
       "line_start": 40,
       "severity": "medium",
-      "title": "Setup guide says you should run the migration before deploying the service"
+      "title": "Setup guide says you should run the migration before deploying the service",
+      "line_end": 40,
+      "location_status": "confirmed"
     }
   ],
   "kept": []

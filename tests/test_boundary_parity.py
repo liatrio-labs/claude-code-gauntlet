@@ -617,17 +617,17 @@ def test_verify_consumes_pipeline_findings_without_error(
     assert list(envelope["result"]) == ["deltas", "verified", "eliminated", "stats"]
     assert [
         (delta["id"], delta["verified"]) for delta in envelope["result"]["deltas"]
-    ] == [("F1", False), ("F2", False)]
-    assert envelope["result"]["verified"] == []
-    assert [finding["id"] for finding in envelope["result"]["eliminated"]] == [
+    ] == [("F1", True), ("F2", True)]
+    assert envelope["result"]["eliminated"] == []
+    assert [finding["id"] for finding in envelope["result"]["verified"]] == [
         "F1",
         "F2",
     ]
     assert envelope["result"]["stats"] == {
         "total": 2,
-        "new": 0,
+        "new": 2,
         "surfaced": 0,
-        "eliminated": 2,
+        "eliminated": 0,
     }
     saved: dict[str, Any] = json.loads(
         (tmp_path / "slice.json").read_text(encoding="utf-8")

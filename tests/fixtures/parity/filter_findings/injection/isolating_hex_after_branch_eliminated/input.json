@@ -7,7 +7,9 @@
       "file": "src/handler.py",
       "line_start": 66,
       "severity": "medium",
-      "confidence": 55
+      "confidence": 55,
+      "line_end": 66,
+      "location_status": "confirmed"
     }
   ],
   "fn": "apply_injection_filter"

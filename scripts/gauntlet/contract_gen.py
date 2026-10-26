@@ -601,13 +601,16 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "",
             "class Delta(_DeltaRequired, total=False):",
             *(
-                f"    {field}: {'int' if field == 'confidence' else 'object'}"
+                f"    {field}: {'int' if field in ('confidence', 'line_start', 'line_end') else 'LocationStatus' if field == 'location_status' else 'object'}"
                 for field in delta_value_fields
             ),
             "",
             "",
             "class VerifySliceFinding(TypedDict, total=False):",
-            *(f"    {field}: Any" for field in identity["verifySliceFields"]),
+            *(
+                f"    {field}: {'str' if field == 'anchor' else 'Any'}"
+                for field in identity["verifySliceFields"]
+            ),
             "",
             "",
         ]

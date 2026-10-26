@@ -1,0 +1,60 @@
+{
+  "checksum": "fnv1a32:0x718899f0",
+  "deltas": [
+    {
+      "confidence": 65,
+      "id": "bug-201",
+      "line_end": 52,
+      "line_start": 50,
+      "location_status": "confirmed",
+      "origin": "new",
+      "severity": "medium",
+      "verified": true
+    },
+    {
+      "confidence": 75,
+      "id": "bug-202",
+      "location_status": "unconfirmed",
+      "origin": "new",
+      "severity": "high",
+      "verified": true
+    }
+  ],
+  "joined": [
+    {
+      "anchor": "synthetic_source(0);\nsynthetic_source(1);\nsynthetic_source(2);",
+      "claimed_line_end": 52,
+      "claimed_line_start": 50,
+      "confidence": 65,
+      "cross_file_refs": [],
+      "description": "The file opened via open(path) is never closed if the loop below raises, leaking a file descriptor per failed parse.",
+      "dimension": "bug",
+      "evidence": "f = open(path)",
+      "file": "src/parser.py",
+      "id": "bug-201",
+      "line_end": 52,
+      "line_start": 50,
+      "location_status": "confirmed",
+      "origin": "new",
+      "severity": "medium",
+      "suggestion": "Use a context manager (with open(path) as f) instead.",
+      "title": "Unclosed file handle"
+    },
+    {
+      "claimed_line_end": 902,
+      "claimed_line_start": 900,
+      "confidence": 75,
+      "cross_file_refs": [],
+      "description": "The finding cites a lock acquisition around cache eviction at these lines, but no such code exists in the current file.",
+      "dimension": "bug",
+      "evidence": "with cache_lock: evict(key)",
+      "file": "src/parser.py",
+      "id": "bug-202",
+      "location_status": "unconfirmed",
+      "origin": "new",
+      "severity": "high",
+      "suggestion": "Confirm the lock is actually held at the reported location before filing.",
+      "title": "Claimed race condition in cache eviction"
+    }
+  ]
+}

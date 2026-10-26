@@ -25,7 +25,8 @@
       "routed_by": "dimension",
       "severity": "high",
       "suggestion": "Mock the gateway to raise PaymentGatewayError and assert the transaction is rolled back.",
-      "title": "Missing test for the payment failure rollback path"
+      "title": "Missing test for the payment failure rollback path",
+      "location_status": "unconfirmed"
     },
     {
       "agent": "conventions-and-intent",
@@ -45,7 +46,8 @@
       "severity": "medium",
       "spec_text": "A request failing schema validation MUST return 422 Unprocessable Entity.",
       "suggestion": "Return a 422 with the validation detail instead of a 200.",
-      "title": "Handler returns 200 on a validation failure"
+      "title": "Handler returns 200 on a validation failure",
+      "location_status": "confirmed"
     }
   ]
 }

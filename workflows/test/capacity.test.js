@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  planVerifySlices, predictVerifySliceInlineLength, worstCaseAgentCount, coarsenLimits,
+  verifyCommand, verifyInlineCost, planVerifySlices, predictVerifySliceInlineLength, worstCaseAgentCount, coarsenLimits,
   verifyInlineBudget, effectiveVerifyBaseBranch, effectiveSliceSize, effectiveChallengeCap, effectiveBucketSize, effectiveBatchSize,
 } from '../src/capacity.js';
 import { encodeSliceInline, projectVerifySliceFinding } from '../src/verifyWire.js';
@@ -92,7 +92,7 @@ const COARSEN_ROWS = [
   { name: 'absent cap becomes concrete', limits: { summarizeBucketSize: 20, validateBatch: 25, verifySliceSize: 200 },
     files: 0, findings: 5000,
     expected: { summarizeBucketSize: 20, validateBatch: 25, verifySliceSize: 200, challengeCap: 625 }, count: 885 },
-  { name: 'benchmark shape unchanged', limits: COUNT_GOLDEN, files: 23, findings: 40, expected: COUNT_GOLDEN, count: 56 },
+  { name: 'small review shape', limits: COUNT_GOLDEN, files: 23, findings: 40, expected: COUNT_GOLDEN, count: 56 },
   { name: 'smallest verify slice converges', limits: { ...COUNT_GOLDEN, verifySliceSize: 1 }, files: 20, findings: 5000,
     expected: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 16 }, count: 877 },
   { name: 'all limits absent converge', limits: {}, files: 20000, findings: 5000,
@@ -160,4 +160,27 @@ test('absent bucket limit: 47 files', async () => {
     assert.ok(call.prompt.includes('The authoritative changed-line count is 1211; cite that number verbatim'));
     assert.deepEqual(call.schema, { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] });
   }
+});
+
+
+test('anchor and map flags obey encoded command budget', () => {
+  const anchor = Array.from({ length: 4 }, () => '\u{1F600}'.repeat(90)).join('\n');
+  const findings = Array.from({ length: 6 }, (_, n) => ({ id: `f${n}`, file: 'source', anchor }));
+  const inp = { repoRoot: 'D:/repo', nonce: 'n', headShaShort: 'abcd', verify: {
+    targetKind: 'local', contextFile: 'D:/out/context.md', contextMap: 'D:/out/map.json', diffPath: 'D:/out/raw.patch',
+  } };
+  const one = predictVerifySliceInlineLength(findings.slice(0, 1), 'main', 'windows');
+  const plan = planVerifySlices(findings, 6, one + 2, 'main', 'windows');
+  assert.equal(plan.slices.length, 6);
+  for (const slice of plan.slices) {
+    const content = { findings: slice.map(projectVerifySliceFinding), base_branch: 'main' };
+    const token = encodeSliceInline(content);
+    assert.equal(predictVerifySliceInlineLength(slice, 'main', 'windows'), verifyInlineCost(token, 'windows'));
+    assert.equal(slice[0].anchor, anchor);
+    const command = verifyCommand(inp, 0, 'n.0', token);
+    assert.ok(command.includes('--target-kind local'));
+    assert.ok(command.includes('--context-map D:/out/map.json'));
+    assert.ok(command.includes('--context-file D:/out/context.md'));
+  }
+  assert.ok(verifyInlineBudget(inp) < verifyInlineBudget({ ...inp, verify: {} }));
 });

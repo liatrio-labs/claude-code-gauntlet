@@ -12,7 +12,9 @@
       "id": "C3",
       "line_start": 20,
       "severity": "low",
-      "title": "t3"
+      "title": "t3",
+      "line_end": 20,
+      "location_status": "confirmed"
     },
     {
       "agent": "code-simplifier",
@@ -25,7 +27,9 @@
       "id": "C4",
       "line_start": 21,
       "severity": "low",
-      "title": "t4"
+      "title": "t4",
+      "line_end": 21,
+      "location_status": "confirmed"
     }
   ]
 }

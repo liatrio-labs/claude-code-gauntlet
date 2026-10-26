@@ -10,7 +10,9 @@
       "severity": "high",
       "confidence": 80,
       "title": "Reviewer note on the handler here",
-      "description": "This finding flags a duplicate reviewer annotation on the same handler line from the previous pass over the module."
+      "description": "This finding flags a duplicate reviewer annotation on the same handler line from the previous pass over the module.",
+      "line_end": 42,
+      "location_status": "confirmed"
     },
     {
       "id": "S2",
@@ -20,8 +22,10 @@
       "line_start": 42,
       "severity": "high",
       "confidence": 80,
-      "title": "Reviewеr note on the handler here",
-      "description": "This finding flags a duplicate reviewer annotation on the same handler line from the previous pass over the module."
+      "title": "Review\u0435r note on the handler here",
+      "description": "This finding flags a duplicate reviewer annotation on the same handler line from the previous pass over the module.",
+      "line_end": 42,
+      "location_status": "confirmed"
     }
   ]
 }

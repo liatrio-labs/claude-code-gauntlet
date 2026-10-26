@@ -1,9 +1,12 @@
 {
-  "checksum": "fnv1a32:0xe38794aa",
+  "checksum": "fnv1a32:0xc3b2bf14",
   "deltas": [
     {
       "confidence": 60,
       "id": "tc-501",
+      "line_end": 10,
+      "line_start": 10,
+      "location_status": "confirmed",
       "origin": "new",
       "severity": "medium",
       "verified": true
@@ -12,6 +15,9 @@
   "joined": [
     {
       "agent": "test-coverage-agent",
+      "anchor": "synthetic_source(0);",
+      "claimed_line_end": 40,
+      "claimed_line_start": 10,
       "claude_md_rule": "Every new code path requires a corresponding test (CLAUDE.md > Tests).",
       "confidence": 60,
       "criticality": "high",
@@ -22,8 +28,9 @@
       "failure_scenario": "A partial shipment followed by a refund silently double-credits the customer, because the untested branch skips the shipped-quantity adjustment.",
       "file": "tests/test_orders.py",
       "id": "tc-501",
-      "line_end": 40,
+      "line_end": 10,
       "line_start": 10,
+      "location_status": "confirmed",
       "origin": "new",
       "severity": "medium",
       "suggestion": "Add a test for refund_after_partial_ship.",

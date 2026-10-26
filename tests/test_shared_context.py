@@ -242,9 +242,35 @@ def test_output_write_oserror_exits_two_with_one_line(
     assert context_path.is_dir()
 
 
+@pytest.mark.parametrize(
+    "variant",
+    [
+        None,
+        (
+            b"--- a/real\n+++ b/real\n@@ -1 +1 @@\n-old source text\n+new source text",
+            "b/real",
+        ),
+        (b"--- a/real\n+++ /dev/null\n@@ -1 +0,0 @@\n-old source text", "a/real"),
+        (
+            b'diff --git "a/old name" "b/new name"\n--- "a/old name"\n+++ "b/new name"\n@@ -1 +1 @@\n-old source text\n+new source text',
+            "new name",
+        ),
+        *[
+            (b"--- a/item\n+++ b/item\n" + body, None)
+            for body in [
+                b"@@ -1,2 +1,2 @@\n context\n",
+                b"@@ -1 +1 @@\n-old\n+new\n+excess\n",
+                b"@@ broken\n+source\n",
+                b"@@ -0 +1 @@\n context\n",
+            ]
+        ],
+    ],
+)
 @pytest.mark.parametrize("prefix_lines", [0, 600])
 @pytest.mark.parametrize("crlf", [False, True])
-def test_context_map_matches_read_numbering(tmp_path, invoke, prefix_lines, crlf):
+def test_context_map_matches_read_numbering(
+    tmp_path, invoke, prefix_lines, crlf, variant
+):
     diff = (
         b"diff --git a/old b/new\nrename from old\nrename to new\n"
         b"--- a/old\n+++ b/new\n@@ -7,3 +7,3 @@\n"
@@ -258,6 +284,8 @@ def test_context_map_matches_read_numbering(tmp_path, invoke, prefix_lines, crlf
         b"@@ -1 +1 @@\n-before\n+unicode\xe2\x80\xa8separator\n"
         b"\\ No newline at end of file"
     )
+    if variant is not None:
+        diff = variant[0]
     if crlf:
         diff = diff.replace(b"\n", b"\r\n")
     rules = b"rule\n" * prefix_lines + b"rules"
@@ -270,45 +298,56 @@ def test_context_map_matches_read_numbering(tmp_path, invoke, prefix_lines, crlf
         b"triage\n",
     )
     assert result.returncode == 0, result.stderr
-    assert result.stderr == b""
+    assert bool(result.stderr) == (variant is not None and variant[1] is None)
     context = (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
     sidecar = json.loads(
         (output_dir / f"code-gauntlet-context-map-{SHA}.json").read_bytes()
     )
-    rows = context.split(b"\n")
-    expected = [
-        ("new", "head", 7, b"N7  |first(value)"),
-        ("new", "old", 8, b"O8 -|old deleted value"),
-        ("new", "head", 8, b"N8 +|  new value\xff"),
-        ("new", "head", 9, b"N9  |tail(value)"),
-        ("new", "old", 20, b"O20 -|last old value"),
-        ("new", "head", 20, b"N20 +|last new value"),
-        ("a/real", "old", 1, b"O1 -|old real value"),
-        ("a/real", "head", 1, b"N1 +|new real value"),
-        ("gone", "old", 3, b"O3 -|deleted value"),
-        ("bytes", "old", 1, b"O1 -|before"),
-        ("bytes", "head", 1, b"N1 +|unicode\xe2\x80\xa8separator"),
-    ]
-    assert len(sidecar["entries"]) == len(expected)
-    for (key, entry), (file, side, line, body) in zip(
-        sidecar["entries"].items(), expected, strict=True
-    ):
-        assert entry == {"file": file, "side": side, "line": line}
-        assert rows[int(key) - 1] == body + (b"\r" if crlf else b"")
-    assert min(map(int, sidecar["entries"])) == prefix_lines + 16
-    assert sidecar == {
-        "version": 1,
-        "sha": SHA,
-        "status": "available",
-        "context_sha256": hashlib.sha256(context).hexdigest(),
-        "diff_sha256": hashlib.sha256(diff).hexdigest(),
-        "entries": sidecar["entries"],
-    }
+    if variant is not None:
+        if variant[1] is None:
+            assert diff in context
+            assert sidecar["status"] == "unavailable" and not sidecar["entries"]
+        else:
+            assert sidecar["status"] == "available"
+            assert {entry["file"] for entry in sidecar["entries"].values()} == {
+                variant[1]
+            }
+    else:
+        rows = context.split(b"\n")
+        expected = [
+            ("new", "head", 7, b"N7  |first(value)"),
+            ("new", "old", 8, b"O8 -|old deleted value"),
+            ("new", "head", 8, b"N8 +|  new value\xff"),
+            ("new", "head", 9, b"N9  |tail(value)"),
+            ("new", "old", 20, b"O20 -|last old value"),
+            ("new", "head", 20, b"N20 +|last new value"),
+            ("a/real", "old", 1, b"O1 -|old real value"),
+            ("a/real", "head", 1, b"N1 +|new real value"),
+            ("gone", "old", 3, b"O3 -|deleted value"),
+            ("bytes", "old", 1, b"O1 -|before"),
+            ("bytes", "head", 1, b"N1 +|unicode\xe2\x80\xa8separator"),
+        ]
+        assert len(sidecar["entries"]) == len(expected)
+        for (key, entry), (file, side, line, body) in zip(
+            sidecar["entries"].items(), expected, strict=True
+        ):
+            assert entry == {"file": file, "side": side, "line": line}
+            assert rows[int(key) - 1] == body + (b"\r" if crlf else b"")
+        assert min(map(int, sidecar["entries"])) == prefix_lines + 16
+        assert sidecar == {
+            "version": 1,
+            "sha": SHA,
+            "status": "available",
+            "context_sha256": hashlib.sha256(context).hexdigest(),
+            "diff_sha256": hashlib.sha256(diff).hexdigest(),
+            "entries": sidecar["entries"],
+        }
     assert (output_dir / f"code-gauntlet-diff-{SHA}.patch").read_bytes() == diff
     receipt = json.loads(result.stdout)
     assert receipt["contextLines"] == context.count(b"\n")
     assert receipt["contextChars"] == len(context.decode("utf-8", "replace"))
-    assert b"\\ No newline at end of file\n</untrusted-code-content" in context
+    if variant is None:
+        assert b"\\ No newline at end of file\n</untrusted-code-content" in context
 
 
 def test_map_write_failure_refuses_context(tmp_path, invoke):
@@ -324,68 +363,3 @@ def test_map_write_failure_refuses_context(tmp_path, invoke):
     assert result.returncode == 2
     assert result.stdout == b""
     assert result.stderr.startswith(b"write_shared_context: cannot write context map (")
-
-
-@pytest.mark.parametrize(
-    "headers,file",
-    [
-        (b"--- a/real\n+++ b/real\n", "b/real"),
-        (b"--- a/real\n+++ /dev/null\n", "a/real"),
-        (
-            b'diff --git "a/old name" "b/new name"\n--- "a/old name"\n+++ "b/new name"\n',
-            "new name",
-        ),
-    ],
-)
-def test_context_map_preserves_proven_path_spelling(tmp_path, invoke, headers, file):
-    output_dir = tmp_path / "out"
-    diff = headers + (
-        b"@@ -1 +0,0 @@\n-old source text"
-        if b"/dev/null" in headers
-        else b"@@ -1 +1 @@\n-old source text\n+new source text"
-    )
-    write_context_inputs(output_dir, b"rules", diff)
-    result = invoke(
-        "write_shared_context",
-        ["--output-dir", str(output_dir), "--head-sha", SHA],
-        tmp_path,
-        b"triage",
-    )
-    assert result.returncode == 0, result.stderr
-    raw = json.loads(
-        (output_dir / f"code-gauntlet-context-map-{SHA}.json").read_bytes()
-    )
-    assert raw["status"] == "available"
-    assert {entry["file"] for entry in raw["entries"].values()} == {file}
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        b"@@ -1,2 +1,2 @@\n context\n",
-        b"@@ -1 +1 @@\n-old\n+new\n+excess\n",
-        b"@@ broken\n+source\n",
-        b"@@ -0 +1 @@\n context\n",
-    ],
-)
-def test_malformed_hunk_keeps_raw_presentation_without_partial_map(
-    tmp_path, invoke, body
-):
-    output_dir = tmp_path / "out"
-    diff = b"--- a/item\n+++ b/item\n" + body
-    write_context_inputs(output_dir, b"rules", diff)
-    result = invoke(
-        "write_shared_context",
-        ["--output-dir", str(output_dir), "--head-sha", SHA],
-        tmp_path,
-        b"triage",
-    )
-    assert result.returncode == 0
-    assert b"context map unavailable" in result.stderr
-    context = (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
-    assert diff in context
-    sidecar = json.loads(
-        (output_dir / f"code-gauntlet-context-map-{SHA}.json").read_bytes()
-    )
-    assert sidecar["status"] == "unavailable"
-    assert sidecar["entries"] == {}

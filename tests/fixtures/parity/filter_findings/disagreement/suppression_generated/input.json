@@ -10,7 +10,9 @@
       "severity": "medium",
       "confidence": 70,
       "title": "missing test",
-      "description": "d6"
+      "description": "d6",
+      "line_end": 20,
+      "location_status": "confirmed"
     },
     {
       "id": "D7",
@@ -21,7 +23,9 @@
       "severity": "low",
       "confidence": 60,
       "title": "t7",
-      "description": "this file is auto-generated scaffolding, do not add tests"
+      "description": "this file is auto-generated scaffolding, do not add tests",
+      "line_end": 21,
+      "location_status": "confirmed"
     }
   ]
 }

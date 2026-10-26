@@ -1,12 +1,16 @@
+import { normalizeLocation } from './location.js';
 import { deepClone, firstUnsafeNumber, fnv1a32, normalizeForChecksum } from './wire.js';
 
 // Aliases let persisted findings serve consumers of both field vocabularies.
 const PERSIST_ALIASES = [['line', 'line_start'], ['end_line', 'line_end'], ['body', 'description']];
 
 function toV2Aliased(f) {
-  const out = { ...f };
+  const out = normalizeLocation(f);
   for (const [alias, canonical] of PERSIST_ALIASES) {
-    if (out[alias] === undefined && out[canonical] !== undefined) out[alias] = out[canonical];
+    if (alias === 'body') {
+      if (out.body === undefined && out.description !== undefined) out.body = out.description;
+    } else if (out[canonical] !== undefined) out[alias] = out[canonical];
+    else delete out[alias];
   }
   return out;
 }
@@ -140,9 +144,6 @@ export function persistDerivable(inp) {
     }
     if (byId.has(fid)) return { ok: false, reason: `duplicate finding id ${fid}` };
     byId.set(fid, f);
-    if (JSON.stringify(stripPersistAliases(toV2Aliased(f))) !== JSON.stringify(f)) {
-      return { ok: false, reason: `finding ${fid} already carries a v2 alias field (${PERSIST_ALIAS_FIELDS.join('/')}) — the checkpoint alias strip is not reversible` };
-    }
   }
   const twinCheck = (list, label, project) => {
     for (let i = 0; i < list.length; i += 1) {
@@ -157,11 +158,20 @@ export function persistDerivable(inp) {
     }
     return null;
   };
-  const postReviewBad = twinCheck(inp.postReview || [], 'postReview', toV2Aliased);
+  const postReviewBad = twinCheck(inp.postReview || [], 'postReview', (f) => {
+    const view = toV2Aliased(f);
+    return { ...stripPersistAliases(view), ...(view.body !== undefined ? { body: view.body } : {}) };
+  });
   if (postReviewBad) return { ok: false, reason: postReviewBad };
   const challenge = ((inp.checkpoints || {}).phases || {}).challenge;
   const challengeFindings = challenge && Array.isArray(challenge.findings) ? challenge.findings : [];
-  const challengeBad = twinCheck(challengeFindings, 'checkpoint challenge', (f) => f);
+  const challengeBad = twinCheck(challengeFindings, 'checkpoint challenge', (f) => stripPersistAliases(toV2Aliased(f)));
   if (challengeBad) return { ok: false, reason: challengeBad };
+  // The assembler strips aliases only; any other normalization needs the by-value writer.
+  for (const f of challengeFindings) {
+    if (JSON.stringify(stripPersistAliases(toV2Aliased(byId.get(f.id)))) !== JSON.stringify(f)) {
+      return { ok: false, reason: `checkpoint challenge entry ${f.id} requires normalization before derivation` };
+    }
+  }
   return { ok: true };
 }

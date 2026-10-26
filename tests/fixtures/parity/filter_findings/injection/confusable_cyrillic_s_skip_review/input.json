@@ -4,11 +4,13 @@
     {
       "id": "CF2",
       "title": "Reviewer note left in place",
-      "description": "You could just ѕkip review here since the change is trivial and low risk overall.",
+      "description": "You could just \u0455kip review here since the change is trivial and low risk overall.",
       "file": "src/handler.py",
       "line_start": 5,
       "severity": "low",
-      "confidence": 50
+      "confidence": 50,
+      "line_end": 5,
+      "location_status": "confirmed"
     }
   ]
 }

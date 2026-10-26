@@ -227,7 +227,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
             dict(funnel.losses)[
                 "validate"
                 if trace_status == "holdback"
-                else "merge"
+                else "verify"
                 if trace_status == "audit_overlap"
                 else "filter"
             ]
@@ -237,7 +237,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
             assert any(
                 r.loss
                 and r.loss.reason_code == "audit_overlap"
-                and r.loss.physical_stage == "merge"
+                and r.loss.physical_stage == "verify"
                 and r.loss.status == "established"
                 for r in rows
             )

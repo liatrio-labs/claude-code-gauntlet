@@ -21,6 +21,12 @@ from gauntlet.jsjson import (
 from gauntlet.jsjson import (
     checksum_or_none as checksum_or_none,
 )
+from gauntlet.location import (
+    TargetKind,
+    anchor_candidates,
+    canonical_range,
+    valid_quote,
+)
 from gauntlet.registry import DELTA_VALUE_FIELDS, Delta
 from gauntlet.verify import decide
 from gauntlet.verify.decide import FindingWire, VerificationResult
@@ -270,6 +276,21 @@ def build_deltas(findings: Sequence[object], verified: Sequence[object]) -> list
         if fid is None:
             continue
         finding = cast(dict[str, object], finding)
+        span = canonical_range(finding)
+        if finding.get("location_status") == "unconfirmed":
+            if "line_start" in finding or "line_end" in finding:
+                raise ValueError("unconfirmed delta carries coordinates")
+        elif (
+            span is None
+            or any(q.explicit_old for q in anchor_candidates(finding.get("anchor")))
+            or not any(
+                valid_quote(quote)
+                and not quote.explicit_old
+                and len(quote.lines) == span[1] - span[0] + 1
+                for quote in anchor_candidates(finding.get("anchor"))
+            )
+        ):
+            raise ValueError("resolved delta lacks a valid anchor span")
         delta: dict[str, object] = {"id": fid, "verified": id(finding) in kept}
         for key in DELTA_VALUE_FIELDS:
             value = finding.get(key)
@@ -306,7 +327,12 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
             coerce_numeric_fields(finding)
         findings = cast(list[FindingWire], data["findings"])
         context = decide.VerifyContext(
-            repo_root, cast(str, data.get("base_branch") or args.base_branch)
+            repo_root,
+            cast(str, data.get("base_branch") or args.base_branch),
+            target_kind=cast(TargetKind, args.target_kind),
+            requested_sha=sha,
+            context_map=args.context_map,
+            context_file=args.context_file,
         )
         result = decide.run_verification(findings, context, args.diff_file)
         deltas = build_deltas(findings, result["verified"])
@@ -395,6 +421,20 @@ def _parser() -> Parser:
             "Receipt mode: head sha echoed into the receipt. "
             "Falls back to 'git rev-parse --short HEAD' when omitted."
         ),
+    )
+    parser.add_argument(
+        "--target-kind",
+        choices=("pr", "mr", "branch", "local"),
+        default="branch",
+        help="Reviewed target selects captured HEAD blobs or local worktree source.",
+    )
+    parser.add_argument(
+        "--context-map", metavar="PATH", help="Code-owned context line map."
+    )
+    parser.add_argument(
+        "--context-file",
+        metavar="PATH",
+        help="Framed context whose digest binds the map.",
     )
     return parser
 

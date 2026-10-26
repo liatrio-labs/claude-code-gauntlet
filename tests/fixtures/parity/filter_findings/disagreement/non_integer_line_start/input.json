@@ -10,7 +10,8 @@
       "severity": "medium",
       "confidence": 70,
       "title": "t12",
-      "description": "d12"
+      "description": "d12",
+      "location_status": "unconfirmed"
     },
     {
       "id": "D13",
@@ -21,7 +22,9 @@
       "severity": "medium",
       "confidence": 60,
       "title": "t13",
-      "description": "d13"
+      "description": "d13",
+      "line_end": 20,
+      "location_status": "confirmed"
     }
   ]
 }

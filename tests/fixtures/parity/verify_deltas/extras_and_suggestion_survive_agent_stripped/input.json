@@ -16,7 +16,8 @@
       "criticality": "high",
       "failure_scenario": "A partial shipment followed by a refund silently double-credits the customer, because the untested branch skips the shipped-quantity adjustment.",
       "cross_file_refs": [],
-      "agent": "test-coverage-agent"
+      "agent": "test-coverage-agent",
+      "anchor": "synthetic_source(0);"
     }
   ],
   "result": {
@@ -25,7 +26,7 @@
         "id": "tc-501",
         "file": "tests/test_orders.py",
         "line_start": 10,
-        "line_end": 40,
+        "line_end": 10,
         "title": "No test covers the refund-after-partial-ship path",
         "description": "The refund flow is only tested for full-order refunds; a partial shipment followed by a refund request is untested.",
         "severity": "medium",
@@ -53,7 +54,11 @@
         "diff_validation": {
           "in_diff": true,
           "reason": "line 10 found in diff"
-        }
+        },
+        "anchor": "synthetic_source(0);",
+        "location_status": "confirmed",
+        "claimed_line_start": 10,
+        "claimed_line_end": 40
       }
     ],
     "eliminated": []

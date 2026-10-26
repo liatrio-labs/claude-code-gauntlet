@@ -15,7 +15,9 @@
       "security_escalation": false,
       "severity": "low",
       "singleton_penalty": true,
-      "title": "t3"
+      "title": "t3",
+      "line_end": 5,
+      "location_status": "confirmed"
     }
   ],
   "boosted_count": 0,
