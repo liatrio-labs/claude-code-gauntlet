@@ -259,20 +259,28 @@ const CODE_OWNED_HEADINGS = deepFreeze([
   '## Review Dimensions Summary',
   '## Review Methodology',
 ]);
+const ANCHOR_LIMITS = deepFreeze({ lines: 4, chars: 400 });
+const LOCATION_RIGHTS = deepFreeze({
+  confirmed: { body: true, sourceLink: true, inline: true, fence: true, patch: true, fixTask: true },
+  relocated: { body: true, sourceLink: true, inline: true, fence: true, patch: true, fixTask: true },
+  unconfirmed: { body: true, sourceLink: false, inline: false, fence: false, patch: false, fixTask: false },
+});
+const LOCATION_STATUSES = deepFreeze(Object.keys(LOCATION_RIGHTS));
 const FINDING_PROP_TYPES = deepFreeze({
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
   dimension: 'string', origin: 'string', evidence: 'string',
+  anchor: { type: 'string', description: 'Exact text of 1 to 4 contiguous source lines at the PR head in file, at most 400 characters; OMIT this field when unavailable.' },
   suggestion: 'string', claude_md_rule: 'string',
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string' } },
 });
 const FINDING_PATH_ARRAY_FIELDS = deepFreeze(['cross_file_refs', 'affected_consumers']);
-const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code', 'removed_test']);
+const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
 const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
 const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
-const closedDispatchRow = (properties) => ({
-  type: 'object', properties, required: Object.keys(properties), additionalProperties: false,
+const closedDispatchRow = (properties, optional = []) => ({
+  type: 'object', properties, required: Object.keys(properties).filter((key) => !optional.includes(key)), additionalProperties: false,
 });
 const DISPATCH_RESULTS = deepFreeze({
   [AGENT_TYPE_TEST_ANALYZER]: {
@@ -291,7 +299,8 @@ const DISPATCH_RESULTS = deepFreeze({
           confidence: { type: 'number', minimum: 0, maximum: 100 },
           criticality: { type: 'number', minimum: 1, maximum: 10 },
           failure_scenario: { type: 'string', minLength: 1 },
-        }) },
+          anchor: FINDING_PROP_TYPES.anchor,
+        }, ['anchor']) },
       }),
     },
   },
@@ -325,6 +334,7 @@ const DIMENSIONS = deepFreeze([
 const PIPELINE_FINDING_FIELDS = deepFreeze([
   'trace_id', 'discovery_agent', 'discovery_dimension',
   'removed_test',
+  'location_status', 'claimed_line_start', 'claimed_line_end',
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
   'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
@@ -851,10 +861,14 @@ function validateRemovedTests(value) {
   return value.status === 'unavailable' ? unavailable('saved diff structure unavailable') : body;
 }
 function matchesAuditSchema(value, schema) {
-  if (schema.type === 'object') return exactKeys(value, Object.keys(schema.properties))
-    && Object.entries(schema.properties).every(([key, child]) => matchesAuditSchema(value[key], child));
+  if (schema.type === 'object') return isPlainObject(value)
+    && (schema.required || []).every((key) => Object.hasOwn(value, key))
+    && Object.keys(value).every((key) => Object.hasOwn(schema.properties, key)
+      && matchesAuditSchema(value[key], schema.properties[key]));
   if (schema.type === 'array') return Array.isArray(value) && value.every((entry) => matchesAuditSchema(entry, schema.items));
-  if (schema.type === 'string') return nonempty(value) && (!schema.enum || schema.enum.includes(value));
+  if (schema.type === 'string') return typeof value === 'string'
+    && (schema.minLength === undefined || Array.from(stripPythonWhitespace(value)).length >= schema.minLength)
+    && (!schema.enum || schema.enum.includes(value));
   return typeof value === 'number' && Number.isFinite(value)
     && (schema.type !== 'integer' || Number.isSafeInteger(value))
     && (schema.minimum === undefined || value >= schema.minimum)
@@ -3526,6 +3540,7 @@ function outboundTildeRuns(line) {
 }
 // --- renderReport.js ---
 const REPORT_EXCLUDED_FIELDS = deepFreeze([
+  'anchor', 'claimed_line_start', 'claimed_line_end',
   'suggested_fix_code',
   'suggested_fix_code_removed_by',
   'suggested_fix_code_removal_reason',

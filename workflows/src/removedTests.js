@@ -45,10 +45,14 @@ export function validateRemovedTests(value) {
 
 // Runtime intake must enforce the contract even when a host skips schema validation.
 function matchesAuditSchema(value, schema) {
-  if (schema.type === 'object') return exactKeys(value, Object.keys(schema.properties))
-    && Object.entries(schema.properties).every(([key, child]) => matchesAuditSchema(value[key], child));
+  if (schema.type === 'object') return isPlainObject(value)
+    && (schema.required || []).every((key) => Object.hasOwn(value, key))
+    && Object.keys(value).every((key) => Object.hasOwn(schema.properties, key)
+      && matchesAuditSchema(value[key], schema.properties[key]));
   if (schema.type === 'array') return Array.isArray(value) && value.every((entry) => matchesAuditSchema(entry, schema.items));
-  if (schema.type === 'string') return nonempty(value) && (!schema.enum || schema.enum.includes(value));
+  if (schema.type === 'string') return typeof value === 'string'
+    && (schema.minLength === undefined || Array.from(stripPythonWhitespace(value)).length >= schema.minLength)
+    && (!schema.enum || schema.enum.includes(value));
   return typeof value === 'number' && Number.isFinite(value)
     && (schema.type !== 'integer' || Number.isSafeInteger(value))
     && (schema.minimum === undefined || value >= schema.minimum)

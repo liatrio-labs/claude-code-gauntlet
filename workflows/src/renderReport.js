@@ -14,6 +14,7 @@ import { prepareSummaryTitle, preparedCodeSpan, codeSpan, outboundTildeRuns } fr
 
 // Delivery owns committable fix fences; the report must not expose them as unvalidated prose extras.
 const REPORT_EXCLUDED_FIELDS = deepFreeze([
+  'anchor', 'claimed_line_start', 'claimed_line_end',
   'suggested_fix_code',
   'suggested_fix_code_removed_by',
   'suggested_fix_code_removal_reason',

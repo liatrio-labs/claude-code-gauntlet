@@ -60,6 +60,7 @@ const CANONICAL_PROPS = {
   id: { type: 'string' }, file: { type: 'string' }, line_start: { type: 'number' }, line_end: { type: 'number' },
   title: { type: 'string' }, description: { type: 'string' }, severity: { type: 'string' }, confidence: { type: 'number' },
   dimension: { type: 'string' }, origin: { type: 'string' }, evidence: { type: 'string' },
+  anchor: { type: 'string', description: 'Exact text of 1 to 4 contiguous source lines at the PR head in file, at most 400 characters; OMIT this field when unavailable.' },
   suggestion: { type: 'string' }, claude_md_rule: { type: 'string' }, suggested_fix_code: { type: 'string' },
   cross_file_refs: { type: 'array', items: { type: 'string' } },
 };

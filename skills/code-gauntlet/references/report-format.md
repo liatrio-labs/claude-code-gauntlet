@@ -78,6 +78,7 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `dimension` | string | yes | Review dimension (bug, security, cross-file, etc.) |
 | `origin` | string | no | Blame classification stamped by `scripts/verify_findings.py` — the one canonical field no agent emits. |
 | `evidence` | string | no | Code snippet or behavior demonstrating the issue. Required by the discovery PROMPT (must be non-empty) though schema-optional. |
+| `anchor` | string | no | Exact text of 1 to 4 contiguous source lines at the PR head in file, at most 400 characters; OMIT this field when unavailable. |
 | `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
 | `claude_md_rule` | string | conditional | The cited project rule, quoted with its source file; required by contract for convention findings; OMITTED (never null) when no rule applies. |
 | `cross_file_refs` | array | no | Other files involved in the finding |
@@ -100,6 +101,19 @@ For convention findings, `rule_source` selects the heading for `claude_md_rule`:
 | `behavior_preserved` | string | simplification | yes | Why the simplification is behavior-preserving |
 
 Required is tri-state. A `yes` field is appended to that dimension's dispatch required list (FINDING_REQUIRED plus the row's `requiredExtra`, never the other way around — FINDING_REQUIRED itself never carries a per-dimension field): the platform rejects a finding missing it at the StructuredOutput boundary, and the agent retries. A `conditional` field (`claude_md_rule`, `spec_text` — registry.js's `requiredWhenDimension`) is schema-required only on a dispatch that targets the first-party API directly with no gateway (`resolvedPolicy.conditionalSchema`), and only for a finding whose `dimension` matches the field's owning dimension — a nested `allOf`/`if`/`then` in the conventions-and-intent item schema, the one provider-measured shape that survives dispatch (a top-level conditional construct 400s). A `no` field carries neither promotion. Both `conditional` and `no` fields are contract-enforced by the agent's `.md` prose where its own dimension calls for it, everywhere the schema construct does not ride — third-party providers, gateway sessions, and every sibling dimension of a `conditional` field's own dispatch — and `no` fields are never schema-promoted at all: only a field the owning contract emits unconditionally (no OMIT branch, within its own dimension for `conditional`, within every dimension for `yes`) can be promoted to schema-required. Every per-dimension field is never nullable regardless: a not-applicable value is OMITTED, not emitted as null.
+
+<!-- generated-from-registry-location: do not edit; scripts/generate_contract_requirements.py -->
+## Location Status and Rights
+
+`location_status` is pipeline-owned and excluded from discovery output.
+Unconfirmed findings remain in the review body, labelled `location unconfirmed`.
+
+| Status | body | sourceLink | inline | fence | patch | fixTask |
+|---|---|---|---|---|---|---|
+| confirmed | yes | yes | yes | yes | yes | yes |
+| relocated | yes | yes | yes | yes | yes | yes |
+| unconfirmed | yes | no | no | no | no | no |
+<!-- /generated-from-registry-location -->
 
 ---
 

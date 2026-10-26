@@ -65,6 +65,34 @@ test('audit dispatch converts losses and reserves removed_test for code', async 
   }
 });
 
+test('audit anchor optionality follows required keys', async () => {
+  for (const fields of [{}, { anchor: '' }, { anchor: 'return selected_value;' }, { anchor: ' ' }]) {
+    const out = await discover(auditCtx([{ ...lost, losses: [{ ...loss, ...fields }] }]), { removedTests: body });
+    assert.deepEqual(out.removedTestAudit, { status: 'ran-clean' });
+    assert.equal(out.findings.length, 1);
+  }
+  const invalidLosses = [
+    ...Object.keys(loss).map((key) => Object.fromEntries(Object.entries(loss).filter(([field]) => field !== key))),
+    ...['file', 'title', 'description', 'failure_scenario'].map((key) => ({ ...loss, [key]: '' })),
+    { ...loss, title: '  ' },
+    { ...loss, anchor: null }, { ...loss, anchor: 42 },
+    { ...loss, unexpected: 'unknown' },
+  ];
+  const invalidRows = [
+    ...invalidLosses.map((value) => ({ ...lost, losses: [value] })),
+    { ...lost, id: '' },
+    { ...lost, unexpected: 'unknown' },
+    { ...lost, status: 'covered_elsewhere', losses: [], covered_by: [
+      { file: 'tests/new', line: 1, input: 'competing values', assertion: 'override wins', unexpected: 'unknown' },
+    ] },
+  ];
+  for (const row of invalidRows) {
+    const out = await discover(auditCtx([row]), { removedTests: body });
+    assert.equal(out.removedTestAudit.status, 'gap');
+    assert.deepEqual(out.findings, []);
+  }
+});
+
 test('audit losses drop only same-anchor ordinary findings from the same dispatch', async () => {
   const anchor = { ...loss, file: '/repo/bin/seat', line: 545 };
   const ordinary = (id, fields = {}) => makeFinding(id, {
