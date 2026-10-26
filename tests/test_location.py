@@ -35,24 +35,28 @@ def test_claimed_span_tie_rules(line, head, claimed, entry, expected):
 
 @pytest.mark.parametrize("line", [TEXT, f"prefix {TEXT} suffix"])
 @pytest.mark.parametrize(
-    "head,entry,hunks,expected",
+    "head,claimed,entry,hunks,expected",
     [
-        ([1, 0, 1], 3, [(1, 1)], (3, "context_map")),
-        ([0, 0, 1], None, [], (3, "unique")),
-        ([1, 0, 1], None, [(3, 3)], (3, "unique_hunk")),
-        ([1, 0, 1], 2, [(3, 3), (2, 3)], (3, "unique_hunk")),
-        ([1, 0, 1], None, [(1, 3)], (None, "ambiguous")),
-        ([1, 0, 1], None, [], (None, "ambiguous")),
+        ([1, 0, 1], 99, 3, [(1, 1)], (3, "context_map")),
+        ([0, 0, 1], 99, None, [], (3, "unique")),
+        ([0, 0, 1], None, None, [], (3, "unique")),
+        ([0, 0, 1], 1, 2, [], (3, "unique")),
+        ([0, 0, 1], 1, None, [], (None, "plausible_claim")),
+        ([1, 0, 1], 2, None, [(3, 3)], (None, "plausible_claim")),
+        ([1, 0, 1], 99, None, [(3, 3)], (3, "unique_hunk")),
+        ([1, 0, 1], 99, 2, [(3, 3), (2, 3)], (3, "unique_hunk")),
+        ([1, 0, 1], 99, None, [(1, 3)], (None, "ambiguous")),
+        ([1, 0, 1], 99, None, [], (None, "ambiguous")),
     ],
 )
-def test_map_then_unique_then_hunk_order(line, head, entry, hunks, expected):
+def test_map_then_unique_then_hunk_order(line, head, claimed, entry, hunks, expected):
     mapping = (
         {}
         if entry is None
-        else {99: {"file": "src/item", "side": "head", "line": entry}}
+        else {claimed: {"file": "src/item", "side": "head", "line": entry}}
     )
     result = resolve_location(
-        {**REQUEST, "line_start": 99},
+        {**REQUEST, "line_start": claimed},
         [line if present else "unrelated" for present in head],
         mapping,
         hunks,

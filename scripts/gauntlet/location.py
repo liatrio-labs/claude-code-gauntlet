@@ -28,6 +28,7 @@ ResolutionReason = Literal[
     "ambiguous",
     "not_found",
     "ambiguous_presentation",
+    "plausible_claim",
 ]
 _SAFE_INTEGER = 2**53 - 1
 _READ_LABEL = re.compile(r"^[ \t]*[0-9]+(?:\t|\u2192)")
@@ -163,6 +164,9 @@ def resolve_location(
         and translated["line"] in starts
     ):
         return resolved(translated["line"], "relocated", "context_map")
+    # A distant quote alone cannot disprove a plausible source coordinate.
+    if c is not None and c <= len(head_lines) and translated is None:
+        return unconfirmed("plausible_claim" if starts else "not_found")
     if len(starts) == 1:
         return resolved(next(iter(starts)), "relocated", "unique")
     in_hunks = {

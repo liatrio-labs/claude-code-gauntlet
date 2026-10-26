@@ -12,7 +12,7 @@ LAYERS = [
     "scorer score observations provenance stages ledger anchors scoring_costs profiles",
     "validity invoke check checkpoint run",
     "leaks",
-    "populations looks audit compare simulation report windows",
+    "populations looks audit compare simulation report windows location_replay replay_locations",
 ]
 
 
@@ -22,6 +22,7 @@ def test_imports_follow_stack_layers_and_trace_is_independent():
         *sorted((ROOT / "bench/runner").glob("*.py")),
         ROOT / "bench/run.py",
         ROOT / "bench/report.py",
+        ROOT / "bench/replay_locations.py",
     ]
     for path in paths:
         level = rank[path.stem]

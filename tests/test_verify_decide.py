@@ -772,9 +772,21 @@ def test_blame_default_line(tmp_path, monkeypatch, verify_git):
     assert verify_git[0] == []
 
 
-@pytest.mark.parametrize("start", [999, 1])
-def test_out_of_range_quote_relocates_before_blame(
-    tmp_path, monkeypatch, verify_git, start
+@pytest.mark.parametrize(
+    "start,expected_range,status,in_diff,blame",
+    [
+        (
+            999,
+            (2, 2),
+            "relocated",
+            True,
+            [["git", "blame", "-L2,2", HEAD, "--", "source"]],
+        ),
+        (1, (None, None), "unconfirmed", None, []),
+    ],
+)
+def test_quote_resolution_controls_positional_checks(
+    tmp_path, monkeypatch, verify_git, start, expected_range, status, in_diff, blame
 ):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "source").write_text(
@@ -800,17 +812,12 @@ def test_out_of_range_quote_relocates_before_blame(
     )
     assert result["verified"] == [finding]
     assert result["eliminated"] == []
-    assert (finding["line_start"], finding["line_end"], finding["location_status"]) == (
-        2,
-        2,
-        "relocated",
-    )
+    assert (finding.get("line_start"), finding.get("line_end")) == expected_range
+    assert finding["location_status"] == status
     assert (finding["claimed_line_start"], finding["claimed_line_end"]) == (start, 1000)
     assert finding["confidence"] == 80
-    assert finding["diff_validation"]["in_diff"] is True
-    assert [argv for argv, _ in verify_git[0] if argv[1] == "blame"] == [
-        ["git", "blame", "-L2,2", HEAD, "--", "source"]
-    ]
+    assert finding["diff_validation"]["in_diff"] is in_diff
+    assert [argv for argv, _ in verify_git[0] if argv[1] == "blame"] == blame
 
 
 @pytest.mark.parametrize(
