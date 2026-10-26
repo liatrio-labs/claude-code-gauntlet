@@ -301,6 +301,15 @@ Stamp the printed `contextLines`, `contextChars` and `removedTests` into the arg
 An exit 2 wrote no usable context; stop and report its one-line error.
 `scripts/gauntlet/shared_context.py`'s docstring holds the content and measurement rules.
 
+Diff body rows have source gutters: `N7 +|text` for additions, `N7  |text` for head
+context, and `O7 -|text` for deletions. The source text begins immediately after `|`.
+Headers and metadata retain their original bytes. The writer also saves
+`code-gauntlet-context-map-{head_sha_short}.json` beside the context. Its version-1
+entries map physical context LF line numbers to file, side (`head` or `old`), and
+source line. It hashes the final framed context and the original saved patch.
+Malformed hunks keep the raw framed presentation and emit an unavailable, empty map
+with a diagnostic. Both files must be written before a successful receipt.
+
 The workflow's Summarize stage produces the change summary internally.
 
 Discovery agents return findings through structured output (`agent()`/`parallel()` schema).
