@@ -28,6 +28,32 @@ def patch_finding(**values):
     }
 
 
+def test_filtered_patches_are_counted_and_disclosed(tmp_path, invoke):
+    patch_inputs(
+        tmp_path,
+        [{"suggested_fix_code_removed_by": "injection"}, {}],
+        CAPTURE,
+    )
+    result = invoke(
+        "report_patches",
+        ["--output-dir", str(tmp_path), "--head-sha", "abc1234"],
+        tmp_path,
+    )
+    receipt = json.loads(result.stdout)
+    document = (tmp_path / "code-gauntlet-patches-abc1234.md").read_text(
+        encoding="utf-8"
+    )
+    assert (result.returncode, receipt["filtered_earlier"], receipt["candidates"]) == (
+        0,
+        1,
+        0,
+    )
+    assert (
+        "1 patch(es) were removed earlier by the pipeline's content filter "
+        "and are not candidates here."
+    ) in document
+
+
 def test_patch_artifact_requires_location_and_full_quote(tmp_path, invoke, monkeypatch):
     rows = [patch_finding(location_status="unconfirmed"), patch_finding()]
     patch_inputs(tmp_path, rows, CAPTURE)

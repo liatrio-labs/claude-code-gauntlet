@@ -1042,9 +1042,9 @@ for (const row of REPLAY_PROJECTION_ROWS) test(`replay delivery projection: ${ro
     report = out.persistReturn.entries.find((value) => value.path === PATHS.report).text;
     const text = JSON.stringify(delivered, null, 2);
     assert.equal(normalizeForChecksum(text).length, 1203);
-    assert.equal(fnv1a32(normalizeForChecksum(text)), 'fnv1a32:0x348036f9');
+    assert.equal(fnv1a32(normalizeForChecksum(text)), 'fnv1a32:0xdffa72c1');
     assert.equal(plan.derive[0].chars, 1203);
-    assert.equal(plan.derive[0].checksum, 'fnv1a32:0x348036f9');
+    assert.equal(plan.derive[0].checksum, 'fnv1a32:0xdffa72c1');
     assert.equal(payload, null);
     assert.equal(ctx.calls.some((call) => call.label === 'artifact-writer'), false);
   } else { findings = payload.findings; delivered = payload.postReview; checkpoint = payload.checkpoints; report = payload.report; }

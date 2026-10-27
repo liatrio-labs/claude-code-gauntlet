@@ -46,6 +46,8 @@ def receipt(invoke, tmp_path, token=EMPTY, extra=()):
     return invoke(
         "verify_findings",
         [
+            "--target-kind",
+            "branch",
             "--input",
             str(tmp_path / "slice.json"),
             "--input-inline",
@@ -57,6 +59,21 @@ def receipt(invoke, tmp_path, token=EMPTY, extra=()):
             *extra,
         ],
         tmp_path,
+    )
+
+
+def test_target_kind_is_required(invoke, tmp_path):
+    with pytest.raises(TypeError, match="target_kind"):
+        verify.decide.VerifyContext("repo", "base")
+    result = invoke(
+        "verify_findings",
+        ["--input", "slice.json", "--input-inline", EMPTY],
+        tmp_path,
+    )
+    assert (result.returncode, result.stdout, result.stderr) == (
+        2,
+        b"",
+        b"verify_findings: the following arguments are required: --target-kind\n",
     )
 
 
@@ -483,7 +500,7 @@ def test_receipt_failure(failure, invoke, tmp_path, verify_git, monkeypatch):
 )
 def test_argv(argv, message, invoke, tmp_path, monkeypatch):
     monkeypatch.setenv("COLUMNS", "80")
-    result = invoke("verify_findings", argv, tmp_path)
+    result = invoke("verify_findings", ["--target-kind", "branch", *argv], tmp_path)
     assert result.returncode == 2
     assert result.stdout == b""
     assert result.stderr == f"verify_findings: {message}\n".encode()
@@ -499,6 +516,8 @@ def test_head_sha(invoke, tmp_path, verify_git):
     result = invoke(
         "verify_findings",
         [
+            "--target-kind",
+            "branch",
             "--input",
             "slice.json",
             "--input-inline",
@@ -512,7 +531,7 @@ def test_head_sha(invoke, tmp_path, verify_git):
     assert verify_git[0] == [
         (["git", "rev-parse", "--show-toplevel"], {}),
         (["git", "rev-parse", "--short", "HEAD"], {}),
-        (["git", "rev-parse", "HEAD"], {"cwd": str(tmp_path)}),
+        (["git", "rev-parse", "HEAD"], {"cwd": str(tmp_path), "timeout": 3}),
     ]
 
 
@@ -560,7 +579,16 @@ def test_receipt_defaults(head_reply, invoke, tmp_path, verify_git):
     )
     result = invoke(
         "verify_findings",
-        ["--input", "slice.json", "--input-inline", EMPTY, "--diff-file", "patch"],
+        [
+            "--target-kind",
+            "branch",
+            "--input",
+            "slice.json",
+            "--input-inline",
+            EMPTY,
+            "--diff-file",
+            "patch",
+        ],
         tmp_path,
     )
     assert result.returncode == 0
@@ -578,7 +606,7 @@ def test_receipt_defaults(head_reply, invoke, tmp_path, verify_git):
     assert verify_git[0] == [
         (["git", "rev-parse", "--show-toplevel"], {}),
         (["git", "rev-parse", "--short", "HEAD"], {}),
-        (["git", "rev-parse", "HEAD"], {"cwd": str(tmp_path)}),
+        (["git", "rev-parse", "HEAD"], {"cwd": str(tmp_path), "timeout": 3}),
     ]
 
 

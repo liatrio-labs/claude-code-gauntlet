@@ -15,6 +15,7 @@ FIXTURES = REPO / "tests" / "fixtures" / "parity"
 
 
 def _verify_deltas(inp):
+    from gauntlet.location import normalize_location
     from gauntlet.verify.wire import build_deltas, checksum_or_none
 
     verified_by_id = {f["id"]: f for f in inp["result"]["verified"]}
@@ -24,7 +25,7 @@ def _verify_deltas(inp):
     deltas = build_deltas(ordered, inp["result"]["verified"])
     checksum = checksum_or_none(deltas)
     joined = [
-        _project_verify_delta(post_by_id[f["id"]])
+        normalize_location(_project_verify_delta(post_by_id[f["id"]]))
         for f in inp["dispatched"]
         if f["id"] in verified_by_id
     ]

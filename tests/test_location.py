@@ -1,11 +1,28 @@
 """Location authority is decided at the source and resolver boundaries."""
 
 import pytest
+from gauntlet import proc
 from gauntlet.diff import OldSpan, annotate_diff
-from gauntlet.location import resolve_location
+from gauntlet.location import SourceAdapter, resolve_location
 
 TEXT = "perform_action(value)"
 REQUEST = {"file": "src/item", "line_start": 1, "line_end": 99, "anchor": TEXT}
+
+
+@pytest.mark.parametrize("operation", ["rev-parse", "ls-tree", "cat-file"])
+def test_source_git_timeout_leaves_source_unavailable(tmp_path, monkeypatch, operation):
+    def run(argv, *, cwd, timeout=None):
+        if argv[1] == operation and timeout == 3:
+            raise proc.TimeoutExpired(argv, timeout)
+        output = {
+            "rev-parse": b"a" * 40 + b"\n",
+            "ls-tree": b"100644 blob " + b"1" * 40 + b"\tsource\0",
+            "cat-file": TEXT.encode(),
+        }[argv[1]]
+        return proc.CompletedProcess(argv, 0, output, b"")
+
+    monkeypatch.setattr(proc, "run_bytes", run)
+    assert SourceAdapter.capture(tmp_path, "branch", None).read("source") is None
 
 
 @pytest.mark.parametrize("line", [TEXT, f"prefix {TEXT} suffix"])

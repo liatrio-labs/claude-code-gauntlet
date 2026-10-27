@@ -101,10 +101,10 @@ def _downgrade_severity(finding: FindingWire) -> None:
 class VerifyContext:
     repo_root: str
     base_branch: str
+    target_kind: TargetKind
     _pr_commits: frozenset[str] | None = None
     commit_error: str | None = None
     diff_read: bool = False
-    target_kind: TargetKind = "branch"
     requested_sha: str | None = None
     context_map: str | None = None
     context_file: str | None = None
@@ -520,19 +520,16 @@ def run_verification(
                 resolution.end,
             )
         finding["origin"] = classify_blame(finding, context)
-    verified: list[FindingWire] = []
-    eliminated: list[FindingWire] = []
     for finding in findings:
         verify_factual(finding, context)
-        verified.append(finding)
-    for finding in verified:
+    for finding in findings:
         validate_diff_lines(finding, facts)
     stats: Stats = {
         "total": len(findings),
-        "new": sum(1 for finding in verified if finding.get("origin") == "new"),
+        "new": sum(1 for finding in findings if finding.get("origin") == "new"),
         "surfaced": sum(
-            1 for finding in verified if finding.get("origin") == "surfaced"
+            1 for finding in findings if finding.get("origin") == "surfaced"
         ),
-        "eliminated": len(eliminated),
+        "eliminated": 0,
     }
-    return {"verified": verified, "eliminated": eliminated, "stats": stats}
+    return {"verified": findings, "eliminated": [], "stats": stats}

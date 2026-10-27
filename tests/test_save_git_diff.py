@@ -53,7 +53,7 @@ def test_patch_consumers_ignore_user_diff_config(
                 return output(argv, **kwargs)
 
             monkeypatch.setattr(proc, "output", without_merge_base)
-        content = get_diff(VerifyContext(str(tmp_path), base))
+        content = get_diff(VerifyContext(str(tmp_path), base, target_kind="branch"))
         assert content is not None
         patch = content.encode()
     assert_standard_patch(patch)

@@ -444,8 +444,8 @@ function normalizeLocation(finding, request = false) {
     return out;
   }
   const out = { ...finding };
-  if (Object.hasOwn(out, 'line')) out.line = out.line_start;
-  if (Object.hasOwn(out, 'end_line')) out.end_line = out.line_end;
+  out.line = out.line_start;
+  out.end_line = out.line_end;
   return out;
 }
 // --- paths.js ---
@@ -5948,12 +5948,15 @@ function writerPayload(inp) {
   };
 }
 const PERSIST_ALIAS_FIELDS = PERSIST_ALIASES.map(([alias]) => alias);
-function stripPersistAliases(f) {
+function stripPersistAliases(f, fields = PERSIST_ALIAS_FIELDS) {
   const out = {};
   for (const [k, v] of Object.entries(f)) {
-    if (!PERSIST_ALIAS_FIELDS.includes(k)) out[k] = v;
+    if (!fields.includes(k)) out[k] = v;
   }
   return out;
+}
+function checkpointStripAliasFields(findings) {
+  return PERSIST_ALIAS_FIELDS.filter((alias) => findings.every((f) => !Object.hasOwn(f || {}, alias)));
 }
 function hardenEscapeRuns(json) {
   return typeof json === 'string' ? json.replace(/\\\\/g, '\\u005c') : json;
@@ -5969,6 +5972,7 @@ function persistPlan(inp, paths) {
   const id = inp.prIdentity;
   const skeleton = deepClone(inp.checkpoints || {});
   const challenge = (skeleton.phases || {}).challenge;
+  const stripAliasFields = checkpointStripAliasFields(Array.isArray(challenge?.findings) ? challenge.findings : []);
   let challengeFindingIds = [];
   if (challenge && Array.isArray(challenge.findings)) {
     challengeFindingIds = challenge.findings.map((f) => f && f.id);
@@ -5996,7 +6000,7 @@ function persistPlan(inp, paths) {
       path: paths.checkpoints,
       source: paths.findings,
       challengeFindingIds,
-      stripAliasFields: PERSIST_ALIAS_FIELDS,
+      stripAliasFields,
       skeleton,
     },
   };
@@ -6049,8 +6053,9 @@ function persistDerivable(inp) {
   const challengeFindings = challenge && Array.isArray(challenge.findings) ? challenge.findings : [];
   const challengeBad = twinCheck(challengeFindings, 'checkpoint challenge', (f) => stripPersistAliases(toV2Aliased(f)));
   if (challengeBad) return { ok: false, reason: challengeBad };
+  const stripFields = checkpointStripAliasFields(challengeFindings);
   for (const f of challengeFindings) {
-    if (JSON.stringify(stripPersistAliases(toV2Aliased(byId.get(f.id)))) !== JSON.stringify(f)) {
+    if (JSON.stringify(stripPersistAliases(toV2Aliased(byId.get(f.id)), stripFields)) !== JSON.stringify(f)) {
       return { ok: false, reason: `checkpoint challenge entry ${f.id} requires normalization before derivation` };
     }
   }

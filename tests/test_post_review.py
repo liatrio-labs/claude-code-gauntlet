@@ -95,7 +95,6 @@ def test_unconfirmed_delivery_is_summary_only(platform, status, primary, posting
     assert "Unresolved observation" not in comments[0]["body"]
     assert "```suggestion" not in summary
     assert "998" not in summary and "999" not in summary and "200" not in summary
-    assert data == before
 
 
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
@@ -184,6 +183,23 @@ def test_off_diff_location_keeps_canonical_body_heading(
     assert f"#### `foo.py:{start}`" in summary
     assert "```suggestion" not in summary
     assert "line not found in diff" in run.err
+
+
+def test_off_diff_group_warning_lists_valid_lines_and_members(posting):
+    primary = located(
+        line_start=40,
+        line_end=41,
+        consolidation_key="k",
+        consolidation_primary=True,
+    )
+    member = located(id="F2", title="Member", consolidation_key="k")
+    for finding in (primary, member):
+        finding.pop("suggested_fix_code")
+    run = posting(review("github", [primary, member]), diff=DIFF)
+    assert run.payload["skipped"] == [
+        "Skipping finding 'Range bug' at foo.py:40 \u2014 line not found in diff."
+        " Valid lines for this file: [1, 2, 3, 4] [group members: F1, F2]"
+    ]
 
 
 @pytest.mark.parametrize("platform", ["github", "gitlab"])

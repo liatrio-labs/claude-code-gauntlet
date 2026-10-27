@@ -253,6 +253,26 @@ def _run(map_dir, oracle, frozen, output):
     )
 
 
+def test_replay_counts_eliminated_records(tmp_path, git_repo, monkeypatch):
+    map_dir, oracle, _rows = _case(tmp_path, git_repo)
+    frozen, output = tmp_path / "quotes.jsonl", tmp_path / "result"
+    _freeze(map_dir, oracle, frozen)
+    original = replay.replay_wire
+
+    def eliminate(*args, **kwargs):
+        findings = original(*args, **kwargs)
+        return (
+            findings
+            if kwargs.get("bypass")
+            else [f for f in findings if f["id"] != "span"]
+        )
+
+    monkeypatch.setattr(replay, "replay_wire", eliminate)
+    _run(map_dir, oracle, frozen, output)
+    summary = json.loads((output / "summary.json").read_bytes())
+    assert summary["range_eliminations"] == 1
+
+
 def test_replay_keeps_denominator_and_evidence_adapter(tmp_path, git_repo, monkeypatch):
     map_dir, oracle, rows = _case(tmp_path, git_repo)
     frozen = tmp_path / "quotes.jsonl"

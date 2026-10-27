@@ -80,12 +80,12 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
             "--input-type=module",
             "-e",
             "import { discover } from './workflows/src/discover.js';"
-            "const schemas = {};"
-            "await discover({agent: async (_, options) => {"
-            "schemas[options.label] = options.schema;"
-            "return {findings: [], complete: true, total_seen: 0, removed_test_audit: []};"
-            "}, parallel: async tasks => Promise.all(tasks.map(task => task()))}, {});"
-            "console.log(JSON.stringify(schemas));",
+            + "const schemas = {};"
+            + "await discover({agent: async (_, options) => {"
+            + "schemas[options.label] = options.schema;"
+            + "return {findings: [], complete: true, total_seen: 0, removed_test_audit: []};"
+            + "}, parallel: async tasks => Promise.all(tasks.map(task => task()))}, {});"
+            + "console.log(JSON.stringify(schemas));",
         ],
         cwd=str(registry_tree),
         check=True,

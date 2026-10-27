@@ -690,7 +690,40 @@ def test_legacy_fixture_projection(tmp_path, monkeypatch, capsys, forge_factory)
     assert "```suggestion" not in body
     for finding in GH_COMMENT_FINDINGS:
         assert finding["title"] in body
-    assert len(frozen["payload"]["comments"]) == 4
+
+
+def test_recorded_github_comments_match_delivery(
+    tmp_path, monkeypatch, capsys, forge_factory
+):
+    proofs = [
+        (42, 42, "token = load_token()"),
+        (88, 91, "hash_password()\nsave()\nverify()\nreturn token"),
+        (15, 15, '     cursor.execute(f"SELECT * FROM users WHERE id = {uid}")'),
+        (21, 21, "list_users()"),
+    ]
+    findings = [
+        {
+            **finding,
+            "line_start": start,
+            "line_end": end,
+            "location_status": "confirmed",
+            "anchor": anchor,
+            "claimed_line_start": finding["line"],
+            **(
+                {"claimed_line_end": finding["end_line"]}
+                if "end_line" in finding
+                else {}
+            ),
+        }
+        for finding, (start, end, anchor) in zip(
+            GH_COMMENT_FINDINGS, proofs, strict=True
+        )
+    ]
+    run = capture(
+        tmp_path, monkeypatch, capsys, forge_factory, "github", findings, GH_LEGACY_DIFF
+    )
+    frozen = json.loads(GITHUB_FIXTURE.read_bytes())
+    assert run.payload["payload"]["comments"] == frozen["payload"]["comments"]
 
 
 def test_fixture_inventory():
@@ -880,7 +913,7 @@ def test_payload_conversion(fixture, input_kind, tool, golden, count, skipped):
         anchors = (
             [
                 ("src/auth/session.py", 42),
-                ("src/auth/session.py", 92),
+                ("src/auth/session.py", 91),
                 ("src/api/routes.py", 15),
                 ("src/api/routes.py", 21),
             ]

@@ -425,7 +425,7 @@ def _parser() -> Parser:
     parser.add_argument(
         "--target-kind",
         choices=("pr", "mr", "branch", "local"),
-        default="branch",
+        required=True,
         help="Reviewed target selects captured HEAD blobs or local worktree source.",
     )
     parser.add_argument(

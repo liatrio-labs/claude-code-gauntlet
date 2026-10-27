@@ -18,6 +18,7 @@ const findingsFor = (n) => Array.from({ length: n }, (_, k) => ({
 const located = (f) => {
   if (!Number.isSafeInteger(f.line_start) || !f.anchor) return unresolved(f);
   const out = { ...f, location_status: 'confirmed', line_end: f.line_end ?? f.line_start,
+    line: f.line_start, end_line: f.line_end ?? f.line_start,
     claimed_line_start: f.line_start, ...(Object.hasOwn(f, 'line_end') ? { claimed_line_end: f.line_end } : {}) };
   return out;
 };

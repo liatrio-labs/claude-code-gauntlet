@@ -416,7 +416,7 @@ MAIN_FAILURE = {
     "resolve_config": "--target local --cwd {missing}",
     "resolve_pr_identity": f"--platform github --sha {FULL}",
     "stale_truncate": "--output-dir {missing} --head-sha abcd",
-    "verify_findings": "--input {missing} --output {missing}",
+    "verify_findings": "--target-kind branch --input {missing} --output {missing}",
     "write_shared_context": "--output-dir {missing} --head-sha abcd",
 }
 # diff_numstat, emit_style_context and ensure_output_dir have no malformed-input
@@ -441,7 +441,7 @@ BAD_INPUT = {
     "resolve_config": "--target bitbucket",
     "resolve_pr_identity": "--platform bitbucket",
     "stale_truncate": "--output-dir {missing} --head-sha invalid",
-    "verify_findings": "--input {invalid} --output {missing}",
+    "verify_findings": "--target-kind branch --input {invalid} --output {missing}",
     "write_shared_context": "--output-dir {missing} --head-sha invalid",
 }
 POST = {"platform": "github", "owner": "o", "repo": "r", "pr_number": 5, "sha": FULL}
@@ -494,7 +494,7 @@ SUCCESS = {
     ),
     "verify_findings": (
         {"diff.patch": PATCH},
-        '--input {dir}/slice.json --input-inline {{"findings":[],'
+        '--target-kind branch --input {dir}/slice.json --input-inline {{"findings":[],'
         '"base_branch":"main"}} '
         "--diff-file {dir}/diff.patch --head-sha abcd --nonce cli",
     ),

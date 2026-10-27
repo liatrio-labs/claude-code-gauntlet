@@ -419,8 +419,9 @@ def build_tasks(
         else:
             eligible.append(normalize_location(finding))
     if skipped:
+        noun = "finding" if len(skipped) == 1 else "findings"
         notes.append(
-            f"Skipped {len(skipped)} findings with unconfirmed location: {', '.join(skipped)}"
+            f"Skipped {len(skipped)} {noun} with unconfirmed location: {', '.join(skipped)}"
         )
     if not eligible:
         return [], 0

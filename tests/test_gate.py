@@ -35,7 +35,7 @@ FIX_CASES = {
     "missing-end": FixCase(
         fix_finding(omit=("end_line",)), "missing_end_line", site=(2, 2)
     ),
-    "range-not-in-diff": FixCase(
+    "claimed-span-mismatch": FixCase(
         fix_finding(claimed_line_end=940), "anchor_mismatch", site=(2, 3)
     ),
     "no-anchor": FixCase(fix_finding(), "anchor_mismatch", site=None),

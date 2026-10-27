@@ -34,7 +34,7 @@ export function normalizeLocation(finding, request = false) {
     return out;
   }
   const out = { ...finding };
-  if (Object.hasOwn(out, 'line')) out.line = out.line_start;
-  if (Object.hasOwn(out, 'end_line')) out.end_line = out.line_end;
+  out.line = out.line_start;
+  out.end_line = out.line_end;
   return out;
 }

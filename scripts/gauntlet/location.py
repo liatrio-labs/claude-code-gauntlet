@@ -348,7 +348,9 @@ class SourceAdapter:
     ) -> SourceAdapter:
         head = None
         try:
-            result = proc.run_bytes(["git", "rev-parse", "HEAD"], cwd=str(root))
+            result = proc.run_bytes(
+                ["git", "rev-parse", "HEAD"], cwd=str(root), timeout=3
+            )
             revision = result.stdout.decode("ascii").strip()
             if (
                 result.returncode == 0
@@ -375,7 +377,7 @@ class SourceAdapter:
     def _read(self, file: str) -> tuple[str, ...] | None:
         parts = tuple(file.split("/"))
         if (
-            self.captured_head is None
+            (self.target_kind != "local" and self.captured_head is None)
             or not file
             or "\0" in file
             or any(part in ("", ".", "..") for part in parts)
@@ -387,9 +389,12 @@ class SourceAdapter:
         try:
             if self.target_kind == "local":
                 return _decode_source(_local_bytes(self.root, parts))
+            if self.captured_head is None:
+                return None
             tree = proc.run_bytes(
                 ["git", "ls-tree", "-z", self.captured_head, "--", f":(literal){file}"],
                 cwd=str(self.root),
+                timeout=3,
             )
             if tree.returncode or not tree.stdout.endswith(b"\0"):
                 return None
@@ -402,7 +407,9 @@ class SourceAdapter:
             ):
                 return None
             blob = proc.run_bytes(
-                ["git", "cat-file", "blob", oid.decode("ascii")], cwd=str(self.root)
+                ["git", "cat-file", "blob", oid.decode("ascii")],
+                cwd=str(self.root),
+                timeout=3,
             )
             return _decode_source(blob.stdout) if blob.returncode == 0 else None
         except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):

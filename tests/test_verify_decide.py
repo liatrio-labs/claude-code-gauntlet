@@ -114,7 +114,9 @@ def test_blame(patch, log, blame, expected, tmp_path, monkeypatch, verify_git, c
     if blame is not None:
         replies["blame"] = blame
     assert (
-        verify.classify_blame(finding, verify.VerifyContext(str(tmp_path), "-base"))
+        verify.classify_blame(
+            finding, verify.VerifyContext(str(tmp_path), "-base", target_kind="branch")
+        )
         == origin
     )
     assert finding["severity"] == severity
@@ -207,7 +209,9 @@ def test_fact(
     elif mode == "timeout":
         replies["grep"] = proc.TimeoutExpired(["git", "grep"], 3)
     assert (
-        verify.verify_factual(finding, verify.VerifyContext(str(tmp_path), "base"))
+        verify.verify_factual(
+            finding, verify.VerifyContext(str(tmp_path), "base", target_kind="branch")
+        )
         is keep
     )
     assert finding["confidence"] == confidence
@@ -421,7 +425,10 @@ def test_source(
     calls, replies = verify_git
     replies["diff"] = reply
     assert (
-        verify.get_diff(verify.VerifyContext(str(tmp_path), "-base"), path) == expected
+        verify.get_diff(
+            verify.VerifyContext(str(tmp_path), "-base", target_kind="branch"), path
+        )
+        == expected
     )
     assert calls == [(cmd, {}) for cmd in commands]
     assert capsys.readouterr().err == stderr
@@ -439,7 +446,7 @@ def test_pipe(tmp_path, monkeypatch, verify_git):
     }
     verify_git[1]["diff"] = ("", "bad", 1)
     result = verify.run_verification(
-        [finding], verify.VerifyContext(str(tmp_path), "base")
+        [finding], verify.VerifyContext(str(tmp_path), "base", target_kind="branch")
     )
     assert result["stats"] == {"total": 1, "new": 1, "surfaced": 0, "eliminated": 0}
     assert list(result["stats"]) == ["total", "new", "surfaced", "eliminated"]
@@ -509,7 +516,9 @@ def test_pipe_projection(tmp_path, monkeypatch, verify_git):
     for raw in (findings, extra):
         inputs = project_findings(raw)
         result = verify.run_verification(
-            inputs, verify.VerifyContext(str(tmp_path), "base"), "patch"
+            inputs,
+            verify.VerifyContext(str(tmp_path), "base", target_kind="branch"),
+            "patch",
         )
         assert result["stats"] == {"total": 5, "new": 4, "surfaced": 1, "eliminated": 0}
         assert list(result["stats"]) == ["total", "new", "surfaced", "eliminated"]
@@ -736,7 +745,9 @@ def test_null_line_end_and_diff_policy(tmp_path, monkeypatch, verify_git):
 
     monkeypatch.setattr(verify, "parse_diff", parse)
     result = verify.run_verification(
-        [finding], verify.VerifyContext(str(tmp_path), "base"), "patch"
+        [finding],
+        verify.VerifyContext(str(tmp_path), "base", target_kind="branch"),
+        "patch",
     )
     assert policies == ["verify-both-spellings"]
     assert [(cmd, kw) for cmd, kw in verify_git[0] if cmd[1] in ("log", "blame")] == [
@@ -760,7 +771,9 @@ def test_blame_default_line(tmp_path, monkeypatch, verify_git):
     (tmp_path / "source").write_text("code\n", encoding="utf-8")
     finding = {"file": "source"}
     assert (
-        verify.classify_blame(finding, verify.VerifyContext(str(tmp_path), "base"))
+        verify.classify_blame(
+            finding, verify.VerifyContext(str(tmp_path), "base", target_kind="branch")
+        )
         == "new"
     )
     assert finding["blame_metadata"] == {
@@ -813,7 +826,9 @@ def test_quote_resolution_controls_positional_checks(
     }
     result = verify.run_verification(
         [finding],
-        verify.VerifyContext(str(tmp_path), "base", requested_sha="abcd"),
+        verify.VerifyContext(
+            str(tmp_path), "base", target_kind="branch", requested_sha="abcd"
+        ),
         str(patch),
     )
     assert result["verified"] == [finding]
@@ -843,7 +858,10 @@ def test_unconfirmed_survives_without_location_penalty(
         "severity": "high",
     }
     result = verify.run_verification(
-        [finding], verify.VerifyContext(str(tmp_path), "base", requested_sha="abcd")
+        [finding],
+        verify.VerifyContext(
+            str(tmp_path), "base", target_kind="branch", requested_sha="abcd"
+        ),
     )
     assert result["verified"] == [finding] and not result["eliminated"]
     assert finding["location_status"] == "unconfirmed"
@@ -1005,7 +1023,12 @@ def test_resolution_reads_captured_head(
             ["git", "diff", *verify.DIFF_FLAGS, "--end-of-options", HEAD]
         ]
     assert not result["eliminated"]
-    status = "relocated" if mode in ("regular", "added", "shifted") else "unconfirmed"
+    status = (
+        "relocated"
+        if mode in ("regular", "added", "shifted")
+        or (target_kind == "local" and mode.startswith("revision_"))
+        else "unconfirmed"
+    )
     assert [f["location_status"] for f in findings] == [status, status]
     assert sum(argv[1] == "rev-parse" for argv in calls) == 1
     assert sum(argv[1] == "cat-file" for argv in calls) <= 1

@@ -129,6 +129,13 @@ test('escape-hardened primary pins transmitted bytes and keeps the original pros
 for (const [name, input, expected] of [
   ['canonical selection', INPUT, { ok: true }],
   [
+    'checkpoint needs location normalization', {
+      findings: [{ id: 'F1', line_start: 99 }],
+      checkpoints: { phases: { challenge: { findings: [{ id: 'F1', line_start: 99 }] } } },
+    },
+    { ok: false, reason: 'checkpoint challenge entry F1 requires normalization before derivation' },
+  ],
+  [
     'preexisting alias', { findings: [{ id: 'F1', line: 999 }] },
     { ok: true }
   ],
@@ -172,4 +179,15 @@ test('canonical location overwrites aliases in both writers', () => {
   assert.equal(Object.hasOwn(payload.findings[1], 'end_line'), false);
   assert.equal(findings[0].line, 999);
   assert.equal(persistDerivable(input).ok, true);
+});
+
+test('canonical checkpoint aliases survive derivation', () => {
+  const findings = [
+    { id: 'placed', location_status: 'confirmed', line_start: 7, line_end: 8, line: 7, end_line: 8 },
+    { id: 'unplaced', location_status: 'unconfirmed' },
+  ];
+  const input = { findings, checkpoints: { phases: { challenge: { findings } } } };
+  assert.deepEqual(persistDerivable(input), { ok: true });
+  const plan = persistPlan(input, PATHS);
+  assert.deepEqual(deriveFromPlan(plan, persistPrimaries(input).findingsJson).checkpoints, input.checkpoints);
 });

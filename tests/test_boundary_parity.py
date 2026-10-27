@@ -45,20 +45,23 @@ RENDER_SUMMARIES = (
 
 
 @pytest.mark.parametrize(
-    ("filepath", "expected"),
+    ("filepath", "status", "expected"),
     [
-        ("app/[[...slug]]/page.tsx", "`app/[\uff3b...slug]]/page.tsx:12`"),
-        ("src/![a](u).py", "`src/!\uff3ba](u).py:12`"),
+        ("app/[[...slug]]/page.tsx", "confirmed", "`app/[\uff3b...slug]]/page.tsx:12`"),
+        ("src/![a](u).py", "confirmed", "`src/!\uff3ba](u).py:12`"),
+        ("src/item.py", "unconfirmed", "`src/item.py (location unconfirmed)`"),
     ],
 )
-def test_summary_and_skipped_location_bytes(filepath: str, expected: str) -> None:
+def test_summary_and_skipped_location_bytes(
+    filepath: str, status: str, expected: str
+) -> None:
     finding = {
         "id": "location",
         "severity": "high",
         "file": filepath,
         "line_start": 12,
         "line_end": 12,
-        "location_status": "confirmed",
+        "location_status": status,
         "title": "Location",
     }
     summary = run_node(
@@ -684,6 +687,8 @@ def test_verify_localises_real_receipt_input_typo(
     ).stdout
     args = verify_wire.CLI.parser.parse_args(
         [
+            "--target-kind",
+            "branch",
             "--input",
             str(tmp_path / "slice.json"),
             "--input-inline",

@@ -313,9 +313,7 @@ def _skipped_frame(n: int, shown: int, inline_count: int | None) -> str:
     )
 
 
-def _skipped_piece(
-    filepath: object, line: object, finding: Mapping[str, object]
-) -> str:
+def _skipped_piece(filepath: object, finding: Mapping[str, object]) -> str:
     # Neutralize the assembled heading as well as its prepared finding fields.
     location = _skipped_location(filepath, finding)
     piece = (
@@ -341,7 +339,7 @@ def build_skipped_section(
         return ""
     n = len(skipped)
     return _skipped_frame(n, n, inline_count) + "".join(
-        _skipped_piece(entry.filepath, entry.line, entry.finding) for entry in skipped
+        _skipped_piece(entry.filepath, entry.finding) for entry in skipped
     )
 
 
@@ -365,8 +363,7 @@ def _bounded_section(
 ) -> str:
     section = _skipped_frame(n, len(shown_entries), inline_count)
     section += "".join(
-        _skipped_piece(entry.filepath, entry.line, entry.finding)
-        for entry in shown_entries
+        _skipped_piece(entry.filepath, entry.finding) for entry in shown_entries
     )
     omitted = n - len(shown_entries)
     if omitted:
@@ -451,9 +448,7 @@ def compose_review_body(
     shown_entries: list[SkippedEntry] = []
     omitted_entries: list[SkippedEntry] = []
     for group in skipped_groups:
-        pieces = [
-            _skipped_piece(entry.filepath, entry.line, entry.finding) for entry in group
-        ]
+        pieces = [_skipped_piece(entry.filepath, entry.finding) for entry in group]
         group_size = sum(utf8_len(piece) for piece in pieces)
         if group_size <= remaining:
             shown_entries.extend(group)

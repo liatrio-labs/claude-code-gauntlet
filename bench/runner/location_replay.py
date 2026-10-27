@@ -128,6 +128,7 @@ class ReplayRecord(RecordKey):
     map_sha256: str
     input_sha256: str
     oracle_sha256: str
+    verification_retained: bool
     semantic_selected: bool
     inline: bool
     fence: bool
@@ -1321,6 +1322,7 @@ def replay(
                     "map_sha256": digest(encoded(map_wire)),
                     "input_sha256": digest(inputs.read(artifact)),
                     "oracle_sha256": digest(inputs.read(expectations_path)),
+                    "verification_retained": False,
                     "semantic_selected": False,
                     "inline": False,
                     "fence": False,
@@ -1328,13 +1330,16 @@ def replay(
                 }
             )
         joined = replay_wire(findings, first, directory, map_path)
-        if len(joined) != len(rows):
-            raise InputError(f"Verify join lost records: {artifact}")
-        for row, result, finding in zip(rows, resolved, joined, strict=True):
+        joined_by_id = {finding["id"]: finding for finding in joined}
+        for row, result in zip(rows, resolved, strict=True):
+            joined_finding = joined_by_id.get(row["id"])
+            if joined_finding is None:
+                violations.append({"key": key(row), "violation": "verify_eliminated"})
+                continue
             if (
-                finding.get("line_start"),
-                finding.get("line_end"),
-                finding.get("location_status"),
+                joined_finding.get("line_start"),
+                joined_finding.get("line_end"),
+                joined_finding.get("location_status"),
             ) != (result.start, result.end, result.status):
                 violations.append(
                     {"key": key(row), "violation": "wire_resolution_disagreement"}
@@ -1371,11 +1376,18 @@ def replay(
             {"artifact": artifact, "violation": reason}
             for reason in delivered.violations
         )
-        for record, finding in zip(records[-len(rows) :], joined, strict=True):
-            record["semantic_selected"] = (finding["id"], finding["file"]) in saved_keys
-            record["inline"] = finding["id"] in delivered.inline
-            record["fence"] = finding["id"] in delivered.fences | delivered.patches
-            record["task"] = finding["id"] in delivered.tasks
+        for record in records[-len(rows) :]:
+            retained = joined_by_id.get(record["id"])
+            record["verification_retained"] = retained is not None
+            if retained is None:
+                continue
+            record["semantic_selected"] = (
+                retained["id"],
+                retained["file"],
+            ) in saved_keys
+            record["inline"] = retained["id"] in delivered.inline
+            record["fence"] = retained["id"] in delivered.fences | delivered.patches
+            record["task"] = retained["id"] in delivered.tasks
             if record["status"] == "unconfirmed" and any(
                 record[k] for k in ("inline", "fence", "task")
             ):
@@ -1388,19 +1400,8 @@ def replay(
                 ]
                 head = location.source_lines(blob.decode("utf-8"))
                 span = location.canonical_range(finding)
-                claimed_start, claimed_end = (
-                    finding.get("claimed_line_start"),
-                    finding.get("claimed_line_end"),
-                )
-                if (
-                    span is None
-                    or not location.anchor_matches_span(
-                        finding, head[span[0] - 1 : span[1]], whole=True
-                    )
-                    or not location.positive_safe_integer(claimed_start)
-                    or not location.positive_safe_integer(claimed_end)
-                    or cast(int, claimed_end) - cast(int, claimed_start)
-                    != span[1] - span[0]
+                if not replacement_safe(
+                    finding, list(head[span[0] - 1 : span[1]]) if span else []
                 ):
                     violations.append(
                         {"key": key(record), "violation": "unsafe_fence_or_patch"}
@@ -1437,7 +1438,7 @@ def replay(
         "missed_positives": missed_positives,
         "rule_b_only": sum(r["rule_b_only"] for r in records),
         "rule_b_disagreements": sum(r["rule_b_agrees"] is False for r in records),
-        "range_eliminations": 0,
+        "range_eliminations": sum(not r["verification_retained"] for r in records),
         "previously_correct_moves_by_distance": dict(
             sorted(
                 Counter(

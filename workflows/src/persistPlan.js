@@ -46,12 +46,17 @@ export function writerPayload(inp) {
 // Stripping appended aliases restores canonical values and key order for checkpoint derivation.
 const PERSIST_ALIAS_FIELDS = PERSIST_ALIASES.map(([alias]) => alias);
 
-function stripPersistAliases(f) {
+function stripPersistAliases(f, fields = PERSIST_ALIAS_FIELDS) {
   const out = {};
   for (const [k, v] of Object.entries(f)) {
-    if (!PERSIST_ALIAS_FIELDS.includes(k)) out[k] = v;
+    if (!fields.includes(k)) out[k] = v;
   }
   return out;
+}
+
+// Held aliases must survive checkpoint derivation; absent aliases are writer additions.
+function checkpointStripAliasFields(findings) {
+  return PERSIST_ALIAS_FIELDS.filter((alias) => findings.every((f) => !Object.hasOwn(f || {}, alias)));
 }
 
 // Returns escape-hardened JSON text, passing non-strings through.
@@ -78,6 +83,7 @@ export function persistPlan(inp, paths) {
   const id = inp.prIdentity;
   const skeleton = deepClone(inp.checkpoints || {});
   const challenge = (skeleton.phases || {}).challenge;
+  const stripAliasFields = checkpointStripAliasFields(Array.isArray(challenge?.findings) ? challenge.findings : []);
   let challengeFindingIds = [];
   if (challenge && Array.isArray(challenge.findings)) {
     challengeFindingIds = challenge.findings.map((f) => f && f.id);
@@ -108,7 +114,7 @@ export function persistPlan(inp, paths) {
       path: paths.checkpoints,
       source: paths.findings,
       challengeFindingIds,
-      stripAliasFields: PERSIST_ALIAS_FIELDS,
+      stripAliasFields,
       skeleton,
     },
   };
@@ -168,8 +174,9 @@ export function persistDerivable(inp) {
   const challengeBad = twinCheck(challengeFindings, 'checkpoint challenge', (f) => stripPersistAliases(toV2Aliased(f)));
   if (challengeBad) return { ok: false, reason: challengeBad };
   // The assembler strips aliases only; any other normalization needs the by-value writer.
+  const stripFields = checkpointStripAliasFields(challengeFindings);
   for (const f of challengeFindings) {
-    if (JSON.stringify(stripPersistAliases(toV2Aliased(byId.get(f.id)))) !== JSON.stringify(f)) {
+    if (JSON.stringify(stripPersistAliases(toV2Aliased(byId.get(f.id)), stripFields)) !== JSON.stringify(f)) {
       return { ok: false, reason: `checkpoint challenge entry ${f.id} requires normalization before derivation` };
     }
   }

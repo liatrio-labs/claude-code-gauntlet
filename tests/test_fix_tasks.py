@@ -266,7 +266,7 @@ def test_outside_path_is_omitted_and_counted(
     write_artifact([make_finding(file=file)])
     result = run_renderer()
     assert output(result) == []
-    assert "Skipped 1 findings with unconfirmed location: bug-1" in result.stderr
+    assert "Skipped 1 finding with unconfirmed location: bug-1" in result.stderr
     assert file not in result.stdout
 
 
@@ -549,4 +549,4 @@ def test_unconfirmed_finding_creates_no_fix_task(
     write_artifact([make_finding(**changes)])
     result = run_renderer()
     assert output(result) == []
-    assert "Skipped 1 findings with unconfirmed location: bug-1" in result.stderr
+    assert "Skipped 1 finding with unconfirmed location: bug-1" in result.stderr
