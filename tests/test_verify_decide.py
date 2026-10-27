@@ -576,7 +576,7 @@ def test_context_root(root, verify_git, tmp_path):
 
 def test_context_log_queries(invoke, tmp_path, verify_git):
     (tmp_path / "source").write_text("code\n", encoding="utf-8")
-    (tmp_path / "patch").write_text(DIFF, encoding="utf-8")
+    (tmp_path / "patch").write_bytes(DIFF.encode("utf-8"))
     calls, replies = verify_git
     token = (
         '{"findings":[{"file":"source","line_start":1,'
