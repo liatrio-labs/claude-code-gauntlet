@@ -337,12 +337,10 @@ def test_frozen_extraction_is_an_unchanged_evidence_slice(evidence, expected, ki
 @pytest.mark.parametrize(
     "scenario",
     [
-        "wrong_move",
         "missed_positive",
         "ellipsis_positive",
         "flattened_positive",
         "paraphrase_positive",
-        "blocked_positive",
         "wrong_inline",
         "unsafe_fence",
         "unsafe_patch",
@@ -351,7 +349,7 @@ def test_frozen_extraction_is_an_unchanged_evidence_slice(evidence, expected, ki
         "historical_unconfirmed",
     ],
 )
-def test_replay_fails_wrong_moves_or_unsafe_payloads(
+def test_replay_fails_missed_positives_or_unsafe_payloads(
     tmp_path, git_repo, monkeypatch, scenario
 ):
     map_dir, oracle, rows = _case(tmp_path, git_repo, scenario=scenario)
@@ -401,12 +399,10 @@ def test_replay_fails_wrong_moves_or_unsafe_payloads(
         assert summary["previously_correct_became_unconfirmed"] == {"none": 1}
     else:
         expected = {
-            "wrong_move": "previously_correct_moved",
             "missed_positive": "positive_not_recovered",
             "ellipsis_positive": "positive_not_recovered",
             "flattened_positive": "positive_not_recovered",
             "paraphrase_positive": "positive_not_recovered",
-            "blocked_positive": "positive_not_recovered",
             "wrong_inline": "unsafe_inline_payload",
             "unsafe_fence": "unsafe_rendered_fence",
             "unsafe_patch": "unsafe_patch_receipt",
@@ -425,21 +421,119 @@ def test_replay_fails_wrong_moves_or_unsafe_payloads(
                     "ellipsis_positive": "ellipsis",
                     "flattened_positive": "flattened_multiline",
                     "paraphrase_positive": "paraphrase_or_other_mismatch",
-                    "blocked_positive": "matches_source",
                 }[scenario]
             )
-            assert diagnosis["anchor_matches_any_source"] == (
-                scenario == "blocked_positive"
-            )
-            assert diagnosis["anchor_matches_expected_source"] == (
-                scenario == "blocked_positive"
-            )
-            assert diagnosis["matching_starts"] == (
-                [7] if scenario == "blocked_positive" else []
-            )
+            assert not diagnosis["anchor_matches_any_source"]
+            assert not diagnosis["anchor_matches_expected_source"]
+            assert diagnosis["matching_starts"] == []
             assert json.dumps(miss, sort_keys=True) in (output / "report.md").read_text(
                 encoding="utf-8"
             )
+
+
+@pytest.mark.parametrize("scenario", ["wrong_move", "blocked_positive"])
+def test_replay_recovers_unique_anchors_and_describes_historical_distance(
+    tmp_path, git_repo, scenario
+):
+    map_dir, oracle, rows = _case(tmp_path, git_repo, scenario=scenario)
+    frozen, output = tmp_path / "quotes.jsonl", tmp_path / "result"
+    _freeze(map_dir, oracle, frozen)
+    assert _run(map_dir, oracle, frozen, output) == 1
+    assert json.loads((output / "violations.jsonl").read_bytes()) == {
+        "violation": "fixed_denominator_mismatch"
+    }
+    summary = json.loads((output / "summary.json").read_bytes())
+    assert summary["known_recoveries"] == 1
+    assert summary["previously_correct_moves_by_distance"] == (
+        {"13": 1} if scenario == "wrong_move" else {}
+    )
+
+
+@pytest.mark.parametrize("bypass", [False, True])
+def test_live_replay_uses_real_anchors_and_checks_every_placed_span(
+    tmp_path, git_repo, monkeypatch, bypass
+):
+    map_dir, oracle, rows = _case(tmp_path, git_repo)
+    artifact = Path(rows[0]["artifact"])
+    directory = artifact.parent
+    run = directory.parent
+    sha = rows[0]["source_sha"]
+    diff = (directory / f"code-gauntlet-diff-{sha[:8]}.patch").read_bytes()
+    context = Path(rows[0]["context_path"]).read_bytes()
+    _, entries = replay.reconstruct_map(diff, context)
+    _json(
+        directory / f"code-gauntlet-context-map-{sha[:8]}.json",
+        {
+            "version": 1,
+            "sha": sha[:8],
+            "status": "available",
+            "context_sha256": replay.digest(context),
+            "diff_sha256": replay.digest(diff),
+            "entries": {str(k): v for k, v in entries.items()},
+        },
+    )
+    findings = json.loads(artifact.read_bytes())["findings"]
+    anchors = [
+        "chosen_value = compute_value()\nreturn chosen_value",
+        "chosen_value = compute_value()\nreturn chosen_value",
+        None,
+        "repeated_value = repeated_compute()",
+        "chosen_value = compute_value()",
+        "chosen_value = compute_value()",
+        "chosen_value  = compute_value()",
+    ]
+    for finding, anchor in zip(findings, anchors, strict=True):
+        finding["evidence"] = "This prose has no source quote."
+        if anchor is not None:
+            finding["anchor"] = anchor
+    for index in (0, 3, 4):
+        findings[index]["line_start"] = 1
+    _json(artifact, {"findings": findings})
+    root, _ = git_repo
+    monkeypatch.setattr(replay, "_mirror_dirname", lambda _url: ".git")
+    monkeypatch.setattr(
+        replay, "extract_quote", lambda *_args: pytest.fail("live replay used adapter")
+    )
+    if bypass:
+        original = replay.location.resolve_location
+
+        def corrupt(finding, *args):
+            if finding["id"] == "positive":
+                return replay.location.Resolution(1, 2, "relocated", "unique")
+            return original(finding, *args)
+
+        monkeypatch.setattr(replay.location, "resolve_location", corrupt)
+    output = tmp_path / "live"
+    assert replay.main(
+        [
+            "--live-run",
+            str(run),
+            "--mirrors-dir",
+            str(root),
+            "--output-dir",
+            str(output),
+        ]
+    ) == int(bypass)
+    summary = json.loads((output / "live-replay.json").read_bytes())
+    assert summary["records"] == 7 and summary["artifacts"] == 1
+    assert summary["statuses"] == {"confirmed": 2, "relocated": 2, "unconfirmed": 3}
+    assert summary["anchor_mismatches"] == int(bypass)
+    assert summary["anchored_records"] == 6
+    by_id = {r["id"]: r for r in summary["findings"]}
+    positive = by_id["positive"]
+    assert (positive["new_start"], positive["new_end"]) == (
+        (1, 2) if bypass else (7, 8)
+    )
+    assert positive["anchor_in_resolved_span"] is (not bypass)
+    assert positive["source_sha"] == sha
+    assert by_id["missing"]["anchor_in_resolved_span"] is None
+    assert by_id["fragment"]["reason"] == "ambiguous"
+    assert all(
+        r["anchor_in_resolved_span"] is not None
+        for r in summary["findings"]
+        if r["status"] != "unconfirmed"
+    )
+    assert "Contains anchor" in (output / "live-replay.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(

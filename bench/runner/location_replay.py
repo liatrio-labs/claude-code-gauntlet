@@ -31,6 +31,8 @@ from gauntlet.forge import JsonFetch, Poster
 from gauntlet.registry import LocationStatus
 from gauntlet.verify import decide, wire
 
+from bench.runner.mirrors import _mirror_dirname
+
 ADAPTER_VERSION = "evidence-lexical-v2"
 ROOT = Path(__file__).resolve().parents[2]
 ExtractionKind = Literal["backtick", "fenced", "code_like", "none"]
@@ -172,10 +174,39 @@ class ReplaySummary(TypedDict):
     rule_b_only: int
     rule_b_disagreements: int
     range_eliminations: int
-    false_moves: int
+    previously_correct_moves_by_distance: dict[str, int]
     fence_inspection: ReplayRecord
     violations: int
     records_sha256: str
+
+
+class LiveRecord(RecordKey):
+    id: str
+    file: str
+    source_sha: str
+    source_sha256: str | None
+    old_start: int | None
+    old_end: int | None
+    new_start: int | None
+    new_end: int | None
+    status: LocationStatus
+    reason: location.ResolutionReason
+    anchor: str | None
+    anchor_in_resolved_span: bool | None
+    resolved_text: str | None
+    source_error: str | None
+
+
+class LiveSummary(TypedDict):
+    run: str
+    records: int
+    artifacts: int
+    statuses: dict[LocationStatus, int]
+    anchored_records: int
+    placed_records: int
+    anchor_mismatches: int
+    input_sha256: dict[str, str]
+    findings: list[LiveRecord]
 
 
 def digest(content: bytes) -> str:
@@ -1239,19 +1270,6 @@ def replay(
                     {"key": identity, "violation": "resolved_quote_mismatch"}
                 )
             if (
-                identity in historical
-                and result.start is not None
-                and result.start != sites[identity]["expected_start"]
-            ):
-                violations.append(
-                    {
-                        "key": identity,
-                        "violation": "previously_correct_moved",
-                        "expected": sites[identity]["expected_start"],
-                        "actual": result.start,
-                    }
-                )
-            if (
                 identity in positives
                 and result.start != sites[identity]["expected_start"]
             ):
@@ -1420,8 +1438,18 @@ def replay(
         "rule_b_only": sum(r["rule_b_only"] for r in records),
         "rule_b_disagreements": sum(r["rule_b_agrees"] is False for r in records),
         "range_eliminations": 0,
-        "false_moves": sum(
-            v["violation"] == "previously_correct_moved" for v in violations
+        "previously_correct_moves_by_distance": dict(
+            sorted(
+                Counter(
+                    str(abs(r["new_start"] - r["oracle_start"]))
+                    for r in records
+                    if key(r) in historical
+                    and r["new_start"] is not None
+                    and r["oracle_start"] is not None
+                    and r["new_start"] != r["oracle_start"]
+                ).items(),
+                key=lambda item: int(item[0]),
+            )
         ),
         "fence_inspection": next(r for r in records if key(r) == key(oracle["fence"])),
         "violations": 0,
@@ -1455,7 +1483,8 @@ def replay(
         f"Previously correct became unconfirmed by extraction: {json.dumps(dict(unconfirmed_correct), sort_keys=True)}.",
         f"Known recoveries: {recovered} / {len(positives)}.",
         f"Rule-b-only: {summary['rule_b_only']}. Disagreements: {summary['rule_b_disagreements']}.",
-        f"False moves: {summary['false_moves']}. Violations: {len(violations)}.",
+        f"Previously correct moves by absolute line distance (descriptive): {json.dumps(summary['previously_correct_moves_by_distance'], sort_keys=True)}.",
+        f"Violations: {len(violations)}.",
         f"Saved fence: {json.dumps(summary['fence_inspection'], ensure_ascii=True, sort_keys=True)}.",
         "",
         "Exit 0 requires all fixed-denominator and behavioral criteria.",
@@ -1477,16 +1506,185 @@ def replay(
     return 1 if violations else 0
 
 
+def replay_live(run: Path, mirrors: Path, output: Path) -> int:
+    """Resolve saved agent anchors at recorded heads without extracting evidence."""
+    run, mirrors = safe_path(str(run)), safe_path(str(mirrors))
+    inputs = Inputs(run, ())
+    manifest = inputs.json(run / "run.json")
+    records: list[LiveRecord] = []
+    artifacts = set()
+    sources: dict[tuple[str, str, str], tuple[bytes | None, str | None]] = {}
+    for identity in manifest["pr_identities"].values():
+        sha = identity["head_sha"]
+        if not isinstance(sha, str) or not _SHA.fullmatch(sha):
+            raise InputError("live replay requires a full recorded head SHA")
+        directory = safe_path(
+            str(
+                run
+                / f"pr-{identity['owner']}-{identity['repo']}-{identity['pr_number']}"
+            )
+        )
+        clone_url = f"https://github.com/{identity['owner']}/{identity['repo']}"
+        candidates = [
+            mirrors / _mirror_dirname(clone_url + suffix) for suffix in ("", ".git")
+        ]
+        mirror = next((p for p in candidates if p.is_dir()), None)
+        if mirror is None:
+            raise InputError(f"missing source mirror for {clone_url}")
+        paths = sorted(directory.glob(f"code-gauntlet-phase4-input-{sha[:8]}.*.json"))
+        if not paths:
+            raise InputError(f"missing Verify inputs: {directory}")
+        diff_path = directory / f"code-gauntlet-diff-{sha[:8]}.patch"
+        raw_patch = inputs.read(diff_path)
+        indexed = annotate_diff(raw_patch)
+        context_path = directory / f"code-gauntlet-context-{sha[:8]}.md"
+        map_path = directory / f"code-gauntlet-context-map-{sha[:8]}.json"
+        inputs.read(context_path)
+        inputs.read(map_path)
+        loaded = location.load_context_map(map_path, context_path, raw_patch, sha[:8])
+        if loaded.diagnostic:
+            raise InputError(loaded.diagnostic)
+        for path in paths:
+            artifacts.add(str(path))
+            for index, finding in enumerate(inputs.json(path)["findings"]):
+                file = finding["file"]
+                safe_path(file, source=True)
+                source_key = (str(mirror), sha, file)
+                if source_key not in sources:
+                    try:
+                        source_blob = read_source(
+                            {
+                                "file": file,
+                                "source_mirror": str(mirror),
+                                "source_sha": sha,
+                            }
+                        )
+                        sources[source_key] = source_blob, None
+                    except (
+                        InputError,
+                        UnicodeError,
+                        subprocess.SubprocessError,
+                    ) as exc:
+                        sources[source_key] = None, str(exc)
+                blob, error = sources[source_key]
+                head = (
+                    location.source_lines(blob.decode("utf-8"))
+                    if blob is not None
+                    else None
+                )
+                result = location.resolve_location(
+                    finding,
+                    head,
+                    loaded.entries,
+                    indexed.hunks.get(file, ()),
+                    indexed.old_spans.get(file, ()),
+                )
+                span = (
+                    head[result.start - 1 : result.end]
+                    if head is not None and result.start is not None
+                    else None
+                )
+                contains = (
+                    location.anchor_matches_span(
+                        {
+                            **finding,
+                            "location_status": result.status,
+                            "line_start": result.start,
+                            "line_end": result.end,
+                        },
+                        span,
+                    )
+                    if span is not None
+                    else None
+                )
+                records.append(
+                    {
+                        "artifact": str(path),
+                        "artifact_index": index,
+                        "id": finding["id"],
+                        "file": file,
+                        "source_sha": sha,
+                        "source_sha256": digest(blob) if blob is not None else None,
+                        "old_start": finding.get("line_start"),
+                        "old_end": finding.get("line_end"),
+                        "new_start": result.start,
+                        "new_end": result.end,
+                        "status": result.status,
+                        "reason": result.reason,
+                        "anchor": finding.get("anchor"),
+                        "anchor_in_resolved_span": contains,
+                        "resolved_text": "\n".join(span) if span is not None else None,
+                        "source_error": error,
+                    }
+                )
+    if not records:
+        raise InputError("live run has no Verify records")
+    totals = Counter(r["status"] for r in records)
+    mismatches = sum(r["anchor_in_resolved_span"] is False for r in records)
+    summary: LiveSummary = {
+        "run": str(run),
+        "records": len(records),
+        "artifacts": len(artifacts),
+        "statuses": dict(totals),
+        "anchored_records": sum(
+            isinstance(r["anchor"], str) and bool(r["anchor"]) for r in records
+        ),
+        "placed_records": sum(r["status"] != "unconfirmed" for r in records),
+        "anchor_mismatches": mismatches,
+        "input_sha256": inputs.hashes,
+        "findings": records,
+    }
+    output.mkdir(exist_ok=True)
+    write_json(output / "live-replay.json", summary)
+    report = [
+        "# Live anchor replay",
+        "",
+        f"Run: {run}",
+        f"Records: {len(records)}. Artifacts: {len(artifacts)}.",
+        f"Statuses: {json.dumps(dict(totals), sort_keys=True)}.",
+        f"Anchored: {summary['anchored_records']}. Placed: {summary['placed_records']}. Anchor mismatches: {mismatches}.",
+        "",
+        "Anchors are the saved Verify inputs, without an evidence adapter.",
+        "Source is read from each recorded head. Context-map identity and hashes are checked.",
+        "This checks resolved spans; it does not regenerate delivery or establish semantic correctness.",
+        "",
+        "## Placed records",
+        "",
+        "| Artifact | Index | ID | File | Claimed start | Resolved span | Status | Contains anchor |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        *(
+            f"| {Path(r['artifact']).parent.name}/{Path(r['artifact']).name} | {r['artifact_index']} | {r['id']} | {r['file']} | {r['old_start']} | {r['new_start']}-{r['new_end']} | {r['status']} | {r['anchor_in_resolved_span']} |"
+            for r in records
+            if r["status"] != "unconfirmed"
+        ),
+    ]
+    (output / "live-replay.md").write_text("\n".join(report) + "\n", encoding="utf-8")
+    print(
+        f"LIVE REPLAY: {len(records)} records; {summary['placed_records']} placed; {mismatches} anchor mismatches"
+    )
+    return 1 if mismatches else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--map-dir", required=True, type=Path)
+    parser.add_argument("--map-dir", type=Path)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--freeze-quotes", type=Path)
     mode.add_argument("--quote-spans", type=Path)
-    parser.add_argument("--expectations", required=True, type=Path)
+    mode.add_argument("--live-run", type=Path)
+    parser.add_argument("--mirrors-dir", type=Path)
+    parser.add_argument("--expectations", type=Path)
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.live_run:
+            if args.mirrors_dir is None or args.output_dir is None:
+                raise InputError("live mode requires --mirrors-dir and --output-dir")
+            if args.map_dir is not None or args.expectations is not None:
+                raise InputError("live mode does not use synthetic adapter inputs")
+            return replay_live(args.live_run, args.mirrors_dir, args.output_dir)
+        if args.map_dir is None or args.expectations is None:
+            raise InputError("synthetic replay requires --map-dir and --expectations")
         inputs = load_inputs(args.map_dir)
         if args.freeze_quotes:
             if args.output_dir:

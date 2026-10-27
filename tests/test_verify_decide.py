@@ -782,7 +782,13 @@ def test_blame_default_line(tmp_path, monkeypatch, verify_git):
             True,
             [["git", "blame", "-L2,2", HEAD, "--", "source"]],
         ),
-        (1, (None, None), "unconfirmed", None, []),
+        (
+            1,
+            (2, 2),
+            "relocated",
+            True,
+            [["git", "blame", "-L2,2", HEAD, "--", "source"]],
+        ),
     ],
 )
 def test_quote_resolution_controls_positional_checks(
