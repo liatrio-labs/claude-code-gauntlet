@@ -420,8 +420,16 @@ across equal and +5 scenarios. These rates depend on the empirical packet librar
 and proxy audit labels.
 
 Before the first candidate run, the append-only [look ledger](golden/looks.jsonl)
-registers the wave and frozen rule digest. Run preflight and comparison enforce that
-registration. The compare command appends each operational verdict with its look
+registers the wave, frozen rule digest and baseline plugin input tree digest with
+`python3 -m bench.runner.looks --wave WAVE --rule RULE.json --baseline-treatment-sha DIGEST --contamination contamination.json`.
+For each wave, pin the accepted main baseline and create fresh paired windows. Retain
+reviewed exposure exclusions; if the baseline or dispositions changed, use the existing
+`bench.runner.populations --spec freeze-spec.json --out contamination.json` freezer on
+that clean baseline before any candidate run, and pass those frozen bytes throughout.
+Preflight refuses a missing registration or mismatched baseline freeze. Only a declared
+source substitution adds `--baseline-source-sha SOURCE`; each baseline run then needs
+an equivalence receipt binding `release_sha=SOURCE`, `merge_sha=DIGEST` and evidence refs.
+The compare command appends each operational verdict with its look
 number, treatment SHAs, score references and report digest. A second look requires an
 extendable initial report and its unchanged prefix; every third look is refused. Descriptive specs
 cannot inspect gate populations. The look count comes from this ledger, including

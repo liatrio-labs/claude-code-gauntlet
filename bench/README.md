@@ -520,7 +520,7 @@ python3 -m bench.runner.populations --spec leak-manifest-v2.json --out proposal.
 ```
 
 The population freeze spec has `manifest` (the imported proposal object),
-`baseline_treatment_sha` (the Wave 0a plugin input tree digest), and `frozen_at`
+`baseline_treatment_sha` (the wave's baseline plugin input tree digest), and `frozen_at`
 (an ISO timestamp). The baseline tree digest must match the scanned clean checkout.
 The freeze runs the leak scan itself, refuses failing evidence, and binds its digest.
 Every candidate captures the frozen contamination digest before dispatch. Comparison
@@ -579,7 +579,7 @@ apply separately. Ship also requires a resolved blinded audit. Register the froz
 rule before the first candidate run:
 
 ```sh
-python3 -m bench.runner.looks --wave WAVE --rule frozen-rule.json
+python3 -m bench.runner.looks --wave WAVE --rule frozen-rule.json --baseline-treatment-sha BASELINE_DIGEST --contamination contamination.json
 ```
 
 The append-only `golden/looks.jsonl` is the authoritative look count. The compare

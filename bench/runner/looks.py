@@ -21,6 +21,8 @@ class LookEntry(TypedDict, total=False):
     at: str
     wave: str
     rule_sha256: str
+    baseline_treatment_sha: str
+    baseline_source_sha: str
     look: int
     treatments: list[str]
     score_refs: list[dict[str, str]]
@@ -51,11 +53,20 @@ def append(row: LookEntry, check):
         os.fsync(stream.fileno())
 
 
-def registration(wave, rule_sha256, *, started=None, rows=None):
+def registration(
+    wave, rule_sha256, *, started=None, baseline_treatment_sha=None, rows=None
+):
     rows = entries() if rows is None else rows
     registered = [r for r in rows if r["kind"] == "registration" and r["wave"] == wave]
     if len(registered) != 1 or registered[0]["rule_sha256"] != rule_sha256:
         raise ValueError("wave rule is not preregistered")
+    baseline = registered[0].get("baseline_treatment_sha")
+    if not baseline or (
+        baseline_treatment_sha is not None and baseline_treatment_sha != baseline
+    ):
+        raise ValueError(
+            "baseline treatment differs from preregistration or is missing"
+        )
     if started and timestamp(registered[0]["at"]) >= timestamp(started):
         raise ValueError("rule registration must precede candidate runs")
     return registered[0]
@@ -72,13 +83,23 @@ def next_look(wave, rule_sha256, *, rows=None):
     return len(prior) + 1
 
 
-def register(wave, rule):
+def register(wave, rule, baseline_treatment_sha, *, baseline_source_sha=None):
+    if not baseline_treatment_sha or baseline_source_sha == "":
+        raise ValueError("baseline treatment and substitution source must be nonempty")
+
     def check(rows):
         if any(r.get("wave") == wave for r in rows):
             raise ValueError("wave already registered")
 
     append(
-        dict(kind="registration", wave=wave, rule_sha256=digest(rule), at=utc_now()),
+        dict(
+            kind="registration",
+            wave=wave,
+            rule_sha256=digest(rule),
+            baseline_treatment_sha=baseline_treatment_sha,
+            baseline_source_sha=baseline_source_sha or baseline_treatment_sha,
+            at=utc_now(),
+        ),
         check,
     )
 
@@ -156,6 +177,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wave")
     parser.add_argument("--rule", type=Path)
+    parser.add_argument("--contamination", type=Path)
+    parser.add_argument("--baseline-treatment-sha")
+    parser.add_argument("--baseline-source-sha")
     parser.add_argument("--approved-final-sha")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
@@ -170,7 +194,20 @@ def main():
         rule = decode(PromotionRule, read_json(args.rule))
         if not rule.frozen or not args.wave:
             raise ValueError("frozen rule and wave required")
-        register(args.wave, asdict(rule))
+        if args.contamination is None:
+            parser.error("registration requires --contamination PATH")
+        manifest = read_json(args.contamination)
+        if (
+            manifest.get("status") != "frozen"
+            or manifest.get("baseline_treatment_sha") != args.baseline_treatment_sha
+        ):
+            raise ValueError("frozen contamination with matching baseline required")
+        register(
+            args.wave,
+            asdict(rule),
+            args.baseline_treatment_sha,
+            baseline_source_sha=args.baseline_source_sha,
+        )
 
 
 if __name__ == "__main__":

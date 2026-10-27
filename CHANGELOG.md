@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v3.49.2 (2026-10-27)
+
+### Bug Fixes
+
+- **bench**: Bind each wave's gate baseline at registration instead of one fixed release
+  ([#554](https://github.com/liatrio-labs/claude-code-gauntlet/pull/554),
+  [`350e9ac`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/350e9acec580cc8e233a39a24d31413ef1e64151))
+
+### Chores
+
+- **bench**: Drop the cloud-only host auth mode; ship runs on either auth
+  ([#551](https://github.com/liatrio-labs/claude-code-gauntlet/pull/551),
+  [`e6afe2e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e6afe2ef661881986d935d411affd060104731b4))
+
+### Code Style
+
+- **bench**: Ruff format simulation.py
+  ([#551](https://github.com/liatrio-labs/claude-code-gauntlet/pull/551),
+  [`e6afe2e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e6afe2ef661881986d935d411affd060104731b4))
+
+### Refactoring
+
+- **bench**: Simulation counts auth modes from the shared vocabulary
+  ([#551](https://github.com/liatrio-labs/claude-code-gauntlet/pull/551),
+  [`e6afe2e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e6afe2ef661881986d935d411affd060104731b4))
+
+
 ## v3.49.1 (2026-10-22)
 
 ### Bug Fixes
