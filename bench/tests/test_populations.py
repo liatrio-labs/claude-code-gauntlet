@@ -139,6 +139,50 @@ def test_run_dispatch_refuses_holdout_before_prerequisites(pop_case, monkeypatch
         assert run.main(args) == 2
 
 
+def test_registration_requires_frozen_matching_baseline(
+    pop_case, tmp_path, monkeypatch
+):
+    from bench.tests.test_compare import rule
+
+    _, manifest = pop_case
+    ledger = tmp_path / "looks.jsonl"
+    ledger.write_bytes(b"")
+    monkeypatch.setattr(looks, "LEDGER", ledger)
+    rule_path, contamination = tmp_path / "rule.json", tmp_path / "contamination.json"
+    write(rule_path, asdict(rule()))
+    sha = "a" * 64
+    args = [
+        "looks",
+        "--wave",
+        "wave",
+        "--rule",
+        str(rule_path),
+        "--baseline-treatment-sha",
+        sha,
+    ]
+    monkeypatch.setattr("sys.argv", [*args, "--contamination", str(contamination)])
+    for changes in (
+        dict(status="frozen", baseline_treatment_sha="b" * 40),
+        dict(status="unfrozen", baseline_treatment_sha=sha),
+    ):
+        write(contamination, {**manifest, **changes})
+        refuses(looks.main, match="frozen contamination with matching baseline")
+        assert ledger.read_bytes() == b""
+    monkeypatch.setattr("sys.argv", args)
+    with pytest.raises(SystemExit) as exc:
+        looks.main()
+    assert exc.value.code == 2
+    assert ledger.read_bytes() == b""
+    write(contamination, {**manifest, "baseline_treatment_sha": sha})
+    monkeypatch.setattr("sys.argv", [*args, "--contamination", str(contamination)])
+    looks.main()
+    assert len(looks.entries()) == 1
+    assert (
+        looks.registration("wave", digest(asdict(rule())))["baseline_treatment_sha"]
+        == sha
+    )
+
+
 def test_holdout_receipt_is_once_and_final_sha_bound(pop_case, tmp_path, monkeypatch):
     e, m = pop_case
     ledger = tmp_path / "looks.jsonl"
