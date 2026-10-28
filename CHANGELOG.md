@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## v3.49.3 (2026-10-28)
+
+### Bug Fixes
+
+- **bench**: Replay packet delivery under the packet's own plugin tree
+  ([#555](https://github.com/liatrio-labs/claude-code-gauntlet/pull/555),
+  [`1b44c47`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1b44c4717733b459935eb61e70146589a97e14bb))
+
+- **bench**: Replay packet delivery under the packet's own plugin tree (#46)
+  ([#555](https://github.com/liatrio-labs/claude-code-gauntlet/pull/555),
+  [`1b44c47`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1b44c4717733b459935eb61e70146589a97e14bb))
+
+- **bench**: Score-time delivery replay uses the run's own plugin tree
+  ([#555](https://github.com/liatrio-labs/claude-code-gauntlet/pull/555),
+  [`1b44c47`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1b44c4717733b459935eb61e70146589a97e14bb))
+
+### Chores
+
+- **deps**: Bump the actions group with 4 updates
+  ([#552](https://github.com/liatrio-labs/claude-code-gauntlet/pull/552),
+  [`8fdb81f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8fdb81ffeb007515b49c78c04a66a571b8c442c0))
+
+### Refactoring
+
+- **bench**: One treatment resolver and a single replay error vocabulary
+  ([#555](https://github.com/liatrio-labs/claude-code-gauntlet/pull/555),
+  [`1b44c47`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1b44c4717733b459935eb61e70146589a97e14bb))
+
+
 ## v3.49.2 (2026-10-27)
 
 ### Bug Fixes
