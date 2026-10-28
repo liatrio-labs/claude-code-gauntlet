@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.50.2 (2026-10-28)
+
+### Bug Fixes
+
+- **bench**: Accept a run pair that starts together in the interleaving check
+  ([#559](https://github.com/liatrio-labs/claude-code-gauntlet/pull/559),
+  [`df3cc7d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/df3cc7d4c3d7d56f5c9f6f0d1678c99868f39cb6))
+
+- **bench**: Accept a run pair that starts together in the interleaving check (#46)
+  ([#559](https://github.com/liatrio-labs/claude-code-gauntlet/pull/559),
+  [`df3cc7d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/df3cc7d4c3d7d56f5c9f6f0d1678c99868f39cb6))
+
+### Refactoring
+
+- **bench**: Name the pair and between-pair interleaving rules
+  ([#559](https://github.com/liatrio-labs/claude-code-gauntlet/pull/559),
+  [`df3cc7d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/df3cc7d4c3d7d56f5c9f6f0d1678c99868f39cb6))
+
+
 ## v3.50.1 (2026-10-28)
 
 ### Bug Fixes
