@@ -353,6 +353,7 @@ Discovery agents return findings through structured output (`agent()`/`parallel(
   python,
   diffPath, changedFilesPath, reviewConfigPath,
   intentPath,  // optional producer path; omit for local/uncommitted reviews
+  relatedTests, relatedDocs,  // optional path arrays from Phase 2g/2h (at most 40 each)
   removedTests: contextReceipt.removedTests,  // verbatim saved-diff inventory and checksum
   riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
   scopeAnswer: "light" | "full",  // interactive answer only when the trivial-scope question fires

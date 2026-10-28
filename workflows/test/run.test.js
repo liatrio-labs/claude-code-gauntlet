@@ -19,6 +19,25 @@ const DIMENSIONS = ['bug', 'security', 'cross_file_impact', 'test_coverage', 'co
 const PROOF = { slices: 1, proven: 1, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,
   retried: 0, retriedMismatch: 0, retriedMissing: 0, localised: 0, retriedFindings: 0, degradedFindings: 0 };
 
+for (const [key, agentType, kind] of [
+  ['relatedTests', 'code-gauntlet:test-analyzer', 'tests'],
+  ['relatedDocs', 'code-gauntlet:conventions-and-intent', 'docs'],
+]) test(`${key} changes only its agent's prompt and only when non-empty`, async () => {
+  const baseline = await runAndCapture(validArgs());
+  assert.equal(baseline.out.ok, true);
+  for (const paths of [[], [`${kind}/related lead`, `${kind}/another "lead"`]]) {
+    const { out, ctx } = await runAndCapture(validArgs({ [key]: paths }));
+    assert.equal(out.ok, true);
+    assert.deepEqual(ctx.calls.map((call) => call.agentType), baseline.ctx.calls.map((call) => call.agentType));
+    assert.ok(ctx.calls.some((call) => call.agentType === agentType));
+    for (const [index, call] of ctx.calls.entries()) {
+      const extra = call.agentType === agentType && paths.length
+        ? ` Related ${kind} (optional leads you may read): ${JSON.stringify(paths)}.` : '';
+      assert.equal(call.prompt, baseline.ctx.calls[index].prompt + extra, call.agentType);
+    }
+  }
+});
+
 for (const present of [true, false]) test(`author intent dispatch: path ${present ? 'present' : 'absent'}`, async () => {
   const intentPath = '/repo/.code-gauntlet/code-gauntlet-intent-abcd.md';
   const args = validArgs(present ? { intentPath } : {});

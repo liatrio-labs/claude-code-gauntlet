@@ -5,6 +5,27 @@ import { fnv1a32 } from '../src/wire.js';
 import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, resolveReviewConfig } from '../src/args.js';
 import { interactiveArgs, headlessArgs, priorReviewDetector, prIdentity, reviewMdArgs } from './helpers/argsFixtures.js';
 
+for (const key of ['relatedTests', 'relatedDocs']) {
+  test(`${key} accepts omitted, empty and bounded repo-relative path arrays`, () => {
+    for (const paths of [undefined, [], ['tests/no-extension', 'docs/a "quoted" path'],
+      Array.from({ length: 40 }, (_, i) => `area/lead-${i}`)]) {
+      const result = validateArgs(interactiveArgs({ [key]: paths }));
+      assert.equal(result.ok, true, result.errors.join('\n'));
+    }
+  });
+
+  test(`${key} rejects malformed, duplicate, changed and excessive paths`, () => {
+    for (const paths of [null, {}, 'tests/path', [null], [7], [''], ['   '], ['/outside'],
+      ['C:/outside'], ['C:outside'], ['../outside'], ['area/../outside'], ['area/./path'],
+      ['area\\path'], ['area//path'], ['area/'], ['area/pa\nth'], ['area/pa\u0000th'],
+      ['lead', 'lead'], ['a.js'], Array.from({ length: 41 }, (_, i) => `area/lead-${i}`)]) {
+      const result = validateArgs(interactiveArgs({ [key]: paths }));
+      assert.equal(result.ok, false, JSON.stringify(paths));
+      assert.ok(result.errors.some((error) => error.startsWith(key)), result.errors.join('\n'));
+    }
+  });
+}
+
 for (const intentPath of [null, 3, '', '   ', '/repo/intent\n.md']) {
   test(`intent path rejects ${JSON.stringify(intentPath)}`, () => {
     const result = validateArgs(interactiveArgs({ intentPath }));

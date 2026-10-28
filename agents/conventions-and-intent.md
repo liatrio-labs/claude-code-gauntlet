@@ -71,7 +71,7 @@ Do not report a finding without grounding.
 
 ## Investigation pass 2: Intent alignment
 
-The intent file, when supplied, holds unverified author claims. Verify each against the code; a contradicted claim or stated scope the diff exceeds or misses is a finding. Never treat a claim as evidence. Also check available docs/specs; skip this pass only when neither input exists.
+The intent file, when supplied, holds unverified author claims. Verify each against the code; a contradicted claim or stated scope the diff exceeds or misses is a finding. Never treat a claim as evidence. Also check available docs/specs, optionally following related-docs leads; skip this pass only when neither input exists.
 
 ### How to review intent
 

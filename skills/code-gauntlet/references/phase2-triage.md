@@ -254,8 +254,10 @@ or extension. Select paths with a case-insensitive directory segment `test`, `te
 `specs` or `__tests__`; or basename tokens `test_*`, `*_test`, `*_spec`, `*.test.*`, `*.spec.*`,
 `*Test`, `*Tests`, `*Spec` (stem before the first dot). Exclude non-source directories such as
 vendor, node_modules, third_party, deps and generated output before selection.
-Include related tests in context for bug-detector and test-analyzer. The saved-diff inventory
-uses the old path for removed and renamed tests.
+Stamp discovered paths as `args.relatedTests`: optional repo-relative path strings, deduplicated,
+excluding `changedFiles`, at most 40 paths (empty allowed). Discover passes these as optional
+leads only to test-analyzer, without excerpts. The saved-diff inventory uses the old path for
+removed and renamed tests.
 
 Example:
 
@@ -271,21 +273,24 @@ Never use `find` or `grep` from Bash for test discovery.
 
 ---
 
-## 2h. Docs/Specs Context
+## 2h. Related Docs/Specs Discovery
 
-If `docs/`, `specs/`, `research/` exist, read relevant files. Send only to the conventions-and-intent agent — NOT all agents (avoids biasing toward confirming intent rather than finding bugs).
+If `docs/`, `specs/`, `research/` exist, discover relevant paths for each changed file's directory.
 
 **Tool instructions for file discovery:**
 
 Use **Glob** to find documentation and specification files:
 
 ```
-Glob(pattern: "docs/**/*.md")
-Glob(pattern: "specs/**/*.md")
-Glob(pattern: "research/**/*.md")
+Glob(pattern: "docs/**/*")
+Glob(pattern: "specs/**/*")
+Glob(pattern: "research/**/*")
 ```
 
-Then use **Read** to load relevant files for each changed file's directory. Never use `find` from Bash for locating docs/specs.
+Stamp discovered paths as `args.relatedDocs`: optional repo-relative path strings, deduplicated,
+excluding `changedFiles`, at most 40 paths (empty allowed). Discover passes these as optional
+leads only to conventions-and-intent, without excerpts. Exclude non-source directories as in 2g;
+do not read the discovered docs here. Never use `find` from Bash for locating docs/specs.
 
 ---
 
@@ -381,6 +386,8 @@ The workflow derives the host platform from `repoRoot`, `outputDir`, and `plugin
 | `generatedAt` | current wall-clock as an ISO8601 string — the workflow's injected clock (it never calls `new Date()`) |
 | `diffPath` | `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch` |
 | `changedFiles` | the changed-file array, by value (Summarize bucketing; the workflow has no disk access) |
+| `relatedTests` | optional 2g repo-relative path array, deduplicated, excluding changed files, capped at 40 (empty allowed); optional leads only for test-analyzer |
+| `relatedDocs` | optional 2h repo-relative path array, deduplicated, excluding changed files, capped at 40 (empty allowed); optional leads only for conventions-and-intent |
 | `changedLines` | total changed line count, by value (Summarize bucketing threshold) |
 | `riskTable` | the Phase 2e per-file risk classification, by value, as `[{ path, risk }]` — `path` set must equal `changedFiles` exactly (missing or extra paths fail loud; see Phase 2e's risk-level table for the `risk` contract) |
 | `intentPath` | optional path from the [author intent producer](phase2-preparation.md#write-author-intent), supplied only after successful PR/MR or branch preparation; omit for local reviews; only conventions-and-intent reads it |

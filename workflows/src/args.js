@@ -177,6 +177,32 @@ function validatePathSegments(value, label, reviewFile = false) {
   return errors;
 }
 
+function validateRelatedPaths(args, errors) {
+  const changed = new Set(Array.isArray(args.changedFiles) ? args.changedFiles : []);
+  for (const key of ['relatedTests', 'relatedDocs']) {
+    const paths = args[key];
+    if (paths === undefined) continue;
+    if (!Array.isArray(paths)) {
+      errors.push(`${key} must be an array of repo-relative paths when present`);
+      continue;
+    }
+    if (paths.length > 40) errors.push(`${key} must contain at most 40 paths`);
+    const seen = new Set();
+    for (const [index, path] of paths.entries()) {
+      const label = `${key}[${index}]`;
+      if (typeof path !== 'string' || path.trim() === '') {
+        errors.push(`${label} must be a non-empty path string`);
+        continue;
+      }
+      errors.push(...validatePathSegments(path, label));
+      if (/^[A-Za-z]:/.test(path)) errors.push(`${label} must be repo-relative`);
+      if (seen.has(path)) errors.push(`${label} duplicates another path`);
+      if (changed.has(path)) errors.push(`${label} must not be a changed file`);
+      seen.add(path);
+    }
+  }
+}
+
 function validateFlatPatterns(value, label, errors, ignore = false) {
   if (!Array.isArray(value)) {
     errors.push(`${label} must be an array of flat pattern strings`);
@@ -413,6 +439,7 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
   // Validate policy before dispatch because providers, tiers, and gateway settings affect model resolution.
   if (isPlainObject(args.policy)) validateArgsFields(args.policy, 'policy', errors, 'policy');
   validateArgsFields(args, 'changed', errors);
+  validateRelatedPaths(args, errors);
   // The host cannot inspect the context file, so supplied sizes drive its read plan.
   // Bounds prevent an uncatchable allocation failure; missing line counts remain a disclosed degradation.
   validateArgsFields(args, 'context', errors);

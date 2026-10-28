@@ -210,6 +210,7 @@ export async function runWith(ctx, rawArgs) {
     const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
       measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A), intentPath: A.intentPath,
+      relatedTests: A.relatedTests, relatedDocs: A.relatedDocs,
     }));
 
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
