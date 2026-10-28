@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.50.1 (2026-10-28)
+
+### Bug Fixes
+
+- Place repeated anchors at the claimed line and accept 8-line quotes
+  ([#556](https://github.com/liatrio-labs/claude-code-gauntlet/pull/556),
+  [`8f234f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8f234f1f4260f2d8d7dc500e3870b16bec6fe0dc))
+
+- Place repeated anchors at the claimed line and accept 8-line quotes (#46)
+  ([#556](https://github.com/liatrio-labs/claude-code-gauntlet/pull/556),
+  [`8f234f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8f234f1f4260f2d8d7dc500e3870b16bec6fe0dc))
+
+### Testing
+
+- Drop the anchor row the 8-line limit made vacuous
+  ([#556](https://github.com/liatrio-labs/claude-code-gauntlet/pull/556),
+  [`8f234f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8f234f1f4260f2d8d7dc500e3870b16bec6fe0dc))
+
+
 ## v3.50.0 (2026-10-28)
 
 ### Bug Fixes
