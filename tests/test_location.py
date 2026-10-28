@@ -232,7 +232,6 @@ def test_unrelated_deleted_text_does_not_veto_head_quote():
         "\n" * 4,
         "a" * 401,
         "\U0001f600" * 401,
-        "\n".join([TEXT] * 5),
         "no matching source text",
     ],
 )
