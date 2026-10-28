@@ -70,6 +70,10 @@ and [phase2-triage.md](references/phase2-triage.md) for triage and args. Run A b
 bounded diff; count the saved diff. Phase 1 owns output setup. Keep collector, Glob/Grep discovery,
 and context calls separate; announce triage before dispatch.
 
+For PR/MR and branch targets, run the [author intent producer](references/phase2-preparation.md#write-author-intent)
+and stamp its returned path as `args.intentPath`. Local reviews omit it. Keep author text out of
+the shared context and other agent inputs; only conventions-and-intent receives this file.
+
 ### Write the shared agent context file
 
 After 2d, 2e and 2k, run the [shared context command](references/phase2-preparation.md#write-the-shared-agent-context-file).

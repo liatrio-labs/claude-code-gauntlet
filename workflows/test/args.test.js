@@ -5,6 +5,14 @@ import { fnv1a32 } from '../src/wire.js';
 import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, resolveReviewConfig } from '../src/args.js';
 import { interactiveArgs, headlessArgs, priorReviewDetector, prIdentity, reviewMdArgs } from './helpers/argsFixtures.js';
 
+for (const intentPath of [null, 3, '', '   ', '/repo/intent\n.md']) {
+  test(`intent path rejects ${JSON.stringify(intentPath)}`, () => {
+    const result = validateArgs(interactiveArgs({ intentPath }));
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((error) => error.startsWith('intentPath ')));
+  });
+}
+
 test('removed-test args treat every inventory path control character as unavailable', () => {
   const controls = [...Array.from({ length: 32 }, (_, i) => i),
     ...Array.from({ length: 33 }, (_, i) => i + 127), 0x2028, 0x2029];

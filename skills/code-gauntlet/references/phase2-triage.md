@@ -383,6 +383,7 @@ The workflow derives the host platform from `repoRoot`, `outputDir`, and `plugin
 | `changedFiles` | the changed-file array, by value (Summarize bucketing; the workflow has no disk access) |
 | `changedLines` | total changed line count, by value (Summarize bucketing threshold) |
 | `riskTable` | the Phase 2e per-file risk classification, by value, as `[{ path, risk }]` — `path` set must equal `changedFiles` exactly (missing or extra paths fail loud; see Phase 2e's risk-level table for the `risk` contract) |
+| `intentPath` | optional path from the [author intent producer](phase2-preparation.md#write-author-intent), supplied only after successful PR/MR or branch preparation; omit for local reviews; only conventions-and-intent reads it |
 | `configEcho` | Copy `configResult.waist` verbatim into args, including all fields it carries. |
 | `pluginRoot` | `configResult.identity.plugin_root`; the workflow derives its script paths from this root. |
 | `python` | Phase 1 selection: `python3`, `python`, or `py -3`; optional, defaults to `python3`. |

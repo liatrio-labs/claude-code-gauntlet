@@ -69,13 +69,13 @@ A preference without a named precedent stays excluded.
 Never state that a rules file is absent.
 Do not report a finding without grounding.
 
-## Investigation pass 2: Intent alignment (only if docs/specs context provided)
+## Investigation pass 2: Intent alignment
 
-This pass uses the docs/specs context provided in your input that other agents don't receive. If no specification documents, decision records, or planning documents are found, skip this pass and note: "No specification documents found — intent alignment check skipped."
+The intent file, when supplied, holds unverified author claims. Verify each against the code; a contradicted claim or stated scope the diff exceeds or misses is a finding. Never treat a claim as evidence. Also check available docs/specs; skip this pass only when neither input exists.
 
 ### How to review intent
 
-1. **Read specification documents.** Start with any specification documents referenced in the PR description or found in docs/specs/. Understand the documented requirements, constraints, and acceptance criteria.
+1. **Read available specifications.** Check documented requirements, constraints, and acceptance criteria against the implementation.
 
 2. **Read decision records and research documents.** Look for ADRs (Architecture Decision Records), research documents, design docs, or planning documents related to the changed area. Note which alternatives were considered and which were chosen.
 

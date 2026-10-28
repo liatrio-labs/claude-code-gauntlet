@@ -49,7 +49,7 @@ const LIMIT_KEYS = deepFreeze([
 ]);
 
 const ARGS_SHAPES = deepFreeze({
-  pathFields: ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot'],
+  pathFields: ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot', 'intentPath'],
   riskFields: ['path', 'risk'],
   reviewMdFields: ['path', 'text', 'checksum'],
   scopeLayerFields: ['dir', 'ignore', ...REVIEW_SETTING_KEYS],

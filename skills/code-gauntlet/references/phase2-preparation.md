@@ -256,6 +256,34 @@ If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workfl
 
 **Composites A/B do not subsume 2d, 2g, or 2k.** Run 2d's collector as a separate script call after the changed-file list is saved; its receipt is the only REVIEW.md discovery source. Keep test discovery (2g) and AI-marker scanning (2k) as separate Glob/Grep tool calls under `references/phase2-triage.md`; never use `find` or `grep` from Bash for those searches.
 
+## Write author intent
+
+After checkout and SHA resolution, run the matching command with `set -o pipefail`.
+Keep metadata on stdin: never interpolate author text into shell arguments or the shared context.
+Stop on failure; on success stamp the printed path as `args.intentPath`. The producer frames
+unverified author claims and caps the entire file at 8,000 characters, including a truncation marker.
+Only conventions-and-intent reads it; local/uncommitted reviews run no producer and omit `intentPath`.
+
+GitHub:
+
+```bash
+gh pr view {pr_number} --json title,body,commits | {python} "{plugin_root}/scripts/write_author_intent.py" --target github --output-dir "{output_dir}" --head-sha "{head_sha_short}"
+```
+
+GitLab (title and description; this metadata response does not provide commit subjects):
+
+```bash
+glab mr view {pr_number} --output json | {python} "{plugin_root}/scripts/write_author_intent.py" --target gitlab --output-dir "{output_dir}" --head-sha "{head_sha_short}"
+```
+
+Branch comparison (resolved SHAs pin the subjects to the reviewed target):
+
+```bash
+git log --format=%s "{base_sha}..{target_sha}" | {python} -c 'import json,sys; json.dump(sys.stdin.read().splitlines(), sys.stdout)' | {python} "{plugin_root}/scripts/write_author_intent.py" --target branch --output-dir "{output_dir}" --head-sha "{head_sha_short}"
+```
+
+Keep the separate identity producer unchanged; its title is only the report subject.
+
 ## Discover REVIEW.md and stamp its raw text
 
 1. **Project-rule inputs.** The script below collects CLAUDE.md, AGENTS.md, QODO.md, and REVIEW.md for shared context; Read REVIEW.md separately only for the raw waist in step 3, and never Read or Glob CLAUDE.md/AGENTS.md/QODO.md directly here.
@@ -324,6 +352,7 @@ Discovery agents return findings through structured output (`agent()`/`parallel(
   repoRoot: configResult.identity.repo_root, outputDir, headShaShort, nonce, generatedAt,
   python,
   diffPath, changedFilesPath, reviewConfigPath,
+  intentPath,  // optional producer path; omit for local/uncommitted reviews
   removedTests: contextReceipt.removedTests,  // verbatim saved-diff inventory and checksum
   riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
   scopeAnswer: "light" | "full",  // interactive answer only when the trivial-scope question fires

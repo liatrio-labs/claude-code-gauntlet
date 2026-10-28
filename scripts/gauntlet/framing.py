@@ -7,7 +7,9 @@ import unicodedata
 from collections.abc import Mapping
 from typing import AnyStr, Literal, get_args
 
-BlockTag = Literal["untrusted-code-content", "project-rules", "review-rules"]
+BlockTag = Literal[
+    "untrusted-code-content", "project-rules", "review-rules", "untrusted-pr-text"
+]
 
 # unicodedata has no Default_Ignorable_Code_Point, so its non-Cf members are listed.
 _IGNORABLE_NON_CF = (

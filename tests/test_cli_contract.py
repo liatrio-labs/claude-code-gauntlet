@@ -418,6 +418,7 @@ MAIN_FAILURE = {
     "stale_truncate": "--output-dir {missing} --head-sha abcd",
     "verify_findings": "--target-kind branch --input {missing} --output {missing}",
     "write_shared_context": "--output-dir {missing} --head-sha abcd",
+    "write_author_intent": "--target github --output-dir {missing} --head-sha abcd",
 }
 # diff_numstat, emit_style_context and ensure_output_dir have no malformed-input
 # branch beyond the failure row.
@@ -443,10 +444,12 @@ BAD_INPUT = {
     "stale_truncate": "--output-dir {missing} --head-sha invalid",
     "verify_findings": "--target-kind branch --input {invalid} --output {missing}",
     "write_shared_context": "--output-dir {missing} --head-sha invalid",
+    "write_author_intent": "--target branch --output-dir {dir} --head-sha invalid",
 }
 POST = {"platform": "github", "owner": "o", "repo": "r", "pr_number": 5, "sha": FULL}
 # Each success row is (files written under the case directory, argv).
 SUCCESS = {
+    "write_author_intent": ({}, "--target branch --output-dir {dir} --head-sha abcd"),
     "capture_policy_env": ({}, ""),
     "check_eligibility": ({}, "--platform github --pr 7"),
     "list_pr_files": ({}, "--platform github --pr 7"),
@@ -633,6 +636,8 @@ def scenario(name, case, tmp_path, *, shell_fixture=False):
     stdin = b"triage\n" if triage else b"{}\n"
     if (name, case) == ("resolve_pr_identity", "success"):
         stdin = b'{"url":"https://github.com/o/r/pull/5"}\n'
+    if (name, case) == ("write_author_intent", "success"):
+        stdin = b"[]\n"
     if name in ("check_eligibility", "list_pr_files", "pr_status"):
         stdin = b'{"mode":"interactive","resolved":{}}\n'
         if case == "bad_input":

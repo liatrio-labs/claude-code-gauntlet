@@ -135,7 +135,7 @@ A convention finding grounded in an in-repo precedent names the files that estab
 
 **6. Issues explicitly silenced in code.** If the author has added a suppression comment or documented a deliberate design trade-off, respect the intent.
 
-**7. Intentional design trade-offs.** When the diff comment or PR description explains a deliberate design choice (e.g., "kept anemic for simplicity because this is a DTO"), do not flag it as a design flaw without providing a compelling counter-argument.
+**7. Intentional design trade-offs.** When a code comment explains a deliberate design choice (e.g., "kept anemic for simplicity because this is a DTO"), do not flag it as a design flaw without providing a compelling counter-argument.
 
 **8. Issues flagged by CLAUDE.md rules that the code explicitly opts out of.** If a file has a file-level opt-out directive, do not flag issues governed by those rules in that file.
 
