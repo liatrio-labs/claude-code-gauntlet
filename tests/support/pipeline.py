@@ -47,7 +47,7 @@ def build_gh_diff(findings: list[dict[str, Any]]) -> str:
                 " context\n",
             ]
         )
-        parts.extend(f"+added {line}\n" for line in range(2, count + 1))
+        parts.extend("+return process(value);\n" for line in range(2, count + 1))
     return "".join(parts)
 
 

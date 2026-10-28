@@ -12,7 +12,8 @@
       "dimension": "bug",
       "evidence": "for attempt in range(max_attempts + 1):",
       "suggestion": "Use range(max_attempts) instead of range(max_attempts + 1).",
-      "cross_file_refs": []
+      "cross_file_refs": [],
+      "anchor": "synthetic_source(0);\nsynthetic_source(1);\nsynthetic_source(2);"
     }
   ],
   "result": {
@@ -45,7 +46,11 @@
         "diff_validation": {
           "in_diff": true,
           "reason": "line 12 found in diff"
-        }
+        },
+        "anchor": "synthetic_source(0);\nsynthetic_source(1);\nsynthetic_source(2);",
+        "location_status": "confirmed",
+        "claimed_line_start": 12,
+        "claimed_line_end": 14
       }
     ],
     "eliminated": []

@@ -1,3 +1,4 @@
+import { canonicalRange, clearLocation, normalizeLocation } from './location.js';
 import { INT_POLICY, coerceInt, firstUnsafeNumber, fnv1a32 } from './wire.js';
 import { hasRemovedTestLocation } from './removedTests.js';
 import { extractSymbols } from './verifySymbols.js';
@@ -81,7 +82,7 @@ export function encodeSliceInline(content) {
 export const VERIFY_INLINE_CHAR_BUDGET = 50000;
 
 // Generated into Python; this order also governs the delta checksum.
-export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
+export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status'];
 
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
 
@@ -104,9 +105,13 @@ export function joinVerifyDeltas(slice, deltas) {
   for (const f of slice) {
     const delta = byId.get(f.id);
     if (!delta || delta.verified === false) continue;
-    const joined = pinNumericFields(f);
+    const joined = clearLocation(pinNumericFields(f));
     for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
-    out.push(joined);
+    if (canonicalRange(joined) && (Object.hasOwn(f, 'line') || Object.hasOwn(f, 'end_line'))) {
+      joined.line = joined.line_start;
+      joined.end_line = joined.line_end;
+    }
+    out.push(normalizeLocation(joined));
   }
   return out;
 }
@@ -123,7 +128,7 @@ export function pinNumericFields(finding) {
   return out;
 }
 
-const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'severity', 'confidence'];
+const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'severity', 'confidence', 'anchor'];
 // Fixed order is shared with the generated Python wire type.
 export const VERIFY_SLICE_FIELDS = [...VERIFY_SLICE_SCALAR_FIELDS, 'has_cross_file_refs', 'has_removed_test_location', 'symbols'];
 const verifyProjectionCache = new WeakMap();

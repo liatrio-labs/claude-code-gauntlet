@@ -7,7 +7,9 @@
       "id": "T-marker-1",
       "line_start": 60,
       "severity": "medium",
-      "title": "Draft copy still has lorem ipsum filler text in the changelog heading"
+      "title": "Draft copy still has lorem ipsum filler text in the changelog heading",
+      "line_end": 60,
+      "location_status": "confirmed"
     }
   ],
   "fn": "apply_injection_filter"

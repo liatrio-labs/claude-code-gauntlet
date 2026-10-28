@@ -389,6 +389,8 @@ def evaluator_for(epoch, pin, adjudicator_pin):
 
 
 def _candidate_context(info, candidate):
+    if not candidate.get("line"):
+        return "", str(candidate.get("path") or ""), "file_only_unconfirmed", False
     diff_path = Path(info["pr_dir"]) / "diff.patch"
     diff = (
         diff_path.read_text(encoding="utf-8", errors="replace")

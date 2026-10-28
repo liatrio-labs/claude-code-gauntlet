@@ -117,6 +117,11 @@ GL_FINDINGS = [
         "severity": "high",
         "title": "N+1 query in loop",
         "body": "user.posts is queried inside the each loop; preload before iterating.",
+        "line_start": 27,
+        "line_end": 27,
+        "location_status": "confirmed",
+        "anchor": "user.posts.each do |p|",
+        "claimed_line_start": 27,
     },
     {
         "file": "app/controllers/sessions_controller.rb",
@@ -124,6 +129,11 @@ GL_FINDINGS = [
         "severity": "low",
         "title": "Unused parameter",
         "body": "The redirect_to param is never read.",
+        "line_start": 5,
+        "line_end": 5,
+        "location_status": "confirmed",
+        "anchor": "redirect_to_home",
+        "claimed_line_start": 5,
     },
 ]
 
@@ -134,10 +144,10 @@ GH_DIFF_PREFIXED_PATH = (
     "+++ b/src/edited.py\n"
     "@@ -1,1 +1,5 @@\n"
     " def handler():\n"
-    "+    line1\n"
-    "+    line2\n"
-    "+    line3\n"
-    "+    line4\n"
+    "+    source_value_1\n"
+    "+    source_value_2\n"
+    "+    source_value_3\n"
+    "+    source_value_4\n"
 )
 
 
@@ -148,6 +158,11 @@ GH_PREFIXED_PATH_FINDINGS = [
         "severity": "high",
         "title": "Single line issue",
         "body": "Single-line body text.",
+        "line_start": 2,
+        "line_end": 2,
+        "location_status": "confirmed",
+        "anchor": "    source_value_1",
+        "claimed_line_start": 2,
     },
     {
         "file": "b/src/edited.py",
@@ -156,6 +171,12 @@ GH_PREFIXED_PATH_FINDINGS = [
         "severity": "medium",
         "title": "Multi line issue",
         "body": "Multi-line body text.",
+        "line_start": 3,
+        "line_end": 4,
+        "location_status": "confirmed",
+        "anchor": "    source_value_2\n    source_value_3",
+        "claimed_line_start": 3,
+        "claimed_line_end": 4,
     },
 ]
 
@@ -168,6 +189,11 @@ GH_SKIPPED_SECTION_FINDINGS = [
         "title": "Anchored fix downgrades",
         "body": "The anchored line's own patch states no end_line.",
         "suggested_fix_code": "    fixed_line1",
+        "line_start": 2,
+        "line_end": 2,
+        "location_status": "confirmed",
+        "anchor": "    source_value_1",
+        "claimed_line_start": 2,
     },
     {
         "file": "b/src/edited.py",
@@ -182,11 +208,18 @@ GH_SKIPPED_SECTION_FINDINGS = [
             f'"sha":"{_GH_SHA}"}} -->'
         ),
         "suggested_fix_code": "    replacement_line\n    second_line",
+        "line_start": 99,
+        "line_end": 100,
+        "location_status": "confirmed",
+        "anchor": "    unchanged_source_value\n    unchanged_second_value",
+        "claimed_line_start": 99,
+        "claimed_line_end": 100,
     },
     {
         "severity": "low",
         "title": "Repo-wide observation",
         "body": "This finding applies to the whole PR, not one line.",
+        "location_status": "unconfirmed",
     },
 ]
 
@@ -212,6 +245,11 @@ GL_PREFIXED_PATH_FINDINGS = [
         "severity": "high",
         "title": "Added line issue",
         "body": "An added line has no old side.",
+        "line_start": 2,
+        "line_end": 2,
+        "location_status": "confirmed",
+        "anchor": "added_line_1",
+        "claimed_line_start": 2,
     },
     {
         "file": "b/src/edited.py",
@@ -219,6 +257,11 @@ GL_PREFIXED_PATH_FINDINGS = [
         "severity": "low",
         "title": "Context line issue",
         "body": "A context line anchors on both sides.",
+        "line_start": 1,
+        "line_end": 1,
+        "location_status": "confirmed",
+        "anchor": "context_line",
+        "claimed_line_start": 1,
     },
     {
         "file": "b/src/new_file.py",
@@ -226,6 +269,11 @@ GL_PREFIXED_PATH_FINDINGS = [
         "severity": "medium",
         "title": "New file issue",
         "body": "A newly-added file has no old side at all.",
+        "line_start": 1,
+        "line_end": 1,
+        "location_status": "confirmed",
+        "anchor": "brand_new_line",
+        "claimed_line_start": 1,
     },
 ]
 
@@ -248,6 +296,11 @@ GL_FENCED_FINDINGS = [
         "title": "Context line downgrades",
         "body": "The context line's own patch states no end_line.",
         "suggested_fix_code": "fixed_context_line",
+        "line_start": 1,
+        "line_end": 1,
+        "location_status": "confirmed",
+        "anchor": "context_line",
+        "claimed_line_start": 1,
     },
     {
         "file": "src/edited.py",
@@ -257,6 +310,12 @@ GL_FENCED_FINDINGS = [
         "title": "Fenced fix kept",
         "body": "The added span gets a kept one-click suggestion.",
         "suggested_fix_code": "fixed_line_2\nfixed_line_3",
+        "line_start": 2,
+        "line_end": 3,
+        "location_status": "confirmed",
+        "anchor": "added_line_2\nadded_line_3",
+        "claimed_line_start": 2,
+        "claimed_line_end": 3,
     },
     {
         "file": "src/edited.py",
@@ -264,11 +323,13 @@ GL_FENCED_FINDINGS = [
         "severity": "low",
         "title": "Off-diff finding",
         "body": "This finding's line sits outside the diff.",
+        "location_status": "unconfirmed",
     },
     {
         "severity": "low",
         "title": "Repo-wide observation",
         "body": "This finding applies to the whole MR, not one line.",
+        "location_status": "unconfirmed",
     },
 ]
 
@@ -279,11 +340,11 @@ GH_DIFF_OVERLAP = (
     "+++ b/foo.py\n"
     "@@ -1,1 +1,6 @@\n"
     " def f():\n"
-    "+    line2\n"
-    "+    line3\n"
-    "+    line4\n"
-    "+    line5\n"
-    "+    line6\n"
+    "+    source_value_2\n"
+    "+    source_value_3\n"
+    "+    source_value_4\n"
+    "+    source_value_5\n"
+    "+    source_value_6\n"
 )
 
 
@@ -294,6 +355,11 @@ GH_OVERLAP_FINDINGS = [
         "severity": "low",
         "title": "Index splitter",
         "body": "No suggested_fix_code — never a candidate, but still a group.",
+        "line_start": 6,
+        "line_end": 6,
+        "location_status": "confirmed",
+        "anchor": "    source_value_6",
+        "claimed_line_start": 6,
     },
     {
         "file": "foo.py",
@@ -303,6 +369,12 @@ GH_OVERLAP_FINDINGS = [
         "title": "First overlapping fix",
         "body": "The higher-priority finding's fence is kept.",
         "suggested_fix_code": "    a2\n    a3\n    a4",
+        "line_start": 2,
+        "line_end": 4,
+        "location_status": "confirmed",
+        "anchor": "    source_value_2\n    source_value_3\n    source_value_4",
+        "claimed_line_start": 2,
+        "claimed_line_end": 4,
     },
     {
         "file": "foo.py",
@@ -313,6 +385,12 @@ GH_OVERLAP_FINDINGS = [
         "body": "This fence's range overlaps the first finding's and demotes to prose.",
         "suggestion": "Apply the equivalent three-line change by hand.",
         "suggested_fix_code": "    b3\n    b4\n    b5",
+        "line_start": 3,
+        "line_end": 5,
+        "location_status": "confirmed",
+        "anchor": "    source_value_3\n    source_value_4\n    source_value_5",
+        "claimed_line_start": 3,
+        "claimed_line_end": 5,
     },
 ]
 
@@ -320,12 +398,12 @@ GH_OVERLAP_FINDINGS = [
 GL_DIFF_OVERLAP = (
     "--- foo.py\n+++ foo.py\n@@ -1,1 +1,7 @@\n"
     " def f():\n"
-    "+    line2\n"
-    "+    line3\n"
-    "+    line4\n"
-    "+    line5\n"
-    "+    line6\n"
-    "+    line7\n"
+    "+    source_value_2\n"
+    "+    source_value_3\n"
+    "+    source_value_4\n"
+    "+    source_value_5\n"
+    "+    source_value_6\n"
+    "+    source_value_7\n"
 )
 
 
@@ -336,6 +414,7 @@ GL_OVERLAP_FINDINGS = [
         "severity": "low",
         "title": "Off-diff finding",
         "body": "This finding's line sits outside the diff — skipped before `remaining` is built.",
+        "location_status": "unconfirmed",
     },
     {
         "file": "foo.py",
@@ -345,6 +424,12 @@ GL_OVERLAP_FINDINGS = [
         "title": "First single-line fix",
         "body": "The higher-priority finding at line 2 keeps its fence.",
         "suggested_fix_code": "    s2",
+        "line_start": 2,
+        "line_end": 2,
+        "location_status": "confirmed",
+        "anchor": "    source_value_2",
+        "claimed_line_start": 2,
+        "claimed_line_end": 2,
     },
     {
         "file": "foo.py",
@@ -355,6 +440,12 @@ GL_OVERLAP_FINDINGS = [
         "body": "A second finding anchored at the SAME line as the first.",
         "suggestion": "Apply the same one-line change by hand.",
         "suggested_fix_code": "    s2b",
+        "line_start": 2,
+        "line_end": 2,
+        "location_status": "confirmed",
+        "anchor": "    source_value_2",
+        "claimed_line_start": 2,
+        "claimed_line_end": 2,
     },
     {
         "file": "foo.py",
@@ -364,6 +455,12 @@ GL_OVERLAP_FINDINGS = [
         "title": "Touching range A",
         "body": "Kept: overlaps neither single-line finding above.",
         "suggested_fix_code": "    t4\n    t5",
+        "line_start": 4,
+        "line_end": 5,
+        "location_status": "confirmed",
+        "anchor": "    source_value_4\n    source_value_5",
+        "claimed_line_start": 4,
+        "claimed_line_end": 5,
     },
     {
         "file": "foo.py",
@@ -373,6 +470,12 @@ GL_OVERLAP_FINDINGS = [
         "title": "Touching range B",
         "body": "Kept: touches range A's end but shares no line index with it.",
         "suggested_fix_code": "    t6\n    t7",
+        "line_start": 6,
+        "line_end": 7,
+        "location_status": "confirmed",
+        "anchor": "    source_value_6\n    source_value_7",
+        "claimed_line_start": 6,
+        "claimed_line_end": 7,
     },
 ]
 
@@ -392,7 +495,7 @@ GL_SHAPE_DIFF = (
     "@@ -26,1 +26,2 @@\n existing\n+user.posts.each do |p|\n"
     "--- app/controllers/sessions_controller.rb\n"
     "+++ app/controllers/sessions_controller.rb\n"
-    "@@ -4,1 +4,2 @@\n existing\n+redirect_to\n"
+    "@@ -4,1 +4,2 @@\n existing\n+redirect_to_home\n"
 )
 
 FIDELITY = [
@@ -581,29 +684,46 @@ def test_legacy_fixture_projection(tmp_path, monkeypatch, capsys, forge_factory)
     )
     assert run.payload["method"] == frozen["method"] == "POST"
     assert run.payload["payload"]["event"] == frozen["payload"]["event"] == "COMMENT"
+    assert run.payload["payload"]["comments"] == []
+    body = run.payload["payload"]["body"]
+    assert body.count("location unconfirmed") == 4
+    assert "```suggestion" not in body
+    for finding in GH_COMMENT_FINDINGS:
+        assert finding["title"] in body
+
+
+def test_recorded_github_comments_match_delivery(
+    tmp_path, monkeypatch, capsys, forge_factory
+):
+    proofs = [
+        (42, 42, "token = load_token()"),
+        (88, 91, "hash_password()\nsave()\nverify()\nreturn token"),
+        (15, 15, '     cursor.execute(f"SELECT * FROM users WHERE id = {uid}")'),
+        (21, 21, "list_users()"),
+    ]
+    findings = [
+        {
+            **finding,
+            "line_start": start,
+            "line_end": end,
+            "location_status": "confirmed",
+            "anchor": anchor,
+            "claimed_line_start": finding["line"],
+            **(
+                {"claimed_line_end": finding["end_line"]}
+                if "end_line" in finding
+                else {}
+            ),
+        }
+        for finding, (start, end, anchor) in zip(
+            GH_COMMENT_FINDINGS, proofs, strict=True
+        )
+    ]
+    run = capture(
+        tmp_path, monkeypatch, capsys, forge_factory, "github", findings, GH_LEGACY_DIFF
+    )
+    frozen = json.loads(GITHUB_FIXTURE.read_bytes())
     assert run.payload["payload"]["comments"] == frozen["payload"]["comments"]
-    assert run.payload["payload"]["body"] == (
-        "### \u2694\ufe0f Code Gauntlet\n\nAutomated review summary.\n\n---\n"
-        "Generated by code-gauntlet | Reviewed up to: deadbeefcafe1234deadbeefcafe1234deadbeef\n\n"
-        '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":4,"sha":"deadbeefcafe1234deadbeefcafe1234deadbeef"} -->'
-    )
-    assert run.payload["skipped"] == [
-        "suggested-fix downgraded: src/api/routes.py:21 (missing_end_line)"
-    ]
-    assert (
-        run.err
-        == "WARNING: suggested-fix downgraded: src/api/routes.py:21 (missing_end_line)\n"
-    )
-    # These facts have no backing fifth finding, so only the real projection is equal.
-    assert frozen["payload"]["body"] == (
-        "### \u2694\ufe0f Code Gauntlet\n\nAutomated review summary.\n\n---\n"
-        "Generated by code-gauntlet | Reviewed up to: deadbeefcafe1234deadbeefcafe1234deadbeef\n\n"
-        '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":5,"sha":"deadbeefcafe1234deadbeefcafe1234deadbeef"} -->'
-    )
-    assert frozen["skipped"] == [
-        "suggested-fix downgraded: src/api/routes.py:21 (missing_end_line)",
-        "Skipping finding 'Docs typo' at README.md:999 \u2014 line not found in diff. Valid lines for this file: [3, 4, 5]",
-    ]
 
 
 def test_fixture_inventory():
@@ -677,7 +797,14 @@ def test_folded_body_adapter(
         "severity": "high",
         "title": "Near limit",
         "body": "x" * 700,
+        "line_start": 2,
+        "line_end": 2,
+        "location_status": "confirmed",
+        "anchor": "    source_value_1",
+        "claimed_line_start": 2,
     }
+    if platform == "gitlab":
+        finding["anchor"] = "added_line_1"
     run = capture(
         tmp_path, monkeypatch, capsys, forge_factory, platform, [finding], raw_diff
     )
@@ -786,7 +913,7 @@ def test_payload_conversion(fixture, input_kind, tool, golden, count, skipped):
         anchors = (
             [
                 ("src/auth/session.py", 42),
-                ("src/auth/session.py", 92),
+                ("src/auth/session.py", 91),
                 ("src/api/routes.py", 15),
                 ("src/api/routes.py", 21),
             ]

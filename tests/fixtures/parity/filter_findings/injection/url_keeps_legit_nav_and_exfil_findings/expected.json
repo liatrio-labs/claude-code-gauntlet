@@ -8,7 +8,9 @@
       "id": "T-legit-nav-1",
       "line_start": 30,
       "severity": "medium",
-      "title": "Routing bug"
+      "title": "Routing bug",
+      "line_end": 30,
+      "location_status": "confirmed"
     },
     {
       "confidence": 40,
@@ -17,7 +19,9 @@
       "id": "T-legit-docs-1",
       "line_start": 5,
       "severity": "low",
-      "title": "Docs issue"
+      "title": "Docs issue",
+      "line_end": 5,
+      "location_status": "confirmed"
     },
     {
       "confidence": 70,
@@ -26,7 +30,9 @@
       "id": "T-legit-exfil-1",
       "line_start": 44,
       "severity": "high",
-      "title": "Session cookie exfiltration"
+      "title": "Session cookie exfiltration",
+      "line_end": 44,
+      "location_status": "confirmed"
     },
     {
       "confidence": 65,
@@ -35,7 +41,9 @@
       "id": "T-legit-exfil-2",
       "line_start": 88,
       "severity": "high",
-      "title": "Auth token leak"
+      "title": "Auth token leak",
+      "line_end": 88,
+      "location_status": "confirmed"
     },
     {
       "confidence": 60,
@@ -44,7 +52,9 @@
       "id": "T-legit-exfil-3",
       "line_start": 19,
       "severity": "medium",
-      "title": "Bearer token in logs"
+      "title": "Bearer token in logs",
+      "line_end": 19,
+      "location_status": "confirmed"
     }
   ]
 }

@@ -10,7 +10,9 @@
       "id": "drop",
       "line_start": 2,
       "severity": "high",
-      "title": "Drop"
+      "title": "Drop",
+      "line_end": 2,
+      "location_status": "confirmed"
     }
   ],
   "filtered": [
@@ -29,7 +31,9 @@
       "report_tag": "main",
       "security_escalation": false,
       "severity": "high",
-      "title": "Keep"
+      "title": "Keep",
+      "line_end": 1,
+      "location_status": "confirmed"
     }
   ],
   "generated_at": "2026-07-18T00:00:00Z",

@@ -10,6 +10,20 @@
 Code-owned escaping, display folds, and host budgets belong here for maintenance.
 The session passes persisted artifacts to the delivery scripts without reproducing these rules.
 
+A finding with a confirmed or relocated canonical range can carry a source link or inline
+comment. Delivery rechecks its quote against the current diff at that range without searching.
+A qualifying one-line fragment may post inline. Missing, unknown, or unconfirmed location
+status keeps the finding in the review body, labelled `location unconfirmed`, without a source
+link, inline comment, replacement fence, patch artifact, or executable fix task. Legacy numeric
+aliases alone grant no location rights. Fix tasks recheck the quote against the current regular
+source file, including local worktree edits.
+
+Replacement fences and patch artifacts require whole-line equality after stripping each line's
+leading and trailing whitespace. Every canonical line must match its corresponding anchor line.
+The held claimed start and end must be positive safe integers whose span length equals the
+canonical anchor length. A missing held end, a longer original fix span, a proper fragment, or a
+platform-shrunk apply range withholds the replacement code while retaining the prose suggestion.
+
 ## Outbound text preparation
 
 Every posted text field is prepared before Markdown is assembled. Titles and corroborator

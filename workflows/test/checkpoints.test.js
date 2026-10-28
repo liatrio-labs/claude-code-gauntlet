@@ -293,3 +293,19 @@ test('checkpoint producer retains fractional criticality across JSON replay', as
   assert.equal(resumed.payload.findings[0].criticality, 0.75);
   assert.equal(resumed.payload.findings[0].description, description);
 });
+
+test('late legacy replay remains body only', async () => {
+  for (const location_status of [undefined, 'unknown', 'confirmed']) {
+    const finding = makeFinding('legacy', { location_status, line_start: 900, line_end: 999, line: 1, end_line: 2 });
+    const args = validArgs({ checkpoints: { challenge: challengeOutput({ findings: [finding] }) } });
+    const { out, ctx, payload } = await runAndCapture(args);
+    assert.equal(out.ok, true);
+    assert.equal(ctx.calls.some((call) => call.label.startsWith('verify-') && call.prompt.includes('legacy')), false);
+    const held = payload.findings[0];
+    assert.match(payload.report, /`legacy\.js \(location unconfirmed\)`: finding legacy/);
+    assert.doesNotMatch(payload.report, /:900|-999/);
+    assert.equal(held.location_status, 'unconfirmed');
+    assert.equal(held.claimed_line_start, 900);
+    for (const key of ['line_start', 'line_end', 'line', 'end_line']) assert.equal(Object.hasOwn(held, key), false);
+  }
+});

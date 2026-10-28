@@ -9,7 +9,9 @@
       "file": "src/handlers/one.py",
       "line_start": 10,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 10,
+      "location_status": "confirmed"
     }
   ]
 }

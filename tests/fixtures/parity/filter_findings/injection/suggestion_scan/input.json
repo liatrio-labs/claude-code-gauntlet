@@ -9,7 +9,9 @@
       "file": "src/handlers/one.py",
       "line_start": 10,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "S2",
@@ -19,7 +21,9 @@
       "file": "src/handlers/two.py",
       "line_start": 20,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 20,
+      "location_status": "confirmed"
     },
     {
       "id": "S3",
@@ -29,7 +33,9 @@
       "file": "src/handlers/three.py",
       "line_start": 30,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 30,
+      "location_status": "confirmed"
     },
     {
       "id": "S4",
@@ -39,7 +45,9 @@
       "file": "src/handlers/four.py",
       "line_start": 40,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 40,
+      "location_status": "confirmed"
     },
     {
       "id": "S5",
@@ -49,7 +57,9 @@
       "file": "src/handlers/five.py",
       "line_start": 50,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 50,
+      "location_status": "confirmed"
     },
     {
       "id": "S6",
@@ -59,7 +69,9 @@
       "file": "src/handlers/six.py",
       "line_start": 60,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 60,
+      "location_status": "confirmed"
     },
     {
       "id": "S7",
@@ -69,7 +81,9 @@
       "file": "src/handlers/seven.py",
       "line_start": 70,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 70,
+      "location_status": "confirmed"
     },
     {
       "id": "S8",
@@ -79,7 +93,9 @@
       "file": "src/handlers/eight.py",
       "line_start": 80,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 80,
+      "location_status": "confirmed"
     },
     {
       "id": "S9",
@@ -89,7 +105,9 @@
       "file": "src/handlers/nine.py",
       "line_start": 90,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 90,
+      "location_status": "confirmed"
     },
     {
       "id": "S10",
@@ -99,7 +117,9 @@
       "file": "src/handlers/ten.py",
       "line_start": 100,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 100,
+      "location_status": "confirmed"
     },
     {
       "id": "S11",
@@ -109,7 +129,9 @@
       "file": "src/handlers/eleven.py",
       "line_start": 110,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 110,
+      "location_status": "confirmed"
     },
     {
       "id": "S12",
@@ -121,7 +143,9 @@
       "file": "src/handlers/twelve.py",
       "line_start": 120,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 120,
+      "location_status": "confirmed"
     }
   ]
 }

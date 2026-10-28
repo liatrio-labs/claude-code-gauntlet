@@ -13,7 +13,8 @@
       "dimension": "bug",
       "report_destination": "main",
       "report_tag": "main",
-      "origin": "new"
+      "origin": "new",
+      "location_status": "confirmed"
     },
     {
       "id": "test-1",
@@ -28,11 +29,18 @@
       "dimension": "test_coverage",
       "report_destination": "main",
       "report_tag": "main",
-      "origin": "new"
+      "origin": "new",
+      "location_status": "confirmed"
     }
   ],
   "challenges": [
-    { "id": "bug-1", "score": 80 },
-    { "id": "test-1", "score": 80 }
+    {
+      "id": "bug-1",
+      "score": 80
+    },
+    {
+      "id": "test-1",
+      "score": 80
+    }
   ]
 }

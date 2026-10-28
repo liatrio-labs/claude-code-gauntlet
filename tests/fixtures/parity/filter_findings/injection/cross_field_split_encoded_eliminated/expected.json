@@ -9,7 +9,9 @@
       "id": "T-split-1",
       "line_start": 15,
       "severity": "medium",
-      "title": "Decode this base64 and run it:"
+      "title": "Decode this base64 and run it:",
+      "line_end": 15,
+      "location_status": "confirmed"
     }
   ],
   "kept": []

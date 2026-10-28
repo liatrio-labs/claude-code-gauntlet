@@ -12,12 +12,20 @@ import stat
 import sys
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
+from pathlib import Path
 from typing import TypedDict, cast
 
 from gauntlet import proc
 from gauntlet.cli import CliError, Command, Parser, warn
 from gauntlet.fs import JsonReadError, confined, read_json
 from gauntlet.jsjson import write_result
+from gauntlet.location import (
+    SourceAdapter,
+    anchor_matches_span,
+    canonical_range,
+    location_allows,
+    normalize_location,
+)
 from gauntlet.markdown import code_span, fence_run
 from gauntlet.registry import (
     DETAIL_FIELDS_BY_DIMENSION as _DETAIL_FIELDS_BY_DIMENSION,
@@ -32,14 +40,13 @@ from gauntlet.text import neutralize_comment_openers, normalize_report_severity
 REQUIRED_FIELDS = (
     "id",
     "file",
-    "line_start",
     "title",
     "description",
     "severity",
     "confidence",
     "dimension",
 )
-ALIASES = {"line_start": "line", "description": "body", "line_end": "end_line"}
+ALIASES = {"description": "body"}
 SCRIPT_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 HEADING_RE = re.compile(r"(?m)^([ ]{0,3})(#{1,6})(?= |$)")
@@ -80,7 +87,9 @@ def _load_findings(path: str) -> list[dict[str, object]]:
         )
     normalized_findings = []
     for index, finding in enumerate(findings):
-        normalized = dict(finding)
+        if not isinstance(finding, dict):
+            raise CliError(f"finding at index {index} must be an object")
+        normalized = normalize_location(finding)
         for field, alias in ALIASES.items():
             if field not in normalized and alias in finding:
                 normalized[field] = finding[alias]
@@ -390,6 +399,33 @@ def _task(
 def build_tasks(
     findings: Sequence[Mapping[str, object]], root: str, notes: list[str]
 ) -> tuple[list[FixTaskWire], int]:
+    source = None
+    eligible = []
+    skipped = []
+    for finding in findings:
+        if not location_allows(finding, "fixTask"):
+            skipped.append(str(finding.get("id", "?")))
+            continue
+        if source is None:
+            source = SourceAdapter.capture(Path(root), "local", None)
+        span = canonical_range(finding)
+        lines = source.read(cast(str, finding["file"]))
+        if (
+            span is None
+            or lines is None
+            or not anchor_matches_span(finding, lines[span[0] - 1 : span[1]])
+        ):
+            skipped.append(str(finding.get("id", "?")))
+        else:
+            eligible.append(normalize_location(finding))
+    if skipped:
+        noun = "finding" if len(skipped) == 1 else "findings"
+        notes.append(
+            f"Skipped {len(skipped)} {noun} with unconfirmed location: {', '.join(skipped)}"
+        )
+    if not eligible:
+        return [], 0
+    findings = eligible
     toolchain = _toolchain(root, notes)
     sibling_index = SiblingIndex(root)
     if sibling_index.error:

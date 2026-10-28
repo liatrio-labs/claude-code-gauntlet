@@ -10,7 +10,9 @@
       "severity": "high",
       "confidence": 80,
       "title": "Duplicate bug here",
-      "description": "dd"
+      "description": "dd",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "S2",
@@ -20,8 +22,10 @@
       "line_start": 10,
       "severity": "high",
       "confidence": 80,
-      "title": "﻿Duplicate bug here",
-      "description": "dd"
+      "title": "\ufeffDuplicate bug here\u0085",
+      "description": "dd",
+      "line_end": 10,
+      "location_status": "confirmed"
     }
   ]
 }

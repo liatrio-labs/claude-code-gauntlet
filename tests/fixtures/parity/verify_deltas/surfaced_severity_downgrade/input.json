@@ -12,8 +12,13 @@
       "dimension": "cross_file_impact",
       "evidence": "order.save(); billing.sync(order.id)",
       "suggestion": "Await the commit, or pass the in-memory order object directly instead of re-reading it.",
-      "affected_consumers": ["billing/sync.py"],
-      "cross_file_refs": ["billing/sync.py:41"]
+      "affected_consumers": [
+        "billing/sync.py"
+      ],
+      "cross_file_refs": [
+        "billing/sync.py:41"
+      ],
+      "anchor": "synthetic_source(0);"
     }
   ],
   "result": {
@@ -22,7 +27,7 @@
         "id": "xfi-77",
         "file": "src/handlers/order.py",
         "line_start": 220,
-        "line_end": 225,
+        "line_end": 220,
         "title": "Downstream consumer assumes synchronous commit",
         "description": "order.save() is followed immediately by billing.sync(order.id), but the consumer in billing/sync.py reads the order row before the write transaction commits.",
         "severity": "medium",
@@ -30,8 +35,12 @@
         "dimension": "cross_file_impact",
         "evidence": "order.save(); billing.sync(order.id)",
         "suggestion": "Await the commit, or pass the in-memory order object directly instead of re-reading it.",
-        "affected_consumers": ["billing/sync.py"],
-        "cross_file_refs": ["billing/sync.py:41"],
+        "affected_consumers": [
+          "billing/sync.py"
+        ],
+        "cross_file_refs": [
+          "billing/sync.py:41"
+        ],
         "origin": "surfaced",
         "blame_metadata": {
           "classification": "surfaced",
@@ -46,8 +55,12 @@
         },
         "diff_validation": {
           "in_diff": false,
-          "reason": "lines 220-225 of 'src/handlers/order.py' not found in diff — tagged as surfaced (was: surfaced)"
-        }
+          "reason": "lines 220-225 of 'src/handlers/order.py' not found in diff \u2014 tagged as surfaced (was: surfaced)"
+        },
+        "anchor": "synthetic_source(0);",
+        "location_status": "confirmed",
+        "claimed_line_start": 220,
+        "claimed_line_end": 225
       }
     ],
     "eliminated": []

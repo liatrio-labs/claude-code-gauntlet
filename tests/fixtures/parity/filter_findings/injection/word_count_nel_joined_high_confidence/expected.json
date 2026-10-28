@@ -8,7 +8,9 @@
       "id": "WC2",
       "line_start": 8,
       "severity": "medium",
-      "title": "Terse high-confidence finding"
+      "title": "Terse high-confidence finding",
+      "line_end": 8,
+      "location_status": "confirmed"
     }
   ]
 }

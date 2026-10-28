@@ -36,14 +36,14 @@ export function challengeOutput(over = {}) {
     generated_at: '2026-07-18T00:00:00Z', ...over,
   };
 }
-export const PROJECTION_A = { id: 'A', line_start: 7, line_end: 9, description: 'body text', report_tag: 'suggestion' };
-export const PROJECTION_B = { id: 'B', line_start: 3, description: 'other', confidence: 71, report_tag: 'main' };
+export const PROJECTION_A = { id: 'A', location_status: 'confirmed', line_start: 7, line_end: 9, description: 'body text', report_tag: 'suggestion' };
+export const PROJECTION_B = { id: 'B', location_status: 'confirmed', line_start: 3, line_end: 3, description: 'other', confidence: 71, report_tag: 'main' };
 export const PROJECTION_C = {
-  id: 'C', title: '\u4e2d\u6587\u6807\u9898 \ud83c\udf89',
+  id: 'C', location_status: 'unconfirmed', title: '\u4e2d\u6587\u6807\u9898 \ud83c\udf89',
   description: '\u65e5\u672c\u8a9e\u306e\u8aac\u660e \ud83d\ude00 with an astral \ud835\udd4f character',
 };
 export const ESCAPED_PROJECTION = {
-  id: 'A', description: "gradeInputProof produces \\\"the executor's receipt carried no input_checksum\\\" here",
+  id: 'A', location_status: 'unconfirmed', description: "gradeInputProof produces \\\"the executor's receipt carried no input_checksum\\\" here",
 };
 
 export function persistCheckpoints(findings) {

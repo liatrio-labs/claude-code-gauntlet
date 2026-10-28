@@ -39,6 +39,8 @@ class SummaryFinding(TypedDict):
     severity: str
     file: str
     line_start: int
+    line_end: int
+    location_status: Literal["confirmed", "relocated", "unconfirmed"]
     title: str
 
 

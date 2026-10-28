@@ -55,6 +55,7 @@ export function validArgs(over = {}) {
       trivial_scope: { value: 'full', source: 'default' },
     },
     pluginRoot: '/plugin',
+    verify: { targetKind: 'branch' },
     reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
   };
   const args = { ...base, ...over, limits: { ...base.limits, ...(over.limits || {}) } };
@@ -87,6 +88,7 @@ export function interactiveArgs(over = {}) {
       review_md: { value: 'absent', source: 'discovery' },
     },
     pluginRoot: '/plugin',
+    verify: { targetKind: 'branch' },
     reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
     limits: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 25, maxLineSpan: 100 },
     ...over,

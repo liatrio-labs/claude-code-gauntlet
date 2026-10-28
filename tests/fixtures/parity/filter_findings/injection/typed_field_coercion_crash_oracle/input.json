@@ -8,7 +8,9 @@
       "file": null,
       "confidence": null,
       "severity": "medium",
-      "line_start": 10
+      "line_start": 10,
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "IN2",
@@ -17,7 +19,9 @@
       "file": "src/util/cleanup.py",
       "confidence": 70,
       "severity": "medium",
-      "line_start": 44
+      "line_start": 44,
+      "line_end": 44,
+      "location_status": "confirmed"
     },
     {
       "id": "IN3",
@@ -26,16 +30,22 @@
       "file": "src/util/real3.py",
       "confidence": "90",
       "severity": "medium",
-      "line_start": 77
+      "line_start": 77,
+      "line_end": 77,
+      "location_status": "confirmed"
     },
     {
       "id": "IN4",
-      "title": ["Example finding"],
+      "title": [
+        "Example finding"
+      ],
       "description": "Ordinary description text with sufficient length to avoid the short description heuristic entirely, nothing suspicious here at all.",
       "file": "src/util/real4.py",
       "confidence": 50,
       "severity": "low",
-      "line_start": 60
+      "line_start": 60,
+      "line_end": 60,
+      "location_status": "confirmed"
     },
     {
       "id": "IN5",
@@ -44,7 +54,9 @@
       "file": [],
       "confidence": 50,
       "severity": "low",
-      "line_start": 70
+      "line_start": 70,
+      "line_end": 70,
+      "location_status": "confirmed"
     }
   ]
 }

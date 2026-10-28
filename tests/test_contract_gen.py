@@ -1,5 +1,6 @@
 """Contract rendering and the developer command's generated-target boundary."""
 
+import json
 import re
 import shutil
 import sys
@@ -22,11 +23,13 @@ PREFLIGHT = "skills/code-gauntlet/references/phase1-preflight.md"
 HEADLESS = "skills/code-gauntlet/references/headless-mode.md"
 DELIVER_PHASE = "skills/code-gauntlet/references/phase8-delivery.md"
 TARGETS = (
+    "agents/bug-detector.md",
     "agents/security-reviewer.md",
     "agents/cross-file-impact.md",
     "agents/test-analyzer.md",
     "agents/code-simplifier.md",
     "agents/conventions-and-intent.md",
+    "agents/type-design-analyzer.md",
     REPORT,
     DELIVERY,
     SKILL,
@@ -42,6 +45,97 @@ TARGETS = (
 def registry_tree(tmp_path: Path) -> Path:
     copy_generator_tree(ROOT, tmp_path, TARGETS)
     return tmp_path
+
+
+def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
+    before = gen.load_registry(str(registry_tree))
+    description = before["findingTypes"]["anchor"]["description"]
+    replacement = "Exact source text copied from the reviewed file."
+    source = registry_tree / "workflows/src/registry.js"
+    source.write_text(
+        source.read_text(encoding="utf-8").replace(description, replacement),
+        encoding="utf-8",
+    )
+    contracts = {
+        agent: (registry_tree / f"agents/{agent.split(':')[1]}.md").read_text(
+            encoding="utf-8"
+        )
+        for agent in before["agents"]
+    }
+    args = ["--repo-root", str(registry_tree)]
+    result = invoke("generate_contract_requirements", args, registry_tree)
+    assert result.returncode == 0, result.stderr
+    after = gen.load_registry(str(registry_tree))
+    anchor = {"type": "string", "description": replacement}
+    assert after["findingTypes"]["anchor"] == anchor
+    assert after["required"] == before["required"]
+    assert "anchor" not in after["required"]
+    assert "location_status" not in after["findingTypes"]
+    assert "claimed_line_start" not in after["findingTypes"]
+    assert "claimed_line_end" not in after["findingTypes"]
+    assert after["dimensions"] == before["dimensions"]
+    dispatched = gen.proc.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            "import { discover } from './workflows/src/discover.js';"
+            + "const schemas = {};"
+            + "await discover({agent: async (_, options) => {"
+            + "schemas[options.label] = options.schema;"
+            + "return {findings: [], complete: true, total_seen: 0, removed_test_audit: []};"
+            + "}, parallel: async tasks => Promise.all(tasks.map(task => task()))}, {});"
+            + "console.log(JSON.stringify(schemas));",
+        ],
+        cwd=str(registry_tree),
+        check=True,
+    )
+    schemas = json.loads(dispatched.stdout)
+    assert set(schemas) == set(after["agents"])
+    for schema in schemas.values():
+        item = schema["properties"]["findings"]["items"]
+        assert item["properties"]["anchor"] == {**anchor, "minLength": 1}
+        assert "anchor" in item["required"]
+        assert item["properties"]["line_start"] == {"type": "number"}
+        assert item["properties"]["line_end"] == {"type": "number"}
+    losses = after["dispatchResults"]["code-gauntlet:test-analyzer"][
+        "removed_test_audit"
+    ]["items"]["properties"]["losses"]["items"]
+    assert losses["properties"]["anchor"] == anchor
+    assert losses["required"] == [
+        key for key in losses["properties"] if key != "anchor"
+    ]
+    optional_block = re.compile(
+        re.escape(gen.OPTIONAL_MARKER_OPEN)
+        + r"\n(.*?)\n"
+        + re.escape(gen.OPTIONAL_MARKER_CLOSE),
+        re.DOTALL,
+    )
+    for agent, original in contracts.items():
+        contract = (registry_tree / f"agents/{agent.split(':')[1]}.md").read_text(
+            encoding="utf-8"
+        )
+        blocks = optional_block.findall(contract)
+        assert blocks == ['```json\n{"anchor": "<' + replacement + '>"}\n```']
+        if agent == "code-gauntlet:test-analyzer":
+            original = original.replace(description, replacement)
+        assert optional_block.sub("", contract) == optional_block.sub("", original)
+    namespace: dict[str, Any] = {}
+    exec(
+        (registry_tree / "scripts/gauntlet/registry.py").read_text(encoding="utf-8"),
+        namespace,
+    )
+    assert namespace["ANCHOR_SCHEMA"] == anchor
+    assert namespace["ANCHOR_LIMITS"] == after["anchorLimits"]
+    assert namespace["LOCATION_STATUSES"] == tuple(after["locationRights"])
+    assert namespace["LOCATION_RIGHTS"] == after["locationRights"]
+    with pytest.raises(TypeError):
+        namespace["LOCATION_RIGHTS"]["unconfirmed"]["inline"] = True
+    report = (registry_tree / REPORT).read_text(encoding="utf-8")
+    assert f"| `anchor` | string | yes | {replacement} |" in report
+    assert gen.location_reference(after) in report
+    check = invoke("generate_contract_requirements", [*args, "--check"], registry_tree)
+    assert check.returncode == 0, check.stderr
 
 
 @pytest.mark.parametrize("agent", ["bug-detector", "conventions-and-intent"])

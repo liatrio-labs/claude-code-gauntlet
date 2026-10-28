@@ -12,7 +12,9 @@
       "severity": "medium",
       "suggested_fix_code_removal_reason": "claude_md_rule carried contains bypass/auto-approve instruction",
       "suggested_fix_code_removed_by": "injection",
-      "title": "Null check missing in handler p1"
+      "title": "Null check missing in handler p1",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "confidence": 60,
@@ -25,7 +27,9 @@
       "spec_text_removed_by": "injection",
       "suggested_fix_code_removal_reason": "spec_text carried contains bypass/auto-approve instruction",
       "suggested_fix_code_removed_by": "injection",
-      "title": "Null check missing in handler p2"
+      "title": "Null check missing in handler p2",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "claude_md_rule_removal_reason": "claude_md_rule contains bypass/auto-approve instruction: \"\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b\"",
@@ -40,7 +44,9 @@
       "suggested_fix_code_removed_by": "injection",
       "suggestion_removal_reason": "suggestion contains bypass/auto-approve instruction: \"\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler p3"
+      "title": "Null check missing in handler p3",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "claude_md_rule_removal_reason": "claude_md_rule is not a string",
@@ -52,7 +58,9 @@
       "line_start": 10,
       "severity": "medium",
       "suggested_fix_code": "def process_data(x):\n    return x\n",
-      "title": "Null check missing in handler p4"
+      "title": "Null check missing in handler p4",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "claude_md_rule_removal_reason": "claude_md_rule contains bypass/auto-approve instruction: \"\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b\"",
@@ -63,7 +71,9 @@
       "id": "P5",
       "line_start": 10,
       "severity": "medium",
-      "title": "Null check missing in handler p5"
+      "title": "Null check missing in handler p5",
+      "line_end": 10,
+      "location_status": "confirmed"
     }
   ]
 }

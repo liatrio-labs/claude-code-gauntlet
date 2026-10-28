@@ -25,6 +25,9 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
         values_dict: dict[str, Any] = {
             "file": "src/probe.py",
             "line": 1,
+            "line_start": 1,
+            "line_end": 1,
+            "location_status": "confirmed",
             "end_line": 1,
             "severity": "medium",
             "title": "Probe finding",
@@ -71,7 +74,15 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
         )
 
     def add_patch(case_id: str, body: str, code: str) -> None:
-        patch = finding(body, suggested_fix_code=code, end_line=3)
+        patch = finding(
+            body,
+            suggested_fix_code=code,
+            end_line=3,
+            line_end=3,
+            claimed_line_start=1,
+            claimed_line_end=3,
+            anchor="old line 1\nold line 2\nold line 3",
+        )
         site = gate.gitlab_apply_range(1, 3, 1)
         verdict = gate.evaluate_fix(patch, apply_range=site.apply_range, facts=facts)
         if site.cap_exceeded or not verdict.keep:

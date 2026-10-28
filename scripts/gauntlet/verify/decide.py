@@ -5,15 +5,32 @@ from __future__ import annotations
 import os
 import re
 import sys
-from dataclasses import dataclass
-from typing import Any, Literal, TypedDict
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal, TypedDict, cast
 
 from gauntlet import proc
 from gauntlet.cli import warn
-from gauntlet.diff import DiffFacts, is_line_valid, parse_diff
+from gauntlet.diff import (
+    ContextMapEntry,
+    DiffFacts,
+    DiffStructureError,
+    annotate_diff,
+    is_line_valid,
+    parse_diff,
+)
 from gauntlet.git_diff import DIFF_FLAGS
+from gauntlet.location import (
+    SourceAdapter,
+    TargetKind,
+    canonical_range,
+    load_context_map,
+    location_allows,
+    resolve_location,
+)
 from gauntlet.paths import entry
-from gauntlet.registry import SEVERITY_ORDER, VerifySliceFinding
+from gauntlet.registry import SEVERITY_ORDER, LocationStatus, VerifySliceFinding
 
 Origin = Literal["new", "surfaced"]
 
@@ -50,6 +67,9 @@ class FindingWire(VerifySliceFinding, total=False):
     factual_verification: FactualVerification
     diff_validation: DiffValidation
     elimination_reason: object
+    location_status: LocationStatus
+    claimed_line_start: object
+    claimed_line_end: object
 
 
 class Stats(TypedDict):
@@ -81,9 +101,23 @@ def _downgrade_severity(finding: FindingWire) -> None:
 class VerifyContext:
     repo_root: str
     base_branch: str
+    target_kind: TargetKind
     _pr_commits: frozenset[str] | None = None
     commit_error: str | None = None
     diff_read: bool = False
+    requested_sha: str | None = None
+    context_map: str | None = None
+    context_file: str | None = None
+    source: SourceAdapter | None = None
+    map_entries: Mapping[int, ContextMapEntry] = field(default_factory=dict)
+    facts: DiffFacts | None = None
+
+    def sources(self) -> SourceAdapter:
+        if self.source is None:
+            self.source = SourceAdapter.capture(
+                Path(self.repo_root), self.target_kind, self.requested_sha
+            )
+        return self.source
 
     def commits(self) -> frozenset[str] | None:
         if self._pr_commits is None and self.commit_error is None:
@@ -93,7 +127,7 @@ class VerifyContext:
                     "log",
                     "--format=%H",
                     "--end-of-options",
-                    f"{self.base_branch}..HEAD",
+                    f"{self.base_branch}..{self.sources().captured_head or 'HEAD'}",
                 ]
             )
             if rc != 0:
@@ -121,7 +155,9 @@ def get_diff(context: VerifyContext, diff_file: str | None = None) -> str | None
     base_branch = context.base_branch
     if diff_file:
         try:
-            with open(diff_file, encoding="utf-8") as fh:
+            with open(
+                diff_file, encoding="utf-8", errors="surrogateescape", newline=""
+            ) as fh:
                 content = fh.read()
             print(
                 f"Diff source: --diff-file ({diff_file}), {len(content)} bytes",
@@ -131,6 +167,20 @@ def get_diff(context: VerifyContext, diff_file: str | None = None) -> str | None
         except OSError as e:
             warn(f"Could not read diff file '{diff_file}': {e}")
             return None
+
+    if context.target_kind == "local":
+        revision = context.sources().captured_head or "HEAD"
+        stdout, stderr, rc = proc.output(
+            ["git", "diff", *DIFF_FLAGS, "--end-of-options", revision]
+        )
+        if rc == 0:
+            print(
+                f"Diff source: git diff {revision} (local), {len(stdout)} bytes",
+                file=sys.stderr,
+            )
+            return stdout
+        warn(f"local git diff failed: {stderr.strip()}; diff validation skipped")
+        return None
 
     stdout, stderr, rc = proc.output(
         ["git", "diff", *DIFF_FLAGS, "--end-of-options", f"{base_branch}...HEAD"]
@@ -196,11 +246,18 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
         _downgrade_severity(finding)
         return _stamp_blame(finding, "surfaced", original_severity)
 
-    if not os.path.exists(filepath):
-        warn(
-            f"classify_blame: file not found '{filepath}' "
-            "— classifying as 'new' (conservative)."
+    span = canonical_range(finding)
+    if span is None:
+        return _stamp_blame(finding, "new", original_severity)
+    if (
+        context.target_kind == "local"
+        and context.facts is not None
+        and any(
+            (filepath, line) in context.facts.valid_lines
+            and context.facts.valid_lines[(filepath, line)] is None
+            for line in range(span[0], span[1] + 1)
         )
+    ):
         return _stamp_blame(finding, "new", original_severity)
 
     pr_commits = context.commits()
@@ -212,7 +269,10 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
         )
         return _stamp_blame(finding, "new", original_severity)
 
-    blame_cmd = ["git", "blame", f"-L{line_start},{line_end}", "--", filepath]
+    blame_cmd = ["git", "blame", f"-L{line_start},{line_end}"]
+    if context.target_kind != "local":
+        blame_cmd.append(cast(str, context.sources().captured_head))
+    blame_cmd.extend(["--", filepath])
     blame_stdout, blame_stderr, blame_rc = proc.output(blame_cmd)
 
     if blame_rc != 0:
@@ -273,63 +333,11 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
 def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
     has_removed_test_location = finding.get("has_removed_test_location", False)
     filepath = finding.get("file", "")
-    line_start = finding.get("line_start")
-    line_end: Any = finding.get("line_end") or line_start
-
-    if not line_start and not has_removed_test_location:
-        finding["factual_verification"] = {
-            "verified": True,
-            "reason": "no line reference — verification skipped",
-            "code_at_lines": None,
-        }
-        return True
-
-    if not filepath or not os.path.exists(filepath):
-        finding["confidence"] = 0
-        finding["factual_verification"] = {
-            "verified": False,
-            "reason": f"file not found: {filepath!r}",
-            "code_at_lines": None,
-        }
-        return False
-
-    try:
-        with open(filepath, encoding="utf-8", errors="strict") as fh:
-            all_lines = fh.readlines()
-    except UnicodeDecodeError:
-        warn(f"verify_factual: binary file '{filepath}' — skipping factual check.")
-        finding["factual_verification"] = {
-            "verified": True,
-            "reason": "binary file — verification skipped",
-            "code_at_lines": None,
-        }
-        return True
-    except OSError as e:
-        finding["confidence"] = 0
-        finding["factual_verification"] = {
-            "verified": False,
-            "reason": f"could not read file '{filepath}': {e}",
-            "code_at_lines": None,
-        }
-        return False
-
-    total_lines = len(all_lines)
-
-    if not line_start or line_start < 1 or line_start > total_lines:
-        finding["confidence"] = 0
-        finding["factual_verification"] = {
-            "verified": False,
-            "reason": (
-                f"line_start {line_start} out of range (file has {total_lines} line(s))"
-            ),
-            "code_at_lines": None,
-        }
-        return False
-
-    effective_end = min(line_end, total_lines)
-
-    relevant_lines = all_lines[line_start - 1 : effective_end]
-    code_at_lines = "".join(relevant_lines).rstrip("\n")
+    span = canonical_range(finding)
+    all_lines = context.sources().read(filepath) if span else None
+    code_at_lines = None
+    if all_lines is not None and span is not None:
+        code_at_lines = "\n".join(all_lines[span[0] - 1 : span[1]])
 
     # Removed test identifiers need not exist at HEAD; the anchor still must.
     symbols_to_check = (
@@ -341,7 +349,9 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
     if not symbols_to_check:
         finding["factual_verification"] = {
             "verified": True,
-            "reason": "no extractable symbols — verification skipped",
+            "reason": "no extractable symbols - verification skipped"
+            if span
+            else "location unconfirmed - positional checks skipped",
             "code_at_lines": code_at_lines,
         }
         return True
@@ -349,7 +359,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
     total_symbols = len(symbols_to_check)
     missing_symbols = []
     for symbol in sorted(symbols_to_check):
-        if symbol in code_at_lines:
+        if code_at_lines is not None and symbol in code_at_lines:
             continue
 
         try:
@@ -394,7 +404,9 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
 
     finding["factual_verification"] = {
         "verified": True,
-        "reason": "file content and symbols verified",
+        "reason": "file content and symbols verified"
+        if span
+        else "symbols verified; location unconfirmed - positional checks skipped",
         "code_at_lines": code_at_lines,
     }
     return True
@@ -419,10 +431,10 @@ def validate_diff_lines(finding: FindingWire, facts: DiffFacts | None) -> bool:
     line_start = finding.get("line_start") or 0
     line_end = finding.get("line_end") or line_start
 
-    if not line_start:
+    if not location_allows(finding, "sourceLink"):
         finding["diff_validation"] = {
-            "in_diff": True,
-            "reason": "no line reference — validation skipped",
+            "in_diff": None,
+            "reason": "location unconfirmed - diff validation skipped",
         }
         return True
 
@@ -455,31 +467,69 @@ def run_verification(
     findings: list[FindingWire], context: VerifyContext, diff_file: str | None = None
 ) -> VerificationResult:
     """Mutate in phase order, retaining dispatched object identities."""
-    for finding in findings:
-        finding["origin"] = classify_blame(finding, context)
-    verified: list[FindingWire] = []
-    eliminated: list[FindingWire] = []
-    for finding in findings:
-        if verify_factual(finding, context):
-            verified.append(finding)
-        else:
-            finding["elimination_reason"] = "evidence does not match file content"
-            eliminated.append(finding)
     diff_text = get_diff(context, diff_file)
     context.diff_read = diff_text is not None
+    raw_diff = (diff_text or "").encode("utf-8", "surrogateescape")
     facts = (
         None
         if diff_text is None
         else parse_diff(diff_text, policy="verify-both-spellings")
     )
-    for finding in verified:
+    context.facts = facts
+    try:
+        indexed = annotate_diff(raw_diff)
+    except DiffStructureError:
+        indexed = None
+    if context.context_map and context.context_file:
+        loaded = load_context_map(
+            context.context_map,
+            context.context_file,
+            raw_diff,
+            context.requested_sha or "",
+        )
+        context.map_entries = loaded.entries
+        if loaded.diagnostic:
+            warn(loaded.diagnostic)
+    elif findings:
+        warn("context map unavailable: context/map paths not supplied")
+    sources = context.sources()
+    for finding in findings:
+        file = finding.get("file", "")
+        resolution = resolve_location(
+            finding,
+            sources.read(file),
+            context.map_entries,
+            indexed.hunks.get(file, ()) if indexed else (),
+            indexed.old_spans.get(file, ()) if indexed else (),
+        )
+        for key, claimed in (
+            ("line_start", "claimed_line_start"),
+            ("line_end", "claimed_line_end"),
+        ):
+            if key in finding and claimed not in finding:
+                cast(dict[str, object], finding)[claimed] = cast(
+                    dict[str, object], finding
+                )[key]
+            cast(dict[str, object], finding).pop(key, None)
+        finding.pop("line", None)
+        finding.pop("end_line", None)
+        finding["location_status"] = resolution.status
+        if resolution.start is not None:
+            finding["line_start"], finding["line_end"] = (
+                resolution.start,
+                resolution.end,
+            )
+        finding["origin"] = classify_blame(finding, context)
+    for finding in findings:
+        verify_factual(finding, context)
+    for finding in findings:
         validate_diff_lines(finding, facts)
     stats: Stats = {
         "total": len(findings),
-        "new": sum(1 for finding in verified if finding.get("origin") == "new"),
+        "new": sum(1 for finding in findings if finding.get("origin") == "new"),
         "surfaced": sum(
-            1 for finding in verified if finding.get("origin") == "surfaced"
+            1 for finding in findings if finding.get("origin") == "surfaced"
         ),
-        "eliminated": len(eliminated),
+        "eliminated": 0,
     }
-    return {"verified": verified, "eliminated": eliminated, "stats": stats}
+    return {"verified": findings, "eliminated": [], "stats": stats}

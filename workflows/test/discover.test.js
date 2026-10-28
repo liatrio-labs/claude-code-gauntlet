@@ -6,6 +6,7 @@ import {
 import { DIMENSIONS, DISPATCH_RESULTS, FINDING_REQUIRED, FINDING_PROP_TYPES } from '../src/registry.js';
 import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
+import { mergeStage } from '../src/mergeFindings.js';
 
 const discover = (ctx, input) => discoverStage(ctx, { removedTests: { status: 'available', items: [], omitted: 0 }, ...input });
 
@@ -60,6 +61,7 @@ const CANONICAL_PROPS = {
   id: { type: 'string' }, file: { type: 'string' }, line_start: { type: 'number' }, line_end: { type: 'number' },
   title: { type: 'string' }, description: { type: 'string' }, severity: { type: 'string' }, confidence: { type: 'number' },
   dimension: { type: 'string' }, origin: { type: 'string' }, evidence: { type: 'string' },
+  anchor: { type: 'string', minLength: 1, description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
   suggestion: { type: 'string' }, claude_md_rule: { type: 'string' }, suggested_fix_code: { type: 'string' },
   cross_file_refs: { type: 'array', items: { type: 'string' } },
 };
@@ -95,7 +97,7 @@ test('finding schemas: one dispatch supplies the roster', async (t) => {
     const schema = ctx.calls.find((call) => call.label === row.agent).schema;
     assert.deepEqual(schema, { type: 'object', properties: {
       findings: { type: 'array', items: { type: 'object', properties: { ...CANONICAL_PROPS, ...row.extra },
-        required: [...REQUIRED, ...(row.required ?? [])], additionalProperties: false,
+        required: [...REQUIRED, 'anchor', ...(row.required ?? [])], additionalProperties: false,
         ...(row.allOf ? { allOf: row.allOf } : {}) } },
       complete: { type: 'boolean' }, total_seen: { type: 'number' },
       ...(DISPATCH_RESULTS[row.agent] || {}),
@@ -178,7 +180,7 @@ const RANGE_ROWS = [
       + ' \u2014 1 of those also carried suggested_fix_code: patch field(s) dropped along with the range'] } },
   { name: 'kept patch', fields: { line_end: 78, suggested_fix_code: 'const x = 1;' },
     expected: { ...RANGE_GOLDEN, end: true, line_end: 78, patch: true, suggested_fix_code: 'const x = 1;' } },
-  { name: 'missing range drops patch', fields: { suggested_fix_code: 'const x = 1;' },
+  { name: 'missing range drops patch', fields: { line_end: undefined, suggested_fix_code: 'const x = 1;' },
     expected: { ...RANGE_GOLDEN, gaps: [
       'discover: 1 finding(s) emitted suggested_fix_code without line_end \u2014 field dropped (a patch must state its range)',
     ] } },
@@ -291,4 +293,37 @@ for (const row of SUMMARY_ROWS) test(`summarize: ${row.name}`, async () => {
   if (row.prompts) assert.deepEqual(ctx.calls.map((call) => call.prompt), row.prompts);
   for (const call of ctx.calls) assert.deepEqual(call.schema, SUMMARY_SCHEMA);
   assert.deepEqual(ctx.violations, []);
+});
+
+test('discovery rejects forged location authority', async () => {
+  const ctx = stageCtx({ reply: () => ({ findings: [
+    finding({ id: 'quoted', anchor: 'perform_action(value)', location_status: 'confirmed', claimed_line_start: 1, claimed_line_end: 4, line_end: undefined, suggested_fix_code: 'fixed(value)' }),
+    finding({ id: 'legacy', anchor: undefined, location_status: 'relocated', claimed_line_start: 5 }),
+  ], complete: true, total_seen: 2, removed_test_audit: [] }) });
+  const out = await discover(ctx, {});
+  assert.equal(out.findings.length, ctx.calls.length * 2);
+  for (const f of out.findings) {
+    for (const key of ['location_status', 'claimed_line_start', 'claimed_line_end']) assert.equal(Object.hasOwn(f, key), false);
+    if (f.id === 'quoted') {
+      assert.equal(f.anchor, 'perform_action(value)');
+      assert.equal(Object.hasOwn(f, 'suggested_fix_code'), false);
+    }
+  }
+});
+
+test('anchor is required only at discovery dispatch', async () => {
+  const ctx = stageCtx();
+  await discover(ctx, {});
+  for (const call of ctx.calls) {
+    const item = call.schema.properties.findings.items;
+    assert.equal(item.additionalProperties, false);
+    assert.ok(item.required.includes('anchor'), `${call.label}: missing anchor must fail StructuredOutput`);
+    assert.equal(item.properties.anchor.minLength, 1, `${call.label}: empty anchor must fail StructuredOutput`);
+  }
+  const authored = finding({ id: 'removed-test:0123456789abcdef:1', agent: 'test-analyzer',
+    dimension: 'test_coverage', anchor: undefined, location_status: 'unconfirmed',
+    removed_test: { id: '0123456789abcdef', path: 'tests/removed', old_start: 1, old_end: 2 } });
+  const merged = mergeStage({ findings: [authored], dispatched: ['code-gauntlet:test-analyzer'] }, {});
+  assert.deepEqual(merged.findings, [authored]);
+  assert.deepEqual(merged.methodology.validation_warnings, []);
 });

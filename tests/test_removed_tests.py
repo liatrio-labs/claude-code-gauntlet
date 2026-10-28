@@ -175,7 +175,9 @@ def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
     verify_git[1]["grep"] = ("", "", 1)
     finding = project_findings([finding])[0]
     result = run_verification(
-        [finding], VerifyContext(str(tmp_path), "base"), str(patch)
+        [finding],
+        VerifyContext(str(tmp_path), "base", target_kind="branch"),
+        str(patch),
     )
     assert result["verified"] == [finding]
     assert finding["origin"] == "new"
@@ -183,7 +185,7 @@ def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
     assert finding["confidence"] == 90
     assert finding["factual_verification"]["verified"] is True
     assert finding["diff_validation"]["in_diff"] is True
-    assert not verify_git[0]
+    assert not any(argv[1] in ("log", "blame", "grep") for argv, _ in verify_git[0])
     malformed = {
         "id": "loss-malformed",
         "file": "source",
@@ -200,22 +202,28 @@ def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
     }
     malformed = project_findings([malformed])[0]
     malformed_result = run_verification(
-        [malformed], VerifyContext(str(tmp_path), "base"), str(patch)
+        [malformed],
+        VerifyContext(str(tmp_path), "base", target_kind="branch"),
+        str(patch),
     )
     assert malformed_result["verified"] == [malformed]
-    assert malformed["origin"] == "surfaced"
-    assert malformed["severity"] == "medium"
+    assert malformed["origin"] == "new"
+    assert malformed["severity"] == "high"
     assert malformed["confidence"] == 30
     assert malformed["factual_verification"]["reason"].startswith(
         "referenced symbol(s) not found in codebase:"
     )
-    assert malformed["diff_validation"]["in_diff"] is False
+    assert malformed["diff_validation"]["in_diff"] is None
     for line in (None, 0, 2):
         finding["line_start"] = line
         assert run_verification(
-            [finding], VerifyContext(str(tmp_path), "base"), str(patch)
-        )["eliminated"] == [finding]
+            [finding],
+            VerifyContext(str(tmp_path), "base", target_kind="branch"),
+            str(patch),
+        )["verified"] == [finding]
     finding.update(file="absent", line_start=1)
     assert run_verification(
-        [finding], VerifyContext(str(tmp_path), "base"), str(patch)
-    )["eliminated"] == [finding]
+        [finding],
+        VerifyContext(str(tmp_path), "base", target_kind="branch"),
+        str(patch),
+    )["verified"] == [finding]

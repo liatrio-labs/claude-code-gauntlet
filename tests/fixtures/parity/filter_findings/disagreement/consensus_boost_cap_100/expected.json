@@ -16,7 +16,9 @@
       "line_start": 10,
       "security_escalation": false,
       "severity": "high",
-      "title": "t1"
+      "title": "t1",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "agent": "security-reviewer",
@@ -34,7 +36,9 @@
       "line_start": 12,
       "security_escalation": false,
       "severity": "high",
-      "title": "t2"
+      "title": "t2",
+      "line_end": 12,
+      "location_status": "confirmed"
     }
   ],
   "boosted_count": 2,

@@ -1,9 +1,12 @@
 {
-  "checksum": "fnv1a32:0xd8a0a653",
+  "checksum": "fnv1a32:0xbf8e8695",
   "deltas": [
     {
       "confidence": 55,
       "id": "conv-401",
+      "line_end": 42,
+      "line_start": 42,
+      "location_status": "confirmed",
       "origin": "new",
       "severity": "low",
       "verified": true
@@ -11,16 +14,22 @@
   ],
   "joined": [
     {
+      "anchor": "synthetic_source(0);",
+      "claimed_line_end": 42,
+      "claimed_line_start": 42,
       "claude_md_rule": "Use snake_case for all method names (CLAUDE.md > Style).",
       "confidence": 55,
       "cross_file_refs": [],
       "description": "This method uses camelCase while every other method in the module uses snake_case.",
       "dimension": "convention",
+      "end_line": 42,
       "evidence": "def getOrderId(self):",
       "file": "src/models/order.py",
       "id": "conv-401",
+      "line": 42,
       "line_end": 42,
       "line_start": 42,
+      "location_status": "confirmed",
       "origin": "new",
       "severity": "low",
       "suggestion": "Rename to get_order_id for consistency with the rest of the module.",

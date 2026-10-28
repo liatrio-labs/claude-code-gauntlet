@@ -17,7 +17,7 @@ const FINDINGS = [PROJECTION_A, PROJECTION_B, PROJECTION_C];
 
 const ALIASED = [
   { ...PROJECTION_A, line: 7, end_line: 9, body: "body text" },
-  { ...PROJECTION_B, line: 3, body: "other" },
+  { ...PROJECTION_B, line: 3, end_line: 3, body: "other" },
   { ...PROJECTION_C, body: "\u65e5\u672c\u8a9e\u306e\u8aac\u660e \ud83d\ude00 with an astral \ud835\udd4f character" },
 ];
 
@@ -53,19 +53,19 @@ test('projection preserves artifact bytes, selection and checkpoint order', () =
   assert.deepEqual(plan, {
     planVersion: 2,
     expect: [
-      { path: PATHS.findings, chars: 504, checksum: "fnv1a32:0x9c07ec11" },
+      { path: PATHS.findings, chars: 652, checksum: "fnv1a32:0x95c36e7d" },
       { path: PATHS.report, chars: 3, checksum: "fnv1a32:0x34bd778c" }
     ],
     derive: [
       {
         path: PATHS.postReview,
-        chars: 348,
-        checksum: "fnv1a32:0xcab9512b"
+        chars: 422,
+        checksum: "fnv1a32:0x7b3f7426"
       },
       {
         path: PATHS.checkpoints,
-        chars: 841,
-        checksum: "fnv1a32:0x40a5d14d"
+        chars: 994,
+        checksum: "fnv1a32:0x24099ac4"
       }
     ],
     postReview: {
@@ -81,7 +81,7 @@ test('projection preserves artifact bytes, selection and checkpoint order', () =
       stripAliasFields: ["line", "end_line", "body"],
       skeleton: { ...CHECKPOINT, phases: { challenge: { ...CHECKPOINT.phases.challenge, findings: [] } } }
     },
-    planChecksum: "fnv1a32:0xc7c7f363"
+    planChecksum: "fnv1a32:0x6a91a603"
   });
   const derived = deriveFromPlan(plan, text);
   assert.equal(JSON.stringify(derived.postReview, null, 2), JSON.stringify([ALIASED[2], ALIASED[0]], null, 2));
@@ -121,17 +121,23 @@ test('escape-hardened primary pins transmitted bytes and keeps the original pros
   const input = { findings: [ESCAPED_PROJECTION] };
   const text = persistPrimaries(input).findingsJson;
   const escaped = "gradeInputProof produces \\u005c\\\"the executor's receipt carried no input_checksum\\u005c\\\" here";
-  assert.equal(text, '[\n  {\n    "id": "A",\n    "description": "' + escaped + '",\n    "body": "' + escaped + '"\n  }\n]');
-  assert.equal(fnv1a32(text), 'fnv1a32:0xb3209e15');
+  assert.equal(text, '[\n  {\n    "id": "A",\n    "location_status": "unconfirmed",\n    "description": "' + escaped + '",\n    "body": "' + escaped + '"\n  }\n]');
+  assert.equal(fnv1a32(text), 'fnv1a32:0xae22a9e7');
   assert.deepEqual(JSON.parse(text), [{ ...ESCAPED_PROJECTION, body: ESCAPED_PROJECTION.description }]);
 });
 
 for (const [name, input, expected] of [
   ['canonical selection', INPUT, { ok: true }],
   [
+    'checkpoint needs location normalization', {
+      findings: [{ id: 'F1', line_start: 99 }],
+      checkpoints: { phases: { challenge: { findings: [{ id: 'F1', line_start: 99 }] } } },
+    },
+    { ok: false, reason: 'checkpoint challenge entry F1 requires normalization before derivation' },
+  ],
+  [
     'preexisting alias', { findings: [{ id: 'F1', line: 999 }] },
-    { ok: false, reason: 'finding F1 already carries a v2 alias field (line/end_line/body) \u2014 the checkpoint '
-      + 'alias strip is not reversible' }
+    { ok: true }
   ],
   [
     'fractional number', { findings: [{ id: 'F1', confidence: 90.5 }] },
@@ -157,3 +163,31 @@ for (const [name, input, expected] of [
     assert.deepEqual(JSON.parse(expected), JSON.parse(input));
   });
 }
+
+test('canonical location overwrites aliases in both writers', () => {
+  const findings = [
+    { id: 'resolved', location_status: 'relocated', line_start: 5, line_end: 6, line: 999, end_line: 1000, description: 'Claim' },
+    { id: 'unresolved', location_status: 'unconfirmed', claimed_line_start: 999, line: 999, end_line: 1000, description: 'Retained' },
+  ];
+  const input = { findings, postReview: findings };
+  const payload = writerPayload(input);
+  assert.deepEqual(JSON.parse(persistPrimaries(input).findingsJson), payload.findings);
+  assert.deepEqual(payload.postReview, payload.findings);
+  assert.equal(payload.findings[0].line, 5);
+  assert.equal(payload.findings[0].end_line, 6);
+  assert.equal(Object.hasOwn(payload.findings[1], 'line'), false);
+  assert.equal(Object.hasOwn(payload.findings[1], 'end_line'), false);
+  assert.equal(findings[0].line, 999);
+  assert.equal(persistDerivable(input).ok, true);
+});
+
+test('canonical checkpoint aliases survive derivation', () => {
+  const findings = [
+    { id: 'placed', location_status: 'confirmed', line_start: 7, line_end: 8, line: 7, end_line: 8 },
+    { id: 'unplaced', location_status: 'unconfirmed' },
+  ];
+  const input = { findings, checkpoints: { phases: { challenge: { findings } } } };
+  assert.deepEqual(persistDerivable(input), { ok: true });
+  const plan = persistPlan(input, PATHS);
+  assert.deepEqual(deriveFromPlan(plan, persistPrimaries(input).findingsJson).checkpoints, input.checkpoints);
+});

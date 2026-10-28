@@ -8,7 +8,9 @@
       "id": "T-carve-encoded-1",
       "line_start": 70,
       "severity": "low",
-      "title": "Investigate identifier ZGVlcC1yZXZpZXcgZmlsdGVyIGNhcnZlb3V0IGZpeHR1cmUgcGF5bG9hZA== appearing in a config value"
+      "title": "Investigate identifier ZGVlcC1yZXZpZXcgZmlsdGVyIGNhcnZlb3V0IGZpeHR1cmUgcGF5bG9hZA== appearing in a config value",
+      "line_end": 70,
+      "location_status": "confirmed"
     }
   ]
 }

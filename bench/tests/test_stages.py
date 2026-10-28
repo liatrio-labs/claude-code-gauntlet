@@ -133,8 +133,12 @@ def test_score_to_dimension_credit_and_loss_funnel(
     if trace_status == "no_eliminations":
         raw = read_json(path)
         ids = raw["snapshots"][0]["finding_version_ids"]
+        for version in raw["versions"]:
+            version["finding"].update(
+                location_status="confirmed", line_start=10, line_end=10
+            )
         review["findings"] = [
-            v.projection() for v in trace.versions if v.version_id in ids
+            v["finding"] for v in raw["versions"] if v["version_id"] in ids
         ]
         for snapshot in raw["snapshots"]:
             snapshot.update(finding_version_ids=ids, decisions=[])
@@ -227,7 +231,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
             dict(funnel.losses)[
                 "validate"
                 if trace_status == "holdback"
-                else "merge"
+                else "verify"
                 if trace_status == "audit_overlap"
                 else "filter"
             ]
@@ -237,7 +241,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
             assert any(
                 r.loss
                 and r.loss.reason_code == "audit_overlap"
-                and r.loss.physical_stage == "merge"
+                and r.loss.physical_stage == "verify"
                 and r.loss.status == "established"
                 for r in rows
             )

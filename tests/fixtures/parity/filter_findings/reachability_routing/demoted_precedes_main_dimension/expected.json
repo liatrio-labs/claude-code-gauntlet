@@ -17,7 +17,9 @@
       "report_tag": "suggestion",
       "routed_by": "reachability",
       "severity": "low",
-      "title": "hypothetical bug"
+      "title": "hypothetical bug",
+      "line_end": 60,
+      "location_status": "confirmed"
     }
   ]
 }

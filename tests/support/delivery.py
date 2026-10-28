@@ -7,10 +7,18 @@ from gauntlet.delivery.compose import SkippedEntry
 
 
 def finding(*, omit: tuple[str, ...] = (), **values: object) -> dict[str, object]:
+    start = values.get("line", 2)
+    end = values.get("end_line", start + 1 if isinstance(start, int) else 3)
     fields = {
         "file": "foo.py",
         "line": 2,
         "end_line": 3,
+        "line_start": values.get("line", 2),
+        "line_end": end,
+        "claimed_line_start": values.get("line", 2),
+        "claimed_line_end": end,
+        "location_status": "confirmed",
+        "anchor": "    return 1\n    # tail",
         "severity": "high",
         "title": "T",
         "body": "b",
@@ -18,6 +26,8 @@ def finding(*, omit: tuple[str, ...] = (), **values: object) -> dict[str, object
     }
     for key in omit:
         fields.pop(key, None)
+        if key == "end_line":
+            fields.pop("claimed_line_end", None)
     return fields
 
 

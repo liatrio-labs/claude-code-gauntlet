@@ -1,9 +1,4 @@
-"""Tests for the mechanical functional-smoke checker (Issue #28).
-
-stdlib only, no network, no judge. Fixtures mirror real harness artifact names:
-bare findings lists, ``workflows/wf_*.json`` (not fabricated ``raw.json`` tool_uses),
-``code-gauntlet-checkpoint-all-*.json``, and ``run.json`` ``pr_urls`` completeness.
-"""
+"""Mechanical artifact checks and file-only context for unresolved observations."""
 
 import contextlib
 import io
@@ -1872,3 +1867,36 @@ def test_artifact_sha_is_a_bounded_lowercase_hex_token(tmp_path, template, token
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("status", ["unconfirmed", "confirmed", "relocated", None])
+def test_unconfirmed_location_is_file_only_in_bench(status, tmp_path, monkeypatch):
+    from bench.runner import check, score
+
+    row = {
+        "file": "source.txt",
+        "description": "Retained observation",
+        "origin": "new",
+        "location_status": status,
+    }
+    _build_ok_run(tmp_path)
+    findings_path = tmp_path / "pr-example-repo-1/code-gauntlet-findings-deadbeef.json"
+    _write_json(findings_path, [row])
+    result = check.check_run(tmp_path, repo_root=REPO_ROOT)
+    assert result["ok"] == (status == "unconfirmed"), result["failures"]
+    assert any(
+        "missing line identity" in failure for failure in result["failures"]
+    ) == (status != "unconfirmed")
+    if status == "unconfirmed":
+
+        def reject(*args):
+            raise AssertionError(
+                "file-only context must not look up source coordinates"
+            )
+
+        monkeypatch.setattr(score, "_head_file_lines", reject)
+        assert score._candidate_context(
+            {"pr_dir": str(tmp_path)}, {"path": "source.txt", "line": None}
+        ) == ("", "source.txt", "file_only_unconfirmed", False)
+    _write_json(findings_path, [{**row, "file": None}])
+    assert not check.check_run(tmp_path, repo_root=REPO_ROOT)["ok"]

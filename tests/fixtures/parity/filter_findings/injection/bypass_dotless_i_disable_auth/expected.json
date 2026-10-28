@@ -9,7 +9,9 @@
       "id": "BYI",
       "line_start": 5,
       "severity": "low",
-      "title": "Auth guard commented out"
+      "title": "Auth guard commented out",
+      "line_end": 5,
+      "location_status": "confirmed"
     }
   ],
   "kept": []

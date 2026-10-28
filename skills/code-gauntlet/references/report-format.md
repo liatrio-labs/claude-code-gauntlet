@@ -46,13 +46,13 @@ The renderer produces these representative lines from the same templates and enc
 
 Reviewed head `{head_sha_short}` at {generatedAt} for [`{owner}/{repo}#7`](https://github.com/%7Bowner%7D/%7Brepo%7D/pull/7) by Code Gauntlet.
 
-- **Location:** [`{finding.file}:{finding.line_start}-{finding.line_end}`](https://github.com/%7Bowner%7D/%7Brepo%7D/blob/0123456789abcdef0123456789abcdef01234567/%7Bfinding.file%7D)
+- **Location:** [`{finding.file}:10-12`](https://github.com/%7Bowner%7D/%7Brepo%7D/blob/0123456789abcdef0123456789abcdef01234567/%7Bfinding.file%7D#L10-L12)
 
 **GitLab:**
 
 Reviewed head `{head_sha_short}` at {generatedAt} for [`group/sub/{repo}!7`](https://gitlab.com/group/sub/%7Brepo%7D/-/merge_requests/7) by Code Gauntlet.
 
-- **Location:** [`{finding.file}:{finding.line_start}-{finding.line_end}`](https://gitlab.com/group/sub/%7Brepo%7D/-/blob/0123456789abcdef0123456789abcdef01234567/%7Bfinding.file%7D)
+- **Location:** [`{finding.file}:10-12`](https://gitlab.com/group/sub/%7Brepo%7D/-/blob/0123456789abcdef0123456789abcdef01234567/%7Bfinding.file%7D#L10-12)
 <!-- /generated-from-registry-identity:permalink_sample -->
 
 Without a valid identity or linkable file path, the same location renders as a plain code span.
@@ -78,6 +78,7 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `dimension` | string | yes | Review dimension (bug, security, cross-file, etc.) |
 | `origin` | string | no | Blame classification stamped by `scripts/verify_findings.py` — the one canonical field no agent emits. |
 | `evidence` | string | no | Code snippet or behavior demonstrating the issue. Required by the discovery PROMPT (must be non-empty) though schema-optional. |
+| `anchor` | string | yes | Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters. |
 | `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
 | `claude_md_rule` | string | conditional | The cited project rule, quoted with its source file; required by contract for convention findings; OMITTED (never null) when no rule applies. |
 | `cross_file_refs` | array | no | Other files involved in the finding |
@@ -101,6 +102,20 @@ For convention findings, `rule_source` selects the heading for `claude_md_rule`:
 
 Required is tri-state. A `yes` field is appended to that dimension's dispatch required list (FINDING_REQUIRED plus the row's `requiredExtra`, never the other way around — FINDING_REQUIRED itself never carries a per-dimension field): the platform rejects a finding missing it at the StructuredOutput boundary, and the agent retries. A `conditional` field (`claude_md_rule`, `spec_text` — registry.js's `requiredWhenDimension`) is schema-required only on a dispatch that targets the first-party API directly with no gateway (`resolvedPolicy.conditionalSchema`), and only for a finding whose `dimension` matches the field's owning dimension — a nested `allOf`/`if`/`then` in the conventions-and-intent item schema, the one provider-measured shape that survives dispatch (a top-level conditional construct 400s). A `no` field carries neither promotion. Both `conditional` and `no` fields are contract-enforced by the agent's `.md` prose where its own dimension calls for it, everywhere the schema construct does not ride — third-party providers, gateway sessions, and every sibling dimension of a `conditional` field's own dispatch — and `no` fields are never schema-promoted at all: only a field the owning contract emits unconditionally (no OMIT branch, within its own dimension for `conditional`, within every dimension for `yes`) can be promoted to schema-required. Every per-dimension field is never nullable regardless: a not-applicable value is OMITTED, not emitted as null.
 
+<!-- generated-from-registry-location: do not edit; scripts/generate_contract_requirements.py -->
+## Location Status and Rights
+
+`location_status` is pipeline-owned and excluded from discovery output.
+`anchor` is required only at discovery dispatch; pipeline-authored and replayed findings may omit it.
+Unconfirmed findings remain in the review body, labelled `location unconfirmed`.
+
+| Status | body | sourceLink | inline | fence | patch | fixTask |
+|---|---|---|---|---|---|---|
+| confirmed | yes | yes | yes | yes | yes | yes |
+| relocated | yes | yes | yes | yes | yes | yes |
+| unconfirmed | yes | no | no | no | no | no |
+<!-- /generated-from-registry-location -->
+
 ---
 
 ## Full Report Template
@@ -120,10 +135,10 @@ Reviewed head `{head_sha_short}` at {generatedAt} by Code Gauntlet.
 
 4 findings after the gauntlet — 1 critical, 1 high, 1 medium, 1 low. 1 routed as improvement suggestion. 2 unverified / pipeline-degraded.
 
-- 🔴 [CRITICAL] `{finding.file}:{finding.line_start}-{finding.line_end}`: {finding.title}
-- 🟠 [HIGH] `{finding.file}:{finding.line_start}`: {finding.title}
-- 🟡 [MEDIUM] `{finding.file}:{finding.line_start}`: {finding.title}
-- 💡 [LOW] `{finding.file}:{finding.line_start}` (improvement suggestion): {finding.title}
+- 🔴 [CRITICAL] `{finding.file}:10-12`: {finding.title}
+- 🟠 [HIGH] `{finding.file}:10`: {finding.title}
+- 🟡 [MEDIUM] `{finding.file}:10`: {finding.title}
+- 💡 [LOW] `{finding.file}:10` (improvement suggestion): {finding.title}
 
 ## Change Context
 
@@ -137,7 +152,7 @@ This is the change summary the review agents shared as context.
 
 #### {finding.title}
 
-- **Location:** `{finding.file}:{finding.line_start}-{finding.line_end}`
+- **Location:** `{finding.file}:10-12`
 - **Dimension:** {finding.dimension}
 - **Origin:** surfaced — pre-existing, surfaced by this change
 - **Contested:** the challenger could not confirm the cited location
@@ -175,7 +190,7 @@ This is the change summary the review agents shared as context.
 
 #### {finding.title}
 
-- **Location:** `{finding.file}:{finding.line_start}`
+- **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
 
 {finding.description}
@@ -184,7 +199,7 @@ This is the change summary the review agents shared as context.
 
 #### {finding.title}
 
-- **Location:** `{finding.file}:{finding.line_start}`
+- **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
 
 {finding.description}
@@ -193,7 +208,7 @@ This is the change summary the review agents shared as context.
 
 #### {finding.title}
 
-- **Location:** `{finding.file}:{finding.line_start}`
+- **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
 - **Routing:** improvement suggestion
 - **Reachability:** only under a future change (severity demoted to low)
@@ -208,7 +223,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 
 #### {finding.title}
 
-- **Location:** `{finding.file}:{finding.line_start}`
+- **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
 - **Unverified because:** the validator did not score this finding, so it was not skeptically validated; the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
 
@@ -224,7 +239,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 
 #### {finding.title}
 
-- **Location:** `{finding.file}:{finding.line_start}`
+- **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
 - **Unverified because:** the challenger failed or returned no score, so this finding was not challenge-verified
 

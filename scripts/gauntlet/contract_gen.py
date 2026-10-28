@@ -26,6 +26,16 @@ MARKER_OPEN = (
     "scripts/generate_contract_requirements.py -->"
 )
 MARKER_CLOSE = "<!-- /generated-from-registry -->"
+OPTIONAL_MARKER_OPEN = (
+    "<!-- generated-from-registry-optional: do not edit; "
+    "scripts/generate_contract_requirements.py -->"
+)
+OPTIONAL_MARKER_CLOSE = "<!-- /generated-from-registry-optional -->"
+LOCATION_MARKER_OPEN = (
+    "<!-- generated-from-registry-location: do not edit; "
+    "scripts/generate_contract_requirements.py -->"
+)
+LOCATION_MARKER_CLOSE = "<!-- /generated-from-registry-location -->"
 
 REPORT_FORMAT_REL = "skills/code-gauntlet/references/report-format.md"
 
@@ -117,6 +127,9 @@ _REGISTRY_FIELDS = (
     "waistRequired: m.REQUIRED",
     "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
     "findingTypes: m.FINDING_PROP_TYPES",
+    "anchorLimits: m.ANCHOR_LIMITS",
+    "locationRights: m.LOCATION_RIGHTS",
+    "locationStatuses: m.LOCATION_STATUSES",
     "dispatchResults: m.DISPATCH_RESULTS",
     "dimensions: m.DIMENSIONS.map(d => ({dimension: d.dimension,"
     " agentType: d.agentType, requiredExtra: d.requiredExtra || [],"
@@ -259,10 +272,6 @@ def conditional_paragraphs(agent_rows: Sequence[Mapping[str, Any]]) -> list[str]
     return paragraphs
 
 
-_EXISTING_BLOCK = re.compile(
-    re.escape(MARKER_OPEN) + r"\n.*?\n" + re.escape(MARKER_CLOSE), re.DOTALL
-)
-
 # Unfenced contracts need anchors so regeneration can introduce ownership markers.
 _SINGLE_SENTENCE_ANCHOR = re.compile(
     "`[a-z_]+`(?:, `[a-z_]+`)*(?:,? and `[a-z_]+`)? (?:is|are) required by "
@@ -275,11 +284,18 @@ _CONDITIONAL_ANCHOR = re.compile(
 
 
 def splice(
-    text: str, anchor_re: re.Pattern[str], body: str, *, allow_append: bool = False
+    text: str,
+    anchor_re: re.Pattern[str],
+    body: str,
+    *,
+    allow_append: bool = False,
+    marker_open: str = MARKER_OPEN,
+    marker_close: str = MARKER_CLOSE,
+    insert_before: bool = False,
 ) -> str:
     """Reject broken markers so --check cannot silently accept stale debris."""
-    open_count = text.count(MARKER_OPEN)
-    close_count = text.count(MARKER_CLOSE)
+    open_count = text.count(marker_open)
+    close_count = text.count(marker_close)
     if open_count > 1 or open_count != close_count:
         raise CliError(
             f"malformed generated-block markers ({open_count} open, "
@@ -287,9 +303,12 @@ def splice(
             "— expected exactly one matched pair or none; fix by hand "
             "before regenerating"
         )
-    new_block = f"{MARKER_OPEN}\n{body}\n{MARKER_CLOSE}"
+    new_block = f"{marker_open}\n{body}\n{marker_close}"
     if open_count == 1:
-        replaced, count = _EXISTING_BLOCK.subn(new_block, text, count=1)
+        existing = re.compile(
+            re.escape(marker_open) + r"\n.*?\n" + re.escape(marker_close), re.DOTALL
+        )
+        replaced, count = existing.subn(lambda _: new_block, text, count=1)
         if count != 1:
             raise CliError("found MARKER_OPEN but block regex did not match")
         return replaced
@@ -298,6 +317,8 @@ def splice(
         if allow_append:
             return text.rstrip("\n") + "\n\n" + new_block + "\n"
         raise CliError("no generated block and no recognizable anchor text to replace")
+    if insert_before:
+        return text[: match.start()] + new_block + "\n\n" + text[match.start() :]
     return text[: match.start()] + new_block + text[match.end() :]
 
 
@@ -348,6 +369,8 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
         known.update(row["extraFields"])
     out_lines = []
     for line in text.splitlines():
+        if line.startswith("| `anchor` |"):
+            continue
         rewritten = line
         for pattern in (_CANONICAL_ROW, _PERDIM_ROW):
             m = pattern.match(line)
@@ -359,10 +382,37 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
                 rewritten = m.group(1) + status + m.group(4)
                 break
         out_lines.append(rewritten)
+        if line.startswith("| `evidence` |"):
+            anchor = registry["findingTypes"]["anchor"]
+            out_lines.append(
+                f"| `anchor` | {anchor['type']} | yes | {anchor['description']} |"
+            )
     text_out = "\n".join(out_lines)
     if text.endswith("\n"):
         text_out += "\n"
     return text_out
+
+
+def location_reference(registry: Mapping[str, Any]) -> str:
+    rights = registry["locationRights"]
+    columns = list(next(iter(rights.values())))
+    rows = [
+        "## Location Status and Rights",
+        "",
+        "`location_status` is pipeline-owned and excluded from discovery output.",
+        "`anchor` is required only at discovery dispatch; pipeline-authored and replayed findings may omit it.",
+        "Unconfirmed findings remain in the review body, labelled `location unconfirmed`.",
+        "",
+        "| Status | " + " | ".join(columns) + " |",
+        "|---|" + "---|" * len(columns),
+    ]
+    rows.extend(
+        f"| {status} | "
+        + " | ".join("yes" if row[column] else "no" for column in columns)
+        + " |"
+        for status, row in rights.items()
+    )
+    return "\n".join(rows)
 
 
 def _python_literal(value: object, indent: int = 0, *, column: int = 0) -> str:
@@ -436,6 +486,13 @@ def _detail_fields(identity: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
 def render_python_registry(identity: Mapping[str, Any]) -> str:
     field_types = identity["findingTypes"]
     for field, schema in field_types.items():
+        if (
+            isinstance(schema, dict)
+            and set(schema) == {"type", "description"}
+            and schema["type"] == "string"
+            and isinstance(schema["description"], str)
+        ):
+            continue
         if schema not in (
             "string",
             "number",
@@ -464,6 +521,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     lines = [
         '"""Generated by scripts/generate_contract_requirements.py. Do not edit."""',
         "",
+        "from collections.abc import Mapping",
         "from types import MappingProxyType",
         "from typing import Any, Literal, TypedDict",
         "",
@@ -471,6 +529,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         f"ModelAlias = {literal_type(identity['modelAliases'])}",
         f"PolicyProvider = {literal_type(identity['policyProviders'])}",
         f"Reachability = {literal_type(identity['reachability'])}",
+        f"LocationStatus = {literal_type(identity['locationStatuses'])}",
         f"DeltaKey = {literal_type(delta_keys)}",
         f"DeltaValueField = {literal_type(delta_value_fields)}",
         "",
@@ -480,6 +539,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "MODEL_ALIASES": tuple(identity["modelAliases"]),
         "POLICY_PROVIDERS": tuple(identity["policyProviders"]),
         "REACHABILITY_VALUES": tuple(identity["reachability"]),
+        "LOCATION_STATUSES": tuple(identity["locationStatuses"]),
         "DELTA_KEYS": tuple(delta_keys),
         "DELTA_VALUE_FIELDS": tuple(delta_value_fields),
         "VERIFY_SLICE_FIELDS": tuple(identity["verifySliceFields"]),
@@ -499,6 +559,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "MODEL_ALIASES": "tuple[ModelAlias, ...]",
         "POLICY_PROVIDERS": "tuple[PolicyProvider, ...]",
         "REACHABILITY_VALUES": "tuple[Reachability, ...]",
+        "LOCATION_STATUSES": "tuple[LocationStatus, ...]",
         "DELTA_KEYS": "tuple[DeltaKey, ...]",
         "DELTA_VALUE_FIELDS": "tuple[DeltaValueField, ...]",
         "VERIFY_SLICE_FIELDS": "tuple[str, ...]",
@@ -508,6 +569,29 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         prefix = f"{name}{annotation} = "
         lines.append(prefix + _python_literal(value, column=len(prefix)))
         lines.append("")
+    for name, value in (
+        ("ANCHOR_SCHEMA", field_types["anchor"]),
+        ("ANCHOR_LIMITS", identity["anchorLimits"]),
+    ):
+        lines.extend(
+            [
+                f"{name} = MappingProxyType(\n    "
+                + _python_literal(value).replace("\n", "\n    ")
+                + "\n)",
+                "",
+            ]
+        )
+    lines.append(
+        "LOCATION_RIGHTS: Mapping[LocationStatus, Mapping[str, bool]] = MappingProxyType("
+    )
+    lines.append("    {")
+    for status, rights in identity["locationRights"].items():
+        lines.append(
+            f"        {json.dumps(status)}: MappingProxyType(\n            "
+            + _python_literal(rights).replace("\n", "\n            ")
+            + "\n        ),"
+        )
+    lines.extend(["    }", ")", ""])
     lines.extend(
         [
             "",
@@ -518,13 +602,16 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "",
             "class Delta(_DeltaRequired, total=False):",
             *(
-                f"    {field}: {'int' if field == 'confidence' else 'object'}"
+                f"    {field}: {'int' if field in ('confidence', 'line_start', 'line_end') else 'LocationStatus' if field == 'location_status' else 'object'}"
                 for field in delta_value_fields
             ),
             "",
             "",
             "class VerifySliceFinding(TypedDict, total=False):",
-            *(f"    {field}: Any" for field in identity["verifySliceFields"]),
+            *(
+                f"    {field}: {'str' if field == 'anchor' else 'Any'}"
+                for field in identity["verifySliceFields"]
+            ),
             "",
             "",
         ]
@@ -568,9 +655,12 @@ def _placeholders(prefix: str, fields: str) -> dict[str, str]:
     return {field: "{" + prefix + "." + field + "}" for field in fields.split()}
 
 
-_TEMPLATE_FINDING = _placeholders(
-    "finding", "id file line_start title description confidence dimension"
-)
+_TEMPLATE_FINDING = {
+    **_placeholders("finding", "id file title description confidence dimension"),
+    "location_status": "confirmed",
+    "line_start": 10,
+    "line_end": 10,
+}
 
 _TEMPLATE_FIXTURE: dict[str, Any] = {
     "mode": "interactive",
@@ -601,10 +691,11 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
             "origin": "surfaced",
             **_placeholders(
                 "finding",
-                "line_end evidence suggestion claude_md_rule rule_source spec_text "
+                "evidence suggestion claude_md_rule rule_source spec_text "
                 "cross_file_refs affected_consumers attack_vector behavior_preserved "
                 "criticality failure_scenario hidden_errors invalid_state_example",
             ),
+            "line_end": 12,
             "challenge_contested": True,
             "corroborations": [
                 _placeholders(
@@ -769,6 +860,9 @@ def pr_identity_fields_body(identity: Mapping[str, Any]) -> list[str]:
 
 
 _INLINE_SAMPLE_FINDING = {
+    "location_status": "confirmed",
+    "line_start": 10,
+    "line_end": 10,
     "severity": "severity",
     "title": "{finding.title}",
     "body": "{body}",
@@ -1119,8 +1213,38 @@ def rendered_targets(
                 allow_append=rel_path in dispatch_paths,
             )
         )
+    anchor = registry["findingTypes"]["anchor"]
+    optional_body = (
+        "```json\n"
+        + json.dumps({"anchor": f"<{anchor['description']}>"}, ensure_ascii=False)
+        + "\n```"
+    )
+    for agent in registry["agents"]:
+        rel_path = f"agents/{agent.split(':', 1)[1]}.md"
+        steps.setdefault(rel_path, []).append(
+            partial(
+                splice,
+                anchor_re=re.compile(
+                    r"^Each finding is a JSON object with this shape:", re.M
+                ),
+                body=optional_body,
+                marker_open=OPTIONAL_MARKER_OPEN,
+                marker_close=OPTIONAL_MARKER_CLOSE,
+                insert_before=True,
+            )
+        )
     steps.setdefault(REPORT_FORMAT_REL, []).append(
         partial(rewrite_required_column, registry=registry)
+    )
+    steps[REPORT_FORMAT_REL].append(
+        partial(
+            splice,
+            anchor_re=re.compile(r"^---\n\n## Full Report Template", re.M),
+            body=location_reference(registry),
+            marker_open=LOCATION_MARKER_OPEN,
+            marker_close=LOCATION_MARKER_CLOSE,
+            insert_before=True,
+        )
     )
     for rel_path in IDENTITY_FENCES:
         path_steps = steps.setdefault(rel_path, [])

@@ -10,7 +10,9 @@
       "severity": "high",
       "confidence": 85,
       "title": "possible injection",
-      "description": "d14"
+      "description": "d14",
+      "line_end": 30,
+      "location_status": "confirmed"
     },
     {
       "id": "D15",
@@ -21,7 +23,9 @@
       "severity": "low",
       "confidence": 40,
       "title": "t15",
-      "description": "d15"
+      "description": "d15",
+      "line_end": 30,
+      "location_status": "confirmed"
     }
   ]
 }
