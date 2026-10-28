@@ -8,7 +8,9 @@
       "file": "src/deploy.py",
       "line_start": 30,
       "severity": "medium",
-      "confidence": 50
+      "confidence": 50,
+      "line_end": 30,
+      "location_status": "confirmed"
     }
   ]
 }

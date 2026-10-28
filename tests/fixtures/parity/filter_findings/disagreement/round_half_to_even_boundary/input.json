@@ -10,7 +10,9 @@
       "severity": "medium",
       "confidence": 70,
       "title": "t10",
-      "description": "d10"
+      "description": "d10",
+      "line_end": 25,
+      "location_status": "confirmed"
     },
     {
       "id": "D11",
@@ -21,7 +23,9 @@
       "severity": "medium",
       "confidence": 65,
       "title": "t11",
-      "description": "d11"
+      "description": "d11",
+      "line_end": 24,
+      "location_status": "confirmed"
     }
   ]
 }

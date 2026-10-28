@@ -1,13 +1,4 @@
-// pipelineMock.js — shared mock ctx + fixtures for driving runWith end-to-end,
-// aligned EXACTLY to the platform dispatch contract so a mock can never again mask
-// an object-vs-prompt dispatch bug (the class the Task 15 live smoke caught). The
-// Python-invoked node recorder (tests/tools) reuses this so the boundary-parity test's
-// input is REAL pipeline output.
-//
-// Platform contract (Phase 0-verified + Workflow docs):
-//   agent(prompt, opts)   — prompt is a STRING; opts = { label, agentType, model, schema }
-//   parallel(thunks)      — thunks is an array of ZERO-ARG FUNCTIONS each calling agent(...);
-//                           a thrown member resolves to null (siblings unaffected).
+// Shared host-contract assertions keep tests aligned with actual dispatch shapes.
 import { parseWriterPayload } from '../../src/persist.js';
 import { plannedArtifactPaths } from '../../src/outputPaths.js';
 import { AGENTS } from '../../src/registry.js';
@@ -17,15 +8,14 @@ const DISCOVERY_AGENT_TYPES = new Set(AGENTS);
 
 // --- Platform-contract assertions (shared by every mock) --------------------
 
-// agent()'s first arg must be a real prompt STRING (the live smoke's object-dispatch
-// delivered the literal "[object Object]").
+// Real prompt strings keep the mock from accepting object-valued dispatches.
 export function assertPrompt(prompt) {
   if (typeof prompt !== 'string') {
     throw new Error(`platform contract: agent() prompt must be a STRING (got ${typeof prompt}: ${JSON.stringify(prompt)})`);
   }
 }
 
-// A single allOf entry of the conditional-required construct (issue #218): { if, then }, NOT
+// Each conditional-required allOf entry has { if, then }, rather than
 // a full JSON Schema — `if`/`then` here carry only `properties`/`required`, no `type` (the
 // measured-accepted spelling discover.js emits). Local validity coverage only: this pins the
 // SHAPE (if.properties.dimension.const, if.required, then.required), not that it is
@@ -64,7 +54,7 @@ export function assertValidSchema(schema, path = '$') {
 
 // Every top-level dispatch schema must be OBJECT-rooted: the Messages API rejects an
 // array-rooted tool input_schema with `tools.N.custom.input_schema.type: Input should
-// be 'object'` (the 400 the live smoke run hit on the array-rooted VALIDATE_SCHEMA).
+// be 'object'`, so the mock enforces the same root shape.
 // Nested schemas may still be arrays — this constrains only the dispatch ROOT.
 export function assertObjectRootSchema(schema) {
   if (!schema || schema.type !== 'object') {
@@ -81,6 +71,8 @@ export function makeFinding(id, over = {}) {
   return {
     id,
     file: `${id}.js`,
+    location_status: 'confirmed',
+    anchor: 'return process(value);',
     line_start: 10,
     line_end: 10,
     title: `finding ${id}`,
@@ -112,7 +104,7 @@ export function makeFindings() {
 //   - onPersist(payload): called with the parsed writer payload at the artifact-writer
 //     dispatch (lets a test/recorder capture the REAL persisted findings/checkpoints)
 //   - findings: replaces the default makeFindings() set that bug-detector discovers. Under
-//     the delta echo (issue #25 PR2) the verify-slice executor never receives or returns the
+//     the delta echo the verify-slice executor never receives or returns the
 //     finding itself — only a per-id DECISION — so a specific finding shape (e.g. a long
 //     description) survives verify because trustSlice/joinVerifyDeltas re-attach the delta to
 //     the DISPATCHED slice finding, not because anything here echoes it back. This option

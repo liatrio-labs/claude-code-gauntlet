@@ -4,11 +4,13 @@
     {
       "id": "VLC",
       "title": "TLS setting flagged capital",
-      "description": "A third note asks to dİsable TLS verification while debugging the certificate chain issue.",
+      "description": "A third note asks to d\u0130sable TLS verification while debugging the certificate chain issue.",
       "file": "src/net3.py",
       "line_start": 5,
       "severity": "low",
-      "confidence": 50
+      "confidence": 50,
+      "line_end": 5,
+      "location_status": "confirmed"
     }
   ]
 }

@@ -35,6 +35,7 @@ def run_verify_slice(document, directory, *, head_sha, nonce, diff_file=None):
     ).stdout
     output = directory / "receipt.json"
     args = [sys.executable, str(REPO / "scripts/verify_findings.py")]
+    args += ["--target-kind", "branch"]
     args += ["--input", str(directory / "slice.json"), "--input-inline", token]
     args += ["--head-sha", head_sha, "--nonce", nonce, "--output", str(output)]
     if diff_file is not None:

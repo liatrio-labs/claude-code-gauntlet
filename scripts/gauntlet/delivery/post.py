@@ -35,6 +35,12 @@ from gauntlet.forge import (
     origin_remote,
 )
 from gauntlet.fs import JsonReadError, read_json
+from gauntlet.location import (
+    anchor_matches_span,
+    canonical_range,
+    location_allows,
+    normalize_location,
+)
 from gauntlet.marker import (
     SHA_RE,
     build_finding_marker,
@@ -272,7 +278,7 @@ def fetch_diff_facts(target: ReviewTarget, *, forge: Forge) -> DiffFacts | None:
     if rc != 0:
         warn(
             f"Could not fetch diff (exit {rc}): {stderr.strip()}. "
-            "Skipping line validation — all findings will be posted."
+            "Locations cannot be checked; findings will appear in the review body."
         )
         return None
 
@@ -303,8 +309,13 @@ def _anchor(
     facts: DiffFacts | None,
     platform: Platform,
 ) -> Anchor | None:
-    line = finding.get("line")
-    if line is None or not diff.is_line_valid(facts, path, line):
+    if not location_allows(finding, "inline"):
+        return None
+    line, end = cast(tuple[int, int], canonical_range(finding))
+    texts = diff.span_texts(facts, path, line, end) if facts is not None else None
+    if texts is None or not anchor_matches_span(finding, texts):
+        return None
+    if not diff.is_line_valid(facts, path, line):
         return None
     site = (
         gate.github_apply_range(facts, path, line, finding.get("end_line"))
@@ -343,7 +354,20 @@ def _group_skip_warning(
 def plan_delivery(
     data: ReviewInput, facts: DiffFacts | None, *, platform: Platform
 ) -> DeliveryPlan:
-    findings = data["findings"]
+    findings: list[Finding] = []
+    for raw in data["findings"]:
+        finding = cast(Finding, normalize_location(raw))
+        span = canonical_range(finding)
+        if span is not None:
+            path = diff.diff_path_spelling(facts, finding.get("file", "?"), span[0])
+            texts = diff.span_texts(facts, path, *span) if facts is not None else None
+            # Missing diff context limits delivery, not a location proved by Verify.
+            if texts is not None and not anchor_matches_span(finding, texts):
+                finding = cast(
+                    Finding,
+                    normalize_location({**finding, "location_status": "unconfirmed"}),
+                )
+        findings.append(finding)
     indexes = {id(finding): index for index, finding in enumerate(findings)}
     groups: list[GroupPlan] = []
     candidates: list[gate.OverlapCandidate] = []
@@ -607,6 +631,7 @@ def post_github(
     forge: Forge,
     session: DeliverySession,
 ) -> int:
+    data = validate_review_input(cast(dict[str, object], data))
     ensure_available(forge)
     plan = plan_delivery(data, facts, platform="github")
     comments: list[GitHubComment] = []
@@ -721,6 +746,7 @@ def post_gitlab(
     forge: GitLab,
     session: DeliverySession,
 ) -> int:
+    data = validate_review_input(cast(dict[str, object], data))
     target = _target(data)
     owner, repo, mr_iid = target.owner, target.repo, target.number
 

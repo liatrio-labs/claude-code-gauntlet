@@ -253,10 +253,10 @@ with no ellipses or placeholders. Include `line_end` with every patch, equal to
 Return JSON Schema (first-party direct dispatch):
 
 ```json
-{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"file":{"type":"string"},"line_start":{"type":"number"},"line_end":{"type":"number"},"title":{"type":"string"},"description":{"type":"string"},"severity":{"type":"string"},"confidence":{"type":"number"},"dimension":{"type":"string"},"origin":{"type":"string"},"evidence":{"type":"string"},"suggestion":{"type":"string"},"claude_md_rule":{"type":"string"},"suggested_fix_code":{"type":"string"},"cross_file_refs":{"type":"array","items":{"type":"string"}},"hidden_errors":{"type":"string"}},"required":["id","file","line_start","title","description","severity","confidence","dimension"],"additionalProperties":false}},"complete":{"type":"boolean"},"total_seen":{"type":"number"}},"required":["findings","complete","total_seen"]}
+{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"file":{"type":"string"},"line_start":{"type":"number"},"line_end":{"type":"number"},"title":{"type":"string"},"description":{"type":"string"},"severity":{"type":"string"},"confidence":{"type":"number"},"dimension":{"type":"string"},"origin":{"type":"string"},"evidence":{"type":"string"},"anchor":{"type":"string","description":"Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.","minLength":1},"suggestion":{"type":"string"},"claude_md_rule":{"type":"string"},"suggested_fix_code":{"type":"string"},"cross_file_refs":{"type":"array","items":{"type":"string"}},"hidden_errors":{"type":"string"}},"required":["id","file","line_start","title","description","severity","confidence","dimension","anchor"],"additionalProperties":false}},"complete":{"type":"boolean"},"total_seen":{"type":"number"}},"required":["findings","complete","total_seen"]}
 ```
 
-Required finding fields: `id`, `file`, `line_start`, `title`, `description`, `severity`, `confidence`, `dimension`.
+Required finding fields: `id`, `file`, `line_start`, `title`, `description`, `severity`, `confidence`, `dimension`, `anchor`.
 
 Optional finding fields: `line_end`, `origin`, `evidence`, `suggestion`, `claude_md_rule`, `suggested_fix_code`, `cross_file_refs`, `hidden_errors`. Omit inapplicable optional fields; never send null.
 <!-- /generated-from-registry -->

@@ -1,3 +1,4 @@
+import { canonicalRange } from './location.js';
 import { fnv1a32, isPlainObject, stripPythonWhitespace } from './wire.js';
 import { AGENT_TYPE_TEST_ANALYZER, DISPATCH_RESULTS } from './registry.js';
 import { repoRelativeFindingPath } from './paths.js';
@@ -45,10 +46,14 @@ export function validateRemovedTests(value) {
 
 // Runtime intake must enforce the contract even when a host skips schema validation.
 function matchesAuditSchema(value, schema) {
-  if (schema.type === 'object') return exactKeys(value, Object.keys(schema.properties))
-    && Object.entries(schema.properties).every(([key, child]) => matchesAuditSchema(value[key], child));
+  if (schema.type === 'object') return isPlainObject(value)
+    && (schema.required || []).every((key) => Object.hasOwn(value, key))
+    && Object.keys(value).every((key) => Object.hasOwn(schema.properties, key)
+      && matchesAuditSchema(value[key], schema.properties[key]));
   if (schema.type === 'array') return Array.isArray(value) && value.every((entry) => matchesAuditSchema(entry, schema.items));
-  if (schema.type === 'string') return nonempty(value) && (!schema.enum || schema.enum.includes(value));
+  if (schema.type === 'string') return typeof value === 'string'
+    && (schema.minLength === undefined || Array.from(stripPythonWhitespace(value)).length >= schema.minLength)
+    && (!schema.enum || schema.enum.includes(value));
   return typeof value === 'number' && Number.isFinite(value)
     && (schema.type !== 'integer' || Number.isSafeInteger(value))
     && (schema.minimum === undefined || value >= schema.minimum)
@@ -99,7 +104,8 @@ export function checkRemovedTestAudit(inventory, rows, repoRoot) {
       }
       rowFindings.push({
         id: `removed-test:${id}:${index + 1}`, agent: 'test-analyzer', dimension: 'test_coverage',
-        file: normalized.file, line_start: loss.line, title: loss.title, description: loss.description,
+        file: normalized.file, line_start: loss.line, location_status: 'unconfirmed',
+        ...(Object.hasOwn(loss, 'anchor') ? { anchor: loss.anchor } : {}), title: loss.title, description: loss.description,
         severity: loss.severity, confidence: loss.confidence, criticality: loss.criticality,
         failure_scenario: loss.failure_scenario, removed_test: { id, path, old_start, old_end },
       });
@@ -108,4 +114,13 @@ export function checkRemovedTestAudit(inventory, rows, repoRoot) {
   }
   return { findings, audit: reasons.size > 0 ? { status: 'gap', reason: [...reasons].join('; ') } : inventory.omitted > 0
     ? { status: 'overflow', omitted: inventory.omitted } : { status: 'ran-clean' } };
+}
+
+// Only source-proven addresses can establish that the audit already represents a loss.
+export function suppressAuditOverlaps(findings, audit) {
+  const losses = findings.filter((f) => hasRemovedTestLocation(f) && canonicalRange(f));
+  const kept = findings.filter((f) => hasRemovedTestLocation(f) || f.agent !== 'test-analyzer'
+    || !canonicalRange(f) || !losses.some((loss) => loss.file === f.file && loss.line_start === f.line_start));
+  const { duplicates_dropped: _oldCount, ...rest } = audit || {};
+  return { findings: kept, audit: { ...rest, ...(kept.length < findings.length ? { duplicates_dropped: findings.length - kept.length } : {}) } };
 }

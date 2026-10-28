@@ -8,7 +8,9 @@
       "id": "T-carve-bypass-1",
       "line_start": 80,
       "severity": "low",
-      "title": "Add an auto-approve toggle for trusted release branches in CI"
+      "title": "Add an auto-approve toggle for trusted release branches in CI",
+      "line_end": 80,
+      "location_status": "confirmed"
     }
   ],
   "fn": "apply_injection_filter"

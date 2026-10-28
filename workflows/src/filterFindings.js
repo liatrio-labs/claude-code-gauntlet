@@ -1,3 +1,4 @@
+import { canonicalRange } from './location.js';
 import { INT_POLICY, coerceInt, asText, asConfidence, deepFreeze } from './wire.js';
 import { FIELD_RENAMES, SEVERITY_ORDER, INJECTION_STRIPPED_PROSE_FIELDS, AGENT_BUG_DETECTOR } from './registry.js';
 import { AGENT_TEST_ANALYZER, AGENT_SECURITY_REVIEWER, AGENT_CONVENTIONS } from './registry.js';
@@ -191,7 +192,7 @@ const SINGLETON_PENALTY = 15;
 function groupFilterFindings(findings, keyFor) {
   const groups = new Map();
   for (const finding of findings) {
-    const key = keyFor(finding);
+    const key = canonicalRange(finding) ? keyFor(finding) : finding;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(finding);
   }
@@ -199,6 +200,9 @@ function groupFilterFindings(findings, keyFor) {
 }
 
 export function detectDisagreement(findings, rules = FILTER_SUPPRESSION_RULES) {
+  for (const f of findings) {
+    for (const key of ['consensus_count', 'consensus_boost', 'corroborated_by', 'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note']) delete f[key];
+  }
   const locationGroups = groupFilterFindings(findings, (finding) => JSON.stringify([
     pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10),
   ]));

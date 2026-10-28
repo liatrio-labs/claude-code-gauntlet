@@ -1,5 +1,6 @@
+import { canonicalRange, clearLocation } from './location.js';
 import { hostPlatformForRoots } from './paths.js';
-import { modelFor } from './registry.js';
+import { LOCATION_STATUSES, modelFor } from './registry.js';
 import { firstUnsafeNumber } from './wire.js';
 import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum } from './verifyWire.js';
 import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
@@ -51,8 +52,11 @@ const VERIFY_SCHEMA = {
               severity: { type: 'string' },
               confidence: { type: 'number' },
               elimination_reason: { type: 'string' },
+              line_start: { type: 'integer', minimum: 1 },
+              line_end: { type: 'integer', minimum: 1 },
+              location_status: { type: 'string', enum: LOCATION_STATUSES },
             },
-            required: ['id', 'verified'],
+            required: ['id', 'verified', 'location_status'],
           },
         },
       },
@@ -76,6 +80,11 @@ export async function verifyStage(ctx, input) {
   // A zero-filled ledger spares consumers telling "no slices" from a missing field.
   if (findings.length === 0) {
     return { findings: [], eliminated: [], verified: true, gaps: [], inputProof: emptyInputProof() };
+  }
+
+  // Source selection must be explicit before any executor can read HEAD or the worktree.
+  if (!['pr', 'mr', 'branch', 'local'].includes(inp.verify?.targetKind)) {
+    throw new Error('verify.targetKind must be one of pr, mr, branch, local');
   }
 
   const model = modelFor('code-gauntlet:executor', inp.policy || {});
@@ -178,7 +187,7 @@ export async function verifyStage(ctx, input) {
 }
 
 function degradedSlice(slice) {
-  return slice.map((f) => ({ ...pinNumericFields(f), origin: 'unknown' }));
+  return slice.map((f) => ({ ...clearLocation(pinNumericFields(f)), origin: 'unknown' }));
 }
 
 const emptyInputProof = () => ({
@@ -291,6 +300,7 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
 
   const expected = new Set(ids);
   const byId = new Map();
+  const malformedLocations = new Set();
   for (const d of result.deltas) {
     if (!d || typeof d !== 'object') return { ok: false, reason: 'delta entry is not an object' };
     const id = typeof d.id === 'string' ? d.id : '';
@@ -304,6 +314,10 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
     if (deltaHas(d, 'confidence') && !Number.isInteger(d.confidence)) {
       return { ok: false, reason: `delta ${id}: confidence is not an integer` };
     }
+    if (!LOCATION_STATUSES.includes(d.location_status)
+      || (d.location_status === 'unconfirmed'
+        ? Object.hasOwn(d, 'line_start') || Object.hasOwn(d, 'line_end')
+        : !canonicalRange(d))) malformedLocations.add(id);
     const stamp = typeof d.elimination_reason === 'string' ? d.elimination_reason.trim() : '';
     if (d.verified === false && stamp === '') {
       return { ok: false, reason: `delta ${id}: eliminated without the elimination_reason stamp (fabricated elimination — the verify script always stamps a real one)` };
@@ -343,7 +357,7 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
   // An unsupported expected value cannot safely be localised by record proof.
   const wholeSlice = [...expectedProofs.values()].some((proof) => proof === null);
   if (wholeSlice && diagnostic) return { ok: false, ...diagnostic };
-  const deltas = ids.filter((id) => byId.has(id) && (wholeSlice || proofs.get(id) === expectedProofs.get(id)))
+  const deltas = ids.filter((id) => !malformedLocations.has(id) && byId.has(id) && (wholeSlice || proofs.get(id) === expectedProofs.get(id)))
     .map((id) => byId.get(id));
   if (wholeSlice && deltas.length !== ids.length) return { ok: false, reason: 'delta does not cover dispatched findings' };
   return {

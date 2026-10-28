@@ -45,6 +45,9 @@ native key order and UTF-16 hashing. This detects value drift, not authenticatio
 changes to the disk JSON's presentation whitespace. Fractional numbers remain valid.
 
 - A signed `.phases` map replays completed outputs and dispatches missing phases.
+- After checksum and shape checks, missing or incoherent location status becomes `unconfirmed`.
+  Verify and later replay clears canonical addresses and preserves original claims as diagnostics.
+  Late replay does not resolve locations again; discover/merge numbers remain requests for Verify.
 - `{ completed }`, `{ completed, truncated: true }`, and empty maps contain no replay
   state. Interactive mode can offer a fresh run without `args.checkpoints`; headless
   delivers the partial report plus gaps and stops.

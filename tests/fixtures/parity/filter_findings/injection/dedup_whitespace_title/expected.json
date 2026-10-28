@@ -11,7 +11,9 @@
       "id": "S2",
       "line_start": 10,
       "severity": "high",
-      "title": "\ufeffDuplicate bug here\u0085"
+      "title": "\ufeffDuplicate bug here\u0085",
+      "line_end": 10,
+      "location_status": "confirmed"
     }
   ],
   "kept": [
@@ -24,7 +26,9 @@
       "id": "S1",
       "line_start": 10,
       "severity": "high",
-      "title": "Duplicate bug here"
+      "title": "Duplicate bug here",
+      "line_end": 10,
+      "location_status": "confirmed"
     }
   ]
 }

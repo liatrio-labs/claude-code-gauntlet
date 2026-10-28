@@ -20,7 +20,8 @@
       "failure_scenario": "A regression dropping the rollback would leave a partial transaction in the database, undetected.",
       "cross_file_refs": [
         "tests/payments/test_processor.py"
-      ]
+      ],
+      "location_status": "unconfirmed"
     },
     {
       "id": "conv-1",
@@ -38,7 +39,8 @@
       "suggestion": "Return a 422 with the validation detail instead of a 200.",
       "claude_md_rule": "Validation failures surface as 422 (CLAUDE.md section 4)",
       "spec_text": "A request failing schema validation MUST return 422 Unprocessable Entity.",
-      "cross_file_refs": []
+      "cross_file_refs": [],
+      "location_status": "confirmed"
     }
   ]
 }

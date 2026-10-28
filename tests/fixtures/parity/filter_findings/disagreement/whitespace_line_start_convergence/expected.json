@@ -1,42 +1,40 @@
 {
   "active": [
     {
+      "id": "W1",
       "agent": "bug-detector",
-      "confidence": 80,
-      "consensus_boost": 10,
-      "consensus_count": 2,
-      "contradiction": false,
-      "corroborated_by": [
-        "security-auditor"
-      ],
-      "description": "aa",
       "dimension": "bug",
       "file": "n.py",
-      "id": "W1",
-      "line_start": "\ufeff12",
-      "security_escalation": false,
+      "line_start": "﻿12",
       "severity": "high",
-      "title": "a"
+      "confidence": 70,
+      "title": "a",
+      "description": "aa",
+      "location_status": "unconfirmed",
+      "consensus_count": 1,
+      "consensus_boost": 0,
+      "corroborated_by": [],
+      "contradiction": false,
+      "security_escalation": false
     },
     {
+      "id": "W2",
       "agent": "security-auditor",
-      "confidence": 80,
-      "consensus_boost": 10,
-      "consensus_count": 2,
-      "contradiction": false,
-      "corroborated_by": [
-        "bug-detector"
-      ],
-      "description": "bb",
       "dimension": "security",
       "file": "n.py",
-      "id": "W2",
-      "line_start": "\u008512",
-      "security_escalation": false,
+      "line_start": "12",
       "severity": "high",
-      "title": "b"
+      "confidence": 70,
+      "title": "b",
+      "description": "bb",
+      "location_status": "unconfirmed",
+      "consensus_count": 1,
+      "consensus_boost": 0,
+      "corroborated_by": [],
+      "contradiction": false,
+      "security_escalation": false
     }
   ],
-  "boosted_count": 2,
-  "suppressed": []
+  "suppressed": [],
+  "boosted_count": 0
 }

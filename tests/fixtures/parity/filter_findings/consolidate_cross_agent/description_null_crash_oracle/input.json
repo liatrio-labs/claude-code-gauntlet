@@ -10,7 +10,9 @@
       "severity": "high",
       "confidence": 80,
       "title": "t1",
-      "description": null
+      "description": null,
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "CA2",
@@ -21,7 +23,9 @@
       "severity": "medium",
       "confidence": 60,
       "title": "t2",
-      "description": "normal description text"
+      "description": "normal description text",
+      "line_end": 11,
+      "location_status": "confirmed"
     },
     {
       "id": "CB1",
@@ -32,7 +36,15 @@
       "severity": "medium",
       "confidence": 60,
       "title": "t3",
-      "description": ["a", "b", "c", "d", "e"]
+      "description": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "e"
+      ],
+      "line_end": 20,
+      "location_status": "confirmed"
     },
     {
       "id": "CB2",
@@ -43,7 +55,9 @@
       "severity": "medium",
       "confidence": 60,
       "title": "t4",
-      "description": "tiny"
+      "description": "tiny",
+      "line_end": 21,
+      "location_status": "confirmed"
     }
   ]
 }

@@ -6,6 +6,13 @@ from typing import Final, Literal, TypeGuard, cast
 
 from gauntlet import diff, registry
 from gauntlet.diff import DiffFacts
+from gauntlet.location import (
+    anchor_matches_span,
+    canonical_range,
+    location_allows,
+    normalize_location,
+    positive_safe_integer,
+)
 from gauntlet.text import has_marker_opener, redact_secrets
 
 __all__ = [
@@ -32,6 +39,8 @@ __all__ = [
 ApplyRange = tuple[int, int]
 FenceOffsets = tuple[int, int]
 FixReason = Literal[
+    "location_unconfirmed",
+    "anchor_text_mismatch",
     "non_string",
     "empty",
     "redacted",
@@ -129,9 +138,10 @@ def _check_fix(
     apply_range: tuple[object, object] | None,
     facts: DiffFacts | None,
     path_lookup: str,
+    mismatch_reason: FixReason,
 ) -> FixReason | None:
-    # Anchors fail open without facts; a misplaced one-click patch corrupts the file.
-    # Raw-path collisions therefore fail closed before range membership is checked.
+    if not location_allows(finding, "fence"):
+        return "location_unconfirmed"
     raw = finding["suggested_fix_code"]
     if not isinstance(raw, str):
         return "non_string"
@@ -151,20 +161,19 @@ def _check_fix(
     if has_marker_opener(text):
         return "marker_shaped"
 
-    line = finding.get("line")
-    end_line = finding.get("end_line")
-    if end_line is None:
-        # A patch's stated range must be explicit. An absent end_line — including
-        # one deleted for exceeding maxLineSpan — is exactly how a multi-line
-        # replacement lands on a single-line anchor and corrupts the file.
+    line, end_line = cast(tuple[int, int], canonical_range(finding))
+    claimed_start = finding.get("claimed_line_start")
+    claimed_end = finding.get("claimed_line_end")
+    if claimed_end is None:
         return "missing_end_line"
     if (
-        not is_plain_int(line)
-        or not is_plain_int(end_line)
-        or line < 1
-        or end_line < line
+        not positive_safe_integer(claimed_start)
+        or not positive_safe_integer(claimed_end)
+        or cast(int, claimed_end) < cast(int, claimed_start)
     ):
         return "invalid_range"
+    if cast(int, claimed_end) - cast(int, claimed_start) != end_line - line:
+        return "anchor_mismatch"
     if facts is None:
         return "no_diff_oracle"
     if diff.path_is_ambiguous(facts, cast(str, finding.get("file", "?"))):
@@ -172,7 +181,7 @@ def _check_fix(
     if not diff.range_is_valid(facts, path_lookup, line, end_line):
         return "range_not_in_diff"
     if apply_range != (line, end_line):
-        return "anchor_mismatch"
+        return mismatch_reason
 
     replacement = text.split("\n")
     span = diff.span_texts(facts, path_lookup, line, end_line)
@@ -180,6 +189,8 @@ def _check_fix(
         # Partial text is unavailable, never permission to skip content checks.
         # A span needs one exact spelling even when membership resolves per line.
         return "no_diff_oracle"
+    if not anchor_matches_span(finding, span, whole=True):
+        return "anchor_text_mismatch"
     # A trailing CR is transport (a CRLF diff carries one on every line), not
     # content, and `fix_code_text` already took the replacement's terminating
     # newline off — so neither side's line terminators decide this. An EDGE
@@ -210,6 +221,7 @@ def evaluate_fix(
     facts: DiffFacts | None,
     mismatch_reason: FixReason = "anchor_mismatch",
 ) -> FixVerdict:
+    finding = normalize_location(finding)
     evaluated = None
     if apply_range is not None and all(is_plain_int(v) for v in apply_range):
         evaluated = cast(ApplyRange, apply_range)
@@ -222,11 +234,13 @@ def evaluate_fix(
         cast(int | None, finding.get("line")),
     )
     reason = _check_fix(
-        finding, apply_range=apply_range, facts=facts, path_lookup=path_lookup
+        finding,
+        apply_range=apply_range,
+        facts=facts,
+        path_lookup=path_lookup,
+        mismatch_reason=mismatch_reason,
     )
     keep = reason is None
-    if not keep and reason == "anchor_mismatch":
-        reason = mismatch_reason
     return FixVerdict(keep, reason, evaluated)
 
 

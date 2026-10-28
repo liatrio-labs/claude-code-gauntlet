@@ -12,7 +12,9 @@
       "title": "hypothetical bug",
       "description": "A future caller would reach this issue.",
       "file": "src/route.py",
-      "line_start": 60
+      "line_start": 60,
+      "line_end": 60,
+      "location_status": "confirmed"
     }
   ]
 }

@@ -12,7 +12,8 @@
       "dimension": "bug",
       "evidence": "return f\"{amount:.0f}\"",
       "suggestion": "Use round() with the currency's minor-unit precision instead of an implicit floor.",
-      "cross_file_refs": []
+      "cross_file_refs": [],
+      "anchor": "synthetic_source(0);"
     }
   ],
   "result": {
@@ -43,7 +44,11 @@
           "reason": "file not found: 'src/i18n/format.py'",
           "code_at_lines": null
         },
-        "elimination_reason": "evidence does not match file content — café 🔥 文字 test tail"
+        "elimination_reason": "evidence does not match file content \u2014 caf\u00e9 \ud83d\udd25 \u6587\u5b57 test\u2028tail",
+        "anchor": "synthetic_source(0);",
+        "location_status": "confirmed",
+        "claimed_line_start": 5,
+        "claimed_line_end": 5
       }
     ]
   }

@@ -9,7 +9,9 @@
       "id": "I5",
       "line_start": 40,
       "severity": "medium",
-      "title": "TODO: Placeholder finding for review"
+      "title": "TODO: Placeholder finding for review",
+      "line_end": 40,
+      "location_status": "confirmed"
     }
   ],
   "kept": []

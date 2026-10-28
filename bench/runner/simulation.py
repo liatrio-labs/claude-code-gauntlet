@@ -20,6 +20,7 @@ from bench.runner.cli import spec_output_args
 from bench.runner.contracts import ScoreRef, exclusive_json
 from bench.runner.decode import decode
 from bench.runner.epochs import digest, load_epoch, read_json
+from bench.runner.ledger import AUTH_MODES
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,10 +353,7 @@ def simulate_rule(library, spec, *, rule_evaluator=compare.evaluate_promotion):
         mde_pp=mde,
         sources=[asdict(v) for v in library.vectors],
         seed=spec.seed,
-        auth_counts={
-            a: sum(v.auth == a for v in library.vectors)
-            for a in ("api", "subscription", "host")
-        },
+        auth_counts={a: sum(v.auth == a for v in library.vectors) for a in AUTH_MODES},
         lane_counts={
             key: sum(
                 v.lane is not None and digest(asdict(v.lane)) == key

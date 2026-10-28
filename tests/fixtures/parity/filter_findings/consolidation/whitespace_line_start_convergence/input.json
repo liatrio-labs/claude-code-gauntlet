@@ -6,22 +6,24 @@
       "agent": "bug-detector",
       "dimension": "bug",
       "file": "n.py",
-      "line_start": "﻿12",
+      "line_start": "\ufeff12",
       "severity": "high",
       "confidence": 80,
       "title": "x",
-      "description": "xxxxxx"
+      "description": "xxxxxx",
+      "location_status": "unconfirmed"
     },
     {
       "id": "C2",
       "agent": "security-auditor",
       "dimension": "security",
       "file": "n.py",
-      "line_start": "12",
+      "line_start": "\u008512",
       "severity": "high",
       "confidence": 70,
       "title": "y",
-      "description": "yy"
+      "description": "yy",
+      "location_status": "unconfirmed"
     }
   ]
 }

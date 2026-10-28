@@ -87,7 +87,7 @@ test('projection emits decision flags only for valid references and removed-test
 
 test('join pins numerics when the delta omits confidence', () => {
   assert.deepEqual(joinVerifyDeltas([{ id: 'F0', line_start: '42', line_end: 9.2, confidence: 82.5 }], [{ id: 'F0', verified: true }]),
-    [{ id: 'F0', line_start: 42, line_end: 9, confidence: 83 }]);
+    [{ id: 'F0', claimed_line_start: 42, claimed_line_end: 9, confidence: 83, location_status: 'unconfirmed' }]);
 });
 
 for (const c of loadCases('review_text_checksum')) {
@@ -109,3 +109,16 @@ for (const c of loadCases('review_md_set_checksum')) {
     assert.deepEqual({ checksum: reviewMdSetChecksum(c.input.entries) }, c.expected);
   });
 }
+
+test('proven locations replace held coordinates and aliases', () => {
+  const held = { id: 'f', line_start: 800, line_end: 804, line: 2, end_line: 7,
+    description: 'The claim survives relocation.', anchor: 'perform_action(value)' };
+  const [resolved] = joinVerifyDeltas([held], [{ id: 'f', verified: true, line_start: 12, line_end: 12, location_status: 'relocated' }]);
+  assert.equal(resolved.description, held.description);
+  assert.deepEqual([resolved.line, resolved.end_line], [12, 12]);
+  assert.deepEqual([resolved.line_start, resolved.line_end, resolved.claimed_line_start, resolved.claimed_line_end], [12, 12, 800, 804]);
+  const [unconfirmed] = joinVerifyDeltas([held], [{ id: 'f', verified: true, location_status: 'unconfirmed' }]);
+  for (const key of ['line_start', 'line_end', 'line', 'end_line']) assert.equal(Object.hasOwn(unconfirmed, key), false);
+  assert.equal(unconfirmed.claimed_line_end, 804);
+  assert.equal(held.line, 2);
+});

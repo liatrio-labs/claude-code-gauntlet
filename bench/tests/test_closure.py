@@ -34,7 +34,7 @@ def test_register_score_and_look_leave_treatment_clean(git_repo, monkeypatch):
     git("commit", "-qm", "fixture")
     monkeypatch.setattr(looks, "LEDGER", ledger)
     identity = v.treatment_sha(root)
-    looks.register("wave", {})
+    looks.register("wave", {}, identity)
     arm = compare.Arm("a", (), identity, identity)
     report = compare.ComparisonReport(
         "c",

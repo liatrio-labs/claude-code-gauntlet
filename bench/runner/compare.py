@@ -204,8 +204,6 @@ def resolve_blocks(spec, packets, *, windows=None):
     windows = comparison_windows(spec) if windows is None else windows
     arms = (spec.baseline, spec.candidate)
     refs = tuple(r for a in arms for r in a.scores)
-    if len(set(refs)) != len(refs) or len({r.run_id for r in refs}) != len(refs):
-        raise ValueError("duplicate score reference or review run")
     hashes = {w.window_id: file_hash(Path(p)) for p, w in windows}
     runs = {r: _packet_run(packets[r]) for r in refs}
     if any(
@@ -869,17 +867,24 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
     ):
         raise ValueError("descriptive comparison has no gate rule")
     look = looks.next_look(window.wave_id, digest(asdict(rule))) if gate else None
+    baseline_substitution = False
+    if gate:
+        registered = looks.registration(
+            window.wave_id,
+            digest(asdict(rule)),
+            baseline_treatment_sha=spec.baseline.treatment_git_sha,
+        )
+        source = registered.get("baseline_source_sha")
+        baseline_substitution = bool(
+            source and source != registered["baseline_treatment_sha"]
+        )
     if look == 2 and not spec.initial_spec_path:
         raise ValueError("wave has no remaining gate look without extension prefix")
     if gate and any(w.rule_sha256 != digest(asdict(rule)) for _, w in windows):
         raise ValueError("window rule differs from preregistration")
     scope = tuple(epoch.subsets["gate"]) if gate else pop.pr_urls
-    if any(
-        not validity.same_pr_set(w.pr_urls, scope)
-        or (rule and rule.kind == "ship" and w.expected.auth_mode != "api")
-        for _, w in windows
-    ):
-        raise ValueError("gate scope/auth mismatch")
+    if any(not validity.same_pr_set(w.pr_urls, scope) for _, w in windows):
+        raise ValueError("gate scope mismatch")
     if windows and any(
         common_controls(w) != common_controls(window)
         or w.arms != window.arms
@@ -958,14 +963,16 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
                             digest(asdict(rule)),
                             started=run["started"],
                         )
-                elif gate:
+                elif baseline_substitution:
                     receipt = run.get("baseline_equivalence_receipt") or {}
                     if (
-                        receipt.get("release_sha") != "839b1886"
-                        or receipt.get("merge_sha") != arm.treatment_git_sha
+                        receipt.get("release_sha") != source
+                        or receipt.get("merge_sha") != run["treatment_git_sha"]
                         or not receipt.get("evidence_refs")
                     ):
-                        raise ValueError("missing Wave 0a merge equivalence receipt")
+                        raise ValueError(
+                            "missing baseline substitution equivalence receipt"
+                        )
             ss.extend(selected)
             stage_rows.extend(sr)
             local_runs.append((arm.name, indices))

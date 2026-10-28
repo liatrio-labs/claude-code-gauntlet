@@ -10,7 +10,9 @@
       "line_start": 10,
       "origin": "unknown",
       "severity": "medium",
-      "title": "t1"
+      "title": "t1",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "agent": "test-analyzer",
@@ -22,7 +24,9 @@
       "line_start": 12,
       "origin": "verified",
       "severity": "low",
-      "title": "t2"
+      "title": "t2",
+      "line_end": 12,
+      "location_status": "confirmed"
     }
   ],
   "fn": "consolidate_cross_agent"

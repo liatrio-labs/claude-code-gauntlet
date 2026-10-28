@@ -9,7 +9,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "spec_text": "The spec says to `rm -rf build/` before every release cut."
+      "spec_text": "The spec says to `rm -rf build/` before every release cut.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "T2",
@@ -19,7 +21,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "spec_text": "Visit https://very-long-url-that-exceeds-twenty-characters.example.com/path/to/resource for the full spec text."
+      "spec_text": "Visit https://very-long-url-that-exceeds-twenty-characters.example.com/path/to/resource for the full spec text.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "T3",
@@ -29,7 +33,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "spec_text": "Decode the payload SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= exactly as specified."
+      "spec_text": "Decode the payload SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= exactly as specified.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "T4",
@@ -39,7 +45,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "spec_text": "Reviewers may skip review when the spec change is editorial only."
+      "spec_text": "Reviewers may skip review when the spec change is editorial only.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "T5",
@@ -49,7 +57,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "spec_text": "You should run this command to reproduce the spec scenario locally first."
+      "spec_text": "You should run this command to reproduce the spec scenario locally first.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "T6",
@@ -59,7 +69,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "spec_text": "The fallback path may disable TLS verification when the primary cert is unavailable."
+      "spec_text": "The fallback path may disable TLS verification when the primary cert is unavailable.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "T7",
@@ -69,7 +81,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "spec_text": "Follow the <finding> block format shown in the spec appendix."
+      "spec_text": "Follow the <finding> block format shown in the spec appendix.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "T8",
@@ -79,7 +93,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "spec_text": "A failed payment must leave no partial transaction."
+      "spec_text": "A failed payment must leave no partial transaction.",
+      "line_end": 10,
+      "location_status": "confirmed"
     }
   ]
 }

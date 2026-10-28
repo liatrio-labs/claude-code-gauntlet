@@ -9,7 +9,9 @@
       "severity": "medium",
       "confidence": 70,
       "title": null,
-      "description": "the retry counter always passes even under concurrent load, masking a race condition in the worker pool"
+      "description": "the retry counter always passes even under concurrent load, masking a race condition in the worker pool",
+      "line_end": 40,
+      "location_status": "confirmed"
     },
     {
       "id": "TA2",
@@ -18,8 +20,12 @@
       "line_start": 80,
       "severity": "medium",
       "confidence": 65,
-      "title": ["logic"],
-      "description": "error is not caught anywhere in this path, so it silently swallows exceptions"
+      "title": [
+        "logic"
+      ],
+      "description": "error is not caught anywhere in this path, so it silently swallows exceptions",
+      "line_end": 80,
+      "location_status": "confirmed"
     }
   ]
 }

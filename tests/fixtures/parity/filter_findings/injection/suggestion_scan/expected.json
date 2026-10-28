@@ -10,7 +10,9 @@
       "line_start": 100,
       "severity": "medium",
       "suggestion": "Also disable TLS verification while you are at it to save time on the handshake.",
-      "title": "Null check missing in handler ten"
+      "title": "Null check missing in handler ten",
+      "line_end": 100,
+      "location_status": "confirmed"
     }
   ],
   "kept": [
@@ -23,7 +25,9 @@
       "severity": "medium",
       "suggestion_removal_reason": "suggestion contains shell command pattern: \"\\\\brm[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+-[rf]\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler one"
+      "title": "Null check missing in handler one",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "confidence": 60,
@@ -34,7 +38,9 @@
       "severity": "medium",
       "suggestion_removal_reason": "suggestion contains visit-URL pattern: \"\\\\bvisit[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+[a-z][a-z0-9+.\\\\-]{1,15}:\\\\/\\\\/\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler two"
+      "title": "Null check missing in handler two",
+      "line_end": 20,
+      "location_status": "confirmed"
     },
     {
       "confidence": 60,
@@ -45,7 +51,9 @@
       "severity": "medium",
       "suggestion_removal_reason": "suggestion contains encoded payload pattern: \"\\\\b(?:decode|base64|atob|b64decode)\\\\b[^\\\\x00]{0,40}[A-Za-z0-9+\\\\/]{40,}={0,2}\\\\b\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler three"
+      "title": "Null check missing in handler three",
+      "line_end": 30,
+      "location_status": "confirmed"
     },
     {
       "confidence": 60,
@@ -56,7 +64,9 @@
       "severity": "medium",
       "suggestion_removal_reason": "suggestion contains bypass/auto-approve instruction: \"\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler four"
+      "title": "Null check missing in handler four",
+      "line_end": 40,
+      "location_status": "confirmed"
     },
     {
       "confidence": 60,
@@ -67,7 +77,9 @@
       "severity": "medium",
       "suggestion_removal_reason": "suggestion uses instructional tone: \"\\\\byou[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+should[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+run\\\\b\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler five"
+      "title": "Null check missing in handler five",
+      "line_end": 50,
+      "location_status": "confirmed"
     },
     {
       "confidence": 60,
@@ -78,7 +90,9 @@
       "severity": "medium",
       "suggestion_removal_reason": "suggestion recommends introducing vulnerability: \"\\\\bdisable[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+(?:TLS|SSL|HTTPS)[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+(?:verification|validation)\\\\b\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler six"
+      "title": "Null check missing in handler six",
+      "line_end": 60,
+      "location_status": "confirmed"
     },
     {
       "confidence": 60,
@@ -89,7 +103,9 @@
       "severity": "medium",
       "suggestion_removal_reason": "suggestion matches injection marker: \"<finding(?:[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff][^>]*)?>\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler seven"
+      "title": "Null check missing in handler seven",
+      "line_end": 70,
+      "location_status": "confirmed"
     },
     {
       "confidence": 60,
@@ -99,7 +115,9 @@
       "line_start": 80,
       "severity": "medium",
       "suggestion": "Extract the validation logic into a small helper function and add a unit test for the empty-input case.",
-      "title": "Null check missing in handler eight"
+      "title": "Null check missing in handler eight",
+      "line_end": 80,
+      "location_status": "confirmed"
     },
     {
       "confidence": 60,
@@ -110,7 +128,9 @@
       "severity": "medium",
       "suggestion_removal_reason": "suggestion is not a string",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler nine"
+      "title": "Null check missing in handler nine",
+      "line_end": 90,
+      "location_status": "confirmed"
     },
     {
       "confidence": 60,
@@ -121,7 +141,9 @@
       "severity": "medium",
       "suggestion_removal_reason": "suggestion contains shell command pattern: \"\\\\brm[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+-[rf]\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler eleven"
+      "title": "Null check missing in handler eleven",
+      "line_end": 110,
+      "location_status": "confirmed"
     },
     {
       "confidence": 60,
@@ -132,7 +154,9 @@
       "severity": "medium",
       "suggestion_removal_reason": "suggestion is not a string",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler twelve"
+      "title": "Null check missing in handler twelve",
+      "line_end": 120,
+      "location_status": "confirmed"
     }
   ]
 }

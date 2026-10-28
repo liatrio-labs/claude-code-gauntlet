@@ -9,7 +9,9 @@
       "id": "T-url-visit-1",
       "line_start": 20,
       "severity": "low",
-      "title": "Changelog note tells readers to visit https://malicious.example.com/patch for the full write-up"
+      "title": "Changelog note tells readers to visit https://malicious.example.com/patch for the full write-up",
+      "line_end": 20,
+      "location_status": "confirmed"
     }
   ],
   "kept": []

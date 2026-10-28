@@ -1,9 +1,15 @@
 """Actual emitted comment bytes are the provenance join boundary."""
 
+import shutil
+from dataclasses import replace
+from pathlib import Path
+
 import pytest
+from gauntlet.delivery import compose
 
 from bench.adapter.adapt import payload_to_candidates
-from bench.runner import provenance, stages
+from bench.runner import observations, provenance, score, stages, validity
+from bench.runner.epochs import read_json
 from bench.tests.test_stages import emit_trace
 
 
@@ -11,7 +17,7 @@ def captured_diff(findings):
     paths = sorted({f["file"] for f in findings})
     return "".join(
         f"diff --git a/{p} b/{p}\n--- a/{p}\n+++ b/{p}\n@@ -1,20 +1,20 @@\n"
-        + " context\n" * 20
+        + " return process(value);\n" * 20
         for p in paths
     )
 
@@ -115,3 +121,87 @@ def test_independent_producer_payload_preserves_patch_demotion_and_order(platfor
     assert any(
         "Suggested fix" in c.text and "```suggestion" not in c.text for c in mapped
     )
+
+
+def test_packet_replays_its_treatment_tree_and_names_missing_treatment(
+    score_case, git_repo, tmp_path, monkeypatch
+):
+    root, git = git_repo
+    scripts = root / "scripts/gauntlet"
+    shutil.copytree(
+        validity.ROOT / "scripts/gauntlet",
+        scripts,
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    composer = scripts / "delivery/compose.py"
+    candidate_trailer = "candidate delivery"
+    composer.write_text(
+        composer.read_text(encoding="utf-8")
+        + f"\nBRAND_TRAILER = {candidate_trailer!r}\n",
+        encoding="utf-8",
+    )
+    git("add", "scripts")
+    git("commit", "-qm", "fixture treatment")
+    treatment = validity.agent_read_hash(root)
+    assert treatment != validity.agent_read_hash(validity.ROOT)
+    monkeypatch.setattr(provenance, "_treatment_roots", {})
+
+    run = root / "bench/workspace/runs/run"
+    run.parent.mkdir(parents=True)
+    shutil.move(str(score_case.run), run)
+    linked = tmp_path / "linked-run"
+    linked.symlink_to(run, target_is_directory=True)
+    case = replace(
+        score_case,
+        run=linked,
+        payload=linked / score_case.payload.relative_to(score_case.run),
+    )
+    score._write_json(
+        linked / "run.json",
+        {**read_json(linked / "run.json"), "treatment_git_sha": treatment},
+    )
+    _, trace_path, receipt = emit_trace(tmp_path)
+    review = receipt["payload"]["postReview"]
+    selected = review["findings"]
+    diff = captured_diff(selected)
+    pr = case.payload.parent
+    (pr / "diff.patch").write_text(diff, encoding="utf-8")
+    score._write_json(pr / "code-gauntlet-post-review-abc1234.json", review)
+    (pr / "code-gauntlet-measurement-abc1234.json").write_bytes(trace_path.read_bytes())
+    with monkeypatch.context() as producer:
+        producer.setattr(compose, "BRAND_TRAILER", candidate_trailer)
+        payload = payload_for(selected, diff, "github")
+        score._write_json(case.payload, payload)
+    result = case.execute(attribution=False)
+    with pytest.raises(ValueError, match="delivered payload differs"):
+        provenance.map_delivery(payload, selected, diff)
+
+    packet_path = Path(result["ledger_row"]["packet_path"])
+    loaded = observations.load_packet(packet_path)
+    assert loaded.candidates and all(
+        c.provenance_status == "complete"
+        and c.source_trace_ids
+        and set(c.discovery_dimensions) == {"bug", "intent"}
+        for c in loaded.candidates
+    )
+    assert provenance._treatment_roots[treatment] == root.resolve()
+    assert provenance.reconstruct_delivery(
+        selected, "", platform="github", treatment_root=root
+    ) == provenance.reconstruct_delivery(selected, "", platform="github")
+
+    composer.write_text("dirty treatment\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=f"no plugin tree for treatment {treatment}"):
+        observations.load_packet(packet_path)
+    # Scoring refuses too, rather than marking the run's PRs ambiguous.
+    with pytest.raises(ValueError, match=f"no plugin tree for treatment {treatment}"):
+        case.execute(attribution=False)
+    composer.write_text("BRAND_TRAILER = 'replacement delivery'\n", encoding="utf-8")
+    git("add", "scripts")
+    git("commit", "-qm", "different fixture treatment")
+    with pytest.raises(ValueError, match=f"no plugin tree for treatment {treatment}"):
+        observations.load_packet(packet_path)
+    detached = tmp_path / packet_path.name
+    shutil.copytree(packet_path, detached)
+    provenance._treatment_roots.clear()
+    with pytest.raises(ValueError, match=f"no plugin tree for treatment {treatment}"):
+        observations.load_packet(detached)

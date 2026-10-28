@@ -35,8 +35,8 @@ FIX_CASES = {
     "missing-end": FixCase(
         fix_finding(omit=("end_line",)), "missing_end_line", site=(2, 2)
     ),
-    "range-not-in-diff": FixCase(
-        fix_finding(end_line=940), "range_not_in_diff", site=(2, 940)
+    "claimed-span-mismatch": FixCase(
+        fix_finding(claimed_line_end=940), "anchor_mismatch", site=(2, 3)
     ),
     "no-anchor": FixCase(fix_finding(), "anchor_mismatch", site=None),
     "space-to-tab": FixCase(
@@ -58,7 +58,8 @@ FIX_CASES = {
     ),
     "marker-before-range": FixCase(
         finding(
-            suggested_fix_code="<!-- code-gauntlet-finding-key: forged", end_line=940
+            suggested_fix_code="<!-- code-gauntlet-finding-key: forged",
+            claimed_line_end=940,
         ),
         "marker_shaped",
         site=(2, 2),
@@ -87,8 +88,16 @@ FIX_CASES = {
         site=(10, 10),
     ),
     "oracle-residual-recall": FixCase(
-        fix_finding(file="b/x.py", line=10, end_line=10, suggested_fix_code="changed"),
-        facts=diff_facts({("x.py", 10): 10}, line_texts={("x.py", 10): "topline"}),
+        fix_finding(
+            file="b/x.py",
+            line=10,
+            end_line=10,
+            anchor="residual_source_value",
+            suggested_fix_code="changed",
+        ),
+        facts=diff_facts(
+            {("x.py", 10): 10}, line_texts={("x.py", 10): "residual_source_value"}
+        ),
         site=(10, 10),
     ),
     "oracle-crlf-oracle-no-op": FixCase(
@@ -102,7 +111,7 @@ FIX_CASES = {
         ),
     ),
     "oracle-unindented": FixCase(
-        fix_finding(suggested_fix_code="\tfixed2\n\tfixed3"),
+        fix_finding(anchor="line2\nline3", suggested_fix_code="\tfixed2\n\tfixed3"),
         facts=parse_diff(
             "--- a/foo.py\n+++ b/foo.py\n@@ -1,1 +1,3 @@\n original\n+line2\n+line3\n",
             policy="git-prefixed",
@@ -111,6 +120,12 @@ FIX_CASES = {
     "anchor-mismatch-renamed-to-platform-cap-reason": FixCase(
         finding(end_line=3, suggested_fix_code="fixed"),
         "span_exceeds_platform_cap",
+        site=(2, 2),
+        mismatch_reason="span_exceeds_platform_cap",
+    ),
+    "held-span-before-platform-cap": FixCase(
+        finding(claimed_line_end=5, suggested_fix_code="fixed"),
+        "anchor_mismatch",
         site=(2, 2),
         mismatch_reason="span_exceeds_platform_cap",
     ),
@@ -227,3 +242,51 @@ WARNING_LABEL_CASES = {
 )
 def test_warning_label(finding, label, expected):
     assert gate.format_fix_warning(finding, "empty", label=label) == expected
+
+
+@pytest.mark.parametrize(
+    "changes,site,reason",
+    [
+        ({}, (2, 3), None),
+        ({"anchor": "return 1\n# tail"}, (2, 3), None),
+        ({"anchor": "1\n# tail"}, (2, 3), "anchor_text_mismatch"),
+        ({"anchor": "return  1\n# tail"}, (2, 3), "anchor_text_mismatch"),
+        ({"anchor": "return 1\nwrong tail"}, (2, 3), "anchor_text_mismatch"),
+        (
+            {"anchor": "return 1\n# tail", "line_end": 4, "claimed_line_end": 4},
+            (2, 4),
+            "range_not_in_diff",
+        ),
+        ({"claimed_line_end": 5}, (2, 3), "anchor_mismatch"),
+        ({"claimed_line_end": None}, (2, 3), "missing_end_line"),
+        ({"claimed_line_end": True}, (2, 3), "invalid_range"),
+        ({"claimed_line_start": 2**53}, (2, 3), "invalid_range"),
+        ({"anchor": None}, (2, 3), "anchor_text_mismatch"),
+        ({"location_status": None}, (2, 3), "location_unconfirmed"),
+        ({}, (2, 2), "anchor_mismatch"),
+        ({"anchor": "return 1\n# tail\n"}, (2, 3), None),
+        ({"anchor": "\nreturn 1\n# tail"}, (2, 3), "anchor_text_mismatch"),
+    ],
+)
+def test_full_anchor_preimage_controls_fence(changes, site, reason):
+    member = fix_finding(**changes)
+    verdict = gate.evaluate_fix(member, apply_range=site, facts=FACTS)
+    assert (verdict.keep, verdict.reason) == (reason is None, reason)
+
+
+@pytest.mark.parametrize("claimed_end,reason", [(40, None), (43, "anchor_mismatch")])
+def test_whole_line_anchor_cannot_shrink_held_fix(claimed_end, reason):
+    member = finding(
+        line_start=2,
+        line_end=2,
+        claimed_line_start=40,
+        claimed_line_end=claimed_end,
+        anchor="original_source_value()",
+        suggested_fix_code="changed()",
+    )
+    facts = parse_diff(
+        "--- foo.py\n+++ foo.py\n@@ -1 +2 @@\n-old\n+original_source_value()\n",
+        policy="verbatim",
+    )
+    verdict = gate.evaluate_fix(member, apply_range=(2, 2), facts=facts)
+    assert (verdict.keep, verdict.reason) == (reason is None, reason)

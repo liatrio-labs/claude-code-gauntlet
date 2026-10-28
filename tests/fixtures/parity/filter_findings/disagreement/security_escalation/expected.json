@@ -17,7 +17,9 @@
       "line_start": 30,
       "security_escalation": true,
       "severity": "high",
-      "title": "possible injection"
+      "title": "possible injection",
+      "line_end": 30,
+      "location_status": "confirmed"
     },
     {
       "agent": "bug-detector",
@@ -35,7 +37,9 @@
       "line_start": 30,
       "security_escalation": true,
       "severity": "low",
-      "title": "t15"
+      "title": "t15",
+      "line_end": 30,
+      "location_status": "confirmed"
     }
   ],
   "boosted_count": 2,

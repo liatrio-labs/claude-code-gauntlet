@@ -7,7 +7,9 @@
       "file": "src/router/index.js",
       "line_start": 30,
       "severity": "medium",
-      "confidence": 55
+      "confidence": 55,
+      "line_end": 30,
+      "location_status": "confirmed"
     },
     {
       "id": "T-legit-docs-1",
@@ -16,7 +18,9 @@
       "file": "docs/setup.md",
       "line_start": 5,
       "severity": "low",
-      "confidence": 40
+      "confidence": 40,
+      "line_end": 5,
+      "location_status": "confirmed"
     },
     {
       "id": "T-legit-exfil-1",
@@ -25,7 +29,9 @@
       "file": "src/auth/redirect.py",
       "line_start": 44,
       "severity": "high",
-      "confidence": 70
+      "confidence": 70,
+      "line_end": 44,
+      "location_status": "confirmed"
     },
     {
       "id": "T-legit-exfil-2",
@@ -34,7 +40,9 @@
       "file": "src/widgets/embed.js",
       "line_start": 88,
       "severity": "high",
-      "confidence": 65
+      "confidence": 65,
+      "line_end": 88,
+      "location_status": "confirmed"
     },
     {
       "id": "T-legit-exfil-3",
@@ -43,7 +51,9 @@
       "file": "src/logging/handler.py",
       "line_start": 19,
       "severity": "medium",
-      "confidence": 60
+      "confidence": 60,
+      "line_end": 19,
+      "location_status": "confirmed"
     }
   ],
   "fn": "apply_injection_filter"

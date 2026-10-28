@@ -49,9 +49,21 @@ def test_direct_sessions_interleave_live_and_dry_delivery(
 ) -> None:
     live = post_review.DeliverySession(dry_run=False)
     dry = post_review.DeliverySession(dry_run=True)
-    facts = diff_facts({("x.py", 2): None}, line_texts={("x.py", 2): "old"})
+    facts = diff_facts(
+        {("x.py", 2): None}, line_texts={("x.py", 2): "current_source_value()"}
+    )
     wrapper = {"owner": "o", "repo": "r", "pr_number": 7, "sha": SHA}
-    finding = {"file": "x.py", "line": 2, "title": "T", "body": "b"}
+    finding = {
+        "file": "x.py",
+        "line": 2,
+        "title": "T",
+        "body": "b",
+        "line_start": 2,
+        "line_end": 2,
+        "location_status": "confirmed",
+        "anchor": "current_source_value()",
+        "claimed_line_start": 2,
+    }
 
     class InterleavingForge(FakeGitLab):
         def submit(self, request: PostRequest) -> PostResult:
@@ -83,7 +95,12 @@ def test_direct_sessions_interleave_live_and_dry_delivery(
                 {
                     **wrapper,
                     "findings": [
-                        {**finding, "end_line": 2, "suggested_fix_code": "new"}
+                        {
+                            **finding,
+                            "end_line": 2,
+                            "claimed_line_end": 2,
+                            "suggested_fix_code": "new",
+                        }
                     ],
                 },
             ),
@@ -147,6 +164,10 @@ def test_corroborator_cross_field_wikilink(
     primary: dict[str, object] = {
         "file": "src/edited.py",
         "line": 2,
+        "line_start": 2,
+        "line_end": 2,
+        "location_status": "confirmed",
+        "anchor": "current_source_value()",
         "severity": "high",
         "title": "Primary",
         "body": "Primary body",
@@ -182,7 +203,7 @@ def _deliver(
     if lines is None:
         lines = {("src/edited.py", 2): None}
     if texts is None:
-        texts = {("src/edited.py", 2): "changed"}
+        texts = {("src/edited.py", 2): "current_source_value()"}
     data: ReviewInput = {
         "owner": "o",
         "repo": "r",
@@ -328,7 +349,9 @@ def test_python_sink_containment(case: SinkCase) -> None:
         [cast(Finding, member) for member in members],
         _poison("review_body"),
         lines={(filepath, 2): None} if case.route != "off_diff" else {},
-        texts={(filepath, 2): "context"} if case.route != "off_diff" else {},
+        texts={(filepath, 2): "current_source_value()"}
+        if case.route != "off_diff"
+        else {},
     )
     assert not isinstance(payload, list)
     if payload["platform"] == "github":
@@ -362,6 +385,8 @@ def test_delivery_title_keys() -> None:
         omit=("title", "end_line"),
         file="src/edited.py",
         line=61,
+        line_end=61,
+        anchor="current_source_value()",
         body="Body one",
     )
     calls, lookup = _deliver(
@@ -370,7 +395,7 @@ def test_delivery_title_keys() -> None:
         live=True,
         prior=PriorDelivery(True, frozenset(), frozenset(), None),
         lines={("src/edited.py", 61): 50},
-        texts={("src/edited.py", 61): "context"},
+        texts={("src/edited.py", 61): "current_source_value()"},
     )
     assert lookup == [ForgeCall("review_entries", ReviewTarget("o", "r", 7))]
     assert isinstance(calls, list) and len(calls) == 1
@@ -451,6 +476,10 @@ def test_markup_rekeys_once() -> None:
     finding: Finding = {
         "file": "src/edited.py",
         "line": 2,
+        "line_start": 2,
+        "line_end": 2,
+        "location_status": "confirmed",
+        "anchor": "current_source_value()",
         "severity": "high",
         "title": "@leehopper <table>",
         "body": "Body one",
@@ -494,6 +523,12 @@ def _poisoned_outbound_sinks_finding(*, primary: bool = False) -> dict[str, obje
         file="app/@zz363file/<Slot>.tsx",
         line=2,
         end_line=2,
+        line_start=2,
+        line_end=2,
+        location_status="confirmed",
+        anchor="current_source_value()",
+        claimed_line_start=2,
+        claimed_line_end=2,
         severity="high",
         confidence=90,
         rule_source="repo_precedent",
@@ -524,6 +559,14 @@ def test_prose_active_fences_preserve_owned_patch(
         "file": "src/edited.py",
         "line": 2,
         "end_line": end_line,
+        "line_start": 2,
+        "line_end": end_line,
+        "location_status": "confirmed",
+        "claimed_line_start": 2,
+        "claimed_line_end": end_line,
+        "anchor": "current_source_value()"
+        if end_line == 2
+        else "current_source_value()\ncurrent_source_value()",
         "severity": "high",
         "title": "before x [a]: //example.test/SENT](a b) after",
         "body": "term\n: ~~~suggestion\n  x = SENT\n  ~~~\n\ntail",
@@ -535,7 +578,10 @@ def test_prose_active_fences_preserve_owned_patch(
         platform,
         [finding],
         lines={("src/edited.py", 2): None, ("src/edited.py", 3): None},
-        texts={("src/edited.py", 2): "changed", ("src/edited.py", 3): "changed"},
+        texts={
+            ("src/edited.py", 2): "current_source_value()",
+            ("src/edited.py", 3): "current_source_value()",
+        },
     )
 
     def string_leaves(value: object) -> list[str]:
@@ -582,15 +628,18 @@ def test_prose_active_fences_preserve_owned_patch(
     [
         ("rejected", 3, "/discussions"),
         ("partial", 3, "/discussions"),
-        ("partial", None, "/notes"),
     ],
-    ids=["rejected-discussion", "missing-discussion", "missing-note"],
+    ids=["rejected-discussion", "missing-discussion"],
 )
 def test_gitlab_live_fallback(route: str, line: int | None, endpoint: str) -> None:
     primary = _poisoned_outbound_sinks_finding(primary=True)
     corroborator = _poisoned_outbound_sinks_finding()
     corroborator["line"] = line
     corroborator["end_line"] = line
+    corroborator["line_start"] = line
+    corroborator["line_end"] = line
+    if line is None:
+        corroborator["location_status"] = "unconfirmed"
     primary_key = compose.finding_key(
         primary["file"],
         primary["line"],
@@ -617,7 +666,10 @@ def test_gitlab_live_fallback(route: str, line: int | None, endpoint: str) -> No
             None,
         ),
         lines={(filepath, 2): None, (filepath, 3): None},
-        texts={(filepath, 2): "primary", (filepath, 3): "corroborator"},
+        texts={
+            (filepath, 2): "current_source_value()",
+            (filepath, 3): "current_source_value()",
+        },
     )
     assert lookup == [ForgeCall("review_entries", ReviewTarget("o", "r", 7))]
     assert isinstance(calls, list)

@@ -15,7 +15,9 @@
       "report_destination": "main",
       "report_tag": "main",
       "severity": "medium",
-      "title": null
+      "title": null,
+      "line_end": 40,
+      "location_status": "confirmed"
     },
     {
       "agent": "test-analyzer",
@@ -29,7 +31,9 @@
       "severity": "medium",
       "title": [
         "logic"
-      ]
+      ],
+      "line_end": 80,
+      "location_status": "confirmed"
     }
   ]
 }

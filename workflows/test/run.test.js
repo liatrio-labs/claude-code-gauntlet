@@ -841,7 +841,7 @@ for (const row of CONTEXT_ROWS) test(`context wiring: ${row.name}`, async () => 
   assert.equal(out.phaseReached, 'report');
   assert.equal(out.stats.highConfidence, 2);
   assert.deepEqual(out.gaps.filter((gap) => /context_unmeasured|context_unplannable/.test(gap)), row.gaps);
-  const readers = ctx.calls.filter((call) => call.prompt.includes('/repo/.code-gauntlet/code-gauntlet-context-abc1234.md'));
+  const readers = ctx.calls.filter((call) => !call.label.startsWith('verify-') && call.prompt.includes('/repo/.code-gauntlet/code-gauntlet-context-abc1234.md'));
   assert.deepEqual(readers.map((call) => call.label), ['summarize', ...DISCOVERY, 'validate-batch-0']);
   for (const call of readers) {
     assert.ok(call.prompt.includes('without a truncation notice'));
@@ -1040,10 +1040,10 @@ for (const row of REPLAY_PROJECTION_ROWS) test(`replay delivery projection: ${ro
     checkpoint = derived.checkpoints;
     report = out.persistReturn.entries.find((value) => value.path === PATHS.report).text;
     const text = JSON.stringify(delivered, null, 2);
-    assert.equal(normalizeForChecksum(text).length, 1127);
-    assert.equal(fnv1a32(normalizeForChecksum(text)), 'fnv1a32:0x6d167885');
-    assert.equal(plan.derive[0].chars, 1127);
-    assert.equal(plan.derive[0].checksum, 'fnv1a32:0x6d167885');
+    assert.equal(normalizeForChecksum(text).length, 1203);
+    assert.equal(fnv1a32(normalizeForChecksum(text)), 'fnv1a32:0xdffa72c1');
+    assert.equal(plan.derive[0].chars, 1203);
+    assert.equal(plan.derive[0].checksum, 'fnv1a32:0xdffa72c1');
     assert.equal(payload, null);
     assert.equal(ctx.calls.some((call) => call.label === 'artifact-writer'), false);
   } else { findings = payload.findings; delivered = payload.postReview; checkpoint = payload.checkpoints; report = payload.report; }

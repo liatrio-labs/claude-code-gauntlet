@@ -14,7 +14,9 @@
       "line_start": 21,
       "security_escalation": false,
       "severity": "low",
-      "title": "t7"
+      "title": "t7",
+      "line_end": 21,
+      "location_status": "confirmed"
     }
   ],
   "boosted_count": 0,
@@ -30,7 +32,9 @@
       "id": "D6",
       "line_start": 20,
       "severity": "medium",
-      "title": "missing test"
+      "title": "missing test",
+      "line_end": 20,
+      "location_status": "confirmed"
     }
   ]
 }

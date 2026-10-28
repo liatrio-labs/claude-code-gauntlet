@@ -313,13 +313,22 @@ def run_hook(
         ):
             raise ValueError("window requires full preregistered rule run count")
         if (prior.get("arm") or args.arm) == window.candidate_arm:
+            baseline = next(
+                t for name, t in window.arms.items() if name != window.candidate_arm
+            )
             looks.registration(
-                window.wave_id, window.rule_sha256, started=validity.utc_now()
+                window.wave_id,
+                window.rule_sha256,
+                started=validity.utc_now(),
+                baseline_treatment_sha=baseline.treatment_git_sha,
             )
             if not args.contamination:
                 raise ValueError("candidate requires --contamination PATH")
             contamination = read_json(args.contamination)
             contamination_entries(contamination, epoch)
+            check_baseline_binding(
+                contamination, baseline.treatment_git_sha, baseline.treatment_git_sha
+            )
             check_freeze(contamination, validity.utc_now())
         return None
     if event == "reserve":

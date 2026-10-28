@@ -1,3 +1,4 @@
+import { suppressAuditOverlaps } from './removedTests.js';
 // Pipeline sequencing, replay, diagnostics, and return envelopes.
 import { setupContext } from './contextPlan.js';
 import { coarsenLimits } from './capacity.js';
@@ -167,6 +168,16 @@ export async function runWith(ctx, rawArgs) {
     // Discovery intake covers fresh findings before downstream readers; replayed outputs need the same normalization at every phase.
     const rejected = [];
     if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A, rejected);
+    let verifyRequests;
+    if (name === 'verify') {
+      verifyRequests = out.findings || [];
+      const discovery = phaseOutputs.discover;
+      const audit = suppressAuditOverlaps(verifyRequests, discovery?.removedTestAudit);
+      out.findings = audit.findings;
+      if (discovery) discovery.removedTestAudit = audit.audit;
+      rejected.push(...verifyRequests.filter((f) => !audit.findings.includes(f) && f.trace_id)
+        .map((f) => traceDecision(f, 'audit_overlap', 'removed-test audit represents this anchor')));
+    }
     if (name === 'discover') discoveryDecisions = [...decisionsFor(out), ...rejected];
     if (measurementTrace && ['merge', 'verify', 'validate', 'filter', 'challenge'].includes(name)) {
       recordStage(measurementTrace, name, out, { replayed,
@@ -180,7 +191,7 @@ export async function runWith(ctx, rawArgs) {
     } else if (name === 'discover' && replayed) recordStage(measurementTrace, name, out, { replayed });
     if (name === 'verify') {
       const { eliminated: _eliminated, ...recovery } = out;
-      phaseOutputs[name] = recovery;
+      phaseOutputs[name] = { ...recovery, findings: verifyRequests };
     } else phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
@@ -240,7 +251,9 @@ export async function runWith(ctx, rawArgs) {
     const verifyOut = await runPhase('verify', () => verifyStage(c, {
       findings: mergeOut.findings || [], measurementTrace, limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
       python: A.python, repoRoot: A.repoRoot, outputDir: A.outputDir, pluginRoot: A.pluginRoot,
-      verify: { ...(A.verify || {}), baseBranch: A.baseBranch, diffPath: A.diffPath },
+      verify: { ...(A.verify || {}), baseBranch: A.baseBranch, diffPath: A.diffPath,
+        contextMap: `${A.outputDir}/code-gauntlet-context-map-${A.headShaShort}.json`,
+        contextFile: `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md` },
     }));
     gaps.push(...(verifyOut.gaps || []));
 

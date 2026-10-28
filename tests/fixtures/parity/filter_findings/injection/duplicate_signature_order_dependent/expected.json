@@ -9,7 +9,9 @@
       "id": "I6b",
       "line_start": 20,
       "severity": "medium",
-      "title": "NULL CHECK MISSING"
+      "title": "NULL CHECK MISSING",
+      "line_end": 20,
+      "location_status": "confirmed"
     }
   ],
   "kept": [
@@ -20,7 +22,9 @@
       "id": "I6a",
       "line_start": 20,
       "severity": "medium",
-      "title": "Null check missing"
+      "title": "Null check missing",
+      "line_end": 20,
+      "location_status": "confirmed"
     }
   ]
 }

@@ -10,7 +10,9 @@
       "severity": "high",
       "confidence": 80,
       "title": "possible null deref",
-      "description": "d4"
+      "description": "d4",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "D5",
@@ -21,7 +23,9 @@
       "severity": "low",
       "confidence": 60,
       "title": "t5",
-      "description": "this behavior is intentional and documented"
+      "description": "this behavior is intentional and documented",
+      "line_end": 11,
+      "location_status": "confirmed"
     }
   ]
 }

@@ -9,7 +9,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "claude_md_rule": null
+      "claude_md_rule": null,
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "N2",
@@ -21,7 +23,9 @@
       "confidence": 60,
       "claude_md_rule": {
         "note": "structured citation payload"
-      }
+      },
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "N3",
@@ -31,7 +35,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "spec_text": 42
+      "spec_text": 42,
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "N4",
@@ -44,7 +50,9 @@
       "spec_text": [
         "clause one",
         "clause two"
-      ]
+      ],
+      "line_end": 10,
+      "location_status": "confirmed"
     }
   ]
 }

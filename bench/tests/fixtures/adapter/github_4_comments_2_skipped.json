@@ -14,7 +14,7 @@
       },
       {
         "path": "src/auth/session.py",
-        "line": 92,
+        "line": 91,
         "side": "RIGHT",
         "body": "**🟡 [MEDIUM] Password hashed twice**\n\nhash_password() runs here and again in save(); the double hash makes the stored value fail verification.\n\n⚔️ *Code Gauntlet*",
         "start_line": 88,

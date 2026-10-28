@@ -228,7 +228,9 @@ def _check_union_schema(finding, label):
             failures.append(
                 "{}: missing required field group {}".format(label, "/".join(group))
             )
-    if not any(finding.get(k) not in (None, "") for k in _LINE_FIELDS):
+    if finding.get("location_status") != "unconfirmed" and not any(
+        finding.get(k) not in (None, "") for k in _LINE_FIELDS
+    ):
         failures.append(f"{label}: missing line identity (line_start or line)")
     return failures
 

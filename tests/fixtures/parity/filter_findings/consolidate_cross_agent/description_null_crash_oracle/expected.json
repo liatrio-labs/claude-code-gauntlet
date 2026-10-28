@@ -12,7 +12,9 @@
       "id": "CA1",
       "line_start": 10,
       "severity": "high",
-      "title": "t1"
+      "title": "t1",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "agent": "test-analyzer",
@@ -25,7 +27,9 @@
       "id": "CA2",
       "line_start": 11,
       "severity": "medium",
-      "title": "t2"
+      "title": "t2",
+      "line_end": 11,
+      "location_status": "confirmed"
     },
     {
       "agent": "test-analyzer",
@@ -44,7 +48,9 @@
       "id": "CB1",
       "line_start": 20,
       "severity": "medium",
-      "title": "t3"
+      "title": "t3",
+      "line_end": 20,
+      "location_status": "confirmed"
     },
     {
       "agent": "code-simplifier",
@@ -57,7 +63,9 @@
       "id": "CB2",
       "line_start": 21,
       "severity": "medium",
-      "title": "t4"
+      "title": "t4",
+      "line_end": 21,
+      "location_status": "confirmed"
     }
   ]
 }

@@ -20,20 +20,20 @@ const REFUSED_RECEIPTS = [
     'assemble script reported failure (first; second)', [PATHS.findings, PATHS.report]],
   ['foreign checksum', (r) => ({ ...r, planChecksum: 'other-plan' }),
     'assemble receipt echoed plan checksum other-plan but the pipeline computed '
-    + 'fnv1a32:0xc4e79613 \u2014 the executor did not run this persist plan', []],
+    + 'fnv1a32:0xf382bdca \u2014 the executor did not run this persist plan', []],
   ['unverified report', (r) => ({ ...r, verified: r.verified.slice(0, 1) }),
     `assemble receipt did not verify ${PATHS.report} (no content proof)`, [PATHS.findings]],
   ['unwritten checkpoint', (r) => ({ ...r, written: r.written.slice(0, 1) }),
     `assemble receipt did not write ${PATHS.checkpoints} (no write proof)`, [PATHS.findings, PATHS.report]],
   ['foreign expected chars', (r) => { r.verified[0].expected_chars = 9; return r; },
     `assemble receipt checked ${PATHS.findings} against a foreign expectation (receipt says `
-    + `9 chars/fnv1a32:0x231bd64b, the pipeline handed the writer 1184/fnv1a32:0x231bd64b)`, [PATHS.report]],
+    + `9 chars/fnv1a32:0xf7c0f7c7, the pipeline handed the writer 1336/fnv1a32:0xf7c0f7c7)`, [PATHS.report]],
   ['actual checksum contradicts match', (r) => { r.verified[0].checksum = 'foreign'; return r; },
     `assemble receipt is incoherent for ${PATHS.findings}: content_proof:"match" `
-    + `contradicts its own chars/checksum (1184/foreign vs expected 1184/fnv1a32:0x231bd64b)`, [PATHS.report]],
+    + `contradicts its own chars/checksum (1336/foreign vs expected 1336/fnv1a32:0xf7c0f7c7)`, [PATHS.report]],
   ['derived foreign numbers', (r) => { r.written[0].chars = 19; r.written[0].checksum = 'foreign'; return r; },
     `derived document ${PATHS.postReview} does not match the pipeline's own derivation `
-    + `(receipt reports 19 chars/foreign, the pipeline derived 1184/fnv1a32:0x231bd64b) `
+    + `(receipt reports 19 chars/foreign, the pipeline derived 1336/fnv1a32:0xf7c0f7c7) `
     + `\u2014 the delivered payload is not what this run produced`, [PATHS.findings, PATHS.report]],
   ['null receipt', () => null, 'assemble executor returned no receipt', []],
   ['mismatched primary is not salvageable', (r) => {
@@ -61,7 +61,7 @@ for (const [name, patch, reason, proven] of REFUSED_RECEIPTS) {
   });
 }
 const FINDINGS_MISMATCH_GAP = `artifact-content-proof: ${PATHS.findings} bytes on disk differ from the payload handed `
-  + 'to the writer (expected 1184 chars/checksum fnv1a32:0x231bd64b, got 1185/fnv1a32:0x0000dead)';
+  + 'to the writer (expected 1336 chars/checksum fnv1a32:0xf7c0f7c7, got 1185/fnv1a32:0x0000dead)';
 const ACCEPTED_RECEIPTS = [
   ['honest', (r) => r, []],
   ['findings content differs without retry', (r) => {
@@ -76,11 +76,11 @@ const ACCEPTED_RECEIPTS = [
     FINDINGS_MISMATCH_GAP,
     `artifact-content-proof: derived document ${PATHS.postReview} does not match the `
     + `pipeline's own derivation (receipt reports 1189 chars/fnv1a32:0x0000beef, the pipeline `
-    + `derived 1184/fnv1a32:0x231bd64b) \u2014 expected, since ${PATHS.findings} it was `
+    + `derived 1336/fnv1a32:0xf7c0f7c7) \u2014 expected, since ${PATHS.findings} it was `
     + `derived from also diverged`,
     `artifact-content-proof: derived document ${PATHS.checkpoints} does not match the `
     + `pipeline's own derivation (receipt reports 1408 chars/fnv1a32:0x0000beef, the pipeline `
-    + `derived 1403/fnv1a32:0xea7a545d) \u2014 expected, since ${PATHS.findings} it was `
+    + `derived 1579/fnv1a32:0x07a56615) \u2014 expected, since ${PATHS.findings} it was `
     + `derived from also diverged`,
   ]],
 ];

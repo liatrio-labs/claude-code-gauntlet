@@ -18,8 +18,8 @@ from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from bench.runner import provenance
 from bench.runner.contracts import (
-    HOST_SET_ENV,
     AuthMode,
     ScoreRef,
     artifact_allowed,
@@ -39,6 +39,10 @@ from bench.runner.epochs import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+# Provenance owns the treatment digest because it sits lower in the layer order.
+PLUGIN_PATHS = provenance.PLUGIN_PATHS
+agent_read_hash = provenance.agent_read_hash
+require_clean_treatment = provenance.require_clean_treatment
 
 CheckpointStatus = Literal["pending", "ok", "timeout", "invalid", "drifted", "failed"]
 ValidityState = Literal["valid", "invalid", "pending", "operational_failure"]
@@ -61,7 +65,7 @@ LIMITATIONS = (
 )
 
 
-def refuse_ambient_model_overrides(env, auth_mode=None):
+def refuse_ambient_model_overrides(env):
     provider_keys = {
         "CLAUDE_CODE_USE_BEDROCK",
         "CLAUDE_CODE_USE_VERTEX",
@@ -70,9 +74,6 @@ def refuse_ambient_model_overrides(env, auth_mode=None):
         "ANTHROPIC_BASE_URL",
     }
     override_keys = {*MODEL_OVERRIDE_KEYS, *EFFORT_KEYS}
-    if auth_mode == "host":
-        provider_keys.remove("ANTHROPIC_BASE_URL")
-        override_keys -= set(HOST_SET_ENV)
     if any(k in env for k in override_keys) or any(
         env.get(k) and env[k].lower() not in ("0", "false") for k in provider_keys
     ):
@@ -300,7 +301,7 @@ def capture_fingerprint(
     cli_probe=cli_probe,
     model_probe=model_probe,
 ):
-    refuse_ambient_model_overrides(env, auth_mode)
+    refuse_ambient_model_overrides(env)
     path = Path(cli_path).resolve(strict=True)
     models = {**model_probe(root, policy), "orchestrator": child_model}
     if env.get("DISABLE_AUTOUPDATER") != "1":
@@ -700,35 +701,6 @@ def benchmark_policy(timeout_s, *, resolve_limits=True, root=ROOT):
         "stage_limits": limits,
         "capacity_policy_sha256": file_hash(Path(root) / "workflows/src/capacity.js"),
     }
-
-
-PLUGIN_PATHS = (".claude-plugin", "agents", "skills", "workflows", "scripts")
-
-
-def require_clean_treatment(root=ROOT):
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no", "--", *PLUGIN_PATHS],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
-    )
-    if status.stdout.strip():
-        raise ValueError("input_drift: measurement requires clean tracked files")
-
-
-def agent_read_hash(root=ROOT):
-    # The index records names, modes and blob ids for the entire loaded plugin tree.
-    entries = subprocess.run(
-        ["git", "ls-files", "--stage", "-z", "--", *PLUGIN_PATHS],
-        cwd=root,
-        capture_output=True,
-        check=True,
-    ).stdout.split(b"\0")
-    if not entries or entries == [b""]:
-        raise ValueError("missing plugin index tree")
-    return digest(sorted(row.decode("utf-8") for row in entries if row))
 
 
 def run_provenance(

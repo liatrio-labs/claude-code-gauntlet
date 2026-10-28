@@ -1,3 +1,4 @@
+import { canonicalRange } from './location.js';
 import { WS_TRIM_RE, asText, asConfidence, deepFreeze } from './wire.js';
 import { INJECTION_STRIPPED_PROSE_FIELDS } from './registry.js';
 
@@ -405,7 +406,7 @@ function injectionScanCore(findings, includeH4, rules) {
         }
       } else if (row.kind === 'duplicate') {
         // Ordered tuple encoding keeps title and location boundaries unambiguous for duplicate detection.
-        const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, finding.line_start]);
+        const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, canonicalRange(finding) ? ['resolved', finding.line_start] : ['unconfirmed', finding.id]]);
         if (seenSignatures.has(sig)) {
           reasons.push(`${row.label} ${JSON.stringify(seenSignatures.get(sig))}`);
         } else {
