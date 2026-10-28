@@ -658,7 +658,11 @@ def packet_traces(path):
 
 
 def validate_packet_evidence(path, packet, epoch):
-    from bench.runner.provenance import bind_candidates, trace_delivery
+    from bench.runner.provenance import (
+        bind_candidates,
+        packet_treatment_root,
+        trace_delivery,
+    )
 
     bindings = read_json(path / "stage_trace_bindings.json")
     traces = packet_traces(path)
@@ -674,6 +678,9 @@ def validate_packet_evidence(path, packet, epoch):
                 read_json(confined(path, delivery["selected_path"])),
                 read_json(confined(path, delivery["payload_path"])),
                 confined(path, delivery["diff_path"]).read_text(encoding="utf-8"),
+                treatment_root=packet_treatment_root(
+                    path, packet.manifest.score_ref.run_id
+                ),
             )
             group = tuple(c for c in packet.candidates if c.pr_url == url)
             if group != bind_candidates(group, mapped):
