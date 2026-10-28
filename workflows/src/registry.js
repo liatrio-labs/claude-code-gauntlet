@@ -74,7 +74,8 @@ export const CODE_OWNED_HEADINGS = deepFreeze([
   '## Review Methodology',
 ]);
 
-export const ANCHOR_LIMITS = deepFreeze({ lines: 4, chars: 400 });
+// Agents are asked for 1 to 4 lines; a longer exact quote is more specific, and chars bounds its cost.
+export const ANCHOR_LIMITS = deepFreeze({ lines: 8, chars: 400 });
 
 export const LOCATION_RIGHTS = deepFreeze({
   confirmed: { body: true, sourceLink: true, inline: true, fence: true, patch: true, fixTask: true },
