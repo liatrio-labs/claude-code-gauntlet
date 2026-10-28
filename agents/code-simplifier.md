@@ -132,7 +132,7 @@ A convention finding grounded in an in-repo precedent names the files that estab
 
 **6. Issues explicitly silenced in code.** If the author has added a comment documenting a deliberate complexity (e.g., "// intentionally verbose for debuggability"), respect the intent.
 
-**7. Intentional complexity for a stated reason.** When the PR description or code comment explains why the complex form was chosen (performance, debuggability, forward compatibility), do not flag it without a compelling counter-argument.
+**7. Intentional complexity for a stated reason.** When a code comment explains why the complex form was chosen (performance, debuggability, forward compatibility), do not flag it without a compelling counter-argument.
 
 **8. Issues flagged by CLAUDE.md rules that the code explicitly opts out of.** If a file has a file-level opt-out directive, do not flag issues governed by those rules in that file.
 
