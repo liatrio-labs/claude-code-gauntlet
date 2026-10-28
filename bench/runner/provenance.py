@@ -51,24 +51,20 @@ def agent_read_hash(root=ROOT):
 _TREATMENT_ROOTS: dict[str, Path | None] = {}
 
 
-def packet_treatment_root(path, run_id):
-    """Plugin checkout to replay a packet's delivery under; None means this one."""
-    treatment = read_json(path / "run-provenance.json").get("treatment_git_sha")
+def treatment_root(run_dir, treatment):
+    """Plugin checkout to replay a run's delivery under; None means this one."""
     if not _TREATMENT_ROOTS:
         _TREATMENT_ROOTS[agent_read_hash(ROOT)] = None
     if not treatment or (
         treatment in _TREATMENT_ROOTS and not _TREATMENT_ROOTS[treatment]
     ):
         return None
-    # The run directory lives in the checkout that produced it, even through a symlink.
-    root = _TREATMENT_ROOTS.get(treatment) or next(
-        (
-            parent.parents[3]
-            for parent in path.resolve().parents
-            if parent.name == run_id
-            and parent.parent.parts[-3:] == ("bench", "workspace", "runs")
-        ),
-        None,
+    # A run directory lives in the checkout that produced it, even through a symlink.
+    resolved = Path(run_dir).resolve() if run_dir else None
+    root = _TREATMENT_ROOTS.get(treatment) or (
+        resolved.parents[3]
+        if resolved and resolved.parent.parts[-3:] == ("bench", "workspace", "runs")
+        else None
     )
     # Recheck each load: that checkout may have moved on since the root was cached.
     try:
@@ -79,6 +75,20 @@ def packet_treatment_root(path, run_id):
         raise ValueError(f"no plugin tree for treatment {treatment}") from exc
     _TREATMENT_ROOTS[treatment] = root
     return root
+
+
+def packet_treatment_root(path, run_id):
+    treatment = read_json(path / "run-provenance.json").get("treatment_git_sha")
+    run_dir = next(
+        (
+            parent
+            for parent in path.resolve().parents
+            if parent.name == run_id
+            and parent.parent.parts[-3:] == ("bench", "workspace", "runs")
+        ),
+        None,
+    )
+    return treatment_root(run_dir, treatment)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +120,7 @@ class RenderedDeliveryWire(TypedDict):
 
 
 class DeliveryOmissionWire(TypedDict):
-    trace_ids: list[str | None]
+    trace_ids: list[str]
     reason_code: Literal["unanchored", "body_budget"]
     reason: str
 
@@ -120,13 +130,30 @@ class DeliveryReplayWire(TypedDict):
     omissions: list[DeliveryOmissionWire]
 
 
+ReplayErrorName = Literal["ValueError", "KeyError", "TypeError"]
+_REPLAY_ERRORS: dict[str, type[Exception]] = {
+    "ValueError": ValueError,
+    "KeyError": KeyError,
+    "TypeError": TypeError,
+}
+
+
+class ReplayErrorWire(TypedDict):
+    error: ReplayErrorName
+    message: str
+
+
 def _replay_main():
     from dataclasses import asdict
 
     try:
         result = reconstruct_delivery(**json.load(sys.stdin))
     except (ValueError, KeyError, TypeError) as exc:
-        json.dump({"error": type(exc).__name__, "args": exc.args}, sys.stdout)
+        failure: ReplayErrorWire = {
+            "error": cast(ReplayErrorName, type(exc).__name__),
+            "message": str(exc),
+        }
+        json.dump(failure, sys.stdout)
         return
     wire: DeliveryReplayWire = {
         "groups": [
@@ -169,12 +196,8 @@ def _replay_delivery(findings, diff_text, platform, root):
     )
     wire = json.loads(result.stdout)
     if "error" in wire:
-        errors = {
-            "ValueError": ValueError,
-            "KeyError": KeyError,
-            "TypeError": TypeError,
-        }
-        raise errors[wire["error"]](*wire["args"])
+        failure = decode(ReplayErrorWire, wire)
+        raise _REPLAY_ERRORS[failure["error"]](failure["message"])
     wire = decode(DeliveryReplayWire, wire)
     members = {f.get("trace_id"): f for f in findings}
     return DeliveryReconstruction(

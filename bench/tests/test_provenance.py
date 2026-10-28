@@ -172,7 +172,7 @@ def test_packet_replays_its_treatment_tree_and_names_missing_treatment(
         producer.setattr(compose, "BRAND_TRAILER", candidate_trailer)
         payload = payload_for(selected, diff, "github")
         score._write_json(case.payload, payload)
-        result = case.execute(attribution=False)
+    result = case.execute(attribution=False)
     with pytest.raises(ValueError, match="delivered payload differs"):
         provenance.map_delivery(payload, selected, diff)
 

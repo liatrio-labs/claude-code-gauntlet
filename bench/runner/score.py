@@ -648,6 +648,12 @@ def score_run(
     evaluator = evaluator_for(epoch, pin, adjudicator_pin)
     candidate_map = observations.candidate_records(candidates, attempts)
     delivery_bindings = {}
+    # Outside the per-PR guard: a missing treatment tree must fail, not mark PRs ambiguous.
+    replay_root = (
+        provenance.treatment_root(run_dir, manifest.get("treatment_git_sha"))
+        if traces
+        else None
+    )
     for url, (path, trace) in traces.items():
         info = per_pr[url]
         pr_dir = Path(info["pr_dir"])
@@ -674,6 +680,7 @@ def score_run(
                 read_json(inputs["selected_path"]),
                 read_json(inputs["payload_path"]),
                 inputs["diff_path"].read_text(encoding="utf-8"),
+                treatment_root=replay_root,
             )
             delivery_bindings[url] = {
                 key: str(Path("sources") / p.relative_to(run_dir))
