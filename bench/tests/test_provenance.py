@@ -144,7 +144,7 @@ def test_packet_replays_its_treatment_tree_and_names_missing_treatment(
     git("commit", "-qm", "fixture treatment")
     treatment = validity.agent_read_hash(root)
     assert treatment != validity.agent_read_hash(validity.ROOT)
-    monkeypatch.setattr(provenance, "_TREATMENT_ROOTS", {})
+    monkeypatch.setattr(provenance, "_treatment_roots", {})
 
     run = root / "bench/workspace/runs/run"
     run.parent.mkdir(parents=True)
@@ -184,7 +184,7 @@ def test_packet_replays_its_treatment_tree_and_names_missing_treatment(
         and set(c.discovery_dimensions) == {"bug", "intent"}
         for c in loaded.candidates
     )
-    assert provenance._TREATMENT_ROOTS[treatment] == root.resolve()
+    assert provenance._treatment_roots[treatment] == root.resolve()
     assert provenance.reconstruct_delivery(
         selected, "", platform="github", treatment_root=root
     ) == provenance.reconstruct_delivery(selected, "", platform="github")
@@ -192,6 +192,9 @@ def test_packet_replays_its_treatment_tree_and_names_missing_treatment(
     composer.write_text("dirty treatment\n", encoding="utf-8")
     with pytest.raises(ValueError, match=f"no plugin tree for treatment {treatment}"):
         observations.load_packet(packet_path)
+    # Scoring refuses too, rather than marking the run's PRs ambiguous.
+    with pytest.raises(ValueError, match=f"no plugin tree for treatment {treatment}"):
+        case.execute(attribution=False)
     composer.write_text("BRAND_TRAILER = 'replacement delivery'\n", encoding="utf-8")
     git("add", "scripts")
     git("commit", "-qm", "different fixture treatment")
@@ -199,6 +202,6 @@ def test_packet_replays_its_treatment_tree_and_names_missing_treatment(
         observations.load_packet(packet_path)
     detached = tmp_path / packet_path.name
     shutil.copytree(packet_path, detached)
-    provenance._TREATMENT_ROOTS.clear()
+    provenance._treatment_roots.clear()
     with pytest.raises(ValueError, match=f"no plugin tree for treatment {treatment}"):
         observations.load_packet(detached)

@@ -48,47 +48,47 @@ def agent_read_hash(root=ROOT):
     return digest(sorted(row.decode("utf-8") for row in entries if row))
 
 
-_TREATMENT_ROOTS: dict[str, Path | None] = {}
+RUNS_LAYOUT = ("bench", "workspace", "runs")
+_local_digest: list[str] = []
+_treatment_roots: dict[str, Path] = {}
 
 
-def treatment_root(run_dir, treatment):
-    """Plugin checkout to replay a run's delivery under; None means this one."""
-    if not _TREATMENT_ROOTS:
-        _TREATMENT_ROOTS[agent_read_hash(ROOT)] = None
-    if not treatment or (
-        treatment in _TREATMENT_ROOTS and not _TREATMENT_ROOTS[treatment]
-    ):
+def resolve_treatment_root(run_dir, treatment):
+    """Plugin checkout to replay a run's delivery under; None means this one.
+
+    A run without a treatment digest predates the record and replays here.
+    """
+    if not _local_digest:
+        _local_digest.append(agent_read_hash(ROOT))
+    if not treatment or treatment == _local_digest[0]:
         return None
     # A run directory lives in the checkout that produced it, even through a symlink.
     resolved = Path(run_dir).resolve() if run_dir else None
-    root = _TREATMENT_ROOTS.get(treatment) or (
+    root = _treatment_roots.get(treatment) or (
         resolved.parents[3]
-        if resolved and resolved.parent.parts[-3:] == ("bench", "workspace", "runs")
+        if resolved and resolved.parent.parts[-3:] == RUNS_LAYOUT
         else None
     )
     # Recheck each load: that checkout may have moved on since the root was cached.
     try:
-        if root is None or agent_read_hash(root) != treatment:
-            raise ValueError("treatment digest mismatch")
-        require_clean_treatment(root)
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        raise ValueError(f"no plugin tree for treatment {treatment}") from exc
-    _TREATMENT_ROOTS[treatment] = root
+        matches = root is not None and agent_read_hash(root) == treatment
+        if matches:
+            require_clean_treatment(root)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        matches = False
+    if not matches:
+        raise ValueError(f"no plugin tree for treatment {treatment}")
+    _treatment_roots[treatment] = root
     return root
 
 
 def packet_treatment_root(path, run_id):
     treatment = read_json(path / "run-provenance.json").get("treatment_git_sha")
     run_dir = next(
-        (
-            parent
-            for parent in path.resolve().parents
-            if parent.name == run_id
-            and parent.parent.parts[-3:] == ("bench", "workspace", "runs")
-        ),
+        (p for p in path.resolve().parents if p.name == run_id),
         None,
     )
-    return treatment_root(run_dir, treatment)
+    return resolve_treatment_root(run_dir, treatment)
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,7 +131,7 @@ class DeliveryReplayWire(TypedDict):
 
 
 ReplayErrorName = Literal["ValueError", "KeyError", "TypeError"]
-_REPLAY_ERRORS: dict[str, type[Exception]] = {
+_REPLAY_ERRORS: dict[ReplayErrorName, type[Exception]] = {
     "ValueError": ValueError,
     "KeyError": KeyError,
     "TypeError": TypeError,
@@ -148,9 +148,10 @@ def _replay_main():
 
     try:
         result = reconstruct_delivery(**json.load(sys.stdin))
-    except (ValueError, KeyError, TypeError) as exc:
+    except tuple(_REPLAY_ERRORS.values()) as exc:
+        # Subclasses such as JSONDecodeError relay as their declared base.
         failure: ReplayErrorWire = {
-            "error": cast(ReplayErrorName, type(exc).__name__),
+            "error": next(n for n, t in _REPLAY_ERRORS.items() if isinstance(exc, t)),
             "message": str(exc),
         }
         json.dump(failure, sys.stdout)

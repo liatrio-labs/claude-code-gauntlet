@@ -18,6 +18,7 @@ from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from bench.runner import provenance
 from bench.runner.contracts import (
     AuthMode,
     ScoreRef,
@@ -36,13 +37,12 @@ from bench.runner.epochs import (
     load_epoch,
     read_json,
 )
-from bench.runner.provenance import (  # noqa: F401  re-exported for validity callers
-    PLUGIN_PATHS,
-    agent_read_hash,
-    require_clean_treatment,
-)
 
 ROOT = Path(__file__).resolve().parents[2]
+# Provenance owns the treatment digest because it sits lower in the layer order.
+PLUGIN_PATHS = provenance.PLUGIN_PATHS
+agent_read_hash = provenance.agent_read_hash
+require_clean_treatment = provenance.require_clean_treatment
 
 CheckpointStatus = Literal["pending", "ok", "timeout", "invalid", "drifted", "failed"]
 ValidityState = Literal["valid", "invalid", "pending", "operational_failure"]

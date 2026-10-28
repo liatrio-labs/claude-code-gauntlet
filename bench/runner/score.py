@@ -650,7 +650,7 @@ def score_run(
     delivery_bindings = {}
     # Outside the per-PR guard: a missing treatment tree must fail, not mark PRs ambiguous.
     replay_root = (
-        provenance.treatment_root(run_dir, manifest.get("treatment_git_sha"))
+        provenance.resolve_treatment_root(run_dir, manifest.get("treatment_git_sha"))
         if traces
         else None
     )
