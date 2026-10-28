@@ -18,6 +18,7 @@ from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from bench.runner import provenance
 from bench.runner.contracts import (
     AuthMode,
     ScoreRef,
@@ -38,6 +39,10 @@ from bench.runner.epochs import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+# Provenance owns the treatment digest because it sits lower in the layer order.
+PLUGIN_PATHS = provenance.PLUGIN_PATHS
+agent_read_hash = provenance.agent_read_hash
+require_clean_treatment = provenance.require_clean_treatment
 
 CheckpointStatus = Literal["pending", "ok", "timeout", "invalid", "drifted", "failed"]
 ValidityState = Literal["valid", "invalid", "pending", "operational_failure"]
@@ -696,35 +701,6 @@ def benchmark_policy(timeout_s, *, resolve_limits=True, root=ROOT):
         "stage_limits": limits,
         "capacity_policy_sha256": file_hash(Path(root) / "workflows/src/capacity.js"),
     }
-
-
-PLUGIN_PATHS = (".claude-plugin", "agents", "skills", "workflows", "scripts")
-
-
-def require_clean_treatment(root=ROOT):
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no", "--", *PLUGIN_PATHS],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
-    )
-    if status.stdout.strip():
-        raise ValueError("input_drift: measurement requires clean tracked files")
-
-
-def agent_read_hash(root=ROOT):
-    # The index records names, modes and blob ids for the entire loaded plugin tree.
-    entries = subprocess.run(
-        ["git", "ls-files", "--stage", "-z", "--", *PLUGIN_PATHS],
-        cwd=root,
-        capture_output=True,
-        check=True,
-    ).stdout.split(b"\0")
-    if not entries or entries == [b""]:
-        raise ValueError("missing plugin index tree")
-    return digest(sorted(row.decode("utf-8") for row in entries if row))
 
 
 def run_provenance(
