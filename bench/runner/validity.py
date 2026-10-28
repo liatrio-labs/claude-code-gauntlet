@@ -675,16 +675,23 @@ def validate_interleaving(selections, window, runs):
     def together(a, b):
         return abs(min(starts[a]) - min(starts[b])) <= PAIR_START_TOLERANCE
 
+    def valid_pair(pair):
+        return (
+            len(pair) == 2
+            and pair[0][1] == pair[1][1]
+            and (before(*pair) or together(*pair))
+        )
+
+    def precedes(pair, following):
+        return all(before(x, y) for x in pair for y in following)
+
     pairs = [order[i : i + 2] for i in range(0, len(order), 2)]
     if (
         set(order) != {(a, r) for a, indices in runs for r in indices}
         or len(order) != len(starts)
         or any(a[0] == b[0] for a, b in pairwise(order))
-        or any(
-            len(p) != 2 or p[0][1] != p[1][1] or not (before(*p) or together(*p))
-            for p in pairs
-        )
-        or not all(before(x, y) for p, q in pairwise(pairs) for x in p for y in q)
+        or not all(map(valid_pair, pairs))
+        or not all(precedes(p, q) for p, q in pairwise(pairs))
     ):
         raise ValueError("selected attempts do not follow planned interleaving")
 
