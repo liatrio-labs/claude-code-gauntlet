@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyStage } from '../src/verifyStage.js';
 import { deltaContentProof } from '../src/verifyWire.js';
+import { ANCHOR_LIMITS } from '../src/registry.js';
 import { deltaEnvelope, deltasFor, ELIMINATION_STAMP, verifyCtx, verifyInput, dispatchedFindings, sliceInputRecorder } from './helpers/verifyDelta.js';
 import { outsideSingleQuotes, shellSplit } from './helpers/shellWords.js';
 
@@ -437,7 +438,7 @@ test('location deltas require shape and content proofs', async () => {
   const rows = [
     { location_status: undefined }, { location_status: 'forged' },
     { line_start: 0 }, { line_start: 1.5 }, { line_end: Number.MAX_SAFE_INTEGER + 1 },
-    { line_start: 4, line_end: 2 }, { line_end: 5 },
+    { line_start: 4, line_end: 2 }, { line_end: ANCHOR_LIMITS.lines + 1 },
     { location_status: 'unconfirmed', line_start: 1, line_end: 1 },
   ];
   for (const fields of rows) {
