@@ -343,6 +343,8 @@ effort. Preflight precedes spend. Gate PRs run sequentially and each comparison
 requires a complete PR-by-run matrix of independent review runs. Each window is a block and freezes a
 cross-arm run order. Selected attempts' start times must follow it. Rescoring creates
 no new independent run. Selected attempts and their provenance remain immutable.
+Packet delivery replay uses its recorded treatment's plugin tree, resolving a clean
+checkout containing the physical run directory when the loading checkout differs.
 
 A first non-ok outcome is invalid and retryable. A second non-ok outcome for the same
 PR/window and observed fingerprint is an all-missed operational failure on API, or on

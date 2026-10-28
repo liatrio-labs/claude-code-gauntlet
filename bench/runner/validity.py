@@ -36,6 +36,11 @@ from bench.runner.epochs import (
     load_epoch,
     read_json,
 )
+from bench.runner.provenance import (  # noqa: F401  re-exported for validity callers
+    PLUGIN_PATHS,
+    agent_read_hash,
+    require_clean_treatment,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -696,35 +701,6 @@ def benchmark_policy(timeout_s, *, resolve_limits=True, root=ROOT):
         "stage_limits": limits,
         "capacity_policy_sha256": file_hash(Path(root) / "workflows/src/capacity.js"),
     }
-
-
-PLUGIN_PATHS = (".claude-plugin", "agents", "skills", "workflows", "scripts")
-
-
-def require_clean_treatment(root=ROOT):
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no", "--", *PLUGIN_PATHS],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
-    )
-    if status.stdout.strip():
-        raise ValueError("input_drift: measurement requires clean tracked files")
-
-
-def agent_read_hash(root=ROOT):
-    # The index records names, modes and blob ids for the entire loaded plugin tree.
-    entries = subprocess.run(
-        ["git", "ls-files", "--stage", "-z", "--", *PLUGIN_PATHS],
-        cwd=root,
-        capture_output=True,
-        check=True,
-    ).stdout.split(b"\0")
-    if not entries or entries == [b""]:
-        raise ValueError("missing plugin index tree")
-    return digest(sorted(row.decode("utf-8") for row in entries if row))
 
 
 def run_provenance(
