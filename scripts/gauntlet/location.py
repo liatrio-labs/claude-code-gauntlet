@@ -115,7 +115,7 @@ def resolve_location(
     hunks: Sequence[tuple[int, int]],
     old_spans: Sequence[OldSpan],
 ) -> Resolution:
-    """Apply claimed, map, unique-file, then unique-hunk precedence to one file."""
+    """Apply claimed, map, claimed-among-matches, unique-file, then unique-hunk precedence."""
 
     def unconfirmed(reason: ResolutionReason) -> Resolution:
         return Resolution(None, None, "unconfirmed", reason)
@@ -163,6 +163,10 @@ def resolve_location(
         and translated["line"] in starts
     ):
         return resolved(translated["line"], "relocated", "context_map")
+    # The map reading missed every match, so only the source reading of the number holds.
+    if c in starts:
+        assert c is not None
+        return resolved(c, "confirmed", "claimed")
     if len(starts) == 1:
         return resolved(next(iter(starts)), "relocated", "unique")
     in_hunks = {

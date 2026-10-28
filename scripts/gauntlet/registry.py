@@ -493,7 +493,7 @@ ANCHOR_SCHEMA = MappingProxyType(
 
 ANCHOR_LIMITS = MappingProxyType(
     {
-        "lines": 4,
+        "lines": 8,
         "chars": 400,
     }
 )

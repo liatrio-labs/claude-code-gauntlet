@@ -199,7 +199,7 @@ const CODE_OWNED_HEADINGS = deepFreeze([
   '## Review Dimensions Summary',
   '## Review Methodology',
 ]);
-const ANCHOR_LIMITS = deepFreeze({ lines: 4, chars: 400 });
+const ANCHOR_LIMITS = deepFreeze({ lines: 8, chars: 400 });
 const LOCATION_RIGHTS = deepFreeze({
   confirmed: { body: true, sourceLink: true, inline: true, fence: true, patch: true, fixTask: true },
   relocated: { body: true, sourceLink: true, inline: true, fence: true, patch: true, fixTask: true },

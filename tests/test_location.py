@@ -34,7 +34,8 @@ def test_source_git_timeout_leaves_source_unavailable(tmp_path, monkeypatch, ope
         (2, 1, ("src/other", "head", 2), (1, 1, "confirmed", "claimed")),
         (2, 1, ("src/item", "head", 2), (2, 2, "relocated", "context_map")),
         (2, 1, ("src/item", "head", 1), (1, 1, "relocated", "context_map")),
-        (2, 1, ("src/item", "old", 9), (None, None, "unconfirmed", "ambiguous")),
+        (2, 1, ("src/item", "old", 9), (1, 1, "confirmed", "claimed")),
+        (2, 1, ("src/item", "head", 9), (1, 1, "confirmed", "claimed")),
         (1, 1, ("src/item", "head", 9), (1, 1, "confirmed", "claimed")),
     ],
 )
@@ -126,6 +127,20 @@ def test_map_then_unique_then_hunk_order(line, head, claimed, entry, hunks, expe
             "claimed",
         ),
         ("N1 +|" + "\U0001f600" * 400, ["\U0001f600" * 400], 1, 1, "claimed"),
+        (
+            "\n".join(f"step({i})" for i in range(8)),
+            [f"step({i})" for i in range(8)],
+            1,
+            8,
+            "claimed",
+        ),
+        (
+            "\n".join(f"step({i})" for i in range(9)),
+            [f"step({i})" for i in range(9)],
+            None,
+            None,
+            "invalid_anchor",
+        ),
     ],
 )
 def test_quote_presentation_and_exact_whitespace(anchor, head, start, end, reason):
