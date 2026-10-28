@@ -743,6 +743,24 @@ def test_rule_capacity_is_checked_at_the_schema_boundary(
         assert reached == ([True] if schema_version == 2 else [])
 
 
+def test_a_run_pair_may_start_together_but_never_overlaps_the_next_pair(case, tmp_path):
+    spec, packets = case.build()
+    spec = audited(spec, packets, tmp_path / "audit")
+
+    def restart(arm, index, at, only=None):
+        ref = getattr(spec, arm).scores[index]
+        for (r, u), attempt in list(case.attempts.items()):
+            if r == ref and only in (None, u):
+                case.attempts[r, u] = replace(attempt, started_at=at)
+
+    retried = next(u for r, u in case.attempts if r == spec.baseline.scores[1])
+    restart("candidate", 1, "2026-10-20T12:02:00Z")
+    restart("baseline", 1, "2026-10-20T12:03:30Z", only=retried)
+    paired(spec, packets)
+    restart("baseline", 1, "2026-10-20T12:04:30Z", only=retried)
+    refuses(paired, spec, packets, match="planned interleaving")
+
+
 @pytest.fixture
 def decision_case(case):
     primary = paired(*case.build("mini", False)).population_reports[0]

@@ -11,7 +11,7 @@ import subprocess
 import sys
 import uuid
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from itertools import pairwise
 from pathlib import Path
 from typing import Literal
@@ -653,6 +653,11 @@ def load_selected_attempt(packet, url, aid):
     return attempt
 
 
+# A pair of runs, one per arm, either runs in planned order or starts together; starting
+# together shares the time-of-day conditions as well as alternating does.
+PAIR_START_TOLERANCE = timedelta(minutes=1)
+
+
 def validate_interleaving(selections, window, runs):
     order = tuple((a, r) for a, r in window.planned_order if r in dict(runs)[a])
     starts = {
@@ -663,12 +668,23 @@ def validate_interleaving(selections, window, runs):
         ]
         for a, r in order
     }
+
+    def before(a, b):
+        return max(starts[a]) < min(starts[b])
+
+    def together(a, b):
+        return abs(min(starts[a]) - min(starts[b])) <= PAIR_START_TOLERANCE
+
+    pairs = [order[i : i + 2] for i in range(0, len(order), 2)]
     if (
         set(order) != {(a, r) for a, indices in runs for r in indices}
         or len(order) != len(starts)
+        or any(a[0] == b[0] for a, b in pairwise(order))
         or any(
-            a[0] == b[0] or max(starts[a]) >= min(starts[b]) for a, b in pairwise(order)
+            len(p) != 2 or p[0][1] != p[1][1] or not (before(*p) or together(*p))
+            for p in pairs
         )
+        or not all(before(x, y) for p, q in pairwise(pairs) for x in p for y in q)
     ):
         raise ValueError("selected attempts do not follow planned interleaving")
 
