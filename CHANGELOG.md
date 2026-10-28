@@ -2,6 +2,61 @@
 
 <!-- version list -->
 
+## v3.50.0 (2026-10-28)
+
+### Bug Fixes
+
+- Address gauntlet, Bugbot and code-quality review on location delivery
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **location**: Treat a unique agent-written anchor as the finding's location
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+### Chores
+
+- **bench**: Drop the one-time location replay tool
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+### Features
+
+- Findings carry source anchors and resolve their own location (#46)
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **bench**: Offline location replay over saved Verify inputs, and keep plausible claims in place
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **context**: Number diff lines with their source lines and resolve anchors in code
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **contract**: Declare the finding anchor and location status once in the registry
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **contract**: Require the anchor in agent answers
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **delivery**: Post, link and fence only locations the pipeline proved
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **verify**: Place findings by their anchor before blame, membership and filtering
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+### Testing
+
+- **verify**: Write the diff fixture as bytes so its size matches on Windows
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+
 ## v3.49.3 (2026-10-28)
 
 ### Bug Fixes
