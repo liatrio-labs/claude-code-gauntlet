@@ -2360,3 +2360,11 @@ def test_score_only_forwards_explicit_epoch_and_prints_score_identity(
         "epoch_id": None,
         "attempt_selection": None,
     }
+    assert run.main(["--score-only", "r", "--surface-views"]) == 0
+    assert calls[-1][1] == {
+        "epoch_id": None,
+        "attempt_selection": None,
+        "surface_views": True,
+    }
+    assert run.main(["--surface-views"]) == 2
+    assert "--surface-views requires --score-only" in capsys.readouterr().err

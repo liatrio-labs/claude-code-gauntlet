@@ -1,7 +1,7 @@
 import { deepClone, RETURN_CHAR_BUDGET } from './wire.js';
 
-export const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'holdback', 'select', 'deliver'];
-export const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'unknown'];
+export const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'cite', 'dispose', 'holdback', 'select', 'deliver'];
+export const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
 const traceHistory = new WeakMap();
 const stageDecisions = new WeakMap();
 export const decisionsFor = (output) => stageDecisions.get(output) || [];
@@ -65,9 +65,14 @@ export function recordStage(trace, stage, output, details = {}) {
 }
 export function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;
-  const candidate = { ...envelope, measurement: { status: 'available', text: JSON.stringify(trace) } };
+  return appendBudgetedMeasurement(envelope,
+    { status: 'available', text: JSON.stringify(trace) },
+    { status: 'unavailable', reason: 'return_budget' });
+}
+export function appendBudgetedMeasurement(envelope, available, unavailable) {
+  const candidate = { ...envelope, measurement: available };
   if (JSON.stringify(candidate).length <= RETURN_CHAR_BUDGET) return candidate;
-  const fallback = { ...envelope, measurement: { status: 'unavailable', reason: 'return_budget' } };
+  const fallback = { ...envelope, measurement: unavailable };
   return JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET ? fallback : envelope;
 }
 

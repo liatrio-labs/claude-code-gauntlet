@@ -8,7 +8,6 @@ SRC = REPO / "workflows" / "src"
 _EXPORT_FN = re.compile(r"^export\s+(?:async\s+)?function\s+(\w+)\s*\(", re.M)
 
 EXPORT_ALLOWLIST = {
-    "persist.js:parseWriterPayload": "R-044 intentional-and-documented (test-only)",
     "args.js:normalizeArgs": "R-045 intentional-and-documented (test-only)",
 }
 

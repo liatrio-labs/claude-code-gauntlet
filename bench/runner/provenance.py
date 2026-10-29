@@ -9,14 +9,15 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, TypedDict, cast, get_args
 
-from gauntlet.delivery import gate, post
+from gauntlet.delivery import compose, gate, post
 from gauntlet.delivery.input import ReviewInput
 from gauntlet.diff import parse_diff, posting_policy
+from gauntlet.marker import SHA_RE
 
 from bench.adapter.adapt import _iter_comments
 from bench.runner.decode import decode
 from bench.runner.epochs import JsonValue, digest, read_json
-from bench.runner.observations import Dimension, ProvenanceStatus
+from bench.runner.observations import Dimension, ProvenanceStatus, Surface
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_PATHS = (".claude-plugin", "agents", "skills", "workflows", "scripts")
@@ -94,9 +95,10 @@ def packet_treatment_root(path, run_id):
 @dataclass(frozen=True, slots=True)
 class RenderedDelivery:
     body: str
-    path: str
-    line: int
+    path: str | None
+    line: int | None
     members: tuple[dict[str, JsonValue], ...]
+    surface: Surface = "inline"
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,13 +112,15 @@ class DeliveryOmission:
 class DeliveryReconstruction:
     groups: tuple[RenderedDelivery, ...]
     omissions: tuple[DeliveryOmission, ...]
+    summary: str | None = None
 
 
 class RenderedDeliveryWire(TypedDict):
     body: str
-    path: str
-    line: int
+    path: str | None
+    line: int | None
     trace_ids: list[str | None]
+    surface: Surface
 
 
 class DeliveryOmissionWire(TypedDict):
@@ -128,6 +132,7 @@ class DeliveryOmissionWire(TypedDict):
 class DeliveryReplayWire(TypedDict):
     groups: list[RenderedDeliveryWire]
     omissions: list[DeliveryOmissionWire]
+    summary: str | None
 
 
 ReplayErrorName = Literal["ValueError", "KeyError", "TypeError"]
@@ -163,15 +168,17 @@ def _replay_main():
                 "path": row.path,
                 "line": row.line,
                 "trace_ids": [f.get("trace_id") for f in row.members],
+                "surface": row.surface,
             }
             for row in result.groups
         ],
         "omissions": [asdict(row) for row in result.omissions],
+        "summary": result.summary,
     }
     json.dump(wire, sys.stdout)
 
 
-def _replay_delivery(findings, diff_text, platform, root):
+def _replay_delivery(findings, diff_text, platform, root, review_body, sha):
     # Pin gauntlet before bench's bootstrap adds the loading checkout's scripts.
     script = (
         "import sys; sys.path[:0] = sys.argv[1:]; "
@@ -188,7 +195,13 @@ def _replay_delivery(findings, diff_text, platform, root):
             str(ROOT),
         ],
         input=json.dumps(
-            dict(selected_findings=findings, diff_text=diff_text, platform=platform)
+            dict(
+                selected_findings=findings,
+                diff_text=diff_text,
+                platform=platform,
+                review_body=review_body,
+                sha=sha,
+            )
         ),
         capture_output=True,
         text=True,
@@ -208,25 +221,96 @@ def _replay_delivery(findings, diff_text, platform, root):
                 row["path"],
                 row["line"],
                 tuple(members[tid] for tid in row["trace_ids"]),
+                row["surface"],
             )
             for row in wire["groups"]
         ),
         tuple(decode(DeliveryOmission, row) for row in wire["omissions"]),
+        wire["summary"],
     )
 
 
 @dataclass(frozen=True, slots=True)
 class DeliveryProvenance:
     text: str
-    path: str
-    line: int
+    path: str | None
+    line: int | None
     source_trace_ids: tuple[str, ...]
     discovery_dimensions: tuple[Dimension, ...]
     provenance_status: ProvenanceStatus = "complete"
+    surface: Surface = "inline"
+    issue_id: str | None = None
+
+
+def _reconstruct_body_summary(
+    findings, skipped_groups, inline_count, platform, review_body, sha
+) -> DeliveryReconstruction:
+    # Calling plan_summary without a captured SHA would consult today's HEAD.
+    if (
+        not isinstance(review_body, str)
+        or not isinstance(sha, str)
+        or not SHA_RE.fullmatch(sha)
+    ):
+        raise ValueError(
+            "body reconstruction requires original review body and captured SHA"
+        )
+    finalized = post.plan_summary(
+        cast(
+            ReviewInput,
+            {"findings": findings, "review_body": review_body, "sha": sha},
+        ),
+        skipped_groups,
+        platform=platform,
+        inline_count=inline_count if platform == "github" else None,
+    )
+    if finalized.budget_error:
+        raise ValueError(finalized.budget_error)
+    summary = finalized.summary.body
+    rendered, omissions = [], []
+    if skipped_groups:
+        frame = compose._skipped_frame(
+            sum(len(g) for g in skipped_groups),
+            finalized.summary.shown,
+            inline_count if platform == "github" else None,
+        )
+        if summary.count(frame) != 1:
+            raise ValueError("ambiguous body section")
+        cursor = summary.index(frame) + len(frame)
+        shown = 0
+        for group in skipped_groups:
+            fragment = "".join(
+                compose._skipped_piece(e.filepath, e.finding) for e in group
+            )
+            members = tuple(e.finding for e in group)
+            if summary.startswith(fragment, cursor):
+                rendered.append(
+                    RenderedDelivery(
+                        fragment, group[0].filepath, group[0].line, members, "body"
+                    )
+                )
+                cursor += len(fragment)
+                shown += len(group)
+            else:
+                omissions.append(
+                    DeliveryOmission(
+                        tuple(f.get("trace_id") for f in members),
+                        "body_budget",
+                        "whole body group omitted by summary budget",
+                    )
+                )
+        if shown != finalized.summary.shown:
+            raise ValueError("body fragment membership differs from composer")
+    return DeliveryReconstruction(tuple(rendered), tuple(omissions), summary)
 
 
 def reconstruct_delivery(
-    selected_findings, diff_text, *, platform, treatment_root=None
+    selected_findings,
+    diff_text,
+    *,
+    platform,
+    treatment_root=None,
+    review_body=None,
+    sha=None,
 ):
     """Reproduce initial dry-run delivery ordering, folding and patch demotion."""
     findings = []
@@ -241,15 +325,29 @@ def reconstruct_delivery(
                 f[alias] = f[key]
         findings.append(f)
     if treatment_root is not None:
-        return _replay_delivery(findings, diff_text, platform, treatment_root)
+        return _replay_delivery(
+            findings, diff_text, platform, treatment_root, review_body, sha
+        )
     data = cast(ReviewInput, {"findings": findings})
     facts = parse_diff(diff_text, policy=posting_policy(platform))
     plan = post.plan_delivery(data, facts, platform=platform)
     session = post.DeliverySession(dry_run=True)
     rendered = []
     omissions = []
+    skipped_groups = []
+    wants_body = review_body is not None and sha is not None
     for group in plan.groups:
         if isinstance(group, post.DegradedGroup):
+            if wants_body:
+                skipped_groups.append(
+                    tuple(
+                        compose.SkippedEntry(
+                            m.path, m.finding.get("line"), session.activate(m)
+                        )
+                        for m in group.members
+                    )
+                )
+                continue
             omissions.append(
                 DeliveryOmission(
                     tuple(m.finding.get("trace_id") for m in group.members),
@@ -297,21 +395,48 @@ def reconstruct_delivery(
                 (group.primary.finding, *(m.finding for m in corroborators)),
             )
         )
-    return DeliveryReconstruction(tuple(rendered), tuple(omissions))
+    summary = None
+    if wants_body:
+        body = _reconstruct_body_summary(
+            findings, skipped_groups, len(rendered), platform, review_body, sha
+        )
+        rendered.extend(body.groups)
+        omissions.extend(body.omissions)
+        summary = body.summary
+    return DeliveryReconstruction(tuple(rendered), tuple(omissions), summary)
 
 
 def map_delivery(
-    payload, selected_findings, diff_text, *, treatment_root=None
+    payload,
+    selected_findings,
+    diff_text,
+    *,
+    treatment_root=None,
+    review_body=None,
+    sha=None,
 ) -> tuple[DeliveryProvenance, ...]:
     """Attach provenance only after exact ordered body/path/line equality."""
     actual = tuple(_iter_comments(payload))
-    planned = reconstruct_delivery(
+    reconstructed = reconstruct_delivery(
         selected_findings,
         diff_text,
         platform=payload.get("platform"),
         treatment_root=treatment_root,
-    ).groups
-    if actual != tuple((r.body, r.path, r.line) for r in planned):
+        review_body=review_body,
+        sha=sha,
+    )
+    planned = reconstructed.groups
+    if reconstructed.summary is not None:
+        captured = (
+            (payload.get("payload") or {}).get("body")
+            if payload.get("platform") == "github"
+            else (payload.get("summary") or {}).get("body")
+        )
+        if captured != reconstructed.summary:
+            raise ValueError("delivered summary differs from pure delivery plan")
+    if actual != tuple(
+        (r.body, r.path, r.line) for r in planned if r.surface == "inline"
+    ):
         raise ValueError("delivered payload differs from pure delivery plan")
     all_ids = [f.get("trace_id") for row in planned for f in row.members]
     if len(all_ids) != len(set(all_ids)):
@@ -335,6 +460,8 @@ def map_delivery(
                 line,
                 ids,
                 dimensions,
+                surface=row.surface,
+                issue_id=digest(sorted(ids)),
             )
         )
     return tuple(out)
@@ -344,7 +471,8 @@ def bind_candidates(candidates, mapped):
     if len(candidates) != len(mapped):
         raise ValueError("candidate provenance length mismatch")
     if any(
-        (c.text, c.path, c.line) != (m.text, m.path, m.line)
+        (c.text, c.path, c.line, c.surface) != (m.text, m.path, m.line, m.surface)
+        or (c.issue_id is not None and c.issue_id != m.issue_id)
         for c, m in zip(candidates, mapped, strict=True)
     ):
         raise ValueError("candidate provenance identity mismatch")
@@ -359,9 +487,18 @@ def bind_candidates(candidates, mapped):
     )
 
 
-def trace_delivery(trace, selected, payload, diff, *, treatment_root=None):
+def trace_delivery(
+    trace, selected, payload, diff, *, treatment_root=None, include_body=False
+):
     from bench.runner.stages import bind_delivery_trace
 
+    body_inputs = {}
+    if include_body:
+        if not isinstance(selected, dict):
+            raise ValueError("original body evidence unavailable")
+        body_inputs = {k: selected.get(k) for k in ("review_body", "sha")}
+        if any(value is None for value in body_inputs.values()):
+            raise ValueError("original body evidence unavailable")
     selected = selected.get("findings", []) if isinstance(selected, dict) else selected
     versions = {v.version_id: v for v in trace.versions}
     expected = [
@@ -389,8 +526,14 @@ def trace_delivery(trace, selected, payload, diff, *, treatment_root=None):
         }
         for f, original in zip(selected, expected, strict=True)
     ]
-    mapped = map_delivery(payload, selected, diff, treatment_root=treatment_root)
+    mapped = map_delivery(
+        payload, selected, diff, treatment_root=treatment_root, **body_inputs
+    )
     omissions = reconstruct_delivery(
-        selected, diff, platform=payload["platform"], treatment_root=treatment_root
+        selected,
+        diff,
+        platform=payload["platform"],
+        treatment_root=treatment_root,
+        **body_inputs,
     ).omissions
     return bind_delivery_trace(trace, mapped, omissions=omissions), mapped

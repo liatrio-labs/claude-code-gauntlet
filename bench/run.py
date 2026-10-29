@@ -1258,7 +1258,7 @@ def _resume(run_id, args, retry):
     return _exit_code(final, urls)
 
 
-def _score_only(run_id, *, epoch_id=None, attribution=False):
+def _score_only(run_id, *, epoch_id=None, attribution=False, surface_views=False):
     run_dir = RUNS_ROOT / run_id
     try:
         from bench.runner import score
@@ -1279,6 +1279,8 @@ def _score_only(run_id, *, epoch_id=None, attribution=False):
         }
         if attribution:
             options["attribution"] = True
+        if surface_views:
+            options["surface_views"] = True
         result = score.score_run(str(run_dir), **options)
     except (ValueError, RuntimeError) as exc:
         print(f"--score-only failed for {run_id}: {exc}", file=sys.stderr)
@@ -1403,6 +1405,11 @@ def parse_args(argv=None):
         "or the operator's Claude subscription via CLAUDE_CODE_OAUTH_TOKEN",
     )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
+    parser.add_argument(
+        "--surface-views",
+        action="store_true",
+        help="with --score-only, opt into a full paid all-surface re-score",
+    )
     parser.add_argument("--golden-epoch", metavar="EPOCH_ID")
     parser.add_argument("--unseal-holdout", help="one-time final-SHA unseal receipt")
     parser.add_argument(
@@ -1497,7 +1504,12 @@ def main(argv=None):
             options["epoch_id"] = args.golden_epoch
         if args.attribution:
             options["attribution"] = True
+        if args.surface_views:
+            options["surface_views"] = True
         return _score_only(args.score_only, **options)
+    if args.surface_views:
+        print("--surface-views requires --score-only", file=sys.stderr)
+        return 2
     if args.check:
         # --check inspects an existing run; combining it with new-run flags is always a
         # mistake (the flags would be silently ignored). Fail loud.
