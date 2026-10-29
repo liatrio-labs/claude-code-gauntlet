@@ -1,8 +1,11 @@
 {
-  "checksum": "fnv1a32:0xbf8e8695",
+  "checksum": "fnv1a32:0x516584c3",
   "deltas": [
     {
       "confidence": 55,
+      "diff_validation": {
+        "in_diff": true
+      },
       "id": "conv-401",
       "line_end": 42,
       "line_start": 42,
@@ -21,6 +24,9 @@
       "confidence": 55,
       "cross_file_refs": [],
       "description": "This method uses camelCase while every other method in the module uses snake_case.",
+      "diff_validation": {
+        "in_diff": true
+      },
       "dimension": "convention",
       "end_line": 42,
       "evidence": "def getOrderId(self):",

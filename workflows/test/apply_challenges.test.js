@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyChallenges, rankFindings } from '../src/applyChallenges.js';
 import { finding, consolidationFinding } from './helpers/findings.js';
+import { disposeFindings } from '../src/dispose.js';
 
 const CHALLENGE_CASES = [
   { name: 'score zero downgrades critical security finding', f: { severity: 'critical', dimension: 'security' }, challenge: { id: 'f1',
@@ -42,7 +43,7 @@ test('challenge: mixed removed, downgraded, contested, survived and unchallenged
   assert.deepEqual(out.findings.map((f) => f.id), ['f3', 'f4', 'f5', 'f2']);
   assert.deepEqual(out.eliminated.map((f) => f.id), ['f1']);
   assert.deepEqual(out.stats, { total_input: 5, challenge_removed: 1, challenge_downgraded: 1, challenge_contested: 1,
-    challenge_survived: 1, unchallenged: 1, cross_agent_consolidated: 0, final_count: 4 });
+    challenge_survived: 1, unchallenged: 1, final_count: 4 });
 });
 
 const RANK_CASES = [
@@ -105,7 +106,7 @@ const CONSOLIDATION_CHALLENGE_ROWS = [
   },
 ];
 for (const row of CONSOLIDATION_CHALLENGE_ROWS) test(`challenge consolidation: ${row.name}`, () => {
-  const out = applyChallenges(row.input.map(consolidationFinding), row.challenges);
+  const out = disposeFindings(applyChallenges(row.input.map(consolidationFinding), row.challenges));
   assert.deepEqual({ ids: out.findings.map((item) => item.id), keys: out.findings.map((item) => item.consolidation_key),
     consolidated: out.stats.cross_agent_consolidated,
     dedup: out.eliminated.some((item) => item.eliminated_by === 'dedup:cross-agent') }, row.expected);

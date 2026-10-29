@@ -1,8 +1,11 @@
 {
-  "checksum": "fnv1a32:0xec6bbce8",
+  "checksum": "fnv1a32:0x48123c02",
   "deltas": [
     {
       "confidence": 80,
+      "diff_validation": {
+        "in_diff": true
+      },
       "id": "ws-1",
       "line_end": 12,
       "line_start": 10,
@@ -31,6 +34,9 @@
       "confidence": 80,
       "cross_file_refs": [],
       "description": "Finding whose id is the bare token; must stay distinct from its whitespace-padded twin for the content proof.",
+      "diff_validation": {
+        "in_diff": true
+      },
       "dimension": "bug",
       "end_line": 12,
       "evidence": "x = 1",

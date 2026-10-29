@@ -116,7 +116,7 @@ for (const row of FILTER_ROWS) test(`filter forwarding: ${row.name}`, () => {
 
 const CHALLENGE_GOLDEN = {
   total_input: 1, dispatched: 1, completed: 1, skipped: 0, challenge_removed: 0, challenge_downgraded: 0,
-  challenge_contested: 0, challenge_survived: 1, unchallenged: 0, cross_agent_consolidated: 0, final_count: 1,
+  challenge_contested: 0, challenge_survived: 1, unchallenged: 0, final_count: 1,
 };
 const CHALLENGE_ROWS = [
   { name: 'negative cap clamps to zero', input: [finding({ id: 'F1' }), finding({ id: 'F2', severity: 'critical' })],

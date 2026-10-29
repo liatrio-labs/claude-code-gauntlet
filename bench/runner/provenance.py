@@ -277,23 +277,28 @@ def _reconstruct_body_summary(
             raise ValueError("ambiguous body section")
         cursor = summary.index(frame) + len(frame)
         shown = 0
-        for group in skipped_groups:
-            fragment = "".join(
-                compose._skipped_piece(e.filepath, e.finding) for e in group
-            )
-            members = tuple(e.finding for e in group)
+        dimensions: set[str] = set()
+        for group in compose._ordered_skipped_groups(skipped_groups):
+            proposed = set(dimensions)
+            fragment = compose._digest_pieces(group, proposed)
+            members = tuple(cast(dict[str, JsonValue], e.finding) for e in group)
             if summary.startswith(fragment, cursor):
                 rendered.append(
                     RenderedDelivery(
-                        fragment, group[0].filepath, group[0].line, members, "body"
+                        fragment,
+                        cast(str | None, group[0].filepath),
+                        cast(int | None, group[0].line),
+                        members,
+                        "body",
                     )
                 )
                 cursor += len(fragment)
                 shown += len(group)
+                dimensions = proposed
             else:
                 omissions.append(
                     DeliveryOmission(
-                        tuple(f.get("trace_id") for f in members),
+                        tuple(cast(str, f.get("trace_id")) for f in members),
                         "body_budget",
                         "whole body group omitted by summary budget",
                     )

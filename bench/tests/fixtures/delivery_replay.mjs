@@ -12,6 +12,7 @@ import { runWith } from '../../../workflows/src/run.js';
 const finding = (occurrence, over = {}) => makeFinding(occurrence === 4 ? 'DUP' : `F${occurrence}`, {
   file: `${occurrence}.js`, trace_id: `nonce-xyz:0:${occurrence}`,
   agent: 'bug-detector', discovery_agent: 'bug-detector', discovery_dimension: 'bug', ...over,
+  diff_validation: { in_diff: true, reason: 'fixture diff membership' },
   line: 10, end_line: 10,
 });
 const winner = finding(0, { id: 'DUP' });
@@ -21,23 +22,34 @@ const grouped = finding(1, { file: winner.file, title: 'corroborating defect',
   discovery_agent: 'conventions-and-intent', discovery_dimension: 'intent' });
 const held = finding(3, { validation: 'skipped' });
 const eliminated = finding(4, { eliminated_by: 'challenge:removed', elimination_reason: 'disproved' });
-const findings = [winner, grouped, held, eliminated];
+const filtered = finding(5, { confidence: 10, eliminated_by: 'threshold', elimination_reason: 'below threshold' });
+const findings = [winner, grouped, held, eliminated, filtered];
 const phaseInputs = {
   summarize: { summary: 'Synthetic replay', gaps: [] },
   discover: { findings, dispatched: ['code-gauntlet:bug-detector'], degraded: [], removedTestAudit: {} },
   merge: { findings, methodology: { findings_per_channel: { ndjson: findings.length } } },
   verify: { findings, verified: true, inputProof: { trusted: findings.length } },
   validate: { findings, stats: { skipped: 1 } },
-  filter: { filtered: findings, eliminated: [], stats: {} },
+  filter: { filtered: findings.filter((f) => f !== filtered), eliminated: [filtered], stats: {} },
   challenge: { findings: [winner, grouped], unverified: [{ ...held, challenge: 'capped' }],
-    eliminated: [eliminated], stats: {} },
+    eliminated: [filtered, eliminated], stats: {} },
 };
 const rows = {};
-for (const mode of ['return', 'derived', 'legacy', 'writer-failure']) {
+for (const mode of ['return', 'derived', 'legacy', 'writer-failure', 'empty', 'candidate']) {
   // Clone each phase independently: real phase outputs do not share finding objects.
   const phases = Object.fromEntries(Object.entries(phaseInputs).map(([key, out]) => [key, structuredClone(out)]));
+  if (mode === 'candidate') for (const output of Object.values(phases)) {
+    for (const bucket of ['findings', 'unverified', 'eliminated', 'filtered']) {
+      for (const finding of output[bucket] || []) if (finding.file === '4.js') finding.id = 'ELIM';
+    }
+  }
+  if (mode === 'empty') for (const output of Object.values(phases)) {
+    for (const bucket of ['findings', 'unverified', 'eliminated', 'filtered']) if (Array.isArray(output[bucket])) output[bucket] = [];
+  }
   const args = normalizeArgs(validArgs({ contextLines: 1, contextChars: 1, measurementTrace: true,
-    limits: { deliveryCap: 1 }, delivery: { tier: 'all' }, checkpoints: phases,
+    limits: { deliveryCap: 1 }, delivery: { tier: 'all', prIdentity: {
+      owner: 'synthetic', repo: 'fixture', pr_number: 1, sha_full: 'a'.repeat(40), platform: 'github', web_origin: 'https://github.com',
+    } }, checkpoints: phases,
     ...(mode === 'return' ? { persist: { returnPrimaries: true } } : mode === 'legacy' ? {} : { persist: {} }),
   }));
   const dispatches = [];

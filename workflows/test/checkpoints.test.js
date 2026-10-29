@@ -158,11 +158,14 @@ for (const row of REPLAY_ROWS) {
     const args = validArgs(challenge ? { checkpoints: { challenge } } : {});
     const { out, ctx, payload } = await runAndCapture(args);
     assert.equal(out.ok, true);
-    const cp = payload.checkpoints.phases.challenge;
+    const raw = payload.checkpoints.phases.challenge;
+    const cp = { findings: payload.findings.filter((f) => ['deliver', 'body', 'report_only'].includes(f.disposition)),
+      unverified: payload.findings.filter((f) => f.disposition === 'held_back'),
+      eliminated: payload.findings.filter((f) => f.disposition === 'eliminate') };
+    if (challenge) assert.deepEqual(raw.findings.map((f) => f.id), challenge.findings.map((f) => f.id));
     assert.deepEqual(cp.findings.map((finding) => finding.id), expected.kept);
-    assert.deepEqual(payload.findings.map((finding) => finding.id), expected.kept);
     assert.deepEqual(payload.postReview.map((finding) => finding.id), expected.kept);
-    assert.deepEqual(cp.unverified.map((finding) => finding.id), expected.unverified);
+    assert.deepEqual(cp.unverified.map((finding) => finding.id).sort(), [...expected.unverified].sort());
     assert.deepEqual(cp.eliminated.map((finding) => finding.id), expected.eliminated);
     assert.equal(out.stats.challenge.final_count, expected.final);
     assert.equal(out.stats.highConfidence, expected.kept.length);
@@ -195,7 +198,7 @@ for (const row of REPLAY_ROWS) {
     }
     if (row.legacyBody) {
       assert.equal(cp.eliminated[0].description, SHELL_PAYLOAD);
-      assert.equal(cp.eliminated[0].body, undefined);
+      assert.equal(cp.eliminated[0].body, SHELL_PAYLOAD);
     }
     const gaps = out.gaps.filter((gap) => gap.startsWith('replay-filter:'));
     if (expected.belt) {
@@ -213,14 +216,12 @@ for (const row of REPLAY_ROWS) {
       const snapshot = JSON.parse(JSON.stringify(cp));
       const second = await runAndCapture(validArgs({ checkpoints: { challenge: cp } }));
       assert.equal(second.out.ok, true);
-      assert.equal(second.out.stats.challenge.replay_belt_eliminated, 0);
+      assert.equal(second.out.stats.challenge.replay_belt_eliminated, undefined);
       assert.deepEqual(second.out.gaps.filter((gap) => gap.startsWith('replay-filter:')), gaps);
-      assert.deepEqual(second.payload.checkpoints.phases.challenge.findings, snapshot.findings);
-      assert.deepEqual(second.payload.checkpoints.phases.challenge.eliminated, snapshot.eliminated);
-      assert.deepEqual(second.payload.checkpoints.phases.challenge.unverified, snapshot.unverified);
+      assert.deepEqual(second.payload.findings, [...snapshot.findings, ...snapshot.unverified, ...snapshot.eliminated]);
       assert.equal(second.out.stats.challenge.held_back, expected.held);
       assert.equal(second.out.stats.challenge.skipped, expected.skipped);
-      const survivor = second.payload.checkpoints.phases.challenge.findings.find((finding) => finding.id === (row.regrouped ? 'CLEAN' : 'M1'));
+      const survivor = second.payload.findings.find((finding) => finding.id === (row.regrouped ? 'CLEAN' : 'M1'));
       assert.ok(survivor);
       assert.deepEqual(survivor, snapshot.findings.find((finding) => finding.id === (row.regrouped ? 'CLEAN' : 'M1')));
     }

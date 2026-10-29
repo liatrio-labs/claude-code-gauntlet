@@ -206,6 +206,14 @@ const LOCATION_RIGHTS = deepFreeze({
   unconfirmed: { body: true, sourceLink: false, inline: false, fence: false, patch: false, fixTask: false },
 });
 const LOCATION_STATUSES = deepFreeze(Object.keys(LOCATION_RIGHTS));
+const DISPOSITION_RIGHTS = deepFreeze({
+  deliver: { inline: true, body: true, report: 'finding', fixTask: true, patch: true, fence: true, sourceLink: true },
+  body: { inline: false, body: true, report: 'finding', fixTask: false, patch: false, fence: false, sourceLink: true },
+  held_back: { inline: false, body: false, report: 'unverified', fixTask: false, patch: false, fence: false, sourceLink: false },
+  report_only: { inline: false, body: false, report: 'finding', fixTask: false, patch: false, fence: false, sourceLink: false },
+  eliminate: { inline: false, body: false, report: 'eliminated', fixTask: false, patch: false, fence: false, sourceLink: false },
+});
+const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
 const FINDING_PROP_TYPES = deepFreeze({
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
@@ -424,6 +432,16 @@ function canonicalRange(finding) {
 function locationAllows(finding, right) {
   const status = canonicalRange(finding) ? finding.location_status : 'unconfirmed';
   return LOCATION_RIGHTS[status][right] === true;
+}
+function deliveryAllows(finding, right) {
+  const stamp = finding?.disposition;
+  const rights = typeof stamp === 'string' && Object.hasOwn(DISPOSITION_RIGHTS, stamp)
+    && (finding.disposition_reasons === undefined || (Array.isArray(finding.disposition_reasons)
+      && finding.disposition_reasons.every((reason) => typeof reason === 'string')))
+    ? DISPOSITION_RIGHTS[stamp] : DISPOSITION_RIGHTS.held_back;
+  if (right === 'report') return rights.report === 'finding';
+  if (right === 'unverified' || right === 'eliminated') return rights.report === right;
+  return rights[right] === true && locationAllows(finding, right);
 }
 function clearLocation(finding) {
   const out = { ...finding, location_status: 'unconfirmed' };
@@ -1067,7 +1085,7 @@ function encodeSliceInline(content) {
   return encoded;
 }
 const VERIFY_INLINE_CHAR_BUDGET = 50000;
-const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status'];
+const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation'];
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
 const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
 function deltasById(deltas) {
@@ -1084,6 +1102,7 @@ function joinVerifyDeltas(slice, deltas) {
     const delta = byId.get(f.id);
     if (!delta || delta.verified === false) continue;
     const joined = clearLocation(pinNumericFields(f));
+    delete joined.diff_validation;
     for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
     if (canonicalRange(joined) && (Object.hasOwn(f, 'line') || Object.hasOwn(f, 'end_line'))) {
       joined.line = joined.line_start;
@@ -1521,7 +1540,7 @@ function traceDecision(finding, reason_code, reason, related = [], decision = 'e
   return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related };
 }
 function eliminationDecisions(output) {
-  const codes = { threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
+  const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
     'suppressed:intentional': 'suppression', 'suppressed:generated': 'suppression',
     'challenge:removed': 'challenge_removed', 'challenge:downgraded': 'challenge_downgraded_removed' };
   return (output.eliminated || []).filter((f) => f.trace_id)
@@ -2792,10 +2811,11 @@ function consolidateCrossAgent(findings) {
   return { findings, consolidatedCount };
 }
 function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
-  const { findings: tagged, consolidatedCount } = consolidateCrossAgent(findings);
   let mainCount = 0;
   let suggestionCount = 0;
-  for (const finding of tagged) {
+  for (const finding of findings) {
+    delete finding.consolidation_key;
+    delete finding.consolidation_primary;
     const agent = pyGet(finding, 'agent', '').toLowerCase();
     const dimension = finding.dimension ? String(finding.dimension).toLowerCase() : '';
     let destination;
@@ -2834,7 +2854,7 @@ function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
     if (destination === 'main') mainCount += 1;
     else suggestionCount += 1;
   }
-  return { tagged, consolidatedCount, mainCount, suggestionCount };
+  return { tagged: findings, mainCount, suggestionCount };
 }
 function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   const total = findings.length;
@@ -2863,7 +2883,7 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   ).length;
   const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
   allEliminated.push(...elimSuppressed);
-  const { tagged, consolidatedCount, mainCount, suggestionCount } = tagFindings(active);
+  const { tagged, mainCount, suggestionCount } = tagFindings(active);
   const promotedCount = tagged.filter((f) => f.promoted_from === 'test-analyzer').length;
   const dimensionRouted = tagged.filter((f) => f.routed_by === 'dimension').length;
   const reachabilityDemoted = [...tagged, ...allEliminated]
@@ -2884,7 +2904,6 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
       singleton_penalized: singletonPenalized,
       dimension_routed: dimensionRouted,
       reachability_demoted: reachabilityDemoted,
-      cross_agent_consolidated: consolidatedCount,
       test_analyzer_promoted: promotedCount,
       tagged_main: mainCount,
       tagged_suggestion: suggestionCount,
@@ -2998,8 +3017,7 @@ function applyChallenges(findings, challenges) {
     }
   }
   const totalInput = findings.length;
-  const { findings: consolidatedActive, consolidatedCount } = consolidateCrossAgent(active);
-  const ranked = rankFindings(consolidatedActive);
+  const ranked = rankFindings(active);
   return {
     findings: ranked,
     eliminated,
@@ -3010,7 +3028,6 @@ function applyChallenges(findings, challenges) {
       challenge_contested: stats.challenge_contested,
       challenge_survived: stats.challenge_survived,
       unchallenged: stats.unchallenged,
-      cross_agent_consolidated: consolidatedCount,
       final_count: ranked.length,
     },
   };
@@ -3770,6 +3787,8 @@ function coerceReportFinding(finding, severities) {
       value = reportAsConfidence(raw);
     } else if (key === 'corroborations') {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
+    } else if (key === 'disposition_reasons') {
+      value = raw;
     } else if (key === 'consolidation_primary' || key === 'challenge_contested') {
       value = raw;
     } else if (key === 'risk_level') {
@@ -3932,7 +3951,7 @@ function permalinkContext(identity) {
   return { repositoryBase, blobBase, template, values };
 }
 function locationUrl(finding, permalinks, displayedLocation) {
-  if (!locationAllows(finding, 'sourceLink') || !permalinks.blobBase || !isPresent(finding.file)) return null;
+  if (!deliveryAllows(finding, 'sourceLink') || !permalinks.blobBase || !isPresent(finding.file)) return null;
   const rawFile = reportAsText(finding.file);
   if (outboundBase(rawFile) !== rawFile) return null;
   if (oneLine(rawFile) !== rawFile) return null;
@@ -4131,10 +4150,11 @@ function summaryIndex(rawFindings, findingsView, input) {
   if (!reasons.length && omittedUnits.length) reasons.push('not selected for delivery');
   return { indexed, reasons };
 }
-function summaryBlock(builder, input) {
+function summaryBlock(builder, input, reportMode = false) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = coerceReportFindings(inp.findings);
-  const rawUnverified = coerceReportFindings(inp.unverified);
+  const projected = coerceReportFindings(inp.findings);
+  const rawFindings = projected.filter((f) => deliveryAllows(f, reportMode ? 'report' : 'body'));
+  const rawUnverified = [...projected.filter((f) => deliveryAllows(f, 'unverified')), ...coerceReportFindings(inp.unverified)];
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -4313,8 +4333,9 @@ function renderMethodology(builder, input, rawFindings, knobs) {
 }
 function renderReport(input, knobs = KNOB_REGISTRY) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = coerceReportFindings(inp.findings);
-  const rawUnverified = coerceReportFindings(inp.unverified);
+  const projected = coerceReportFindings(inp.findings);
+  const rawFindings = projected.filter((f) => deliveryAllows(f, 'report'));
+  const rawUnverified = [...projected.filter((f) => deliveryAllows(f, 'unverified')), ...coerceReportFindings(inp.unverified)];
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -4362,7 +4383,7 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
   builder.add();
   builder.add('## Summary');
   builder.add();
-  summaryBlock(builder, inp);
+  summaryBlock(builder, inp, true);
   builder.add();
   builder.add('## Change Context');
   builder.add();
@@ -4385,6 +4406,15 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
     builder.add('These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. '
       + 'They are not confirmed findings.');
     renderSeverityBuckets(builder, unverifiedView, true, permalinks);
+  }
+  const eliminated = [...projected, ...coerceReportFindings(inp.eliminated)].filter((f) => deliveryAllows(f, 'eliminated'));
+  if (eliminated.length) {
+    builder.add();
+    builder.add('## Eliminated findings');
+    for (const finding of eliminated) {
+      builder.add();
+      builder.add(`- ${inline(finding.id)}: ${inline(finding.title)} — ${inline(finding.eliminated_by)}: ${inline(finding.elimination_reason)}`);
+    }
   }
   const dimensionsTable = dimensionsSummaryTable({
     ...(inp.dimensions && typeof inp.dimensions === 'object' ? inp.dimensions : {}),
@@ -4554,7 +4584,7 @@ async function challengeStage(ctx, input) {
       stats: {
         total_input: 0, dispatched: 0, completed: 0, skipped: 0,
         challenge_removed: 0, challenge_downgraded: 0, challenge_contested: 0,
-        challenge_survived: 0, unchallenged: 0, cross_agent_consolidated: 0, final_count: 0,
+        challenge_survived: 0, unchallenged: 0, final_count: 0,
       },
       generated_at: inp.generatedAt,
     };
@@ -4609,7 +4639,6 @@ async function challengeStage(ctx, input) {
       challenge_contested: applied.stats.challenge_contested,
       challenge_survived: applied.stats.challenge_survived,
       unchallenged: applied.stats.unchallenged,
-      cross_agent_consolidated: applied.stats.cross_agent_consolidated,
       final_count: applied.stats.final_count,
     },
     generated_at: inp.generatedAt,
@@ -4856,6 +4885,7 @@ const VERIFY_SCHEMA = {
               line_start: { type: 'integer', minimum: 1 },
               line_end: { type: 'integer', minimum: 1 },
               location_status: { type: 'string', enum: LOCATION_STATUSES },
+              diff_validation: { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false },
             },
             required: ['id', 'verified', 'location_status'],
           },
@@ -4954,7 +4984,7 @@ async function verifyStage(ctx, input) {
       else if (attempt.inputFault === 'missing') inputProof.missing += 1;
     }
     out.push(...attempt.verified);
-    if (inp.measurementTrace) eliminated.push(...attempt.eliminated);
+    eliminated.push(...attempt.eliminated);
     if (attempt.degraded) {
       degradedSlices += 1;
       gaps.push(verifyDegradeGap(`slice ${i}: ${attempt.reason}`, attempt.degraded, findings.length));
@@ -4999,8 +5029,8 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
   }
   const degraded = slice.length - accepted.size;
   return {
-    eliminated: inp.measurementTrace ? slice.filter((f) => accepted.get(f.id)?.verified === false)
-      .map((f) => ({ ...f, elimination_reason: accepted.get(f.id).elimination_reason })) : [],
+    eliminated: slice.filter((f) => accepted.get(f.id)?.verified === false)
+      .map((f) => ({ ...f, eliminated_by: 'verify', elimination_reason: accepted.get(f.id).elimination_reason })),
     verified: slice.flatMap((f) => accepted.has(f.id)
       ? joinVerifyDeltas([f], [accepted.get(f.id)]) : degradedSlice([f])),
     degraded,
@@ -5080,6 +5110,8 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
       || (d.location_status === 'unconfirmed'
         ? Object.hasOwn(d, 'line_start') || Object.hasOwn(d, 'line_end')
         : !canonicalRange(d))) malformedLocations.add(id);
+    if (d.diff_validation !== undefined && (!d.diff_validation || typeof d.diff_validation !== 'object'
+      || ![true, false, null].includes(d.diff_validation.in_diff))) malformedLocations.add(id);
     const stamp = typeof d.elimination_reason === 'string' ? d.elimination_reason.trim() : '';
     if (d.verified === false && stamp === '') {
       return { ok: false, reason: `delta ${id}: eliminated without the elimination_reason stamp (fabricated elimination — the verify script always stamps a real one)` };
@@ -5960,9 +5992,6 @@ function stripPersistAliases(f, fields = PERSIST_ALIAS_FIELDS) {
   }
   return out;
 }
-function checkpointStripAliasFields(findings) {
-  return PERSIST_ALIAS_FIELDS.filter((alias) => findings.every((f) => !Object.hasOwn(f || {}, alias)));
-}
 function hardenEscapeRuns(json) {
   return typeof json === 'string' ? json.replace(/\\\\/g, '\\u005c') : json;
 }
@@ -5976,20 +6005,13 @@ function persistPlan(inp, paths) {
   const { findingsJson, reportMd } = persistPrimaries(inp);
   const id = inp.prIdentity;
   const skeleton = deepClone(inp.checkpoints || {});
-  const challenge = (skeleton.phases || {}).challenge;
-  const stripAliasFields = checkpointStripAliasFields(Array.isArray(challenge?.findings) ? challenge.findings : []);
-  let challengeFindingIds = [];
-  if (challenge && Array.isArray(challenge.findings)) {
-    challengeFindingIds = challenge.findings.map((f) => f && f.id);
-    challenge.findings = [];
-  }
   const expectOf = (path, text) => {
     const normalized = normalizeForChecksum(text);
     return { path, chars: normalized.length, checksum: fnv1a32(normalized) };
   };
   const held = writerPayload(inp);
   const plan = {
-    planVersion: 2,
+    planVersion: 3,
     expect: [expectOf(paths.findings, findingsJson), expectOf(paths.report, reportMd)],
     derive: [
       expectOf(paths.postReview, JSON.stringify(held.postReview, null, 2)),
@@ -6003,9 +6025,7 @@ function persistPlan(inp, paths) {
     },
     checkpoint: {
       path: paths.checkpoints,
-      source: paths.findings,
-      challengeFindingIds,
-      stripAliasFields,
+      mode: 'literal',
       skeleton,
     },
   };
@@ -6054,16 +6074,6 @@ function persistDerivable(inp) {
     return { ...stripPersistAliases(view), ...(view.body !== undefined ? { body: view.body } : {}) };
   });
   if (postReviewBad) return { ok: false, reason: postReviewBad };
-  const challenge = ((inp.checkpoints || {}).phases || {}).challenge;
-  const challengeFindings = challenge && Array.isArray(challenge.findings) ? challenge.findings : [];
-  const challengeBad = twinCheck(challengeFindings, 'checkpoint challenge', (f) => stripPersistAliases(toV2Aliased(f)));
-  if (challengeBad) return { ok: false, reason: challengeBad };
-  const stripFields = checkpointStripAliasFields(challengeFindings);
-  for (const f of challengeFindings) {
-    if (JSON.stringify(stripPersistAliases(toV2Aliased(byId.get(f.id)), stripFields)) !== JSON.stringify(f)) {
-      return { ok: false, reason: `checkpoint challenge entry ${f.id} requires normalization before derivation` };
-    }
-  }
   return { ok: true };
 }
 // --- persist.js ---
@@ -6318,7 +6328,7 @@ function trustAssembleReceipt(receipt, paths, plan) {
     const got = writtenByPath.get(p);
     if (got.chars === want.chars && got.checksum === want.checksum) continue;
     const detail = `derived document ${p} does not match the pipeline's own derivation (receipt reports ${got.chars == null ? 'no' : got.chars} chars/${got.checksum == null ? 'no checksum' : got.checksum}, the pipeline derived ${want.chars}/${want.checksum})`;
-    if (sourceDiverged) {
+    if (sourceDiverged && p === paths.postReview) {
       derivedGaps.push(`artifact-content-proof: ${detail} — expected, since ${paths.findings} it was derived from also diverged`);
       continue;
     }
@@ -6662,6 +6672,10 @@ function normalizePhaseFindings(name, out, replayed, args, decisions = []) {
   let pathRewrites = 0;
   for (const [, field] of checkpointFindingListsForPhase(name)) {
     if (!Array.isArray(out[field])) continue;
+    for (const finding of out[field]) if (finding && typeof finding === 'object') {
+      delete finding.disposition;
+      delete finding.disposition_reasons;
+    }
     const normalized = normalizeFindingPaths(out[field], args.repoRoot, decisions);
     rejected += out[field].length - normalized.valid.length;
     pathRewrites += normalized.path_rewrites;
@@ -6718,29 +6732,45 @@ function applyChallengeReplayBelt(challengeOut) {
   }
   return challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
 }
-// --- holdBackIncomplete.js ---
-function holdBackIncomplete(challengeOut) {
-  const clean = [];
-  const unverified = challengeOut.unverified || [];
-  for (const finding of challengeOut.findings || []) {
-    if (incompleteVetting(finding).length) unverified.push(finding);
-    else clean.push(finding);
-  }
-  for (const finding of unverified) {
+// --- dispose.js ---
+function disposeFindings(challenged) {
+  const input = deepClone(challenged);
+  const findings = [];
+  const unverified = [];
+  const eliminated = input.eliminated || [];
+  const decisions = [];
+  for (const finding of [...(input.findings || []), ...(input.unverified || [])]) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
+    const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
+    if (['failed', 'capped'].includes(finding.challenge)) reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed');
+    if ((input.unverified || []).includes(finding) && !reasons.length) reasons.push('held_back');
+    const disposition = reasons.length ? 'held_back'
+      : (finding.diff_validation === undefined || finding.diff_validation?.in_diff === true) && locationAllows(finding, 'inline') ? 'deliver' : 'body';
+    finding.disposition = disposition;
+    finding.disposition_reasons = reasons.length ? reasons : disposition === 'body' ? ['body_routed'] : [];
+    (disposition === 'held_back' ? unverified : findings).push(finding);
+    if (finding.trace_id) for (const reason of finding.disposition_reasons) {
+      decisions.push(traceDecision(finding, reason, reason, [], disposition === 'held_back' ? 'held_back' : 'body_routed'));
+    }
   }
-  const { findings, consolidatedCount } = consolidateCrossAgent(clean);
-  challengeOut.findings = findings;
-  challengeOut.unverified = unverified;
-  challengeOut.stats = {
-    ...challengeOut.stats,
-    skipped: unverified.filter((f) => Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
-    held_back: unverified.filter((f) => !Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge) && incompleteVetting(f).length).length,
-    cross_agent_consolidated: consolidatedCount,
-    final_count: findings.length,
-  };
-  return challengeOut;
+  const eliminations = eliminationDecisions({ eliminated: eliminated.map((f) => ({ ...f, trace_id: f.trace_id || 'unused' })) });
+  for (const [index, finding] of eliminated.entries()) {
+    delete finding.consolidation_key;
+    delete finding.consolidation_primary;
+    finding.disposition = 'eliminate';
+    finding.disposition_reasons = [eliminations[index].reason_code];
+  }
+  decisions.push(...eliminations.filter((_, index) => eliminated[index].trace_id));
+  const { consolidatedCount } = consolidateCrossAgent(findings);
+  for (const finding of findings.filter((f) => f.consolidation_key && !f.consolidation_primary && f.trace_id)) {
+    const related = findings.filter((f) => f.consolidation_key === finding.consolidation_key && f !== finding && f.trace_id).map((f) => f.trace_id);
+    if (related.length) decisions.push(traceDecision(finding, 'folded', 'cross-agent consolidation', related, 'coalesced'));
+  }
+  return { findings, unverified, eliminated, decisions, stats: { ...input.stats,
+    skipped: unverified.filter((f) => ['capped', 'failed', 'skipped'].includes(f.challenge)).length,
+    held_back: unverified.filter((f) => !['capped', 'failed', 'skipped'].includes(f.challenge)).length,
+    cross_agent_consolidated: consolidatedCount, final_count: findings.length } };
 }
 // --- measurementReplay.js ---
 function promptSha256(text) {
@@ -6888,37 +6918,37 @@ async function deliverFromCheckpoint(c, A, state) {
   const replay = measurementTrace ? captureDeliveryReplay(c, A, state) : null;
   if (replay) c = replay.ctx;
   const { summarize: summaryOut, discover: discoverOut, merge: mergeOut,
-    verify: verifyOut, validate: validateOut, filter: filterOut, challenge: challengeOut } = phaseOutputs;
-  rewriteHostPathText(challengeOut, summaryOut, A.repoRoot);
-  gaps.push(...(challengeOut.gaps || []));
-  const markedCount = applyChallengeReplayBelt(challengeOut);
-  holdBackIncomplete(challengeOut);
-  if (measurementTrace) recordStage(measurementTrace, 'holdback', challengeOut, {
-    decisions: [
-      ...(challengeOut.eliminated || []).filter((f) => f.replay_belt && f.trace_id).map((f) => traceDecision(f, 'injection', f.elimination_reason)),
-      ...(challengeOut.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f,
-        f.validation === 'skipped' ? 'validation_skipped' : f.origin === 'unknown' ? 'verify_unproven' :
-          f.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed', f.validation === 'skipped' ? 'validation skipped' : f.origin === 'unknown' ? 'verification unproven' : f.challenge, [], 'held_back')),
-    ],
-  });
+    verify: verifyOut, validate: validateOut, filter: filterOut } = phaseOutputs;
+  const summaryCopy = deepClone(summaryOut);
+  const rawChallenge = phaseOutputs.challenge;
+  rewriteHostPathText(rawChallenge, summaryCopy, A.repoRoot);
+  const challengeCopy = deepClone(rawChallenge);
+  gaps.push(...(rawChallenge.gaps || []));
+  const markedCount = applyChallengeReplayBelt(challengeCopy);
+  const challengeOut = disposeFindings(challengeCopy);
+  if (measurementTrace) recordStage(measurementTrace, 'dispose', challengeOut, { decisions: challengeOut.decisions });
   if (markedCount > 0) {
     gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
   }
   gaps.push(...hostPathTextGaps(
     challengeOut,
-    summaryOut,
+    summaryCopy,
     [A.repoRoot, A.pluginRoot, A.outputDir],
   ));
   const deliveryTier = A.delivery && A.delivery.tier;
-  const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
+  const eligible = challengeOut.findings.filter((f) => deliveryAllows(f, 'body'));
+  const selected = selectDelivery(eligible, limits.deliveryCap, deliveryTier);
+  const postReview = [...selected.filter((f) => deliveryAllows(f, 'inline')),
+    ...selected.filter((f) => f.disposition === 'body')];
   if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
-    cap_hit: selectDelivery(challengeOut.findings, null, deliveryTier).length > postReview.length,
+    cap_hit: selectDelivery(eligible, null, deliveryTier).length > postReview.length,
     decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,
       deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
       'delivery selection', [], 'not_selected')),
   });
   if (measurementTrace) measurementTrace.complete = true;
   stripTraceFields(phaseOutputs);
+  stripTraceFields(challengeOut);
   const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
   const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
     && (A.mode !== 'headless'
@@ -6932,10 +6962,11 @@ async function deliverFromCheckpoint(c, A, state) {
     if (Object.keys(counts).length) pathNormalization[phase] = counts;
   }
   const reportInput = {
-    summary: summaryOut.summary,
+    summary: summaryCopy.summary,
     ...(includeDelivered ? { delivered: postReview } : {}),
     findings: challengeOut.findings,
     unverified: challengeOut.unverified,
+    eliminated: challengeOut.eliminated,
     stats: {
       pathNormalization,
       discovered: (discoverOut.findings || []).length,
@@ -6966,7 +6997,7 @@ async function deliverFromCheckpoint(c, A, state) {
   reportOut = { report: renderReport(reportInput), gaps: reportGaps };
   phaseOutputs.report = reportOut;
   const writeOut = await writeArtifacts(c, {
-    findings: challengeOut.findings,
+    findings: [...challengeOut.findings, ...challengeOut.unverified, ...challengeOut.eliminated],
     postReview,
     prIdentity: (A.delivery || {}).prIdentity,
     reviewBody,
@@ -7085,8 +7116,7 @@ async function runWith(ctx, rawArgs) {
       });
     } else if (name === 'discover' && replayed) recordStage(measurementTrace, name, out, { replayed });
     if (name === 'verify') {
-      const { eliminated: _eliminated, ...recovery } = out;
-      phaseOutputs[name] = { ...recovery, findings: verifyRequests };
+      phaseOutputs[name] = { ...out, findings: verifyRequests };
     } else phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
@@ -7156,9 +7186,13 @@ async function runWith(ctx, rawArgs) {
       exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
     }));
     gaps.push(...(filterOut.gaps || []));
-    await runPhase('challenge', () => challengeStage(c, {
-      findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
-    }));
+    await runPhase('challenge', async () => {
+      const out = await challengeStage(c, {
+        findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
+      });
+      out.eliminated = [...(verifyOut.eliminated || []), ...(filterOut.eliminated || []), ...(out.eliminated || [])];
+      return out;
+    });
     return await deliverFromCheckpoint(c, A, {
       limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
       reviewMdSubtrees, derivedAgentFlags, runPhase, measured, replayArgs,

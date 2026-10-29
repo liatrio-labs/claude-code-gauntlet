@@ -8,6 +8,16 @@ import { corpus, finding, reportInput } from './helpers/reportFixtures.js';
 
 const rendered = (input) => report.renderReport(reportInput(input));
 
+test('injection eliminations expose only audit fields', () => {
+  const text = rendered({ eliminated: [finding('INJECTION', {
+    disposition: 'eliminate', title: 'Rejected claim', eliminated_by: 'injection',
+    elimination_reason: 'instruction in evidence', description: 'PRIVATE_DESCRIPTION',
+    evidence: 'PRIVATE_EVIDENCE', suggestion: 'PRIVATE_SUGGESTION',
+  })] });
+  for (const field of ['INJECTION', 'Rejected claim', 'injection', 'instruction in evidence']) assert.ok(text.includes(field));
+  for (const field of ['PRIVATE_DESCRIPTION', 'PRIVATE_EVIDENCE', 'PRIVATE_SUGGESTION']) assert.equal(text.includes(field), false);
+});
+
 test('the report ends with a REVIEW.md tip only when discovery says none exists', () => {
   const tip = 'A REVIEW.md at the repository root is the preferred way to state review rules: focus, ignore paths, and severity.\n'
     + 'Format reference: https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/skills/code-gauntlet/references/review-md-spec.md';
@@ -314,7 +324,8 @@ const SUMMARY_CASE_IDS = new Set([
 ]);
 const SUMMARY_ROWS = [
   ...corpus('cross_runtime/outbound_line').summary_cases
-    .filter((row) => SUMMARY_CASE_IDS.has(row.id)).map((row) => ({ name: row.id, input: row.input,
+    .filter((row) => SUMMARY_CASE_IDS.has(row.id)).map((row) => ({ name: row.id, input: { ...row.input,
+      findings: row.input.findings.map((f) => ({ ...f, disposition: 'deliver' })) },
     expected: row.expected_js })),
   { name: 'two suggestions first line', input: { findings: [finding('A', { report_tag: 'suggestion' }),
     finding('B', { report_tag: 'suggestion' })] }, surface: 'firstLine',

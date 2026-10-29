@@ -606,7 +606,7 @@ def capture(
             "platform": platform,
             "sha": _GH_SHA,
             "review_body": "Automated review summary.",
-            "findings": findings,
+            "findings": [{"disposition": "deliver", **finding} for finding in findings],
         },
         diff=raw_diff,
         refs=JsonFetch(

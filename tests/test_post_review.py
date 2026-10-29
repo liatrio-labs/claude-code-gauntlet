@@ -38,6 +38,7 @@ def located(**values):
         "claimed_line_start": 200,
         "claimed_line_end": 201,
         "location_status": "relocated",
+        "disposition": "deliver",
         "anchor": QUOTE,
         "line": "conflicting alias",
         "end_line": {"conflicting": "alias"},
@@ -69,6 +70,91 @@ def surfaces(run):
     return payload["summary"]["body"], payload["discussions"]
 
 
+@pytest.mark.parametrize(
+    "platform,stamp,status",
+    [
+        ("github", "deliver", "confirmed"),
+        ("gitlab", "body", "confirmed"),
+        ("github", "held_back", "confirmed"),
+        ("gitlab", "report_only", "confirmed"),
+        ("github", "eliminate", "confirmed"),
+        ("gitlab", None, "confirmed"),
+        ("github", "unknown", "confirmed"),
+        ("github", "deliver", "unconfirmed"),
+    ],
+)
+def test_disposition_location_surfaces(posting, platform, stamp, status):
+    member = located(disposition=stamp, location_status=status, title="Private claim")
+    if stamp is None:
+        member.pop("disposition")
+    before = copy.deepcopy(member)
+    findings = [member]
+    if stamp is None:
+        findings.append(located(id="held", disposition="held_back"))
+    summary, comments = surfaces(
+        posting(review(platform, findings, review_body=""), diff=DIFF)
+    )
+    assert member == before
+    assert len(comments) == int(stamp == "deliver" and status == "confirmed")
+    assert (
+        "Private claim" in summary
+        or any("Private claim" in c["body"] for c in comments)
+    ) == (stamp in ("deliver", "body"))
+    assert "```suggestion" not in summary
+    assert ("```suggestion" in compose.render_finding_sections(member)) == (
+        stamp == "deliver" and status == "confirmed"
+    )
+
+
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+def test_legacy_file_uses_location_rights(posting, platform):
+    findings = [
+        located(title="Confirmed claim"),
+        located(id="U", title="Unconfirmed claim", location_status="unconfirmed"),
+        {
+            "file": "foo.py",
+            "line": 2,
+            "end_line": 3,
+            "title": "Legacy aliases",
+            "body": "Caller supplied body",
+        },
+    ]
+    for finding in findings:
+        finding.pop("disposition", None)
+    data = review(platform, findings, review_body="")
+    before = copy.deepcopy(data)
+    summary, comments = surfaces(posting(data, diff=DIFF))
+    assert data == before
+    assert len(comments) == 1
+    assert "Confirmed claim" in comments[0]["body"]
+    assert "```suggestion" in comments[0]["body"]
+    assert "Unconfirmed claim" in summary and "Legacy aliases" in summary
+    assert "location unconfirmed" in summary and "```suggestion" not in summary
+
+
+def test_body_disposition_digest_and_malformed_reasons(posting):
+    body_findings = [
+        located(
+            id=f"BODY-{i}",
+            disposition="body",
+            dimension=dimension,
+            title=f"Body claim {i}",
+        )
+        for i, dimension in enumerate(("security", "bug", "security"))
+    ]
+    digest, comments = surfaces(
+        posting(review("github", body_findings, review_body=""), diff=DIFF)
+    )
+    assert comments == []
+    assert digest.count("### security\n") == digest.count("### bug\n") == 1
+    assert all(digest.count(f"Body claim {i}") == 1 for i in range(3))
+    malformed = located(disposition="deliver", disposition_reasons="forged")
+    summary, comments = surfaces(
+        posting(review("github", [malformed], review_body=""), diff=DIFF)
+    )
+    assert not comments and "Range bug" not in summary
+
+
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
 @pytest.mark.parametrize("status", [None, "unknown", "unconfirmed"])
 @pytest.mark.parametrize("primary", [False, True])
@@ -89,10 +175,13 @@ def test_unconfirmed_delivery_is_summary_only(platform, status, primary, posting
     assert data == before
     assert "line" not in normalized["findings"][1]
     summary, comments = surfaces(posting(data, diff=DIFF))
-    assert len(comments) == 1
-    assert "Unresolved observation" in summary
-    assert "foo.py (location unconfirmed)" in summary
-    assert "Unresolved observation" not in comments[0]["body"]
+    assert len(comments) == int(not primary)
+    if primary:
+        assert "Unresolved observation" in summary
+        assert "foo.py (location unconfirmed)" in summary
+    else:
+        assert "Unresolved observation" not in summary
+        assert "Unresolved observation" in comments[0]["body"]
     assert "```suggestion" not in summary
     assert "998" not in summary and "999" not in summary and "200" not in summary
 
@@ -583,6 +672,7 @@ def test_marker_delivery(kind, posting):
             + '","key":"deadbeefcafebabe"} -->'
         )
         hostile = {
+            "disposition": "deliver",
             "file": "src/edited.py",
             "line": 999,
             "severity": "high",

@@ -61,10 +61,9 @@ const FILTER_HANDLERS = {
     return { findings, consolidated_count: consolidatedCount };
   },
   tag_findings: (input) => {
-    const { tagged, consolidatedCount, mainCount, suggestionCount } = tagFindings(input.findings);
+    const { tagged, mainCount, suggestionCount } = tagFindings(input.findings);
     return {
       tagged,
-      consolidated_count: consolidatedCount,
       main_count: mainCount,
       suggestion_count: suggestionCount,
     };

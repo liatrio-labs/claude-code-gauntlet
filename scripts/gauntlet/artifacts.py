@@ -15,7 +15,7 @@ from gauntlet.cli import Command, Parser
 from gauntlet.fs import write_atomic
 from gauntlet.jsjson import fnv1a32, js_stringify_pretty, normalize_content, utf16_len
 
-PLAN_VERSION = 2
+PLAN_VERSION = 3
 PLAN_CHECKSUM_KEY = "planChecksum"
 ProofState = Literal["match", "mismatch"]
 
@@ -192,7 +192,7 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
         return _receipt(False, None, None, verified, [], errors)
 
     plan_version = plan.get("planVersion")
-    if plan_version != PLAN_VERSION:
+    if type(plan_version) is not int or plan_version not in (2, PLAN_VERSION):
         errors.append(
             f"unsupported planVersion {plan_version!r} (expected {PLAN_VERSION})"
         )
@@ -293,7 +293,14 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
             pending.append(PlanEntry(post_path, text))
 
     cp_source = cp.get("source")
-    cp_by_id = _load_source(cp_source, cache, errors)
+    cp_by_id = _load_source(cp_source, cache, errors) if plan_version == 2 else None
+    if plan_version == 3:
+        if cp.get("mode") != "literal" or not isinstance(cp.get("skeleton"), dict):
+            errors.append("checkpoint must carry a literal skeleton")
+        else:
+            text = _serialize(cp["skeleton"], "checkpoint", errors)
+            if text is not None and cp_path is not None:
+                pending.append(PlanEntry(cp_path, text))
     if cp_by_id is not None:
         alias_fields = set(cast(Sequence[Hashable], cp.get("stripAliasFields") or []))
         cp_ids = cast(Sequence[object], cp.get("challengeFindingIds") or [])

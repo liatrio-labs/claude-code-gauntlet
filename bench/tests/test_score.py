@@ -351,11 +351,11 @@ def test_surface_opt_in_preserves_canonical_packet_bytes(
     )
     assert (
         digest(stored)
-        == "c25d66f3670d14881c528774a64cbb230966c9013633b424d5b3c4129c57236b"
+        == "6363379781409eaf53669842ff40d2e8d79a1835e8e13fad561d20d818340643"
     )
     assert (
         digest(stored["manifest"])
-        == "0ae0b217998e234c625480ce3e31bd7edc3d63fb11606c4fa1ec2233634d0665"
+        == "9a7149fffc5a0b34cba3a33887a4fcc1dd77352f2f9e9e0e2dbc29134bad895e"
     )
     path.rename(tmp_path / "canonical-packet")
 

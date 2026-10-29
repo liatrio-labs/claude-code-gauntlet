@@ -6,10 +6,12 @@ from gauntlet.cli import CliError
 from gauntlet.delivery.gate import is_plain_int
 from gauntlet.forge import parse_web_origin
 from gauntlet.location import normalize_location
-from gauntlet.registry import LocationStatus
+from gauntlet.registry import Disposition, LocationStatus
 
 
 class Finding(TypedDict, total=False):
+    disposition: Disposition
+    disposition_reasons: list[str]
     file: str
     line_start: int
     line_end: int
@@ -87,6 +89,9 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
             raise CliError(
                 f"findings[{index}].consolidation_key must be a string or null"
             )
-    return cast(
-        ReviewInput, {**data, "findings": [normalize_location(f) for f in findings]}
-    )
+    normalized = [normalize_location(f) for f in findings]
+    # Only a wholly unstamped caller input predates disposition enforcement.
+    if not any("disposition" in f for f in findings):
+        for finding in normalized:
+            finding["disposition"] = "deliver"
+    return cast(ReviewInput, {**data, "findings": normalized})

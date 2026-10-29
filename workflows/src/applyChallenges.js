@@ -1,6 +1,5 @@
 // Apply challenge scores to findings and preserve the consolidation fields.
 
-import { consolidateCrossAgent } from './filterFindings.js';
 import { SEVERITY_ORDER } from './registry.js';
 import { INT_POLICY, coerceInt, deepClone } from './wire.js';
 
@@ -122,8 +121,7 @@ export function applyChallenges(findings, challenges) {
 
   const totalInput = findings.length;
 
-  const { findings: consolidatedActive, consolidatedCount } = consolidateCrossAgent(active);
-  const ranked = rankFindings(consolidatedActive);
+  const ranked = rankFindings(active);
 
   return {
     findings: ranked,
@@ -135,7 +133,6 @@ export function applyChallenges(findings, challenges) {
       challenge_contested: stats.challenge_contested,
       challenge_survived: stats.challenge_survived,
       unchallenged: stats.unchallenged,
-      cross_agent_consolidated: consolidatedCount,
       final_count: ranked.length,
     },
   };

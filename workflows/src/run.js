@@ -17,7 +17,8 @@ import { renderReport, renderSummaryBody } from './renderReport.js';
 import { writeArtifacts } from './persist.js';
 import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
 import { checkpointChecksumErrors, checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
-import { holdBackIncomplete } from './holdBackIncomplete.js';
+import { disposeFindings } from './dispose.js';
+import { deliveryAllows } from './location.js';
 import { appendMeasurement, createMeasurementTrace, recordStage, traceDecision, eliminationDecisions, stripTraceFields, decisionsFor } from './measurementTrace.js';
 import { captureDeliveryReplay, appendDeliveryReplay } from './measurementReplay.js';
 import { deepClone } from './wire.js';
@@ -113,41 +114,41 @@ export async function deliverFromCheckpoint(c, A, state) {
   const replay = measurementTrace ? captureDeliveryReplay(c, A, state) : null;
   if (replay) c = replay.ctx;
   const { summarize: summaryOut, discover: discoverOut, merge: mergeOut,
-    verify: verifyOut, validate: validateOut, filter: filterOut, challenge: challengeOut } = phaseOutputs;
-  rewriteHostPathText(challengeOut, summaryOut, A.repoRoot);
-  gaps.push(...(challengeOut.gaps || []));
+    verify: verifyOut, validate: validateOut, filter: filterOut } = phaseOutputs;
+  const summaryCopy = deepClone(summaryOut);
+  const rawChallenge = phaseOutputs.challenge;
+  rewriteHostPathText(rawChallenge, summaryCopy, A.repoRoot);
+  const challengeCopy = deepClone(rawChallenge);
+  gaps.push(...(rawChallenge.gaps || []));
 
   // Keep replay disclosures outside checkpoints so resumes cannot duplicate them.
-  const markedCount = applyChallengeReplayBelt(challengeOut);
-  holdBackIncomplete(challengeOut);
-  if (measurementTrace) recordStage(measurementTrace, 'holdback', challengeOut, {
-    decisions: [
-      ...(challengeOut.eliminated || []).filter((f) => f.replay_belt && f.trace_id).map((f) => traceDecision(f, 'injection', f.elimination_reason)),
-      ...(challengeOut.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f,
-        f.validation === 'skipped' ? 'validation_skipped' : f.origin === 'unknown' ? 'verify_unproven' :
-          f.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed', f.validation === 'skipped' ? 'validation skipped' : f.origin === 'unknown' ? 'verification unproven' : f.challenge, [], 'held_back')),
-    ],
-  });
+  const markedCount = applyChallengeReplayBelt(challengeCopy);
+  const challengeOut = disposeFindings(challengeCopy);
+  if (measurementTrace) recordStage(measurementTrace, 'dispose', challengeOut, { decisions: challengeOut.decisions });
   if (markedCount > 0) {
     gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
   }
 
   gaps.push(...hostPathTextGaps(
     challengeOut,
-    summaryOut,
+    summaryCopy,
     [A.repoRoot, A.pluginRoot, A.outputDir],
   ));
 
   const deliveryTier = A.delivery && A.delivery.tier;
-  const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
+  const eligible = challengeOut.findings.filter((f) => deliveryAllows(f, 'body'));
+  const selected = selectDelivery(eligible, limits.deliveryCap, deliveryTier);
+  const postReview = [...selected.filter((f) => deliveryAllows(f, 'inline')),
+    ...selected.filter((f) => f.disposition === 'body')];
   if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
-    cap_hit: selectDelivery(challengeOut.findings, null, deliveryTier).length > postReview.length,
+    cap_hit: selectDelivery(eligible, null, deliveryTier).length > postReview.length,
     decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,
       deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
       'delivery selection', [], 'not_selected')),
   });
   if (measurementTrace) measurementTrace.complete = true;
   stripTraceFields(phaseOutputs);
+  stripTraceFields(challengeOut);
   const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
   const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
     && (A.mode !== 'headless'
@@ -162,10 +163,11 @@ export async function deliverFromCheckpoint(c, A, state) {
     if (Object.keys(counts).length) pathNormalization[phase] = counts;
   }
   const reportInput = {
-    summary: summaryOut.summary,
+    summary: summaryCopy.summary,
     ...(includeDelivered ? { delivered: postReview } : {}),
     findings: challengeOut.findings,
     unverified: challengeOut.unverified,
+    eliminated: challengeOut.eliminated,
     stats: {
       pathNormalization,
       discovered: (discoverOut.findings || []).length,
@@ -202,7 +204,7 @@ export async function deliverFromCheckpoint(c, A, state) {
 
   // Writer failures must degrade to artifact gaps because persistence failure does not invalidate completed review work.
   const writeOut = await writeArtifacts(c, {
-    findings: challengeOut.findings,
+    findings: [...challengeOut.findings, ...challengeOut.unverified, ...challengeOut.eliminated],
     postReview,
     prIdentity: (A.delivery || {}).prIdentity,
     reviewBody,
@@ -344,8 +346,7 @@ export async function runWith(ctx, rawArgs) {
       });
     } else if (name === 'discover' && replayed) recordStage(measurementTrace, name, out, { replayed });
     if (name === 'verify') {
-      const { eliminated: _eliminated, ...recovery } = out;
-      phaseOutputs[name] = { ...recovery, findings: verifyRequests };
+      phaseOutputs[name] = { ...out, findings: verifyRequests };
     } else phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
@@ -432,10 +433,14 @@ export async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(filterOut.gaps || []));
 
-    await runPhase('challenge', () => challengeStage(c, {
-      // Shared context would weaken the challenger's independent check, so its prompt contains only the claim and location.
-      findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
-    }));
+    await runPhase('challenge', async () => {
+      const out = await challengeStage(c, {
+        // Shared context would weaken the challenger's independent check, so its prompt contains only the claim and location.
+        findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
+      });
+      out.eliminated = [...(verifyOut.eliminated || []), ...(filterOut.eliminated || []), ...(out.eliminated || [])];
+      return out;
+    });
     return await deliverFromCheckpoint(c, A, {
       limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
       reviewMdSubtrees, derivedAgentFlags, runPhase, measured, replayArgs,

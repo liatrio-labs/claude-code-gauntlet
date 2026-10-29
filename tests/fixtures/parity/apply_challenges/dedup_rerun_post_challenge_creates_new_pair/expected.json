@@ -6,40 +6,36 @@
       "challenge_contested": false,
       "challenge_score": 80,
       "confidence": 90,
-      "consolidation_key": "a.py:10",
-      "consolidation_primary": false,
       "description": "This loop boundary is not covered by any existing test case.",
       "dimension": "test_coverage",
       "file": "a.py",
       "id": "test-1",
       "line_end": 12,
       "line_start": 12,
+      "location_status": "confirmed",
       "origin": "new",
       "report_destination": "main",
       "report_tag": "main",
       "severity": "high",
-      "title": "Missing test coverage",
-      "location_status": "confirmed"
+      "title": "Missing test coverage"
     },
     {
       "agent": "bug-detector",
       "challenge_contested": false,
       "challenge_score": 80,
       "confidence": 80,
-      "consolidation_key": "a.py:10",
-      "consolidation_primary": true,
       "description": "The loop index is off by one and skips the last element.",
       "dimension": "bug",
       "file": "a.py",
       "id": "bug-1",
       "line_end": 10,
       "line_start": 10,
+      "location_status": "confirmed",
       "origin": "new",
       "report_destination": "main",
       "report_tag": "main",
       "severity": "high",
-      "title": "Real bug",
-      "location_status": "confirmed"
+      "title": "Real bug"
     }
   ],
   "stats": {
@@ -47,7 +43,6 @@
     "challenge_downgraded": 0,
     "challenge_removed": 0,
     "challenge_survived": 2,
-    "cross_agent_consolidated": 2,
     "final_count": 2,
     "total_input": 2,
     "unchallenged": 0

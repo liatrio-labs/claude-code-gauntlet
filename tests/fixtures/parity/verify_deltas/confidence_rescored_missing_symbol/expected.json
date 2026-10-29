@@ -1,8 +1,11 @@
 {
-  "checksum": "fnv1a32:0x6ee39d96",
+  "checksum": "fnv1a32:0x5822cde4",
   "deltas": [
     {
       "confidence": 62,
+      "diff_validation": {
+        "in_diff": true
+      },
       "id": "bug-301",
       "line_end": 33,
       "line_start": 30,
@@ -20,6 +23,9 @@
       "confidence": 62,
       "cross_file_refs": [],
       "description": "parseResponsePayload() is called without first checking whether response is None.",
+      "diff_validation": {
+        "in_diff": true
+      },
       "dimension": "bug",
       "end_line": 33,
       "evidence": "data = parseResponsePayload(response)",

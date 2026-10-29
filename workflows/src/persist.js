@@ -302,7 +302,7 @@ function trustAssembleReceipt(receipt, paths, plan) {
     const got = writtenByPath.get(p);
     if (got.chars === want.chars && got.checksum === want.checksum) continue;
     const detail = `derived document ${p} does not match the pipeline's own derivation (receipt reports ${got.chars == null ? 'no' : got.chars} chars/${got.checksum == null ? 'no checksum' : got.checksum}, the pipeline derived ${want.chars}/${want.checksum})`;
-    if (sourceDiverged) {
+    if (sourceDiverged && p === paths.postReview) {
       derivedGaps.push(`artifact-content-proof: ${detail} — expected, since ${paths.findings} it was derived from also diverged`);
       continue;
     }

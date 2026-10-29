@@ -385,12 +385,13 @@ export function consolidateCrossAgent(findings) {
 }
 
 export function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
-  const { findings: tagged, consolidatedCount } = consolidateCrossAgent(findings);
 
   let mainCount = 0;
   let suggestionCount = 0;
 
-  for (const finding of tagged) {
+  for (const finding of findings) {
+    delete finding.consolidation_key;
+    delete finding.consolidation_primary;
     const agent = pyGet(finding, 'agent', '').toLowerCase();
     const dimension = finding.dimension ? String(finding.dimension).toLowerCase() : '';
 
@@ -433,7 +434,7 @@ export function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
     else suggestionCount += 1;
   }
 
-  return { tagged, consolidatedCount, mainCount, suggestionCount };
+  return { tagged: findings, mainCount, suggestionCount };
 }
 
 // Reachability demotion precedes thresholds; injection sanitization precedes corroboration and routing.
@@ -472,7 +473,7 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
   const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
   allEliminated.push(...elimSuppressed);
 
-  const { tagged, consolidatedCount, mainCount, suggestionCount } = tagFindings(active);
+  const { tagged, mainCount, suggestionCount } = tagFindings(active);
 
   const promotedCount = tagged.filter((f) => f.promoted_from === 'test-analyzer').length;
   const dimensionRouted = tagged.filter((f) => f.routed_by === 'dimension').length;
@@ -496,7 +497,6 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
       singleton_penalized: singletonPenalized,
       dimension_routed: dimensionRouted,
       reachability_demoted: reachabilityDemoted,
-      cross_agent_consolidated: consolidatedCount,
       test_analyzer_promoted: promotedCount,
       tagged_main: mainCount,
       tagged_suggestion: suggestionCount,

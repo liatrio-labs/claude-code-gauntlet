@@ -60,7 +60,7 @@ export function replaySurvivor() {
 }
 
 export function persistInput(over = {}) {
-  const findings = over.findings || [makeFinding('F1'), makeFinding('F2')];
+  const findings = over.findings || [makeFinding('F1'), makeFinding('F2')].map(({ diff_validation: _diff, ...finding }) => finding);
   return {
     findings, postReview: findings, report: '# Code Gauntlet\n\nfindings rendered here',
     checkpoints: persistCheckpoints(findings),
@@ -72,7 +72,7 @@ export function persistInput(over = {}) {
 // Plumbing receipts echo the dispatched plan; independent byte oracles live in persistPlan.test.js.
 function receiptFor(plan) {
   return {
-    ok: true, planVersion: 2, planChecksum: plan.planChecksum,
+    ok: true, planVersion: plan.planVersion, planChecksum: plan.planChecksum,
     verified: plan.expect.map((e) => ({
       path: e.path, chars: e.chars, expected_chars: e.chars,
       checksum: e.checksum, expected_checksum: e.checksum, content_proof: 'match',

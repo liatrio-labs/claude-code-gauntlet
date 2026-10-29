@@ -326,6 +326,10 @@ export function normalizePhaseFindings(name, out, replayed, args, decisions = []
   let pathRewrites = 0;
   for (const [, field] of checkpointFindingListsForPhase(name)) {
     if (!Array.isArray(out[field])) continue;
+    for (const finding of out[field]) if (finding && typeof finding === 'object') {
+      delete finding.disposition;
+      delete finding.disposition_reasons;
+    }
     const normalized = normalizeFindingPaths(out[field], args.repoRoot, decisions);
     rejected += out[field].length - normalized.valid.length;
     pathRewrites += normalized.path_rewrites;

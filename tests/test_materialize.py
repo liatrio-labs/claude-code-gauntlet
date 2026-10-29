@@ -417,7 +417,12 @@ def test_real_node_return_channel(tmp_path):
         ids = (
             plan["postReview"]["ids"]
             if name == "post-review"
-            else plan["checkpoint"]["challengeFindingIds"]
+            else [
+                f["id"]
+                for f in plan["checkpoint"]["skeleton"]["phases"]["challenge"][
+                    "findings"
+                ]
+            ]
         )
         assert [f["id"] for f in projected] == ids
     checkpoint_path = Path(output, "code-gauntlet-checkpoint-all-abc1234.json")

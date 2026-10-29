@@ -97,6 +97,8 @@ For a legacy bare findings array, pass `--report PATH` together with `--owner`, 
 report Summary and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
 that body as is.
 
+Caller-supplied JSON with no `disposition` field on any finding uses legacy location rights for placement; if any finding carries `disposition`, findings missing it are held back.
+
 **Findings JSON schema:**
 
 > `suggested_fix_code` below is optional and gated: every discovery agent may emit it, but

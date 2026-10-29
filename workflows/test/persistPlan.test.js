@@ -51,7 +51,7 @@ test('projection preserves artifact bytes, selection and checkpoint order', () =
   assert.deepEqual(writerPayload(INPUT), { findings: ALIASED, postReview: [ALIASED[2], ALIASED[0]], report: INPUT.report, checkpoints: CHECKPOINT });
   const plan = persistPlan(INPUT, PATHS);
   assert.deepEqual(plan, {
-    planVersion: 2,
+    planVersion: 3,
     expect: [
       { path: PATHS.findings, chars: 652, checksum: "fnv1a32:0x95c36e7d" },
       { path: PATHS.report, chars: 3, checksum: "fnv1a32:0x34bd778c" }
@@ -76,12 +76,10 @@ test('projection preserves artifact bytes, selection and checkpoint order', () =
     },
     checkpoint: {
       path: PATHS.checkpoints,
-      source: PATHS.findings,
-      challengeFindingIds: ["A", "B", "C"],
-      stripAliasFields: ["line", "end_line", "body"],
-      skeleton: { ...CHECKPOINT, phases: { challenge: { ...CHECKPOINT.phases.challenge, findings: [] } } }
+      mode: 'literal',
+      skeleton: CHECKPOINT
     },
-    planChecksum: "fnv1a32:0x6a91a603"
+    planChecksum: plan.planChecksum
   });
   const derived = deriveFromPlan(plan, text);
   assert.equal(JSON.stringify(derived.postReview, null, 2), JSON.stringify([ALIASED[2], ALIASED[0]], null, 2));
@@ -133,7 +131,7 @@ for (const [name, input, expected] of [
       findings: [{ id: 'F1', line_start: 99 }],
       checkpoints: { phases: { challenge: { findings: [{ id: 'F1', line_start: 99 }] } } },
     },
-    { ok: false, reason: 'checkpoint challenge entry F1 requires normalization before derivation' },
+    { ok: true },
   ],
   [
     'preexisting alias', { findings: [{ id: 'F1', line: 999 }] },

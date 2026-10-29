@@ -25,7 +25,7 @@ from tests.support.pipeline import (
     methodology_input,
     run_node,
 )
-from tests.support.posting import invoke_posting
+from tests.support.posting import invoke_posting, review
 from tests.support.verify_parity import project_findings, run_verify_slice
 
 READ_INPUT = (
@@ -62,6 +62,7 @@ def test_summary_and_skipped_location_bytes(
         "line_start": 12,
         "line_end": 12,
         "location_status": status,
+        "disposition": "deliver",
         "title": "Location",
     }
     summary = run_node(
@@ -99,6 +100,7 @@ def test_permalinked_summary_slice_and_guard_equality() -> None:
                 "line_start": 8,
                 "line_end": 8,
                 "location_status": "confirmed",
+                "disposition": "deliver",
                 "title": (
                     "Use `foo()` and `<Slot>`; mail dev@example.test; &#\u0666\u0664;"
                 ),
@@ -110,6 +112,7 @@ def test_permalinked_summary_slice_and_guard_equality() -> None:
                 "line_start": 1,
                 "line_end": 1,
                 "location_status": "confirmed",
+                "disposition": "deliver",
                 "title": "Path boundary",
             },
         ],
@@ -142,6 +145,7 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             "line_start": 1,
             "line_end": 1,
             "location_status": "confirmed",
+            "disposition": "deliver",
             "severity": "high",
             "confidence": 10,
             "consolidation_key": "g",
@@ -154,6 +158,7 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             "line_start": 11,
             "line_end": 11,
             "location_status": "confirmed",
+            "disposition": "deliver",
             "severity": "high",
             "confidence": 60,
             "consolidation_key": "g",
@@ -166,6 +171,7 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             "line_start": 12,
             "line_end": 12,
             "location_status": "confirmed",
+            "disposition": "deliver",
             "severity": "high",
             "confidence": 95,
             "consolidation_key": "g",
@@ -196,6 +202,88 @@ def test_withheld_primary_summary_cross_runtime() -> None:
     assert groups[0].primary["file"] in bullets[0]
     assert "Lower ranked child" not in bullets[0]
     assert "The PR claims" not in body
+
+
+@pytest.mark.parametrize("body_primary", [False, True])
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+def test_mixed_disposition_group_cross_runtime(
+    body_primary, platform, tmp_path, monkeypatch, capsys, forge_factory
+):
+    findings = [
+        {
+            "id": stamp,
+            "trace_id": f"nonce:0:{index}",
+            "file": "app.js",
+            "line_start": line,
+            "line_end": line,
+            "location_status": "confirmed",
+            "anchor": "return process(value);",
+            "title": f"{stamp} claim",
+            "description": f"Evidence from {stamp}",
+            "severity": "high",
+            "confidence": 99 if (stamp == "body") == body_primary else 90,
+            "agent": agent,
+            "dimension": "bug",
+            "diff_validation": {"in_diff": stamp == "deliver", "reason": stamp},
+        }
+        for index, (stamp, line, agent) in enumerate(
+            [("body", 4, "security-reviewer"), ("deliver", 3, "bug-detector")]
+        )
+    ]
+    disposed = json.loads(
+        run_node(
+            "import { disposeFindings } from './workflows/src/dispose.js';"
+            + READ_INPUT
+            + "process.stdout.write(JSON.stringify(disposeFindings(JSON.parse(source))));",
+            {"findings": findings},
+        ).stdout
+    )
+    members = disposed["findings"]
+    assert [f["disposition"] for f in members] == ["body", "deliver"]
+    assert members[0]["consolidation_key"] == members[1]["consolidation_key"]
+    groups = compose.consolidate_delivery(cast(list[Finding], members))
+    assert len(groups) == 1
+    primary, child = (
+        (members[0], members[1]) if body_primary else (members[1], members[0])
+    )
+    assert groups[0].primary == primary
+    assert groups[0].corroborators == (child,)
+    folded = [d for d in disposed["decisions"] if d["reason_code"] == "folded"]
+    assert len(folded) == 1 and folded[0]["trace_id"] == child["trace_id"]
+    assert folded[0]["related_trace_ids"] == [primary["trace_id"]]
+    for finding in members:
+        finding["body"] = finding["description"]
+    result = invoke_posting(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        forge_factory,
+        review(platform, members, review_body=""),
+        diff=(
+            "diff --git a/app.js b/app.js\n--- a/app.js\n+++ b/app.js\n"
+            "@@ -3 +3 @@\n-old_value();\n+return process(value);\n"
+        ),
+    )
+    assert result.code == 0, result.err
+    payload = result.payload
+    assert payload is not None
+    summary = (
+        payload["payload"]["body"]
+        if platform == "github"
+        else payload["summary"]["body"]
+    )
+    comments = (
+        payload["payload"]["comments"]
+        if platform == "github"
+        else payload["discussions"]
+    )
+    assert len(comments) == int(not body_primary)
+    if body_primary:
+        assert all(f["title"] in summary for f in members)
+    else:
+        assert all(f["title"] in comments[0]["body"] for f in members)
+        assert "Corroborating finding" in comments[0]["body"]
+        assert all(f["title"] not in summary for f in members)
 
 
 def test_pipeline_fields_reach_poster(
@@ -664,6 +752,7 @@ def test_verify_localises_real_receipt_input_typo(
             "line_start": 1,
             "line_end": 1,
             "location_status": "confirmed",
+            "disposition": "deliver",
             "severity": "high",
             "confidence": 80,
             "description": "`alpha_token` and `beta_token`",

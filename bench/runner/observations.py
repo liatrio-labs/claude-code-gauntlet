@@ -55,7 +55,7 @@ Stage = Literal[
     "select",
     "deliver",
 ]
-OPTIONAL_STAGES: frozenset[Stage] = frozenset(("cite", "dispose"))
+OPTIONAL_STAGES: frozenset[Stage] = frozenset(("cite", "dispose", "holdback"))
 REQUIRED_STAGES = tuple(
     stage
     for stage in get_args(Stage)

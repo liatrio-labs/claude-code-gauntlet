@@ -61,7 +61,9 @@ def _manifest(tmp_path, evidence, mode="return", trace=True):
             json.loads(
                 next(
                     text
-                    for path, text in evidence["return"]["artifacts"].items()
+                    for path, text in evidence[
+                        "return" if mode == "writer-failure" else mode
+                    ]["artifacts"].items()
                     if "checkpoint-all" in path
                 )
             ),
@@ -85,7 +87,7 @@ def _manifest(tmp_path, evidence, mode="return", trace=True):
     return path
 
 
-def _cli(manifest, out):
+def _cli(manifest, out, *extra):
     return subprocess.run(
         [
             sys.executable,
@@ -94,6 +96,7 @@ def _cli(manifest, out):
             str(manifest),
             "--out",
             str(out),
+            *extra,
         ],
         cwd=ROOT,
         capture_output=True,
@@ -152,6 +155,200 @@ sys.exit(delivery_replay.main())
     assert not out.exists()
 
 
+def test_candidate_dispose_trace(tmp_path, evidence):
+    from bench.runner import delivery_replay
+    from bench.runner.delivery_replay import load_replay_inputs, replay_delivery
+    from bench.runner.stages import load_trace
+
+    manifest = _manifest(tmp_path, evidence, "candidate")
+    wire = json.loads(manifest.read_bytes())
+    patch = tmp_path / "saved.patch"
+    patch.write_bytes(
+        b"diff --git a/0.js b/0.js\n--- a/0.js\n+++ b/0.js\n@@ -10 +10 @@\n-old_value();\n+return process(value);\n"
+    )
+    wire["diff"] = {"path": patch.name, "sha256": _hash(patch.read_bytes())}
+    _write(manifest, wire)
+    inputs = load_replay_inputs(manifest)
+    before = {p: p.read_bytes() for p in inputs.source_paths}
+    first, second = [replay_delivery(inputs, candidate=True) for _ in range(2)]
+    assert first == second
+    assert all(p.read_bytes() == data for p, data in before.items())
+    files = dict(first.artifacts)
+    trace = json.loads(files["measurement-trace.json"])
+    reducer = next(s for s in trace["snapshots"] if s["stage"] == "dispose")
+    assert {"validation_skipped", "challenge_cap", "threshold"} <= {
+        d["reason_code"] for d in reducer["decisions"]
+    }
+    assert sum(s["stage"] in ("holdback", "dispose") for s in trace["snapshots"]) == 1
+    receipt = json.loads(first.receipt)
+    assert receipt["input_hashes"]["diff"] == wire["diff"]["sha256"]
+    assert "post-review-payload.json" in receipt["artifact_hashes"]
+    posted = json.loads(files["post-review-payload.json"])
+    assert posted["placement"] == "available"
+    assert len(posted["payload"]["comments"]) == 1
+    assert json.loads(files["delivery-deltas.json"])
+    original_assembly = delivery_replay._assemble_entries
+
+    def corrupt_checkpoint(artifacts, plan_path):
+        receipt = original_assembly(artifacts, plan_path)
+        checkpoint_path = json.loads(artifacts[plan_path])["checkpoint"]["path"]
+        checkpoint = json.loads(artifacts[checkpoint_path])
+        checkpoint["phases"]["challenge"]["stats"]["forged"] = True
+        artifacts[checkpoint_path] = js_stringify_pretty(checkpoint)
+        return receipt
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(delivery_replay, "_assemble_entries", corrupt_checkpoint)
+        with pytest.raises(ValueError, match="raw checkpoint delta"):
+            replay_delivery(inputs, candidate=True)
+    for mutation, error in (
+        ("findings[0].confidence += 1", "finding delta"),
+        (
+            "findings[0].description = findings[0].body = 'invented claim'",
+            "finding delta",
+        ),
+        ("findings[0].body = 'invented claim'", "finding delta"),
+        ("findings.pop()", "member omission"),
+    ):
+        with pytest.MonkeyPatch.context() as patcher:
+            patcher.setattr(
+                delivery_replay,
+                "NODE",
+                delivery_replay.NODE.replace(
+                    "send({ dispatch, prompt_sha256:",
+                    "if (dispatch.label === 'artifact-writer') { const entry = entries.find(e => e.path.includes('findings-')); const findings = JSON.parse(entry.text); "
+                    + mutation
+                    + "; entry.text = JSON.stringify(findings, null, 2); } send({ dispatch, prompt_sha256:",
+                ),
+            )
+            with pytest.raises(ValueError, match=error):
+                replay_delivery(inputs, candidate=True)
+    trace_path = tmp_path / "current.json"
+    for stage in ("dispose", "holdback"):
+        historical = copy.deepcopy(trace)
+        next(s for s in historical["snapshots"] if s["stage"] == "dispose")["stage"] = (
+            stage
+        )
+        _write(trace_path, historical)
+        assert load_trace(
+            trace_path, expected_sha256=_hash(trace_path.read_bytes())
+        ).complete
+    for reducers in ([], ["dispose", "holdback"]):
+        invalid = copy.deepcopy(trace)
+        index = next(
+            i for i, s in enumerate(invalid["snapshots"]) if s["stage"] == "dispose"
+        )
+        invalid["snapshots"][index : index + 1] = [
+            {**reducer, "stage": stage} for stage in reducers
+        ]
+        for sequence, snapshot in enumerate(invalid["snapshots"]):
+            snapshot["sequence"] = sequence
+        _write(trace_path, invalid)
+        with pytest.raises(ValueError):
+            load_trace(trace_path, expected_sha256=_hash(trace_path.read_bytes()))
+    off_manifest = _manifest(tmp_path, evidence, "candidate", trace=False)
+    missing = dict(
+        replay_delivery(load_replay_inputs(off_manifest), candidate=True).artifacts
+    )
+    unavailable = json.loads(missing["post-review-payload.json"])
+    assert (
+        unavailable["placement"] == "unavailable"
+        and not unavailable["payload"]["comments"]
+    )
+    off_wire = json.loads(off_manifest.read_bytes())
+    off_wire["diff"] = wire["diff"]
+    _write(off_manifest, off_wire)
+    off = dict(
+        replay_delivery(load_replay_inputs(off_manifest), candidate=True).artifacts
+    )
+    assert {p: data for p, data in files.items() if p.startswith("code-gauntlet-")} == {
+        p: data for p, data in off.items() if p.startswith("code-gauntlet-")
+    }
+    empty_manifest = _manifest(tmp_path, evidence, "empty")
+    empty = dict(
+        replay_delivery(load_replay_inputs(empty_manifest), candidate=True).artifacts
+    )
+    findings = next(data for p, data in empty.items() if "findings-" in p)
+    assert json.loads(findings) == []
+    result = _cli(empty_manifest, tmp_path / "candidate-cli", "--candidate")
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "changes,expected",
+    [
+        (
+            {"diff_validation": {"in_diff": False, "reason": "recorded off diff"}},
+            {"in_diff": False, "reason": "recorded off diff"},
+        ),
+        (
+            {"diff_validation": {"in_diff": None, "reason": "recorded unavailable"}},
+            {"in_diff": None, "reason": "recorded unavailable"},
+        ),
+        (
+            {"file": "outside.js"},
+            {
+                "in_diff": False,
+                "reason": "lines 10-10 of 'outside.js' not found in diff — tagged as surfaced (was: new)",
+            },
+        ),
+        (
+            {"file": "outside.js", "has_removed_test_location": True},
+            {
+                "in_diff": True,
+                "reason": "removed test inventory anchors a new coverage loss",
+            },
+        ),
+        (
+            {"location_status": "unconfirmed"},
+            {
+                "in_diff": None,
+                "reason": "location unconfirmed - diff validation skipped",
+            },
+        ),
+        ({}, {"in_diff": True, "reason": "line 10 found in diff"}),
+    ],
+    ids=[
+        "recorded-off-diff",
+        "recorded-unavailable",
+        "legacy-off-diff",
+        "legacy-removed-test",
+        "legacy-unconfirmed",
+        "legacy-in-diff",
+    ],
+)
+def test_candidate_uses_verify_diff_facts(tmp_path, evidence, changes, expected):
+    from bench.runner.delivery_replay import load_replay_inputs, replay_delivery
+
+    manifest = _manifest(tmp_path, evidence, "candidate", trace=False)
+    wire = json.loads(manifest.read_bytes())
+    patch = tmp_path / "saved.patch"
+    patch.write_bytes(
+        b"diff --git a/0.js b/0.js\n--- a/0.js\n+++ b/0.js\n@@ -10 +10 @@\n-old_value();\n+return process(value);\n"
+    )
+    wire["diff"] = {"path": patch.name, "sha256": _hash(patch.read_bytes())}
+    workflow_path = tmp_path / "workflow.json"
+    record = json.loads(workflow_path.read_bytes())
+    finding = record["state"]["phaseOutputs"]["challenge"]["findings"][0]
+    finding.pop("diff_validation")
+    finding.update(changes)
+    original = copy.deepcopy(finding)
+    _write(workflow_path, record)
+    wire["sources"]["workflow"]["sha256"] = _hash(workflow_path.read_bytes())
+    _write(manifest, wire)
+    files = dict(
+        replay_delivery(load_replay_inputs(manifest), candidate=True).artifacts
+    )
+    disposed = json.loads(next(data for p, data in files.items() if "findings-" in p))
+    actual = next(f for f in disposed if f["id"] == finding["id"])
+    assert actual["diff_validation"] == expected
+    assert actual["origin"] == original["origin"]
+    assert actual["severity"] == original["severity"]
+    assert actual["disposition"] == (
+        "deliver" if expected["in_diff"] is True else "body"
+    )
+
+
 @pytest.mark.parametrize("mode", ["return", "derived", "legacy", "writer-failure"])
 def test_replay_preserves_bytes_and_occurrence_identity(tmp_path, mode, evidence):
     manifest = _manifest(tmp_path, evidence, mode)
@@ -175,7 +372,9 @@ def test_replay_preserves_bytes_and_occurrence_identity(tmp_path, mode, evidence
     assert files["envelope.json"] == js_stringify_pretty(evidence[mode]["out"]).encode(
         "utf-8"
     )
-    holdback = next(s for s in trace["snapshots"] if s["stage"] == "holdback")
+    holdback = next(
+        s for s in trace["snapshots"] if s["stage"] in ("holdback", "dispose")
+    )
     select = next(s for s in trace["snapshots"] if s["stage"] == "select")
     assert any(d["decision"] == "held_back" for d in holdback["decisions"])
     assert any(d["reason_code"] == "delivery_cap" for d in select["decisions"])
@@ -274,7 +473,9 @@ def test_replay_cli_refuses_incomplete_or_ambiguous_evidence(
         if case == "trace-version":
             trace["versions"].append(trace["versions"][0])
         else:
-            holdback = next(s for s in trace["snapshots"] if s["stage"] == "holdback")
+            holdback = next(
+                s for s in trace["snapshots"] if s["stage"] in ("holdback", "dispose")
+            )
             challenge = next(s for s in trace["snapshots"] if s["stage"] == "challenge")
             extra = copy.deepcopy(
                 next(

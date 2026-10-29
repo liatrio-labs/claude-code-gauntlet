@@ -188,7 +188,7 @@ export async function challengeStage(ctx, input) {
       stats: {
         total_input: 0, dispatched: 0, completed: 0, skipped: 0,
         challenge_removed: 0, challenge_downgraded: 0, challenge_contested: 0,
-        challenge_survived: 0, unchallenged: 0, cross_agent_consolidated: 0, final_count: 0,
+        challenge_survived: 0, unchallenged: 0, final_count: 0,
       },
       generated_at: inp.generatedAt,
     };
@@ -257,7 +257,6 @@ export async function challengeStage(ctx, input) {
       challenge_contested: applied.stats.challenge_contested,
       challenge_survived: applied.stats.challenge_survived,
       unchallenged: applied.stats.unchallenged,
-      cross_agent_consolidated: applied.stats.cross_agent_consolidated,
       final_count: applied.stats.final_count,
     },
     generated_at: inp.generatedAt,

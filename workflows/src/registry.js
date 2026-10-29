@@ -84,6 +84,15 @@ export const LOCATION_RIGHTS = deepFreeze({
 });
 export const LOCATION_STATUSES = deepFreeze(Object.keys(LOCATION_RIGHTS));
 
+export const DISPOSITION_RIGHTS = deepFreeze({
+  deliver: { inline: true, body: true, report: 'finding', fixTask: true, patch: true, fence: true, sourceLink: true },
+  body: { inline: false, body: true, report: 'finding', fixTask: false, patch: false, fence: false, sourceLink: true },
+  held_back: { inline: false, body: false, report: 'unverified', fixTask: false, patch: false, fence: false, sourceLink: false },
+  report_only: { inline: false, body: false, report: 'finding', fixTask: false, patch: false, fence: false, sourceLink: false },
+  eliminate: { inline: false, body: false, report: 'eliminated', fixTask: false, patch: false, fence: false, sourceLink: false },
+});
+export const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
+
 // Use full schema fragments for arrays because the host requires items; scalar fields can use type shorthand.
 // Verification stamps origin, so discovery does not require it.
 export const FINDING_PROP_TYPES = deepFreeze({

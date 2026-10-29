@@ -35,12 +35,14 @@ def _verify_deltas(inp):
 _VERIFY_DELTA_DROP = (
     "blame_metadata",
     "factual_verification",
-    "diff_validation",
 )
 
 
 def _project_verify_delta(finding):
-    return {k: v for k, v in finding.items() if k not in _VERIFY_DELTA_DROP}
+    out = {k: v for k, v in finding.items() if k not in _VERIFY_DELTA_DROP}
+    if "diff_validation" in out:
+        out["diff_validation"] = {"in_diff": out["diff_validation"]["in_diff"]}
+    return out
 
 
 def _slice_input_proof(inp):

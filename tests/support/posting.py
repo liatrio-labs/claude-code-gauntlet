@@ -36,6 +36,7 @@ CONTEXT = {
     "line_start": 61,
     "line_end": 62,
     "location_status": "confirmed",
+    "disposition": "deliver",
     "anchor": "unchanged_ctx\nadded",
     "severity": "high",
     "title": "Context-line finding",
@@ -43,6 +44,7 @@ CONTEXT = {
 }
 
 ADDED = {
+    "disposition": "deliver",
     "file": "src/edited.py",
     "line": 62,
     "line_start": 62,
@@ -55,6 +57,7 @@ ADDED = {
 }
 
 NEW = {
+    "disposition": "deliver",
     "file": "src/app/clients/api/__init__.py",
     "line": 1,
     "line_start": 1,

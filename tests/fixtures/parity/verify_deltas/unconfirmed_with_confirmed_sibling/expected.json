@@ -1,8 +1,11 @@
 {
-  "checksum": "fnv1a32:0x718899f0",
+  "checksum": "fnv1a32:0xaa2d7c9e",
   "deltas": [
     {
       "confidence": 65,
+      "diff_validation": {
+        "in_diff": true
+      },
       "id": "bug-201",
       "line_end": 52,
       "line_start": 50,
@@ -28,6 +31,9 @@
       "confidence": 65,
       "cross_file_refs": [],
       "description": "The file opened via open(path) is never closed if the loop below raises, leaking a file descriptor per failed parse.",
+      "diff_validation": {
+        "in_diff": true
+      },
       "dimension": "bug",
       "end_line": 52,
       "evidence": "f = open(path)",

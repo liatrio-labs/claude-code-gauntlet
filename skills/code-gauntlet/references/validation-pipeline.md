@@ -118,7 +118,7 @@ The stage ranks clean findings first, then incomplete findings, and blind-challe
 - **50–74** → `challenge_contested: true`; surfaced re-routed to `"suggestion"`
 - **≥ 75** → survives unchanged
 
-After thresholds it consolidates and ranks survivors. Challenge cap overflow is stamped `challenge='capped'`; null/unscored results are stamped `challenge='failed'`. Both enter the **unverified** bucket. Immediately after the challenge phase and replay belt, `holdBackIncomplete` moves survivors missing validation or verification to that bucket, on fresh runs and old checkpoints alike. Eliminated findings stay eliminated. The helper clears unverified consolidation stamps and regroups only clean survivors, which form the **high-confidence bucket**. Legacy `challenge='skipped'` entries remain unchallenged with neutral report wording. Both buckets flow to the report; only high-confidence findings enter findings.json and delivery.
+After thresholds it ranks survivors and retains upstream eliminations in the challenge checkpoint. Challenge cap overflow is stamped `challenge='capped'`; null/unscored results are stamped `challenge='failed'`. After the replay belt, `disposeFindings` assigns delivery dispositions once: incomplete verification, validation, or challenge becomes `held_back`; clean findings become `deliver` when location and diff facts allow inline placement, or `body` otherwise. Legacy records without diff facts retain location-based placement, and `challenge='skipped'` remains unchallenged. Eliminations become `eliminate`. The reducer clears stale consolidation and regroups clean survivors. All records enter findings.json and their corresponding report sections; only `deliver` and `body` records share the ranked delivery cap.
 
 ---
 

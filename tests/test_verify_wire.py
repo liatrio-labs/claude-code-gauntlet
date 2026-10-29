@@ -282,7 +282,7 @@ def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
         "sha": "abcd",
         "n_in": 1,
         "nonce": "cli",
-        "deltas_checksum": "fnv1a32:0xe7fda501",
+        "deltas_checksum": "fnv1a32:0xdbf6aa5e",
         "inline_checksum": "fnv1a32:0x17c759ec",
         "base_branch": "main",
         "diff_source": {"path": None, "read": True},
@@ -327,6 +327,7 @@ def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
             "origin": "new",
             "confidence": 80,
             "location_status": "unconfirmed",
+            "diff_validation": {"in_diff": None},
         }
     ]
     assert env["result"]["stats"] == {
@@ -386,6 +387,7 @@ def test_receipt_surrogate_ascii(invoke, tmp_path, verify_git):
             "verified": True,
             "origin": "new",
             "location_status": "unconfirmed",
+            "diff_validation": {"in_diff": None},
         }
     ]
     assert env["result"]["verified"][0]["description"] == "\ud800"
@@ -393,7 +395,7 @@ def test_receipt_surrogate_ascii(invoke, tmp_path, verify_git):
         "sha": "abcd",
         "n_in": 1,
         "nonce": "cli",
-        "deltas_checksum": "fnv1a32:0xcfb0eff0",
+        "deltas_checksum": "fnv1a32:0x34fd001f",
         "inline_checksum": "fnv1a32:0xc771c3d9",
         "base_branch": "main",
         "diff_source": {"path": None, "read": True},

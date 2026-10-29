@@ -55,6 +55,7 @@ const VERIFY_SCHEMA = {
               line_start: { type: 'integer', minimum: 1 },
               line_end: { type: 'integer', minimum: 1 },
               location_status: { type: 'string', enum: LOCATION_STATUSES },
+              diff_validation: { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false },
             },
             required: ['id', 'verified', 'location_status'],
           },
@@ -173,7 +174,7 @@ export async function verifyStage(ctx, input) {
       else if (attempt.inputFault === 'missing') inputProof.missing += 1;
     }
     out.push(...attempt.verified);
-    if (inp.measurementTrace) eliminated.push(...attempt.eliminated);
+    eliminated.push(...attempt.eliminated);
     if (attempt.degraded) {
       degradedSlices += 1;
       gaps.push(verifyDegradeGap(`slice ${i}: ${attempt.reason}`, attempt.degraded, findings.length));
@@ -227,8 +228,8 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
   }
   const degraded = slice.length - accepted.size;
   return {
-    eliminated: inp.measurementTrace ? slice.filter((f) => accepted.get(f.id)?.verified === false)
-      .map((f) => ({ ...f, elimination_reason: accepted.get(f.id).elimination_reason })) : [],
+    eliminated: slice.filter((f) => accepted.get(f.id)?.verified === false)
+      .map((f) => ({ ...f, eliminated_by: 'verify', elimination_reason: accepted.get(f.id).elimination_reason })),
     // Accepted membership includes trusted eliminations exactly once after retry.
     verified: slice.flatMap((f) => accepted.has(f.id)
       ? joinVerifyDeltas([f], [accepted.get(f.id)]) : degradedSlice([f])),
@@ -318,6 +319,8 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
       || (d.location_status === 'unconfirmed'
         ? Object.hasOwn(d, 'line_start') || Object.hasOwn(d, 'line_end')
         : !canonicalRange(d))) malformedLocations.add(id);
+    if (d.diff_validation !== undefined && (!d.diff_validation || typeof d.diff_validation !== 'object'
+      || ![true, false, null].includes(d.diff_validation.in_diff))) malformedLocations.add(id);
     const stamp = typeof d.elimination_reason === 'string' ? d.elimination_reason.trim() : '';
     if (d.verified === false && stamp === '') {
       return { ok: false, reason: `delta ${id}: eliminated without the elimination_reason stamp (fabricated elimination — the verify script always stamps a real one)` };
