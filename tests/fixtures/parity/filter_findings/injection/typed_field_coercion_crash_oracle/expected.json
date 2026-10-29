@@ -9,7 +9,9 @@
       "id": "IN1",
       "line_start": 10,
       "severity": "medium",
-      "title": null
+      "title": null,
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "confidence": 70,
@@ -20,7 +22,9 @@
       "id": "IN2",
       "line_start": 44,
       "severity": "medium",
-      "title": "Suspicious embedded shell command finding"
+      "title": "Suspicious embedded shell command finding",
+      "line_end": 44,
+      "location_status": "confirmed"
     },
     {
       "confidence": 50,
@@ -31,7 +35,9 @@
       "id": "IN5",
       "line_start": 70,
       "severity": "low",
-      "title": "Ordinary title text with no injection content whatsoever"
+      "title": "Ordinary title text with no injection content whatsoever",
+      "line_end": 70,
+      "location_status": "confirmed"
     }
   ],
   "kept": [
@@ -42,7 +48,9 @@
       "id": "IN3",
       "line_start": 77,
       "severity": "medium",
-      "title": "Legitimate finding with a numeric-string confidence"
+      "title": "Legitimate finding with a numeric-string confidence",
+      "line_end": 77,
+      "location_status": "confirmed"
     },
     {
       "confidence": 50,
@@ -53,7 +61,9 @@
       "severity": "low",
       "title": [
         "Example finding"
-      ]
+      ],
+      "line_end": 60,
+      "location_status": "confirmed"
     }
   ]
 }

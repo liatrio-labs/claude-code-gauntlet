@@ -7,12 +7,24 @@ from pathlib import Path
 
 import pytest
 from gauntlet import fix_tasks as renderer
+from gauntlet import proc
 
 
 @pytest.fixture
-def fix_root(tmp_path):
+def fix_root(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     root.mkdir()
+    source = root / "src/bug.py"
+    source.parent.mkdir()
+    source.write_text("\n" * 9 + "stale_value = read_value()\n" * 3, encoding="utf-8")
+    original = proc.run_bytes
+
+    def run(argv, **kwargs):
+        if argv == ["git", "rev-parse", "HEAD"]:
+            return proc.CompletedProcess(argv, 0, b"a" * 40 + b"\n", b"")
+        return original(argv, **kwargs)
+
+    monkeypatch.setattr(proc, "run_bytes", run)
     return root
 
 
@@ -26,6 +38,9 @@ def make_finding(**changes):
         "id": "bug-1",
         "file": "src/bug.py",
         "line_start": 10,
+        "line_end": 10,
+        "anchor": "stale_value = read_value()",
+        "location_status": "confirmed",
         "title": "Avoid stale value",
         "description": "The value is stale.",
         "severity": "medium",
@@ -33,6 +48,10 @@ def make_finding(**changes):
         "dimension": "bug",
     }
     value.update(changes)
+    if changes.get("line_end") == 12:
+        value["anchor"] = (
+            "stale_value = read_value()\nstale_value = read_value()\nstale_value = read_value()"
+        )
     return value
 
 
@@ -80,7 +99,9 @@ def tracked_files(fix_root):
         for path in paths:
             target = fix_root / path
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text("x", encoding="utf-8")
+            target.write_text(
+                "\n" * 9 + "stale_value = read_value()\n" * 3, encoding="utf-8"
+            )
         subprocess.run(
             ["git", "add", *paths], cwd=fix_root, check=True, capture_output=True
         )
@@ -194,15 +215,15 @@ def test_wrapped_aliases_and_canonical_precedence(run_renderer, write_artifact):
     for key in ("line_start", "description"):
         finding.pop(key)
     write_artifact([finding], wrapper=True)
-    alias_task = output(run_renderer())[0]
-    assert "## Location\n`src/bug.py:11-12`" in alias_task["description"]
-    assert alias_task["metadata"]["requirements"] == [
-        {"id": "R-bug-1.1", "text": "canonical description", "testable": True}
-    ]
-    finding.update(line_start=11, line_end=12, description="canonical description")
+    assert output(run_renderer()) == []
+    finding.update(line_start=10, line_end=10, description="canonical description")
     finding.update(line=99, end_line=88, body="alias body")
     write_artifact([finding], wrapper=True)
-    assert output(run_renderer())[0] == alias_task
+    task = output(run_renderer())[0]
+    assert "## Location\n`src/bug.py:10`" in task["description"]
+    assert task["metadata"]["requirements"] == [
+        {"id": "R-bug-1.1", "text": "canonical description", "testable": True}
+    ]
 
 
 def test_invalid_artifact_is_a_content_failure(run_renderer, write_artifact):
@@ -244,17 +265,9 @@ def test_outside_path_is_omitted_and_counted(
         (fix_root / "link.py").symlink_to(tmp_path / "outside.py")
     write_artifact([make_finding(file=file)])
     result = run_renderer()
-    task = output(result)[0]
-    assert "(1 path rejected)" in result.stderr
+    assert output(result) == []
+    assert "Skipped 1 finding with unconfirmed location: bug-1" in result.stderr
     assert file not in result.stdout
-    assert "## Location\n(path rejected: outside repo root)" in task["description"]
-    assert task["metadata"]["scope"] == {
-        "files_to_create": [],
-        "files_to_modify": [],
-        "patterns_to_follow": [],
-    }
-    assert task["metadata"]["proof_artifacts"] == []
-    assert task["metadata"]["commit"]["template"] == "fix(fix): Avoid stale value"
 
 
 @pytest.mark.parametrize(
@@ -519,3 +532,21 @@ def test_caller_fix_protocol():
         "Never hand-compose",
     ):
         assert phrase in block
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"location_status": None},
+        {"location_status": "unknown"},
+        {"location_status": "unconfirmed"},
+        {"anchor": "changed_source_value()"},
+    ],
+)
+def test_unconfirmed_finding_creates_no_fix_task(
+    changes, run_renderer, write_artifact, fix_root
+):
+    write_artifact([make_finding(**changes)])
+    result = run_renderer()
+    assert output(result) == []
+    assert "Skipped 1 finding with unconfirmed location: bug-1" in result.stderr

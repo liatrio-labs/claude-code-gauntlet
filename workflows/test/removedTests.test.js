@@ -13,6 +13,8 @@ import { stageCtx } from './helpers/stageFixtures.js';
 import { validArgs, checkpointArgs } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { shellSplit } from './helpers/shellWords.js';
+import { runAndCapture } from './helpers/persistFixtures.js';
+import { projectVerifySliceFinding } from '../src/verifyWire.js';
 
 const item = { id: '0123456789abcdef', path: 'tests/removed', old_start: 3, old_end: 7, kind: 'deleted_file' };
 const body = { status: 'available', items: [item], omitted: 0 };
@@ -34,7 +36,7 @@ test('audit dispatch converts losses and reserves removed_test for code', async 
   assert.equal(out.findings.length, 1);
   assert.deepEqual(out.findings[0], {
     id: `removed-test:${item.id}:1`, agent: 'test-analyzer', dimension: 'test_coverage',
-    file: loss.file, line_start: loss.line, title: loss.title, description: loss.description,
+    file: loss.file, line_start: loss.line, location_status: 'unconfirmed', title: loss.title, description: loss.description,
     severity: loss.severity, confidence: loss.confidence, criticality: loss.criticality,
     failure_scenario: loss.failure_scenario,
     removed_test: { id: item.id, path: item.path, old_start: 3, old_end: 7 },
@@ -65,8 +67,36 @@ test('audit dispatch converts losses and reserves removed_test for code', async 
   }
 });
 
-test('audit losses drop only same-anchor ordinary findings from the same dispatch', async () => {
-  const anchor = { ...loss, file: '/repo/bin/seat', line: 545 };
+test('audit anchor optionality follows required keys', async () => {
+  for (const fields of [{}, { anchor: '' }, { anchor: 'return selected_value;' }, { anchor: ' ' }]) {
+    const out = await discover(auditCtx([{ ...lost, losses: [{ ...loss, ...fields }] }]), { removedTests: body });
+    assert.deepEqual(out.removedTestAudit, { status: 'ran-clean' });
+    assert.equal(out.findings.length, 1);
+  }
+  const invalidLosses = [
+    ...Object.keys(loss).map((key) => Object.fromEntries(Object.entries(loss).filter(([field]) => field !== key))),
+    ...['file', 'title', 'description', 'failure_scenario'].map((key) => ({ ...loss, [key]: '' })),
+    { ...loss, title: '  ' },
+    { ...loss, anchor: null }, { ...loss, anchor: 42 },
+    { ...loss, unexpected: 'unknown' },
+  ];
+  const invalidRows = [
+    ...invalidLosses.map((value) => ({ ...lost, losses: [value] })),
+    { ...lost, id: '' },
+    { ...lost, unexpected: 'unknown' },
+    { ...lost, status: 'covered_elsewhere', losses: [], covered_by: [
+      { file: 'tests/new', line: 1, input: 'competing values', assertion: 'override wins', unexpected: 'unknown' },
+    ] },
+  ];
+  for (const row of invalidRows) {
+    const out = await discover(auditCtx([row]), { removedTests: body });
+    assert.equal(out.removedTestAudit.status, 'gap');
+    assert.deepEqual(out.findings, []);
+  }
+});
+
+test('audit anchors reach Verify without numeric suppression', async () => {
+  const anchor = { ...loss, file: '/repo/bin/seat', line: 545, anchor: 'return selected_value;' };
   const ordinary = (id, fields = {}) => makeFinding(id, {
     file: 'bin/seat', line_start: 545, line_end: undefined, dimension: 'test_coverage',
     title: anchor.title, ...fields,
@@ -88,14 +118,17 @@ test('audit losses drop only same-anchor ordinary findings from the same dispatc
   } });
   const out = await discover(ctx, { repoRoot: '/repo', removedTests: body });
   assert.deepEqual(out.findings.map((finding) => finding.id), [
-    'other-agent', `removed-test:${item.id}:1`, 'range-middle', 'range-end', 'before', 'after', 'other-file',
+    'other-agent', `removed-test:${item.id}:1`, 'range-start', 'range-middle', 'range-end', 'single-line', 'before', 'after', 'other-file',
   ]);
   assert.equal(out.findings[0].agent, 'bug-detector');
   assert.equal(out.findings[1].file, 'bin/seat');
+  assert.equal(out.findings[1].anchor, anchor.anchor);
+  assert.equal(out.findings[1].location_status, 'unconfirmed');
+  assert.equal(projectVerifySliceFinding(out.findings[1]).anchor, anchor.anchor);
   assert.deepEqual(out.gaps, []);
-  assert.equal(out.removedTestAudit.duplicates_dropped, 2);
+  assert.equal(out.removedTestAudit.duplicates_dropped, undefined);
   const row = dimensionsSummaryTable(out).split('\n').find((line) => line.includes('| test-analyzer |'));
-  assert.match(row, /2 repeated an audit loss and were dropped/);
+  assert.doesNotMatch(row, /repeated an audit loss/);
 });
 
 const badRows = [
@@ -284,5 +317,36 @@ test('removed coverage reaches capped delivery and main_only with real Verify an
       discoverOutput = out.checkpoints.phases.discover;
       assert.deepEqual(discoverOutput.removedTestAudit, { status: 'ran-clean' });
     } else assert.ok(!ctx.calls.some((call) => call.label === 'code-gauntlet:test-analyzer'));
+  }
+});
+
+test('resolved audit overlap keeps existing same-start policy', async () => {
+  const synthetic = makeFinding(`removed-test:${item.id}:1`, { agent: 'test-analyzer', file: 'source', line_start: 10, line_end: 10,
+    removed_test: { id: item.id, path: item.path, old_start: 3, old_end: 7 } });
+  const ordinary = [
+    makeFinding('duplicate', { agent: 'test-analyzer', file: 'source' }),
+    makeFinding('other-agent', { agent: 'bug-detector', file: 'source' }),
+    makeFinding('other-start', { agent: 'test-analyzer', file: 'source', line_start: 9, line_end: 11 }),
+    makeFinding('unconfirmed', { agent: 'test-analyzer', file: 'source', location_status: 'unconfirmed' }),
+    makeFinding('other-file', { agent: 'test-analyzer', file: 'other' }),
+  ];
+  for (const location_status of ['confirmed', 'unconfirmed']) {
+    const findings = [{ ...synthetic, location_status }, ...ordinary];
+    const args = validArgs({ checkpoints: {
+      summarize: { summary: 's', gaps: [] },
+      discover: { findings, gaps: [], dispatched: ['code-gauntlet:test-analyzer'], degraded: [], removedTestAudit: { status: 'ran-clean', duplicates_dropped: 99 } },
+      verify: { findings: structuredClone(findings), gaps: [], verified: true },
+    } });
+    const failed = await runWith(makeCtx(args, { parallelThrows: true }), args);
+    assert.equal(failed.ok, false);
+    assert.equal(failed.failingPhase, 'validate');
+    const { out, ctx, payload } = await runAndCapture({ ...args, checkpoints: failed.checkpoints }, { findings: [] });
+    assert.equal(out.ok, true);
+    const row = payload.report.split('\n').find((line) => line.includes('| test-analyzer |'));
+    if (location_status === 'confirmed') assert.match(row, /1 repeated an audit loss/);
+    else assert.doesNotMatch(row, /repeated an audit loss/);
+    const validate = ctx.calls.find((call) => call.label.startsWith('validate-')).prompt;
+    assert.equal(validate.includes('- duplicate ['), location_status === 'unconfirmed');
+    for (const f of ordinary.slice(1)) assert.ok(validate.includes(`- ${f.id} [`));
   }
 });

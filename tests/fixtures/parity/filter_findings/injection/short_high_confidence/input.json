@@ -8,7 +8,9 @@
       "file": "src/app.py",
       "line_start": 5,
       "severity": "low",
-      "confidence": 90
+      "confidence": 90,
+      "line_end": 5,
+      "location_status": "confirmed"
     }
   ]
 }

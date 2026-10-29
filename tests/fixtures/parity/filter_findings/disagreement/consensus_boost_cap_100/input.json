@@ -10,7 +10,9 @@
       "severity": "high",
       "confidence": 95,
       "title": "t1",
-      "description": "d1"
+      "description": "d1",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "D2",
@@ -21,7 +23,9 @@
       "severity": "high",
       "confidence": 70,
       "title": "t2",
-      "description": "d2"
+      "description": "d2",
+      "line_end": 12,
+      "location_status": "confirmed"
     }
   ]
 }

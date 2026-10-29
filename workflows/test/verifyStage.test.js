@@ -2,18 +2,33 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyStage } from '../src/verifyStage.js';
 import { deltaContentProof } from '../src/verifyWire.js';
+import { ANCHOR_LIMITS } from '../src/registry.js';
 import { deltaEnvelope, deltasFor, ELIMINATION_STAMP, verifyCtx, verifyInput, dispatchedFindings, sliceInputRecorder } from './helpers/verifyDelta.js';
 import { outsideSingleQuotes, shellSplit } from './helpers/shellWords.js';
 
 const BASE = [
-  { id: 'F1', file: 'a.js', line_start: 1, origin: 'new', dimension: 'bug', cross_file_refs: [], agent: 'bug-detector' },
-  { id: 'F2', file: 'b.js', line_start: 2, origin: 'new', dimension: 'security', cross_file_refs: ['c.js:9'], agent: 'bug-detector' },
+  { id: 'F1', file: 'a.js', line_start: 1, line_end: 1, anchor: 'return process(value);', origin: 'new', dimension: 'bug', cross_file_refs: [], agent: 'bug-detector' },
+  { id: 'F2', file: 'b.js', line_start: 2, line_end: 2, anchor: 'return process(value);', origin: 'new', dimension: 'security', cross_file_refs: ['c.js:9'], agent: 'bug-detector' },
 ];
 const findingsFor = (n) => Array.from({ length: n }, (_, k) => ({
-  id: `F${k}`, file: `f${k}.js`, line_start: k + 1, line_end: k + 1,
+  anchor: 'return process(value);', id: `F${k}`, file: `f${k}.js`, line_start: k + 1, line_end: k + 1,
   title: `t${k}`, description: `d${k}`, severity: 'high', confidence: 80,
   dimension: 'bug', origin: 'new', evidence: `e${k}`, cross_file_refs: [], agent: 'bug-detector',
 }));
+// Expected location views describe the held claim and the executor's proven range.
+const located = (f) => {
+  if (!Number.isSafeInteger(f.line_start) || !f.anchor) return unresolved(f);
+  const out = { ...f, location_status: 'confirmed', line_end: f.line_end ?? f.line_start,
+    line: f.line_start, end_line: f.line_end ?? f.line_start,
+    claimed_line_start: f.line_start, ...(Object.hasOwn(f, 'line_end') ? { claimed_line_end: f.line_end } : {}) };
+  return out;
+};
+const unresolved = (f) => {
+  const { line_start, line_end, line: _line, end_line: _end, ...rest } = f;
+  return { ...rest, location_status: 'unconfirmed',
+    ...(Object.hasOwn(f, 'line_start') ? { claimed_line_start: line_start } : {}),
+    ...(Object.hasOwn(f, 'line_end') ? { claimed_line_end: line_end } : {}) };
+};
 const ZERO = {
   slices: 0, proven: 0, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,
   retried: 0, retriedMismatch: 0, retriedMissing: 0,
@@ -25,6 +40,26 @@ const inlineOf = (call) => {
   const argv = argvOf(call);
   return argv[argv.indexOf('--input-inline') + 1];
 };
+
+test('Verify refuses missing or unsupported target kinds before dispatch', async () => {
+  for (const verify of [undefined, null, {}, ...[undefined, null, '', 'LOCAL', 'commit', 1, {}, ['local']]
+    .map((targetKind) => ({ targetKind }))]) {
+    const ctx = verifyCtx(() => deltaEnvelope(BASE, { nonce: 'n-1.0' }));
+    await assert.rejects(verifyStage(ctx, { ...verifyInput(BASE), verify }),
+      /verify\.targetKind must be one of pr, mr, branch, local/);
+    assert.equal(ctx.calls.length, 0);
+  }
+});
+
+test('Verify dispatches each explicit supported target kind', async () => {
+  for (const targetKind of ['pr', 'mr', 'branch', 'local']) {
+    const ctx = verifyCtx(() => deltaEnvelope(BASE, { nonce: 'n-1.0' }));
+    const out = await verifyStage(ctx, verifyInput(BASE, { verify: { targetKind } }));
+    assert.equal(out.verified, true);
+    const argv = argvOf(ctx.calls[0]);
+    assert.equal(argv[argv.indexOf('--target-kind') + 1], targetKind);
+  }
+});
 
 const TRUSTED_ROWS = [
   ...[['python', ['python']], ['py -3', ['py', '-3']]].map(([python, argv]) => ({
@@ -54,7 +89,7 @@ for (const row of TRUSTED_ROWS) {
       const env = deltaEnvelope(row.findings, { nonce: 'n-1.0', ...row.options?.(row.findings) });
       return env;
     });
-    const expected = row.findings.filter((f) => !row.ids || row.ids.includes(f.id)).map((f) => ({ ...f, ...row.changes }));
+    const expected = row.findings.filter((f) => !row.ids || row.ids.includes(f.id)).map((f) => located({ ...f, ...row.changes }));
     const out = await verifyStage(ctx, verifyInput(row.findings, row.input));
     assert.equal(out.verified, true);
     assert.deepEqual(out.findings, expected);
@@ -73,7 +108,7 @@ const degradedGap = (reason, first = reason, slice, affected, total) =>
 const UNTRUSTED_ROWS = [
   { name: 'origin drift rejects the original script proof',
     options: (f) => ({ deltas: deltasFor(f, { F0: { origin: 'surfaced' } }), checksum: 'fnv1a32:0xc35f3d60' }),
-    reason: 'delta content proof mismatch (receipt fnv1a32:0xc35f3d60, recomputed fnv1a32:0x151174e3) \u2014 the echoed values are not the ones the script wrote',
+    reason: 'delta content proof mismatch (receipt fnv1a32:0xc35f3d60, recomputed fnv1a32:0xb75055cd) \u2014 the echoed values are not the ones the script wrote',
   },
   { name: 'absent delta proof is untrusted',
     mutate: (env) => { delete env.receipt.deltas_checksum; },
@@ -130,7 +165,7 @@ for (const row of UNTRUSTED_ROWS) {
     const input = verifyInput(findings, row.over);
     const out = await verifyStage(ctx, input);
     assert.equal(out.verified, false);
-    assert.deepEqual(out.findings, findings.map((f, i) => ({ ...f, origin: row.origins?.[i] || 'unknown' })));
+    assert.deepEqual(out.findings, findings.map((f, i) => row.origins?.[i] === 'new' ? located(f) : unresolved({ ...f, origin: 'unknown' })));
     assert.deepEqual(ctx.calls.map((call) => call.label), row.labels || ['verify-slice-0', 'verify-slice-0-retry']);
     assert.deepEqual(out.inputProof, row.ledger || { ...ZERO, slices: 1, retriedFindings: findings.length, degradedFindings: findings.length });
     if (row.nonces) assert.deepEqual(ctx.calls.map((call) => { const argv = argvOf(call); return argv[argv.indexOf('--nonce') + 1]; }),
@@ -155,7 +190,7 @@ test('missing id degrades without dispatch', async () => {
   const out = await verifyStage(ctx, verifyInput(findings));
   assert.equal(out.verified, false);
   assert.deepEqual(ctx.calls, []);
-  assert.deepEqual(out.findings, findings.map((f) => ({ ...f, origin: 'unknown' })));
+  assert.deepEqual(out.findings, findings.map((f) => unresolved({ ...f, origin: 'unknown' })));
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, degradedFindings: 2 });
   assert.deepEqual(out.gaps, [
     'verify: UNVERIFIED \u2014 slice 0: a dispatched finding has no usable id \u2014 the delta echo is keyed by '
@@ -182,7 +217,7 @@ test('received record order binds the delta proof while held order and exact ids
   const out = await verifyStage(ctx, verifyInput(findings));
   assert.equal(ctx.calls.length, 1);
   assert.equal(out.verified, true);
-  assert.deepEqual(out.findings, findings);
+  assert.deepEqual(out.findings, findings.map(located));
 });
 
 const LOCAL_ROWS = [
@@ -228,7 +263,7 @@ for (const row of LOCAL_ROWS) test(`per-record recovery: ${row.name}`, async () 
   const degraded = row.failed ? row.bad : (row.retryBad || []);
   assert.equal(out.verified, degraded.length === 0);
   assert.deepEqual(out.findings, findings.filter((f) => !(row.acceptedElimination && f.id === 'F0'))
-    .map((f) => ({ ...f, origin: degraded.includes(f.id) ? 'unknown' : 'new' })));
+    .map((f) => degraded.includes(f.id) ? unresolved({ ...f, origin: 'unknown' }) : located(f)));
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, localised: 3 - row.bad.length,
     retriedFindings: row.bad.length, degradedFindings: degraded.length,
     ...(degraded.length ? { mismatched: 1 } : { retried: 1, [row.missing ? 'retriedMissing' : 'retriedMismatch']: 1 }),
@@ -245,7 +280,7 @@ for (const field of ['deltas_checksum', 'record_proofs']) test(`whole-attempt re
   });
   const out = await verifyStage(ctx, verifyInput(findings));
   assert.equal(out.verified, true);
-  assert.deepEqual(out.findings, findings);
+  assert.deepEqual(out.findings, findings.map(located));
   assert.deepEqual(ctx.calls.map((call) => dispatchedFindings(call.prompt).map((f) => f.id)), [['F0', 'F1'], ['F0', 'F1']]);
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1, retried: 1, retriedFindings: 2,
     retriedMissing: field === 'record_proofs' ? 1 : 0 });
@@ -280,7 +315,7 @@ for (const [name, mutate] of [
   assert.deepEqual(ctx.calls.map((call) => dispatchedFindings(call.prompt).map((f) => f.id)), [
     ['F0', 'F1', 'F2'], ['F0', 'F1', 'F2'],
   ]);
-  assert.deepEqual(out.findings, findings.map((f) => ({ ...f, origin: 'unknown' })));
+  assert.deepEqual(out.findings, findings.map((f) => unresolved({ ...f, origin: 'unknown' })));
 });
 
 test('unprovable expected record falls back to the whole-slice token gate', async () => {
@@ -302,7 +337,7 @@ test('unprovable expected record trusts valid whole-slice token and delta proofs
   const ctx = verifyCtx((_index, attempt, call) => envelopeForCall(call, attempt));
   const out = await verifyStage(ctx, verifyInput(findings));
   assert.equal(out.verified, true);
-  assert.deepEqual(out.findings, findings);
+  assert.deepEqual(out.findings, findings.map(located));
   assert.deepEqual(out.gaps, []);
   assert.equal(ctx.calls.length, 1);
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, unprovable: 1, proven: 0 });
@@ -322,7 +357,7 @@ for (const [name, receipt, fault] of [
   });
   const out = await verifyStage(ctx, verifyInput(BASE));
   assert.equal(out.verified, true);
-  assert.deepEqual(out.findings, BASE);
+  assert.deepEqual(out.findings, BASE.map(located));
   assert.equal(ctx.calls.length, 1);
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, [fault]: 1 });
 });
@@ -380,6 +415,7 @@ test('shell quoting preserves paths with spaces, apostrophes and special branch 
     '--input-inline', inlineOf(ctx.calls[0]), '--output', '/My Documents/out/phase4-output-abc123.slice0.json',
     '--nonce', 'n-1.0', '--head-sha', 'abc123', '--base-branch', 'feature/$x-`y`',
     '--diff-file', "/Users/o'brien/out/code-gauntlet diff.patch",
+    '--target-kind', 'branch',
   ]);
   assert.doesNotMatch(outsideSingleQuotes(commandOf(ctx.calls[0])), /[$`]/);
 });
@@ -387,7 +423,7 @@ test('shell quoting preserves paths with spaces, apostrophes and special branch 
 for (const hostPlatform of ['posix', 'windows']) test(`oversize finding is disclosed without dispatch and leaves the next slice nonce intact: ${hostPlatform}`, async () => {
   const findings = [
     { id: 'BIG', file: 'x'.repeat(hostPlatform === 'windows' ? 31000 : 50000), line_start: 1, origin: 'new', cross_file_refs: [] },
-    { id: 'OK', file: 'b.js', line_start: 2, origin: 'new', cross_file_refs: [] },
+    { id: 'OK', file: 'b.js', line_start: 2, line_end: 2, anchor: 'return process(value);', origin: 'new', cross_file_refs: [] },
   ];
   const ctx = verifyCtx(() => deltaEnvelope([findings[1]], { nonce: 'n-1.0', n_in: 1 }));
   const out = await verifyStage(ctx, verifyInput(findings, { repoRoot: hostPlatform === 'windows' ? 'D:/repo' : '/repo', limits: { verifySliceSize: 2 } }));
@@ -395,5 +431,38 @@ for (const hostPlatform of ['posix', 'windows']) test(`oversize finding is discl
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1, oversize: 1, degradedFindings: 1 });
   assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0']);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['BIG', 'unknown'], ['OK', 'new']]);
-  assert.deepEqual(out.gaps, [`verify: UNVERIFIED \u2014 finding BIG has ${hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length'} ${hostPlatform === 'windows' ? 31089 : 50073}, over VERIFY_INLINE_CHAR_BUDGET=${hostPlatform === 'windows' ? 30442 : 50000}; 1 of 2 finding(s) in stage marked origin=unknown, surfaced-classification skipped, held back to the report`]);
+  assert.deepEqual(out.gaps, [`verify: UNVERIFIED \u2014 finding BIG has ${hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length'} ${hostPlatform === 'windows' ? 31089 : 50073}, over VERIFY_INLINE_CHAR_BUDGET=${hostPlatform === 'windows' ? 30421 : 50000}; 1 of 2 finding(s) in stage marked origin=unknown, surfaced-classification skipped, held back to the report`]);
+});
+
+test('location deltas require shape and content proofs', async () => {
+  const rows = [
+    { location_status: undefined }, { location_status: 'forged' },
+    { line_start: 0 }, { line_start: 1.5 }, { line_end: Number.MAX_SAFE_INTEGER + 1 },
+    { line_start: 4, line_end: 2 }, { line_end: ANCHOR_LIMITS.lines + 1 },
+    { location_status: 'unconfirmed', line_start: 1, line_end: 1 },
+  ];
+  for (const fields of rows) {
+    const findings = findingsFor(2);
+    const ctx = verifyCtx((_index, _attempt, call) => {
+      const dispatched = dispatchedFindings(call.prompt);
+      return deltaEnvelope(dispatched, { nonce: shellSplit(call.prompt.split('\n').pop())[shellSplit(call.prompt.split('\n').pop()).indexOf('--nonce') + 1],
+        overrides: { F0: fields } });
+    });
+    const out = await verifyStage(ctx, verifyInput(findings));
+    assert.equal(out.findings[0].location_status, 'unconfirmed');
+    assert.equal(Object.hasOwn(out.findings[0], 'line_start'), false);
+    assert.equal(out.findings[1].location_status, 'confirmed');
+    assert.deepEqual(dispatchedFindings(ctx.calls[1].prompt).map((f) => f.id), ['F0']);
+  }
+  for (const fields of [{ line_start: 2 }, { line_end: 2 }, { location_status: 'relocated' }]) {
+    const findings = findingsFor(1);
+    const ctx = verifyCtx(() => {
+      const env = deltaEnvelope(findings, { nonce: 'n-1.0' });
+      Object.assign(env.result.deltas[0], fields);
+      return env;
+    });
+    const out = await verifyStage(ctx, verifyInput(findings));
+    assert.equal(out.findings[0].location_status, 'unconfirmed');
+    assert.ok(out.gaps.some((g) => g.includes('delta content proof mismatch')));
+  }
 });

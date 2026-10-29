@@ -46,6 +46,8 @@ def receipt(invoke, tmp_path, token=EMPTY, extra=()):
     return invoke(
         "verify_findings",
         [
+            "--target-kind",
+            "branch",
             "--input",
             str(tmp_path / "slice.json"),
             "--input-inline",
@@ -57,6 +59,21 @@ def receipt(invoke, tmp_path, token=EMPTY, extra=()):
             *extra,
         ],
         tmp_path,
+    )
+
+
+def test_target_kind_is_required(invoke, tmp_path):
+    with pytest.raises(TypeError, match="target_kind"):
+        verify.decide.VerifyContext("repo", "base")
+    result = invoke(
+        "verify_findings",
+        ["--input", "slice.json", "--input-inline", EMPTY],
+        tmp_path,
+    )
+    assert (result.returncode, result.stdout, result.stderr) == (
+        2,
+        b"",
+        b"verify_findings: the following arguments are required: --target-kind\n",
     )
 
 
@@ -199,7 +216,10 @@ def test_coerce(before, after):
 
 
 def test_delta_half_up():
-    findings = [{"id": "a", "confidence": 64.5}, {"id": "b", "confidence": -64.5}]
+    findings = [
+        {"id": "a", "confidence": 64.5, "location_status": "unconfirmed"},
+        {"id": "b", "confidence": -64.5, "location_status": "unconfirmed"},
+    ]
     assert [
         delta["confidence"] for delta in verify.build_deltas(findings, findings)
     ] == [65, -64]
@@ -262,7 +282,7 @@ def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
         "sha": "abcd",
         "n_in": 1,
         "nonce": "cli",
-        "deltas_checksum": "fnv1a32:0xc9ca61b0",
+        "deltas_checksum": "fnv1a32:0xe7fda501",
         "inline_checksum": "fnv1a32:0x17c759ec",
         "base_branch": "main",
         "diff_source": {"path": None, "read": True},
@@ -278,35 +298,41 @@ def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
         {
             "id": "a",
             "file": "source",
-            "line_start": 1,
+            "claimed_line_start": 1,
+            "location_status": "unconfirmed",
             "confidence": 80,
             "blame_metadata": {
                 "classification": "new",
-                "author": "First Author",
-                "date": "2024-01-02",
+                "author": None,
+                "date": None,
                 "original_severity": "",
             },
-            "origin": "surfaced",
+            "origin": "new",
             "factual_verification": {
                 "verified": True,
-                "reason": "no extractable symbols \u2014 verification skipped",
-                "code_at_lines": "code",
+                "reason": "location unconfirmed - positional checks skipped",
+                "code_at_lines": None,
             },
             "diff_validation": {
-                "in_diff": False,
-                "reason": "lines 1-1 of 'source' not found in diff \u2014 "
-                "tagged as surfaced (was: new)",
+                "in_diff": None,
+                "reason": "location unconfirmed - diff validation skipped",
             },
         }
     ]
     assert env["result"]["eliminated"] == []
     assert env["result"]["deltas"] == [
-        {"id": "a", "verified": True, "origin": "surfaced", "confidence": 80}
+        {
+            "id": "a",
+            "verified": True,
+            "origin": "new",
+            "confidence": 80,
+            "location_status": "unconfirmed",
+        }
     ]
     assert env["result"]["stats"] == {
         "total": 1,
-        "new": 0,
-        "surfaced": 1,
+        "new": 1,
+        "surfaced": 0,
         "eliminated": 0,
     }
 
@@ -355,14 +381,19 @@ def test_receipt_surrogate_ascii(invoke, tmp_path, verify_git):
     assert result.stdout.isascii()
     env = json.loads(result.stdout)
     assert env["result"]["deltas"] == [
-        {"id": "\udcff", "verified": True, "origin": "new"}
+        {
+            "id": "\udcff",
+            "verified": True,
+            "origin": "new",
+            "location_status": "unconfirmed",
+        }
     ]
     assert env["result"]["verified"][0]["description"] == "\ud800"
     assert env["receipt"] == {
         "sha": "abcd",
         "n_in": 1,
         "nonce": "cli",
-        "deltas_checksum": "fnv1a32:0x877e5b9a",
+        "deltas_checksum": "fnv1a32:0xcfb0eff0",
         "inline_checksum": "fnv1a32:0xc771c3d9",
         "base_branch": "main",
         "diff_source": {"path": None, "read": True},
@@ -469,7 +500,7 @@ def test_receipt_failure(failure, invoke, tmp_path, verify_git, monkeypatch):
 )
 def test_argv(argv, message, invoke, tmp_path, monkeypatch):
     monkeypatch.setenv("COLUMNS", "80")
-    result = invoke("verify_findings", argv, tmp_path)
+    result = invoke("verify_findings", ["--target-kind", "branch", *argv], tmp_path)
     assert result.returncode == 2
     assert result.stdout == b""
     assert result.stderr == f"verify_findings: {message}\n".encode()
@@ -485,6 +516,8 @@ def test_head_sha(invoke, tmp_path, verify_git):
     result = invoke(
         "verify_findings",
         [
+            "--target-kind",
+            "branch",
             "--input",
             "slice.json",
             "--input-inline",
@@ -498,6 +531,7 @@ def test_head_sha(invoke, tmp_path, verify_git):
     assert verify_git[0] == [
         (["git", "rev-parse", "--show-toplevel"], {}),
         (["git", "rev-parse", "--short", "HEAD"], {}),
+        (["git", "rev-parse", "HEAD"], {"cwd": str(tmp_path), "timeout": 3}),
     ]
 
 
@@ -545,7 +579,16 @@ def test_receipt_defaults(head_reply, invoke, tmp_path, verify_git):
     )
     result = invoke(
         "verify_findings",
-        ["--input", "slice.json", "--input-inline", EMPTY, "--diff-file", "patch"],
+        [
+            "--target-kind",
+            "branch",
+            "--input",
+            "slice.json",
+            "--input-inline",
+            EMPTY,
+            "--diff-file",
+            "patch",
+        ],
         tmp_path,
     )
     assert result.returncode == 0
@@ -563,6 +606,7 @@ def test_receipt_defaults(head_reply, invoke, tmp_path, verify_git):
     assert verify_git[0] == [
         (["git", "rev-parse", "--show-toplevel"], {}),
         (["git", "rev-parse", "--short", "HEAD"], {}),
+        (["git", "rev-parse", "HEAD"], {"cwd": str(tmp_path), "timeout": 3}),
     ]
 
 
@@ -583,3 +627,159 @@ def test_inline_progress_regression():
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == b"decoded"
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        None,
+        "version",
+        "sha",
+        "context_sha256",
+        "diff_sha256",
+        "status",
+        "entry_side",
+        "entry_line",
+        "entry_file",
+        "entry_key",
+        "entry_extra",
+        "missing",
+        "json",
+    ],
+)
+def test_context_map_identity_controls_translation(
+    tmp_path, invoke, verify_git, damage
+):
+    from tests.support.phase2 import write_context_inputs
+
+    text = "perform_action(value)"
+    (tmp_path / "item").write_text(f"{text}\n{text}\n", encoding="utf-8")
+    diff = f"--- item\n+++ item\n@@ -1,2 +1,2 @@\n {text}\n {text}\n".encode()
+    output = tmp_path / "out"
+    write_context_inputs(output, b"rules\n" * 30, diff, sha="abcd")
+    result = invoke(
+        "write_shared_context",
+        ["--output-dir", str(output), "--head-sha", "abcd"],
+        tmp_path,
+        b"triage",
+    )
+    assert result.returncode == 0, result.stderr
+    context_path = output / "code-gauntlet-context-abcd.md"
+    map_path = output / "code-gauntlet-context-map-abcd.json"
+    raw = json.loads(map_path.read_bytes())
+    claimed = int(
+        next(key for key, value in raw["entries"].items() if value["line"] == 2)
+    )
+    if damage in ("version", "sha", "context_sha256", "diff_sha256", "status"):
+        raw[damage] = "wrong"
+    elif damage == "entry_key":
+        raw["entries"]["01"] = next(iter(raw["entries"].values()))
+    elif damage and damage.startswith("entry_"):
+        field = damage.removeprefix("entry_")
+        next(iter(raw["entries"].values()))[field] = {
+            "side": "wrong",
+            "line": True,
+            "file": "",
+            "extra": 1,
+        }[field]
+    map_path.write_text(json.dumps(raw) if damage != "json" else "{", encoding="utf-8")
+    if damage == "missing":
+        map_path = output / "missing.json"
+    token = json.dumps(
+        {
+            "findings": [
+                {"id": "f", "file": "item", "line_start": claimed, "anchor": text}
+            ]
+        },
+        separators=(",", ":"),
+    )
+    token = token.replace("(", "%28").replace(")", "%29")
+    result = receipt(
+        invoke,
+        tmp_path,
+        token,
+        [
+            "--context-map",
+            str(map_path),
+            "--context-file",
+            str(context_path),
+            "--diff-file",
+            str(output / "code-gauntlet-diff-abcd.patch"),
+            "--target-kind",
+            "pr",
+        ],
+    )
+    env = json.loads(result.stdout)
+    assert env["status"] == "ok", env
+    delta = env["result"]["deltas"][0]
+    if damage is None:
+        assert (delta["line_start"], delta["line_end"], delta["location_status"]) == (
+            2,
+            2,
+            "relocated",
+        )
+    else:
+        assert delta["location_status"] == "unconfirmed"
+        assert "line_start" not in delta and "line_end" not in delta
+        assert b"context map unavailable" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "anchor,end,accepted",
+    [
+        ("perform_action(value)", 1, True),
+        ("perform_action(value)", 2, False),
+        ("", 1, False),
+        ("short", 1, False),
+        ("O1 -|perform_action(value)", 1, False),
+        ("perform_action(value)\n" * 5, 4, False),
+    ],
+)
+def test_delta_anchor_authority(anchor, end, accepted):
+    finding = {
+        "id": "f",
+        "anchor": anchor,
+        "line_start": 1,
+        "line_end": end,
+        "location_status": "confirmed",
+    }
+    if accepted:
+        assert verify.build_deltas([finding], [finding])[0]["line_end"] == end
+    else:
+        with pytest.raises(ValueError, match="anchor span"):
+            verify.build_deltas([finding], [finding])
+
+
+def test_presentation_quote_proof_reaches_trusted_js_join():
+    from tests.support.pipeline import run_node
+
+    anchor = "\n".join(
+        f"{'9' * 110}\tN{i + 1} +|perform_action(value)" for i in range(4)
+    )
+    finding = {
+        "id": "f",
+        "anchor": anchor,
+        "line_start": 1,
+        "line_end": 4,
+        "location_status": "confirmed",
+    }
+    deltas = verify.build_deltas([finding], [finding])
+    checksum = verify.checksum_or_none(deltas)
+    assert len(anchor) > 400
+    result = run_node(
+        """
+import assert from 'node:assert/strict';
+import { verifyStage } from './workflows/src/verifyStage.js';
+import { verifyCtx, verifyInput, deltaEnvelope } from './workflows/test/helpers/verifyDelta.js';
+let source = ''; for await (const chunk of process.stdin) source += chunk;
+const { finding, deltas, checksum } = JSON.parse(source);
+const ctx = verifyCtx(() => deltaEnvelope([finding], { nonce: 'n-1.0', deltas, checksum }));
+const out = await verifyStage(ctx, verifyInput([finding]));
+assert.equal(out.verified, true);
+assert.equal(ctx.calls.length, 1);
+assert.equal(out.findings[0].line_end, 4);
+console.log('presentation quote accepted');
+""",
+        {"finding": finding, "deltas": deltas, "checksum": checksum},
+    )
+    assert result.stdout.strip() == "presentation quote accepted"

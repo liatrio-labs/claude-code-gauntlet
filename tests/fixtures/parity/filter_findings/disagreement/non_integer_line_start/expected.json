@@ -1,42 +1,41 @@
 {
   "active": [
     {
+      "id": "D12",
       "agent": "bug-detector",
-      "confidence": 80,
-      "consensus_boost": 10,
-      "consensus_count": 2,
-      "contradiction": false,
-      "corroborated_by": [
-        "cross-file-impact"
-      ],
-      "description": "d12",
       "dimension": "bug",
       "file": "n.py",
-      "id": "D12",
       "line_start": 25.7,
-      "security_escalation": false,
       "severity": "medium",
-      "title": "t12"
+      "confidence": 70,
+      "title": "t12",
+      "description": "d12",
+      "location_status": "unconfirmed",
+      "consensus_count": 1,
+      "consensus_boost": 0,
+      "corroborated_by": [],
+      "contradiction": false,
+      "security_escalation": false
     },
     {
+      "id": "D13",
       "agent": "cross-file-impact",
-      "confidence": 70,
-      "consensus_boost": 10,
-      "consensus_count": 2,
-      "contradiction": false,
-      "corroborated_by": [
-        "bug-detector"
-      ],
-      "description": "d13",
       "dimension": "cross_file_impact",
       "file": "n.py",
-      "id": "D13",
       "line_start": 20,
-      "security_escalation": false,
       "severity": "medium",
-      "title": "t13"
+      "confidence": 60,
+      "title": "t13",
+      "description": "d13",
+      "line_end": 20,
+      "location_status": "confirmed",
+      "consensus_count": 1,
+      "consensus_boost": 0,
+      "corroborated_by": [],
+      "contradiction": false,
+      "security_escalation": false
     }
   ],
-  "boosted_count": 2,
-  "suppressed": []
+  "suppressed": [],
+  "boosted_count": 0
 }

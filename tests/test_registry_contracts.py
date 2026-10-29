@@ -175,7 +175,7 @@ def test_contract_schema(agent_type: str) -> None:
     assert schema == contract["schema"]
     item = schema["properties"]["findings"]["items"]
     rows = [r for r in live["dimensions"] if r["agentType"] == agent_type]
-    required = [*live["required"], *contract["requiredExtra"]]
+    required = [*live["required"], "anchor", *contract["requiredExtra"]]
     assert item["required"] == required
     optional = [f for f in item["properties"] if f not in required]
     for label, fields in (("Required", required), ("Optional", optional)):
@@ -226,7 +226,7 @@ def test_handwritten_field_tables():
     per_dimension = table_named(tables, "Per-dimension")
     assert {field for field, cells in canonical} == set(registry()["propTypes"])
     assert {field for field, cells in per_dimension} == set(all_extras())
-    required = set(registry()["required"])
+    required = set(registry()["required"]) | {"anchor"}
     extra_required = {
         field for row in registry()["dimensions"] for field in row["requiredExtra"]
     }

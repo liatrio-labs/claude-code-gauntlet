@@ -194,6 +194,7 @@ echo "=== misc ==="
 On `files: FAILED`, stop and report the stderr reason (headless: non-zero outcome).
 
 - **Files** → this path becomes `args.changedFilesPath`; keep the same array inline for `args.changedFiles` (the Summarize stage reads it by value — the workflow cannot open the file).
+- **Context map** accompanies the framed context; Verify checks both digests before translating a context line.
 - **Diff** → this path becomes `args.diffPath`, passed to the verify executor as `--diff-file`.
 - **`numstat` counts the patch saved by the `diff` section with `scripts/diff_numstat.py`; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules.** Check `binary_files > 0` before treating a low count as no diff. This feeds `changedLines`, and the 2k scan reads the same saved patch, never a fresh diff fetch. Never run a second `gh pr diff` to re-fetch it.
 - **`misc`** gives a `generatedAt` candidate (re-stamp at args-assembly time if Phase 3 dispatch isn't immediate — `generatedAt` must reflect the actual assembly moment), and a `nonce` candidate matching `^[A-Za-z0-9._-]+$`.
@@ -303,6 +304,15 @@ Stamp the printed `contextLines`, `contextChars` and `removedTests` into the arg
 An exit 2 wrote no usable context; stop and report its one-line error.
 `scripts/gauntlet/shared_context.py`'s docstring holds the content and measurement rules.
 
+Diff body rows have source gutters: `N7 +|text` for additions, `N7  |text` for head
+context, and `O7 -|text` for deletions. The source text begins immediately after `|`.
+Headers and metadata retain their original bytes. The writer also saves
+`code-gauntlet-context-map-{head_sha_short}.json` beside the context. Its version-1
+entries map physical context LF line numbers to file, side (`head` or `old`), and
+source line. It hashes the final framed context and the original saved patch.
+Malformed hunks keep the raw framed presentation and emit an unavailable, empty map
+with a diagnostic. Both files must be written before a successful receipt.
+
 The workflow's Summarize stage produces the change summary internally.
 
 Discovery agents return findings through structured output (`agent()`/`parallel()` schema).
@@ -347,6 +357,7 @@ Discovery agents return findings through structured output (`agent()`/`parallel(
 
   // verify handoff (sha-scoped) for the executor's pinned command:
   verify: {
+    targetKind: "{target_kind}", // pr, mr, branch, or local, selected during preparation
     inputPathBase: "{output_dir}/code-gauntlet-phase4-input-{head_sha_short}",
     outputPathBase: "{output_dir}/code-gauntlet-phase4-output-{head_sha_short}"
   }

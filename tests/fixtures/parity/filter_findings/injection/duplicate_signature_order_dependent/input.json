@@ -8,7 +8,9 @@
       "file": "src/util.py",
       "line_start": 20,
       "severity": "medium",
-      "confidence": 40
+      "confidence": 40,
+      "line_end": 20,
+      "location_status": "confirmed"
     },
     {
       "id": "I6b",
@@ -17,7 +19,9 @@
       "file": "src/util.py",
       "line_start": 20,
       "severity": "medium",
-      "confidence": 40
+      "confidence": 40,
+      "line_end": 20,
+      "location_status": "confirmed"
     }
   ]
 }

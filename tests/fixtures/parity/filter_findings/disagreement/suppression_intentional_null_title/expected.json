@@ -14,7 +14,9 @@
       "line_start": 101,
       "security_escalation": false,
       "severity": "low",
-      "title": null
+      "title": null,
+      "line_end": 101,
+      "location_status": "confirmed"
     },
     {
       "agent": "bug-detector",
@@ -32,7 +34,9 @@
       "line_start": 200,
       "security_escalation": false,
       "severity": "high",
-      "title": "Off-by-one error in pagination cursor"
+      "title": "Off-by-one error in pagination cursor",
+      "line_end": 200,
+      "location_status": "confirmed"
     },
     {
       "agent": "conventions-and-intent",
@@ -52,7 +56,9 @@
       "severity": "low",
       "title": [
         "by design"
-      ]
+      ],
+      "line_end": 201,
+      "location_status": "confirmed"
     }
   ],
   "boosted_count": 2,
@@ -68,7 +74,9 @@
       "id": "DN1",
       "line_start": 100,
       "severity": "high",
-      "title": "Null pointer dereference on error path"
+      "title": "Null pointer dereference on error path",
+      "line_end": 100,
+      "location_status": "confirmed"
     }
   ]
 }

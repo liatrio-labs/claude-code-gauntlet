@@ -8,7 +8,9 @@
       "file": "src/cleanup.sh",
       "line_start": 12,
       "severity": "medium",
-      "confidence": 45
+      "confidence": 45,
+      "line_end": 12,
+      "location_status": "confirmed"
     }
   ]
 }

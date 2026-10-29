@@ -5,10 +5,18 @@ from typing import TypedDict, cast
 from gauntlet.cli import CliError
 from gauntlet.delivery.gate import is_plain_int
 from gauntlet.forge import parse_web_origin
+from gauntlet.location import normalize_location
+from gauntlet.registry import LocationStatus
 
 
 class Finding(TypedDict, total=False):
     file: str
+    line_start: int
+    line_end: int
+    anchor: str
+    location_status: LocationStatus
+    claimed_line_start: int
+    claimed_line_end: int
     line: int | None
     end_line: int | None
     consolidation_key: str | None
@@ -74,16 +82,11 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
             raise CliError(f"findings[{index}] must be an object")
         if "file" in finding and not isinstance(finding["file"], str):
             raise CliError(f"findings[{index}].file must be a string")
-        for field in ("line", "end_line"):
-            value = finding.get(field)
-            if value is not None and not is_plain_int(value):
-                raise CliError(f"findings[{index}].{field} must be an integer or null")
         key = finding.get("consolidation_key")
         if key is not None and not isinstance(key, str):
             raise CliError(
                 f"findings[{index}].consolidation_key must be a string or null"
             )
-    if "findings" not in data:
-        data["findings"] = findings
-    # Returning the caller's mapping preserves identities and unknown keys.
-    return cast(ReviewInput, data)
+    return cast(
+        ReviewInput, {**data, "findings": [normalize_location(f) for f in findings]}
+    )

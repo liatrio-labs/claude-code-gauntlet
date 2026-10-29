@@ -9,7 +9,9 @@
       "id": "T-iso-hex-b-1",
       "line_start": 66,
       "severity": "medium",
-      "title": "Suspicious response payload"
+      "title": "Suspicious response payload",
+      "line_end": 66,
+      "location_status": "confirmed"
     }
   ],
   "kept": []

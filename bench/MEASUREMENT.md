@@ -343,6 +343,8 @@ effort. Preflight precedes spend. Gate PRs run sequentially and each comparison
 requires a complete PR-by-run matrix of independent review runs. Each window is a block and freezes a
 cross-arm run order. Selected attempts' start times must follow it. Rescoring creates
 no new independent run. Selected attempts and their provenance remain immutable.
+Packet delivery replay uses its recorded treatment's plugin tree, resolving a clean
+checkout containing the physical run directory when the loading checkout differs.
 
 A first non-ok outcome is invalid and retryable. A second non-ok outcome for the same
 PR/window and observed fingerprint is an all-missed operational failure on API, or on
@@ -361,16 +363,14 @@ Create declarations with `python3 -m bench.runner.windows --population NAME`, tw
 `--arm NAME=sha:REV|NAME=worktree:PATH` arguments, `--run-indices`, `--auth-mode`,
 `--duration-hours`, `--child-model`, and `--out`. Schema 2 supports local block plans;
 schema-1 windows retain full-rule preflight capacity checks. Both schemas keep
-`max_parallel_prs: 1`, serial PRs and immutable resume evidence. Host auth uses the
-operator's existing cloud session; no cloud orchestration or host identity capture is added.
+`max_parallel_prs: 1`, serial PRs and immutable resume evidence.
 
 A comparison's `window_paths` list declares balanced blocks, including reserved empty
 blocks; `window_path` is the singleton alias. Each block uses its own local planned
 prefix. Top-level arm score lists retain their order. Reports list lanes, local and
-pooled indices, and zero-run blocks. Lanes may differ in auth and CLI identity (host
-identity remains unknown). Treatments, scoring context and the common wave/rule remain
-fixed. Extensions bind initial score prefixes and every original block's bytes and
-local run assignments, then fill balanced reserved capacity or append blocks.
+pooled indices, and zero-run blocks. Lanes may differ in auth and CLI identity.
+Treatments, scoring context and the common wave/rule remain fixed. Extensions bind
+initial score prefixes and every original block's bytes and local run assignments, then fill balanced reserved capacity or append blocks.
 Aggregate capacity covers the initial and extension counts. One verdict records one look.
 
 Comparison first averages each bug's Boolean detections over all independent runs in
@@ -422,8 +422,16 @@ across equal and +5 scenarios. These rates depend on the empirical packet librar
 and proxy audit labels.
 
 Before the first candidate run, the append-only [look ledger](golden/looks.jsonl)
-registers the wave and frozen rule digest. Run preflight and comparison enforce that
-registration. The compare command appends each operational verdict with its look
+registers the wave, frozen rule digest and baseline plugin input tree digest with
+`python3 -m bench.runner.looks --wave WAVE --rule RULE.json --baseline-treatment-sha DIGEST --contamination contamination.json`.
+For each wave, pin the accepted main baseline and create fresh paired windows. Retain
+reviewed exposure exclusions; if the baseline or dispositions changed, use the existing
+`bench.runner.populations --spec freeze-spec.json --out contamination.json` freezer on
+that clean baseline before any candidate run, and pass those frozen bytes throughout.
+Preflight refuses a missing registration or mismatched baseline freeze. Only a declared
+source substitution adds `--baseline-source-sha SOURCE`; each baseline run then needs
+an equivalence receipt binding `release_sha=SOURCE`, `merge_sha=DIGEST` and evidence refs.
+The compare command appends each operational verdict with its look
 number, treatment SHAs, score references and report digest. A second look requires an
 extendable initial report and its unchanged prefix; every third look is refused. Descriptive specs
 cannot inspect gate populations. The look count comes from this ledger, including
@@ -435,10 +443,10 @@ one run identity and permits its resume and retry. It refuses another unseal, an
 independent review run, another audit sample, or another comparison. Audit and
 comparison verify the receipt and final treatment, and refuse another SHA.
 
-Final confirmation uses API 3+3, baseline versus final tip, gate only. The ship rule
-requires primary and non-mini recall lower bounds to exceed their negative owner
-margins. It also uses the harm checks and requires a resolved audit. It has no
-extension. Improvement is a point estimate of
+Final confirmation uses 3+3 on API or subscription auth, baseline versus final tip,
+gate only. The ship rule requires primary and non-mini recall lower bounds to exceed
+their negative owner margins. It also uses the harm checks and requires a resolved
+audit. It has no extension. Improvement is a point estimate of
 at least +5 points and lower bound above zero, reported but not required. Passing the
 ship line establishes the new baseline. Marketplace bumps are held from Wave 2a until
 this line passes; failure returns to the last passing tip.

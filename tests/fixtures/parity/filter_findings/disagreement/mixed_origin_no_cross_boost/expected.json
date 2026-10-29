@@ -16,7 +16,8 @@
       "origin": "unknown",
       "security_escalation": false,
       "severity": "high",
-      "title": "t1"
+      "title": "t1",
+      "location_status": "confirmed"
     },
     {
       "agent": "security-reviewer",
@@ -34,7 +35,8 @@
       "origin": "verified",
       "security_escalation": false,
       "severity": "high",
-      "title": "t2"
+      "title": "t2",
+      "location_status": "confirmed"
     }
   ],
   "boosted_count": 0,

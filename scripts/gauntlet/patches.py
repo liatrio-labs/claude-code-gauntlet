@@ -12,6 +12,7 @@ from gauntlet.delivery import gate
 from gauntlet.delivery.gate import FixReason, fix_code_text
 from gauntlet.diff import parse_diff, patch_report_policy
 from gauntlet.fs import JsonReadError, confined, read_json, write_atomic
+from gauntlet.location import location_allows, normalize_location
 from gauntlet.markdown import code_span, fence_run
 from gauntlet.text import neutralize_comment_openers, redact_secrets
 
@@ -228,7 +229,7 @@ def _execute(args: argparse.Namespace) -> tuple[PatchReceipt, int]:
             else parse_diff(diff_text, policy=patch_report_policy(diff_text))
         )
         candidates = [
-            cast(Mapping[str, object], f)
+            normalize_location(f)
             for f in findings
             if isinstance(f, dict) and "suggested_fix_code" in f
         ]
@@ -240,10 +241,14 @@ def _execute(args: argparse.Namespace) -> tuple[PatchReceipt, int]:
         )
         kept = []
         for finding in candidates:
-            verdict = gate.evaluate_fix(
-                finding,
-                apply_range=(finding.get("line"), finding.get("end_line")),
-                facts=facts,
+            verdict = (
+                gate.FixVerdict(False, "location_unconfirmed", None)
+                if not location_allows(finding, "patch")
+                else gate.evaluate_fix(
+                    finding,
+                    apply_range=(finding.get("line"), finding.get("end_line")),
+                    facts=facts,
+                )
             )
             if verdict.keep:
                 receipt["kept"] += 1

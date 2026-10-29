@@ -81,12 +81,15 @@ def _description_child():
     defective = (
         Path("collection.py").read_bytes() == (FIXTURES / "defective.py").read_bytes()
     )
+    source = Path("collection.py").read_text(encoding="utf-8").splitlines()
     findings = [
         dict(
             id=name,
             file="collection.py",
             line_start=site["line"],
             line_end=site["line"],
+            location_status="confirmed",
+            anchor=source[site["line"] - 1],
             dimension="bug",
             severity="P1",
             confidence=95,

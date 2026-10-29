@@ -8,7 +8,9 @@
       "id": "T-carve-url-bare-1",
       "line_start": 10,
       "severity": "medium",
-      "title": "SSRF: outbound fetch follows attacker-controlled redirect_uri=https://internal.example.com/api/v2/config/endpoint unchecked"
+      "title": "SSRF: outbound fetch follows attacker-controlled redirect_uri=https://internal.example.com/api/v2/config/endpoint unchecked",
+      "line_end": 10,
+      "location_status": "confirmed"
     }
   ]
 }

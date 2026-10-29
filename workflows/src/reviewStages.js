@@ -1,3 +1,4 @@
+import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap } from './capacity.js';
@@ -117,7 +118,7 @@ function validatePrompt(inp, batch) {
   const ctxLine = inp.contextLine || '';
   // Locations and claims let validators inspect the relevant code instead of scoring identifiers without evidence.
   const block = batch.map((f) => {
-    const range = f.line_end != null && f.line_end !== f.line_start
+    const range = !locationAllows(f, 'sourceLink') ? 'location unconfirmed' : f.line_end != null && f.line_end !== f.line_start
       ? `${f.line_start}-${f.line_end}`
       : `${f.line_start != null ? f.line_start : '?'}`;
     const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
@@ -151,8 +152,7 @@ export function blindChallengeFields(finding, diffPath) {
     title: finding.title || '',
     description: finding.description || '',
     file: finding.file || '',
-    line_start: finding.line_start != null ? finding.line_start : '',
-    line_end: finding.line_end != null ? finding.line_end : '',
+    ...(locationAllows(finding, 'sourceLink') ? { line_start: finding.line_start, line_end: finding.line_end } : { location: 'location unconfirmed' }),
     ...(finding.removed_test ? {
       removed_test: {
         path: finding.removed_test.path,
@@ -167,7 +167,7 @@ export function blindChallengeFields(finding, diffPath) {
 // Conservative scores prevent unverifiable absence claims from becoming high-confidence findings.
 function challengePrompt(finding, diffPath) {
   const b = blindChallengeFields(finding, diffPath);
-  const range = b.line_end !== '' && b.line_end !== b.line_start ? `${b.line_start}-${b.line_end}` : `${b.line_start}`;
+  const range = b.location || (b.line_end !== '' && b.line_end !== b.line_start ? `${b.line_start}-${b.line_end}` : `${b.line_start}`);
   const removedContext = b.removed_test
     ? `\nRead saved diff ${b.diffPath}: deleted test ${JSON.stringify(b.removed_test.path)}, old lines ${b.removed_test.old_start}-${b.removed_test.old_end}. Check the removed input and assertion, then search surviving tests at HEAD for the same behavior. This coverage-loss claim is verifiable from the saved diff and surviving tests.` : '';
   return `Independently check the claim's central facts against raw code at ${b.file}:${range}, opening enough surrounding context with Read/Grep/LSP to prove or disprove the actual claim. Runtime failures require a current trigger; static defects require evidence of the static claim. Do not lower the score merely because upstream evidence is withheld. If the central assertion remains unverifiable from code and context, score it 25 or below (below 25 when nothing in code confirms it). Reserve scores above 25 for positively confirmed claims. A removed-test claim can be verified from its deleted location in the saved diff and surviving assertions at HEAD.${removedContext}\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct 0-100 (higher = the claim holds).`;

@@ -7,7 +7,9 @@
       "file": "src/ci/automerge.py",
       "line_start": 12,
       "severity": "medium",
-      "confidence": 50
+      "confidence": 50,
+      "line_end": 12,
+      "location_status": "confirmed"
     }
   ],
   "fn": "apply_injection_filter"

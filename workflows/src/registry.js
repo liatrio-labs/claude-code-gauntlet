@@ -60,6 +60,16 @@ export const CODE_OWNED_HEADINGS = deepFreeze([
   '## Review Methodology',
 ]);
 
+// Agents are asked for 1 to 4 lines; a longer exact quote is more specific, and chars bounds its cost.
+export const ANCHOR_LIMITS = deepFreeze({ lines: 8, chars: 400 });
+
+export const LOCATION_RIGHTS = deepFreeze({
+  confirmed: { body: true, sourceLink: true, inline: true, fence: true, patch: true, fixTask: true },
+  relocated: { body: true, sourceLink: true, inline: true, fence: true, patch: true, fixTask: true },
+  unconfirmed: { body: true, sourceLink: false, inline: false, fence: false, patch: false, fixTask: false },
+});
+export const LOCATION_STATUSES = deepFreeze(Object.keys(LOCATION_RIGHTS));
+
 // Use full schema fragments for arrays because the host requires items; scalar fields can use type shorthand.
 // Verification stamps origin, so discovery does not require it.
 export const FINDING_PROP_TYPES = deepFreeze({
@@ -67,6 +77,7 @@ export const FINDING_PROP_TYPES = deepFreeze({
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
   dimension: 'string', origin: 'string', evidence: 'string',
+  anchor: { type: 'string', description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
   // Optional prose fields must be omitted when inapplicable; emitting null would violate their schema types.
   suggestion: 'string', claude_md_rule: 'string',
   // Delivery applies deterministic fix checks before rendering a committable fence.
@@ -79,15 +90,15 @@ export const FINDING_PROP_TYPES = deepFreeze({
 export const FINDING_PATH_ARRAY_FIELDS = deepFreeze(['cross_file_refs', 'affected_consumers']);
 
 // Identifiers must not collide; structural paths and suggestion code retain their own semantics.
-export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code', 'removed_test']);
+export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
 
 // Flat required fields must be unconditional for every dimension in a dispatch to avoid forcing fabricated sibling fields.
 export const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
 
 export const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
 
-const closedDispatchRow = (properties) => ({
-  type: 'object', properties, required: Object.keys(properties), additionalProperties: false,
+const closedDispatchRow = (properties, optional = []) => ({
+  type: 'object', properties, required: Object.keys(properties).filter((key) => !optional.includes(key)), additionalProperties: false,
 });
 
 export const DISPATCH_RESULTS = deepFreeze({
@@ -107,7 +118,8 @@ export const DISPATCH_RESULTS = deepFreeze({
           confidence: { type: 'number', minimum: 0, maximum: 100 },
           criticality: { type: 'number', minimum: 1, maximum: 10 },
           failure_scenario: { type: 'string', minLength: 1 },
-        }) },
+          anchor: FINDING_PROP_TYPES.anchor,
+        }, ['anchor']) },
       }),
     },
   },
@@ -148,6 +160,7 @@ export const DIMENSIONS = deepFreeze([
 const PIPELINE_FINDING_FIELDS = deepFreeze([
   'trace_id', 'discovery_agent', 'discovery_dimension',
   'removed_test',
+  'location_status', 'claimed_line_start', 'claimed_line_end',
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
   'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',

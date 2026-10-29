@@ -1,10 +1,35 @@
 {
   "fn": "apply_filter_pipeline",
-  "config": {"confidence_threshold": 60, "ignore": []},
+  "config": {
+    "confidence_threshold": 60,
+    "ignore": []
+  },
   "exclusion_patterns": [],
   "generated_at": "2026-07-18T00:00:00Z",
   "findings": [
-    {"id": "keep", "file": "legacy/x.py", "line_start": 1, "severity": "high", "confidence": 80, "title": "Keep", "description": "real issue", "dimension": "bug"},
-    {"id": "drop", "file": "legacy/y.py", "line_start": 2, "severity": "high", "confidence": 40, "title": "Drop", "description": "real issue", "dimension": "bug"}
+    {
+      "id": "keep",
+      "file": "legacy/x.py",
+      "line_start": 1,
+      "severity": "high",
+      "confidence": 80,
+      "title": "Keep",
+      "description": "real issue",
+      "dimension": "bug",
+      "line_end": 1,
+      "location_status": "confirmed"
+    },
+    {
+      "id": "drop",
+      "file": "legacy/y.py",
+      "line_start": 2,
+      "severity": "high",
+      "confidence": 40,
+      "title": "Drop",
+      "description": "real issue",
+      "dimension": "bug",
+      "line_end": 2,
+      "location_status": "confirmed"
+    }
   ]
 }

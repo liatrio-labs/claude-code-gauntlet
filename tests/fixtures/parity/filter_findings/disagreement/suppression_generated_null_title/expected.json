@@ -14,7 +14,9 @@
       "line_start": 21,
       "security_escalation": false,
       "severity": "low",
-      "title": null
+      "title": null,
+      "line_end": 21,
+      "location_status": "confirmed"
     },
     {
       "agent": "test-analyzer",
@@ -32,7 +34,9 @@
       "line_start": 30,
       "security_escalation": false,
       "severity": "medium",
-      "title": "missing test for retry backoff"
+      "title": "missing test for retry backoff",
+      "line_end": 30,
+      "location_status": "confirmed"
     },
     {
       "agent": "conventions-and-intent",
@@ -52,7 +56,9 @@
       "severity": "low",
       "title": [
         "boilerplate"
-      ]
+      ],
+      "line_end": 31,
+      "location_status": "confirmed"
     }
   ],
   "boosted_count": 2,
@@ -68,7 +74,9 @@
       "id": "DG1",
       "line_start": 20,
       "severity": "medium",
-      "title": "missing coverage for parser branch"
+      "title": "missing coverage for parser branch",
+      "line_end": 20,
+      "location_status": "confirmed"
     }
   ]
 }

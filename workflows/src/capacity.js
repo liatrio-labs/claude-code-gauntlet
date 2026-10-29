@@ -21,6 +21,9 @@ export function verifyCommand(inp, i, sliceNonce, inlinePayload) {
     '--base-branch', effectiveVerifyBaseBranch(v.baseBranch),
   ];
   if (v.diffPath) parts.push('--diff-file', v.diffPath);
+  for (const [key, flag] of [['contextMap', '--context-map'], ['contextFile', '--context-file'], ['targetKind', '--target-kind']]) {
+    if (v[key]) parts.push(flag, v[key]);
+  }
   return parts.map(shellWord).join(' ');
 }
 

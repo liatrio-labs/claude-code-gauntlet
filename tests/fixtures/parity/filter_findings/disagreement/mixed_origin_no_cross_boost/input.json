@@ -11,7 +11,8 @@
       "line_start": 10,
       "origin": "unknown",
       "severity": "high",
-      "title": "t1"
+      "title": "t1",
+      "location_status": "confirmed"
     },
     {
       "agent": "security-reviewer",
@@ -24,7 +25,8 @@
       "line_start": 11,
       "origin": "verified",
       "severity": "high",
-      "title": "t2"
+      "title": "t2",
+      "location_status": "confirmed"
     }
   ],
   "fn": "detect_disagreement"

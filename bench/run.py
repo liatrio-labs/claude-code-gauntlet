@@ -270,7 +270,6 @@ def check_prereqs(
     the mode's primary use is a ``--check`` functional smoke, which never runs the judge.
     ``env`` defaults to ``os.environ`` (the same late binding ``score._judge_api_key``
     uses, so a caller can supply a fixed mapping without a mutable default).
-    ``host`` requires CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST and reads no credential.
     """
     env_path = Path(env_path if env_path is not None else ENV_PATH)
     workspace_dir = Path(workspace_dir if workspace_dir is not None else WORKSPACE)
@@ -297,10 +296,7 @@ def check_prereqs(
             "gh CLI not found on PATH -- install GitHub CLI and run `gh auth login`."
         )
 
-    if child_auth == "host":
-        if not env.get("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"):
-            failures.append("host auth requires CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST")
-    elif child_auth == ledger.SUBSCRIPTION_AUTH_MODE:
+    if child_auth == ledger.SUBSCRIPTION_AUTH_MODE:
         # bench/.env before ambient, the precedence _claude_auth_env applies.
         #
         # Both messages spell the var name out instead of interpolating the invoke
@@ -321,14 +317,13 @@ def check_prereqs(
             "copy bench/.env.example to bench/.env and add the metered key."
         )
 
-    if child_auth in (ledger.SUBSCRIPTION_AUTH_MODE, "host"):
+    if child_auth == ledger.SUBSCRIPTION_AUTH_MODE:
         helper_files = invoke.api_key_helper_files(
             invoke.resolve_claude_home(workspace_dir, env)
         )
         if helper_files:
             failures.append(
-                "apiKeyHelper set in {files} -- it outranks CLAUDE_CODE_OAUTH_TOKEN "
-                "and host auth; "
+                "apiKeyHelper set in {files} -- it outranks CLAUDE_CODE_OAUTH_TOKEN; "
                 "remove it or run --child-auth api.".format(
                     files=", ".join(helper_files)
                 )
@@ -1405,8 +1400,7 @@ def parse_args(argv=None):
         default=None,
         dest="child_auth",
         help="credential for the review children: the metered bench/.env key (default) "
-        "or the operator's Claude subscription via CLAUDE_CODE_OAUTH_TOKEN, "
-        "or host authentication inside a cloud session",
+        "or the operator's Claude subscription via CLAUDE_CODE_OAUTH_TOKEN",
     )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
     parser.add_argument("--golden-epoch", metavar="EPOCH_ID")
@@ -1556,7 +1550,7 @@ def main(argv=None):
         )
         decision_hook("preflight", args=args, urls=urls, epoch=_run_epoch(args))
         if args.measurement_window:
-            validity.refuse_ambient_model_overrides(os.environ, child_auth)
+            validity.refuse_ambient_model_overrides(os.environ)
             validity.require_clean_treatment()
             args.measurement_window = str(Path(args.measurement_window).resolve())
         recorded_window = (prior_manifest or {}).get("measurement_window")

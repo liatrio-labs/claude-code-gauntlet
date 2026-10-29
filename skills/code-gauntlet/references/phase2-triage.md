@@ -416,6 +416,7 @@ Model dispatch, including user mappings and gateway naming, follows [model-polic
 
 ```
 verify: {
+  targetKind: "{pr|mr|branch|local}",
   inputPathBase: "{output_dir}/code-gauntlet-phase4-input-{head_sha_short}",
   outputPathBase: "{output_dir}/code-gauntlet-phase4-output-{head_sha_short}"
 }

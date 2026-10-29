@@ -8,7 +8,9 @@
       "id": "T-carve-url-1",
       "line_start": 90,
       "severity": "low",
-      "title": "Router fails to navigate to the error boundary on a 500 response"
+      "title": "Router fails to navigate to the error boundary on a 500 response",
+      "line_end": 90,
+      "location_status": "confirmed"
     }
   ]
 }

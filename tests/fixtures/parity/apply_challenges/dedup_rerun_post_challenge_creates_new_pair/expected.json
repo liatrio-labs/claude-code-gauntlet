@@ -18,7 +18,8 @@
       "report_destination": "main",
       "report_tag": "main",
       "severity": "high",
-      "title": "Missing test coverage"
+      "title": "Missing test coverage",
+      "location_status": "confirmed"
     },
     {
       "agent": "bug-detector",
@@ -37,7 +38,8 @@
       "report_destination": "main",
       "report_tag": "main",
       "severity": "high",
-      "title": "Real bug"
+      "title": "Real bug",
+      "location_status": "confirmed"
     }
   ],
   "stats": {

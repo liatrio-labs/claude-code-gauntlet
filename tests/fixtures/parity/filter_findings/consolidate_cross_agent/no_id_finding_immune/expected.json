@@ -12,7 +12,9 @@
       "id": "C10",
       "line_start": 50,
       "severity": "high",
-      "title": "t10"
+      "title": "t10",
+      "line_end": 50,
+      "location_status": "confirmed"
     },
     {
       "agent": "code-simplifier",
@@ -22,7 +24,9 @@
       "file": "j.py",
       "line_start": 51,
       "severity": "low",
-      "title": "t11"
+      "title": "t11",
+      "line_end": 51,
+      "location_status": "confirmed"
     }
   ]
 }

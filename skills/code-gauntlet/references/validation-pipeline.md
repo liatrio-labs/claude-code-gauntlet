@@ -21,12 +21,13 @@ The five transform golden families under `tests/fixtures/parity/` are JavaScript
 
 Classifies each finding as `new` (introduced by this change) or `surfaced` (pre-existing code exposed by the change), fact-checks evidence against file content, and validates line references against the diff. It is the one stage that still shells out to Python — the workflow has no shell, so it dispatches an **executor** agent per finding-slice.
 
-**The executor pattern.** The stage plans slices under `VERIFY_INLINE_CHAR_BUDGET` and `limits.verifySliceSize`, then dispatches executors sequentially. `VERIFY_SLICE_FIELDS` generates the Python wire type: `id`, `file`, `line_start`, `line_end`, `severity`, `confidence`, plus true-only `has_cross_file_refs` and `has_removed_test_location`, and sorted, space-joined `symbols` when nonempty. JS extracts symbols once per finding. Prose, reference arrays, removed-test records and `origin` stay on held findings. Each executor runs:
+**The executor pattern.** The stage plans slices under `VERIFY_INLINE_CHAR_BUDGET` and `limits.verifySliceSize`, then dispatches executors sequentially. `VERIFY_SLICE_FIELDS` generates the Python wire type: `id`, `file`, `line_start`, `line_end`, `severity`, `confidence`, optional verbatim `anchor`, plus true-only `has_cross_file_refs` and `has_removed_test_location`, and sorted, space-joined `symbols` when nonempty. JS extracts symbols once per finding. Prose, reference arrays, removed-test records and `origin` stay on held findings. Each executor runs:
 
 ```
 {python} "{plugin_root}/scripts/verify_findings.py" --input '{inputPathBase}.slice{i}.json' --input-inline '<payload>' \
   --output '{outputPathBase}.slice{i}.json' --nonce '{nonce}.{i}' --head-sha '{headShaShort}' \
-  --base-branch '{baseBranch}' [--diff-file '{diffPath}']
+  --base-branch '{baseBranch}' --target-kind '{targetKind}' [--diff-file '{diffPath}'] \
+  --context-map '{contextMap}' --context-file '{contextFile}'
 ```
 
 The workflow applies `shellWord` to every argument: unsafe tokens use POSIX single-quote
@@ -39,7 +40,7 @@ a per-finding **delta**, omitting the findings themselves:
   receipt: { sha, n_in, nonce, deltas_checksum, input_checksum?, inline_checksum,
              base_branch, diff_source: { path, read }, record_proofs: [ { id, checksum }, ... ] },
   result: {
-    deltas: [ { id, verified, origin?, severity?, confidence?, elimination_reason? }, ... ],
+    deltas: [ { id, verified, origin?, severity?, confidence?, elimination_reason?, line_start?, line_end?, location_status }, ... ],
     verified, eliminated, stats   // full arrays and stats on disk; NEVER echoed by the executor
   },
 } | { status: 'failed', exitCode, stderr }
@@ -63,7 +64,10 @@ These proofs check consistency against transcription errors; an executor that re
 - Findings on lines the author modified (blamed commit is in the branch) are always `new`.
 - A finding spanning both new and old lines classifies as `new`.
 - `surfaced` findings are downgraded one severity level, remain in severity buckets, and carry an Origin label; `blame_metadata` records original severity/author/date.
-- Missing files or invalid line ranges set confidence to 0. Missing symbols reduce confidence proportionally, with a floor of 30; validation can still confirm them.
+- Resolve the exact anchor before positional checks: claimed start, same-file context map, unique file match, then unique complete hunk match. One-line fragments need 12 non-whitespace characters; multi-line quotes match whole lines. Matching strips line edges and preserves internal whitespace.
+- PR, MR, and branch sources come from the captured HEAD. Local targets use regular worktree files; added lines skip HEAD blame and unchanged lines use worktree-aware blame.
+- Unavailable or ambiguous locations survive as `unconfirmed`, without canonical coordinates or a location penalty. Original claim numbers remain diagnostics. Independent missing-symbol policy still applies, with a confidence floor of 30.
+- Proven deltas replace both coordinates and capture original claim numbers. Replay without a coherent resolved stamp stays unconfirmed; late replay never reruns resolution. Filter treats each unconfirmed claim as a singleton with the ordinary non-core singleton penalty.
 
 ---
 

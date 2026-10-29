@@ -2,6 +2,155 @@
 
 <!-- version list -->
 
+## v3.50.2 (2026-10-28)
+
+### Bug Fixes
+
+- **bench**: Accept a run pair that starts together in the interleaving check
+  ([#559](https://github.com/liatrio-labs/claude-code-gauntlet/pull/559),
+  [`df3cc7d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/df3cc7d4c3d7d56f5c9f6f0d1678c99868f39cb6))
+
+- **bench**: Accept a run pair that starts together in the interleaving check (#46)
+  ([#559](https://github.com/liatrio-labs/claude-code-gauntlet/pull/559),
+  [`df3cc7d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/df3cc7d4c3d7d56f5c9f6f0d1678c99868f39cb6))
+
+### Refactoring
+
+- **bench**: Name the pair and between-pair interleaving rules
+  ([#559](https://github.com/liatrio-labs/claude-code-gauntlet/pull/559),
+  [`df3cc7d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/df3cc7d4c3d7d56f5c9f6f0d1678c99868f39cb6))
+
+
+## v3.50.1 (2026-10-28)
+
+### Bug Fixes
+
+- Place repeated anchors at the claimed line and accept 8-line quotes
+  ([#556](https://github.com/liatrio-labs/claude-code-gauntlet/pull/556),
+  [`8f234f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8f234f1f4260f2d8d7dc500e3870b16bec6fe0dc))
+
+- Place repeated anchors at the claimed line and accept 8-line quotes (#46)
+  ([#556](https://github.com/liatrio-labs/claude-code-gauntlet/pull/556),
+  [`8f234f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8f234f1f4260f2d8d7dc500e3870b16bec6fe0dc))
+
+### Testing
+
+- Drop the anchor row the 8-line limit made vacuous
+  ([#556](https://github.com/liatrio-labs/claude-code-gauntlet/pull/556),
+  [`8f234f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8f234f1f4260f2d8d7dc500e3870b16bec6fe0dc))
+
+
+## v3.50.0 (2026-10-28)
+
+### Bug Fixes
+
+- Address gauntlet, Bugbot and code-quality review on location delivery
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **location**: Treat a unique agent-written anchor as the finding's location
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+### Chores
+
+- **bench**: Drop the one-time location replay tool
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+### Features
+
+- Findings carry source anchors and resolve their own location (#46)
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **bench**: Offline location replay over saved Verify inputs, and keep plausible claims in place
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **context**: Number diff lines with their source lines and resolve anchors in code
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **contract**: Declare the finding anchor and location status once in the registry
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **contract**: Require the anchor in agent answers
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **delivery**: Post, link and fence only locations the pipeline proved
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+- **verify**: Place findings by their anchor before blame, membership and filtering
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+### Testing
+
+- **verify**: Write the diff fixture as bytes so its size matches on Windows
+  ([#553](https://github.com/liatrio-labs/claude-code-gauntlet/pull/553),
+  [`f703d93`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f703d935d9282db7b014247ee288f570cceba191))
+
+
+## v3.49.3 (2026-10-28)
+
+### Bug Fixes
+
+- **bench**: Replay packet delivery under the packet's own plugin tree
+  ([#555](https://github.com/liatrio-labs/claude-code-gauntlet/pull/555),
+  [`1b44c47`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1b44c4717733b459935eb61e70146589a97e14bb))
+
+- **bench**: Replay packet delivery under the packet's own plugin tree (#46)
+  ([#555](https://github.com/liatrio-labs/claude-code-gauntlet/pull/555),
+  [`1b44c47`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1b44c4717733b459935eb61e70146589a97e14bb))
+
+- **bench**: Score-time delivery replay uses the run's own plugin tree
+  ([#555](https://github.com/liatrio-labs/claude-code-gauntlet/pull/555),
+  [`1b44c47`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1b44c4717733b459935eb61e70146589a97e14bb))
+
+### Chores
+
+- **deps**: Bump the actions group with 4 updates
+  ([#552](https://github.com/liatrio-labs/claude-code-gauntlet/pull/552),
+  [`8fdb81f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8fdb81ffeb007515b49c78c04a66a571b8c442c0))
+
+### Refactoring
+
+- **bench**: One treatment resolver and a single replay error vocabulary
+  ([#555](https://github.com/liatrio-labs/claude-code-gauntlet/pull/555),
+  [`1b44c47`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1b44c4717733b459935eb61e70146589a97e14bb))
+
+
+## v3.49.2 (2026-10-27)
+
+### Bug Fixes
+
+- **bench**: Bind each wave's gate baseline at registration instead of one fixed release
+  ([#554](https://github.com/liatrio-labs/claude-code-gauntlet/pull/554),
+  [`350e9ac`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/350e9acec580cc8e233a39a24d31413ef1e64151))
+
+### Chores
+
+- **bench**: Drop the cloud-only host auth mode; ship runs on either auth
+  ([#551](https://github.com/liatrio-labs/claude-code-gauntlet/pull/551),
+  [`e6afe2e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e6afe2ef661881986d935d411affd060104731b4))
+
+### Code Style
+
+- **bench**: Ruff format simulation.py
+  ([#551](https://github.com/liatrio-labs/claude-code-gauntlet/pull/551),
+  [`e6afe2e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e6afe2ef661881986d935d411affd060104731b4))
+
+### Refactoring
+
+- **bench**: Simulation counts auth modes from the shared vocabulary
+  ([#551](https://github.com/liatrio-labs/claude-code-gauntlet/pull/551),
+  [`e6afe2e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e6afe2ef661881986d935d411affd060104731b4))
+
+
 ## v3.49.1 (2026-10-22)
 
 ### Bug Fixes

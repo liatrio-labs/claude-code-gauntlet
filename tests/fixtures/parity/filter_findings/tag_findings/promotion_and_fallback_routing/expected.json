@@ -15,7 +15,9 @@
       "report_destination": "main",
       "report_tag": "main",
       "severity": "medium",
-      "title": "race condition in worker pool"
+      "title": "race condition in worker pool",
+      "line_end": 100,
+      "location_status": "confirmed"
     },
     {
       "agent": "conventions-and-intent",
@@ -29,7 +31,9 @@
       "report_tag": "suggestion",
       "routed_by": "dimension",
       "severity": "low",
-      "title": "stale comment"
+      "title": "stale comment",
+      "line_end": 200,
+      "location_status": "confirmed"
     },
     {
       "agent": "conventions-and-intent",
@@ -41,7 +45,9 @@
       "report_destination": "main",
       "report_tag": "main",
       "severity": "medium",
-      "title": "violates naming convention documented in style guide"
+      "title": "violates naming convention documented in style guide",
+      "line_end": 300,
+      "location_status": "confirmed"
     },
     {
       "agent": "some-unknown-agent",
@@ -53,7 +59,9 @@
       "report_destination": "main",
       "report_tag": "main",
       "severity": "high",
-      "title": "weird finding"
+      "title": "weird finding",
+      "line_end": 400,
+      "location_status": "confirmed"
     },
     {
       "agent": "code-simplifier",
@@ -65,7 +73,9 @@
       "report_destination": "suggestion",
       "report_tag": "suggestion",
       "severity": "low",
-      "title": "redundant code"
+      "title": "redundant code",
+      "line_end": 500,
+      "location_status": "confirmed"
     }
   ]
 }

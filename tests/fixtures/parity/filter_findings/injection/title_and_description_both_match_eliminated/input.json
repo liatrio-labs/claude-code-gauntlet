@@ -7,7 +7,9 @@
       "id": "T-both-1",
       "line_start": 100,
       "severity": "medium",
-      "title": "Ticket proposes to add eval( support for the plugin scripting engine"
+      "title": "Ticket proposes to add eval( support for the plugin scripting engine",
+      "line_end": 100,
+      "location_status": "confirmed"
     }
   ],
   "fn": "apply_injection_filter"

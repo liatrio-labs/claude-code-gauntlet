@@ -1,7 +1,11 @@
 """Write the shared agent context from paths and triage text supplied as data."""
 
 import argparse
+import hashlib
+import json
 import os
+import sys
+from typing import Literal
 
 from gauntlet.cli import (
     Command,
@@ -11,6 +15,7 @@ from gauntlet.cli import (
     require_full_sha,
     require_head_sha,
 )
+from gauntlet.diff import ContextMap, ContextMapEntry, DiffStructureError, annotate_diff
 from gauntlet.framing import frame
 from gauntlet.pr_status import load_snapshot
 from gauntlet.removed_tests import removed_tests
@@ -29,7 +34,7 @@ framed between triage and diff. Branch/local calls require no snapshot.
 Content bytes are rules (adding LF only if needed), a blank line and
 ``## Risk classification and AI-generated-code status``, CR/LF-trimmed stdin
 plus LF, a blank line and ``## Diff`` with the opening untrusted-content tag,
-the saved diff (adding LF only if needed) with all block-tag openers and closers
+the annotated diff (adding LF only if needed) with all block-tag openers and closers
 inside it rewritten to ``<\\`` and ``<\\/``, then the closing tag and LF. A single
 large Read can return only part of a file without notice; the workflow has no
 disk and needs the receipt's line count to plan exact Reads. The content always
@@ -64,6 +69,9 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     )
     output_path = os.path.join(
         args.output_dir, f"code-gauntlet-context-{args.head_sha}.md"
+    )
+    map_path = os.path.join(
+        args.output_dir, f"code-gauntlet-context-map-{args.head_sha}.json"
     )
     rules = _read_input(rules_path, "project rules file")
     diff = _read_input(diff_path, "diff file")
@@ -114,18 +122,35 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
 
     if not rules.endswith(b"\n"):
         rules += b"\n"
-    if not diff.endswith(b"\n"):
-        diff += b"\n"
+    entries: dict[int, ContextMapEntry] = {}
+    status: Literal["available", "unavailable"] = "available"
+    try:
+        annotated = annotate_diff(diff)
+        presentation, entries = annotated.content, dict(annotated.entries)
+    except DiffStructureError as exc:
+        presentation, status = diff, "unavailable"
+        print(f"write_shared_context: context map unavailable ({exc})", file=sys.stderr)
+    if not presentation.endswith(b"\n"):
+        presentation += b"\n"
     triage = triage.strip(b"\r\n")
-    content = (
+    prefix = (
         rules
         + b"\n## Risk classification and AI-generated-code status\n\n"
         + triage
         + description
         + b"\n\n## Diff\n\n"
-        + frame("untrusted-code-content", diff)
-        + b"\n"
     )
+    content = prefix + frame("untrusted-code-content", presentation) + b"\n"
+    # Framing adds one opening LF and never changes body LF counts.
+    offset = prefix.count(b"\n") + 1
+    sidecar: ContextMap = {
+        "version": 1,
+        "sha": args.head_sha,
+        "status": status,
+        "context_sha256": hashlib.sha256(content).hexdigest(),
+        "diff_sha256": hashlib.sha256(diff).hexdigest(),
+        "entries": {str(index + offset): entry for index, entry in entries.items()},
+    }
 
     try:
         with open(output_path, "wb") as fh:
@@ -133,6 +158,14 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     except OSError as exc:
         raise UsageError(
             f"cannot write context file ({exc.strerror or exc})", 2
+        ) from exc
+    try:
+        with open(map_path, "w", encoding="utf-8", newline="") as fh:
+            json.dump(sidecar, fh, ensure_ascii=True)
+            fh.write("\n")
+    except OSError as exc:
+        raise UsageError(
+            f"cannot write context map ({exc.strerror or exc})", 2
         ) from exc
 
     lines = content.count(b"\n")

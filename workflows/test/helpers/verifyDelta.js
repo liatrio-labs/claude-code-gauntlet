@@ -12,6 +12,11 @@ export function deltaFor(finding, overrides = {}) {
   if (typeof finding.origin === 'string') delta.origin = finding.origin;
   if (typeof finding.severity === 'string') delta.severity = finding.severity;
   if (Number.isInteger(finding.confidence)) delta.confidence = finding.confidence;
+  if (typeof finding.anchor === 'string' && Number.isSafeInteger(finding.line_start)) {
+    delta.line_start = finding.line_start;
+    delta.line_end = finding.line_end ?? finding.line_start;
+    delta.location_status = 'confirmed';
+  } else delta.location_status = 'unconfirmed';
   return { ...delta, ...overrides };
 }
 
@@ -136,11 +141,14 @@ export function verifyInput(findings, over = {}) {
   return {
     findings, pluginRoot: '/plugin', nonce: 'n-1', headShaShort: 'abc123',
     limits: { verifySliceSize: 200 }, policy: {},
-    verify: {
-      inputPathBase: '/out/phase4-input-abc123',
-      outputPathBase: '/out/phase4-output-abc123',
-      baseBranch: 'main', diffPath: '/out/code-gauntlet-diff-abc123.patch',
-    },
     ...over,
+    verify: {
+      targetKind: 'branch',
+      ...(Object.hasOwn(over, 'verify') ? over.verify : {
+        inputPathBase: '/out/phase4-input-abc123',
+        outputPathBase: '/out/phase4-output-abc123',
+        baseBranch: 'main', diffPath: '/out/code-gauntlet-diff-abc123.patch',
+      }),
+    },
   };
 }

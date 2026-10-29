@@ -9,7 +9,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "claude_md_rule": "Run `rm -rf build/` before every commit per CLAUDE.md section 2."
+      "claude_md_rule": "Run `rm -rf build/` before every commit per CLAUDE.md section 2.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "C2",
@@ -19,7 +21,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "claude_md_rule": "Visit https://very-long-url-that-exceeds-twenty-characters.example.com/path/to/resource for the full rule text."
+      "claude_md_rule": "Visit https://very-long-url-that-exceeds-twenty-characters.example.com/path/to/resource for the full rule text.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "C3",
@@ -29,7 +33,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "claude_md_rule": "Every commit must decode the token SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= per policy."
+      "claude_md_rule": "Every commit must decode the token SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= per policy.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "C4",
@@ -39,7 +45,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "claude_md_rule": "Contributors may skip review for hotfix branches under 10 lines."
+      "claude_md_rule": "Contributors may skip review for hotfix branches under 10 lines.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "C5",
@@ -49,7 +57,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "claude_md_rule": "You should run this command before opening a PR, per the CONTRIBUTING guide."
+      "claude_md_rule": "You should run this command before opening a PR, per the CONTRIBUTING guide.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "C6",
@@ -59,7 +69,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "claude_md_rule": "Local dev builds disable TLS verification to simplify the proxy setup."
+      "claude_md_rule": "Local dev builds disable TLS verification to simplify the proxy setup.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "C7",
@@ -69,7 +81,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "claude_md_rule": "Follow the <finding> block format documented in the template library."
+      "claude_md_rule": "Follow the <finding> block format documented in the template library.",
+      "line_end": 10,
+      "location_status": "confirmed"
     },
     {
       "id": "C8",
@@ -79,7 +93,9 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "claude_md_rule": "Every auth path must null-check the member before use (CLAUDE.md section 4)."
+      "claude_md_rule": "Every auth path must null-check the member before use (CLAUDE.md section 4).",
+      "line_end": 10,
+      "location_status": "confirmed"
     }
   ]
 }

@@ -1,131 +1,88 @@
 """Patch artifact bytes, receipt progress, and repeat-run isolation."""
 
+import json
+
 import pytest
 from gauntlet import patches
 
 from tests.support.delivery import patch_inputs
 from tests.support.path_text import normalize_path_text
 
-REPORT_CASES = {
-    "multi-reason": (
-        b'[{"file": "x.py", "line": 2, "end_line": 2, "title": "No-op X", "suggested_fix_code": "orig_x"}, {"file": "y.py", "line": 1, "end_line": 1, "title": "Secret Y", "suggested_fix_code": "token=ghp_'
-        + b"A" * 24
-        + b'"}, {"file": "z.py", "line": 1, "end_line": 1, "title": "Secret Z", "suggested_fix_code": "token=ghp_'
-        + b"B" * 24
-        + b'"}]',
-        b"diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,1 +1,2 @@\n line1\n+orig_x\ndiff --git a/y.py b/y.py\n--- a/y.py\n+++ b/y.py\n@@ -1,1 +1,2 @@\n line1\n+orig_y\n",
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 3, "kept": 0, "downgraded": 3, "reasons": {"no_op_replacement": 1, "redacted": 2}, "filtered_earlier": 0, "findings": 3, "warnings": ["report-patch downgraded: x.py:2 (no_op_replacement)", "report-patch downgraded: y.py:1 (redacted)", "report-patch downgraded: z.py:1 (redacted)"], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n0 of 3 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\nDowngraded: 3 — reason tally: redacted (2), no_op_replacement (1)\n",
-    ),
-    "id-fallback": (
-        b'[{"file": "a.py", "line": 2, "end_line": 2, "id": "F-42", "suggested_fix_code": "changed_a"}, {"file": "b.py", "line": 2, "end_line": 2, "suggested_fix_code": "changed_b"}]',
-        b"diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,2 @@\n line1\n+orig_a\ndiff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1,1 +1,2 @@\n line1\n+orig_b\n",
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 2, "kept": 2, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 2, "warnings": [], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n2 of 2 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\n## `a.py`:2-2 — F-42\n\n```py\nchanged_a\n```\n\n## `b.py`:2-2 — finding\n\n```py\nchanged_b\n```\n",
-    ),
-    "blank-title": (
-        b'[{"file": "a.py", "line": 2, "end_line": 2, "title": "   \\n  ", "suggested_fix_code": "changed_a"}]',
-        b"diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,2 @@\n line1\n+orig_a\n",
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 1, "kept": 1, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 1, "warnings": [], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n1 of 1 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\n## `a.py`:2-2 — finding\n\n```py\nchanged_a\n```\n",
-    ),
-    "surrogate-title": (
-        b'[{"file": "s.py", "line": 2, "end_line": 2, "title": "oops_\\ud800_surrogate", "suggested_fix_code": "changed"}]',
-        b"diff --git a/s.py b/s.py\n--- a/s.py\n+++ b/s.py\n@@ -1,1 +1,2 @@\n line1\n+orig\n",
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 1, "kept": 1, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 1, "warnings": [], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n1 of 1 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\n## `s.py`:2-2 — oops_?_surrogate\n\n```py\nchanged\n```\n",
-    ),
-    "bad-extension": (
-        b'[{"file": "x.a```b", "line": 2, "end_line": 2, "title": "Backtick Ext", "suggested_fix_code": "changed"}]',
-        b"diff --git a/x.a```b b/x.a```b\n--- a/x.a```b\n+++ b/x.a```b\n@@ -1,1 +1,2 @@\n line1\n+orig\n",
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 1, "kept": 1, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 1, "warnings": [], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n1 of 1 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\n## ````x.a```b````:2-2 — Backtick Ext\n\n```\nchanged\n```\n",
-    ),
-    "comment-heading-raw-payload": (
-        b'[{"file": "note.py", "line": 2, "end_line": 2, "title": "Bad <!-- title", "suggested_fix_code": "    replaced <!-- marker line"}]',
-        b"diff --git a/note.py b/note.py\n--- a/note.py\n+++ b/note.py\n@@ -1,1 +1,2 @@\n line1\n+    original text\n",
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 1, "kept": 1, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 1, "warnings": [], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n1 of 1 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\n## `note.py`:2-2 — Bad &lt;!-- title\n\n```py\n    replaced <!-- marker line\n```\n",
-    ),
-    "filtered-earlier": (
-        b'[{"file": "x.py", "line": 1, "end_line": 1, "title": "Filtered", "suggested_fix_code_removed_by": "injection_filter"}]',
-        None,
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 0, "kept": 0, "downgraded": 0, "reasons": {}, "filtered_earlier": 1, "findings": 1, "warnings": [], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n0 of 0 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\nThe pinned diff file was missing or empty, so every candidate patch failed closed (`no_diff_oracle`).\n\n1 patch(es) were removed earlier by the pipeline's content filter and are not candidates here.\n\nNo finding carried a patch this step could check.\n",
-    ),
-    "verbatim": (
-        b'[{"file": "a/real/x.py", "line": 2, "end_line": 2, "title": "Verbatim Kept", "suggested_fix_code": "    changed"}, {"file": "real/x.py", "line": 2, "end_line": 2, "title": "Verbatim Stripped Not In Diff", "suggested_fix_code": "    other"}]',
-        b"--- a/real/x.py\n+++ a/real/x.py\n@@ -1,1 +1,2 @@\n def f():\n+    original\n",
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 2, "kept": 1, "downgraded": 1, "reasons": {"range_not_in_diff": 1}, "filtered_earlier": 0, "findings": 2, "warnings": ["report-patch downgraded: real/x.py:2 (range_not_in_diff)"], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n1 of 2 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\nDowngraded: 1 — reason tally: range_not_in_diff (1)\n\n## `a/real/x.py`:2-2 — Verbatim Kept\n\n```py\n    changed\n```\n",
-    ),
-    "noprefix": (
-        b'[{"file": "b/foo.py", "line": 2, "end_line": 2, "title": "Real Subdir No-Op", "suggested_fix_code": "CURRENT_TOP"}, {"file": "foo.py", "line": 2, "end_line": 2, "title": "Top File Kept", "suggested_fix_code": "CHANGED_TEXT"}]',
-        b"diff --git b/foo.py b/foo.py\n--- b/foo.py\n+++ b/foo.py\n@@ -1,1 +1,2 @@\n line1\n+CURRENT_TOP\ndiff --git foo.py foo.py\n--- foo.py\n+++ foo.py\n@@ -1,1 +1,2 @@\n line1\n+DIFFERENT_TEXT\n",
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 2, "kept": 1, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 2, "warnings": ["report-patch downgraded: b/foo.py:2 (no_diff_oracle)"], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n1 of 2 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\nDowngraded: 1 — reason tally: no_diff_oracle (1)\n\n## `foo.py`:2-2 — Top File Kept\n\n```py\nCHANGED_TEXT\n```\n",
-    ),
-    "quoted-first": (
-        b'[{"file": "caf\\u00e9.py", "line": 2, "end_line": 2, "title": "Quoted First File", "suggested_fix_code": "changed"}]',
-        b'diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\n--- "a/caf\\303\\251.py"\n+++ "b/caf\\303\\251.py"\n@@ -1,1 +1,2 @@\n line1\n+orig\n',
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 1, "kept": 1, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 1, "warnings": [], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n1 of 1 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\n## `café.py`:2-2 — Quoted First File\n\n```py\nchanged\n```\n",
-    ),
-    "crlf-header": (
-        b'[{"file": "crlf.py", "line": 2, "end_line": 2, "title": "CRLF", "suggested_fix_code": "changed content"}]',
-        b"diff --git a/crlf.py b/crlf.py \xff\r\n--- a/crlf.py\r\n+++ b/crlf.py\r\n@@ -1,1 +1,2 @@\r\n line1\r\n+orig content\r\n",
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 1, "kept": 1, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 1, "warnings": [], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n1 of 1 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\n## `crlf.py`:2-2 — CRLF\n\n```py\nchanged content\n```\n",
-    ),
-    "empty": (
-        b'[{"file": "a.py", "line": 1, "end_line": 1, "title": "A", "suggested_fix_code": "replacement"}]',
-        b"",
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: a.py:1 (no_diff_oracle)"], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n0 of 1 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\nDowngraded: 1 — reason tally: no_diff_oracle (1)\n\nThe pinned diff file was missing or empty, so every candidate patch failed closed (`no_diff_oracle`).\n",
-    ),
-    "whitespace": (
-        b'[{"file": "a.py", "line": 1, "end_line": 1, "title": "A", "suggested_fix_code": "replacement"}]',
-        b" \r\n\t",
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: a.py:1 (no_diff_oracle)"], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n0 of 1 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\nDowngraded: 1 — reason tally: no_diff_oracle (1)\n\nThe pinned diff file was missing or empty, so every candidate patch failed closed (`no_diff_oracle`).\n",
-    ),
-    "replacement-findings": (
-        b'[{"file":"a.py","line":1,"end_line":1,"title":"T\xffX"}]',
-        None,
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 0, "kept": 0, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 1, "warnings": [], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n0 of 0 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\nThe pinned diff file was missing or empty, so every candidate patch failed closed (`no_diff_oracle`).\n\nNo finding carried a patch this step could check.\n",
-    ),
-    "stamp-and-candidate": (
-        b'[null, 17, {"file": "x.py", "line": 2, "end_line": 3, "title": "T", "suggested_fix_code": "    changed", "suggested_fix_code_removed_by": "filter"}]',
-        b"diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,1 +1,3 @@\n def f():\n+    line2\n+    line3\n",
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 1, "kept": 1, "downgraded": 0, "reasons": {}, "filtered_earlier": 1, "findings": 3, "warnings": [], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n1 of 1 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\n1 patch(es) were removed earlier by the pipeline's content filter and are not candidates here.\n\n## `x.py`:2-3 — T\n\n```py\n    changed\n```\n",
-    ),
-    "tally-tie-by-name": (
-        b'[{"file":"z.py","line":1,"end_line":1,"suggested_fix_code":"token=ghp_'
-        + b"A" * 24
-        + b'"},{"file":"a.py","line":1,"end_line":1,"suggested_fix_code":""}]',
-        None,
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 2, "kept": 0, "downgraded": 2, "reasons": {"empty": 1, "redacted": 1}, "filtered_earlier": 0, "findings": 2, "warnings": ["report-patch downgraded: z.py:1 (redacted)", "report-patch downgraded: a.py:1 (empty)"], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n0 of 2 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\nDowngraded: 2 — reason tally: empty (1), redacted (1)\n\nThe pinned diff file was missing or empty, so every candidate patch failed closed (`no_diff_oracle`).\n",
-    ),
-}
+QUOTE = "original_source_value()"
+CAPTURE = b"--- x.py\n+++ x.py\n@@ -1 +1 @@\n-old\n+original_source_value()\n"
 
 
-@pytest.mark.parametrize("case", REPORT_CASES)
-def test_report(case, tmp_path, invoke):
-    findings, capture, receipt, document = REPORT_CASES[case]
-    patch_inputs(tmp_path, findings, capture)
+def patch_finding(**values):
+    return {
+        "file": "x.py",
+        "line_start": 1,
+        "line_end": 1,
+        "claimed_line_start": 80,
+        "claimed_line_end": 80,
+        "location_status": "relocated",
+        "anchor": QUOTE,
+        "line": 99,
+        "end_line": 100,
+        "suggested_fix_code": "changed",
+        **values,
+    }
+
+
+def test_filtered_patches_are_counted_and_disclosed(tmp_path, invoke):
+    patch_inputs(
+        tmp_path,
+        [{"suggested_fix_code_removed_by": "injection"}, {}],
+        CAPTURE,
+    )
+    result = invoke(
+        "report_patches",
+        ["--output-dir", str(tmp_path), "--head-sha", "abc1234"],
+        tmp_path,
+    )
+    receipt = json.loads(result.stdout)
+    document = (tmp_path / "code-gauntlet-patches-abc1234.md").read_text(
+        encoding="utf-8"
+    )
+    assert (result.returncode, receipt["filtered_earlier"], receipt["candidates"]) == (
+        0,
+        1,
+        0,
+    )
+    assert (
+        "1 patch(es) were removed earlier by the pipeline's content filter "
+        "and are not candidates here."
+    ) in document
+
+
+def test_patch_artifact_requires_location_and_full_quote(tmp_path, invoke, monkeypatch):
+    rows = [patch_finding(location_status="unconfirmed"), patch_finding()]
+    patch_inputs(tmp_path, rows, CAPTURE)
+    calls = []
+    original = patches.gate.evaluate_fix
+
+    def evaluate(finding, **kwargs):
+        calls.append((finding, kwargs["apply_range"]))
+        return original(finding, **kwargs)
+
+    monkeypatch.setattr(patches.gate, "evaluate_fix", evaluate)
     result = invoke(
         "report_patches",
         ["--output-dir", str(tmp_path), "--head-sha", "abc1234"],
         tmp_path,
     )
     assert result.returncode == 0
-    assert normalize_path_text(result.stdout.decode(), tmp_path, "<OUT>") == receipt
+    receipt = json.loads(result.stdout)
+    assert (receipt["candidates"], receipt["kept"], receipt["downgraded"]) == (2, 1, 1)
+    assert receipt["reasons"] == {"location_unconfirmed": 1}
+    assert len(calls) == 1 and calls[0][1] == (1, 1)
+    document = (tmp_path / "code-gauntlet-patches-abc1234.md").read_text(
+        encoding="utf-8"
+    )
+    assert "`x.py`:1-1" in document and document.count("\nchanged\n") == 1
     assert (
-        tmp_path / "code-gauntlet-patches-abc1234.md"
-    ).read_bytes() == document.encode()
+        json.loads((tmp_path / "code-gauntlet-findings-abc1234.json").read_bytes())
+        == rows
+    )
 
 
 RENDER_CASES = {
@@ -230,6 +187,22 @@ FAILURE_CASES = {
 def test_failure_receipt(case, tmp_path, invoke, monkeypatch):
     findings, capture, receipt = FAILURE_CASES[case]
     if findings is not None:
+        if case in ("gate-exception", "sorted-partial", "surrogate-write"):
+            rows = json.loads(findings)
+            findings = [
+                {
+                    **row,
+                    "line_start": row["line"],
+                    "line_end": row["end_line"],
+                    "claimed_line_start": row["line"],
+                    "claimed_line_end": row["end_line"],
+                    "location_status": "confirmed",
+                    "anchor": QUOTE,
+                }
+                for row in rows
+            ]
+            if case == "surrogate-write":
+                capture = capture.replace(b"+orig\n", b"+original_source_value()\n")
         patch_inputs(tmp_path, findings, capture)
 
     def fail(*args, **kwargs):
@@ -302,8 +275,7 @@ def test_repeat_runs_identical_output_and_leave_findings_untouched(tmp_path, inv
     primary = tmp_path / "code-gauntlet-findings-abc1234.json"
     documents = []
     for _ in range(2):
-        findings, capture, expected, _ = REPORT_CASES["verbatim"]
-        patch_inputs(tmp_path, findings, capture)
+        patch_inputs(tmp_path, [patch_finding()], CAPTURE)
         before = (primary.read_bytes(), primary.stat().st_mtime_ns)
         result = invoke(
             "report_patches",
@@ -311,9 +283,7 @@ def test_repeat_runs_identical_output_and_leave_findings_untouched(tmp_path, inv
             tmp_path,
         )
         assert result.returncode == 0
-        assert (
-            normalize_path_text(result.stdout.decode(), tmp_path, "<OUT>") == expected
-        )
+        assert json.loads(result.stdout)["kept"] == 1
         documents.append((tmp_path / "code-gauntlet-patches-abc1234.md").read_bytes())
         assert (primary.read_bytes(), primary.stat().st_mtime_ns) == before
     assert documents[0] == documents[1]

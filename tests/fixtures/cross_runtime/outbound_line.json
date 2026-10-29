@@ -2128,7 +2128,9 @@
             "severity": "high",
             "file": "src/a.py",
             "line_start": 3,
-            "title": "before x [a]: //example.test/SENT](a b) after"
+            "title": "before x [a]: //example.test/SENT](a b) after",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ],
         "prIdentity": {
@@ -2151,7 +2153,9 @@
             "severity": "high",
             "file": "src/a.py",
             "line_start": 3,
-            "title": "before x [a]: //example.test/SENT](a b) after"
+            "title": "before x [a]: //example.test/SENT](a b) after",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ]
       },
@@ -2167,7 +2171,9 @@
             "severity": "high",
             "file": "src/[x]:.py",
             "line_start": 3,
-            "title": "before x [a]: //example.test/SENT](a b) after"
+            "title": "before x [a]: //example.test/SENT](a b) after",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ],
         "prIdentity": {
@@ -2190,7 +2196,9 @@
             "severity": "high",
             "file": "src/[x]:.py",
             "line_start": 3,
-            "title": "before x [a]: //example.test/SENT](a b) after"
+            "title": "before x [a]: //example.test/SENT](a b) after",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ]
       },
@@ -2206,7 +2214,9 @@
             "severity": "high",
             "file": "src/a.py",
             "line_start": 3,
-            "title": "[x]: u"
+            "title": "[x]: u",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ],
         "prIdentity": {
@@ -2229,7 +2239,9 @@
             "severity": "high",
             "file": "src/a.py",
             "line_start": 3,
-            "title": "[x]: u"
+            "title": "[x]: u",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ]
       },
@@ -2245,7 +2257,9 @@
             "severity": "high",
             "file": "src/[x]:.py",
             "line_start": 3,
-            "title": "[x]: u"
+            "title": "[x]: u",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ],
         "prIdentity": {
@@ -2268,7 +2282,9 @@
             "severity": "high",
             "file": "src/[x]:.py",
             "line_start": 3,
-            "title": "[x]: u"
+            "title": "[x]: u",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ]
       },
@@ -2284,7 +2300,9 @@
             "severity": "high",
             "file": "src/a.py",
             "line_start": 3,
-            "title": "`x [a]: SENT](a b)`"
+            "title": "`x [a]: SENT](a b)`",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ],
         "prIdentity": {
@@ -2307,7 +2325,9 @@
             "severity": "high",
             "file": "src/a.py",
             "line_start": 3,
-            "title": "`x [a]: SENT](a b)`"
+            "title": "`x [a]: SENT](a b)`",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ]
       },
@@ -2323,7 +2343,9 @@
             "severity": "high",
             "file": "src/[x]:.py",
             "line_start": 3,
-            "title": "`x [a]: SENT](a b)`"
+            "title": "`x [a]: SENT](a b)`",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ],
         "prIdentity": {
@@ -2346,7 +2368,9 @@
             "severity": "high",
             "file": "src/[x]:.py",
             "line_start": 3,
-            "title": "`x [a]: SENT](a b)`"
+            "title": "`x [a]: SENT](a b)`",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ]
       },
@@ -2362,7 +2386,9 @@
             "severity": "high",
             "file": "a~~~b",
             "line_start": 3,
-            "title": "a ~~~ b"
+            "title": "a ~~~ b",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ],
         "prIdentity": {
@@ -2385,7 +2411,9 @@
             "severity": "high",
             "file": "a~~~b",
             "line_start": 3,
-            "title": "a ~~~ b"
+            "title": "a ~~~ b",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ]
       },
@@ -2401,7 +2429,9 @@
             "severity": "high",
             "file": "~~~/x.py",
             "line_start": 3,
-            "title": "a ~~~ b"
+            "title": "a ~~~ b",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ],
         "prIdentity": {
@@ -2424,7 +2454,9 @@
             "severity": "high",
             "file": "~~~/x.py",
             "line_start": 3,
-            "title": "a ~~~ b"
+            "title": "a ~~~ b",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ]
       },
@@ -2440,7 +2472,9 @@
             "severity": "high",
             "file": "src/[x]:.py",
             "line_start": 3,
-            "title": "[^`]: The handler trusts `X-User` ...; see [docs](https://e.test/auth)."
+            "title": "[^`]: The handler trusts `X-User` ...; see [docs](https://e.test/auth).",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ],
         "prIdentity": {
@@ -2463,7 +2497,9 @@
             "severity": "high",
             "file": "src/[x]:.py",
             "line_start": 3,
-            "title": "[`]: /u 'text ` ](x'"
+            "title": "[`]: /u 'text ` ](x'",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ],
         "prIdentity": {
@@ -2486,7 +2522,9 @@
             "severity": "high",
             "file": "src/[x]:.py",
             "line_start": 3,
-            "title": "See [x](`) [label W5]: //e/dest](a b) ` W6"
+            "title": "See [x](`) [label W5]: //e/dest](a b) ` W6",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ],
         "prIdentity": {
@@ -2509,7 +2547,9 @@
             "severity": "high",
             "file": "src/a.py",
             "line_start": 3,
-            "title": "`[a]: x`"
+            "title": "`[a]: x`",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ]
       },
@@ -2525,7 +2565,9 @@
             "severity": "high",
             "file": "src/[^handler.py",
             "line_start": 3,
-            "title": "See [^The handler trusts X-User W1"
+            "title": "See [^The handler trusts X-User W1",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ]
       },
@@ -2541,7 +2583,9 @@
             "severity": "high",
             "file": "src/[^handler.py",
             "line_start": 3,
-            "title": "See [^The handler trusts X-User W1"
+            "title": "See [^The handler trusts X-User W1",
+            "location_status": "confirmed",
+            "line_end": 3
           }
         ],
         "prIdentity": {

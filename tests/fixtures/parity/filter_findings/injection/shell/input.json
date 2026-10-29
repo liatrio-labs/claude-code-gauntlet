@@ -8,7 +8,9 @@
       "file": "src/build.sh",
       "line_start": 10,
       "severity": "medium",
-      "confidence": 50
+      "confidence": 50,
+      "line_end": 10,
+      "location_status": "confirmed"
     }
   ]
 }

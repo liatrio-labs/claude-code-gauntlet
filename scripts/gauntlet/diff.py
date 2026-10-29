@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal, TypedDict, cast
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +55,35 @@ class DiffCounts:
     added: int
     removed: int
     binary_files: int
+
+
+class ContextMapEntry(TypedDict):
+    file: str
+    side: Literal["head", "old"]
+    line: int
+
+
+class ContextMap(TypedDict):
+    version: Literal[1]
+    sha: str
+    status: Literal["available", "unavailable"]
+    context_sha256: str
+    diff_sha256: str
+    entries: dict[str, ContextMapEntry]
+
+
+@dataclass(frozen=True, slots=True)
+class OldSpan:
+    start: int
+    lines: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AnnotatedDiff:
+    content: bytes
+    entries: Mapping[int, ContextMapEntry]
+    hunks: Mapping[str, tuple[tuple[int, int], ...]]
+    old_spans: Mapping[str, tuple[OldSpan, ...]]
 
 
 # Prefixes may be syntax or real directories; policies decide after decoding.
@@ -137,15 +166,17 @@ def _walk_diff_indexed(
     pending_old_header = False
 
     for line_index, raw_line in enumerate(lines):
+        # CRLF is a terminator, including on paths; body bytes remain untouched.
+        header_line = raw_line.removesuffix("\r")
         if old_rem <= 0 and new_rem <= 0:
             if raw_line.startswith(_GIT_HEADER_PREFIX):
                 if strict and pending_old_header:
                     raise DiffStructureError("unpaired old path")
                 yield (
                     line_index,
-                    HeaderEvent("git_header", raw_line[len(_GIT_HEADER_PREFIX) :]),
+                    HeaderEvent("git_header", header_line[len(_GIT_HEADER_PREFIX) :]),
                 )
-            elif path_match := _PATH_HEADER_RE.match(raw_line):
+            elif path_match := _PATH_HEADER_RE.match(header_line):
                 marker, field = path_match.groups()
                 if strict:
                     if (marker == "---") == pending_old_header:
@@ -308,6 +339,92 @@ def posting_policy(platform: Literal["github", "gitlab"]) -> PostingPathPolicy:
 
 def patch_report_policy(diff_text: str) -> PostingPathPolicy:
     return "git-prefixed" if _GIT_SHAPED_RE.match(diff_text) else "glab-verbatim"
+
+
+def annotate_diff(
+    content: bytes, *, policy: PostingPathPolicy | None = None
+) -> AnnotatedDiff:
+    """Produce presentation and location facts in the same strict indexed walk.
+
+    A failed walk raises before publishing any partial map or hunk authority.
+    """
+    text = content.decode("utf-8", "surrogateescape")
+    lines, final_lf = _split_lines(text)
+    policy = patch_report_policy(text) if policy is None else policy
+    rendered = list(lines)
+    entries: dict[int, ContextMapEntry] = {}
+    hunks: dict[str, list[tuple[int, int]]] = {}
+    old_spans: dict[str, list[OldSpan]] = {}
+    git_header: str | None = None
+    old_side: str | None = None
+    path: str | None = None
+    old_start = 0
+    old_lines: list[str] = []
+
+    def finish_old_span() -> None:
+        if path is not None and old_lines:
+            old_spans.setdefault(path, []).append(OldSpan(old_start, tuple(old_lines)))
+        old_lines.clear()
+
+    for index, event in _walk_diff_indexed(lines, strict=True):
+        if isinstance(event, HeaderEvent):
+            finish_old_span()
+            if event.kind == "git_header":
+                git_header = event.value
+                old_side = path = None
+            elif event.kind == "old_path":
+                old_side = event.value
+                path = None
+            else:
+                new_side = event.value
+                if old_side is None:
+                    raise DiffStructureError("missing old path")
+                if policy == "git-prefixed" or _git_header_agrees(
+                    git_header, old_side, new_side
+                ):
+                    old_side = old_side.removeprefix("a/")
+                    new_side = new_side.removeprefix("b/")
+                path = old_side if new_side == "/dev/null" else new_side
+                git_header = None
+        elif isinstance(event, HunkEvent):
+            finish_old_span()
+            if path is None or path == "/dev/null":
+                raise DiffStructureError("hunk without file paths")
+            if (event.old_count and event.old_line < 1) or (
+                event.new_count and event.new_line < 1
+            ):
+                raise DiffStructureError("nonpositive source line")
+            old_start = event.old_line
+            if event.new_count:
+                hunks.setdefault(path, []).append(
+                    (event.new_line, event.new_line + event.new_count - 1)
+                )
+        else:
+            if path is None:
+                raise DiffStructureError("body without file paths")
+            if event.old_line is not None:
+                old_lines.append(event.text.removesuffix("\r"))
+            if event.new_line is not None:
+                number = event.new_line
+                side: Literal["head", "old"] = "head"
+                gutter = f"N{number} {'+' if event.old_line is None else ' '}|"
+            else:
+                assert event.old_line is not None
+                number, side = event.old_line, "old"
+                gutter = f"O{number} -|"
+            if number <= 0:
+                raise DiffStructureError("nonpositive source line")
+            rendered[index] = gutter + event.text
+            entries[index + 1] = {"file": path, "side": side, "line": number}
+    finish_old_span()
+    return AnnotatedDiff(
+        ("\n".join(rendered) + ("\n" if final_lf else "")).encode(
+            "utf-8", "surrogateescape"
+        ),
+        entries,
+        {file: tuple(spans) for file, spans in hunks.items()},
+        {file: tuple(spans) for file, spans in old_spans.items()},
+    )
 
 
 def parse_diff(diff_text: str, *, policy: DiffPathPolicy) -> DiffFacts:

@@ -56,11 +56,20 @@ def case(pop_case, score_case, tmp_path, fingerprint, window, monkeypatch):
 
     monkeypatch.setattr(c, "load_arm", loaded)
 
-    def build(population="gate", operational=True, count=3, promotion_rule=None):
+    def build(
+        population="gate",
+        operational=True,
+        count=3,
+        promotion_rule=None,
+        *,
+        wave="wave",
+        registered_baseline=None,
+        baseline_source_sha=None,
+    ):
         r = promotion_rule or rule()
         w = replace(
             window,
-            wave_id="wave",
+            wave_id=wave,
             rule_sha256=digest(asdict(r)),
             planned_order=tuple((a, i) for i in range(4) for a in window.arms),
         )
@@ -71,7 +80,12 @@ def case(pop_case, score_case, tmp_path, fingerprint, window, monkeypatch):
         ):
             write(paths[n], value)
         ledger.write_bytes(b"")
-        c.looks.register("wave", asdict(r))
+        c.looks.register(
+            wave,
+            asdict(r),
+            registered_baseline or sha,
+            baseline_source_sha=baseline_source_sha,
+        )
         unseal = str(tmp_path / "unseal.json") if population == "holdout" else None
         if unseal:
             c.looks.unseal(sha, unseal)
@@ -106,9 +120,6 @@ def case(pop_case, score_case, tmp_path, fingerprint, window, monkeypatch):
                     child_auth="api",
                     contamination_sha256=digest(manifest),
                     pr_identities={u: epoch.shas[u] for u in scope},
-                    baseline_equivalence_receipt=dict(
-                        release_sha="839b1886", merge_sha=sha, evidence_refs=["fixture"]
-                    ),
                 )
                 sel = {u: f"{ref.run_id}-{j}" for j, u in enumerate(scope)}
                 for u, aid in sel.items():
@@ -441,7 +452,11 @@ def test_command_records_and_limits_wave_looks(case, tmp_path, monkeypatch, firs
         match="remaining",
     )
     refuses(
-        c.looks.register, "wave", asdict(rule(margin_pp=99)), match="already registered"
+        c.looks.register,
+        "wave",
+        asdict(rule(margin_pp=99)),
+        spec.baseline.treatment_git_sha,
+        match="already registered",
     )
 
 
@@ -493,6 +508,53 @@ def test_descriptive_gate_is_refused_before_loading(case):
     refuses(paired, descriptive, packets, match="descriptive")
 
 
+def test_later_merge_baseline_is_accepted_when_preregistered(case, tmp_path):
+    spec, packets = case.build(wave="wave-2")
+    spec = audited(spec, packets, tmp_path / "audit")
+    assert (
+        c.looks.entries()[0]["baseline_treatment_sha"]
+        == spec.baseline.treatment_git_sha
+    )
+    assert all("baseline_equivalence_receipt" not in r for r in case.runs.values())
+    assert paired(spec, packets).promotion is not None
+
+
+def test_baseline_runs_must_match_preregistered_treatment(case, tmp_path):
+    spec, packets = case.build(wave="wave-2", registered_baseline="another-main-tree")
+    spec = audited(spec, packets, tmp_path / "audit")
+    refuses(
+        paired, spec, packets, match="baseline treatment differs from preregistration"
+    )
+
+
+@pytest.mark.parametrize(
+    "evidence", ["missing", "source", "treatment", "refs", "valid"]
+)
+def test_substituted_baseline_requires_pair_bound_equivalence(case, tmp_path, evidence):
+    spec, packets = case.build(baseline_source_sha="source-release")
+    spec = audited(spec, packets, tmp_path / "audit")
+    receipt = dict(
+        release_sha="source-release",
+        merge_sha=spec.baseline.treatment_git_sha,
+        evidence_refs=["reviewed-equivalence"],
+    )
+    if evidence == "source":
+        receipt["release_sha"] = "another-source"
+    if evidence == "treatment":
+        receipt["merge_sha"] = "another-treatment"
+    if evidence == "refs":
+        receipt["evidence_refs"] = []
+    if evidence != "missing":
+        for ref in spec.baseline.scores:
+            case.runs[ref]["baseline_equivalence_receipt"] = receipt
+    if evidence == "valid":
+        assert paired(spec, packets).promotion is not None
+    else:
+        refuses(
+            paired, spec, packets, match="baseline substitution equivalence receipt"
+        )
+
+
 def test_candidate_dispatch_requires_registration_before_prerequisites(
     case, fingerprint, monkeypatch
 ):
@@ -522,6 +584,59 @@ def test_candidate_dispatch_requires_registration_before_prerequisites(
         )
         == 2
     )
+
+
+@pytest.mark.parametrize("binding", ["missing", "different", "stale-freeze"])
+def test_candidate_preflight_refuses_unbound_baseline(
+    case, fingerprint, monkeypatch, capsys, binding
+):
+    from bench import run
+
+    spec, _ = case.build()
+    registered = c.looks.entries()[0]
+    if binding == "missing":
+        registered.pop("baseline_treatment_sha")
+    if binding == "different":
+        registered["baseline_treatment_sha"] = "another-main-tree"
+    case.ledger.write_bytes(canonical(registered) + b"\n")
+    manifest = read_json(spec.contamination_path)
+    manifest["agent_read_sha256"] = spec.baseline.treatment_git_sha
+    if binding == "stale-freeze":
+        manifest["baseline_treatment_sha"] = "old-main-tree"
+    write(Path(spec.contamination_path), manifest)
+    monkeypatch.setattr(v, "require_clean_treatment", lambda: None)
+    monkeypatch.setattr(v, "run_provenance", lambda **kw: fingerprint.wire())
+    monkeypatch.setattr(
+        run, "check_prereqs", lambda **kw: pytest.fail("prerequisites reached")
+    )
+    assert (
+        run.main(
+            [
+                "--measurement-window",
+                str(case.window_path),
+                "--tier",
+                "subset",
+                "--arm",
+                "candidate",
+                "--run-index",
+                "0",
+                "--child-model",
+                "claude-session-1",
+                "--rule",
+                str(case.rule_path),
+                "--contamination",
+                spec.contamination_path,
+            ]
+        )
+        == 2
+    )
+    expected = (
+        "contamination baseline treatment/hash/report mismatch"
+        if binding == "stale-freeze"
+        else "baseline treatment differs from preregistration"
+    )
+    captured = capsys.readouterr()
+    assert expected in captured.out + captured.err
 
 
 @pytest.mark.parametrize("population", ["gate", "holdout"])
@@ -626,6 +741,24 @@ def test_rule_capacity_is_checked_at_the_schema_boundary(
         )
 
         assert reached == ([True] if schema_version == 2 else [])
+
+
+def test_a_run_pair_may_start_together_but_never_overlaps_the_next_pair(case, tmp_path):
+    spec, packets = case.build()
+    spec = audited(spec, packets, tmp_path / "audit")
+
+    def restart(arm, index, at, only=None):
+        ref = getattr(spec, arm).scores[index]
+        for (r, u), attempt in list(case.attempts.items()):
+            if r == ref and only in (None, u):
+                case.attempts[r, u] = replace(attempt, started_at=at)
+
+    retried = next(u for r, u in case.attempts if r == spec.baseline.scores[1])
+    restart("candidate", 1, "2026-10-20T12:02:00Z")
+    restart("baseline", 1, "2026-10-20T12:03:30Z", only=retried)
+    paired(spec, packets)
+    restart("baseline", 1, "2026-10-20T12:04:30Z", only=retried)
+    refuses(paired, spec, packets, match="planned interleaving")
 
 
 @pytest.fixture
@@ -883,7 +1016,9 @@ def split_blocks(case, spec, groups):
             original,
             schema_version=2,
             window_id=str(number),
-            expected=replace(original.expected, auth_mode="host" if number else "api"),
+            expected=replace(
+                original.expected, auth_mode="subscription" if number else "api"
+            ),
             planned_run_indices=indices,
             planned_order=tuple((a, i) for i in indices for a in original.arms),
         )

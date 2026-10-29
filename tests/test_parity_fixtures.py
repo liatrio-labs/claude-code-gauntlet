@@ -25,6 +25,7 @@ def _case_dirs(family):
     "case_dir", _case_dirs("verify_deltas"), ids=lambda path: path.name
 )
 def test_verify_deltas_parity(case_dir):
+    from gauntlet.location import normalize_location
     from gauntlet.verify.wire import build_deltas, checksum_or_none
 
     verify_delta_drop = {
@@ -40,7 +41,9 @@ def test_verify_deltas_parity(case_dir):
     deltas = build_deltas(ordered, inp["result"]["verified"])
     checksum = checksum_or_none(deltas)
     joined = [
-        {k: v for k, v in post_by_id[f["id"]].items() if k not in verify_delta_drop}
+        normalize_location(
+            {k: v for k, v in post_by_id[f["id"]].items() if k not in verify_delta_drop}
+        )
         for f in inp["dispatched"]
         if f["id"] in verified_by_id
     ]

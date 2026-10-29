@@ -1,3 +1,4 @@
+import { normalizeLocation } from './location.js';
 import { normalizeFindingPaths } from './mergeFindings.js';
 import { fnv1a32, isPlainObject, RETURN_CHAR_BUDGET } from './wire.js';
 import { applyInjectedProseStrip, applyReplayInjectionScan } from './injection.js';
@@ -328,7 +329,7 @@ export function normalizePhaseFindings(name, out, replayed, args, decisions = []
     const normalized = normalizeFindingPaths(out[field], args.repoRoot, decisions);
     rejected += out[field].length - normalized.valid.length;
     pathRewrites += normalized.path_rewrites;
-    out[field] = normalized.valid;
+    out[field] = normalized.valid.map((f) => normalizeLocation(f, name === 'discover' || name === 'merge'));
     warnings.push(...normalized.warnings);
   }
   if (pathRewrites || (replayed && rejected)) {

@@ -10,7 +10,9 @@
       "severity": "low",
       "confidence": 10,
       "title": "t3",
-      "description": "d3"
+      "description": "d3",
+      "line_end": 5,
+      "location_status": "confirmed"
     }
   ]
 }

@@ -1,9 +1,12 @@
 {
-  "checksum": "fnv1a32:0x4b323628",
+  "checksum": "fnv1a32:0x4a1ccf5a",
   "deltas": [
     {
       "confidence": 70,
       "id": "xfi-77",
+      "line_end": 220,
+      "line_start": 220,
+      "location_status": "confirmed",
       "origin": "surfaced",
       "severity": "medium",
       "verified": true
@@ -14,17 +17,23 @@
       "affected_consumers": [
         "billing/sync.py"
       ],
+      "anchor": "synthetic_source(0);",
+      "claimed_line_end": 225,
+      "claimed_line_start": 220,
       "confidence": 70,
       "cross_file_refs": [
         "billing/sync.py:41"
       ],
       "description": "order.save() is followed immediately by billing.sync(order.id), but the consumer in billing/sync.py reads the order row before the write transaction commits.",
       "dimension": "cross_file_impact",
+      "end_line": 220,
       "evidence": "order.save(); billing.sync(order.id)",
       "file": "src/handlers/order.py",
       "id": "xfi-77",
-      "line_end": 225,
+      "line": 220,
+      "line_end": 220,
       "line_start": 220,
+      "location_status": "confirmed",
       "origin": "surfaced",
       "severity": "medium",
       "suggestion": "Await the commit, or pass the in-memory order object directly instead of re-reading it.",
