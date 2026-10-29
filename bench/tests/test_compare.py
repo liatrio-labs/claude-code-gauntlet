@@ -284,6 +284,7 @@ def test_descriptive_populations_accept_the_actual_named_scope(case, population)
     "bad",
     [
         "context",
+        "harness-scoring",
         "epoch",
         "scope",
         "bugs",
@@ -308,6 +309,9 @@ def test_operational_comparison_refuses_verdict_corruption(case, bad, tmp_path):
     manifest_changes = {
         "context": dict(
             evaluator=replace(packet.manifest.evaluator, judge_pin="other")
+        ),
+        "harness-scoring": dict(
+            evaluator=replace(packet.manifest.evaluator, harness_scoring_sha256="other")
         ),
         "epoch": dict(epoch_hashes={}),
         "scope": dict(requested_pr_urls=()),
@@ -965,6 +969,8 @@ def test_precision_pools_stored_core_counts_and_filters_bug_ids(case, tmp_path):
             }
             raw[selected.pr_url] = {"deep-review": {"fp": run * factor}}
             write(root / "evaluations.json", raw)
+            write(root / "complete.json", {"files": {}})
+            write(root / "stage_trace_bindings.json", {})
             packet = packets[ref]
             packets[ref] = replace(
                 packet,
@@ -986,6 +992,289 @@ def test_precision_pools_stored_core_counts_and_filters_bug_ids(case, tmp_path):
         (1 / 3, 1 / 5)
     )
     assert (report.interval.lower, report.interval.upper) == pytest.approx((-2 / 15, 0))
+
+
+def test_comparison_diagnostics_keep_full_denominators(case, tmp_path):
+    from bench.runner import stages
+    from bench.runner.epochs import file_hash
+    from bench.tests.test_stages import emit_trace
+
+    spec, packets = case.build()
+    ref = spec.candidate.scores[0]
+    packet = packets[ref]
+    url = packet.candidates[0].pr_url
+    population = p.resolve_population("gate", case.epoch, "core", case.contamination)
+    bugs = [
+        b
+        for b in packet.observations
+        if b.pr_url == url and b.bug_id in population.bug_ids
+    ]
+    trace, _, _ = emit_trace(tmp_path)
+    versions = tuple({v.trace_id: v for v in trace.versions}.values())[:4]
+    versions = tuple(
+        replace(
+            v,
+            discovery_dimension=d,
+            finding={**v.finding, "discovery_dimension": d},
+        )
+        for v, d in zip(
+            versions, ("bug", "test_coverage", "test_coverage", "security"), strict=True
+        )
+    )
+    tids = tuple(v.trace_id for v in versions)
+    vids = tuple(v.version_id for v in versions)
+    coalesced = stages.StageDecision(tids[0], "coalesced", "folded", None, (tids[1],))
+    trace = replace(
+        trace,
+        versions=versions,
+        snapshots=tuple(
+            replace(
+                s,
+                coverage="complete",
+                finding_version_ids=vids if i == 0 else vids[1:],
+                decisions=(coalesced,) if s.stage in ("merge", "select") else (),
+            )
+            for i, s in enumerate(trace.snapshots)
+        ),
+    )
+    root = tmp_path / "diagnostic-score"
+    (root / "sources").mkdir(parents=True)
+    write(root / "sources/trace.json", asdict(trace))
+    empty_trace = replace(
+        trace,
+        versions=(),
+        snapshots=tuple(
+            replace(s, finding_version_ids=(), decisions=()) for s in trace.snapshots
+        ),
+    )
+    write(root / "sources/empty-trace.json", asdict(empty_trace))
+    write(
+        root / "stage_trace_bindings.json",
+        {
+            u: dict(
+                trace_path="sources/trace.json"
+                if u == url
+                else "sources/empty-trace.json",
+                trace_sha256=file_hash(
+                    root
+                    / ("sources/trace.json" if u == url else "sources/empty-trace.json")
+                ),
+            )
+            for u in packet.manifest.requested_pr_urls
+        },
+    )
+    inline = replace(
+        packet.candidates[0],
+        text="Repeated issue µ",
+        path="tests/check.any",
+        source_trace_ids=tids[:2],
+        discovery_dimensions=("bug", "test_coverage"),
+        provenance_status="complete",
+        issue_id="repeat",
+    )
+    body = replace(
+        inline,
+        candidate_id="body",
+        index=1,
+        text="Body issue",
+        surface="body",
+        source_trace_ids=(tids[2],),
+        discovery_dimensions=("test_coverage",),
+        issue_id="body",
+    )
+    canonical_bugs = tuple(
+        replace(
+            b,
+            outcome="matched",
+            matches=(o.Match(inline.candidate_id, 1, None, "direct"),),
+        )
+        if b.bug_id == bugs[0].bug_id
+        else b
+        for b in packet.observations
+    )
+    packet = replace(
+        packet, root=root, candidates=(inline,), observations=canonical_bugs
+    )
+    packets[ref] = packet
+    write(
+        root / "evaluations.json",
+        {u: {"deep-review": {"fp": 0}} for u in packet.manifest.requested_pr_urls},
+    )
+    write(root / "scores.json", {"candidates": [asdict(inline)]})
+
+    def seal():
+        write(
+            root / "complete.json",
+            {
+                "files": {
+                    f.relative_to(root).as_posix(): file_hash(f)
+                    for f in root.rglob("*")
+                    if f.is_file() and f.name != "complete.json"
+                }
+            },
+        )
+
+    seal()
+    spec = audited(spec, packets, tmp_path / "audit")
+    original = paired(spec, packets)
+    assert original.promotion is not None
+    for row in original.delivery_diagnostics["candidate"][: len(population.pr_urls)]:
+        assert row.surfaces["body"]["values"] is None
+        assert row.surfaces["all"]["reason"] == "surface sidecar absent"
+    write(
+        root / "surface-views.json",
+        dict(all_surface=None, unavailable_reason="not requested"),
+    )
+    seal()
+    assert (
+        paired(spec, packets)
+        .delivery_diagnostics["candidate"][0]
+        .surfaces["all"]["values"]
+        is None
+    )
+    view_bugs = tuple(
+        replace(
+            b,
+            outcome="matched",
+            matches=(o.Match(body.candidate_id, 1, None, "direct"),),
+        )
+        if b.bug_id == bugs[1].bug_id
+        else b
+        for b in canonical_bugs
+    )
+    # Repeated delivery of the same explicit issue earns one all-surface credit.
+    candidates = o.surface_candidates((inline, replace(inline, surface="body"), body))
+    view = o.SurfaceScoreView(
+        packet.manifest.evaluator.evaluator_id, candidates, view_bugs, (), (), {}, {}
+    )
+    packets[ref] = replace(packet, surface_view=view)
+    (root / "surface-all").mkdir()
+    write(root / "surface-all/dedup_groups.json", {url: {"deep-review": []}})
+    write(root / "surface-all/view.json", asdict(view))
+    write(
+        root / "surface-views.json",
+        dict(all_surface="surface-all/view.json", unavailable_reason=None),
+    )
+    seal()
+    result = paired(spec, packets)
+    assert result.promotion == original.promotion
+    assert result.population_reports == original.population_reports
+    assert result.input_score_refs == original.input_score_refs
+    assert len(result.delivery_diagnostics["candidate"]) == 3 * len(population.pr_urls)
+    rows = {
+        r.pr_url: r
+        for r in result.delivery_diagnostics["candidate"]
+        if r.score_ref == ref
+    }
+    assert set(rows) == set(packet.manifest.selected_attempts)
+    selected = rows[url]
+    assert selected.record_coalescence["values"] == dict(
+        coalesced_source_occurrences=1,
+        eligible_source_occurrences=4,
+        groups=1,
+        rate=0.25,
+    )
+    metrics = selected.surfaces["all"]["values"]
+    assert (
+        metrics["issues"],
+        metrics["source_records"],
+        metrics["records_per_issue"],
+    ) == (2, 3, 1.5)
+    assert (
+        metrics["test_path_issues"],
+        metrics["mixed_producer_issues"],
+        metrics["producer_leakage"],
+    ) == (2, 1, 1)
+    assert metrics["producer_dimensions"]["test_coverage"] == 2
+    assert metrics["producer_dimensions"]["bug"] == 1
+    assert metrics["unknown_producer_issues"] == 0
+    assert metrics["byte_budget_text_folds"] is None
+    assert metrics["utf8_bytes"] == metrics["characters"] + 1
+    assert metrics["observed_sole_match_bug_ids"]["body"] == [bugs[1].bug_id]
+    assert metrics["observed_sole_match_bug_ids"]["test_coverage"] == [bugs[1].bug_id]
+    assert metrics["observed_sole_match_bug_ids"]["bug"] == []
+    for surface, hits in (("inline", 1), ("body", 1), ("all", 2)):
+        assert selected.surfaces[surface]["available"]
+        assert selected.surfaces[surface]["values"]["recall"] == hits / len(bugs)
+        assert selected.surfaces[surface]["values"]["precision"] == 1
+    assert selected.surfaces["all"]["evidence_sha256"][
+        "surface-all/view.json"
+    ] == file_hash(root / "surface-all/view.json")
+    assert selected.record_coalescence["evidence_sha256"][
+        "sources/trace.json"
+    ] == file_hash(root / "sources/trace.json")
+    empty = next(row for u, row in rows.items() if u != url)
+    assert empty.surfaces["all"]["values"]["issues"] == 0
+    assert empty.surfaces["all"]["values"]["precision"] is None
+    assert empty.surfaces["all"]["values"]["recall"] == 0
+    unknown = next(
+        r
+        for r in result.delivery_diagnostics["baseline"]
+        if r.surfaces["inline"]["values"]["delivery_records"]
+    )
+    assert not unknown.record_coalescence["available"]
+    assert unknown.record_coalescence["values"] is None
+    assert unknown.surfaces["inline"]["values"]["issues"] is None
+    assert unknown.surfaces["inline"]["values"]["producer_leakage"] is None
+    assert unknown.surfaces["inline"]["values"]["producer_dimensions"]["bug"] is None
+    body_peer = replace(
+        body,
+        candidate_id="body-peer",
+        index=2,
+        source_trace_ids=(tids[1],),
+        issue_id="body-peer",
+    )
+    multi_match_bugs = tuple(
+        replace(
+            b,
+            matches=tuple(
+                o.Match(cid, 1, None, "direct")
+                for cid in (
+                    (inline.candidate_id, body.candidate_id)
+                    if b.bug_id == bugs[0].bug_id
+                    else (body.candidate_id, body_peer.candidate_id)
+                )
+            ),
+        )
+        if b.bug_id in (bugs[0].bug_id, bugs[1].bug_id)
+        else b
+        for b in view_bugs
+    )
+    view = replace(
+        view,
+        candidates=(
+            replace(inline, source_trace_ids=(tids[0],), discovery_dimensions=("bug",)),
+            body,
+            body_peer,
+        ),
+        observations=multi_match_bugs,
+    )
+    packets[ref] = replace(packet, surface_view=view)
+    write(root / "surface-all/view.json", asdict(view))
+    seal()
+    multi_match_row = next(
+        row
+        for row in paired(spec, packets).delivery_diagnostics["candidate"]
+        if row.score_ref == ref and row.pr_url == url
+    )
+    sole = multi_match_row.surfaces["all"]["values"]["observed_sole_match_bug_ids"]
+    assert bugs[0].bug_id not in sole["bug"]
+    assert bugs[0].bug_id not in sole["test_coverage"]
+    assert bugs[1].bug_id in sole["test_coverage"]
+    for receipt in (None, dict(all_surface=None, unavailable_reason="not requested")):
+        if receipt is None:
+            (root / "surface-views.json").unlink()
+        else:
+            write(root / "surface-views.json", receipt)
+        seal()
+        unavailable = paired(spec, packets)
+        assert unavailable.promotion == original.promotion
+        assert all(
+            row.surfaces[surface]["values"] is None
+            for row in unavailable.delivery_diagnostics["candidate"]
+            if row.score_ref == ref
+            for surface in ("body", "all")
+        )
 
 
 def bind_run(case, ref, block, path, index):
