@@ -6,7 +6,7 @@ import sys
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from statistics import NormalDist
-from typing import Literal, get_args
+from typing import Literal, TypedDict, get_args
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -299,6 +299,21 @@ class PromotionDecision:
     bounds: dict[str, float | None] = field(default_factory=dict)
 
 
+class DeliveryDiagnosticsWire(TypedDict):
+    available: bool
+    reason: str | None
+    evidence_sha256: dict[str, str]
+    values: dict[str, object] | None
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryDiagnostics:
+    score_ref: ScoreRef
+    pr_url: str
+    surfaces: dict[str, DeliveryDiagnosticsWire]
+    record_coalescence: DeliveryDiagnosticsWire
+
+
 @dataclass(frozen=True, slots=True)
 class ComparisonReport:
     comparison_id: str
@@ -308,6 +323,9 @@ class ComparisonReport:
     spend: dict
     promotion: PromotionDecision | None = None
     blocks: tuple[BlockReport, ...] = ()
+    delivery_diagnostics: dict[str, tuple[DeliveryDiagnostics, ...]] = field(
+        default_factory=dict
+    )
 
 
 def quantile(values, q):
@@ -337,21 +355,284 @@ def cluster_bootstrap(bugs, config):
     )
 
 
-def packet_precision(packet, population):
+def packet_precision(packet, population, *, surface="inline"):
+    bugs = packet.observations
     raw = read_json(packet.root / "evaluations.json")
+    if surface != "inline":
+        view = packet.surface_view
+        if view is None:
+            return None
+        candidates = {
+            c.candidate_id
+            for c in view.candidates
+            if surface == "all" or c.surface == surface
+        }
+        bugs = tuple(
+            replace(
+                b,
+                matches=tuple(m for m in b.matches if m.candidate_id in candidates),
+                outcome="matched"
+                if any(m.candidate_id in candidates for m in b.matches)
+                else "operational_failure"
+                if b.outcome == "operational_failure"
+                else "missed",
+            )
+            for b in view.observations
+        )
+        matched = observations.bucket_candidate_ids(view.observations)
+        groups = observations.dedup_groups(
+            read_json(packet.root / "surface-all/dedup_groups.json"), view.candidates
+        )
+        raw = {
+            u: {
+                "deep-review": {
+                    "fp": sum(
+                        g.pr_url == u
+                        and bool(candidates.intersection(g.candidate_ids))
+                        and not matched.intersection(g.candidate_ids)
+                        for g in groups
+                    )
+                }
+            }
+            for u in population.pr_urls
+        }
     counts = []
     for url in sorted(population.pr_urls):
         metrics = profiles.profile_metrics(
-            [
-                o
-                for o in packet.observations
-                if o.pr_url == url and o.bug_id in population.bug_ids
-            ],
+            [o for o in bugs if o.pr_url == url and o.bug_id in population.bug_ids],
             raw.get(url, {}).get("deep-review", {}).get("fp", 0),
             "core",
         )
         counts.append(PrecisionCount(url, metrics.tp, metrics.fp))
     return tuple(counts)
+
+
+def _delivery_burden(candidates):
+    from gauntlet.removed_tests import is_test_path
+
+    issues, unknown = {}, 0
+    for c in candidates:
+        identity = c.issue_id or (
+            digest(sorted(c.source_trace_ids))
+            if c.provenance_status == "complete" and c.source_trace_ids
+            else None
+        )
+        if identity is None:
+            unknown += 1
+        else:
+            issues.setdefault(identity, []).append(c)
+    dimensions = dict.fromkeys(get_args(observations.Dimension), 0)
+    test_paths = mixed = leakage = unknown_paths = unknown_producers = 0
+    sources = set()
+    for members in issues.values():
+        sources.update(t for c in members for t in c.source_trace_ids)
+        test = any(c.path is not None and is_test_path(c.path) for c in members)
+        unknown_paths += not test and any(c.path is None for c in members)
+        test_paths += test
+        dims = {d for c in members for d in c.discovery_dimensions}
+        known = all(c.provenance_status == "complete" for c in members)
+        if not known or not dims or "unknown" in dims:
+            unknown_producers += 1
+            continue
+        for d in dims:
+            dimensions[d] += 1
+        mixed += len(dims) > 1
+        leakage += test and bool(dims - {"test_coverage"})
+    known_sources = not (unknown or unknown_producers) and all(
+        c.source_trace_ids for c in candidates
+    )
+    return dict(
+        delivery_records=len(candidates),
+        issues=len(issues) if not unknown else None,
+        known_issues=len(issues),
+        unknown_identity_records=unknown,
+        source_records=len(sources) if known_sources else None,
+        records_per_issue=len(sources) / len(issues)
+        if known_sources and issues
+        else None,
+        characters=sum(len(c.text) for c in candidates),
+        utf8_bytes=sum(len(c.text.encode("utf-8")) for c in candidates),
+        test_path_issues=test_paths if not (unknown or unknown_paths) else None,
+        unknown_path_issues=unknown_paths,
+        producer_dimensions={
+            d: n if not (unknown or unknown_producers) else None
+            for d, n in dimensions.items()
+        },
+        known_producer_dimensions=dimensions,
+        mixed_producer_issues=mixed if not (unknown or unknown_producers) else None,
+        unknown_producer_issues=unknown_producers if not unknown else None,
+        producer_leakage=leakage
+        if not (unknown or unknown_paths or unknown_producers)
+        else None,
+    )
+
+
+def _observed_sole_matches(view, url, population):
+    selectors = ("inline", "body", *get_args(observations.Dimension))
+    if view is None:
+        return dict.fromkeys(selectors)
+    candidates = {c.candidate_id: c for c in view.candidates}
+    result = {s: [] for s in selectors}
+    for bug in view.observations:
+        if bug.pr_url != url or bug.bug_id not in population.bug_ids:
+            continue
+        if (
+            bug.errors
+            or bug.outcome == "unavailable"
+            or (bug.outcome == "matched" and not bug.matches)
+        ):
+            result = dict.fromkeys(selectors)
+            continue
+        if bug.outcome != "matched" or not bug.matches:
+            continue
+        matches = [candidates.get(m.candidate_id) for m in bug.matches]
+        for selector in selectors:
+            surface = selector in ("inline", "body")
+            known = all(
+                c is not None
+                and (
+                    surface
+                    or (
+                        c.provenance_status == "complete"
+                        and c.discovery_dimensions
+                        and "unknown" not in c.discovery_dimensions
+                    )
+                )
+                for c in matches
+            )
+            if not known:
+                result[selector] = None
+            elif result[selector] is not None and all(
+                c.surface == selector
+                if surface
+                else c.discovery_dimensions == (selector,)
+                for c in matches
+            ):
+                result[selector].append(bug.bug_id)
+    return {s: sorted(ids) if ids is not None else None for s, ids in result.items()}
+
+
+def _record_coalescence(trace):
+    if not trace.complete or not all(
+        s.executed and s.coverage == "complete" for s in trace.snapshots
+    ):
+        return None
+    versions = {v.version_id: v.trace_id for v in trace.versions}
+    eligible = {versions[v] for v in trace.snapshots[0].finding_version_ids}
+    decisions = {
+        (d.trace_id, d.related_trace_ids)
+        for s in trace.snapshots
+        for d in s.decisions
+        if d.decision == "coalesced"
+    }
+    groups = []
+    for source, related in sorted(decisions):
+        group = {source, *related}
+        overlapping = [g for g in groups if g & group]
+        group.update(t for g in overlapping for t in g)
+        groups = [g for g in groups if g not in overlapping] + [group]
+    if all(related and {source, *related} <= eligible for source, related in decisions):
+        return dict(
+            coalesced_source_occurrences=len({d[0] for d in decisions}),
+            eligible_source_occurrences=len(eligible),
+            groups=len(groups),
+            rate=len({d[0] for d in decisions}) / len(eligible) if eligible else None,
+        )
+    return None
+
+
+def delivery_diagnostics(packet, population):
+    """One row per selected review; consumers pool over rows, including empty ones."""
+    inventory = read_json(packet.root / "complete.json")["files"]
+    traces = stages.packet_traces(packet.root)
+    sidecar = packet.root / "surface-views.json"
+    receipt = (
+        read_json(sidecar)
+        if sidecar.is_file()
+        else {"unavailable_reason": "surface sidecar absent"}
+    )
+    reason = receipt.get("unavailable_reason")
+    if not receipt.get("all_surface"):
+        packet = replace(packet, surface_view=None)
+
+    def metric(values, evidence, unavailable=None):
+        return DeliveryDiagnosticsWire(
+            available=values is not None,
+            reason=unavailable if values is None else None,
+            evidence_sha256={k: inventory[k] for k in evidence if k in inventory},
+            values=values,
+        )
+
+    precision = {
+        s: packet_precision(packet, population, surface=s)
+        for s in ("inline", "body", "all")
+    }
+    rows = []
+    for url in sorted(population.pr_urls):
+        view = packet.surface_view
+        sole = _observed_sole_matches(view, url, population)
+        surfaces = {}
+        for surface in ("inline", "body", "all"):
+            candidates = (
+                packet.candidates
+                if surface == "inline"
+                else (view.candidates if view is not None else ())
+            )
+            candidates = tuple(
+                c
+                for c in candidates
+                if c.pr_url == url and (surface == "all" or c.surface == surface)
+            )
+            values = None
+            if surface == "inline" or view is not None:
+                count = next(r for r in precision[surface] if r.pr_url == url)
+                bugs = packet.observations if surface == "inline" else view.observations
+                denominator = sum(
+                    b.pr_url == url and b.bug_id in population.bug_ids for b in bugs
+                )
+                values = {
+                    **_delivery_burden(candidates),
+                    "tp": count.tp,
+                    "fp": count.fp,
+                    "golden_denominator": denominator,
+                    "precision": count.tp / (count.tp + count.fp)
+                    if count.tp + count.fp
+                    else None,
+                    "recall": count.tp / denominator if denominator else None,
+                    "observed_sole_match_bug_ids": sole,
+                    # Text-budget folding has no structured occurrence receipt.
+                    "byte_budget_text_folds": None,
+                }
+            surfaces[surface] = metric(
+                values,
+                (
+                    "scores.json",
+                    "evaluations.json",
+                    "surface-views.json",
+                    "surface-all/view.json",
+                    "surface-all/dedup_groups.json",
+                ),
+                reason or "surface scoring unavailable",
+            )
+        fold = None
+        trace_evidence = ("stage_trace_bindings.json",)
+        if url in traces:
+            path, trace = traces[url]
+            trace_evidence += (path.relative_to(packet.root).as_posix(),)
+            fold = _record_coalescence(trace)
+        rows.append(
+            DeliveryDiagnostics(
+                packet.score_ref,
+                url,
+                surfaces,
+                metric(
+                    fold,
+                    trace_evidence,
+                    "complete trace unavailable",
+                ),
+            )
+        )
+    return tuple(rows)
 
 
 def precision_comparison(arms, config):
@@ -1182,6 +1463,16 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
         spend_totals([p.ledger_row() for p in packets]),
         decision,
         tuple(block_reports),
+        {
+            arm.name: tuple(
+                row
+                for ref in arm.scores
+                for row in delivery_diagnostics(
+                    loaded[ref], resolve("gate", "core") if gate else pop
+                )
+            )
+            for arm in arms
+        },
     )
 
 
