@@ -637,3 +637,29 @@ and the active-epoch dashboard keep review, scoring, and attribution costs separ
 The dashboard reads the ledger and labels scores descriptive; it does not render
 comparison verdicts. Unknown costs remain null. Protocol, caveats, measured status and
 the gate-look ledger live in [MEASUREMENT.md](MEASUREMENT.md).
+
+`delivery_diagnostics` groups rows by arm, then explicit score reference and PR.
+Every selected review has a row, including empty reviews and operational failures;
+use the full row count as the review denominator when pooling burden. Operational
+reports recount the full gate scope. Surface precision and recall use core bug IDs.
+Each `surfaces.inline`, `surfaces.body` and `surfaces.all` metric carries availability,
+an unavailable reason and packet evidence hashes. Body and all-surface metrics are
+unknown without a successful opt-in `--surface-views` receipt.
+
+Burden includes delivery records, unique explicit issues, source records per issue,
+characters, UTF-8 bytes, test-path issues and producer-dimension memberships. The
+test-path lens reuses `removed_tests.is_test_path` unchanged. Producer leakage counts
+unique test-path issues with complete provenance containing any producer other than
+`test_coverage`; mixed memberships remain visible. Unknown identities, paths and
+producers have separate counts; unavailable totals are null, with known producer
+membership counts retained separately. `observed_sole_match_bug_ids` selects surface
+or sole producer only when every supported match agrees. These are observed scorer
+winners, not exhaustive pairwise match evidence; absent evidence establishes no
+exclusivity.
+
+`record_coalescence` counts unique coalesced source occurrences over discovery
+occurrences in a complete trace, retaining the numerator, denominator and connected
+groups. Repeated stage decisions count once. Empty denominators have a null rate.
+This measures record coalescence; `byte_budget_text_folds` stays null because packets
+do not carry a structured text-fold receipt. These diagnostics never enter promotion
+inputs, thresholds or look accounting.
