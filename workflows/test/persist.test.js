@@ -3,14 +3,43 @@ import assert from 'node:assert/strict';
 import { writeArtifacts, parseWriterPayload } from '../src/persist.js';
 import { writerPayload, persistPrimaries, persistPlan } from '../src/persistPlan.js';
 import { fnv1a32 } from '../src/wire.js';
+import { renderReport } from '../src/renderReport.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 import { shellSplit } from './helpers/shellWords.js';
-import { PATHS, PLAN_PATH, expectedWith, persistInput, persistCtx } from './helpers/persistFixtures.js';
+import { PATHS, PLAN_PATH, expectedWith, persistInput, persistCtx, challengeOutput } from './helpers/persistFixtures.js';
 
 const SCRIPT = '/plugin/scripts/assemble_artifacts.py';
 const NULL_PATHS = { findings: null, report: null, postReview: null, checkpoints: null };
 const labels = (ctx) => ctx.calls.map((call) => call.label);
 const SUCCESS_GOLDEN = { artifactPaths: PATHS, gaps: [], partial: false };
+
+for (const channel of ['legacy', 'derived', 'return']) {
+  test(`injection audit projection at the ${channel} persistence boundary`, async () => {
+    const finding = makeFinding('INJECTION', {
+      disposition: 'eliminate', eliminated_by: 'injection', elimination_reason: 'instruction in evidence',
+      description: 'PRIVATE_DESCRIPTION', evidence: 'PRIVATE_EVIDENCE', suggestion: 'PRIVATE_SUGGESTION',
+      body: 'PRIVATE_BODY', claude_md_rule: 'PRIVATE_RULE',
+    });
+    const input = persistInput({ findings: [finding], postReview: [], report: renderReport({ eliminated: [finding] }),
+      checkpoints: { phases: { challenge: challengeOutput({ eliminated: [finding] }) } },
+      persist: channel === 'legacy' ? undefined : { returnPrimaries: channel === 'return' } });
+    const ctx = persistCtx();
+    const out = await writeArtifacts(ctx, input);
+    assert.equal(out.partial, false);
+    const payload = channel === 'return' ? out.persistReturn.entries
+      : parseWriterPayload(ctx.calls.find((call) => call.label === 'artifact-writer').prompt);
+    const findings = Array.isArray(payload) ? JSON.parse(payload.find((e) => e.path === PATHS.findings).text) : payload.findings;
+    assert.deepEqual(findings, [{ id: finding.id, title: finding.title,
+      eliminated_by: 'injection', elimination_reason: finding.elimination_reason }]);
+    const report = Array.isArray(payload) ? payload.find((e) => e.path === PATHS.report).text : payload.report;
+    for (const field of ['description', 'evidence', 'suggestion', 'body', 'claude_md_rule']) {
+      assert.equal(report.includes(finding[field]), false, field);
+    }
+    const checkpoints = Array.isArray(payload)
+      ? JSON.parse(payload.at(-1).text).checkpoint.skeleton : payload.checkpoints;
+    assert.deepEqual(checkpoints, input.checkpoints);
+  });
+}
 
 const PARTIAL_GOLDEN = { artifactPaths: NULL_PATHS, partial: true };
 const DERIVED_ECHO_REASON = 'writer echo did not cover all three primary artifact paths (no write proof)';

@@ -613,11 +613,18 @@ function summaryIndex(rawFindings, findingsView, input) {
   return { indexed, reasons };
 }
 
-function summaryBlock(builder, input, reportMode = false) {
-  const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+function partitionByDisposition(inp, findingsRight) {
   const projected = coerceReportFindings(inp.findings);
-  const rawFindings = projected.filter((f) => deliveryAllows(f, reportMode ? 'report' : 'body'));
-  const rawUnverified = [...projected.filter((f) => deliveryAllows(f, 'unverified')), ...coerceReportFindings(inp.unverified)];
+  return {
+    projected,
+    rawFindings: projected.filter((f) => deliveryAllows(f, findingsRight)),
+    rawUnverified: [...projected.filter((f) => deliveryAllows(f, 'unverified')), ...coerceReportFindings(inp.unverified)],
+  };
+}
+
+function summaryBlock(builder, input, findingsRight = 'body') {
+  const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const { rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -811,9 +818,7 @@ function renderMethodology(builder, input, rawFindings, knobs) {
 
 export function renderReport(input, knobs = KNOB_REGISTRY) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const projected = coerceReportFindings(inp.findings);
-  const rawFindings = projected.filter((f) => deliveryAllows(f, 'report'));
-  const rawUnverified = [...projected.filter((f) => deliveryAllows(f, 'unverified')), ...coerceReportFindings(inp.unverified)];
+  const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, 'report');
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -865,7 +870,7 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
   builder.add();
   builder.add('## Summary');
   builder.add();
-  summaryBlock(builder, inp, true);
+  summaryBlock(builder, inp, 'report');
 
   builder.add();
   builder.add('## Change Context');

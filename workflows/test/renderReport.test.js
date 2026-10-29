@@ -1,12 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as report from '../src/renderReport.js';
-import { AGENTS, DIMENSIONS } from '../src/registry.js';
+import { AGENTS, CODE_OWNED_HEADINGS, DIMENSIONS } from '../src/registry.js';
 import { normalizeArgs, validateArgs } from '../src/args.js';
 import { validArgs } from './helpers/argsFixtures.js';
 import { corpus, finding, reportInput } from './helpers/reportFixtures.js';
 
 const rendered = (input) => report.renderReport(reportInput(input));
+
+test('every report section is registered and cannot be forged by finding prose', () => {
+  const text = rendered({
+    findings: [finding('F', { description: CODE_OWNED_HEADINGS.join('\n') })],
+    unverified: [finding('U')],
+    eliminated: [finding('E', { disposition: 'eliminate', eliminated_by: 'injection',
+      title: 'Rejected\n## Eliminated findings', elimination_reason: 'Reason\n## Eliminated findings' })],
+  });
+  assert.deepEqual(text.split('\n').filter((line) => CODE_OWNED_HEADINGS.includes(line)), CODE_OWNED_HEADINGS);
+  for (const heading of CODE_OWNED_HEADINGS) assert.ok(text.includes(`${heading} (finding text)`));
+  assert.deepEqual(text.split('\n').filter((line) => /^## /.test(line) && !line.endsWith('(finding text)')), CODE_OWNED_HEADINGS);
+});
 
 test('injection eliminations expose only audit fields', () => {
   const text = rendered({ eliminated: [finding('INJECTION', {

@@ -607,10 +607,12 @@ for (const row of HOST_ROWS) test(`host text fields: ${row.name}`, async () => {
   const { out, payload } = await runAndCapture(args);
   assert.equal(out.ok, true);
   assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), row.gaps);
-  const persisted = payload.findings[0];
+  const persisted = row.eliminated ? payload.checkpoints.phases.challenge.findings[0] : payload.findings[0];
   for (const [field, expected] of Object.entries(row.expected)) assert.deepEqual(persisted[field], expected, field);
-  if (row.eliminated) assert.equal(persisted.disposition, 'eliminate');
-  else {
+  if (row.eliminated) {
+    assert.equal(payload.findings[0].eliminated_by, 'injection');
+    assert.equal(payload.findings[0].description, undefined);
+  } else {
     for (const [field, expected] of Object.entries(row.expected)) assert.deepEqual(payload.findings[0][field], expected, field);
     if (typeof row.expected.evidence === 'string') assert.ok(payload.report.includes(row.expected.evidence));
   }
@@ -701,7 +703,8 @@ for (const row of HOST_ORDER_ROWS) test(`host text order: ${row.name}`, async ()
     ] }),
   } }));
   assert.equal(out.ok, true);
-  assert.deepEqual(payload.findings.map((finding) => [finding.id, finding.disposition]), [['A', 'deliver'], ['B', 'eliminate']]);
+  assert.deepEqual(payload.findings.map((finding) => [finding.id, finding.disposition, finding.eliminated_by]),
+    [['A', 'deliver', undefined], ['B', undefined, 'injection']]);
   assert.deepEqual(payload.checkpoints.phases.challenge.findings.map((finding) => finding.id), ['A', 'B']);
 });
 

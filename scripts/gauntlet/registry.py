@@ -241,6 +241,7 @@ CODE_OWNED_HEADINGS = [
     "## Change Context",
     "## Findings",
     "## Unverified / pipeline-degraded findings",
+    "## Eliminated findings",
     "## Review Dimensions Summary",
     "## Review Methodology",
 ]

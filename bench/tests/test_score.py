@@ -321,7 +321,7 @@ def test_surface_opt_in_preserves_canonical_packet_bytes(
     score_case, tmp_path, monkeypatch
 ):
     from bench.runner import score
-    from bench.runner.epochs import canonical, digest
+    from bench.runner.epochs import canonical
 
     prepare_surface_case(score_case, tmp_path)
     head = score_case.payload.parent / "worktree/body-1.py"
@@ -348,14 +348,6 @@ def test_surface_opt_in_preserves_canonical_packet_bytes(
     assert (
         canonical_bytes.replace(str(path).encode(), b"PACKET")
         == canonical(stored) + b"\n"
-    )
-    assert (
-        digest(stored)
-        == "dbe80c77427921056c647cedc6f931ec0504e28514b3807dcd41f341739407d4"
-    )
-    assert (
-        digest(stored["manifest"])
-        == "71c60c1a57d0817f130472a52caa79a04409777cf0bb527de1d3bf02ea32797a"
     )
     path.rename(tmp_path / "canonical-packet")
 

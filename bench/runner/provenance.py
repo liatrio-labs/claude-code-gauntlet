@@ -277,12 +277,13 @@ def _reconstruct_body_summary(
             raise ValueError("ambiguous body section")
         cursor = summary.index(frame) + len(frame)
         shown = 0
-        dimensions: set[str] = set()
-        for group in compose._ordered_skipped_groups(skipped_groups):
-            proposed = set(dimensions)
-            fragment = compose._digest_pieces(group, proposed)
+
+        def matches_next(fragment: str) -> bool:
+            return summary.startswith(fragment, cursor)
+
+        for group, fragment in compose.digest_groups(skipped_groups, matches_next):
             members = tuple(cast(dict[str, JsonValue], e.finding) for e in group)
-            if summary.startswith(fragment, cursor):
+            if fragment is not None:
                 rendered.append(
                     RenderedDelivery(
                         fragment,
@@ -294,7 +295,6 @@ def _reconstruct_body_summary(
                 )
                 cursor += len(fragment)
                 shown += len(group)
-                dimensions = proposed
             else:
                 omissions.append(
                     DeliveryOmission(
