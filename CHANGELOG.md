@@ -2,6 +2,45 @@
 
 <!-- version list -->
 
+## v3.53.0 (2026-10-29)
+
+### Bug Fixes
+
+- **bench**: Keep surface order and confine surface source copies
+  ([#562](https://github.com/liatrio-labs/claude-code-gauntlet/pull/562),
+  [`f78f17b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f78f17bd015418e9baf9d6c853fbaacc286d50e3))
+
+### Features
+
+- **bench**: Replay stored delivery and capture its inputs on measured runs
+  ([#562](https://github.com/liatrio-labs/claude-code-gauntlet/pull/562),
+  [`f78f17b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f78f17bd015418e9baf9d6c853fbaacc286d50e3))
+
+- **bench**: Report delivery burden and attribution in comparisons
+  ([#562](https://github.com/liatrio-labs/claude-code-gauntlet/pull/562),
+  [`f78f17b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f78f17bd015418e9baf9d6c853fbaacc286d50e3))
+
+- **bench**: Report delivery burden and attribution in comparisons (#46)
+  ([#562](https://github.com/liatrio-labs/claude-code-gauntlet/pull/562),
+  [`f78f17b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f78f17bd015418e9baf9d6c853fbaacc286d50e3))
+
+- **bench**: Trace disposition reasons and score body findings beside inline
+  ([#562](https://github.com/liatrio-labs/claude-code-gauntlet/pull/562),
+  [`f78f17b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f78f17bd015418e9baf9d6c853fbaacc286d50e3))
+
+### Refactoring
+
+- **bench**: Surface replay child errors and share the measured return budget fallback
+  ([#562](https://github.com/liatrio-labs/claude-code-gauntlet/pull/562),
+  [`f78f17b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f78f17bd015418e9baf9d6c853fbaacc286d50e3))
+
+### Testing
+
+- **bench**: Cover multi-producer sole matches and name the coalescence helper
+  ([#562](https://github.com/liatrio-labs/claude-code-gauntlet/pull/562),
+  [`f78f17b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f78f17bd015418e9baf9d6c853fbaacc286d50e3))
+
+
 ## v3.52.0 (2026-10-29)
 
 ### Bug Fixes
