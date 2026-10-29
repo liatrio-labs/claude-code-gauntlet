@@ -395,9 +395,31 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
     return text_out
 
 
-def location_reference(registry: Mapping[str, Any]) -> str:
-    rights = registry["locationRights"]
+def _rights_cell(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if value:
+        return "yes"
+    return "no"
+
+
+def _rights_table(
+    first_column: str, rights: Mapping[str, Mapping[str, object]]
+) -> list[str]:
     columns = list(next(iter(rights.values())))
+    return [
+        "| " + first_column + " | " + " | ".join(columns) + " |",
+        "|---|" + "---|" * len(columns),
+        *(
+            f"| {status} | "
+            + " | ".join(_rights_cell(row[column]) for column in columns)
+            + " |"
+            for status, row in rights.items()
+        ),
+    ]
+
+
+def location_reference(registry: Mapping[str, Any]) -> str:
     rows = [
         "## Location Status and Rights",
         "",
@@ -405,37 +427,16 @@ def location_reference(registry: Mapping[str, Any]) -> str:
         "`anchor` is required only at discovery dispatch; pipeline-authored and replayed findings may omit it.",
         "Unconfirmed findings remain in the review body, labelled `location unconfirmed`.",
         "",
-        "| Status | " + " | ".join(columns) + " |",
-        "|---|" + "---|" * len(columns),
+        *_rights_table("Status", registry["locationRights"]),
     ]
-    rows.extend(
-        f"| {status} | "
-        + " | ".join("yes" if row[column] else "no" for column in columns)
-        + " |"
-        for status, row in rights.items()
-    )
-    rights = registry["dispositionRights"]
-    columns = list(next(iter(rights.values())))
     rows += [
         "",
         "## Final Disposition and Rights",
         "",
         "Missing or unknown disposition is held back. Delivery intersects these rights with location rights.",
         "",
-        "| Disposition | " + " | ".join(columns) + " |",
-        "|---|" + "---|" * len(columns),
+        *_rights_table("Disposition", registry["dispositionRights"]),
     ]
-    rows.extend(
-        "| "
-        + status
-        + " | "
-        + " | ".join(
-            str(row[c]) if isinstance(row[c], str) else "yes" if row[c] else "no"
-            for c in columns
-        )
-        + " |"
-        for status, row in rights.items()
-    )
     return "\n".join(rows)
 
 
@@ -525,6 +526,10 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             raise CliError(f"unknown finding schema type for {field}: {schema!r}")
     delta_keys = identity["deltaKeys"]
     delta_value_fields = delta_keys[2:]
+    delta_annotations = dict.fromkeys(("confidence", "line_start", "line_end"), "int")
+    delta_annotations.update(
+        location_status="LocationStatus", diff_validation="DiffValidation"
+    )
     root = "/__gauntlet_registry_root__/"
     sha = "__GAUNTLET_SHA__"
     templates = {
@@ -642,7 +647,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "",
             "class Delta(_DeltaRequired, total=False):",
             *(
-                f"    {field}: {'int' if field in ('confidence', 'line_start', 'line_end') else 'LocationStatus' if field == 'location_status' else 'DiffValidation' if field == 'diff_validation' else 'object'}"
+                f"    {field}: {delta_annotations.get(field, 'object')}"
                 for field in delta_value_fields
             ),
             "",

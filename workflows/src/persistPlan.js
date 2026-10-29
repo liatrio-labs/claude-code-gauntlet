@@ -5,6 +5,11 @@ import { deepClone, firstUnsafeNumber, fnv1a32, normalizeForChecksum } from './w
 const PERSIST_ALIASES = [['line', 'line_start'], ['end_line', 'line_end'], ['body', 'description']];
 
 function toV2Aliased(f) {
+  // Rejected injection prose belongs only in the raw forensic checkpoint.
+  if (f.eliminated_by === 'injection') {
+    const { id, title, eliminated_by, elimination_reason } = f;
+    return { id, title, eliminated_by, elimination_reason };
+  }
   const out = normalizeLocation(f);
   for (const [alias, canonical] of PERSIST_ALIASES) {
     if (alias === 'body') {

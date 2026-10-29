@@ -161,7 +161,7 @@ for (const row of REPLAY_ROWS) {
     const raw = payload.checkpoints.phases.challenge;
     const cp = { findings: payload.findings.filter((f) => ['deliver', 'body', 'report_only'].includes(f.disposition)),
       unverified: payload.findings.filter((f) => f.disposition === 'held_back'),
-      eliminated: payload.findings.filter((f) => f.disposition === 'eliminate') };
+      eliminated: payload.findings.filter((f) => f.eliminated_by === 'injection' || f.disposition === 'eliminate') };
     if (challenge) assert.deepEqual(raw.findings.map((f) => f.id), challenge.findings.map((f) => f.id));
     assert.deepEqual(cp.findings.map((finding) => finding.id), expected.kept);
     assert.deepEqual(payload.postReview.map((finding) => finding.id), expected.kept);
@@ -188,17 +188,17 @@ for (const row of REPLAY_ROWS) {
     }
     for (const finding of cp.eliminated) {
       assert.equal(finding.eliminated_by, 'injection');
-      assert.equal(finding.replay_belt, true);
       assert.match(finding.elimination_reason, row.reason);
+      assert.deepEqual(Object.keys(finding), ['id', 'title', 'eliminated_by', 'elimination_reason']);
     }
     if (row.stripped) {
       const finding = [...cp.unverified, ...cp.eliminated].find((finding) => finding.id === row.stripped);
       assert.equal(finding.claude_md_rule, undefined);
-      assert.equal(finding.claude_md_rule_removed_by, 'injection');
     }
     if (row.legacyBody) {
-      assert.equal(cp.eliminated[0].description, SHELL_PAYLOAD);
-      assert.equal(cp.eliminated[0].body, SHELL_PAYLOAD);
+      assert.equal(cp.eliminated[0].description, undefined);
+      assert.equal(cp.eliminated[0].body, undefined);
+      assert.equal(raw.findings[0].body, SHELL_PAYLOAD);
     }
     const gaps = out.gaps.filter((gap) => gap.startsWith('replay-filter:'));
     if (expected.belt) {
@@ -214,9 +214,9 @@ for (const row of REPLAY_ROWS) {
     } else assert.deepEqual(gaps, []);
     if (row.repeat) {
       const snapshot = JSON.parse(JSON.stringify(cp));
-      const second = await runAndCapture(validArgs({ checkpoints: { challenge: cp } }));
+      const second = await replayProducedCheckpoint(args, payload.checkpoints);
       assert.equal(second.out.ok, true);
-      assert.equal(second.out.stats.challenge.replay_belt_eliminated, undefined);
+      assert.equal(second.out.stats.challenge.replay_belt_eliminated, expected.belt);
       assert.deepEqual(second.out.gaps.filter((gap) => gap.startsWith('replay-filter:')), gaps);
       assert.deepEqual(second.payload.findings, [...snapshot.findings, ...snapshot.unverified, ...snapshot.eliminated]);
       assert.equal(second.out.stats.challenge.held_back, expected.held);

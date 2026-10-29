@@ -70,6 +70,7 @@ export const CODE_OWNED_HEADINGS = deepFreeze([
   '## Change Context',
   '## Findings',
   '## Unverified / pipeline-degraded findings',
+  '## Eliminated findings',
   '## Review Dimensions Summary',
   '## Review Methodology',
 ]);

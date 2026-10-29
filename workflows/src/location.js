@@ -14,11 +14,13 @@ export function locationAllows(finding, right) {
 }
 
 export function deliveryAllows(finding, right) {
-  const stamp = finding?.disposition;
-  const rights = typeof stamp === 'string' && Object.hasOwn(DISPOSITION_RIGHTS, stamp)
-    && (finding.disposition_reasons === undefined || (Array.isArray(finding.disposition_reasons)
-      && finding.disposition_reasons.every((reason) => typeof reason === 'string')))
-    ? DISPOSITION_RIGHTS[stamp] : DISPOSITION_RIGHTS.held_back;
+  let stamp = finding?.disposition;
+  const reasons = finding?.disposition_reasons;
+  if (typeof stamp !== 'string' || !Object.hasOwn(DISPOSITION_RIGHTS, stamp)
+    || (reasons !== undefined && (!Array.isArray(reasons) || !reasons.every((reason) => typeof reason === 'string')))) {
+    stamp = 'held_back';
+  }
+  const rights = DISPOSITION_RIGHTS[stamp];
   if (right === 'report') return rights.report === 'finding';
   if (right === 'unverified' || right === 'eliminated') return rights.report === right;
   return rights[right] === true && locationAllows(finding, right);

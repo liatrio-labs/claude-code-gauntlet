@@ -1,7 +1,7 @@
 """Pure delivery bodies, grouping, and key material."""
 
 import hashlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
 from gauntlet import registry
@@ -43,6 +43,7 @@ __all__ = [
     "compose_inline_body",
     "compose_review_body",
     "consolidate_delivery",
+    "digest_groups",
     "finding_key",
     "key_material_body",
     "render_comment_body",
@@ -322,14 +323,19 @@ def _skipped_piece(filepath: object, finding: Mapping[str, object]) -> str:
     return neutralize_comment_openers(piece)
 
 
+def _digest_dimension(finding: Mapping[str, object]) -> str | None:
+    if finding.get("disposition") == "body":
+        return prepare_line(finding.get("dimension", "unknown"))
+    return None
+
+
 def _digest_pieces(entries: Sequence[SkippedEntry], dimensions: set[str]) -> str:
     pieces = []
     for entry in entries:
-        if entry.finding.get("disposition") == "body":
-            dimension = prepare_line(entry.finding.get("dimension", "unknown"))
-            if dimension not in dimensions:
-                pieces.append(f"\n\n### {dimension}")
-                dimensions.add(dimension)
+        dimension = _digest_dimension(entry.finding)
+        if dimension is not None and dimension not in dimensions:
+            pieces.append(f"\n\n### {dimension}")
+            dimensions.add(dimension)
         pieces.append(_skipped_piece(entry.filepath, entry.finding))
     return "".join(pieces)
 
@@ -341,12 +347,25 @@ def _ordered_skipped_groups(
         sorted(
             groups,
             key=lambda group: (
-                prepare_line(group[0].finding.get("dimension", "unknown"))
-                if group and group[0].finding.get("disposition") == "body"
-                else ""
+                _digest_dimension(group[0].finding) or "" if group else ""
             ),
         )
     )
+
+
+def digest_groups(
+    groups: Sequence[Sequence[SkippedEntry]], fits: Callable[[str], bool]
+) -> Iterator[tuple[Sequence[SkippedEntry], str | None]]:
+    """Yield ordered groups with accepted fragments, or None for omissions."""
+    dimensions: set[str] = set()
+    for group in _ordered_skipped_groups(groups):
+        proposed = set(dimensions)
+        fragment = _digest_pieces(group, proposed)
+        if fits(fragment):
+            dimensions = proposed
+            yield group, fragment
+        else:
+            yield group, None
 
 
 def _closing_line(m: int, n: int, platform: Platform) -> str:
@@ -471,14 +490,18 @@ def compose_review_body(
     remaining = allowance - (utf8_len(review_body) if review_body else 0)
     shown_entries: list[SkippedEntry] = []
     omitted_entries: list[SkippedEntry] = []
-    dimensions: set[str] = set()
-    for group in skipped_groups:
-        proposed = set(dimensions)
-        group_size = utf8_len(_digest_pieces(group, proposed))
-        if group_size <= remaining:
+
+    def fits(fragment: str) -> bool:
+        nonlocal remaining
+        group_size = utf8_len(fragment)
+        if group_size > remaining:
+            return False
+        remaining -= group_size
+        return True
+
+    for group, fragment in digest_groups(skipped_groups, fits):
+        if fragment is not None:
             shown_entries.extend(group)
-            dimensions = proposed
-            remaining -= group_size
         else:
             omitted_entries.extend(group)
     section = _bounded_section(n, shown_entries, inline_count, platform) if n else ""

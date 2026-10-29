@@ -196,6 +196,7 @@ const CODE_OWNED_HEADINGS = deepFreeze([
   '## Change Context',
   '## Findings',
   '## Unverified / pipeline-degraded findings',
+  '## Eliminated findings',
   '## Review Dimensions Summary',
   '## Review Methodology',
 ]);
@@ -434,11 +435,13 @@ function locationAllows(finding, right) {
   return LOCATION_RIGHTS[status][right] === true;
 }
 function deliveryAllows(finding, right) {
-  const stamp = finding?.disposition;
-  const rights = typeof stamp === 'string' && Object.hasOwn(DISPOSITION_RIGHTS, stamp)
-    && (finding.disposition_reasons === undefined || (Array.isArray(finding.disposition_reasons)
-      && finding.disposition_reasons.every((reason) => typeof reason === 'string')))
-    ? DISPOSITION_RIGHTS[stamp] : DISPOSITION_RIGHTS.held_back;
+  let stamp = finding?.disposition;
+  const reasons = finding?.disposition_reasons;
+  if (typeof stamp !== 'string' || !Object.hasOwn(DISPOSITION_RIGHTS, stamp)
+    || (reasons !== undefined && (!Array.isArray(reasons) || !reasons.every((reason) => typeof reason === 'string')))) {
+    stamp = 'held_back';
+  }
+  const rights = DISPOSITION_RIGHTS[stamp];
   if (right === 'report') return rights.report === 'finding';
   if (right === 'unverified' || right === 'eliminated') return rights.report === right;
   return rights[right] === true && locationAllows(finding, right);
@@ -4150,11 +4153,17 @@ function summaryIndex(rawFindings, findingsView, input) {
   if (!reasons.length && omittedUnits.length) reasons.push('not selected for delivery');
   return { indexed, reasons };
 }
-function summaryBlock(builder, input, reportMode = false) {
-  const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+function partitionByDisposition(inp, findingsRight) {
   const projected = coerceReportFindings(inp.findings);
-  const rawFindings = projected.filter((f) => deliveryAllows(f, reportMode ? 'report' : 'body'));
-  const rawUnverified = [...projected.filter((f) => deliveryAllows(f, 'unverified')), ...coerceReportFindings(inp.unverified)];
+  return {
+    projected,
+    rawFindings: projected.filter((f) => deliveryAllows(f, findingsRight)),
+    rawUnverified: [...projected.filter((f) => deliveryAllows(f, 'unverified')), ...coerceReportFindings(inp.unverified)],
+  };
+}
+function summaryBlock(builder, input, findingsRight = 'body') {
+  const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const { rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -4333,9 +4342,7 @@ function renderMethodology(builder, input, rawFindings, knobs) {
 }
 function renderReport(input, knobs = KNOB_REGISTRY) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const projected = coerceReportFindings(inp.findings);
-  const rawFindings = projected.filter((f) => deliveryAllows(f, 'report'));
-  const rawUnverified = [...projected.filter((f) => deliveryAllows(f, 'unverified')), ...coerceReportFindings(inp.unverified)];
+  const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, 'report');
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -4383,7 +4390,7 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
   builder.add();
   builder.add('## Summary');
   builder.add();
-  summaryBlock(builder, inp, true);
+  summaryBlock(builder, inp, 'report');
   builder.add();
   builder.add('## Change Context');
   builder.add();
@@ -5952,6 +5959,10 @@ function checkpointPath(phase, sha) {
 // --- persistPlan.js ---
 const PERSIST_ALIASES = [['line', 'line_start'], ['end_line', 'line_end'], ['body', 'description']];
 function toV2Aliased(f) {
+  if (f.eliminated_by === 'injection') {
+    const { id, title, eliminated_by, elimination_reason } = f;
+    return { id, title, eliminated_by, elimination_reason };
+  }
   const out = normalizeLocation(f);
   for (const [alias, canonical] of PERSIST_ALIASES) {
     if (alias === 'body') {
@@ -6743,12 +6754,17 @@ function disposeFindings(challenged) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
     const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
-    if (['failed', 'capped'].includes(finding.challenge)) reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed');
+    if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
+      reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed');
+    }
     if ((input.unverified || []).includes(finding) && !reasons.length) reasons.push('held_back');
-    const disposition = reasons.length ? 'held_back'
-      : (finding.diff_validation === undefined || finding.diff_validation?.in_diff === true) && locationAllows(finding, 'inline') ? 'deliver' : 'body';
+    let disposition = 'body';
+    if (reasons.length) disposition = 'held_back';
+    else if ((finding.diff_validation === undefined || finding.diff_validation?.in_diff === true) && locationAllows(finding, 'inline')) {
+      disposition = 'deliver';
+    } else reasons.push('body_routed');
     finding.disposition = disposition;
-    finding.disposition_reasons = reasons.length ? reasons : disposition === 'body' ? ['body_routed'] : [];
+    finding.disposition_reasons = reasons;
     (disposition === 'held_back' ? unverified : findings).push(finding);
     if (finding.trace_id) for (const reason of finding.disposition_reasons) {
       decisions.push(traceDecision(finding, reason, reason, [], disposition === 'held_back' ? 'held_back' : 'body_routed'));
@@ -6768,8 +6784,8 @@ function disposeFindings(challenged) {
     if (related.length) decisions.push(traceDecision(finding, 'folded', 'cross-agent consolidation', related, 'coalesced'));
   }
   return { findings, unverified, eliminated, decisions, stats: { ...input.stats,
-    skipped: unverified.filter((f) => ['capped', 'failed', 'skipped'].includes(f.challenge)).length,
-    held_back: unverified.filter((f) => !['capped', 'failed', 'skipped'].includes(f.challenge)).length,
+    skipped: unverified.filter((f) => Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
+    held_back: unverified.filter((f) => !Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
     cross_agent_consolidated: consolidatedCount, final_count: findings.length } };
 }
 // --- measurementReplay.js ---

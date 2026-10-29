@@ -787,3 +787,19 @@ def test_summary_admission_reserves_review_bytes() -> None:
         )
     assert (composed.shown, composed.omitted, composed.folded_bytes) == (0, 2, 0)
     assert len(composed.body.encode("utf-8")) <= 1000
+
+
+def test_body_digest_omission_does_not_consume_dimension_heading() -> None:
+    groups = [
+        skipped_group(
+            title="Huge", body="x" * 70000, disposition="body", dimension="bug"
+        ),
+        skipped_group(title="Small", body="b", disposition="body", dimension="bug"),
+        skipped_group(title="Another", body="c", disposition="body", dimension="bug"),
+    ]
+    (_, omitted), (_, first), (_, second) = compose.digest_groups(
+        groups, lambda fragment: len(fragment.encode("utf-8")) <= 65536
+    )
+    assert omitted is None
+    assert first is not None and first.startswith("\n\n### bug\n\n")
+    assert second is not None and "\n\n### bug" not in second
