@@ -5,7 +5,7 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 from gauntlet import shared_context
@@ -56,6 +56,46 @@ const payload = writerPayload({ findings: disposed.findings, postReview: dispose
   reviewBody: 'Summary' });
 process.stdout.write(JSON.stringify(payload));
 """
+
+
+def _flow_command(script, work, *args):
+    # Workflow roots use forward slashes even when the subprocess cwd is native.
+    return [
+        "node",
+        "--input-type=module",
+        "-e",
+        script,
+        ROOT.as_posix(),
+        work.as_posix(),
+        *args,
+    ]
+
+
+@pytest.mark.parametrize(
+    "root,work",
+    [
+        (PurePosixPath("/plugin"), PurePosixPath("/tmp/work")),
+        (
+            PureWindowsPath(r"C:\Program Files\plugin"),
+            PureWindowsPath(r"D:\Temp\pytest/work"),
+        ),
+    ],
+)
+def test_flow_command_roots_satisfy_workflow_contract(monkeypatch, root, work):
+    paths_module = (ROOT / "workflows/src/paths.js").as_uri()
+    script = f"""
+import {{normalizeAbsoluteRoot}} from {json.dumps(paths_module)};
+process.stdout.write(JSON.stringify(process.argv.slice(1).map(normalizeAbsoluteRoot)));
+"""
+    monkeypatch.setattr(sys.modules[__name__], "ROOT", root)
+    result = subprocess.run(
+        _flow_command(script, work),
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    )
+    assert json.loads(result.stdout) == [root.as_posix(), work.as_posix()]
 
 
 def _placement(tmp_path, monkeypatch, capsys, platform, prefix_lines, bypass=False):
@@ -112,16 +152,7 @@ def _placement(tmp_path, monkeypatch, capsys, platform, prefix_lines, bypass=Fal
         )
         env["PYTHONPATH"] = os.pathsep.join((str(hook), str(ROOT / "scripts")))
     result = subprocess.run(
-        [
-            "node",
-            "--input-type=module",
-            "-e",
-            FLOW,
-            ROOT.as_posix(),
-            work.as_posix(),
-            sha,
-            str(claimed),
-        ],
+        _flow_command(FLOW, work, sha, str(claimed)),
         cwd=work,
         env=env,
         text=True,
@@ -257,7 +288,7 @@ const tampered = await verifyStage(context(true),input);
 process.stdout.write(JSON.stringify({all,some,missing,tampered,gaps:raw.gaps,resolved:verified.findings[0]}));
 """
     result = subprocess.run(
-        ["node", "--input-type=module", "-e", script, str(ROOT), str(tmp_path), sha],
+        _flow_command(script, tmp_path, sha),
         cwd=tmp_path,
         text=True,
         encoding="utf-8",
