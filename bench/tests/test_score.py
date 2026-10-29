@@ -1,6 +1,7 @@
 """Scoring boundary controls and recorded charge semantics."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,369 @@ import pytest
 from bench.runner import observations, score
 from bench.runner.contracts import pr_dir_name
 from bench.runner.epochs import read_json
+
+
+def prepare_surface_case(score_case, tmp_path):
+    from bench.tests.test_provenance import payload_for, surface_review
+
+    path, review, diff = surface_review(tmp_path, grouped=False)
+    pr = score_case.payload.parent
+    (pr / "diff.patch").write_text(diff, encoding="utf-8")
+    score._write_json(pr / "code-gauntlet-post-review-abc1234.json", review)
+    (pr / "code-gauntlet-measurement-abc1234.json").write_bytes(path.read_bytes())
+    score._write_json(
+        score_case.payload,
+        payload_for(
+            review["findings"],
+            diff,
+            "github",
+            review_body=review["review_body"],
+            sha=review["sha"],
+        ),
+    )
+    return review
+
+
+def test_surface_views_preserve_candidate_order_across_prs(score_case, tmp_path):
+    prepare_surface_case(score_case, tmp_path)
+    epoch = score.load_epoch()
+    second_url = next(b.pr_url for b in epoch.bugs if b.pr_url != score_case.url)
+    second_pr = score_case.run / pr_dir_name({"url": second_url})
+    second_pr.mkdir()
+    second_tmp = tmp_path / "second"
+    second_tmp.mkdir()
+    prepare_surface_case(
+        replace(
+            score_case, url=second_url, payload=second_pr / "post-review-payload.json"
+        ),
+        second_tmp,
+    )
+    score._write_json(
+        score_case.run / "state/second.json", {"url": second_url, "status": "ok"}
+    )
+    score._write_json(
+        score_case.run / "run.json",
+        {"run_id": "run", "urls": [score_case.url, second_url]},
+    )
+    result = score_case.execute(surface_views=True)
+    loaded = observations.load_packet(Path(result["ledger_row"]["packet_path"]))
+    assert loaded.surface_view is not None
+    assert [(c.pr_url, c.surface) for c in loaded.surface_view.candidates] == [
+        (url, surface)
+        for url in sorted((score_case.url, second_url))
+        for surface in ("inline", "body", "body")
+    ]
+    assert result["surface_views"]["all"]["metrics"]["n_prs"] == 2
+
+
+@pytest.mark.parametrize(
+    "kind", ["absolute", "traversal", "destination_symlink", "surface_symlink"]
+)
+def test_surface_source_copy_rejects_unsafe_paths(tmp_path, kind):
+    epoch = score.load_epoch()
+    url = epoch.bugs[0].pr_url
+    run = tmp_path / "run"
+    packet = run / "packet"
+    pr = packet / "sources/pr"
+    head = pr / "worktree/source.py"
+    head.parent.mkdir(parents=True)
+    head.write_text("source context", encoding="utf-8")
+    (head.parent / "nested").mkdir()
+    path = str(head) if kind == "absolute" else "nested/../source.py"
+    message = "surface candidate path must be relative without traversal"
+    if kind in ("destination_symlink", "surface_symlink"):
+        path = "source.py"
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        surface = packet / "surface-all"
+        if kind == "surface_symlink":
+            surface.symlink_to(outside, target_is_directory=True)
+        else:
+            surface.mkdir()
+            (surface / "sources").symlink_to(outside, target_is_directory=True)
+        message = "surface destination escapes packet root"
+    mapped = observations.candidate_records(
+        {
+            url: {
+                score.TOOL: [
+                    dict(text="body", path=path, surface="body", issue_id="issue")
+                ]
+            }
+        },
+        {url: "attempt"},
+    )
+    request = observations.ScoreRequest(
+        score.ScoreRef("run", epoch.epoch_id, "score"),
+        epoch,
+        packet,
+        (url,),
+        ((url, "attempt"),),
+        (),
+        score.TOOL,
+        observations.Evaluator(
+            epoch.judge_pin, epoch.adjudicator_pin, epoch.scorer_tree, "fixed", 0.0
+        ),
+    )
+    with pytest.raises(ValueError, match=message):
+        score.score_surface_view(
+            request,
+            mapped,
+            (),
+            {url: {"pr_dir": str(pr)}},
+            (),
+            None,
+            {},
+            lambda *args: pytest.fail("unsafe source reached scoring"),
+            lambda *args: pytest.fail("unsafe source reached adjudication"),
+            run,
+        )
+    assert head.read_text(encoding="utf-8") == "source context"
+    if kind in ("destination_symlink", "surface_symlink"):
+        assert list(outside.iterdir()) == []
+    else:
+        assert not (packet / "surface-all").exists()
+
+
+def test_surface_failure_without_message_publishes_readable_receipt(
+    score_case, tmp_path, monkeypatch
+):
+    prepare_surface_case(score_case, tmp_path)
+    original = score.provenance.trace_delivery
+
+    def fail_body(*args, **kwargs):
+        if kwargs.get("include_body"):
+            raise ValueError()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(score.provenance, "trace_delivery", fail_body)
+    result = score_case.execute(surface_views=True)
+    loaded = observations.load_packet(Path(result["ledger_row"]["packet_path"]))
+    assert loaded.surface_view is None
+    assert read_json(loaded.root / "surface-views.json")["unavailable_reason"]
+
+
+@pytest.mark.parametrize("body_evidence", ["available", "missing", "tampered"])
+def test_scoring_preserves_inline_and_all_surface_receipts(
+    score_case, tmp_path, monkeypatch, body_evidence
+):
+    from bench.runner.epochs import load_epoch
+    from bench.tests.test_provenance import payload_for
+
+    review = prepare_surface_case(score_case, tmp_path)
+    if body_evidence == "missing":
+        del review["review_body"]
+    elif body_evidence == "tampered":
+        review["review_body"] += " changed"
+    score._write_json(
+        score_case.payload.parent / "code-gauntlet-post-review-abc1234.json", review
+    )
+    epoch = load_epoch()
+    empty_url = next(b.pr_url for b in epoch.bugs if b.pr_url != score_case.url)
+    pr = score_case.run / pr_dir_name({"url": empty_url})
+    pr.mkdir()
+    score._write_json(
+        score_case.run / "state/empty.json", {"url": empty_url, "status": "ok"}
+    )
+    score._write_json(
+        score_case.run / "run.json",
+        {"run_id": "run", "urls": [score_case.url, empty_url]},
+    )
+    trace = read_json(
+        score_case.payload.parent / "code-gauntlet-measurement-abc1234.json"
+    )
+    trace["versions"] = []
+    for snapshot in trace["snapshots"]:
+        snapshot.update(finding_version_ids=[], decisions=[])
+    score._write_json(pr / "code-gauntlet-measurement-empty.json", trace)
+    empty_review = dict(findings=[], review_body="No issues.", sha="b" * 40)
+    score._write_json(pr / "code-gauntlet-post-review-empty.json", empty_review)
+    (pr / "diff.patch").write_text("", encoding="utf-8")
+    score._write_json(
+        pr / "post-review-payload.json",
+        payload_for(
+            [],
+            "",
+            "github",
+            review_body=empty_review["review_body"],
+            sha=empty_review["sha"],
+        ),
+    )
+    original = type(score_case).scorer
+
+    def scorer(self, pin, key, model):
+        self.hits["*"] = (0, 2) if "surface-all" in model.parts else (0, 1)
+        original(self, pin, key, model)
+        if "surface-all" in model.parts:
+            evaluations = read_json(model / "evaluations.json")
+            body = read_json(model / "candidates.json")[self.url]["deep-review"][-1][
+                "text"
+            ]
+            for tp in evaluations[self.url]["deep-review"]["true_positives"]:
+                tp["matched_candidate"] = body
+            evaluations[self.url]["deep-review"]["fp"] = 2
+            score._write_json(model / "evaluations.json", evaluations)
+
+    monkeypatch.setattr(type(score_case), "scorer", scorer)
+    adjudicator_calls = []
+
+    def adjudicate(text, hunk, context, pin, key):
+        adjudicator_calls.append((text, hunk, context))
+        return {
+            "bucket": "noise",
+            "usage": [
+                {
+                    "model": pin,
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 10,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                    },
+                }
+            ],
+        }
+
+    result = score_case.execute(adjudicator=adjudicate, surface_views=True)
+    loaded = observations.load_packet(Path(result["ledger_row"]["packet_path"]))
+    assert result["profiles"]["all"]["tp"] == 2
+    assert result["metrics"]["n_prs"] == 2
+    assert len(loaded.candidates) == 1 and all(
+        c.surface == "inline" for c in loaded.candidates
+    )
+    assert "surface_views" not in result["ledger_row"]
+    assert read_json(loaded.root / "scores.json")["costs"].keys() == {
+        "dedup",
+        "judge",
+        "adjudicator",
+        "attribution",
+    }
+    if body_evidence != "available":
+        assert result["surface_views"]["all"] is None
+        assert len(score_case.calls) == 1
+        return
+    assert len(score_case.calls) == 2
+    view = loaded.surface_view
+    assert [c.surface for c in view.candidates] == ["inline", "body", "body"]
+    assert result["surface_views"]["all"]["profiles"]["all"]["tp"] == 3
+    assert result["surface_views"]["all"]["profiles"]["all"]["fp"] == 1
+    assert result["surface_views"]["all"]["metrics"]["n_prs"] == 2
+    assert len({b.bug_id for b in view.observations if b.outcome == "matched"}) == 3
+    repeated = (*view.candidates, replace(view.candidates[0], surface="body"))
+    assert observations.surface_candidates(iter(repeated)) == view.candidates
+    assert len(view.contexts) == len(view.adjudications) == len(adjudicator_calls) == 1
+    assert view.costs["adjudicator"] == pytest.approx(0.00075)
+    assert loaded.costs["adjudicator"] == 0
+    assert view.costs.keys() == {"dedup", "judge", "adjudicator"}
+    assert loaded.projection() == result
+
+
+@pytest.mark.parametrize("failure", ["scorer", "adjudicator", "receipt", "process"])
+def test_failed_surface_pass_still_publishes_canonical_score(
+    score_case, tmp_path, monkeypatch, failure
+):
+    prepare_surface_case(score_case, tmp_path)
+    original = type(score_case).scorer
+
+    def scorer(self, pin, key, model):
+        original(self, pin, key, model)
+        score._write_json(model / "judge-usage.json", [])
+        if "surface-all" in model.parts and failure == "scorer":
+            raise RuntimeError("surface judge unavailable")
+        if "surface-all" in model.parts and failure == "receipt":
+            score._write_json(model / "candidates.json", {})
+        if "surface-all" in model.parts and failure == "process":
+            raise score.subprocess.CalledProcessError(1, ["surface-scorer"])
+
+    def adjudicate(*args):
+        if failure == "adjudicator":
+            raise ValueError("surface adjudicator unavailable")
+        return {"bucket": "noise"}
+
+    monkeypatch.setattr(type(score_case), "scorer", scorer)
+    result = score_case.execute(surface_views=True, adjudicator=adjudicate)
+    path = Path(result["ledger_row"]["packet_path"])
+    loaded = observations.load_packet(path)
+    assert result["profiles"]["all"]["tp"] == 2
+    assert result["ledger_row"]["judge_cost_usd"] == 0
+    assert loaded.surface_view is None
+    assert result["surface_views"]["all"] is None
+    receipt = read_json(path / "surface-views.json")
+    assert receipt["all_surface"] is None
+    if failure == "receipt":
+        assert receipt["unavailable_reason"] == (
+            "all-surface scoring failed: surface candidate or evaluator join mismatch"
+        )
+    elif failure == "process":
+        assert receipt["unavailable_reason"] == (
+            "all-surface scoring failed: "
+            + str(score.subprocess.CalledProcessError(1, ["surface-scorer"]))
+        )
+    else:
+        component = "judge" if failure == "scorer" else failure
+        assert receipt["unavailable_reason"] == (
+            f"all-surface scoring failed: surface {component} unavailable"
+        )
+    assert len(score_case.calls) == 2
+    assert list((path / "surface-all").rglob("judge-usage.json"))
+    assert read_json(score_case.run / "latest-score.json") == result["score_ref"]
+    assert len(score_case.ledger.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_surface_opt_in_preserves_canonical_packet_bytes(
+    score_case, tmp_path, monkeypatch
+):
+    from bench.runner import score
+    from bench.runner.epochs import canonical, digest
+
+    prepare_surface_case(score_case, tmp_path)
+    head = score_case.payload.parent / "worktree/body-1.py"
+    head.parent.mkdir()
+    head.write_text("body source context\n" * 1000, encoding="utf-8")
+    monkeypatch.setattr(score, "_now", lambda: "2026-01-01T00:00:00Z")
+    monkeypatch.setattr(score, "_git_head", lambda: "a" * 40)
+    epoch = score.load_epoch()
+    evaluator = observations.Evaluator(
+        epoch.judge_pin, epoch.adjudicator_pin, epoch.scorer_tree, "fixed", 0.0
+    )
+    monkeypatch.setattr(score, "evaluator_for", lambda *args: evaluator)
+    score_id = "b" * 32
+    baseline = score_case.execute(score_id=score_id)
+    path = Path(baseline["ledger_row"]["packet_path"])
+    canonical_bytes = (path / "scores.json").read_bytes()
+    manifest_bytes = canonical(read_json(path / "scores.json")["manifest"])
+    assert len(score_case.calls) == 1
+    assert baseline["surface_views"]["all"] is None
+    assert not (path / "surface-all").exists()
+    stored = read_json(path / "scores.json")
+    stored["metadata"]["packet_path"] = "PACKET"
+    # Fixed evaluator/time and a normalized packet path make the wire bytes reproducible.
+    assert (
+        canonical_bytes.replace(str(path).encode(), b"PACKET")
+        == canonical(stored) + b"\n"
+    )
+    assert (
+        digest(stored)
+        == "c25d66f3670d14881c528774a64cbb230966c9013633b424d5b3c4129c57236b"
+    )
+    assert (
+        digest(stored["manifest"])
+        == "0ae0b217998e234c625480ce3e31bd7edc3d63fb11606c4fa1ec2233634d0665"
+    )
+    path.rename(tmp_path / "canonical-packet")
+
+    result = replace(score_case, ledger=tmp_path / "surface-ledger.jsonl").execute(
+        score_id=score_id, surface_views=True
+    )
+    assert (path / "scores.json").read_bytes() == canonical_bytes
+    assert canonical(read_json(path / "scores.json")["manifest"]) == manifest_bytes
+    assert result["metrics"] == baseline["metrics"]
+    assert len(score_case.calls) == 3
+    view = observations.load_packet(path).surface_view
+    relative = head.relative_to(score_case.run)
+    assert relative.as_posix() in view.source_artifact_hashes
+    assert (path / "surface-all/sources" / relative).read_bytes() == head.read_bytes()
+    assert not (path / "sources" / relative).exists()
+    assert relative.as_posix() not in stored["manifest"]["source_artifact_hashes"]
 
 
 @pytest.mark.parametrize("kind", ["duplicate", "missing_payload", "unresolved", "pin"])

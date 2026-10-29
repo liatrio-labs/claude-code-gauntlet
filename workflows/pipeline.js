@@ -1501,8 +1501,8 @@ function validateConfigEcho(args, errors, table = KNOB_REGISTRY) {
   }
 }
 // --- measurementTrace.js ---
-const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'holdback', 'select', 'deliver'];
-const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'unknown'];
+const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'cite', 'dispose', 'holdback', 'select', 'deliver'];
+const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
 const traceHistory = new WeakMap();
 const stageDecisions = new WeakMap();
 const decisionsFor = (output) => stageDecisions.get(output) || [];

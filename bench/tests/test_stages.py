@@ -2,8 +2,9 @@
 
 import json
 import subprocess
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -14,6 +15,34 @@ from bench.runner.epochs import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("optional", [(), ("cite",), ("cite", "dispose")])
+def test_funnel_coverage_ignores_absent_optional_stages(optional):
+    ref = stages.ScoreRef("run", "epoch", "score")
+    rows = tuple(
+        stages.StageBugObservation(
+            ref, "attempt", "url", bug, stage, True, (), None, "complete"
+        )
+        for bug in ("legacy", "current")
+        for stage in get_args(stages.Stage)
+        if stage not in ("cite", "dispose") or (bug == "current" and stage in optional)
+    )
+    funnel = stages.loss_funnel(rows, population={"legacy", "current"})
+    assert funnel.coverage == "complete"
+    assert funnel.delivered_hits == funnel.denominator == 2
+    assert not any(dict(funnel.unjudged_counts).values())
+    for stage in ("cite", "dispose"):
+        assert dict(funnel.survivor_counts).get(stage, 0) == int(stage in optional)
+        assert dict(funnel.cap_hit_counts).get(stage, 0) == 0
+    if optional:
+        partial = tuple(
+            replace(row, survives=None) if row.stage == optional[0] else row
+            for row in rows
+        )
+        funnel = stages.loss_funnel(partial, population={"legacy", "current"})
+        assert funnel.coverage == "partial"
+        assert dict(funnel.unjudged_counts)[optional[0]] == 1
 
 
 def emit_trace(tmp_path, mode="return"):
@@ -50,7 +79,16 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
     trace, path, receipt = emit_trace(tmp_path, mode)
     assert trace.complete
     assert trace.run_nonce == "nonce-xyz"
-    assert tuple(s.stage for s in trace.snapshots) == stages.get_args(stages.Stage)[:-1]
+    assert tuple(s.stage for s in trace.snapshots) == (
+        "discover",
+        "merge",
+        "verify",
+        "validate",
+        "filter",
+        "challenge",
+        "holdback",
+        "select",
+    )
     assert set(receipt["payload"]["checkpoints"]["phases"]) == {"challenge"}
     assert "snapshots" not in receipt["payload"]["checkpoints"]
     first = next(v for v in trace.versions if v.finding.get("id") == "FILTER")
@@ -75,6 +113,7 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
         "flag",
         "duplicate_occurrence",
         "reason",
+        "folded_elimination",
     ],
 )
 def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
@@ -96,6 +135,8 @@ def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
             snapshot["stage"] = "deliver"
         elif mutation == "reason":
             raw["snapshots"][1]["decisions"][0]["reason_code"] = None
+        elif mutation == "folded_elimination":
+            raw["snapshots"][1]["decisions"][0]["reason_code"] = "folded"
         elif mutation == "flag":
             snapshot["executed"] = 1
         else:
@@ -195,6 +236,9 @@ def test_score_to_dimension_credit_and_loss_funnel(
         monkeypatch.setattr(type(score_case), "scorer", fail_judge)
     packet = score_case.execute(attribution=trace_status != "disabled")
     loaded = observations.load_packet(Path(packet["ledger_row"]["packet_path"]))
+    assert {r.stage for r in stages.read_rows(loaded.root)}.isdisjoint(
+        {"cite", "dispose"}
+    )
     assert packet["profiles"]["all"]["tp"] == 1
     assert len(score_case.calls) == (
         2
@@ -278,6 +322,124 @@ def test_trace_vocabularies_match_workflow_source():
         list(stages.get_args(stages.ReasonCode)),
         list(stages.get_args(observations.Dimension)),
     ]
+
+
+@pytest.mark.parametrize("extended", [False, True])
+def test_trace_reasons_survive_delivery_overlay(tmp_path, extended):
+    trace, path, _ = emit_trace(tmp_path)
+    versions = tuple({v.trace_id: v for v in trace.versions}.values())[:5]
+    ids = tuple(v.trace_id for v in versions)
+    vids = tuple(v.version_id for v in versions)
+    snapshots = [
+        replace(s, finding_version_ids=vids, decisions=()) for s in trace.snapshots
+    ]
+    decisions = tuple(
+        stages.StageDecision(tid, decision, reason, reason, related)
+        for tid, decision, reason, related in (
+            (ids[0], "body_routed", "body_routed", ()),
+            (ids[1], "held_back", "held_back", ()),
+            (ids[2], "eliminated", "refuted", ()),
+            (ids[3], "coalesced", "folded", (ids[4],)),
+        )
+    )
+    if extended:
+        snapshots[6:6] = [
+            replace(snapshots[5], stage="cite"),
+            replace(snapshots[5], stage="dispose"),
+        ]
+    snapshots[-1] = replace(snapshots[-1], decisions=decisions)
+    trace = replace(
+        trace,
+        versions=versions,
+        snapshots=tuple(replace(s, sequence=i) for i, s in enumerate(snapshots)),
+    )
+    path.write_text(json.dumps(asdict(trace)), encoding="utf-8")
+    trace = stages.load_trace(path, expected_sha256=file_hash(path))
+    bound = stages.bind_delivery_trace(trace, ())
+    assert bound.snapshots[-1].decisions[:4] == (decisions[3], *decisions[:3])
+    assert bound.snapshots[-1].decisions[0].decision == "coalesced"
+    assert bound.snapshots[-1].decisions[0].related_trace_ids == (ids[4],)
+    assert [
+        d.decision for d in bound.snapshots[-1].decisions if d.trace_id == ids[3]
+    ] == ["coalesced"]
+    # A folded source follows its representative rather than becoming a merge loss.
+    snapshots[1] = replace(
+        snapshots[1], finding_version_ids=(vids[4],), decisions=(decisions[3],)
+    )
+    for i in range(2, len(snapshots)):
+        snapshots[i] = replace(
+            snapshots[i], finding_version_ids=(vids[4],), decisions=()
+        )
+    snapshots[-1] = replace(
+        snapshots[-1],
+        finding_version_ids=(),
+        decisions=(stages.StageDecision(ids[4], "held_back", "held_back", None, ()),),
+    )
+    trace = replace(
+        trace, snapshots=tuple(replace(s, sequence=i) for i, s in enumerate(snapshots))
+    )
+    from bench.runner.contracts import ScoreRef
+
+    bug = observations.BugObservation(
+        1,
+        ScoreRef("run", "epoch", "score"),
+        "url",
+        "attempt",
+        "bug",
+        None,
+        "missed",
+        (),
+        (),
+        None,
+    )
+    # Discovery judging uses the public capture boundary and the same synthetic golden records.
+    from bench.runner.epochs import GoldenBug, load_epoch
+
+    epoch = replace(
+        load_epoch(), bugs=(GoldenBug("bug", "url", 0, "claim", "high", None),)
+    )
+    request = observations.ScoreRequest(
+        bug.score_ref,
+        epoch,
+        tmp_path,
+        ("url",),
+        (("url", "attempt"),),
+        (),
+        None,
+        score.evaluator_for(epoch, epoch.judge_pin, epoch.adjudicator_pin),
+    )
+    inputs = {
+        "url": {"discover:" + v.version_id: [{"text": "claim"}] for v in versions}
+    }
+    evaluations = {
+        "url": {
+            tool: {
+                "tp": int(tool.endswith(vids[3])),
+                "fp": 0,
+                "fn": int(not tool.endswith(vids[3])),
+                "true_positives": [
+                    {"golden_comment": "claim", "matched_candidate": "claim"}
+                ]
+                if tool.endswith(vids[3])
+                else [],
+                "false_negatives": []
+                if tool.endswith(vids[3])
+                else [{"golden_comment": "claim"}],
+            }
+            for tool in inputs["url"]
+        }
+    }
+    rows = stages.capture_score(
+        {"url": (path, stages.bind_delivery_trace(trace, ()))},
+        (bug,),
+        request,
+        evaluations,
+        {},
+        inputs,
+        {},
+    )
+    loss = next(r.loss for r in rows if r.stage == "deliver")
+    assert loss.reason_code == "held_back" and loss.stage == "delivery"
 
 
 def test_collection_hashes_top_level_trace_and_persists_availability(tmp_path):

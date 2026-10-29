@@ -1,7 +1,8 @@
 """Actual emitted comment bytes are the provenance join boundary."""
 
+import json
 import shutil
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,118 @@ from bench.runner.epochs import read_json
 from bench.tests.test_stages import emit_trace
 
 
+def surface_review(tmp_path, platform="github", *, budget_omission=False, grouped=True):
+    """Extend the existing workflow fixture with captured body-routed sources."""
+    trace, path, receipt = emit_trace(tmp_path)
+    raw = read_json(path)
+    review = receipt["payload"]["postReview"]
+    review.update(
+        review_body="Summary index repeats inline findings; no new issue.", sha="a" * 40
+    )
+    selected = review["findings"]
+    diff = captured_diff(selected)
+    for i in range(2 + int(budget_omission)):
+        finding = {
+            **selected[0],
+            "id": f"BODY-{i}",
+            "trace_id": f"{trace.run_nonce}:body:{i}",
+            "file": f"body-{i}.py",
+            "line_start": 999,
+            "line_end": 999,
+            "title": f"Body issue {i}",
+            "description": f"Body defect {i}",
+            "consolidation_key": "body-group" if i < 2 and grouped else f"body-{i}",
+        }
+        if i == 2:
+            from gauntlet.delivery.fold import body_limit
+
+            finding["description"] = "x" * body_limit(platform).bytes
+        version = {
+            **raw["versions"][0],
+            "version_id": f"body-v{i}",
+            "trace_id": finding["trace_id"],
+            "finding": finding,
+            "discovery_agent": finding["discovery_agent"],
+            "discovery_dimension": finding["discovery_dimension"],
+        }
+        raw["versions"].append(version)
+        for snapshot in raw["snapshots"]:
+            snapshot["finding_version_ids"].append(version["version_id"])
+        selected.append(finding)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    return path, review, diff
+
+
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+@pytest.mark.parametrize(
+    "tamper", [None, "inline", "body", "order", "location", "identity", "surface"]
+)
+def test_body_provenance_matches_posted_order(
+    tmp_path, monkeypatch, capsys, forge_factory, platform, tamper
+):
+    from bench.tests.test_adapter import capture
+
+    _, review, diff = surface_review(tmp_path, platform, budget_omission=True)
+    selected = review["findings"]
+    # Exercise the real poster, independently of provenance reconstruction.
+    posting_findings = [
+        {**f, "body": f.get("body", f.get("description", ""))} for f in selected
+    ]
+    run = capture(
+        tmp_path, monkeypatch, capsys, forge_factory, platform, posting_findings, diff
+    )
+    review.update(review_body="Automated review summary.")
+    from bench.tests.test_adapter import _GH_SHA
+
+    review["sha"] = _GH_SHA
+    payload = run.payload
+    body = payload["payload"] if platform == "github" else payload["summary"]
+    if tamper == "inline":
+        comments = (
+            payload["payload"]["comments"]
+            if platform == "github"
+            else payload["discussions"]
+        )
+        comments[0]["body"] += " changed"
+    elif tamper == "body":
+        body["body"] += " changed"
+    elif tamper == "order":
+        selected.reverse()
+    elif tamper == "location":
+        selected[-3]["line_start"] = 998
+    elif tamper == "identity":
+        selected[-2]["trace_id"] = selected[-3]["trace_id"]
+
+    def mapped_delivery():
+        return provenance.map_delivery(
+            payload,
+            selected,
+            diff,
+            review_body=review["review_body"],
+            sha=review["sha"],
+        )
+
+    if tamper not in (None, "surface"):
+        with pytest.raises(ValueError):
+            mapped_delivery()
+        return
+    mapped = mapped_delivery()
+    candidates = observations.candidate_records(
+        {"url": {"deep-review": [asdict(m) for m in mapped]}}, {"url": "attempt"}
+    )
+    assert [c.surface for c in candidates] == ["inline", "body"]
+    assert len(mapped[0].source_trace_ids) == len(mapped[1].source_trace_ids) == 2
+    assert len(candidates) == 2
+    assert "BODY-2" not in str(mapped)
+    assert mapped[1].text in body["body"] and "Summary index" not in mapped[1].text
+    if tamper == "surface":
+        candidates = (candidates[0], replace(candidates[1], surface="inline"))
+        with pytest.raises(ValueError, match="identity mismatch"):
+            provenance.bind_candidates(candidates, mapped)
+    else:
+        assert provenance.bind_candidates(candidates, mapped) == candidates
+
+
 def captured_diff(findings):
     paths = sorted({f["file"] for f in findings})
     return "".join(
@@ -22,13 +135,23 @@ def captured_diff(findings):
     )
 
 
-def payload_for(findings, diff, platform):
-    rendered = provenance.reconstruct_delivery(findings, diff, platform=platform).groups
+def payload_for(findings, diff, platform, **body_inputs):
+    reconstruction = provenance.reconstruct_delivery(
+        findings, diff, platform=platform, **body_inputs
+    )
+    rendered = tuple(r for r in reconstruction.groups if r.surface == "inline")
     if platform == "github":
         comments = [dict(body=r.body, path=r.path, line=r.line) for r in rendered]
-        return {"platform": platform, "payload": {"comments": comments}}
+        return {
+            "platform": platform,
+            "payload": {
+                "comments": comments,
+                **({"body": reconstruction.summary} if body_inputs else {}),
+            },
+        }
     return {
         "platform": platform,
+        **({"summary": {"body": reconstruction.summary}} if body_inputs else {}),
         "discussions": [
             {"body": row.body, "position": {"new_path": row.path, "new_line": row.line}}
             for row in rendered

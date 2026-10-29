@@ -6,7 +6,7 @@ import uuid
 from collections import Counter
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict, get_args
 
 from bench.runner.contracts import LedgerRow, ScoreRef, exclusive_json
 from bench.runner.decode import decode
@@ -49,10 +49,18 @@ Stage = Literal[
     "validate",
     "filter",
     "challenge",
+    "cite",
+    "dispose",
     "holdback",
     "select",
     "deliver",
 ]
+OPTIONAL_STAGES: frozenset[Stage] = frozenset(("cite", "dispose"))
+REQUIRED_STAGES = tuple(
+    stage
+    for stage in get_args(Stage)
+    if stage not in OPTIONAL_STAGES and stage != "deliver"
+)
 LossStage = Literal[
     "not_found",
     "verify",
@@ -62,9 +70,20 @@ LossStage = Literal[
     "merge",
     "filter",
     "delivery",
+    "cite",
+    "dispose",
     "unknown",
 ]
-Decision = Literal["kept", "eliminated", "coalesced", "held_back", "not_selected"]
+Decision = Literal[
+    "kept",
+    "eliminated",
+    "coalesced",
+    "held_back",
+    "not_selected",
+    "body_routed",
+    "report_only",
+    "demoted",
+]
 ReasonCode = Literal[
     "not_found",
     "duplicate_id",
@@ -87,9 +106,59 @@ ReasonCode = Literal[
     "unanchored",
     "body_budget",
     "post_omission",
+    "body_routed",
+    "report_only",
+    "held_back",
+    "folded",
+    "demoted",
+    "refuted",
+    "out_of_scope",
+    "scope_contradicted",
+    "cite_unmatched",
+    "cite_unavailable",
     "unknown",
 ]
 Coverage = Literal["complete", "partial", "unavailable"]
+Surface = Literal["inline", "body"]
+
+
+class SurfaceItemWire(TypedDict):
+    surface: Surface
+    text: str
+    path: str | None
+    line: int | None
+    issue_id: str | None
+    source_trace_ids: list[str]
+    discovery_dimensions: list[Dimension]
+
+
+class AvailableSurfaceViewsWire(TypedDict):
+    schema_version: Literal[1]
+    all_surface: Literal["surface-all/view.json"]
+    unavailable_reason: None
+
+
+class UnavailableSurfaceViewsWire(TypedDict):
+    schema_version: Literal[1]
+    all_surface: None
+    unavailable_reason: str
+
+
+SurfaceViewsWire = AvailableSurfaceViewsWire | UnavailableSurfaceViewsWire
+
+
+def surface_views_receipt(view, reason) -> SurfaceViewsWire:
+    if view is not None:
+        return {
+            "schema_version": 1,
+            "all_surface": "surface-all/view.json",
+            "unavailable_reason": None,
+        }
+    return {
+        "schema_version": 1,
+        "all_surface": None,
+        "unavailable_reason": reason or "original body evidence unavailable",
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,17 +193,33 @@ class Candidate:
     discovery_dimensions: tuple[Dimension, ...] = ("unknown",)
     dedup_group_id: str = ""
     provenance_status: ProvenanceStatus = "legacy_unknown"
+    surface: Surface = "inline"
+    issue_id: str | None = None
+
+    def __post_init__(self):
+        if self.surface == "body" and not self.issue_id:
+            raise ValueError("body candidate requires explicit issue identity")
+
+    def wire_fields(self, *, identity=False):
+        names = [f.name for f in fields(self)]
+        if identity:
+            names = [
+                "candidate_id",
+                "pr_url",
+                "attempt_id",
+                "index",
+                "text",
+                "path",
+                "line",
+            ]
+            if self.surface != "inline":
+                names.append("surface")
+        elif self.surface == "inline" and self.issue_id is None:
+            names = [name for name in names if name not in ("surface", "issue_id")]
+        return {name: getattr(self, name) for name in names}
 
     def identity(self):
-        return {
-            "candidate_id": self.candidate_id,
-            "pr_url": self.pr_url,
-            "attempt_id": self.attempt_id,
-            "index": self.index,
-            "text": self.text,
-            "path": self.path,
-            "line": self.line,
-        }
+        return self.wire_fields(identity=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,7 +335,13 @@ class LegacyScoreIdentity:
 def wire_record(value):
     """Serialize dataclasses and nested containers to JSON-compatible values."""
     if is_dataclass(value):
-        return {f.name: wire_record(getattr(value, f.name)) for f in fields(value)}
+        serializer = getattr(value, "wire_fields", None)
+        record = (
+            serializer()
+            if serializer
+            else {f.name: getattr(value, f.name) for f in fields(value)}
+        )
+        return wire_record(record)
     if isinstance(value, dict):
         return {k: wire_record(v) for k, v in value.items()}
     if isinstance(value, (tuple, list)):
@@ -285,20 +376,26 @@ def candidate_records(
                 line = None
             if not isinstance(c["text"], str) or not c["text"]:
                 raise ValueError("candidate text must be a nonempty string")
+            record = Candidate(
+                "",
+                url,
+                attempts[url],
+                index,
+                c["text"],
+                c.get("path"),
+                line,
+                source_trace_ids=tuple(c.get("source_trace_ids", ())),
+                discovery_dimensions=tuple(c.get("discovery_dimensions", ("unknown",))),
+                provenance_status=c.get("provenance_status", "legacy_unknown"),
+                surface=c.get("surface", "inline"),
+                issue_id=c.get("issue_id"),
+            )
+            identity = record.identity()
             identity = digest(
                 [url, attempts[url], "delivered", index, c["text"], c.get("path"), line]
+                + ([identity["surface"]] if "surface" in identity else [])
             )
-            records.append(
-                Candidate(
-                    identity,
-                    url,
-                    attempts[url],
-                    index,
-                    c["text"],
-                    c.get("path"),
-                    line,
-                )
-            )
+            records.append(replace(record, candidate_id=identity))
     return tuple(records)
 
 
@@ -436,8 +533,59 @@ class StoredScore:
 
 
 @dataclass(frozen=True, slots=True)
+class SurfaceScoreView:
+    evaluator_id: str
+    candidates: tuple[Candidate, ...]
+    observations: tuple[BugObservation, ...]
+    adjudications: tuple[Adjudication, ...]
+    contexts: tuple[AdjudicationContext, ...]
+    costs: dict[Literal["dedup", "judge", "adjudicator"], float | None]
+    source_artifact_hashes: dict[str, str]
+
+
+def surface_candidates(mapped):
+    """One explicit issue credit, preferring its inline occurrence."""
+    mapped = tuple(mapped)
+    seen, result = set(), []
+    pr_order = {url: i for i, url in enumerate(dict.fromkeys(c.pr_url for c in mapped))}
+    for c in sorted(mapped, key=lambda c: (pr_order[c.pr_url], c.surface != "inline")):
+        if c.issue_id is None:
+            raise ValueError("all-surface scoring requires explicit issue identity")
+        key = (c.pr_url, c.issue_id)
+        if key not in seen:
+            seen.add(key)
+            result.append(c)
+    return tuple(result)
+
+
+def union_surface_observations(bugs, inline, candidates, inline_candidates):
+    """Scorer competition cannot erase an established inline bug hit."""
+    by_issue = {(c.pr_url, c.issue_id): c.candidate_id for c in candidates}
+    originals = {c.candidate_id: c for c in inline_candidates}
+    canonical = {(b.pr_url, b.bug_id): b for b in inline}
+    result = []
+    for b in bugs:
+        previous = canonical[b.pr_url, b.bug_id]
+        matches = list(b.matches)
+        for match in previous.matches:
+            c = originals[match.candidate_id]
+            cid = by_issue.get((c.pr_url, digest(sorted(c.source_trace_ids))))
+            if cid is None:
+                raise ValueError("inline issue missing from all-surface population")
+            if cid not in {m.candidate_id for m in matches}:
+                matches.append(replace(match, candidate_id=cid))
+        result.append(
+            replace(
+                b, outcome="matched" if matches else b.outcome, matches=tuple(matches)
+            )
+        )
+    return tuple(result)
+
+
+@dataclass(frozen=True, slots=True)
 class ScorePacket(StoredScore):
     root: Path
+    surface_view: SurfaceScoreView | None = None
 
     @property
     def score_ref(self):
@@ -474,12 +622,37 @@ class ScorePacket(StoredScore):
                 traces,
             ),
         }
+        all_surface = None
+        if self.surface_view is not None:
+            view = self.surface_view
+            matched = bucket_candidate_ids(view.observations)
+            groups = dedup_groups(
+                read_json(self.root / "surface-all/dedup_groups.json"),
+                view.candidates,
+            )
+            fp_by_pr = Counter(
+                g.pr_url for g in groups if not matched.intersection(g.candidate_ids)
+            )
+            fp = sum(fp_by_pr[u] for u in self.manifest.requested_pr_urls)
+            all_surface = {
+                "profiles": {
+                    p: asdict(profile_metrics(view.observations, fp, p))
+                    for p in epoch.supported_profiles
+                },
+                "metrics": bucket_metrics(
+                    view.candidates, view.observations, view.adjudications
+                ),
+                "costs": view.costs,
+            }
         return {
             "schema_version": 3,
             "score_ref": asdict(self.score_ref),
             "metrics": metrics,
             "profiles": profiles,
             "ledger_row": {**self.ledger_row(), **metrics},
+            "surface_views": {
+                "all": all_surface,
+            },
         }
 
     def ledger_row(self):
@@ -523,6 +696,8 @@ def write_packet(
     contexts,
     stage_observations=(),
     costs,
+    surface_view=None,
+    surface_unavailable_reason="original body evidence unavailable",
 ):
     pending = request.work_dir
     final = pending.parent / request.score_ref.score_id
@@ -538,6 +713,10 @@ def write_packet(
     )
     exclusive_json(pending / "golden-context.json", epoch_context(request.epoch))
     exclusive_json(pending / "scores.json", wire_record(stored))
+    if surface_view is not None:
+        exclusive_json(pending / "surface-all/view.json", wire_record(surface_view))
+    receipt = surface_views_receipt(surface_view, surface_unavailable_reason)
+    exclusive_json(pending / "surface-views.json", receipt)
     with (pending / "stages.jsonl").open("xb") as stream:
         for row in stage_observations:
             stream.write(canonical(asdict(row)) + b"\n")
@@ -659,10 +838,87 @@ def _load_packet(path, epoch=None, *, allow_pending=False):
         raise ValueError("invalid judge cost")
     from bench.runner.stages import validate_packet_evidence
 
-    validate_packet_evidence(path, data, epoch)
+    surface_view = None
+    if "surface-views.json" in actual:
+        surface_receipt = decode(
+            SurfaceViewsWire, read_json(path / "surface-views.json")
+        )
+        target = surface_receipt["all_surface"]
+        if target is not None:
+            surface_view = decode(SurfaceScoreView, read_json(confined(path, target)))
+            validate_surface_view(
+                path, data.observations, request, surface_view, failures
+            )
+        elif not surface_receipt["unavailable_reason"]:
+            raise ValueError("missing surface unavailability reason")
+        elif "surface-all/view.json" in actual:
+            raise ValueError("unreferenced surface view")
+    elif any(p.startswith("surface-all/") for p in actual):
+        raise ValueError("missing surface receipt")
+    validate_packet_evidence(path, data, epoch, surface_view=surface_view)
     return ScorePacket(
-        **{f.name: getattr(data, f.name) for f in fields(data)}, root=path
+        **{f.name: getattr(data, f.name) for f in fields(data)},
+        root=path,
+        surface_view=surface_view,
     )
+
+
+def validate_surface_view(path, inline_bugs, request, view, failures):
+    for name, expected in view.source_artifact_hashes.items():
+        if file_hash(confined(path / "surface-all/sources", name)) != expected:
+            raise ValueError("surface source hash mismatch")
+    raw = read_json(path / "surface-all/candidates.json")
+    rebuilt = candidate_records(raw, dict(request.selected_attempts))
+    if (
+        set(raw) != set(request.requested_pr_urls)
+        or any(set(tools) != {"deep-review"} for tools in raw.values())
+        or tuple(replace(c, dedup_group_id="") for c in view.candidates) != rebuilt
+        or view.evaluator_id != request.evaluator.evaluator_id
+    ):
+        raise ValueError("surface candidate or evaluator join mismatch")
+    if surface_candidates(view.candidates) != view.candidates:
+        raise ValueError("duplicate surface issue credit")
+    groups = dedup_groups(
+        read_json(path / "surface-all/dedup_groups.json"), view.candidates
+    )
+    gids = {cid: g.group_id for g in groups for cid in g.candidate_ids}
+    if any(c.dedup_group_id != gids[c.candidate_id] for c in view.candidates):
+        raise ValueError("surface dedup join mismatch")
+    rebuilt_bugs = build_observations(
+        replace(request, candidates=view.candidates),
+        read_json(path / "surface-all/evaluations.json"),
+        groups,
+        failures=failures,
+    )
+    rebuilt_bugs = union_surface_observations(
+        rebuilt_bugs, inline_bugs, view.candidates, request.candidates
+    )
+    if view.observations != rebuilt_bugs:
+        raise ValueError("surface observation join mismatch")
+    remaining = {
+        c.candidate_id: c
+        for c in view.candidates
+        if c.candidate_id not in bucket_candidate_ids(view.observations)
+    }
+    contexts = {c.candidate_id: c for c in view.contexts}
+    if (
+        len(view.adjudications) != len(remaining)
+        or len(view.contexts) != len(remaining)
+        or {a.candidate_id for a in view.adjudications} != set(remaining)
+        or set(contexts) != set(remaining)
+    ):
+        raise ValueError("surface adjudication coverage mismatch")
+    for a in view.adjudications:
+        if (
+            a.pr_url != remaining[a.candidate_id].pr_url
+            or a.evaluator_id != view.evaluator_id
+            or a.context_sha256 != contexts[a.candidate_id].context_sha256
+        ):
+            raise ValueError("surface context join mismatch")
+    if set(view.costs) != {"dedup", "judge", "adjudicator"} or any(
+        v is not None and v < 0 for v in view.costs.values()
+    ):
+        raise ValueError("invalid surface scoring cost")
 
 
 def epoch_hashes(epoch):

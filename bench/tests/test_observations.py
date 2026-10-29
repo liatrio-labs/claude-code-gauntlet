@@ -35,6 +35,20 @@ def packet_path(packet):
     return Path(packet["ledger_row"]["packet_path"])
 
 
+@pytest.mark.parametrize("issue_id", [None, ""])
+def test_body_candidates_require_identity_at_construction(issue_id):
+    from dataclasses import replace
+
+    candidate = observations.candidate_records(
+        {"url": {"deep-review": [{"text": "issue"}]}}, {"url": "attempt"}
+    )[0]
+    assert "surface" not in observations.wire_record(candidate)
+    with pytest.raises(
+        ValueError, match="body candidate requires explicit issue identity"
+    ):
+        replace(candidate, surface="body", issue_id=issue_id)
+
+
 def test_score_packet_buckets_costs_and_replay_are_derived_once(score_case):
     packet = score_case.execute()
     path = packet_path(packet)
@@ -72,6 +86,18 @@ def test_score_packet_buckets_costs_and_replay_are_derived_once(score_case):
     )
     with pytest.raises(FileExistsError):
         score_case.execute(score_id=packet["score_ref"]["score_id"])
+    # Historical packets have no surface receipt; canonical candidate bytes stay unchanged.
+    (path / "surface-views.json").unlink()
+    stored = read_json(path / "scores.json")
+    for c in stored["candidates"]:
+        assert "surface" not in c and "issue_id" not in c
+    complete = read_json(path / "complete.json")
+    del complete["files"]["surface-views.json"]
+    complete["files"]["scores.json"] = file_hash(path / "scores.json")
+    score._write_json(path / "complete.json", complete)
+    legacy = observations.load_packet(path).projection()
+    assert legacy["metrics"] == packet["metrics"]
+    assert legacy["surface_views"]["all"] is None
 
 
 @pytest.mark.parametrize(
@@ -122,10 +148,57 @@ def test_invalid_scorer_output_cannot_become_a_packet(
         "ledger_profile",
         "ledger_schema",
         "ledger_missing",
+        "surface_hash",
+        "surface_join",
+        "surface_identity",
+        "surface_reference",
+        "surface_conflicting_reason",
+        "surface_missing_reason",
+        "surface_empty_reason",
     ],
 )
-def test_reader_rechecks_joins_beyond_byte_hashes(score_case, field):
-    path = packet_path(score_case.execute())
+def test_reader_rechecks_joins_beyond_byte_hashes(score_case, field, tmp_path):
+    if field.startswith("surface_"):
+        from bench.tests.test_score import prepare_surface_case
+
+        prepare_surface_case(score_case, tmp_path)
+    path = packet_path(score_case.execute(surface_views=field.startswith("surface_")))
+    if field.startswith("surface_"):
+        target = (
+            "surface-views.json"
+            if field
+            in (
+                "surface_reference",
+                "surface_conflicting_reason",
+                "surface_missing_reason",
+                "surface_empty_reason",
+            )
+            else "surface-all/view.json"
+        )
+        surface = read_json(path / target)
+        if field == "surface_reference":
+            surface["all_surface"] = "scores.json"
+        elif field == "surface_conflicting_reason":
+            surface["unavailable_reason"] = "unavailable"
+        elif field in ("surface_missing_reason", "surface_empty_reason"):
+            surface["all_surface"] = None
+            surface["unavailable_reason"] = (
+                "" if field == "surface_empty_reason" else None
+            )
+        elif field == "surface_join":
+            surface["observations"][0]["outcome"] = "missed"
+        elif field == "surface_identity":
+            surface["candidates"][-1]["issue_id"] = "forged"
+        else:
+            surface["costs"]["judge"] = 1
+        score._write_json(path / target, surface)
+        if field != "surface_hash":
+            complete = read_json(path / "complete.json")
+            complete["files"][target] = file_hash(path / target)
+            score._write_json(path / "complete.json", complete)
+        with pytest.raises(ValueError):
+            observations.load_packet(path)
+        return
     data = read_json(path / "scores.json")
     if field == "evaluator":
         data["manifest"]["evaluator"]["judge_pin"] = "forged"
