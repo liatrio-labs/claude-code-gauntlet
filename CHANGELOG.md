@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## v3.52.0 (2026-10-29)
+
+### Bug Fixes
+
+- **bench**: Keep surface order and confine surface source copies
+  ([#561](https://github.com/liatrio-labs/claude-code-gauntlet/pull/561),
+  [`14b4d33`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/14b4d33d1bc2e260fb29278f0c9a68940f70e958))
+
+### Features
+
+- **bench**: Replay stored delivery and capture its inputs on measured runs
+  ([#561](https://github.com/liatrio-labs/claude-code-gauntlet/pull/561),
+  [`14b4d33`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/14b4d33d1bc2e260fb29278f0c9a68940f70e958))
+
+- **bench**: Trace disposition reasons and score body findings beside inline
+  ([#561](https://github.com/liatrio-labs/claude-code-gauntlet/pull/561),
+  [`14b4d33`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/14b4d33d1bc2e260fb29278f0c9a68940f70e958))
+
+- **bench**: Trace disposition reasons and score body findings beside inline (#46)
+  ([#561](https://github.com/liatrio-labs/claude-code-gauntlet/pull/561),
+  [`14b4d33`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/14b4d33d1bc2e260fb29278f0c9a68940f70e958))
+
+### Refactoring
+
+- **bench**: Surface replay child errors and share the measured return budget fallback
+  ([#561](https://github.com/liatrio-labs/claude-code-gauntlet/pull/561),
+  [`14b4d33`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/14b4d33d1bc2e260fb29278f0c9a68940f70e958))
+
+
 ## v3.51.0 (2026-10-29)
 
 ### Features
