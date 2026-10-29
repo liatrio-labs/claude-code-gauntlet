@@ -5,7 +5,9 @@ Recoverable identity/fetch/Git errors stay in one ASCII receipt with exit zero.
 """
 
 import argparse
+import hashlib
 import json
+import re
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -51,6 +53,43 @@ class PriorDelivery:
     finding_keys: frozenset[str]
     legacy_group_keys: frozenset[str]
     error: str | None
+    site_keys: frozenset[str] = frozenset()
+    summary_id: int | str | None = None
+    summary_body: str | None = None
+    group_keys: frozenset[str] = frozenset()
+
+
+def site_key(site: Mapping[str, object], member_key: str = "") -> str:
+    material = json.dumps(
+        [
+            "site",
+            member_key,
+            site.get("file"),
+            site.get("line_start"),
+            site.get("line_end"),
+        ],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
+_COVERAGE = re.compile(r"<!-- code-gauntlet-coverage: (\{[^\n]*\}) -->")
+
+
+def group_key(stamp: Mapping[str, object]) -> str:
+    return hashlib.sha256(str(stamp["issue_key"]).encode("utf-8")).hexdigest()[:16]
+
+
+def coverage_marker(sha: str, groups: Sequence[str], sites: Sequence[str]) -> str:
+    return (
+        "\n\n<!-- code-gauntlet-coverage: "
+        + json.dumps(
+            {"sha": sha, "groups": sorted(set(groups)), "sites": sorted(set(sites))},
+            separators=(",", ":"),
+        )
+        + " -->"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,22 +262,69 @@ def prior_delivery_from_entries(
     fully marked group as legacy and suppress an undelivered member.
     """
     summary_posted = False
+    summary_id = None
+    summary_body = None
+    groups: set[str] = set()
+    sites: set[str] = set()
     keys: set[str] = set()
     legacy_keys: set[str] = set()
     for entry in entries or []:
         if not isinstance(entry, dict):
             continue
         body = entry.get("body")
-        signal = detect_signal(body)
+        signal_body = body
+        if isinstance(body, str) and _COVERAGE.search(body):
+            lines = body.splitlines()
+            while lines and (
+                not lines[-1].strip()
+                or find_finding_markers(lines[-1])
+                or _COVERAGE.fullmatch(lines[-1])
+            ):
+                lines.pop()
+            signal_body = "\n".join(lines)
+            for match in _COVERAGE.finditer(body):
+                try:
+                    coverage = json.loads(match[1])
+                except ValueError:
+                    continue
+                if not isinstance(coverage, dict) or coverage.get("sha") != sha:
+                    continue
+                for name, target in (("groups", groups), ("sites", sites)):
+                    values = coverage.get(name)
+                    if isinstance(values, list) and all(
+                        isinstance(key, str) and re.fullmatch(r"[0-9a-f]{16}", key)
+                        for key in values
+                    ):
+                        target.update(values)
+        signal = detect_signal(signal_body)
         if signal and signal.get("sha") == sha:
             summary_posted = True
+            note_id = entry.get("id")
+            if (
+                isinstance(note_id, int)
+                and not isinstance(note_id, bool)
+                and note_id > 0
+            ) or (
+                isinstance(note_id, str) and note_id.isascii() and note_id.isdecimal()
+            ):
+                summary_id = note_id
+                summary_body = body
         matched: list[str] = [
             m["key"] for m in find_finding_markers(body) if m["sha"] == sha
         ]
         keys.update(matched)
         if matched and _is_legacy_undermarked_group_body(body, len(matched)):
             legacy_keys.update(matched)
-    return PriorDelivery(summary_posted, frozenset(keys), frozenset(legacy_keys), None)
+    return PriorDelivery(
+        summary_posted,
+        frozenset(keys),
+        frozenset(legacy_keys),
+        None,
+        frozenset(sites),
+        summary_id,
+        summary_body,
+        frozenset(groups),
+    )
 
 
 def count_by_source(entries: Iterable[ReviewEntryWire]) -> dict[str, int]:

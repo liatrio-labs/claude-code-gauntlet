@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { validateStage, filterStage, challengeStage, blindChallengeFields, selectDelivery } from '../src/reviewStages.js';
 import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
+import { VALIDATION_RETURN_PROPERTIES } from '../src/registry.js';
 
 const omittedGap = (idx, count) => `validate-batch-${idx}: validator omitted scores — ${count} finding(s) unvalidated (validation=skipped, held back to the report)`;
 const VALIDATE_STATS = { batches_dispatched: 1, batches_completed: 1, validated: 1, skipped: 1, adjusted: 1 };
@@ -86,6 +87,7 @@ for (const row of VALIDATE_PROMPT_ROWS) test(`validate prompt: ${row.name}`, asy
     type: 'array', items: { type: 'object', properties: {
       finding_id: { type: 'string' }, confidence: { type: 'number' }, justification: { type: 'string' },
       reachability: { type: 'string', enum: ['current', 'future_change_only', 'uncertain'] },
+      ...VALIDATION_RETURN_PROPERTIES,
     }, required: ['finding_id', 'confidence'] },
   } }, required: ['validations'] });
 });

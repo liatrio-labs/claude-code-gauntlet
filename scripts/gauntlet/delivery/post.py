@@ -46,7 +46,13 @@ from gauntlet.marker import (
     build_finding_marker,
     is_sha_shaped,
 )
-from gauntlet.prior_review import PriorDelivery, gitlab_prior_delivery_state
+from gauntlet.prior_review import (
+    PriorDelivery,
+    coverage_marker,
+    gitlab_prior_delivery_state,
+    group_key,
+    site_key,
+)
 from gauntlet.text import prepare_line
 
 
@@ -203,7 +209,7 @@ class DeliverySession:
     def try_post(
         self, request: PostRequest, *, forge: Forge
     ) -> tuple[object, str | None]:
-        # A rejected discussion must leave sibling deliveries retryable.
+        # Uncertain creates are reconciled by the next run's history read.
         if self.dry_run:
             self.captured.append(request)
             return {}, None
@@ -234,6 +240,7 @@ class DeliverySession:
         # GitLab captures rendered bodies; only live deliveries append finding markers.
         if platform == "github":
             cap = self.captured[0]
+            assert cap.method == "POST"
             return {
                 "platform": "github",
                 "endpoint": cap.endpoint,
@@ -729,14 +736,14 @@ def gitlab_prior_delivery(
     session: DeliverySession,
 ) -> PriorDelivery:
     # Dry runs skip prior delivery reads to capture every finding, summary first.
-    # Invalid SHAs cannot deduplicate; fetch failures risk duplicates over lost reviews.
+    # An unreadable history cannot establish that an uncertain create failed.
     if session.dry_run or not is_sha_shaped(sha):
         return PriorDelivery(False, frozenset(), frozenset(), None)
     state = gitlab_prior_delivery_state(owner, repo, mr_iid, sha, forge=forge)
     if state.error:
-        warn(
+        die(
             f"could not check for an existing summary note or already-delivered inline "
-            f"discussions ({state.error}); posting them."
+            f"discussions ({state.error}); delivery remains unresolved."
         )
     return state
 
@@ -780,80 +787,212 @@ def post_gitlab(
         group for group in plan.groups if isinstance(group, AnchoredGroup)
     )
     finalized = plan_summary(data, skipped_groups, platform="gitlab")
-    composed, sha = finalized.summary, finalized.sha
-    summary_payload: GitLabNotePayload = {"body": composed.body}
+    initial_skipped = tuple(skipped_groups)
+    sha = finalized.sha
     prior = gitlab_prior_delivery(
         owner, repo, mr_iid, sha, forge=forge, session=session
     )
     delivered_keys = prior.finding_keys
-    if prior.summary_posted:
-        print(f"MR summary note for {sha} already on the MR — skipping.")
-    else:
+    coverage_overrides: dict[int, tuple[str, ...]] = {}
+
+    def member_key(finding: Finding) -> str:
+        line = finding.get("line")
+        path = finding.get("file", "?")
+        if line is not None:
+            path = diff.diff_path_spelling(facts, path, line)
+        raw_title = finding.get("title")
+        title = prepare_line(raw_title) if isinstance(raw_title, str) else ""
+        return compose.finding_key(
+            path, line, title, compose.key_material_body(finding)
+        )
+
+    def coverage(finding: Finding) -> tuple[str, ...]:
+        if id(finding) in coverage_overrides:
+            return coverage_overrides[id(finding)]
+        key = member_key(finding)
+        owner = (
+            group_key(finding["delivery_group"])
+            if finding.get("delivery_group")
+            else key
+        )
+        return (
+            key,
+            *(
+                site_key(site, owner)
+                for site in finding.get("sites", [])
+                if delivery_allows(
+                    {**site, "disposition": finding.get("disposition")}, "sourceLink"
+                )
+            ),
+        )
+
+    pending = []
+    for group in remaining:
+        members = (group.primary.finding, *group.group.corroborators)
+        keys = tuple(member_key(member) for member in members)
+        all_keys = tuple(key for member in members for key in coverage(member))
+        stamp = group.primary.finding.get("delivery_group")
+        if not session.dry_run and (
+            any(key in delivered_keys for key in keys)
+            or any(key in prior.legacy_group_keys for key in keys)
+            or (stamp is not None and group_key(stamp) in prior.group_keys)
+        ):
+            # Existing members cover the issue discussion; only new coverage enters the digest.
+            additions = []
+            legacy = any(key in prior.legacy_group_keys for key in keys)
+            if not legacy:
+                checked = render_inline(
+                    group.primary,
+                    group.group.corroborators,
+                    surface="discussion",
+                    plan=plan,
+                    facts=facts,
+                    session=session,
+                    marker_suffix=_delivery_marker_suffix(sha, all_keys),
+                )
+                if checked.budget_error:
+                    warn(checked.budget_error)
+            for member, key in zip(members, keys, strict=True):
+                owner = (
+                    group_key(member["delivery_group"])
+                    if member.get("delivery_group")
+                    else key
+                )
+                new_sites = [
+                    site
+                    for site in member.get("sites", [])
+                    if site_key(site, owner) not in prior.site_keys
+                    and delivery_allows(
+                        {**site, "disposition": member.get("disposition")}, "sourceLink"
+                    )
+                ]
+                if key not in delivered_keys and not legacy:
+                    extra = cast(Finding, {**member, "disposition": "body"})
+                    extra.pop("suggested_fix_code", None)
+                    coverage_overrides[id(extra)] = coverage(member)
+                    additions.append(
+                        compose.SkippedEntry(
+                            member.get("file"), member.get("line"), extra
+                        )
+                    )
+                elif new_sites:
+                    extra = cast(
+                        Finding,
+                        {
+                            **member,
+                            "sites": new_sites,
+                            "disposition": "body",
+                            "body": "Additional confirmed sites for this previously delivered issue.",
+                        },
+                    )
+                    extra.pop("suggested_fix_code", None)
+                    coverage_overrides[id(extra)] = (
+                        key,
+                        *(site_key(site, owner) for site in new_sites),
+                    )
+                    additions.append(
+                        compose.SkippedEntry(
+                            member.get("file"), member.get("line"), extra
+                        )
+                    )
+            if additions:
+                skipped_groups.append(tuple(additions))
+            continue
+        pending.append(
+            (group, keys, tuple(key for key in all_keys if key not in keys), stamp)
+        )
+
+    # Only successfully included digest fragments acquire coverage markers.
+    summary_groups = []
+    for skipped_group in skipped_groups:
+        missing = tuple(
+            entry
+            for entry in skipped_group
+            if not all(
+                key in delivered_keys for key in coverage(cast(Finding, entry.finding))
+            )
+        )
+        if missing:
+            summary_groups.append(missing)
+    if tuple(summary_groups) != initial_skipped:
+        finalized = plan_summary(
+            {**data, "sha": sha}, summary_groups, platform="gitlab"
+        )
+    composed = finalized.summary
+    summary_keys: list[str] = []
+    summary_sites: list[str] = []
+    summary_group_keys: list[str] = []
+    dimensions: set[str] = set()
+    cursor = composed.body.find(
+        compose._skipped_frame(
+            sum(len(g) for g in summary_groups), composed.shown, None
+        )
+    )
+    for summary_group in compose._ordered_skipped_groups(summary_groups):
+        proposed = set(dimensions)
+        fragment = compose._digest_pieces(summary_group, proposed)
+        found = composed.body.find(fragment, max(0, cursor))
+        if found >= 0:
+            for entry in summary_group:
+                finding = cast(Finding, entry.finding)
+                if finding.get("delivery_group") or finding.get("sites"):
+                    keys = coverage(finding)
+                    summary_keys.append(keys[0])
+                    summary_sites.extend(keys[1:])
+                    if finding.get("delivery_group"):
+                        summary_group_keys.append(group_key(finding["delivery_group"]))
+            dimensions = proposed
+            cursor = found + len(fragment)
+    if not prior.summary_posted or summary_keys:
         if finalized.budget_error is not None:
             die(finalized.budget_error)
-        session.post(gitlab_note_request(target, summary_payload), forge=forge)
+        body = composed.body
+        if prior.summary_posted:
+            if prior.summary_id is None or not prior.summary_body:
+                die(
+                    "Existing summary has no usable note ID; new coverage remains unresolved."
+                )
+            # Keep earlier digest fragments when extending the code-owned summary.
+            section_start = composed.body.find("\n\n---\n\n")
+            section = composed.body[section_start:] if section_start >= 0 else ""
+            body = prior.summary_body + section
+        if not session.dry_run:
+            if summary_sites or summary_group_keys:
+                body += coverage_marker(sha, summary_group_keys, summary_sites)
+            body += _delivery_marker_suffix(sha, summary_keys)
+        if _body_budget_error(body, "gitlab", "summary"):
+            die(
+                "Updated summary exceeds the body limit; new coverage remains retryable."
+            )
+        request = gitlab_note_request(target, {"body": body})
+        if prior.summary_posted:
+            request = replace(
+                request, endpoint=f"{request.endpoint}/{prior.summary_id}", method="PUT"
+            )
+        session.post(request, forge=forge)
         print(
             "MR summary note captured (dry-run)."
             if session.dry_run
             else "MR summary note posted."
         )
         _report_summary_budget(composed, "gitlab")
+    else:
+        print(f"MR summary note for {sha} already on the MR — skipping.")
 
-    def member_key(member: FindingPlan) -> str:
-        finding = member.finding
-        anchor = member.anchor if isinstance(member, AnchoredFinding) else None
-        raw_title = finding.get("title")
-        title = prepare_line(raw_title) if isinstance(raw_title, str) else ""
-        return compose.finding_key(
-            anchor.path if anchor is not None else finding.get("file", "?"),
-            anchor.line if anchor is not None else finding.get("line"),
-            title,
-            compose.key_material_body(finding),
-        )
-
-    def submit_inline(
-        member: FindingPlan,
-        inline: InlinePlan,
-        marker_suffix: str,
-        position: GitLabPosition | None = None,
-    ) -> DeliveryOutcome:
-        finding = member.finding
-        surface: Surface = "discussion" if position is not None else "note"
-        filepath = position["new_path"] if position else finding.get("file")
-        line = position["new_line"] if position else finding.get("line")
-        _report_inline_budget(inline.body, "gitlab", surface, filepath, line)
-        body = inline.body.body + ("" if session.dry_run else marker_suffix)
-        request = (
-            gitlab_discussion_request(target, {"body": body, "position": position})
-            if position is not None
-            else gitlab_note_request(target, {"body": body})
-        )
-        _response, error = session.try_post(request, forge=forge)
-        if error is not None:
-            # A rejected member must not strand siblings after the summary lands.
-            title = finding.get("title", "?")
-            message = (
-                f"Skipping finding '{title}' at {filepath}:{line} "
-                "— GitLab rejected the inline discussion."
-                if position is not None
-                else f"Skipping corroborating finding '{title}' — GitLab "
-                "rejected the position-less note."
-            )
-            session.warn_skip(f"{message}\n{error}")
-            return "failed"
-        return "posted"
-
-    def deliver(
-        member: FindingPlan,
-        corroborators: Sequence[Finding],
-        keys: tuple[str, ...],
-    ) -> DeliveryOutcome:
-        # Render before dedup for rerun counts; fold notices follow dedup.
-        marker_suffix = _delivery_marker_suffix(sha, keys)
+    posted = 0
+    failed = 0
+    for group, keys, site_keys, stamp in pending:
+        anchored_member = group.primary
+        anchor = anchored_member.anchor
+        marker_suffix = (
+            coverage_marker(sha, [group_key(stamp)] if stamp else [], site_keys)
+            if stamp or site_keys
+            else ""
+        ) + _delivery_marker_suffix(sha, keys)
         inline = render_inline(
-            member,
-            corroborators,
-            surface="discussion" if isinstance(member, AnchoredFinding) else "note",
+            anchored_member,
+            group.group.corroborators,
+            surface="discussion",
             plan=plan,
             facts=facts,
             session=session,
@@ -861,130 +1000,63 @@ def post_gitlab(
         )
         if inline.budget_error is not None:
             warn(inline.budget_error)
-            return "failed"
-        if all(key in delivered_keys for key in keys):
-            return "already_present"
-        if isinstance(member, UnanchoredFinding):
-            return submit_inline(member, inline, marker_suffix)
-        anchor = member.anchor
-        filepath, line = anchor.path, anchor.line
-        # Never send line_code because GitLab derives it and rejects a synthesized one.
+            failed += 1
+            continue
         position: GitLabPosition = {
             "position_type": "text",
             "base_sha": base_sha,
             "head_sha": head_sha,
             "start_sha": start_sha,
-            "new_path": filepath,
-            "new_line": line,
+            "new_path": anchor.path,
+            "new_line": anchor.line,
         }
-        old_line = diff.old_line_for(facts, filepath, line)
+        old_line = diff.old_line_for(facts, anchor.path, anchor.line)
         if old_line is not None:
             position["old_line"] = old_line
-        # A new-file old_path causes HTTP 500 after creation.
-        if not diff.is_new_file(facts, filepath):
-            position["old_path"] = diff.old_path_for(facts, filepath)
-
-        return submit_inline(member, inline, marker_suffix, position)
-
-    def deliver_corroborator(member: FindingPlan, key: str) -> DeliveryOutcome:
-        finding = member.finding
-        line = finding.get("line")
-        title = finding.get("title", "?")
-        # Without a delivered primary, a positionless note would lose group context.
-        if line is None:
+        if not diff.is_new_file(facts, anchor.path):
+            position["old_path"] = diff.old_path_for(facts, anchor.path)
+        _report_inline_budget(
+            inline.body, "gitlab", "discussion", anchor.path, anchor.line
+        )
+        body = inline.body.body + ("" if session.dry_run else marker_suffix)
+        _response, error = session.try_post(
+            gitlab_discussion_request(target, {"body": body, "position": position}),
+            forge=forge,
+        )
+        if error is not None:
             session.warn_skip(
-                f"Skipping corroborating finding '{title}' — no line number to "
-                f"anchor its own discussion on."
+                f"Skipping finding '{anchored_member.finding.get('title', '?')}' at {anchor.path}:{anchor.line} — GitLab rejected the inline discussion.\n{error}"
             )
-            return "invalid"
-        if isinstance(member, UnanchoredFinding):
-            filepath = member.path
-            session.warn_skip(
-                f"Skipping corroborating finding '{title}' at {filepath}:{line} "
-                f"— line not found in diff."
-            )
-            return "invalid"
-        return deliver(member, (), (key,))
-
-    counters: dict[DeliveryOutcome, int] = {
-        "posted": 0,
-        "already_present": 0,
-        "invalid": 0,
-        "failed": 0,
-    }
-    for group in remaining:
-        primary_key = member_key(group.primary)
-        # Unanchored members key their raw location, even within a grouped body, so
-        # a member keeps one marker identity whether it posts grouped or split.
-        corroborators = resolve_corroborators(group, facts)
-        member_keys = (primary_key, *(member_key(m) for m in corroborators))
-        if primary_key in prior.legacy_group_keys:
-            # Unkeyed corroborators make the group body the whole delivery.
-            counters["already_present"] += len(member_keys)
-            continue
-        if any(key in delivered_keys for key in member_keys) and not all(
-            key in delivered_keys for key in member_keys
-        ):
-            counters[
-                "already_present"
-                if primary_key in delivered_keys
-                else deliver(group.primary, (), (primary_key,))
-            ] += 1
-            for member, key in zip(corroborators, member_keys[1:], strict=True):
-                if key in delivered_keys:
-                    counters["already_present"] += 1
-                elif isinstance(member, AnchoredFinding):
-                    counters[deliver_corroborator(member, key)] += 1
-                else:
-                    counters[deliver(member, (), (key,))] += 1
-            continue
-        outcome = deliver(group.primary, group.group.corroborators, member_keys)
-        if outcome == "failed":
-            counters[outcome] += 1
-            for member, key in zip(corroborators, member_keys[1:], strict=True):
-                counters[deliver_corroborator(member, key)] += 1
+            failed += 1
         else:
-            counters[outcome] += len(member_keys)
-
-    posted = counters["posted"]
-    already_present = counters["already_present"]
-    invalid = counters["invalid"]
-    failed = counters["failed"]
-
-    delivery = "captured" if session.dry_run else "posted"
-    print(f"  {posted} inline discussion(s) {delivery}.")
-    flat_skipped = [entry for group in skipped_groups for entry in group]
-    if flat_skipped:
-        print(f"  {len(flat_skipped)} finding(s) skipped.")
+            posted += 1
+    print(
+        f"  {posted} inline discussion(s) {'captured' if session.dry_run else 'posted'}."
+    )
+    already_present = sum(
+        member_key(f) in delivered_keys
+        or member_key(g.primary.finding) in prior.legacy_group_keys
+        for g in remaining
+        for f in (g.primary.finding, *g.group.corroborators)
+    )
     if already_present:
         print(
-            f"  {already_present} inline discussion(s) already on the MR from an "
-            f"earlier run — left alone."
+            f"  {already_present} inline discussion(s) already on the MR from an earlier run — left alone."
         )
-    if invalid:
-        print(f"  {invalid} finding(s) had a malformed position (see warnings above).")
+    if skipped_groups:
+        print(f"  {sum(len(g) for g in skipped_groups)} finding(s) skipped.")
     session.print_fix_summary()
-
-    standing = (
-        f" {already_present} from an earlier run remain on the MR."
-        if already_present
-        else ""
-    )
-
     if failed:
         print(f"  {failed} inline discussion(s) not delivered (see warnings above).")
         if posted == 0:
-            # Prior deliveries and invalid positions are not attempts.
-            die(
-                f"all {failed} finding(s) attempted this run were not delivered "
-                f"— nothing new was posted inline.{standing} The MR summary note "
-                f"is on the MR; rerunning retries the inline comments without "
-                f"duplicating what is already there."
+            standing = (
+                f" {already_present} from an earlier run remain on the MR."
+                if already_present
+                else ""
             )
-
-    # A budget failure can leave unanchored corroborators beside captured siblings.
-    if session.dry_run:
-        return 1 if invalid else 0
+            die(
+                f"all {failed} finding(s) attempted this run were not delivered — nothing new was posted inline.{standing} The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there."
+            )
     return 0
 
 

@@ -1,6 +1,6 @@
 import { canonicalRange, clearLocation } from './location.js';
 import { hostPlatformForRoots } from './paths.js';
-import { LOCATION_STATUSES, modelFor } from './registry.js';
+import { LOCATION_STATUSES, RESOLVED_SITE_SCHEMA, modelFor } from './registry.js';
 import { firstUnsafeNumber } from './wire.js';
 import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum } from './verifyWire.js';
 import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
@@ -56,6 +56,7 @@ const VERIFY_SCHEMA = {
               line_end: { type: 'integer', minimum: 1 },
               location_status: { type: 'string', enum: LOCATION_STATUSES },
               diff_validation: { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false },
+              resolved_sites: RESOLVED_SITE_SCHEMA,
             },
             required: ['id', 'verified', 'location_status'],
           },
@@ -188,7 +189,7 @@ export async function verifyStage(ctx, input) {
 }
 
 function degradedSlice(slice) {
-  return slice.map((f) => ({ ...clearLocation(pinNumericFields(f)), origin: 'unknown' }));
+  return slice.map((f) => ({ ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' }));
 }
 
 const emptyInputProof = () => ({
@@ -321,6 +322,9 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
         : !canonicalRange(d))) malformedLocations.add(id);
     if (d.diff_validation !== undefined && (!d.diff_validation || typeof d.diff_validation !== 'object'
       || ![true, false, null].includes(d.diff_validation.in_diff))) malformedLocations.add(id);
+    if (d.resolved_sites !== undefined && (!Array.isArray(d.resolved_sites) || d.resolved_sites.some((site) =>
+      !site || typeof site.file !== 'string' || typeof site.anchor !== 'string' || !canonicalRange(site)
+      || ![true, false, null].includes(site.diff_validation?.in_diff)))) malformedLocations.add(id);
     const stamp = typeof d.elimination_reason === 'string' ? d.elimination_reason.trim() : '';
     if (d.verified === false && stamp === '') {
       return { ok: false, reason: `delta ${id}: eliminated without the elimination_reason stamp (fabricated elimination — the verify script always stamps a real one)` };

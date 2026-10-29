@@ -82,7 +82,7 @@ export function encodeSliceInline(content) {
 export const VERIFY_INLINE_CHAR_BUDGET = 50000;
 
 // Generated into Python; this order also governs the delta checksum.
-export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation'];
+export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites'];
 
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
 
@@ -107,6 +107,9 @@ export function joinVerifyDeltas(slice, deltas) {
     if (!delta || delta.verified === false) continue;
     const joined = clearLocation(pinNumericFields(f));
     delete joined.diff_validation;
+    delete joined.sites;
+    delete joined.resolved_sites;
+    if (Array.isArray(f.sites)) joined.site_requests = projectVerifySliceFinding(f).sites;
     for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
     if (canonicalRange(joined) && (Object.hasOwn(f, 'line') || Object.hasOwn(f, 'end_line'))) {
       joined.line = joined.line_start;
@@ -129,7 +132,7 @@ export function pinNumericFields(finding) {
   return out;
 }
 
-const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'severity', 'confidence', 'anchor'];
+const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'severity', 'confidence', 'anchor', 'sites'];
 // Fixed order is shared with the generated Python wire type.
 export const VERIFY_SLICE_FIELDS = [...VERIFY_SLICE_SCALAR_FIELDS, 'has_cross_file_refs', 'has_removed_test_location', 'symbols'];
 const verifyProjectionCache = new WeakMap();
@@ -140,6 +143,8 @@ function projectFinding(finding) {
   for (const k of VERIFY_SLICE_SCALAR_FIELDS) {
     if (Object.hasOwn(finding, k) && finding[k] !== undefined) projected[k] = finding[k];
   }
+  if (Array.isArray(finding.sites)) projected.sites = finding.sites.map((site) => Object.fromEntries(
+    ['file', 'line_start', 'line_end', 'anchor'].filter((key) => site?.[key] !== undefined).map((key) => [key, site[key]])));
   if (Array.isArray(finding.cross_file_refs) && finding.cross_file_refs.length > 0) projected.has_cross_file_refs = true;
   if (hasRemovedTestLocation(finding)) projected.has_removed_test_location = true;
   const symbols = [...extractSymbols(finding.description, finding.evidence)].sort().join(' ');

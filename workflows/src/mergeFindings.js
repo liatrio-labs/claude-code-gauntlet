@@ -1,6 +1,6 @@
 // Finding path normalization, validation, deduplication, and merge envelopes.
 import { repoRelativeFindingPath, safeFindingLabel } from './paths.js';
-import { AGENTS, DIMENSIONS, FINDING_PATH_ARRAY_FIELDS } from './registry.js';
+import { AGENTS, DIMENSIONS, FINDING_PATH_DESCRIPTORS } from './registry.js';
 import { measurementDecisions, traceDecision } from './measurementTrace.js';
 import { deepClone } from './wire.js';
 
@@ -58,24 +58,38 @@ export function normalizeFindingPaths(findings, repoRoot, decisions = []) {
       continue;
     }
     if (result.rewritten) pathRewrites += 1;
-    for (const field of FINDING_PATH_ARRAY_FIELDS) {
-      if (!(field in finding)) continue;
-      if (!Array.isArray(finding[field])) {
-        delete finding[field];
-        warnings.push(invalidFindingPathWarning(finding, field, 'expected an array', 'field dropped'));
-        continue;
-      }
-      const refs = [];
-      for (const ref of finding[field]) {
-        const normalized = repoRelativeFindingPath(repoRoot, ref);
+    const confine = (value, schema, field) => {
+      if (schema.$comment === 'repo-path') {
+        const normalized = repoRelativeFindingPath(repoRoot, value);
         if ('reason' in normalized) {
           warnings.push(invalidFindingPathWarning(finding, field, normalized.reason, 'reference dropped'));
-        } else {
-          refs.push(normalized.file);
-          if (normalized.file !== ref) pathRewrites += 1;
+          return undefined;
         }
+        if (normalized.file !== value) pathRewrites += 1;
+        return normalized.file;
       }
-      finding[field] = refs;
+      if (schema.type === 'array') {
+        if (Array.isArray(value)) return value.flatMap((entry) => {
+          const normalized = confine(entry, schema.items, field);
+          return normalized === undefined ? [] : [normalized];
+        });
+      } else if (schema.type === 'object' && value && typeof value === 'object' && !Array.isArray(value)) {
+        const out = { ...value };
+        for (const [key, child] of Object.entries(schema.properties)) {
+          const normalized = confine(value[key], child, `${field}.${key}`);
+          if (normalized === undefined && schema.required.includes(key)) return undefined;
+          out[key] = normalized;
+        }
+        return out;
+      } else if (!['array', 'object'].includes(schema.type)) return value;
+      warnings.push(invalidFindingPathWarning(finding, field, schema.type === 'array' ? 'expected an array' : `expected ${schema.type}`, 'field dropped'));
+      return undefined;
+    };
+    for (const [field, schema] of Object.entries(FINDING_PATH_DESCRIPTORS)) {
+      if (!(field in finding)) continue;
+      const refs = confine(finding[field], schema, field);
+      if (refs === undefined) delete finding[field];
+      else finding[field] = refs;
     }
     valid.push(finding);
   }

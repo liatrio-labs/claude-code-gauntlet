@@ -243,9 +243,7 @@ def test_mixed_disposition_group_cross_runtime(
     assert members[0]["consolidation_key"] == members[1]["consolidation_key"]
     groups = compose.consolidate_delivery(cast(list[Finding], members))
     assert len(groups) == 1
-    primary, child = (
-        (members[0], members[1]) if body_primary else (members[1], members[0])
-    )
+    primary, child = members[1], members[0]
     assert groups[0].primary == primary
     assert groups[0].corroborators == (child,)
     folded = [d for d in disposed["decisions"] if d["reason_code"] == "folded"]
@@ -277,13 +275,10 @@ def test_mixed_disposition_group_cross_runtime(
         if platform == "github"
         else payload["discussions"]
     )
-    assert len(comments) == int(not body_primary)
-    if body_primary:
-        assert all(f["title"] in summary for f in members)
-    else:
-        assert all(f["title"] in comments[0]["body"] for f in members)
-        assert "Corroborating finding" in comments[0]["body"]
-        assert all(f["title"] not in summary for f in members)
+    assert len(comments) == 1
+    assert all(f["title"] in comments[0]["body"] for f in members)
+    assert "Corroborating finding" in comments[0]["body"]
+    assert all(f["title"] not in summary for f in members)
 
 
 def test_pipeline_fields_reach_poster(

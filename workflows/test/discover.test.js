@@ -63,7 +63,8 @@ const CANONICAL_PROPS = {
   dimension: { type: 'string' }, origin: { type: 'string' }, evidence: { type: 'string' },
   anchor: { type: 'string', minLength: 1, description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
   suggestion: { type: 'string' }, claude_md_rule: { type: 'string' }, suggested_fix_code: { type: 'string' },
-  cross_file_refs: { type: 'array', items: { type: 'string' } },
+  cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
+  sites: FINDING_PROP_TYPES.sites,
 };
 const REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
 const CONDITIONAL = [
@@ -75,7 +76,7 @@ const SCHEMA_ROWS = [
   { agent: 'code-gauntlet:security-reviewer',
     extra: { attack_vector: { type: 'string' } }, required: ['attack_vector'] },
   { agent: 'code-gauntlet:cross-file-impact',
-    extra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, required: ['affected_consumers'] },
+    extra: { affected_consumers: { type: 'array', items: { type: 'string', $comment: 'repo-path' } } }, required: ['affected_consumers'] },
   { agent: 'code-gauntlet:test-analyzer',
     extra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: { type: 'string' } },
     required: ['criticality', 'failure_scenario'] },

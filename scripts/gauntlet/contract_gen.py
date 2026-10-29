@@ -127,6 +127,10 @@ _REGISTRY_FIELDS = (
     "waistRequired: m.REQUIRED",
     "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
     "findingTypes: m.FINDING_PROP_TYPES",
+    "pathDescriptors: m.FINDING_PATH_DESCRIPTORS",
+    "resolvedSiteSchema: m.RESOLVED_SITE_SCHEMA",
+    "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
+    "validationReturnProperties: m.VALIDATION_RETURN_PROPERTIES",
     "anchorLimits: m.ANCHOR_LIMITS",
     "locationRights: m.LOCATION_RIGHTS",
     "locationStatuses: m.LOCATION_STATUSES",
@@ -371,7 +375,7 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
         known.update(row["extraFields"])
     out_lines = []
     for line in text.splitlines():
-        if line.startswith("| `anchor` |"):
+        if line.startswith(("| `anchor` |", "| `sites` |")):
             continue
         rewritten = line
         for pattern in (_CANONICAL_ROW, _PERDIM_ROW):
@@ -389,6 +393,15 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
             out_lines.append(
                 f"| `anchor` | {anchor['type']} | yes | {anchor['description']} |"
             )
+            for field, schema in registry["findingTypes"].items():
+                if (
+                    isinstance(schema, dict)
+                    and schema.get("type") == "array"
+                    and schema.get("description")
+                ):
+                    out_lines.append(
+                        f"| `{field}` | array | no | {schema['description']} |"
+                    )
     text_out = "\n".join(out_lines)
     if text.endswith("\n"):
         text_out += "\n"
@@ -509,20 +522,63 @@ def _detail_fields(identity: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
 
 def render_python_registry(identity: Mapping[str, Any]) -> str:
     field_types = identity["findingTypes"]
-    for field, schema in field_types.items():
-        if (
-            isinstance(schema, dict)
-            and set(schema) == {"type", "description"}
-            and schema["type"] == "string"
-            and isinstance(schema["description"], str)
-        ):
-            continue
-        if schema not in (
-            "string",
-            "number",
-            {"type": "array", "items": {"type": "string"}},
-        ):
-            raise CliError(f"unknown finding schema type for {field}: {schema!r}")
+    nested: list[str] = []
+
+    def schema_type(schema: Any, name: str) -> str:
+        if isinstance(schema, dict) and "enum" in schema:
+            return (
+                "Literal["
+                + ", ".join(json.dumps(value) for value in schema["enum"])
+                + "]"
+            )
+        kind = schema if isinstance(schema, str) else schema.get("type")
+        scalars = {
+            "string": "str",
+            "number": "float",
+            "integer": "int",
+            "boolean": "bool",
+            "null": "None",
+        }
+        if isinstance(kind, list):
+            return " | ".join(schema_type(k, name) for k in kind)
+        if kind in scalars:
+            return scalars[kind]
+        if kind == "array":
+            return f"list[{schema_type(schema['items'], name + 'Item')}]"
+        if kind == "object":
+            fields = [
+                (
+                    key,
+                    schema_type(
+                        child, name + "".join(s.title() for s in key.split("_"))
+                    ),
+                )
+                for key, child in schema["properties"].items()
+            ]
+            total = (
+                ""
+                if set(schema.get("required", [])) == set(schema["properties"])
+                else ", total=False"
+            )
+            nested.extend(
+                [
+                    "",
+                    "",
+                    f"class {name}(TypedDict{total}):",
+                    *(f"    {key}: {value}" for key, value in fields),
+                ]
+            )
+            return name
+        raise CliError(f"unknown finding schema type for {name}: {schema!r}")
+
+    wire_types = {
+        field: schema_type(schema, "".join(s.title() for s in field.split("_")))
+        for field, schema in field_types.items()
+    }
+    resolved_type = schema_type(identity["resolvedSiteSchema"], "ResolvedSites")
+    schema_type(identity["deliveryGroupSchema"], "DeliveryGroup")
+    for field, schema in identity["validationReturnProperties"].items():
+        schema_type(schema, "".join(s.title() for s in field.split("_")))
     delta_keys = identity["deltaKeys"]
     delta_value_fields = delta_keys[2:]
     root = "/__gauntlet_registry_root__/"
@@ -630,6 +686,8 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         lines.extend(["    }", ")", ""])
     lines.extend(
         [
+            *nested[1:],
+            "",
             "",
             "class DiffValidation(TypedDict):",
             "    in_diff: bool | None",
@@ -642,14 +700,14 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "",
             "class Delta(_DeltaRequired, total=False):",
             *(
-                f"    {field}: {'int' if field in ('confidence', 'line_start', 'line_end') else 'LocationStatus' if field == 'location_status' else 'DiffValidation' if field == 'diff_validation' else 'object'}"
+                f"    {field}: {'int' if field in ('confidence', 'line_start', 'line_end') else 'LocationStatus' if field == 'location_status' else 'DiffValidation' if field == 'diff_validation' else resolved_type if field == 'resolved_sites' else 'object'}"
                 for field in delta_value_fields
             ),
             "",
             "",
             "class VerifySliceFinding(TypedDict, total=False):",
             *(
-                f"    {field}: {'str' if field == 'anchor' else 'Any'}"
+                f"    {field}: {wire_types[field] if field in wire_types and isinstance(field_types[field], dict) else 'Any'}"
                 for field in identity["verifySliceFields"]
             ),
             "",
@@ -1256,10 +1314,29 @@ def rendered_targets(
                 allow_append=rel_path in dispatch_paths,
             )
         )
-    anchor = registry["findingTypes"]["anchor"]
+
+    def sample(schema: Any) -> Any:
+        if isinstance(schema, str):
+            return f"<{schema}>"
+        if schema["type"] == "array":
+            return [sample(schema["items"])]
+        if schema["type"] == "object":
+            return {key: sample(child) for key, child in schema["properties"].items()}
+        if schema["type"] == "integer":
+            return schema.get("minimum", 1)
+        return f"<{schema.get('description', schema['type'])}>"
+
     optional_body = (
         "```json\n"
-        + json.dumps({"anchor": f"<{anchor['description']}>"}, ensure_ascii=False)
+        + json.dumps(
+            {
+                key: sample(schema)
+                for key, schema in registry["findingTypes"].items()
+                if isinstance(schema, dict)
+                and (key == "anchor" or schema.get("description"))
+            },
+            ensure_ascii=False,
+        )
         + "\n```"
     )
     for agent in registry["agents"]:

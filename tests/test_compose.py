@@ -224,28 +224,6 @@ def test_style_values(mode, expected, monkeypatch):
     assert compose.render_comment_body(finding, style=style) == expected
 
 
-@pytest.mark.parametrize("primary", (False, True))
-def test_delivery_groups(primary):
-    findings = [
-        {"title": "B", "consolidation_key": "k"},
-        {"title": "Other"},
-        {"title": "A", "consolidation_key": "k", "consolidation_primary": primary},
-        {"title": "Second", "consolidation_key": "j"},
-    ]
-    findings = [finding(**member) for member in findings]
-    before = copy.deepcopy(findings)
-    groups = compose.consolidate_delivery(findings)
-    assert [
-        (g.primary["title"], tuple(c["title"] for c in g.corroborators)) for g in groups
-    ] == [
-        ("A", ("B",)) if primary else ("B", ("A",)),
-        ("Other", ()),
-        ("Second", ()),
-    ]
-    assert findings == before
-    assert groups[0].primary is findings[2 if primary else 0]
-
-
 GROUP_SECTIONS_CASES = {
     "ordered-corroborators-primary-fence-only": (
         {

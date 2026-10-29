@@ -14,7 +14,6 @@ from unittest.mock import patch
 
 import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
-import gauntlet.text as outbound_text
 import pytest
 from gauntlet.delivery import compose
 from gauntlet.delivery.input import Finding, ReviewInput
@@ -626,67 +625,3 @@ def test_prose_active_fences_preserve_owned_patch(
         ]
     )
     assert ": \\~\\~\\~suggestion" in skipped
-
-
-@pytest.mark.parametrize(
-    "route, line, endpoint",
-    [
-        ("rejected", 3, "/discussions"),
-        ("partial", 3, "/discussions"),
-    ],
-    ids=["rejected-discussion", "missing-discussion"],
-)
-def test_gitlab_live_fallback(route: str, line: int | None, endpoint: str) -> None:
-    primary = _poisoned_outbound_sinks_finding(primary=True)
-    corroborator = _poisoned_outbound_sinks_finding()
-    corroborator["line"] = line
-    corroborator["end_line"] = line
-    corroborator["line_start"] = line
-    corroborator["line_end"] = line
-    if line is None:
-        corroborator["location_status"] = "unconfirmed"
-    primary_key = compose.finding_key(
-        primary["file"],
-        primary["line"],
-        outbound_text.prepare_line(primary["title"]),
-        compose.key_material_body(primary),
-    )
-    corroborator_key = compose.finding_key(
-        corroborator["file"],
-        line,
-        outbound_text.prepare_line(corroborator["title"]),
-        compose.key_material_body(corroborator),
-    )
-    filepath = primary["file"]
-    assert isinstance(filepath, str)
-    calls, lookup = _deliver(
-        "gitlab",
-        [cast(Finding, primary), cast(Finding, corroborator)],
-        live=True,
-        reject_first=route == "rejected",
-        prior=PriorDelivery(
-            True,
-            frozenset({primary_key}) if route == "partial" else frozenset(),
-            frozenset(),
-            None,
-        ),
-        lines={(filepath, 2): None, (filepath, 3): None},
-        texts={
-            (filepath, 2): "current_source_value()",
-            (filepath, 3): "current_source_value()",
-        },
-    )
-    assert lookup == [ForgeCall("review_entries", ReviewTarget("o", "r", 7))]
-    assert isinstance(calls, list)
-    assert len(calls) == (2 if route == "rejected" else 1)
-    if route == "rejected":
-        grouped_body = calls[0].payload["body"]
-        assert isinstance(grouped_body, str)
-        assert "Corroborating finding" in grouped_body
-    request = calls[-1]
-    assert request.endpoint.endswith(endpoint)
-    assert ("position" in request.payload) == (line is not None)
-    body = request.payload["body"]
-    assert isinstance(body, str)
-    assert "Corroborating finding" not in body
-    _assert_prepared_poison(body, [{"sha": SHA, "key": corroborator_key}])

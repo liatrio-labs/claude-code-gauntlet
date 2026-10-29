@@ -36,6 +36,7 @@ def surface_review(tmp_path, platform="github", *, budget_omission=False, groupe
             "description": f"Body defect {i}",
             "consolidation_key": "body-group" if i < 2 and grouped else f"body-{i}",
         }
+        finding.pop("delivery_group", None)
         if i == 2:
             from gauntlet.delivery.fold import body_limit
 
@@ -132,6 +133,102 @@ def captured_diff(findings):
         f"diff --git a/{p} b/{p}\n--- a/{p}\n+++ b/{p}\n@@ -1,20 +1,20 @@\n"
         + " return process(value);\n" * 20
         for p in paths
+    )
+
+
+def test_group_surfaces_preserve_identity(tmp_path, monkeypatch, capsys, forge_factory):
+    from bench.tests.test_adapter import _GH_SHA, capture
+
+    def finding(id, dimension="bug", **over):
+        return {
+            "id": id,
+            "trace_id": f"run:{id}",
+            "discovery_dimension": dimension,
+            "file": f"{id}.txt",
+            "line_start": 7,
+            "line_end": 7,
+            "location_status": "confirmed",
+            "anchor": "return process(value);",
+            "disposition": "deliver",
+            "dimension": dimension,
+            "title": "Same title",
+            "description": id,
+            "body": id,
+            "severity": "high",
+            **over,
+        }
+
+    stamp = {"issue_key": "issue", "lead_id": "B", "finding_ids": ["B", "A"]}
+    selected = [
+        finding("A", delivery_group=stamp),
+        finding("B", "intent", delivery_group=stamp),
+        finding("Z", "security", disposition="body"),
+        finding("D", disposition="body"),
+        finding("OMITTED", "type_design", disposition="body", body="x" * 70000),
+    ]
+    diff = captured_diff(selected)
+    run = capture(
+        tmp_path, monkeypatch, capsys, forge_factory, "github", selected, diff
+    )
+    assert run.code == 0
+    wrapper = {
+        "findings": selected,
+        "review_body": "Automated review summary.",
+        "sha": _GH_SHA,
+    }
+    mapped = provenance.map_delivery(
+        run.payload, selected, diff, review_body=wrapper["review_body"], sha=_GH_SHA
+    )
+    assert [m.surface for m in mapped] == ["inline", "body", "body"]
+    assert [m.source_trace_ids for m in mapped] == [
+        ("run:B", "run:A"),
+        ("run:D",),
+        ("run:Z",),
+    ]
+    assert mapped[0].path == "B.txt"
+    summary = run.payload["payload"]["body"]
+    assert summary.index(mapped[1].text) < summary.index(mapped[2].text)
+    assert all("OMITTED" not in m.source_trace_ids for m in mapped)
+    candidates, stats = payload_to_candidates(
+        run.payload, "u", selected_findings=wrapper, diff_text=diff
+    )
+    assert stats["n_candidates"] == 1
+    assert candidates["u"]["deep-review"][0]["source_trace_ids"] == ["run:B", "run:A"]
+    records = observations.candidate_records(
+        {"u": {"deep-review": [asdict(m) for m in mapped]}}, {"u": "attempt"}
+    )
+    repeated = replace(records[0], surface="body")
+    assert observations.surface_candidates((*records, repeated)) == records
+    duplicate = [
+        *selected,
+        {
+            **selected[0],
+            "delivery_group": {
+                "issue_key": "other",
+                "lead_id": "A",
+                "finding_ids": ["A"],
+            },
+        },
+    ]
+    forge_factory.calls.clear()
+    duplicate_run = capture(
+        tmp_path, monkeypatch, capsys, forge_factory, "github", duplicate, diff
+    )
+    with pytest.raises(ValueError, match="ambiguous delivery occurrence"):
+        provenance.map_delivery(
+            duplicate_run.payload,
+            duplicate,
+            diff,
+            review_body=wrapper["review_body"],
+            sha=_GH_SHA,
+        )
+    forge_factory.calls.clear()
+    empty = capture(tmp_path, monkeypatch, capsys, forge_factory, "github", [], "")
+    assert (
+        provenance.map_delivery(
+            empty.payload, [], "", review_body=wrapper["review_body"], sha=_GH_SHA
+        )
+        == ()
     )
 
 

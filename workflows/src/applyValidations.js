@@ -1,12 +1,14 @@
 // Apply validator confidence and reachability updates to findings.
 
 import { INT_POLICY, coerceInt } from './wire.js';
+import { canonicalRange } from './location.js';
 
 export const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
 
 export function applyValidations(findings, validations) {
   const findingById = new Map();
   for (const finding of findings) {
+    if (finding.sites || finding.resolved_sites) finding.sites = [];
     const fid = 'id' in finding ? finding.id : undefined;
     if (fid !== null && fid !== undefined) findingById.set(fid, finding);
   }
@@ -42,6 +44,10 @@ export function applyValidations(findings, validations) {
     if (justification) finding.validation_justification = justification;
     const reachability = 'reachability' in validation ? validation.reachability : undefined;
     if (REACHABILITY_VALUES.includes(reachability)) finding.reachability = reachability;
+    const key = (site) => JSON.stringify([site.file, site.line_start, site.line_end]);
+    const confirmations = new Map((Array.isArray(validation.site_confirmations) ? validation.site_confirmations : [])
+      .filter((site) => site && typeof site === 'object').map((site) => [key(site), site.confirmed === true]));
+    if (finding.resolved_sites) finding.sites = finding.resolved_sites.filter((site) => canonicalRange(site) && confirmations.get(key(site)) === true);
 
     adjustedCount += 1;
   }

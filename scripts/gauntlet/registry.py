@@ -21,6 +21,7 @@ DeltaKey = Literal[
     "line_end",
     "location_status",
     "diff_validation",
+    "resolved_sites",
 ]
 DeltaValueField = Literal[
     "origin",
@@ -31,6 +32,7 @@ DeltaValueField = Literal[
     "line_end",
     "location_status",
     "diff_validation",
+    "resolved_sites",
 ]
 
 SEVERITY_ORDER: tuple[Severity, ...] = ("critical", "high", "medium", "low")
@@ -75,6 +77,7 @@ DELTA_KEYS: tuple[DeltaKey, ...] = (
     "line_end",
     "location_status",
     "diff_validation",
+    "resolved_sites",
 )
 
 DELTA_VALUE_FIELDS: tuple[DeltaValueField, ...] = (
@@ -86,6 +89,7 @@ DELTA_VALUE_FIELDS: tuple[DeltaValueField, ...] = (
     "line_end",
     "location_status",
     "diff_validation",
+    "resolved_sites",
 )
 
 VERIFY_SLICE_FIELDS: tuple[str, ...] = (
@@ -96,6 +100,7 @@ VERIFY_SLICE_FIELDS: tuple[str, ...] = (
     "severity",
     "confidence",
     "anchor",
+    "sites",
     "has_cross_file_refs",
     "has_removed_test_location",
     "symbols",
@@ -607,6 +612,39 @@ DISPOSITION_RIGHTS: Mapping[Disposition, Mapping[str, bool | str]] = MappingProx
 )
 
 
+class SitesItem(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    anchor: str
+
+
+class ResolvedSitesItemDiffValidation(TypedDict):
+    in_diff: bool | None
+
+
+class ResolvedSitesItem(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    anchor: str
+    location_status: Literal["confirmed", "relocated", "unconfirmed"]
+    diff_validation: ResolvedSitesItemDiffValidation
+
+
+class DeliveryGroup(TypedDict):
+    issue_key: str
+    lead_id: str
+    finding_ids: list[str]
+
+
+class SiteConfirmationsItem(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    confirmed: bool
+
+
 class DiffValidation(TypedDict):
     in_diff: bool | None
 
@@ -625,6 +663,7 @@ class Delta(_DeltaRequired, total=False):
     line_end: int
     location_status: LocationStatus
     diff_validation: DiffValidation
+    resolved_sites: list[ResolvedSitesItem]
 
 
 class VerifySliceFinding(TypedDict, total=False):
@@ -635,6 +674,7 @@ class VerifySliceFinding(TypedDict, total=False):
     severity: Any
     confidence: Any
     anchor: str
+    sites: list[SitesItem]
     has_cross_file_refs: Any
     has_removed_test_location: Any
     symbols: Any

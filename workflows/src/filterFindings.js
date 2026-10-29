@@ -329,7 +329,7 @@ function groupByProximity(findings, lineProximity) {
   ]));
 }
 
-export function consolidateCrossAgent(findings) {
+export function consolidateCrossAgent(findings, prefer = () => false) {
   const LINE_PROXIMITY = 5;
 
   // Clear consolidation stamps before regrouping so a removed primary cannot leave stale group ownership.
@@ -346,7 +346,7 @@ export function consolidateCrossAgent(findings) {
     const conf = asConfidence(f.confidence);
     // Ranking uses UTF-16 length; code-point counting would change winners for astral text.
     const descLen = asText(f.description).length;
-    return [isCore, conf, descLen];
+    return [prefer(f) ? 1 : 0, isCore, conf, descLen];
   };
 
   const compareWinnerDesc = (a, b) => {

@@ -4,6 +4,7 @@ import { canonicalRange, locationAllows, deliveryAllows } from './location.js';
 import { incompleteVetting, UNVERIFIED_REASONS } from './vetting.js';
 import { rankFindings } from './applyChallenges.js';
 import { PERMALINK_TEMPLATES, identityCheck, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES } from './registry.js';
+import { deliveryGroups } from './dispose.js';
 import { DIMENSIONS, AGENTS, AGENT_LABELS, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI } from './registry.js';
 import { RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, conditionalSchemaActive, pinsModelIds, resolvePolicy } from './registry.js';
 import { SEVERITY_ORDER, REPORT_FOLD_LIMITS } from './registry.js';
@@ -122,33 +123,12 @@ export function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
 }
 
 function consolidateForReport(findings) {
-  const list = findings || [];
-  const groups = [];
-  const keyToGroup = new Map();
-  for (const f of list) {
-    const key = f && f.consolidation_key;
-    if (!key) {
-      groups.push({ primary: f, corroborators: [] });
-      continue;
-    }
-    let group = keyToGroup.get(key);
-    if (!group) {
-      group = { primary: null, corroborators: [] };
-      keyToGroup.set(key, group);
-      groups.push(group);
-    }
-    if (f.consolidation_primary) {
-      if (!group.primary) group.primary = f;
-      else group.corroborators.push(f);
-    } else group.corroborators.push(f);
-  }
-  return groups.map((group) => {
-    // A delivered subset may omit the stamped primary; use its first remaining member instead of surfacing null.
-    const primary = group.primary || group.corroborators.shift();
-    if (!group.corroborators.length) return primary;
+  return deliveryGroups(findings).map(({ primary, corroborators }) => {
+    if (!corroborators.length) return primary;
     return {
       ...primary,
-      corroborations: group.corroborators.map((c) => ({
+      sites: [primary, ...corroborators].flatMap((f) => (f.sites || []).filter((site) => deliveryAllows({ ...site, disposition: f.disposition }, 'sourceLink'))),
+      corroborations: corroborators.map((c) => ({
         agent: c.agent,
         dimension: c.dimension,
         confidence: c.confidence,
@@ -217,7 +197,9 @@ function coerceReportFinding(finding, severities) {
       value = reportAsConfidence(raw);
     } else if (key === 'corroborations') {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
-    } else if (key === 'disposition_reasons') {
+    } else if (key === 'sites') {
+      value = Array.isArray(raw) ? raw : [];
+    } else if (['disposition_reasons', 'delivery_group'].includes(key)) {
       value = raw;
     } else if (key === 'consolidation_primary' || key === 'challenge_contested') {
       value = raw;
@@ -438,6 +420,11 @@ function renderFinding(builder, finding, unverified, permalinks) {
   const where = location(finding);
   const url = locationUrl(finding, permalinks, where);
   if (where) bullets.push(url ? `- **Location:** [${where}](${url})` : `- **Location:** ${where}`);
+  for (const site of finding.sites || []) {
+    const located = { ...site, disposition: finding.disposition };
+    const link = locationUrl(located, permalinks);
+    if (link) bullets.push(`- **Additional site:** [${location(located)}](${link})`);
+  }
   const classification = [];
   if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
   if (isPresent(finding.confidence)) classification.push(`**Confidence:** ${inline(finding.confidence)}%`);

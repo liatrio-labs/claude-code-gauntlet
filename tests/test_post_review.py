@@ -7,7 +7,7 @@ import pytest
 from gauntlet.delivery import compose, fold, post
 from gauntlet.delivery.input import validate_review_input
 from gauntlet.forge import JsonFetch, PostResult, parse_remote
-from gauntlet.marker import find_finding_markers, find_marker
+from gauntlet.marker import build_marker, find_finding_markers, find_marker
 
 from tests.support.posting import (
     CONTEXT,
@@ -68,6 +68,216 @@ def surfaces(run):
     if payload["platform"] == "github":
         return payload["payload"]["body"], payload["payload"]["comments"]
     return payload["summary"]["body"], payload["discussions"]
+
+
+def test_group_retry_is_atomic(posting):
+    from gauntlet.prior_review import prior_delivery_from_entries
+
+    from tests.test_outbound_delivery import (
+        _assert_prepared_poison,
+        _poisoned_outbound_sinks_finding,
+    )
+
+    stamp = {"issue_key": "issue", "lead_id": "P", "finding_ids": ["P", "M"]}
+    primary = located(
+        **{
+            **_poisoned_outbound_sinks_finding(primary=True),
+            "id": "P",
+            "file": "foo.py",
+            "line_start": 2,
+            "line_end": 3,
+            "anchor": QUOTE,
+            "delivery_group": stamp,
+        }
+    )
+    member = located(
+        **{
+            **_poisoned_outbound_sinks_finding(),
+            "id": "M",
+            "file": "foo.py",
+            "line_start": 4,
+            "line_end": 4,
+            "anchor": "finish_operation()",
+            "delivery_group": stamp,
+        }
+    )
+    sites = [
+        {
+            "file": f"extra-{n}.txt",
+            "line_start": n,
+            "line_end": n,
+            "anchor": "quote",
+            "location_status": "confirmed",
+            "diff_validation": {"in_diff": False},
+        }
+        for n in range(1, 5)
+    ]
+    primary["sites"] = sites
+    key_before = compose.key_material_body(primary)
+    assert compose.key_material_body({**primary, "sites": []}) == key_before
+    for platform in ("github", "gitlab"):
+        run = posting(review(platform, [primary, member]), diff=DIFF)
+        _, comments = surfaces(run)
+        assert len(comments) == 1
+        assert comments[0]["body"].count("extra-") == 4
+        assert comments[0]["body"].count("Corroborating finding") == 1
+        assert "```suggestion" not in comments[0]["body"]
+        assert not any(call.method == "review_entries" for call in run.fake.calls)
+    # Membership selects a stamped primary even when a legacy stamp disagrees.
+    reordered = {**stamp, "finding_ids": ["M", "P"]}
+    selected = posting(
+        review(
+            "github",
+            [
+                {**member, "delivery_group": reordered, "consolidation_primary": True},
+                {
+                    **primary,
+                    "delivery_group": reordered,
+                    "consolidation_primary": False,
+                },
+            ],
+        ),
+        diff=DIFF,
+    )
+    assert selected.payload["payload"]["comments"][0]["line"] == 3
+    missing = {**stamp, "finding_ids": ["P", "M", "N"]}
+    fallback = posting(
+        review(
+            "github",
+            [
+                {**primary, "id": "N", "delivery_group": missing},
+                {**member, "delivery_group": missing},
+            ],
+        ),
+        diff=DIFF,
+    )
+    assert fallback.payload["payload"]["comments"][0]["line"] == 4
+    first = posting(review("gitlab", [primary, member]), diff=DIFF, dry_run=False)
+    assert first.code == 0
+    summary, discussion = first.requests
+    discussion_body = discussion.payload["body"]
+    markers = find_finding_markers(discussion_body)
+    member_keys = [
+        compose.finding_key(
+            "foo.py", line, post.prepare_line(f["title"]), compose.key_material_body(f)
+        )
+        for f, line in ((primary, 2), (member, 4))
+    ]
+    assert len(markers) == 2
+    import re
+
+    def assert_poison(body):
+        body = body.replace(build_marker(SHA, 2), "")
+        _assert_prepared_poison(
+            re.sub(r"<!-- code-gauntlet-coverage: .*? -->", "", body),
+            find_finding_markers(body),
+        )
+
+    assert_poison(discussion_body)
+    notes = [
+        {"id": 10, "author": {"username": "poster"}, "body": summary.payload["body"]},
+        {"id": 11, "author": {"username": "poster"}, "body": discussion_body},
+    ]
+    for error in ("denied", "timeout after create"):
+        failed = posting(
+            review("gitlab", [primary, member]),
+            diff=DIFF,
+            dry_run=False,
+            submissions=[PostResult({}, None, None), PostResult(None, error, None)],
+        )
+        assert failed.code == 1
+        assert len(failed.requests) == 2
+        assert failed.requests[-1].endpoint.endswith("/discussions")
+        assert_poison(failed.requests[-1].payload["body"])
+    reconciled = posting(
+        review("gitlab", [primary, member]),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(notes, None),
+    )
+    assert reconciled.code == 0 and reconciled.requests == ()
+    for present in (0, 1):
+        partial = [
+            notes[0],
+            {**notes[1], "body": post.build_finding_marker(SHA, member_keys[present])},
+        ]
+        run = posting(
+            review("gitlab", [primary, member]),
+            diff=DIFF,
+            dry_run=False,
+            entries=JsonFetch(partial, None),
+        )
+        assert run.code == 0 and len(run.requests) == 1
+        request = run.requests[0]
+        assert request.method == "PUT" and request.endpoint.endswith("/notes/10")
+        assert "position" not in request.payload
+        body = request.payload["body"]
+        assert_poison(body)
+        assert member_keys[1 - present] in body
+        assert "@ghost" not in body and "<!-- code-gauntlet-findings:" in body
+        assert "~~~suggestion" not in body
+    legacy = [
+        notes[0],
+        {
+            **notes[1],
+            "body": "Corroborating finding — member\n"
+            + post.build_finding_marker(SHA, member_keys[0]),
+        },
+    ]
+    legacy_run = posting(
+        review("gitlab", [primary, member]),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(legacy, None),
+    )
+    assert legacy_run.code == 0 and all(r.method == "PUT" for r in legacy_run.requests)
+    extra = {**sites[-1], "file": "new-site.txt"}
+    extended = [{**primary, "sites": [*sites, extra]}, member]
+    update = posting(
+        review("gitlab", extended),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(notes, None),
+    )
+    assert update.code == 0 and len(update.requests) == 1
+    assert update.requests[0].method == "PUT"
+    assert update.requests[0].payload["body"].count("new-site.txt") == 1
+    assert "extra-1.txt" not in update.requests[0].payload["body"]
+    state = prior_delivery_from_entries(
+        [{**notes[0], "body": update.requests[0].payload["body"]}, notes[1]], SHA
+    )
+    assert state.summary_id == 10 and len(state.site_keys) == 5
+    assert state.group_keys
+    updated_notes = [{**notes[0], "body": update.requests[0].payload["body"]}, notes[1]]
+    again = posting(
+        review("gitlab", extended),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(updated_notes, None),
+    )
+    assert again.requests == ()
+    failed_update = posting(
+        review("gitlab", extended),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(notes, None),
+        submissions=[PostResult(None, "denied", None)],
+    )
+    assert failed_update.code == 1
+    retry = posting(
+        review("gitlab", extended),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(notes, None),
+    )
+    assert retry.requests == failed_update.requests
+    unreadable = posting(
+        review("gitlab", extended),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(None, "history unreadable"),
+    )
+    assert unreadable.code == 1 and unreadable.requests == ()
 
 
 @pytest.mark.parametrize(
@@ -307,69 +517,6 @@ def test_overlap_withholds_only_later_fence(platform, posting):
     assert "Return the current value." in comments[1]["body"]
 
 
-def test_gitlab_rejected_primary_promotes_resolved_member(posting):
-    primary = located(consolidation_key="k", consolidation_primary=True)
-    member = located(
-        id="F2",
-        title="Member",
-        line_start=4,
-        line_end=4,
-        anchor="finish_operation()",
-        claimed_line_end=200,
-        consolidation_key="k",
-    )
-    run = posting(
-        review("gitlab", [primary, member]),
-        diff=DIFF,
-        dry_run=False,
-        submissions={
-            "notes": [PostResult({}, None, None)],
-            "discussions": [
-                PostResult(None, "denied", None),
-                PostResult({}, None, None),
-            ],
-        },
-    )
-    assert run.code == 0
-    discussions = [r for r in run.requests if r.endpoint.endswith("/discussions")]
-    assert len(discussions) == 2
-    assert "Corroborating finding" in discussions[0].payload["body"]
-    assert discussions[1].payload["position"]["new_line"] == 4
-    assert "Corroborating finding" not in discussions[1].payload["body"]
-
-
-def test_gitlab_retry_posts_only_missing_member(posting):
-    primary = located(consolidation_key="k", consolidation_primary=True)
-    member = located(
-        id="F2",
-        title="Member",
-        line_start=4,
-        line_end=4,
-        anchor="finish_operation()",
-        claimed_line_end=200,
-        consolidation_key="k",
-    )
-    first = posting(review("gitlab", [primary, member]), diff=DIFF, dry_run=False)
-    body = next(
-        r.payload["body"] for r in first.requests if r.endpoint.endswith("/discussions")
-    )
-    markers = find_finding_markers(body)
-    assert len(markers) == 2
-    rerun = posting(
-        review("gitlab", [primary, member]),
-        diff=DIFF,
-        dry_run=False,
-        entries=prior(
-            compose.finding_key(
-                "foo.py", 2, primary["title"], compose.key_material_body(primary)
-            )
-        ),
-    )
-    assert len(rerun.requests) == 1
-    assert rerun.requests[0].payload["position"]["new_line"] == 4
-    assert "Member" in rerun.requests[0].payload["body"]
-
-
 def test_gitlab_legacy_group_rerun_skips_render_and_count(posting):
     primary = located(consolidation_key="k", consolidation_primary=True)
     member = located(
@@ -393,31 +540,6 @@ def test_gitlab_legacy_group_rerun_skips_render_and_count(posting):
     assert run.requests == ()
     assert "2 inline discussion(s) already on the MR" in run.out
     assert "suggested fix(es)" not in run.out
-
-
-def test_gitlab_retry_posts_only_missing_primary(posting):
-    primary = located(consolidation_key="k", consolidation_primary=True)
-    member = located(
-        id="F2",
-        title="Member",
-        line_start=4,
-        line_end=4,
-        anchor="finish_operation()",
-        consolidation_key="k",
-    )
-    key = compose.finding_key(
-        "foo.py", 4, member["title"], compose.key_material_body(member)
-    )
-    run = posting(
-        review("gitlab", [primary, member]),
-        diff=DIFF,
-        dry_run=False,
-        entries=prior(key),
-    )
-    assert run.code == 0 and len(run.requests) == 1
-    assert run.requests[0].payload["position"]["new_line"] == 2
-    assert "Corroborating finding" not in run.requests[0].payload["body"]
-    assert "1 inline discussion(s) already on the MR" in run.out
 
 
 def test_gitlab_rerun_keys_resolved_path(posting):
@@ -844,11 +966,11 @@ def test_detected_platform(posting, monkeypatch):
     assert run.payload["platform"] == "github"
 
 
-def test_gitlab_identity_failure_warns_and_posts_without_dedup(
+def test_gitlab_identity_failure_leaves_delivery_unresolved(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    from gauntlet.cli import CliError
     from gauntlet.forge import Poster
-    from gauntlet.prior_review import PriorDelivery
 
     from tests.support.forge import FakeGitLab
 
@@ -859,14 +981,11 @@ def test_gitlab_identity_failure_warns_and_posts_without_dedup(
         entries=[JsonFetch([], "gitlab notes denied")],
         posters=[Poster(None, failure)],
     )
-    state = post.gitlab_prior_delivery(
-        "o", "r", 5, SHA, forge=fake, session=post.DeliverySession(dry_run=False)
-    )
-    assert state == PriorDelivery(
-        False, frozenset(), frozenset(), f"gitlab notes denied; {failure}"
-    )
-    warning = capsys.readouterr().err
-    assert failure in warning and "posting them" in warning
+    with pytest.raises(CliError, match="delivery remains unresolved") as error:
+        post.gitlab_prior_delivery(
+            "o", "r", 5, SHA, forge=fake, session=post.DeliverySession(dry_run=False)
+        )
+    assert failure in str(error.value)
 
 
 @pytest.mark.parametrize(

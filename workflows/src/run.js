@@ -37,6 +37,7 @@ function walkHostPathText(value, transform, field = null, exempt = false) {
   if (typeof value === 'string') return transform(value, field ?? 'other', exempt);
   if (value === null || typeof value !== 'object') return value;
   for (const [key, entry] of Object.entries(value)) {
+    if (key === 'delivery_group') continue;
     const name = Array.isArray(value) ? field : field ?? (FINDING_TEXT_FIELD_NAMES.includes(key) ? key : 'other');
     if (!Array.isArray(value)) transform(key, name, true);
     const rewritten = walkHostPathText(entry, transform, name, exempt || FINDING_REWRITE_EXEMPT_FIELDS.includes(key));
@@ -138,8 +139,7 @@ export async function deliverFromCheckpoint(c, A, state) {
   const deliveryTier = A.delivery && A.delivery.tier;
   const eligible = challengeOut.findings.filter((f) => deliveryAllows(f, 'body'));
   const selected = selectDelivery(eligible, limits.deliveryCap, deliveryTier);
-  const postReview = [...selected.filter((f) => deliveryAllows(f, 'inline')),
-    ...selected.filter((f) => f.disposition === 'body')];
+  const postReview = selected;
   if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
     cap_hit: selectDelivery(eligible, null, deliveryTier).length > postReview.length,
     decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,

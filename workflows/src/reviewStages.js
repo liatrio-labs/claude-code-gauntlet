@@ -2,12 +2,14 @@ import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap } from './capacity.js';
-import { modelFor } from './registry.js';
+import { modelFor, VALIDATION_RETURN_PROPERTIES } from './registry.js';
 import { INT_POLICY, coerceInt } from './wire.js';
 import { applyValidations, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
 import { applyChallenges, rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
+import { deliveryGroups } from './dispose.js';
+import { deliveryAllows } from './location.js';
 
 // The platform rejects array-rooted tool schemas, so validation entries need an object wrapper.
 const VALIDATE_SCHEMA = {
@@ -22,6 +24,7 @@ const VALIDATE_SCHEMA = {
           confidence: { type: 'number' },
           justification: { type: 'string' },
           reachability: { type: 'string', enum: REACHABILITY_VALUES },
+          ...VALIDATION_RETURN_PROPERTIES,
         },
         required: ['finding_id', 'confidence'],
       },
@@ -32,6 +35,7 @@ const VALIDATE_SCHEMA = {
 
 function validateReturnDescriptor() {
   return Object.entries(VALIDATE_SCHEMA.properties.validations.items.properties)
+    .filter(([name]) => !Object.hasOwn(VALIDATION_RETURN_PROPERTIES, name))
     .map(([name, schema]) => {
       const values = Array.isArray(schema.enum) ? ` (${schema.enum.join(' | ')})` : '';
       return `${name}${values}`;
@@ -266,13 +270,14 @@ export async function challengeStage(ctx, input) {
 // Delivery defaults to all survivors to avoid silently narrowing scope.
 // Persisting the selected set lets delivery consume the policy decision without independently filtering or ranking it.
 export function selectDelivery(survivors, cap, tier) {
-  const pool = tier === 'main_only'
-    ? (survivors || []).filter((f) => (f.report_tag ?? f.report_destination) === 'main')
-    : (survivors || []);
+  const pool = deliveryGroups(survivors).filter(({ primary, corroborators }) => tier !== 'main_only'
+    || [primary, ...corroborators].some((f) => (f.report_tag ?? f.report_destination) === 'main'));
   // Rank a tolerant projection to handle malformed replay fields, then preserve the original entries for persistence identity.
-  const rankable = coerceReportFindings(pool);
-  const originalByRankable = new Map(rankable.map((finding, index) => [finding, pool[index]]));
-  const ranked = rankFindings(rankable).map((finding) => originalByRankable.get(finding));
-  if (cap === undefined || cap === null) return ranked;
-  return ranked.slice(0, Math.max(0, cap));
+  const inline = pool.filter(({ primary }) => primary.disposition !== 'body');
+  const rankable = coerceReportFindings(inline.map((group) => group.primary));
+  const originalByRankable = new Map(rankable.map((finding, index) => [finding, inline[index]]));
+  let ranked = rankFindings(rankable).map((finding) => originalByRankable.get(finding));
+  if (cap !== undefined && cap !== null) ranked = ranked.slice(0, Math.max(0, cap));
+  return [...ranked, ...pool.filter(({ primary }) => primary.disposition === 'body' && deliveryAllows(primary, 'body'))]
+    .flatMap(({ primary, corroborators }) => [primary, ...corroborators]);
 }

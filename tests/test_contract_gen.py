@@ -94,6 +94,76 @@ def test_disposition_row_generates_consumers(registry_tree, invoke):
     assert json.loads(dispatched.stdout) == [True, False, True, False]
 
 
+def test_site_descriptor_generates_consumers(registry_tree, invoke):
+    source = registry_tree / "workflows/src/registry.js"
+    source.write_text(
+        source.read_text(encoding="utf-8").replace(
+            "  sites: {",
+            "  related: { type: 'array', description: 'Related paths.', items: { type: 'object', properties: { path: { type: 'string', $comment: 'repo-path' }, active: { type: 'boolean' } }, required: ['path', 'active'], additionalProperties: false } },\n  sites: {",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    result = invoke(
+        "generate_contract_requirements",
+        ["--repo-root", str(registry_tree)],
+        registry_tree,
+    )
+    assert result.returncode == 0, result.stderr
+    namespace = {}
+    exec(
+        (registry_tree / "scripts/gauntlet/registry.py").read_text(encoding="utf-8"),
+        namespace,
+    )
+    assert namespace["RelatedItem"].__annotations__ == {"path": str, "active": bool}
+    assert namespace["SitesItem"].__annotations__ == {
+        "file": str,
+        "line_start": int,
+        "line_end": int,
+        "anchor": str,
+    }
+    assert "resolved_sites" in namespace["Delta"].__annotations__
+    for agent in gen.load_registry(str(registry_tree))["agents"]:
+        contract = (registry_tree / f"agents/{agent.split(':')[1]}.md").read_text(
+            encoding="utf-8"
+        )
+        assert '"related": [{"path": "<string>", "active": "<boolean>"}]' in contract
+        assert (
+            '"sites": [{"file": "<string>", "line_start": 1, "line_end": 1, "anchor": "<string>"}]'
+            in contract
+        )
+    assert "| `related` | array | no | Related paths. |" in (
+        registry_tree / REPORT
+    ).read_text(encoding="utf-8")
+    result = gen.proc.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import { normalizePhaseFindings } from './workflows/src/checkpoints.js';
+import { discover } from './workflows/src/discover.js';
+const schemas = [];
+await discover({agent: async (_, o) => { schemas.push(o.schema.properties.findings.items.properties); return {findings:[], complete:true, total_seen:0, removed_test_audit:[]}; }, parallel: async ts => Promise.all(ts.map(t=>t()))}, {});
+const out = { findings: [{file:'main.txt', related:[{path:'/repo/ok.txt',active:true},{path:'../escape',active:false}], sites:[{file:'../escape',line_start:1,line_end:1,anchor:'q'}]}] };
+normalizePhaseFindings('discover', out, false, {repoRoot:'/repo'});
+console.log(JSON.stringify({out, schemas}));
+""",
+        ],
+        cwd=str(registry_tree),
+        check=True,
+    )
+    value = json.loads(result.stdout)
+    assert value["out"]["findings"][0]["related"] == [
+        {"path": "ok.txt", "active": True}
+    ]
+    assert value["out"]["findings"][0]["sites"] == []
+    assert len(value["out"]["gaps"]) == 2
+    for schema in value["schemas"]:
+        assert schema["related"]["items"]["properties"]["active"] == {"type": "boolean"}
+        assert schema["sites"]["items"]["additionalProperties"] is False
+
+
 def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
     before = gen.load_registry(str(registry_tree))
     description = before["findingTypes"]["anchor"]["description"]
@@ -163,7 +233,13 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
             encoding="utf-8"
         )
         blocks = optional_block.findall(contract)
-        assert blocks == ['```json\n{"anchor": "<' + replacement + '>"}\n```']
+        assert len(blocks) == 1
+        assert (
+            json.loads(blocks[0].removeprefix("```json\n").removesuffix("\n```"))[
+                "anchor"
+            ]
+            == "<" + replacement + ">"
+        )
         if agent == "code-gauntlet:test-analyzer":
             original = original.replace(description, replacement)
         assert optional_block.sub("", contract) == optional_block.sub("", original)
@@ -898,7 +974,7 @@ def live_identity():
 
 def test_registry_diagnostic(registry_tree, live_identity, monkeypatch, invoke):
     identity = deepcopy(live_identity)
-    identity["findingTypes"]["id"] = "boolean"
+    identity["findingTypes"]["id"] = "unknown"
     monkeypatch.setattr(gen, "load_registry", lambda root: identity)
     result = invoke(
         "generate_contract_requirements",
@@ -907,7 +983,7 @@ def test_registry_diagnostic(registry_tree, live_identity, monkeypatch, invoke):
     )
     assert result.returncode == 1
     assert result.stdout == b""
-    assert "unknown finding schema type for id: 'boolean'" in result.stderr.decode()
+    assert "unknown finding schema type for Id: 'unknown'" in result.stderr.decode()
     assert re.fullmatch(
         r"generate_contract_requirements: [^\n]+\n", result.stderr.decode()
     )

@@ -106,14 +106,36 @@ export const FINDING_PROP_TYPES = deepFreeze({
   // Delivery applies deterministic fix checks before rendering a committable fence.
   // The field alone does not guarantee that a patch will ship.
   suggested_fix_code: 'string',
-  cross_file_refs: { type: 'array', items: { type: 'string' } },
+  cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
+  sites: { type: 'array', description: 'Additional locations of this issue.', items: {
+    type: 'object', properties: {
+      file: { type: 'string', $comment: 'repo-path' },
+      line_start: { type: 'integer', minimum: 1 }, line_end: { type: 'integer', minimum: 1 },
+      anchor: { type: 'string' },
+    }, required: ['file', 'line_start', 'line_end', 'anchor'], additionalProperties: false,
+  } },
 });
 
-// Structural references need the same confinement as file before reaching artifacts.
-export const FINDING_PATH_ARRAY_FIELDS = deepFreeze(['cross_file_refs', 'affected_consumers']);
+export const VALIDATION_RETURN_PROPERTIES = deepFreeze({
+  site_confirmations: { type: 'array', items: {
+    type: 'object', properties: {
+      file: { type: 'string' }, line_start: { type: 'integer', minimum: 1 },
+      line_end: { type: 'integer', minimum: 1 }, confirmed: { type: 'boolean' },
+    }, required: ['file', 'line_start', 'line_end', 'confirmed'], additionalProperties: false,
+  } },
+});
 
-// Identifiers must not collide; structural paths and suggestion code retain their own semantics.
-export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
+export const RESOLVED_SITE_SCHEMA = deepFreeze({ type: 'array', items: {
+  ...FINDING_PROP_TYPES.sites.items,
+  properties: { ...FINDING_PROP_TYPES.sites.items.properties,
+    location_status: { type: 'string', enum: LOCATION_STATUSES },
+    diff_validation: { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false },
+  }, required: [...FINDING_PROP_TYPES.sites.items.required, 'location_status', 'diff_validation'],
+} });
+
+export const DELIVERY_GROUP_SCHEMA = deepFreeze({ type: 'object', properties: {
+  issue_key: { type: 'string' }, lead_id: { type: 'string' }, finding_ids: { type: 'array', items: { type: 'string' } },
+}, required: ['issue_key', 'lead_id', 'finding_ids'], additionalProperties: false });
 
 // Flat required fields must be unconditional for every dimension in a dispatch to avoid forcing fabricated sibling fields.
 export const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
@@ -157,7 +179,7 @@ export const DIMENSIONS = deepFreeze([
   { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' },
     requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
   { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
-    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'],
+    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string', $comment: 'repo-path' } } }, requiredExtra: ['affected_consumers'],
       requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'test_coverage', agentType: AGENT_TYPE_TEST_ANALYZER, conditionalFlag: DEEP,
     // Bound the impact scale at dispatch; confidence remains unbounded here because runtime validators adjust it.
@@ -178,6 +200,15 @@ export const DIMENSIONS = deepFreeze([
     schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], requiredWhenDimension: [], modelOverride: null,
       promptExtra: null },
 ]);
+
+export const FINDING_PATH_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries({
+  ...FINDING_PROP_TYPES, ...Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)),
+}).filter(([, schema]) => JSON.stringify(schema).includes('repo-path'))));
+export const FINDING_PATH_ARRAY_FIELDS = deepFreeze(Object.entries(FINDING_PATH_DESCRIPTORS)
+  .filter(([, schema]) => schema.type === 'array' && schema.items.$comment === 'repo-path').map(([key]) => key));
+
+// Identifiers must not collide; structural paths and suggestion code retain their own semantics.
+export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'delivery_group', 'file', ...Object.keys(FINDING_PATH_DESCRIPTORS), 'site_requests', 'resolved_sites', 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
 
 // Keep pipeline stamp names code-owned so disclosure can use a safe other fallback for unknown fields.
 const PIPELINE_FINDING_FIELDS = deepFreeze([
@@ -364,6 +395,7 @@ export const SUGGESTION_AGENTS = deepFreeze([AGENT_TEST_ANALYZER, 'code-simplifi
 export const COMMENT_ACCURACY_DIMENSIONS = deepFreeze(['comment-accuracy', 'documentation', 'doc-accuracy']);
 
 export const REPORT_PLACED_FIELDS = deepFreeze([
+  'sites',
   'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
   'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
   'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
