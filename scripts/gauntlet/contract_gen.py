@@ -127,7 +127,6 @@ _REGISTRY_FIELDS = (
     "waistRequired: m.REQUIRED",
     "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
     "findingTypes: m.FINDING_PROP_TYPES",
-    "pathDescriptors: m.FINDING_PATH_DESCRIPTORS",
     "resolvedSiteSchema: m.RESOLVED_SITE_SCHEMA",
     "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
     "validationReturnProperties: m.VALIDATION_RETURN_PROPERTIES",

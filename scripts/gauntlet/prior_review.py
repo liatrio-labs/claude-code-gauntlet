@@ -56,7 +56,6 @@ class PriorDelivery:
     site_keys: frozenset[str] = frozenset()
     summary_id: int | str | None = None
     summary_body: str | None = None
-    group_keys: frozenset[str] = frozenset()
 
 
 def site_key(site: Mapping[str, object], member_key: str = "") -> str:
@@ -77,15 +76,11 @@ def site_key(site: Mapping[str, object], member_key: str = "") -> str:
 _COVERAGE = re.compile(r"<!-- code-gauntlet-coverage: (\{[^\n]*\}) -->")
 
 
-def group_key(stamp: Mapping[str, object]) -> str:
-    return hashlib.sha256(str(stamp["issue_key"]).encode("utf-8")).hexdigest()[:16]
-
-
-def coverage_marker(sha: str, groups: Sequence[str], sites: Sequence[str]) -> str:
+def coverage_marker(sha: str, sites: Sequence[str]) -> str:
     return (
         "\n\n<!-- code-gauntlet-coverage: "
         + json.dumps(
-            {"sha": sha, "groups": sorted(set(groups)), "sites": sorted(set(sites))},
+            {"sha": sha, "sites": sorted(set(sites))},
             separators=(",", ":"),
         )
         + " -->"
@@ -264,7 +259,6 @@ def prior_delivery_from_entries(
     summary_posted = False
     summary_id = None
     summary_body = None
-    groups: set[str] = set()
     sites: set[str] = set()
     keys: set[str] = set()
     legacy_keys: set[str] = set()
@@ -272,16 +266,7 @@ def prior_delivery_from_entries(
         if not isinstance(entry, dict):
             continue
         body = entry.get("body")
-        signal_body = body
-        if isinstance(body, str) and _COVERAGE.search(body):
-            lines = body.splitlines()
-            while lines and (
-                not lines[-1].strip()
-                or find_finding_markers(lines[-1])
-                or _COVERAGE.fullmatch(lines[-1])
-            ):
-                lines.pop()
-            signal_body = "\n".join(lines)
+        if isinstance(body, str):
             for match in _COVERAGE.finditer(body):
                 try:
                     coverage = json.loads(match[1])
@@ -289,14 +274,13 @@ def prior_delivery_from_entries(
                     continue
                 if not isinstance(coverage, dict) or coverage.get("sha") != sha:
                     continue
-                for name, target in (("groups", groups), ("sites", sites)):
-                    values = coverage.get(name)
-                    if isinstance(values, list) and all(
-                        isinstance(key, str) and re.fullmatch(r"[0-9a-f]{16}", key)
-                        for key in values
-                    ):
-                        target.update(values)
-        signal = detect_signal(signal_body)
+                values = coverage.get("sites")
+                if isinstance(values, list) and all(
+                    isinstance(key, str) and re.fullmatch(r"[0-9a-f]{16}", key)
+                    for key in values
+                ):
+                    sites.update(values)
+        signal = detect_signal(body)
         if signal and signal.get("sha") == sha:
             summary_posted = True
             note_id = entry.get("id")
@@ -323,7 +307,6 @@ def prior_delivery_from_entries(
         frozenset(sites),
         summary_id,
         summary_body,
-        frozenset(groups),
     )
 
 

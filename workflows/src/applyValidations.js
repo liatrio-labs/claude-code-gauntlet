@@ -8,7 +8,7 @@ export const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'
 export function applyValidations(findings, validations) {
   const findingById = new Map();
   for (const finding of findings) {
-    if (finding.sites || finding.resolved_sites) finding.sites = [];
+    delete finding.sites;
     const fid = 'id' in finding ? finding.id : undefined;
     if (fid !== null && fid !== undefined) findingById.set(fid, finding);
   }

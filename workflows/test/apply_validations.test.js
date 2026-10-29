@@ -4,6 +4,18 @@ import { applyValidations } from '../src/applyValidations.js';
 import { finding } from './helpers/findings.js';
 
 const VALIDATION_CASES = [
+  { name: 'unscored retry discards previously confirmed sites', findings: [finding({ sites: [
+    { file: 'old.txt', line_start: 1, line_end: 1, anchor: 'quote', location_status: 'confirmed' },
+  ] })], validations: [], adjusted: 0, absent: 'sites' },
+  { name: 'confirmations retain only resolved canonical sites', findings: [finding({ resolved_sites: [
+    { file: 'kept.txt', line_start: 1, line_end: 1, anchor: 'quote', location_status: 'confirmed' },
+    { file: 'rejected.txt', line_start: 2, line_end: 2, anchor: 'quote', location_status: 'confirmed' },
+  ] })], validations: [{ id: 'f1', confidence: 80, site_confirmations: [
+    { file: 'kept.txt', line_start: 1, line_end: 1, confirmed: true },
+    { file: 'rejected.txt', line_start: 2, line_end: 2, confirmed: false },
+  ] }], adjusted: 1, expected: { sites: [
+    { file: 'kept.txt', line_start: 1, line_end: 1, anchor: 'quote', location_status: 'confirmed' },
+  ] } },
   { name: 'unchanged confidence still saves original', findings: [finding({ confidence: 80 })], validations: [{ id: 'f1',
     confidence: 80 }], adjusted: 1, expected: { confidence: 80, original_confidence: 80, validator_confidence: 80 } },
   { name: 'unknown reachability ignored', findings: [finding()], validations: [{ id: 'f1', confidence: 72, reachability: 'later' }],

@@ -225,6 +225,37 @@ def test_style_values(mode, expected, monkeypatch):
 
 
 GROUP_SECTIONS_CASES = {
+    "sites-obey-their-own-location-rights": (
+        {
+            "title": "Safe",
+            "body": "Body",
+            "sites": [
+                {
+                    "file": "extra.txt",
+                    "line_start": 5,
+                    "line_end": 5,
+                    "anchor": "quote",
+                    "location_status": "confirmed",
+                },
+                {
+                    "file": "unconfirmed.txt",
+                    "line_start": 6,
+                    "line_end": 6,
+                    "anchor": "quote",
+                    "location_status": "unconfirmed",
+                },
+                {
+                    "file": "invalid-range.txt",
+                    "line_start": 7,
+                    "line_end": 6,
+                    "anchor": "quote",
+                    "location_status": "confirmed",
+                },
+            ],
+        },
+        [],
+        "**💡 [LOW] Safe**\n\nBody\n\n**Additional sites:**\n- `extra.txt:5-5`",
+    ),
     "ordered-corroborators-primary-fence-only": (
         {
             "severity": "high",
@@ -669,7 +700,7 @@ FOOTER_LINES_CASES = {
 def test_footer_lines(review, expected):
     assert compose.compose_review_body(
         review, [], platform="github", findings_count=0, sha=SHA
-    ) == compose.ComposedBody(expected, 0, 0, 0, ())
+    ) == compose.ComposedBody(expected, 0, 0, 0, (), ())
 
 
 SUMMARY_FOOTER_RESERVATION_CASES = {

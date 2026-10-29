@@ -44,9 +44,12 @@ test('whole issue groups reach every artifact', async (t) => {
   const first = await runAndCapture(args);
   assert.equal(first.out.ok, true, JSON.stringify(first.out));
   const post = first.payload.postReview.findings;
-  assert.deepEqual(post.map((f) => f.id), ['CORE', 'SUGGESTION', 'CORE-LOW', 'BODY', 'BODY-SUGGESTION']);
-  assert.deepEqual(post[0].delivery_group, { issue_key: 'group:group.txt:10', lead_id: 'CORE', finding_ids: ['CORE', 'SUGGESTION', 'CORE-LOW'] });
-  assert.equal(post[0].sites.length, 4);
+  assert.deepEqual(post.map((f) => f.id), ['ANCHOR', 'OFF']);
+  const grouped = await runAndCapture(validArgs({ ...args, checkpoints: { challenge: challengeOutput({ findings: raw.findings.slice(0, 3) }) } }));
+  const groupPost = grouped.payload.postReview.findings;
+  assert.deepEqual(groupPost.map((f) => f.id), ['CORE', 'SUGGESTION', 'CORE-LOW']);
+  assert.deepEqual(groupPost[0].delivery_group, { issue_key: 'group:group.txt:10', lead_id: 'CORE', finding_ids: ['CORE', 'SUGGESTION', 'CORE-LOW'] });
+  assert.equal(groupPost[0].sites.length, 4);
   const all = first.payload.findings;
   assert.deepEqual(all.filter((f) => f.delivery_group?.lead_id === 'ANCHOR').map((f) => f.id), ['OFF', 'ANCHOR']);
   for (const id of ['SAME-A', 'SAME-B', 'STALE', 'UNRELATED']) {
@@ -60,10 +63,12 @@ test('whole issue groups reach every artifact', async (t) => {
   assert.deepEqual(resumed.payload.postReview, first.payload.postReview);
   const returned = await runAndCapture(validArgs({ ...args, persist: { returnPrimaries: true }, checkpoints: { challenge: challengeOutput({ findings: raw.findings.slice(0, 3) }) } }));
   const entries = returned.out.persistReturn.entries;
-  assert.deepEqual(deriveFromPlan(JSON.parse(entries.at(-1).text), entries[0].text).postReview.findings, post.slice(0, 3));
+  assert.deepEqual(deriveFromPlan(JSON.parse(entries.at(-1).text), entries[0].text).postReview.findings, groupPost);
   const main = await runAndCapture(validArgs({ limits: { deliveryCap: 100 }, delivery: { prIdentity: prIdentity(), tier: 'main_only' }, checkpoints: { challenge: raw } }));
   const mainIds = main.payload.postReview.findings.map((f) => f.id);
-  assert.ok(mainIds.includes('SUGGESTION') && mainIds.includes('OFF') && mainIds.includes('ANCHOR'));
+  assert.ok(mainIds.includes('CORE') && mainIds.includes('CORE-LOW') && mainIds.includes('OFF'));
+  assert.equal(mainIds.includes('SUGGESTION'), false);
+  assert.equal(mainIds.includes('ANCHOR'), false);
   assert.equal(mainIds.includes('BODY-SUGGESTION'), false);
   const uncapped = await runAndCapture(validArgs({ delivery: { prIdentity: prIdentity() }, limits: { deliveryCap: 100 }, checkpoints: { challenge: raw } }));
   assert.equal(uncapped.out.ok, true, JSON.stringify(uncapped.out));
@@ -168,7 +173,7 @@ test('final disposition survives replay and persistence', async () => {
     assert.equal(findings.find((f) => f.id === 'SECURITY').challenge_score, 0);
     assert.equal(findings.find((f) => f.id === 'SECURITY').risk_level, 4);
     assert.equal(findings.find((f) => f.id === 'NUMERIC').challenge_score, 0);
-    assert.deepEqual(resumed.payload.postReview.map((f) => f.id), ['UNKNOWN', 'BODY']);
+    assert.deepEqual(resumed.payload.postReview.map((f) => f.id), ['UNKNOWN']);
     if (!writerFails) assert.deepEqual(findings, result.payload.findings);
   }
   const returned = await runAndCapture(validArgs({ persist: { returnPrimaries: true }, checkpoints: { challenge: raw } }));
@@ -204,13 +209,13 @@ test('final disposition survives replay and persistence', async () => {
   assert.equal(body.includes('claim-0'), false);
 });
 
-test('body findings bypass the inline delivery cap', async () => {
+test('body findings rank with inline findings under the delivery cap', async () => {
   const raw = challengeOutput({ findings: [
     makeFinding('INLINE', { severity: 'low' }),
     makeFinding('BODY', { severity: 'critical', diff_validation: { in_diff: false } }),
   ] });
   const { payload } = await runAndCapture(validArgs({ limits: { deliveryCap: 1 }, checkpoints: { challenge: raw } }));
-  assert.deepEqual(payload.postReview.map((f) => f.id), ['INLINE', 'BODY']);
+  assert.deepEqual(payload.postReview.map((f) => f.id), ['BODY']);
 });
 
 test('challenge checkpoint owns upstream eliminations across resume', async () => {

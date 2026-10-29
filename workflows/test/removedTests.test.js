@@ -301,7 +301,7 @@ test('removed coverage reaches capped delivery and main_only with real Verify an
     const out = await runWith(ctx, args);
     assert.equal(out.ok, true, JSON.stringify(out));
     assert.equal(out.stats.verified, true, JSON.stringify(out.gaps));
-    assert.equal(payload.postReview.length, 7);
+    assert.equal(payload.postReview.length, 6);
     assert.ok(payload.postReview.every((finding) => finding.disposition === 'body'));
     const delivered = payload.postReview.find((finding) => finding.removed_test);
     assert.ok(delivered, `${tier} must deliver the removed coverage loss above medium bugs`);

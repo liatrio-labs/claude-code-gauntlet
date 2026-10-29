@@ -108,7 +108,6 @@ export function joinVerifyDeltas(slice, deltas) {
     const joined = clearLocation(pinNumericFields(f));
     delete joined.diff_validation;
     delete joined.sites;
-    delete joined.resolved_sites;
     if (Array.isArray(f.sites)) joined.site_requests = projectVerifySliceFinding(f).sites;
     for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
     if (canonicalRange(joined) && (Object.hasOwn(f, 'line') || Object.hasOwn(f, 'end_line'))) {

@@ -102,6 +102,7 @@ class ComposedBody:
     omitted: int
     folded_bytes: int
     omitted_entries: tuple[OmittedEntry, ...]
+    shown_entries: tuple[SkippedEntry, ...]
 
 
 class ReportShapeError(Exception):
@@ -482,7 +483,7 @@ def compose_review_body(
     )
     body = _compose_fragments(review_body, section, footer)
     if utf8_len(body) <= limits.bytes:
-        return ComposedBody(body, n, 0, 0, ())
+        return ComposedBody(body, n, 0, 0, (), tuple(skipped))
 
     footer = build_footer(findings_count, sha)
     fixed = utf8_len(BRAND_SUMMARY_HEADER) + utf8_len(footer)
@@ -504,6 +505,7 @@ def compose_review_body(
             n,
             folded_bytes,
             _omitted_entries(skipped),
+            (),
         )
 
     remaining = allowance - (utf8_len(review_body) if review_body else 0)
@@ -531,6 +533,7 @@ def compose_review_body(
         len(omitted_entries),
         0,
         _omitted_entries(omitted_entries),
+        tuple(shown_entries),
     )
 
 

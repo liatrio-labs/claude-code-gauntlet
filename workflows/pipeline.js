@@ -1137,7 +1137,6 @@ function joinVerifyDeltas(slice, deltas) {
     const joined = clearLocation(pinNumericFields(f));
     delete joined.diff_validation;
     delete joined.sites;
-    delete joined.resolved_sites;
     if (Array.isArray(f.sites)) joined.site_requests = projectVerifySliceFinding(f).sites;
     for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
     if (canonicalRange(joined) && (Object.hasOwn(f, 'line') || Object.hasOwn(f, 'end_line'))) {
@@ -1924,7 +1923,7 @@ const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
 function applyValidations(findings, validations) {
   const findingById = new Map();
   for (const finding of findings) {
-    if (finding.sites || finding.resolved_sites) finding.sites = [];
+    delete finding.sites;
     const fid = 'id' in finding ? finding.id : undefined;
     if (fid !== null && fid !== undefined) findingById.set(fid, finding);
   }
@@ -3822,7 +3821,7 @@ function consolidateForReport(findings) {
     if (!corroborators.length) return primary;
     return {
       ...primary,
-      sites: [primary, ...corroborators].flatMap((f) => (f.sites || []).filter((site) => deliveryAllows({ ...site, disposition: f.disposition }, 'sourceLink'))),
+      sites: [primary, ...corroborators].flatMap((f) => f.sites || []),
       corroborations: corroborators.map((c) => ({
         agent: c.agent,
         dimension: c.dimension,
@@ -4755,15 +4754,15 @@ async function challengeStage(ctx, input) {
   };
 }
 function selectDelivery(survivors, cap, tier) {
-  const pool = deliveryGroups(survivors).filter(({ primary, corroborators }) => tier !== 'main_only'
-    || [primary, ...corroborators].some((f) => (f.report_tag ?? f.report_destination) === 'main'));
-  const inline = pool.filter(({ primary }) => primary.disposition !== 'body');
-  const rankable = coerceReportFindings(inline.map((group) => group.primary));
-  const originalByRankable = new Map(rankable.map((finding, index) => [finding, inline[index]]));
+  const members = tier === 'main_only'
+    ? (survivors || []).filter((f) => (f.report_tag ?? f.report_destination) === 'main')
+    : (survivors || []);
+  const pool = deliveryGroups(members);
+  const rankable = pool.map(({ primary, corroborators }) => rankFindings(coerceReportFindings([primary, ...corroborators]))[0]);
+  const originalByRankable = new Map(rankable.map((finding, index) => [finding, pool[index]]));
   let ranked = rankFindings(rankable).map((finding) => originalByRankable.get(finding));
   if (cap !== undefined && cap !== null) ranked = ranked.slice(0, Math.max(0, cap));
-  return [...ranked, ...pool.filter(({ primary }) => primary.disposition === 'body' && deliveryAllows(primary, 'body'))]
-    .flatMap(({ primary, corroborators }) => [primary, ...corroborators]);
+  return ranked.flatMap(({ primary, corroborators }) => [primary, ...corroborators]);
 }
 // --- mergeFindings.js ---
 const KNOWN_DIMENSIONS = new Set(DIMENSIONS.map((d) => d.dimension));

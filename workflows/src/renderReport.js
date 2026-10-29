@@ -127,7 +127,7 @@ function consolidateForReport(findings) {
     if (!corroborators.length) return primary;
     return {
       ...primary,
-      sites: [primary, ...corroborators].flatMap((f) => (f.sites || []).filter((site) => deliveryAllows({ ...site, disposition: f.disposition }, 'sourceLink'))),
+      sites: [primary, ...corroborators].flatMap((f) => f.sites || []),
       corroborations: corroborators.map((c) => ({
         agent: c.agent,
         dimension: c.dimension,
