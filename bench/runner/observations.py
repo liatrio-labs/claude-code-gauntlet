@@ -6,7 +6,7 @@ import uuid
 from collections import Counter
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, get_args
 
 from bench.runner.contracts import LedgerRow, ScoreRef, exclusive_json
 from bench.runner.decode import decode
@@ -55,6 +55,12 @@ Stage = Literal[
     "select",
     "deliver",
 ]
+OPTIONAL_STAGES: frozenset[Stage] = frozenset(("cite", "dispose"))
+REQUIRED_STAGES = tuple(
+    stage
+    for stage in get_args(Stage)
+    if stage not in OPTIONAL_STAGES and stage != "deliver"
+)
 LossStage = Literal[
     "not_found",
     "verify",
@@ -126,10 +132,33 @@ class SurfaceItemWire(TypedDict):
     discovery_dimensions: list[Dimension]
 
 
-class SurfaceViewsWire(TypedDict):
+class AvailableSurfaceViewsWire(TypedDict):
     schema_version: Literal[1]
-    all_surface: Literal["surface-all/view.json"] | None
-    unavailable_reason: str | None
+    all_surface: Literal["surface-all/view.json"]
+    unavailable_reason: None
+
+
+class UnavailableSurfaceViewsWire(TypedDict):
+    schema_version: Literal[1]
+    all_surface: None
+    unavailable_reason: str
+
+
+SurfaceViewsWire = AvailableSurfaceViewsWire | UnavailableSurfaceViewsWire
+
+
+def surface_views_receipt(view, reason) -> SurfaceViewsWire:
+    if view is not None:
+        return {
+            "schema_version": 1,
+            "all_surface": "surface-all/view.json",
+            "unavailable_reason": None,
+        }
+    return {
+        "schema_version": 1,
+        "all_surface": None,
+        "unavailable_reason": reason or "original body evidence unavailable",
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,19 +196,30 @@ class Candidate:
     surface: Surface = "inline"
     issue_id: str | None = None
 
+    def __post_init__(self):
+        if self.surface == "body" and not self.issue_id:
+            raise ValueError("body candidate requires explicit issue identity")
+
+    def wire_fields(self, *, identity=False):
+        names = [f.name for f in fields(self)]
+        if identity:
+            names = [
+                "candidate_id",
+                "pr_url",
+                "attempt_id",
+                "index",
+                "text",
+                "path",
+                "line",
+            ]
+            if self.surface != "inline":
+                names.append("surface")
+        elif self.surface == "inline" and self.issue_id is None:
+            names = [name for name in names if name not in ("surface", "issue_id")]
+        return {name: getattr(self, name) for name in names}
+
     def identity(self):
-        identity = {
-            "candidate_id": self.candidate_id,
-            "pr_url": self.pr_url,
-            "attempt_id": self.attempt_id,
-            "index": self.index,
-            "text": self.text,
-            "path": self.path,
-            "line": self.line,
-        }
-        if self.surface != "inline":
-            identity["surface"] = self.surface
-        return identity
+        return self.wire_fields(identity=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,16 +335,13 @@ class LegacyScoreIdentity:
 def wire_record(value):
     """Serialize dataclasses and nested containers to JSON-compatible values."""
     if is_dataclass(value):
-        return {
-            f.name: wire_record(getattr(value, f.name))
-            for f in fields(value)
-            if not (
-                isinstance(value, Candidate)
-                and value.surface == "inline"
-                and value.issue_id is None
-                and f.name in ("surface", "issue_id")
-            )
-        }
+        serializer = getattr(value, "wire_fields", None)
+        record = (
+            serializer()
+            if serializer
+            else {f.name: getattr(value, f.name) for f in fields(value)}
+        )
+        return wire_record(record)
     if isinstance(value, dict):
         return {k: wire_record(v) for k, v in value.items()}
     if isinstance(value, (tuple, list)):
@@ -339,28 +376,26 @@ def candidate_records(
                 line = None
             if not isinstance(c["text"], str) or not c["text"]:
                 raise ValueError("candidate text must be a nonempty string")
+            record = Candidate(
+                "",
+                url,
+                attempts[url],
+                index,
+                c["text"],
+                c.get("path"),
+                line,
+                source_trace_ids=tuple(c.get("source_trace_ids", ())),
+                discovery_dimensions=tuple(c.get("discovery_dimensions", ("unknown",))),
+                provenance_status=c.get("provenance_status", "legacy_unknown"),
+                surface=c.get("surface", "inline"),
+                issue_id=c.get("issue_id"),
+            )
+            identity = record.identity()
             identity = digest(
                 [url, attempts[url], "delivered", index, c["text"], c.get("path"), line]
-                + (["body"] if c.get("surface", "inline") == "body" else [])
+                + ([identity["surface"]] if "surface" in identity else [])
             )
-            records.append(
-                Candidate(
-                    identity,
-                    url,
-                    attempts[url],
-                    index,
-                    c["text"],
-                    c.get("path"),
-                    line,
-                    source_trace_ids=tuple(c.get("source_trace_ids", ())),
-                    discovery_dimensions=tuple(
-                        c.get("discovery_dimensions", ("unknown",))
-                    ),
-                    provenance_status=c.get("provenance_status", "legacy_unknown"),
-                    surface=c.get("surface", "inline"),
-                    issue_id=c.get("issue_id"),
-                )
-            )
+            records.append(replace(record, candidate_id=identity))
     return tuple(records)
 
 
@@ -510,8 +545,10 @@ class SurfaceScoreView:
 
 def surface_candidates(mapped):
     """One explicit issue credit, preferring its inline occurrence."""
+    mapped = tuple(mapped)
     seen, result = set(), []
-    for c in sorted(mapped, key=lambda c: c.surface != "inline"):
+    pr_order = {url: i for i, url in enumerate(dict.fromkeys(c.pr_url for c in mapped))}
+    for c in sorted(mapped, key=lambda c: (pr_order[c.pr_url], c.surface != "inline")):
         if c.issue_id is None:
             raise ValueError("all-surface scoring requires explicit issue identity")
         key = (c.pr_url, c.issue_id)
@@ -678,13 +715,7 @@ def write_packet(
     exclusive_json(pending / "scores.json", wire_record(stored))
     if surface_view is not None:
         exclusive_json(pending / "surface-all/view.json", wire_record(surface_view))
-    receipt: SurfaceViewsWire = dict(
-        schema_version=1,
-        all_surface="surface-all/view.json" if surface_view is not None else None,
-        unavailable_reason=None
-        if surface_view is not None
-        else surface_unavailable_reason,
-    )
+    receipt = surface_views_receipt(surface_view, surface_unavailable_reason)
     exclusive_json(pending / "surface-views.json", receipt)
     with (pending / "stages.jsonl").open("xb") as stream:
         for row in stage_observations:
@@ -814,8 +845,6 @@ def _load_packet(path, epoch=None, *, allow_pending=False):
         )
         target = surface_receipt["all_surface"]
         if target is not None:
-            if surface_receipt["unavailable_reason"] is not None:
-                raise ValueError("invalid surface receipt reference")
             surface_view = decode(SurfaceScoreView, read_json(confined(path, target)))
             validate_surface_view(
                 path, data.observations, request, surface_view, failures

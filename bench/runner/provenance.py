@@ -12,6 +12,7 @@ from typing import Literal, TypedDict, cast, get_args
 from gauntlet.delivery import compose, gate, post
 from gauntlet.delivery.input import ReviewInput
 from gauntlet.diff import parse_diff, posting_policy
+from gauntlet.marker import SHA_RE
 
 from bench.adapter.adapt import _iter_comments
 from bench.runner.decode import decode
@@ -241,6 +242,67 @@ class DeliveryProvenance:
     issue_id: str | None = None
 
 
+def _reconstruct_body_summary(
+    findings, skipped_groups, inline_count, platform, review_body, sha
+) -> DeliveryReconstruction:
+    # Calling plan_summary without a captured SHA would consult today's HEAD.
+    if (
+        not isinstance(review_body, str)
+        or not isinstance(sha, str)
+        or not SHA_RE.fullmatch(sha)
+    ):
+        raise ValueError(
+            "body reconstruction requires original review body and captured SHA"
+        )
+    finalized = post.plan_summary(
+        cast(
+            ReviewInput,
+            {"findings": findings, "review_body": review_body, "sha": sha},
+        ),
+        skipped_groups,
+        platform=platform,
+        inline_count=inline_count if platform == "github" else None,
+    )
+    if finalized.budget_error:
+        raise ValueError(finalized.budget_error)
+    summary = finalized.summary.body
+    rendered, omissions = [], []
+    if skipped_groups:
+        frame = compose._skipped_frame(
+            sum(len(g) for g in skipped_groups),
+            finalized.summary.shown,
+            inline_count if platform == "github" else None,
+        )
+        if summary.count(frame) != 1:
+            raise ValueError("ambiguous body section")
+        cursor = summary.index(frame) + len(frame)
+        shown = 0
+        for group in skipped_groups:
+            fragment = "".join(
+                compose._skipped_piece(e.filepath, e.finding) for e in group
+            )
+            members = tuple(e.finding for e in group)
+            if summary.startswith(fragment, cursor):
+                rendered.append(
+                    RenderedDelivery(
+                        fragment, group[0].filepath, group[0].line, members, "body"
+                    )
+                )
+                cursor += len(fragment)
+                shown += len(group)
+            else:
+                omissions.append(
+                    DeliveryOmission(
+                        tuple(f.get("trace_id") for f in members),
+                        "body_budget",
+                        "whole body group omitted by summary budget",
+                    )
+                )
+        if shown != finalized.summary.shown:
+            raise ValueError("body fragment membership differs from composer")
+    return DeliveryReconstruction(tuple(rendered), tuple(omissions), summary)
+
+
 def reconstruct_delivery(
     selected_findings,
     diff_text,
@@ -273,9 +335,10 @@ def reconstruct_delivery(
     rendered = []
     omissions = []
     skipped_groups = []
+    wants_body = review_body is not None and sha is not None
     for group in plan.groups:
         if isinstance(group, post.DegradedGroup):
-            if review_body is not None and sha is not None:
+            if wants_body:
                 skipped_groups.append(
                     tuple(
                         compose.SkippedEntry(
@@ -333,65 +396,13 @@ def reconstruct_delivery(
             )
         )
     summary = None
-    if review_body is not None and sha is not None:
-        # Calling plan_summary without a captured SHA would consult today's HEAD.
-        if (
-            not isinstance(review_body, str)
-            or not isinstance(sha, str)
-            or not post.SHA_RE.fullmatch(sha)
-        ):
-            raise ValueError(
-                "body reconstruction requires original review body and captured SHA"
-            )
-        finalized = post.plan_summary(
-            cast(
-                ReviewInput,
-                {"findings": findings, "review_body": review_body, "sha": sha},
-            ),
-            skipped_groups,
-            platform=platform,
-            inline_count=len(rendered) if platform == "github" else None,
+    if wants_body:
+        body = _reconstruct_body_summary(
+            findings, skipped_groups, len(rendered), platform, review_body, sha
         )
-        if finalized.budget_error:
-            raise ValueError(finalized.budget_error)
-        summary = finalized.summary.body
-        if skipped_groups:
-            frame = compose._skipped_frame(
-                sum(len(g) for g in skipped_groups),
-                finalized.summary.shown,
-                len(rendered) if platform == "github" else None,
-            )
-            if summary.count(frame) != 1:
-                raise ValueError("ambiguous body section")
-            cursor = summary.index(frame) + len(frame)
-            shown = 0
-            for group in skipped_groups:
-                fragment = "".join(
-                    compose._skipped_piece(e.filepath, e.finding) for e in group
-                )
-                members = tuple(e.finding for e in group)
-                if summary.startswith(fragment, cursor):
-                    rendered.append(
-                        RenderedDelivery(
-                            fragment,
-                            group[0].filepath,
-                            group[0].line,
-                            members,
-                            "body",
-                        )
-                    )
-                    cursor += len(fragment)
-                    shown += len(group)
-                else:
-                    omissions.append(
-                        DeliveryOmission(
-                            tuple(f.get("trace_id") for f in members),
-                            "body_budget",
-                            "whole body group omitted by summary budget",
-                        )
-                    )
-            if shown != finalized.summary.shown:
-                raise ValueError("body fragment membership differs from composer")
+        rendered.extend(body.groups)
+        omissions.extend(body.omissions)
+        summary = body.summary
     return DeliveryReconstruction(tuple(rendered), tuple(omissions), summary)
 
 
@@ -481,13 +492,13 @@ def trace_delivery(
 ):
     from bench.runner.stages import bind_delivery_trace
 
-    body_inputs = (
-        {k: selected.get(k) for k in ("review_body", "sha")}
-        if include_body and isinstance(selected, dict)
-        else {}
-    )
-    if include_body and any(body_inputs.get(k) is None for k in ("review_body", "sha")):
-        raise ValueError("original body evidence unavailable")
+    body_inputs = {}
+    if include_body:
+        if not isinstance(selected, dict):
+            raise ValueError("original body evidence unavailable")
+        body_inputs = {k: selected.get(k) for k in ("review_body", "sha")}
+        if any(value is None for value in body_inputs.values()):
+            raise ValueError("original body evidence unavailable")
     selected = selected.get("findings", []) if isinstance(selected, dict) else selected
     versions = {v.version_id: v for v in trace.versions}
     expected = [

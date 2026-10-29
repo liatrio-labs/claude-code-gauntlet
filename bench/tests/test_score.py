@@ -32,6 +32,124 @@ def prepare_surface_case(score_case, tmp_path):
     return review
 
 
+def test_surface_views_preserve_candidate_order_across_prs(score_case, tmp_path):
+    prepare_surface_case(score_case, tmp_path)
+    epoch = score.load_epoch()
+    second_url = next(b.pr_url for b in epoch.bugs if b.pr_url != score_case.url)
+    second_pr = score_case.run / pr_dir_name({"url": second_url})
+    second_pr.mkdir()
+    second_tmp = tmp_path / "second"
+    second_tmp.mkdir()
+    prepare_surface_case(
+        replace(
+            score_case, url=second_url, payload=second_pr / "post-review-payload.json"
+        ),
+        second_tmp,
+    )
+    score._write_json(
+        score_case.run / "state/second.json", {"url": second_url, "status": "ok"}
+    )
+    score._write_json(
+        score_case.run / "run.json",
+        {"run_id": "run", "urls": [score_case.url, second_url]},
+    )
+    result = score_case.execute(surface_views=True)
+    loaded = observations.load_packet(Path(result["ledger_row"]["packet_path"]))
+    assert loaded.surface_view is not None
+    assert [(c.pr_url, c.surface) for c in loaded.surface_view.candidates] == [
+        (url, surface)
+        for url in sorted((score_case.url, second_url))
+        for surface in ("inline", "body", "body")
+    ]
+    assert result["surface_views"]["all"]["metrics"]["n_prs"] == 2
+
+
+@pytest.mark.parametrize(
+    "kind", ["absolute", "traversal", "destination_symlink", "surface_symlink"]
+)
+def test_surface_source_copy_rejects_unsafe_paths(tmp_path, kind):
+    epoch = score.load_epoch()
+    url = epoch.bugs[0].pr_url
+    run = tmp_path / "run"
+    packet = run / "packet"
+    pr = packet / "sources/pr"
+    head = pr / "worktree/source.py"
+    head.parent.mkdir(parents=True)
+    head.write_text("source context", encoding="utf-8")
+    (head.parent / "nested").mkdir()
+    path = str(head) if kind == "absolute" else "nested/../source.py"
+    message = "surface candidate path must be relative without traversal"
+    if kind in ("destination_symlink", "surface_symlink"):
+        path = "source.py"
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        surface = packet / "surface-all"
+        if kind == "surface_symlink":
+            surface.symlink_to(outside, target_is_directory=True)
+        else:
+            surface.mkdir()
+            (surface / "sources").symlink_to(outside, target_is_directory=True)
+        message = "surface destination escapes packet root"
+    mapped = observations.candidate_records(
+        {
+            url: {
+                score.TOOL: [
+                    dict(text="body", path=path, surface="body", issue_id="issue")
+                ]
+            }
+        },
+        {url: "attempt"},
+    )
+    request = observations.ScoreRequest(
+        score.ScoreRef("run", epoch.epoch_id, "score"),
+        epoch,
+        packet,
+        (url,),
+        ((url, "attempt"),),
+        (),
+        score.TOOL,
+        observations.Evaluator(
+            epoch.judge_pin, epoch.adjudicator_pin, epoch.scorer_tree, "fixed", 0.0
+        ),
+    )
+    with pytest.raises(ValueError, match=message):
+        score.score_surface_view(
+            request,
+            mapped,
+            (),
+            {url: {"pr_dir": str(pr)}},
+            (),
+            None,
+            {},
+            lambda *args: pytest.fail("unsafe source reached scoring"),
+            lambda *args: pytest.fail("unsafe source reached adjudication"),
+            run,
+        )
+    assert head.read_text(encoding="utf-8") == "source context"
+    if kind in ("destination_symlink", "surface_symlink"):
+        assert list(outside.iterdir()) == []
+    else:
+        assert not (packet / "surface-all").exists()
+
+
+def test_surface_failure_without_message_publishes_readable_receipt(
+    score_case, tmp_path, monkeypatch
+):
+    prepare_surface_case(score_case, tmp_path)
+    original = score.provenance.trace_delivery
+
+    def fail_body(*args, **kwargs):
+        if kwargs.get("include_body"):
+            raise ValueError()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(score.provenance, "trace_delivery", fail_body)
+    result = score_case.execute(surface_views=True)
+    loaded = observations.load_packet(Path(result["ledger_row"]["packet_path"]))
+    assert loaded.surface_view is None
+    assert read_json(loaded.root / "surface-views.json")["unavailable_reason"]
+
+
 @pytest.mark.parametrize("body_evidence", ["available", "missing", "tampered"])
 def test_scoring_preserves_inline_and_all_surface_receipts(
     score_case, tmp_path, monkeypatch, body_evidence
@@ -139,7 +257,7 @@ def test_scoring_preserves_inline_and_all_surface_receipts(
     assert result["surface_views"]["all"]["metrics"]["n_prs"] == 2
     assert len({b.bug_id for b in view.observations if b.outcome == "matched"}) == 3
     repeated = (*view.candidates, replace(view.candidates[0], surface="body"))
-    assert observations.surface_candidates(repeated) == view.candidates
+    assert observations.surface_candidates(iter(repeated)) == view.candidates
     assert len(view.contexts) == len(view.adjudications) == len(adjudicator_calls) == 1
     assert view.costs["adjudicator"] == pytest.approx(0.00075)
     assert loaded.costs["adjudicator"] == 0

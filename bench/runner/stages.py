@@ -11,6 +11,8 @@ from bench.runner.contracts import ScoreRef, artifact_allowed, exclusive_json
 from bench.runner.decode import decode
 from bench.runner.epochs import confined, file_hash, in_profile, read_json
 from bench.runner.observations import (
+    OPTIONAL_STAGES,
+    REQUIRED_STAGES,
     Coverage,
     Decision,
     Dimension,
@@ -157,30 +159,25 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
                 ),
                 "fold requires constituent identities and coalescence",
             )
-    legacy = (
-        "discover",
-        "merge",
-        "verify",
-        "validate",
-        "filter",
-        "challenge",
-        "holdback",
-        "select",
-    )
     actual = tuple(s.stage for s in trace.snapshots)
-    required = tuple(s for s in actual if s not in ("cite", "dispose"))
-    _require(required == legacy[: len(required)], "physical stage order")
+    required = tuple(s for s in actual if s not in OPTIONAL_STAGES)
+    _require(required == REQUIRED_STAGES[: len(required)], "physical stage order")
     order = get_args(Stage)
     _require(
         len(set(actual)) == len(actual)
         and list(actual) == sorted(actual, key=order.index),
         "physical stage order",
     )
-    _require(
-        not set(actual) & {"cite", "dispose"} or "challenge" in actual,
-        "optional stage before required prefix",
-    )
-    _require(not trace.complete or required == legacy, "complete stages")
+    for stage in set(actual) & OPTIONAL_STAGES:
+        _require(
+            all(
+                s in actual
+                for s in order[: order.index(stage)]
+                if s not in OPTIONAL_STAGES
+            ),
+            "optional stage before required prefix",
+        )
+    _require(not trace.complete or required == REQUIRED_STAGES, "complete stages")
     return trace
 
 
@@ -374,7 +371,7 @@ def _bug_stage_rows(bug, trace, results):
     loss = _trace_loss(bug, trace, versions, trace_ids, judged)
     rows = []
     for stage in get_args(Stage):
-        if stage in ("cite", "dispose") and stage not in snapshots:
+        if stage in OPTIONAL_STAGES and stage not in snapshots:
             continue
         snapshot = snapshots.get(stage)
         surviving = tuple(
@@ -448,6 +445,8 @@ def loss_funnel(observations, *, population, score_refs=None) -> FunnelReport:
     for rows in cells.values():
         for stage in get_args(Stage):
             row = rows.get(stage)
+            if stage in OPTIONAL_STAGES and row is None:
+                continue
             if row is None or row.survives is None:
                 unjudged[stage] += 1
             elif row.survives:
@@ -471,7 +470,8 @@ def loss_funnel(observations, *, population, score_refs=None) -> FunnelReport:
     missing = denominator - len(cells)
     unavailable += missing
     for stage in unjudged:
-        unjudged[stage] += missing
+        if stage not in OPTIONAL_STAGES:
+            unjudged[stage] += missing
     _require(
         delivered + sum(losses.values()) + unavailable == denominator,
         "funnel partition",

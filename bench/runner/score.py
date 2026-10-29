@@ -45,6 +45,14 @@ BENCH_DIR = REPO_ROOT / "bench"
 LEDGER_PATH = BENCH_DIR / "experiments.jsonl"
 
 TOOL = "deep-review"
+SURFACE_PASS_ERRORS = (
+    RuntimeError,
+    ValueError,
+    KeyError,
+    TypeError,
+    OSError,
+    subprocess.SubprocessError,
+)
 
 _SEVERITY_RE = re.compile(r"\[(CRITICAL|HIGH|MEDIUM|LOW)\]", re.IGNORECASE)
 _PULL_RE = re.compile(r"github\.com/([^/]+)/([^/]+)/pull/(\d+)")
@@ -441,6 +449,43 @@ def _capture_adjudications(
     return tuple(verdicts), tuple(contexts), total_cost(usage)
 
 
+def _collect_surface_candidates(
+    urls,
+    failures,
+    delivery_bindings,
+    trace_errors,
+    original_traces,
+    per_pr,
+    run_dir,
+    replay_root,
+    attempts,
+):
+    candidates = []
+    for url in urls:
+        if url in failures:
+            continue
+        binding = delivery_bindings.get(url)
+        if not binding or url in trace_errors:
+            return candidates, "original body or trace evidence unavailable"
+        try:
+            info = per_pr[url]
+            _, mapped = provenance.trace_delivery(
+                original_traces[url][1],
+                read_json(
+                    run_dir / Path(binding["selected_path"]).relative_to("sources")
+                ),
+                info["payload"],
+                (Path(info["pr_dir"]) / "diff.patch").read_text(encoding="utf-8"),
+                treatment_root=replay_root,
+                include_body=True,
+            )
+            raw = {url: {TOOL: [{**asdict(m), "source": "extracted"} for m in mapped]}}
+            candidates.extend(observations.candidate_records(raw, attempts))
+        except SURFACE_PASS_ERRORS as exc:
+            return candidates, str(exc) or "original body or trace evidence unavailable"
+    return candidates, None
+
+
 def score_surface_view(
     request,
     mapped,
@@ -474,11 +519,16 @@ def score_surface_view(
         relative = Path(info["pr_dir"]).relative_to(request.work_dir / "sources")
         surface_prs[url] = {**info, "pr_dir": str(root / "sources" / relative)}
         paths = [relative / "diff.patch"]
-        paths.extend(
-            relative / "worktree" / c.path
-            for c in candidates
-            if c.pr_url == url and c.path and artifact_allowed(Path(c.path))
-        )
+        for c in candidates:
+            if c.pr_url != url or not c.path:
+                continue
+            candidate_path = Path(c.path)
+            if candidate_path.is_absolute() or ".." in candidate_path.parts:
+                raise ValueError(
+                    "surface candidate path must be relative without traversal"
+                )
+            if artifact_allowed(candidate_path):
+                paths.append(relative / "worktree" / candidate_path)
         for name in dict.fromkeys(paths):
             snapshot = request.work_dir / "sources" / name
             origin = request.work_dir / "sources" if snapshot.is_file() else source_run
@@ -492,6 +542,8 @@ def score_surface_view(
             if source.is_file():
                 expected = file_hash(source)
                 dest = root / "sources" / name
+                if not dest.resolve().is_relative_to(request.work_dir.resolve()):
+                    raise ValueError("surface destination escapes packet root")
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 copy_exclusive(source, dest)
                 if file_hash(dest) != expected:
@@ -831,38 +883,19 @@ def score_run(
         evaluator,
     )
     all_candidates = []
-    surface_unavailable = None if surface_views else "surface views not requested"
-    for url in urls if surface_views else ():
-        if url in failures:
-            continue
-        binding = delivery_bindings.get(url)
-        if not binding or url in trace_errors:
-            surface_unavailable = "original body or trace evidence unavailable"
-            break
-        try:
-            info = per_pr[url]
-            _, mapped = provenance.trace_delivery(
-                original_traces[url][1],
-                read_json(
-                    run_dir / Path(binding["selected_path"]).relative_to("sources")
-                ),
-                info["payload"],
-                (Path(info["pr_dir"]) / "diff.patch").read_text(encoding="utf-8"),
-                treatment_root=replay_root,
-                include_body=True,
-            )
-            raw = {url: {TOOL: [{**asdict(m), "source": "extracted"} for m in mapped]}}
-            all_candidates.extend(observations.candidate_records(raw, attempts))
-        except (
-            RuntimeError,
-            ValueError,
-            KeyError,
-            TypeError,
-            OSError,
-            subprocess.SubprocessError,
-        ) as exc:
-            surface_unavailable = str(exc)
-            break
+    surface_unavailable = "surface views not requested"
+    if surface_views:
+        all_candidates, surface_unavailable = _collect_surface_candidates(
+            urls,
+            failures,
+            delivery_bindings,
+            trace_errors,
+            original_traces,
+            per_pr,
+            run_dir,
+            replay_root,
+            attempts,
+        )
     # Copy selected inputs before dispatch so every score can be audited independently.
     for name in source_hashes:
         dest = pending / "sources" / name
@@ -920,14 +953,7 @@ def score_run(
                 adjudicator or _adjudicate,
                 run_dir,
             )
-        except (
-            RuntimeError,
-            ValueError,
-            KeyError,
-            TypeError,
-            OSError,
-            subprocess.SubprocessError,
-        ) as exc:
+        except SURFACE_PASS_ERRORS as exc:
             surface_unavailable = "all-surface scoring failed: " + str(exc)
     attribution_cost = None
     stage_evaluations = stage_groups = {}

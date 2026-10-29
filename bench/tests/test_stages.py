@@ -4,6 +4,7 @@ import json
 import subprocess
 from dataclasses import asdict, replace
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -14,6 +15,34 @@ from bench.runner.epochs import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("optional", [(), ("cite",), ("cite", "dispose")])
+def test_funnel_coverage_ignores_absent_optional_stages(optional):
+    ref = stages.ScoreRef("run", "epoch", "score")
+    rows = tuple(
+        stages.StageBugObservation(
+            ref, "attempt", "url", bug, stage, True, (), None, "complete"
+        )
+        for bug in ("legacy", "current")
+        for stage in get_args(stages.Stage)
+        if stage not in ("cite", "dispose") or (bug == "current" and stage in optional)
+    )
+    funnel = stages.loss_funnel(rows, population={"legacy", "current"})
+    assert funnel.coverage == "complete"
+    assert funnel.delivered_hits == funnel.denominator == 2
+    assert not any(dict(funnel.unjudged_counts).values())
+    for stage in ("cite", "dispose"):
+        assert dict(funnel.survivor_counts).get(stage, 0) == int(stage in optional)
+        assert dict(funnel.cap_hit_counts).get(stage, 0) == 0
+    if optional:
+        partial = tuple(
+            replace(row, survives=None) if row.stage == optional[0] else row
+            for row in rows
+        )
+        funnel = stages.loss_funnel(partial, population={"legacy", "current"})
+        assert funnel.coverage == "partial"
+        assert dict(funnel.unjudged_counts)[optional[0]] == 1
 
 
 def emit_trace(tmp_path, mode="return"):
