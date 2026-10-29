@@ -1217,6 +1217,50 @@ def test_comparison_diagnostics_keep_full_denominators(case, tmp_path):
     assert unknown.surfaces["inline"]["values"]["issues"] is None
     assert unknown.surfaces["inline"]["values"]["producer_leakage"] is None
     assert unknown.surfaces["inline"]["values"]["producer_dimensions"]["bug"] is None
+    body_peer = replace(
+        body,
+        candidate_id="body-peer",
+        index=2,
+        source_trace_ids=(tids[1],),
+        issue_id="body-peer",
+    )
+    multi_match_bugs = tuple(
+        replace(
+            b,
+            matches=tuple(
+                o.Match(cid, 1, None, "direct")
+                for cid in (
+                    (inline.candidate_id, body.candidate_id)
+                    if b.bug_id == bugs[0].bug_id
+                    else (body.candidate_id, body_peer.candidate_id)
+                )
+            ),
+        )
+        if b.bug_id in (bugs[0].bug_id, bugs[1].bug_id)
+        else b
+        for b in view_bugs
+    )
+    view = replace(
+        view,
+        candidates=(
+            replace(inline, source_trace_ids=(tids[0],), discovery_dimensions=("bug",)),
+            body,
+            body_peer,
+        ),
+        observations=multi_match_bugs,
+    )
+    packets[ref] = replace(packet, surface_view=view)
+    write(root / "surface-all/view.json", asdict(view))
+    seal()
+    multi_match_row = next(
+        row
+        for row in paired(spec, packets).delivery_diagnostics["candidate"]
+        if row.score_ref == ref and row.pr_url == url
+    )
+    sole = multi_match_row.surfaces["all"]["values"]["observed_sole_match_bug_ids"]
+    assert bugs[0].bug_id not in sole["bug"]
+    assert bugs[0].bug_id not in sole["test_coverage"]
+    assert bugs[1].bug_id in sole["test_coverage"]
     for receipt in (None, dict(all_surface=None, unavailable_reason="not requested")):
         if receipt is None:
             (root / "surface-views.json").unlink()

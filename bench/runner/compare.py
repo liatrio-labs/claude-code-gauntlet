@@ -512,6 +512,35 @@ def _observed_sole_matches(view, url, population):
     return {s: sorted(ids) if ids is not None else None for s, ids in result.items()}
 
 
+def _record_coalescence(trace):
+    if not trace.complete or not all(
+        s.executed and s.coverage == "complete" for s in trace.snapshots
+    ):
+        return None
+    versions = {v.version_id: v.trace_id for v in trace.versions}
+    eligible = {versions[v] for v in trace.snapshots[0].finding_version_ids}
+    decisions = {
+        (d.trace_id, d.related_trace_ids)
+        for s in trace.snapshots
+        for d in s.decisions
+        if d.decision == "coalesced"
+    }
+    groups = []
+    for source, related in sorted(decisions):
+        group = {source, *related}
+        overlapping = [g for g in groups if g & group]
+        group.update(t for g in overlapping for t in g)
+        groups = [g for g in groups if g not in overlapping] + [group]
+    if all(related and {source, *related} <= eligible for source, related in decisions):
+        return dict(
+            coalesced_source_occurrences=len({d[0] for d in decisions}),
+            eligible_source_occurrences=len(eligible),
+            groups=len(groups),
+            rate=len({d[0] for d in decisions}) / len(eligible) if eligible else None,
+        )
+    return None
+
+
 def delivery_diagnostics(packet, population):
     """One row per selected review; consumers pool over rows, including empty ones."""
     inventory = read_json(packet.root / "complete.json")["files"]
@@ -590,35 +619,7 @@ def delivery_diagnostics(packet, population):
         if url in traces:
             path, trace = traces[url]
             trace_evidence += (path.relative_to(packet.root).as_posix(),)
-            if trace.complete and all(
-                s.executed and s.coverage == "complete" for s in trace.snapshots
-            ):
-                versions = {v.version_id: v.trace_id for v in trace.versions}
-                eligible = {versions[v] for v in trace.snapshots[0].finding_version_ids}
-                decisions = {
-                    (d.trace_id, d.related_trace_ids)
-                    for s in trace.snapshots
-                    for d in s.decisions
-                    if d.decision == "coalesced"
-                }
-                groups = []
-                for source, related in sorted(decisions):
-                    group = {source, *related}
-                    overlapping = [g for g in groups if g & group]
-                    group.update(t for g in overlapping for t in g)
-                    groups = [g for g in groups if g not in overlapping] + [group]
-                if all(
-                    related and {source, *related} <= eligible
-                    for source, related in decisions
-                ):
-                    fold = dict(
-                        coalesced_source_occurrences=len({d[0] for d in decisions}),
-                        eligible_source_occurrences=len(eligible),
-                        groups=len(groups),
-                        rate=len({d[0] for d in decisions}) / len(eligible)
-                        if eligible
-                        else None,
-                    )
+            fold = _record_coalescence(trace)
         rows.append(
             DeliveryDiagnostics(
                 packet.score_ref,
