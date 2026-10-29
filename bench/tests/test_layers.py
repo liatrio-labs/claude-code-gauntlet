@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 LAYERS = [
     "__init__ contracts decode epochs costs citations mirrors scorer_source cli",
     "scorer score observations provenance stages ledger anchors scoring_costs profiles",
-    "validity invoke check checkpoint run",
+    "validity invoke check checkpoint run delivery_replay",
     "leaks",
     "populations looks audit compare simulation report windows",
 ]

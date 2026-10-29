@@ -65,9 +65,14 @@ export function recordStage(trace, stage, output, details = {}) {
 }
 export function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;
-  const candidate = { ...envelope, measurement: { status: 'available', text: JSON.stringify(trace) } };
+  return appendBudgetedMeasurement(envelope,
+    { status: 'available', text: JSON.stringify(trace) },
+    { status: 'unavailable', reason: 'return_budget' });
+}
+export function appendBudgetedMeasurement(envelope, available, unavailable) {
+  const candidate = { ...envelope, measurement: available };
   if (JSON.stringify(candidate).length <= RETURN_CHAR_BUDGET) return candidate;
-  const fallback = { ...envelope, measurement: { status: 'unavailable', reason: 'return_budget' } };
+  const fallback = { ...envelope, measurement: unavailable };
   return JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET ? fallback : envelope;
 }
 

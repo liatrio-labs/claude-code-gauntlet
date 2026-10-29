@@ -615,6 +615,18 @@ def _collect_trace(pr_dir: Path) -> CollectedTraceWire | None:
             raise ValueError("measurement attempt binding changed")
     else:
         exclusive_json(receipt, binding)
+    replay = measurement.get("replay") or {}
+    if replay.get("status") == "available":
+        replay_data = decode(str, replay["text"]).encode("utf-8")
+        replay_path = pr_dir / "code-gauntlet-delivery-replay.json"
+        if replay_path.is_symlink() or (
+            replay_path.exists()
+            and file_hash(replay_path) != hashlib.sha256(replay_data).hexdigest()
+        ):
+            raise ValueError("collected replay differs from Workflow return")
+        if not replay_path.exists():
+            with replay_path.open("xb") as stream:
+                stream.write(replay_data)
     return binding
 
 

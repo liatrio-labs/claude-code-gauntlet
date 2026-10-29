@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { runWith } from '../src/run.js';
 import { measurementScenario, persistedScenario } from './helpers/measurementScenario.js';
 import { createMeasurementTrace, stampDiscovery, recordStage, appendMeasurement, traceDecision, TRACE_REASONS, TRACE_STAGES } from '../src/measurementTrace.js';
 import { validArgs } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
+import { captureDeliveryReplay, appendDeliveryReplay } from '../src/measurementReplay.js';
 
 for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves every prompt, schema and user artifact: ${mode}`, async () => {
   const plain = measurementScenario(mode);
@@ -24,6 +26,14 @@ for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves
     assert.equal(/trace_id|discovery_dimension|snapshots/.test(JSON.stringify(call.schema)), false);
   }
   const trace = JSON.parse(on.measurement.text);
+  const replay = JSON.parse(on.measurement.replay.text);
+  assert.equal(replay.state.phaseReached, 'challenge');
+  assert.deepEqual(replay.state.completed, ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge']);
+  assert.equal(Object.hasOwn(replay.state.phaseOutputs, 'report'), false);
+  assert.equal(/trace_id|discovery_dimension/.test(JSON.stringify(replay.state)), false);
+  assert.deepEqual(replay.persistence.map(({ label, agent_type, prompt_sha256, error }) => ({ label, agent_type, prompt_sha256, error })),
+    measured.ctx.calls.filter(({ label }) => ['artifact-writer', 'assemble-artifacts'].includes(label))
+      .map(({ label, agentType, prompt }) => ({ label, agent_type: agentType, prompt_sha256: createHash('sha256').update(prompt).digest('hex'), error: null })));
   assert.deepEqual(trace.snapshots.map((s) => s.stage), TRACE_STAGES.slice(0, -1));
   assert.equal(trace.schema_version, 1);
   assert.equal(trace.complete, true);
@@ -129,4 +139,31 @@ test('mid-pipeline failure checkpoints are identical with tracing on and off', a
 test('an unlisted reason code is recorded as unknown', () => {
   assert.equal(traceDecision({ trace_id: 't1' }, 'threshold').reason_code, 'threshold');
   assert.equal(traceDecision({ trace_id: 't1' }, 'not-a-listed-code').reason_code, 'unknown');
+});
+
+test('measured persistence records native UTF-8 hashes, results and thrown errors', async () => {
+  const options = { label: 'artifact-writer', agentType: 'code-gauntlet:artifact-writer' };
+  const result = { artifactPaths: { report: '/report' } };
+  const { ctx, record } = captureDeliveryReplay({ pipelineVersion: null, agent: async (prompt) => {
+    if (prompt === 'fail') throw new Error('write failed');
+    if (prompt === 'undefined') return undefined;
+    return result;
+  } }, {}, {});
+  const prompts = ['', 'a'.repeat(55), 'a'.repeat(56), 'a'.repeat(64), 'é🐦\ud800', 'undefined', 'fail'];
+  for (const prompt of prompts) {
+    if (prompt === 'fail') await assert.rejects(ctx.agent(prompt, options), /write failed/);
+    else await ctx.agent(prompt, options);
+  }
+  result.artifactPaths.report = '/changed';
+  assert.deepEqual(record.persistence.map((row) => row.prompt_sha256), prompts.map((prompt) => createHash('sha256').update(prompt).digest('hex')));
+  assert.deepEqual(record.persistence[0].result, { artifactPaths: { report: '/report' } });
+  assert.equal(record.persistence.at(-2).result, null);
+  assert.equal(record.persistence.at(-1).error, 'write failed');
+  const large = { ...record, args: { text: 'x'.repeat(1100000) } };
+  const envelope = { ok: true, measurement: { status: 'available', text: '{}' } };
+  const out = appendDeliveryReplay(envelope, large);
+  assert.deepEqual(out.measurement.replay, { status: 'unavailable', reason: 'return_budget' });
+  assert.equal(out.measurement.text, '{}');
+  const full = { ...envelope, text: 'x'.repeat(1100000) };
+  assert.equal(appendDeliveryReplay(full, large), full);
 });
