@@ -102,6 +102,56 @@ def _cli(manifest, out):
     )
 
 
+@pytest.mark.parametrize("read_input, exit_code", [(False, 1), (True, 0), (True, 1)])
+def test_replay_surfaces_bounded_stderr_without_blocking(
+    tmp_path, evidence, read_input, exit_code
+):
+    manifest = _manifest(tmp_path, evidence)
+    wait_for_input = """
+const reader = createInterface({ input: process.stdin });
+await reader[Symbol.asyncIterator]().next();
+"""
+    node = f"""
+import {{ writeFileSync }} from 'node:fs';
+import {{ createInterface }} from 'node:readline';
+{wait_for_input if read_input else ""}
+writeFileSync(2, 'diagnostic-start\\n' + 'x'.repeat(1024 * 1024) + '\\ndiagnostic-end');
+process.exit({exit_code});
+"""
+    launcher = """
+import sys
+sys.path.insert(0, 'scripts')
+from bench.runner import delivery_replay
+delivery_replay.NODE = sys.argv.pop(1)
+sys.exit(delivery_replay.main())
+"""
+    out = tmp_path / "out"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            launcher,
+            node,
+            "--manifest",
+            str(manifest),
+            "--out",
+            str(out),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+    )
+    assert result.returncode == 2, result.stderr
+    assert "refused: incomplete replay dispatch capture" in result.stderr
+    assert "Node stderr (tail):" in result.stderr
+    assert result.stderr.endswith("diagnostic-end\n")
+    assert "diagnostic-start" not in result.stderr
+    assert len(result.stderr) < 4300
+    assert not out.exists()
+
+
 @pytest.mark.parametrize("mode", ["return", "derived", "legacy", "writer-failure"])
 def test_replay_preserves_bytes_and_occurrence_identity(tmp_path, mode, evidence):
     manifest = _manifest(tmp_path, evidence, mode)

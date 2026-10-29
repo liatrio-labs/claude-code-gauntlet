@@ -11,7 +11,7 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, TemporaryFile
 from typing import Any, Literal, TypedDict
 
 from gauntlet.artifacts import assemble, plan_checksum
@@ -97,6 +97,17 @@ DISPATCHES = {
     "artifact-writer": "code-gauntlet:artifact-writer",
     "assemble-artifacts": "code-gauntlet:executor",
 }
+DENIED_NAMES = {"pairing", "auth.json", "secrets.json", "token.json"}
+CONFIG_DIRS = (
+    ".claude",
+    ".config",
+    ".ssh",
+    ".codex",
+    ".aws",
+    ".gnupg",
+    ".kube",
+    ".azure",
+)
 
 
 def _hash(data):
@@ -106,27 +117,12 @@ def _hash(data):
 def _safe(path):
     parts = {p.lower() for p in path.parts}
     home = Path.home().resolve()
-    config_roots = (
-        home / name
-        for name in (
-            ".claude",
-            ".config",
-            ".ssh",
-            ".codex",
-            ".aws",
-            ".gnupg",
-            ".kube",
-            ".azure",
-        )
+    denied = (
+        bool(parts & DENIED_NAMES)
+        or any(p.startswith(".env") or "credential" in p for p in parts)
+        or any(path.is_relative_to(home / name) for name in CONFIG_DIRS)
     )
-    if (
-        any(
-            p in ("pairing", "auth.json") or p.startswith(".env") or "credential" in p
-            for p in parts
-        )
-        or any(path.is_relative_to(root) for root in config_roots)
-        or parts & {"secrets.json", "token.json"}
-    ):
+    if denied:
         raise ValueError("denied evidence path")
     return path
 
@@ -371,77 +367,96 @@ def _target_digest():
     )
 
 
+def _answer_dispatch(message, expected, artifacts, paths):
+    dispatch = message["dispatch"]
+    if expected is None or (
+        dispatch["label"],
+        dispatch["agentType"],
+        message["prompt_sha256"],
+    ) != (
+        expected["label"],
+        expected["agent_type"],
+        expected["prompt_sha256"],
+    ):
+        raise ValueError("unsupported or changed persistence dispatch")
+    reply = {"result": expected["result"], "error": expected["error"]}
+    if expected["error"] or expected["result"] is None:
+        return reply
+    if dispatch["label"] == "artifact-writer":
+        for entry in message["entries"]:
+            if entry["path"] not in paths.values():
+                raise ValueError("unplanned artifact path")
+            artifacts[entry["path"]] = entry["text"]
+    elif expected["result"].get("ok"):
+        actual = _assemble_entries(artifacts, paths["plan"])
+        if actual != expected["result"]:
+            raise ValueError("recorded assembly receipt differs")
+    return reply
+
+
 def replay_delivery(inputs):
     record = inputs.workflow
     paths = {}
-    artifacts, dispatches, failure, envelope = (
-        {},
-        iter(record["persistence"]),
-        None,
-        None,
-    )
+    artifacts = {}
+    dispatches = iter(record["persistence"])
+    failure = None
+    envelope = None
     request = dict(
         record,
         checkpoint=json.loads(inputs.checkpoint),
         trace=asdict(inputs.trace) if inputs.trace is not None else None,
     )
-    with subprocess.Popen(
-        ["node", "--input-type=module", "-e", NODE],
-        cwd=ROOT,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-    ) as child:
+    # A file cannot fill a pipe while the host waits for the next dispatch.
+    with (
+        TemporaryFile() as diagnostics,
+        subprocess.Popen(
+            ["node", "--input-type=module", "-e", NODE],
+            cwd=ROOT,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=diagnostics,
+            text=True,
+            encoding="utf-8",
+        ) as child,
+    ):
         assert child.stdin is not None and child.stdout is not None
-        child.stdin.write(json.dumps(request) + "\n")
-        child.stdin.flush()
-        for line in child.stdout:
-            message = json.loads(line)
-            if "paths" in message:
-                paths = message["paths"]
-                continue
-            if "out" in message or "error" in message:
-                envelope = message.get("out")
-                failure = failure or message.get("error")
-                continue
-            try:
-                dispatch = message["dispatch"]
-                expected = next(dispatches, None)
-                if expected is None or (
-                    dispatch["label"],
-                    dispatch["agentType"],
-                    message["prompt_sha256"],
-                ) != (
-                    expected["label"],
-                    expected["agent_type"],
-                    expected["prompt_sha256"],
-                ):
-                    raise ValueError("unsupported or changed persistence dispatch")
-                if not expected["error"] and expected["result"] is not None:
-                    if dispatch["label"] == "artifact-writer":
-                        for entry in message["entries"]:
-                            if entry["path"] not in paths.values():
-                                raise ValueError("unplanned artifact path")
-                            artifacts[entry["path"]] = entry["text"]
-                    elif expected["result"].get("ok"):
-                        actual = _assemble_entries(artifacts, paths["plan"])
-                        if actual != expected["result"]:
-                            raise ValueError("recorded assembly receipt differs")
-                reply = {"result": expected["result"], "error": expected["error"]}
-            except (ValueError, KeyError, TypeError) as exc:
-                failure, reply = str(exc), {"error": str(exc)}
-            child.stdin.write(json.dumps(reply) + "\n")
+        try:
+            child.stdin.write(json.dumps(request) + "\n")
             child.stdin.flush()
+            for line in child.stdout:
+                message = json.loads(line)
+                if "paths" in message:
+                    paths = message["paths"]
+                    continue
+                if "out" in message or "error" in message:
+                    envelope = message.get("out")
+                    failure = failure or message.get("error")
+                    continue
+                try:
+                    reply = _answer_dispatch(
+                        message, next(dispatches, None), artifacts, paths
+                    )
+                except (ValueError, KeyError, TypeError) as exc:
+                    failure = str(exc)
+                    reply = {"error": str(exc)}
+                child.stdin.write(json.dumps(reply) + "\n")
+                child.stdin.flush()
+        except BrokenPipeError:
+            # Early child exits still need their diagnostics in the refusal.
+            pass
         child.wait()
+        diagnostics.seek(max(0, diagnostics.tell() - 4096))
+        stderr_tail = diagnostics.read().decode("utf-8", errors="replace").strip()
     if (
         failure
         or child.returncode
         or envelope is None
         or next(dispatches, None) is not None
     ):
-        raise ValueError(failure or "incomplete replay dispatch capture")
+        reason = failure or "incomplete replay dispatch capture"
+        if stderr_tail and (child.returncode or envelope is None):
+            reason += "\nNode stderr (tail):\n" + stderr_tail
+        raise ValueError(reason)
     if "persistReturn" in envelope:
         for entry in envelope["persistReturn"]["entries"]:
             if entry["path"] not in paths.values():

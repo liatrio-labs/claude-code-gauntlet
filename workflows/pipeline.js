@@ -1564,9 +1564,14 @@ function recordStage(trace, stage, output, details = {}) {
 }
 function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;
-  const candidate = { ...envelope, measurement: { status: 'available', text: JSON.stringify(trace) } };
+  return appendBudgetedMeasurement(envelope,
+    { status: 'available', text: JSON.stringify(trace) },
+    { status: 'unavailable', reason: 'return_budget' });
+}
+function appendBudgetedMeasurement(envelope, available, unavailable) {
+  const candidate = { ...envelope, measurement: available };
   if (JSON.stringify(candidate).length <= RETURN_CHAR_BUDGET) return candidate;
-  const fallback = { ...envelope, measurement: { status: 'unavailable', reason: 'return_budget' } };
+  const fallback = { ...envelope, measurement: unavailable };
   return JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET ? fallback : envelope;
 }
 function stripTraceFields(value) {
@@ -6797,10 +6802,9 @@ function captureDeliveryReplay(c, args, state) {
 }
 function appendDeliveryReplay(envelope, record) {
   if (!record) return envelope;
-  const candidate = { ...envelope, measurement: { ...envelope.measurement, replay: { status: 'available', text: JSON.stringify(record) } } };
-  if (JSON.stringify(candidate).length <= RETURN_CHAR_BUDGET) return candidate;
-  const fallback = { ...envelope, measurement: { ...envelope.measurement, replay: { status: 'unavailable', reason: 'return_budget' } } };
-  return JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET ? fallback : envelope;
+  return appendBudgetedMeasurement(envelope,
+    { ...envelope.measurement, replay: { status: 'available', text: JSON.stringify(record) } },
+    { ...envelope.measurement, replay: { status: 'unavailable', reason: 'return_budget' } });
 }
 // --- run.js ---
 function defaultCtx() {

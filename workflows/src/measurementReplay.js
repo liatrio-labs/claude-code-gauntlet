@@ -1,5 +1,5 @@
-import { deepClone, RETURN_CHAR_BUDGET } from './wire.js';
-import { stripTraceFields } from './measurementTrace.js';
+import { deepClone } from './wire.js';
+import { stripTraceFields, appendBudgetedMeasurement } from './measurementTrace.js';
 
 // The workflow sandbox has neither crypto nor a byte encoder; prompts are hashed as UTF-8.
 function promptSha256(text) {
@@ -63,8 +63,7 @@ export function captureDeliveryReplay(c, args, state) {
 
 export function appendDeliveryReplay(envelope, record) {
   if (!record) return envelope;
-  const candidate = { ...envelope, measurement: { ...envelope.measurement, replay: { status: 'available', text: JSON.stringify(record) } } };
-  if (JSON.stringify(candidate).length <= RETURN_CHAR_BUDGET) return candidate;
-  const fallback = { ...envelope, measurement: { ...envelope.measurement, replay: { status: 'unavailable', reason: 'return_budget' } } };
-  return JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET ? fallback : envelope;
+  return appendBudgetedMeasurement(envelope,
+    { ...envelope.measurement, replay: { status: 'available', text: JSON.stringify(record) } },
+    { ...envelope.measurement, replay: { status: 'unavailable', reason: 'return_budget' } });
 }
