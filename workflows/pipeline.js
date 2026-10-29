@@ -794,12 +794,12 @@ function pathUnderRoot(root, path) {
 }
 function repoRelativeFindingPath(repoRoot, file) {
   if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
-  const driveRoot = /^[A-Za-z]:\//.test(repoRoot || '');
+  const driveRoot = /^[A-Za-z]:[/\\]/.test(repoRoot || '');
+  const normalizedRoot = driveRoot ? repoRoot.replace(/\\/g, '/') : repoRoot;
   let normalized = file;
   let driveAbsolute = false;
   if (driveRoot) {
-    if (/^[A-Za-z]:\//.test(file)) driveAbsolute = true;
-    else if (/^[A-Za-z]:\\/.test(file)) {
+    if (/^[A-Za-z]:[/\\]/.test(file)) {
       normalized = file.replace(/\\/g, '/');
       driveAbsolute = true;
     } else if (/^\/[A-Za-z]\//.test(file)) {
@@ -826,7 +826,7 @@ function repoRelativeFindingPath(repoRoot, file) {
     relative = normalizePathString(path);
     while (relative.startsWith('./')) relative = relative.slice(2);
   } else {
-    const root = normalizeAbsoluteRoot(repoRoot);
+    const root = normalizeAbsoluteRoot(normalizedRoot);
     if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
     const absolute = normalizePathString(path);
     if (pathComparisonKey(absolute) === pathComparisonKey(root)) return { reason: 'absolute file path resolves to repoRoot' };
