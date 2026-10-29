@@ -149,15 +149,38 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
                 and all(t in identities for t in decision.related_trace_ids),
                 "decision reference",
             )
+            _require(
+                decision.reason_code != "folded"
+                or (
+                    decision.decision == "coalesced"
+                    and bool(decision.related_trace_ids)
+                ),
+                "fold requires constituent identities and coalescence",
+            )
+    legacy = (
+        "discover",
+        "merge",
+        "verify",
+        "validate",
+        "filter",
+        "challenge",
+        "holdback",
+        "select",
+    )
+    actual = tuple(s.stage for s in trace.snapshots)
+    required = tuple(s for s in actual if s not in ("cite", "dispose"))
+    _require(required == legacy[: len(required)], "physical stage order")
+    order = get_args(Stage)
     _require(
-        tuple(s.stage for s in trace.snapshots)
-        == get_args(Stage)[: len(trace.snapshots)],
+        len(set(actual)) == len(actual)
+        and list(actual) == sorted(actual, key=order.index),
         "physical stage order",
     )
     _require(
-        not trace.complete or len(trace.snapshots) == len(get_args(Stage)) - 1,
-        "complete stages",
+        not set(actual) & {"cite", "dispose"} or "challenge" in actual,
+        "optional stage before required prefix",
     )
+    _require(not trace.complete or required == legacy, "complete stages")
     return trace
 
 
@@ -179,6 +202,15 @@ REASON_LOSS_STAGES: dict[ReasonCode, LossStage] = {
     "challenge_cap": "cap",
     "delivery_cap": "cap",
     "injection": "filter",
+    "cite_unmatched": "cite",
+    "cite_unavailable": "cite",
+    "refuted": "dispose",
+    "out_of_scope": "dispose",
+    "scope_contradicted": "dispose",
+    "report_only": "delivery",
+    "body_routed": "delivery",
+    "held_back": "delivery",
+    "demoted": "delivery",
 }
 
 
@@ -189,6 +221,8 @@ PHYSICAL_LOSS_STAGES: dict[Stage, LossStage] = {
     "validate": "validate",
     "filter": "filter",
     "challenge": "challenge",
+    "cite": "cite",
+    "dispose": "dispose",
     "select": "delivery",
     "deliver": "delivery",
 }
@@ -286,10 +320,14 @@ def _trace_loss(bug, trace, versions, trace_ids, judged):
             reason="no discovery claim matched",
             status="established",
         )
+    trace_ids = set(trace_ids)
     previous = set(trace_ids)
     for snapshot in trace.snapshots[1:]:
         if not snapshot.executed or snapshot.coverage == "unavailable":
             break
+        for decision in snapshot.decisions:
+            if decision.decision == "coalesced" and decision.trace_id in previous:
+                trace_ids.update(decision.related_trace_ids)
         surviving = {
             versions[v].trace_id for v in snapshot.finding_version_ids
         } & trace_ids
@@ -297,7 +335,7 @@ def _trace_loss(bug, trace, versions, trace_ids, judged):
             decisions = [
                 d
                 for d in snapshot.decisions
-                if d.trace_id in previous and d.decision != "kept"
+                if d.trace_id in previous and d.decision not in ("kept", "coalesced")
             ]
             if not decisions:
                 break
@@ -336,6 +374,8 @@ def _bug_stage_rows(bug, trace, results):
     loss = _trace_loss(bug, trace, versions, trace_ids, judged)
     rows = []
     for stage in get_args(Stage):
+        if stage in ("cite", "dispose") and stage not in snapshots:
+            continue
         snapshot = snapshots.get(stage)
         surviving = tuple(
             v
@@ -527,6 +567,16 @@ def bind_delivery_trace(trace, candidates, *, omissions=()):
     delivered = {tid for c in candidates for tid in c.source_trace_ids}
     versions = {v.version_id: v for v in trace.versions}
     omitted = {tid: o for o in omissions for tid in o.trace_ids}
+    prior = {
+        d.trace_id: d
+        for s in trace.snapshots
+        for d in s.decisions
+        if d.decision not in ("kept", "coalesced")
+    }
+    coalesced = tuple(
+        d for s in trace.snapshots for d in s.decisions if d.decision == "coalesced"
+    )
+    folded = {d.trace_id for d in coalesced}
     selection = trace.snapshots[-1]
     _require(selection.stage == "select", "delivery requires selection")
     delivery = replace(
@@ -538,8 +588,10 @@ def bind_delivery_trace(trace, candidates, *, omissions=()):
             for v in selection.finding_version_ids
             if versions[v].trace_id in delivered
         ),
-        decisions=tuple(
-            StageDecision(
+        decisions=coalesced
+        + tuple(
+            prior.get(tid)
+            or StageDecision(
                 tid,
                 "not_selected",
                 omitted[tid].reason_code if tid in omitted else "post_omission",
@@ -550,7 +602,7 @@ def bind_delivery_trace(trace, candidates, *, omissions=()):
             )
             for v in selection.finding_version_ids
             for tid in [versions[v].trace_id]
-            if tid not in delivered
+            if tid not in delivered and tid not in folded
         ),
         cap=None,
         cap_hit=False,
@@ -669,7 +721,7 @@ def packet_traces(path):
     }
 
 
-def validate_packet_evidence(path, packet, epoch):
+def validate_packet_evidence(path, packet, epoch, *, surface_view=None):
     from bench.runner.provenance import (
         bind_candidates,
         packet_treatment_root,
@@ -697,6 +749,22 @@ def validate_packet_evidence(path, packet, epoch):
             group = tuple(c for c in packet.candidates if c.pr_url == url)
             if group != bind_candidates(group, mapped):
                 raise ValueError("candidate source attribution mismatch")
+            if surface_view is not None:
+                _, all_mapped = trace_delivery(
+                    traces[url][1],
+                    read_json(confined(path, delivery["selected_path"])),
+                    read_json(confined(path, delivery["payload_path"])),
+                    confined(path, delivery["diff_path"]).read_text(encoding="utf-8"),
+                    treatment_root=packet_treatment_root(
+                        path, packet.manifest.score_ref.run_id
+                    ),
+                    include_body=True,
+                )
+                group = tuple(c for c in surface_view.candidates if c.pr_url == url)
+                if len({m.issue_id for m in all_mapped}) != len(all_mapped):
+                    raise ValueError("duplicate delivered issue identity")
+                if group != bind_candidates(group, all_mapped):
+                    raise ValueError("surface candidate source attribution mismatch")
             traces[url] = traces[url][0], bound_trace
     for c in packet.candidates:
         if c.provenance_status == "complete" and (
@@ -707,6 +775,13 @@ def validate_packet_evidence(path, packet, epoch):
             c.source_trace_ids or c.discovery_dimensions != ("unknown",)
         ):
             raise ValueError("unknown candidate source dimension")
+    if surface_view is not None and any(
+        c.provenance_status != "complete"
+        or c.pr_url not in bindings
+        or not bindings[c.pr_url]["delivery"]
+        for c in surface_view.candidates
+    ):
+        raise ValueError("missing surface candidate source binding")
     inputs = discovery_inputs(traces, errors) if packet.manifest.attribution else {}
     attribution_dir = (
         path

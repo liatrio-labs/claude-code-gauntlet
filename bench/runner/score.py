@@ -184,6 +184,7 @@ def _assemble_candidates(run_dir, pr_records):
             "number": number,
             "candidates": result[url][TOOL],
             "payload_path": str(payload_path),
+            "payload": read_json(payload_path),
         }
     if parts:
         merged, _ = merge_candidates(parts)
@@ -440,6 +441,112 @@ def _capture_adjudications(
     return tuple(verdicts), tuple(contexts), total_cost(usage)
 
 
+def score_surface_view(
+    request,
+    mapped,
+    inline_bugs,
+    per_pr,
+    failures,
+    api_key,
+    env,
+    run_scorer,
+    adjudicator,
+    source_run,
+):
+    """Score a separate population; canonical inputs and outputs stay inline."""
+    raw = {u: {TOOL: []} for u in request.requested_pr_urls}
+    for c in observations.surface_candidates(mapped):
+        raw[c.pr_url][TOOL].append(
+            {
+                **{
+                    key: getattr(c, key)
+                    for key in observations.SurfaceItemWire.__annotations__
+                },
+                "source": "extracted",
+                "provenance_status": c.provenance_status,
+            }
+        )
+    candidates = observations.candidate_records(raw, dict(request.selected_attempts))
+    root = request.work_dir / "surface-all"
+    source_hashes = {}
+    surface_prs = {}
+    for url, info in per_pr.items():
+        relative = Path(info["pr_dir"]).relative_to(request.work_dir / "sources")
+        surface_prs[url] = {**info, "pr_dir": str(root / "sources" / relative)}
+        paths = [relative / "diff.patch"]
+        paths.extend(
+            relative / "worktree" / c.path
+            for c in candidates
+            if c.pr_url == url and c.path and artifact_allowed(Path(c.path))
+        )
+        for name in dict.fromkeys(paths):
+            snapshot = request.work_dir / "sources" / name
+            origin = request.work_dir / "sources" if snapshot.is_file() else source_run
+            source = origin / name
+            if not source.resolve().is_relative_to(source_run):
+                raise ValueError("surface source escapes run directory")
+            if name != relative / "diff.patch" and not source.resolve().is_relative_to(
+                (origin / relative / "worktree").resolve()
+            ):
+                raise ValueError("surface head source escapes worktree")
+            if source.is_file():
+                expected = file_hash(source)
+                dest = root / "sources" / name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                copy_exclusive(source, dest)
+                if file_hash(dest) != expected:
+                    raise ValueError("surface input changed during score snapshot")
+                source_hashes[name.as_posix()] = expected
+    model = scorer.stage_inputs(
+        request.epoch, raw, request.evaluator.judge_pin, root / "work"
+    )
+    if run_scorer is None:
+        scorer.execute(
+            request.epoch, request.evaluator.judge_pin, api_key, model, env=env
+        )
+    else:
+        run_scorer(request.evaluator.judge_pin, api_key, model)
+    for name in ("candidates.json", "dedup_groups.json", "evaluations.json"):
+        copy_exclusive(model / name, root / name)
+    groups = observations.dedup_groups(
+        read_json(root / "dedup_groups.json"), candidates
+    )
+    gids = {cid: g.group_id for g in groups for cid in g.candidate_ids}
+    candidates = tuple(
+        replace(c, dedup_group_id=gids[c.candidate_id]) for c in candidates
+    )
+    surface_request = replace(request, work_dir=root, candidates=candidates)
+    bugs = observations.build_observations(
+        surface_request,
+        read_json(root / "evaluations.json"),
+        groups,
+        failures=frozenset(failures),
+    )
+    bugs = observations.union_surface_observations(
+        bugs, inline_bugs, candidates, request.candidates
+    )
+    verdicts, contexts, cost = _capture_adjudications(
+        surface_request,
+        observations.bucket_candidate_ids(bugs),
+        surface_prs,
+        api_key,
+        adjudicator,
+    )
+    view = observations.SurfaceScoreView(
+        request.evaluator.evaluator_id,
+        candidates,
+        bugs,
+        verdicts,
+        contexts,
+        {**read_costs(model), "adjudicator": cost},
+        source_hashes,
+    )
+    observations.validate_surface_view(
+        request.work_dir, inline_bugs, request, view, frozenset(failures)
+    )
+    return view
+
+
 def score_run(
     run_dir,
     env=None,
@@ -451,6 +558,7 @@ def score_run(
     score_id=None,
     attempt_selection=None,
     attribution=False,
+    surface_views=False,
 ):
     """Execute a fresh score; failures retain a pending diagnostic packet."""
     run_dir = Path(run_dir).resolve()
@@ -656,6 +764,7 @@ def score_run(
         if traces
         else None
     )
+    original_traces = traces.copy()
     for url, (path, trace) in traces.items():
         info = per_pr[url]
         pr_dir = Path(info["pr_dir"])
@@ -721,6 +830,39 @@ def score_run(
         TOOL,
         evaluator,
     )
+    all_candidates = []
+    surface_unavailable = None if surface_views else "surface views not requested"
+    for url in urls if surface_views else ():
+        if url in failures:
+            continue
+        binding = delivery_bindings.get(url)
+        if not binding or url in trace_errors:
+            surface_unavailable = "original body or trace evidence unavailable"
+            break
+        try:
+            info = per_pr[url]
+            _, mapped = provenance.trace_delivery(
+                original_traces[url][1],
+                read_json(
+                    run_dir / Path(binding["selected_path"]).relative_to("sources")
+                ),
+                info["payload"],
+                (Path(info["pr_dir"]) / "diff.patch").read_text(encoding="utf-8"),
+                treatment_root=replay_root,
+                include_body=True,
+            )
+            raw = {url: {TOOL: [{**asdict(m), "source": "extracted"} for m in mapped]}}
+            all_candidates.extend(observations.candidate_records(raw, attempts))
+        except (
+            RuntimeError,
+            ValueError,
+            KeyError,
+            TypeError,
+            OSError,
+            subprocess.SubprocessError,
+        ) as exc:
+            surface_unavailable = str(exc)
+            break
     # Copy selected inputs before dispatch so every score can be audited independently.
     for name in source_hashes:
         dest = pending / "sources" / name
@@ -763,6 +905,30 @@ def score_run(
     adjudications, contexts, adjudicator_cost = _capture_adjudications(
         request, matched, per_pr, api_key, adjudicator or _adjudicate
     )
+    surface_view = None
+    if surface_unavailable is None:
+        try:
+            surface_view = score_surface_view(
+                request,
+                all_candidates,
+                bugs,
+                per_pr,
+                failures,
+                api_key,
+                env,
+                run_scorer,
+                adjudicator or _adjudicate,
+                run_dir,
+            )
+        except (
+            RuntimeError,
+            ValueError,
+            KeyError,
+            TypeError,
+            OSError,
+            subprocess.SubprocessError,
+        ) as exc:
+            surface_unavailable = "all-surface scoring failed: " + str(exc)
     attribution_cost = None
     stage_evaluations = stage_groups = {}
     if any(discovery.values()):
@@ -892,6 +1058,8 @@ def score_run(
             "adjudicator": adjudicator_cost,
             "attribution": attribution_cost,
         },
+        surface_view=surface_view,
+        surface_unavailable_reason=surface_unavailable,
     )
     pointer = run_dir / (".latest-score-" + sid + ".json")
     exclusive_json(pointer, asdict(ref))

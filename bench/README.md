@@ -118,7 +118,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
                       [--check RUN_ID] [--prs URL[,URL...]|mini|dev-slice|dev-pool]
                       [--contamination PATH] [--rule PATH] [--unseal-holdout RECEIPT]
                       [--child-auth api|subscription]
-                      [--golden-epoch EPOCH_ID] [--attribution]
+                      [--golden-epoch EPOCH_ID] [--attribution] [--surface-views]
                       [--tool deep-review-v2|deep-review-v3] [--child-model MODEL_ID]
                       [--measurement-window PATH --arm ARM --run-index N]
                       [--reset-confirmed-at ISO_TIMESTAMP]
@@ -149,6 +149,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 | `--score-only` | `RUN_ID` | - | Score captured payloads on the active epoch without invoking review children. Each execution writes a fresh immutable packet and appends its ledger projection. |
 | `--golden-epoch` | `EPOCH_ID` | active epoch | Select the epoch for `--score-only`. Only the active epoch is runnable. |
 | `--attribution` | flag | off | With `--score-only`, also judge eliminated discovery claims and record stage losses. Missing traces leave attribution unavailable. |
+| `--surface-views` | flag | off | With `--score-only`, opt into a full paid re-score of inline and body issue candidates, including dedup, judging and adjudication. |
 | `--check` | `RUN_ID` | — | Mechanical functional-smoke checker for a completed **skill** run (not `--anchor naive`). Checks payload/schema, findings persistence, no silent degrade, plugin identity (Headless config `pipeline_version`/`plugin_root` echo receipts primary; the record's `script` bytes and `workflowName` identify the repo bundle when present; `scriptPath` resolving to the repo bundle remains accepted for older records), artifact completeness (findings, report, post-review, checkpoint present exactly once), and ≥1 comment. Prints the non-gating citation absence-preamble watch line. Exit 0 = pass; never invokes the judge. See [`MEASUREMENT.md`](MEASUREMENT.md). |
 
 At most one of `--resume` / `--retry-failed` / `--score-only` / `--check` may
@@ -188,6 +189,29 @@ judge and adjudicator are the same pinned, dated snapshot at temperature 0
 (see [Keys and the judge](#keys-and-the-judge)), applied identically to
 bench runs and to the anchor tools — scoring is blind to which tool
 produced a candidate.
+
+Canonical observations, precision, ledger rows and promotion inputs remain inline.
+With `--score-only RUN_ID --surface-views`, when original review body, captured SHA,
+selected findings, diff and trace permit exact reconstruction, `surface-views.json`
+references a separately scored
+all-surface view inside the packet. It includes actual issue fragments from GitHub
+review bodies or GitLab summaries, after inline payload order. Summary prose,
+inline indexes, counts, footers and whole groups omitted by the body budget do
+not become candidates. Missing historical evidence leaves this view unknown.
+
+The all-surface view uses the same pinned scorer, adjudicator and context policy
+in a full opt-in paid re-score, including dedup, judging and adjudication.
+Explicit issue identities deduplicate repeated delivery across surfaces, preferring
+inline; golden hits are unioned by bug ID.
+Empty successful reviews and confirmed operational failures retain their existing
+denominators. The packet completion hash protects the sidecar and its candidates,
+dedup groups, evaluations, adjudications and contexts; reload checks their joins.
+`surface_views` appears beside canonical metrics, with the second pass's full charges
+recorded separately from canonical costs. Legacy packets remain readable with an
+unknown all-surface view. Comparisons require fresh scores for every arm under the
+same final scoring tree, epoch and pins; rescoring adds no independent review.
+If this pass fails, its diagnostic evidence and unavailable reason remain in the
+packet while the canonical score is still published.
 
 The plugin was formerly named deep-review; ledger labels retain that name for measurement continuity.
 Each scored run's ledger row is labeled by `tool`: `deep-review-v3` for a

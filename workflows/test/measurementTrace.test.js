@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { runWith } from '../src/run.js';
 import { measurementScenario, persistedScenario } from './helpers/measurementScenario.js';
-import { createMeasurementTrace, stampDiscovery, recordStage, appendMeasurement, traceDecision, TRACE_REASONS, TRACE_STAGES } from '../src/measurementTrace.js';
+import { createMeasurementTrace, stampDiscovery, recordStage, appendMeasurement, traceDecision, TRACE_REASONS } from '../src/measurementTrace.js';
 import { validArgs } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { captureDeliveryReplay, appendDeliveryReplay } from '../src/measurementReplay.js';
@@ -34,7 +34,7 @@ for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves
   assert.deepEqual(replay.persistence.map(({ label, agent_type, prompt_sha256, error }) => ({ label, agent_type, prompt_sha256, error })),
     measured.ctx.calls.filter(({ label }) => ['artifact-writer', 'assemble-artifacts'].includes(label))
       .map(({ label, agentType, prompt }) => ({ label, agent_type: agentType, prompt_sha256: createHash('sha256').update(prompt).digest('hex'), error: null })));
-  assert.deepEqual(trace.snapshots.map((s) => s.stage), TRACE_STAGES.slice(0, -1));
+  assert.deepEqual(trace.snapshots.map((s) => s.stage), ['discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'holdback', 'select']);
   assert.equal(trace.schema_version, 1);
   assert.equal(trace.complete, true);
   const first = trace.versions.find((v) => v.finding.id === 'FILTER');
