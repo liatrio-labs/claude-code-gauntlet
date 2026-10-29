@@ -94,13 +94,25 @@ def test_disposition_row_generates_consumers(registry_tree, invoke):
     assert json.loads(dispatched.stdout) == [True, False, True, False]
 
 
-def test_site_descriptor_generates_consumers(registry_tree, invoke):
+@pytest.mark.parametrize("discovery_enabled", [False, True])
+def test_site_descriptor_gates_discovery_consumers(
+    registry_tree, invoke, discovery_enabled
+):
     source = registry_tree / "workflows/src/registry.js"
     source.write_text(
         source.read_text(encoding="utf-8").replace(
             "  sites: {",
             "  related: { type: 'array', description: 'Related paths.', items: { type: 'object', properties: { path: { type: 'string', $comment: 'repo-path' }, active: { type: 'boolean' } }, required: ['path', 'active'], additionalProperties: false } },\n  sites: {",
             1,
+        ),
+        encoding="utf-8",
+    )
+    source.write_text(
+        re.sub(
+            r"\bdiscovery: (false|true)\b",
+            "discovery: " + str(discovery_enabled).lower(),
+            source.read_text(encoding="utf-8"),
+            count=1,
         ),
         encoding="utf-8",
     )
@@ -128,13 +140,18 @@ def test_site_descriptor_generates_consumers(registry_tree, invoke):
             encoding="utf-8"
         )
         assert '"related": [{"path": "<string>", "active": "<boolean>"}]' in contract
-        assert (
-            '"sites": [{"file": "<string>", "line_start": 1, "line_end": 1, "anchor": "<string>"}]'
-            in contract
-        )
+        if discovery_enabled:
+            assert (
+                '"sites": [{"file": "<string>", "line_start": 1, "line_end": 1, "anchor": "<string>"}]'
+                in contract
+            )
+        else:
+            assert '"sites":' not in contract
     assert "| `related` | array | no | Related paths. |" in (
         registry_tree / REPORT
     ).read_text(encoding="utf-8")
+    report = (registry_tree / REPORT).read_text(encoding="utf-8")
+    assert ("| `sites` |" in report) is discovery_enabled
     result = gen.proc.run(
         [
             "node",
@@ -161,7 +178,10 @@ console.log(JSON.stringify({out, schemas}));
     assert len(value["out"]["gaps"]) == 2
     for schema in value["schemas"]:
         assert schema["related"]["items"]["properties"]["active"] == {"type": "boolean"}
-        assert schema["sites"]["items"]["additionalProperties"] is False
+        assert ("sites" in schema) is discovery_enabled
+        if discovery_enabled:
+            assert schema["sites"]["items"]["additionalProperties"] is False
+            assert "discovery" not in schema["sites"]
 
 
 def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):

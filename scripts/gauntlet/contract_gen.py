@@ -127,6 +127,7 @@ _REGISTRY_FIELDS = (
     "waistRequired: m.REQUIRED",
     "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
     "findingTypes: m.FINDING_PROP_TYPES",
+    "discoveryFindingTypes: m.DISCOVERY_FINDING_PROP_TYPES",
     "resolvedSiteSchema: m.RESOLVED_SITE_SCHEMA",
     "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
     "validationReturnProperties: m.VALIDATION_RETURN_PROPERTIES",
@@ -392,7 +393,7 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
             out_lines.append(
                 f"| `anchor` | {anchor['type']} | yes | {anchor['description']} |"
             )
-            for field, schema in registry["findingTypes"].items():
+            for field, schema in registry["discoveryFindingTypes"].items():
                 if (
                     isinstance(schema, dict)
                     and schema.get("type") == "array"
@@ -1337,7 +1338,7 @@ def rendered_targets(
         + json.dumps(
             {
                 key: sample(schema)
-                for key, schema in registry["findingTypes"].items()
+                for key, schema in registry["discoveryFindingTypes"].items()
                 if isinstance(schema, dict)
                 and (key == "anchor" or schema.get("description"))
             },

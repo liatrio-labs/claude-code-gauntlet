@@ -223,7 +223,7 @@ const FINDING_PROP_TYPES = deepFreeze({
   suggestion: 'string', claude_md_rule: 'string',
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
-  sites: { type: 'array', description: 'Additional locations of this issue.', items: {
+  sites: { discovery: false, type: 'array', description: 'Additional locations of this issue.', items: {
     type: 'object', properties: {
       file: { type: 'string', $comment: 'repo-path' },
       line_start: { type: 'integer', minimum: 1 }, line_end: { type: 'integer', minimum: 1 },
@@ -231,6 +231,13 @@ const FINDING_PROP_TYPES = deepFreeze({
     }, required: ['file', 'line_start', 'line_end', 'anchor'], additionalProperties: false,
   } },
 });
+const DISCOVERY_FINDING_PROP_TYPES = deepFreeze(Object.fromEntries(Object.entries(FINDING_PROP_TYPES)
+  .filter(([, schema]) => schema.discovery !== false)
+  .map(([name, schema]) => {
+    if (typeof schema === 'string') return [name, schema];
+    const { discovery, ...wireSchema } = schema;
+    return [name, wireSchema];
+  })));
 const VALIDATION_RETURN_PROPERTIES = deepFreeze({
   site_confirmations: { type: 'array', items: {
     type: 'object', properties: {
@@ -1745,7 +1752,7 @@ function allActiveDimensionsDegraded(dispatched, degraded) {
 }
 function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
   const props = {};
-  for (const [k, t] of Object.entries({ ...FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
+  for (const [k, t] of Object.entries({ ...DISCOVERY_FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
     props[k] = typeof t === 'string' ? { type: t } : deepClone(t);
   }
   props.anchor.minLength = 1;

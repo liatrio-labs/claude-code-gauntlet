@@ -815,7 +815,15 @@ def post_gitlab(
             or any(key in prior.legacy_group_keys for key in keys)
         ):
             already_present += 1
-            # Only a delivered primary can extend an existing issue's site coverage.
+            # Per-member deliveries can predate the group's primary finding.
+            if keys[0] not in delivered_keys:
+                extra = cast(Finding, {**members[0], "disposition": "body"})
+                extra.pop("suggested_fix_code", None)
+                coverage_overrides[id(extra)] = coverage(members[0])
+                skipped_groups.append(
+                    (compose.SkippedEntry(extra.get("file"), extra.get("line"), extra),)
+                )
+                continue
             additions = []
             legacy = any(key in prior.legacy_group_keys for key in keys)
             if not legacy:
@@ -830,8 +838,6 @@ def post_gitlab(
                 )
                 if checked.budget_error:
                     warn(checked.budget_error)
-            if keys[0] not in delivered_keys:
-                continue
             for member, key in zip(members, keys, strict=True):
                 owner = site_owners[key]
                 new_sites = [
@@ -890,7 +896,11 @@ def post_gitlab(
     summary_sites: list[str] = []
     for entry in composed.shown_entries:
         finding = cast(Finding, entry.finding)
-        if finding.get("delivery_group") or finding.get("sites"):
+        if (
+            id(finding) in coverage_overrides
+            or finding.get("delivery_group")
+            or finding.get("sites")
+        ):
             keys = coverage(finding)
             summary_keys.append(keys[0])
             summary_sites.extend(keys[1:])

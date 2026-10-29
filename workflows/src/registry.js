@@ -108,7 +108,7 @@ export const FINDING_PROP_TYPES = deepFreeze({
   // The field alone does not guarantee that a patch will ship.
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
-  sites: { type: 'array', description: 'Additional locations of this issue.', items: {
+  sites: { discovery: false, type: 'array', description: 'Additional locations of this issue.', items: {
     type: 'object', properties: {
       file: { type: 'string', $comment: 'repo-path' },
       line_start: { type: 'integer', minimum: 1 }, line_end: { type: 'integer', minimum: 1 },
@@ -116,6 +116,15 @@ export const FINDING_PROP_TYPES = deepFreeze({
     }, required: ['file', 'line_start', 'line_end', 'anchor'], additionalProperties: false,
   } },
 });
+
+// Stage discovery fields independently of the downstream verification and delivery wire.
+export const DISCOVERY_FINDING_PROP_TYPES = deepFreeze(Object.fromEntries(Object.entries(FINDING_PROP_TYPES)
+  .filter(([, schema]) => schema.discovery !== false)
+  .map(([name, schema]) => {
+    if (typeof schema === 'string') return [name, schema];
+    const { discovery, ...wireSchema } = schema;
+    return [name, wireSchema];
+  })));
 
 export const VALIDATION_RETURN_PROPERTIES = deepFreeze({
   site_confirmations: { type: 'array', items: {

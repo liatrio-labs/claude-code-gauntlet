@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   summarize, discover as discoverStage, agentActive, agentSpecs, deriveAgentFlags, allActiveDimensionsDegraded,
 } from '../src/discover.js';
-import { DIMENSIONS, DISPATCH_RESULTS, FINDING_REQUIRED, FINDING_PROP_TYPES } from '../src/registry.js';
+import { DIMENSIONS, DISPATCH_RESULTS, FINDING_REQUIRED, FINDING_PROP_TYPES, DISCOVERY_FINDING_PROP_TYPES } from '../src/registry.js';
 import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
 import { mergeStage } from '../src/mergeFindings.js';
@@ -64,7 +64,7 @@ const CANONICAL_PROPS = {
   anchor: { type: 'string', minLength: 1, description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
   suggestion: { type: 'string' }, claude_md_rule: { type: 'string' }, suggested_fix_code: { type: 'string' },
   cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
-  sites: FINDING_PROP_TYPES.sites,
+  ...(DISCOVERY_FINDING_PROP_TYPES.sites && { sites: DISCOVERY_FINDING_PROP_TYPES.sites }),
 };
 const REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
 const CONDITIONAL = [

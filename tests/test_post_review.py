@@ -135,6 +135,107 @@ def test_gitlab_same_sha_summary_only_extends_inline_issue_sites(
     assert repeated.code == 0 and repeated.requests == ()
 
 
+@pytest.mark.parametrize("summary_posted", [False, True])
+def test_gitlab_member_marker_routes_missing_primary_to_summary_once(
+    posting, summary_posted
+):
+    primary = located(consolidation_key="issue", consolidation_primary=True)
+    member = located(
+        id="M",
+        title="Existing member",
+        consolidation_key="issue",
+        line_start=4,
+        line_end=4,
+        anchor="finish_operation()",
+    )
+    member_key = compose.finding_key(
+        "foo.py", 4, member["title"], compose.key_material_body(member)
+    )
+    primary_key = compose.finding_key(
+        "foo.py", 2, primary["title"], compose.key_material_body(primary)
+    )
+    notes = prior(member_key, summary=summary_posted).payload
+    for i, note in enumerate(notes):
+        note["id"] = 10 + i
+    data = review("gitlab", [primary, member])
+    run = posting(data, diff=DIFF, dry_run=False, entries=JsonFetch(notes, None))
+    assert run.code == 0, run.err
+    assert len(run.requests) == 1
+    request = run.requests[0]
+    assert request.method == ("PUT" if summary_posted else "POST")
+    assert request.endpoint.endswith("/notes/10" if summary_posted else "/notes")
+    body = request.payload["body"]
+    assert primary["title"] in body and primary["body"] in body
+    assert member["title"] not in body and "```suggestion" not in body
+    assert [marker["key"] for marker in find_finding_markers(body)] == [primary_key]
+    if summary_posted:
+        notes[0]["body"] = body
+    else:
+        notes.append({"id": 20, "author": {"username": "poster"}, "body": body})
+    repeated = posting(data, diff=DIFF, dry_run=False, entries=JsonFetch(notes, None))
+    assert repeated.code == 0 and repeated.requests == ()
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing-id", "bool-id", "negative-id", "over-limit"]
+)
+def test_gitlab_summary_extension_failure_preserves_retryable_coverage(
+    posting, failure
+):
+    primary = located()
+    previous = located(
+        id="B",
+        disposition="body",
+        title="Earlier body finding",
+        body="Keep this original finding.",
+    )
+    first = posting(review("gitlab", [primary, previous]), diff=DIFF, dry_run=False)
+    assert first.code == 0
+    notes = [
+        {"id": 10 + i, "author": {"username": "poster"}, "body": r.payload["body"]}
+        for i, r in enumerate(first.requests)
+    ]
+    broken = copy.deepcopy(notes)
+    if failure == "missing-id":
+        broken[0].pop("id")
+    elif failure == "bool-id":
+        broken[0]["id"] = True
+    elif failure == "negative-id":
+        broken[0]["id"] = -1
+    else:
+        body = broken[0]["body"]
+        limit = fold.body_limit("gitlab", "summary").bytes
+        broken[0]["body"] = "x" * (limit - fold.utf8_len(body)) + body
+    snapshot = copy.deepcopy(broken)
+    site = {
+        "file": "new-site.txt",
+        "line_start": 1,
+        "line_end": 1,
+        "anchor": "quote",
+        "location_status": "confirmed",
+        "diff_validation": {"in_diff": False},
+    }
+    data = review("gitlab", [{**primary, "sites": [site]}, previous])
+    failed = posting(data, diff=DIFF, dry_run=False, entries=JsonFetch(broken, None))
+    assert failed.code == 1 and failed.requests == ()
+    assert broken == snapshot
+    expected = (
+        "Updated summary exceeds the body limit; new coverage remains retryable."
+        if failure == "over-limit"
+        else "Existing summary has no usable note ID; new coverage remains unresolved."
+    )
+    assert expected in failed.err
+    retry = posting(data, diff=DIFF, dry_run=False, entries=JsonFetch(notes, None))
+    assert retry.code == 0 and len(retry.requests) == 1
+    request = retry.requests[0]
+    assert request.method == "PUT" and request.endpoint.endswith("/notes/10")
+    assert "Keep this original finding." in request.payload["body"]
+    assert request.payload["body"].count("new-site.txt") == 1
+    notes[0]["body"] = request.payload["body"]
+    repeated = posting(data, diff=DIFF, dry_run=False, entries=JsonFetch(notes, None))
+    assert repeated.code == 0 and repeated.requests == ()
+
+
 def test_group_retry_is_atomic(posting):
     from tests.test_outbound_delivery import (
         _assert_prepared_poison,
@@ -271,7 +372,7 @@ def test_group_retry_is_atomic(posting):
     assert same_issue.code == 0 and same_issue.requests == ()
     for present in (0, 1):
         partial = [
-            notes[0],
+            {**notes[0]},
             {**notes[1], "body": post.build_finding_marker(SHA, member_keys[present])},
         ]
         run = posting(
@@ -281,9 +382,6 @@ def test_group_retry_is_atomic(posting):
             entries=JsonFetch(partial, None),
         )
         assert run.code == 0
-        if present == 1:
-            assert run.requests == ()
-            continue
         assert len(run.requests) == 1
         request = run.requests[0]
         assert request.method == "PUT" and request.endpoint.endswith("/notes/10")
@@ -294,6 +392,16 @@ def test_group_retry_is_atomic(posting):
         assert all(site["file"] in body for site in sites)
         assert "@ghost" not in body and "<!-- code-gauntlet-findings:" in body
         assert "~~~suggestion" not in body
+        if present == 1:
+            assert post.prepare_line(primary["title"]) in body
+            partial[0]["body"] = body
+            repeated = posting(
+                review("gitlab", [primary, member]),
+                diff=DIFF,
+                dry_run=False,
+                entries=JsonFetch(partial, None),
+            )
+            assert repeated.code == 0 and repeated.requests == ()
     legacy = [
         notes[0],
         {

@@ -177,7 +177,7 @@ For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: 
 
 <!-- generated-from-registry-optional: do not edit; scripts/generate_contract_requirements.py -->
 ```json
-{"anchor": "<Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.>", "sites": [{"file": "<string>", "line_start": 1, "line_end": 1, "anchor": "<string>"}]}
+{"anchor": "<Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.>"}
 ```
 <!-- /generated-from-registry-optional -->
 
