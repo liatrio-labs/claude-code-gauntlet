@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.51.0 (2026-10-29)
+
+### Features
+
+- **bench**: Replay stored delivery and capture its inputs on measured runs
+  ([#560](https://github.com/liatrio-labs/claude-code-gauntlet/pull/560),
+  [`cedb75b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cedb75b67815030765ff2935878deca8f3a715ee))
+
+- **bench**: Replay stored delivery and capture its inputs on measured runs (#46)
+  ([#560](https://github.com/liatrio-labs/claude-code-gauntlet/pull/560),
+  [`cedb75b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cedb75b67815030765ff2935878deca8f3a715ee))
+
+### Refactoring
+
+- **bench**: Surface replay child errors and share the measured return budget fallback
+  ([#560](https://github.com/liatrio-labs/claude-code-gauntlet/pull/560),
+  [`cedb75b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cedb75b67815030765ff2935878deca8f3a715ee))
+
+
 ## v3.50.2 (2026-10-28)
 
 ### Bug Fixes
