@@ -19,6 +19,8 @@ import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoint
 import { checkpointChecksumErrors, checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
 import { holdBackIncomplete } from './holdBackIncomplete.js';
 import { appendMeasurement, createMeasurementTrace, recordStage, traceDecision, eliminationDecisions, stripTraceFields, decisionsFor } from './measurementTrace.js';
+import { captureDeliveryReplay, appendDeliveryReplay } from './measurementReplay.js';
+import { deepClone } from './wire.js';
 
 // The host injects runtime globals, while tests supply context explicitly.
 function defaultCtx() {
@@ -104,6 +106,157 @@ export function compactMethodology(m) {
   return out;
 }
 
+export async function deliverFromCheckpoint(c, A, state) {
+  const policy = A.policy || {};
+  const { limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
+    reviewMdSubtrees, derivedAgentFlags, runPhase, measured } = state;
+  const replay = measurementTrace ? captureDeliveryReplay(c, A, state) : null;
+  if (replay) c = replay.ctx;
+  const { summarize: summaryOut, discover: discoverOut, merge: mergeOut,
+    verify: verifyOut, validate: validateOut, filter: filterOut, challenge: challengeOut } = phaseOutputs;
+  rewriteHostPathText(challengeOut, summaryOut, A.repoRoot);
+  gaps.push(...(challengeOut.gaps || []));
+
+  // Keep replay disclosures outside checkpoints so resumes cannot duplicate them.
+  const markedCount = applyChallengeReplayBelt(challengeOut);
+  holdBackIncomplete(challengeOut);
+  if (measurementTrace) recordStage(measurementTrace, 'holdback', challengeOut, {
+    decisions: [
+      ...(challengeOut.eliminated || []).filter((f) => f.replay_belt && f.trace_id).map((f) => traceDecision(f, 'injection', f.elimination_reason)),
+      ...(challengeOut.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f,
+        f.validation === 'skipped' ? 'validation_skipped' : f.origin === 'unknown' ? 'verify_unproven' :
+          f.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed', f.validation === 'skipped' ? 'validation skipped' : f.origin === 'unknown' ? 'verification unproven' : f.challenge, [], 'held_back')),
+    ],
+  });
+  if (markedCount > 0) {
+    gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
+  }
+
+  gaps.push(...hostPathTextGaps(
+    challengeOut,
+    summaryOut,
+    [A.repoRoot, A.pluginRoot, A.outputDir],
+  ));
+
+  const deliveryTier = A.delivery && A.delivery.tier;
+  const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
+  if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
+    cap_hit: selectDelivery(challengeOut.findings, null, deliveryTier).length > postReview.length,
+    decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,
+      deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
+      'delivery selection', [], 'not_selected')),
+  });
+  if (measurementTrace) measurementTrace.complete = true;
+  stripTraceFields(phaseOutputs);
+  const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
+  const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
+    && (A.mode !== 'headless'
+      || headlessCommentsEnabled);
+
+  const pathNormalization = {};
+  for (const [phase, output] of Object.entries(phaseOutputs)) {
+    const counts = {};
+    for (const field of ['path_rewrites', 'replay_path_rejected']) {
+      if (output.stats?.[field] > 0) counts[field] = output.stats[field];
+    }
+    if (Object.keys(counts).length) pathNormalization[phase] = counts;
+  }
+  const reportInput = {
+    summary: summaryOut.summary,
+    ...(includeDelivered ? { delivered: postReview } : {}),
+    findings: challengeOut.findings,
+    unverified: challengeOut.unverified,
+    stats: {
+      pathNormalization,
+      discovered: (discoverOut.findings || []).length,
+      validate: validateOut.stats,
+      filter: filterOut.stats,
+      challenge: challengeOut.stats,
+      merge: compactMethodology(mergeOut.methodology),
+    },
+    // The report needs recorded dispatch scope because a gated agent differs from an agent returning no findings.
+    dimensions: { dispatched: discoverOut.dispatched || [], degraded: discoverOut.degraded || [], removedTestAudit: discoverOut.removedTestAudit || { status: 'unavailable' } },
+    headShaShort: A.headShaShort,
+    generatedAt: A.generatedAt,
+    prIdentity: (A.delivery || {}).prIdentity || null,
+    mode: A.mode,
+    configEcho: A.configEcho,
+    pluginRoot: A.pluginRoot,
+    pipelineVersion: c.pipelineVersion,
+    reviewScope: A.reviewScope,
+    hasReviewMd: Array.isArray(A.reviewMd) ? A.reviewMd.length > 0 : A.reviewConfigPath != null,
+    policy,
+    deliveryTier: deliveryTier ?? 'all',
+    deliveryCap: limits.deliveryCap ?? null,
+    gapCount: gaps.length,
+  };
+  const reviewBody = renderSummaryBody(reportInput);
+  // Render from pipeline data so report structure and counts remain deterministic.
+  let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
+  const reportGaps = reportOut.gaps || [];
+  gaps.push(...reportGaps);
+  // Report checkpoints cannot substitute for rendering from current data.
+  // Rebuild persisted report bytes while preserving disclosed gaps.
+  reportOut = { report: renderReport(reportInput), gaps: reportGaps };
+  phaseOutputs.report = reportOut;
+
+  // Writer failures must degrade to artifact gaps because persistence failure does not invalidate completed review work.
+  const writeOut = await writeArtifacts(c, {
+    findings: challengeOut.findings,
+    postReview,
+    prIdentity: (A.delivery || {}).prIdentity,
+    reviewBody,
+    report: reportOut.report,
+    checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, state.phaseReached),
+    outputDir: A.outputDir,
+    headShaShort: A.headShaShort,
+    // Echo the run id so the materializer can locate task output by content without a task id.
+    nonce: A.nonce,
+    persist: A.persist, python: A.python, pluginRoot: A.pluginRoot,
+    policy,
+  });
+  gaps.push(...(writeOut.gaps || []));
+
+  return appendDeliveryReplay(measured({
+    ok: true,
+    phaseReached: state.phaseReached,
+    stats: {
+      pathNormalization,
+      discovered: (discoverOut.findings || []).length,
+      merged: (mergeOut.findings || []).length,
+      merge: compactMethodology(mergeOut.methodology),
+      verified: verifyOut.verified,
+      // Per-slice proof counts expose partial verification trust that a single stage boolean cannot express.
+      inputProof: verifyOut.inputProof,
+      highConfidence: (challengeOut.findings || []).length,
+      unverified: (challengeOut.unverified || []).length,
+      degraded: discoverOut.degraded || [],
+      validate: validateOut.stats,
+      filter: filterOut.stats,
+      // Provenance needs labels and counts without returning document contents.
+      // Report this run's provenance because replayed filter statistics can describe different inputs.
+      reviewConfigSource: resolvedReview.reviewConfigSource,
+      exclusionsSource: resolvedReview.exclusionsSource,
+      reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
+      reviewMdSubtrees,
+      // Echo the derived decision so readers can verify scope without recomputing it.
+      scope: {
+        lightEligible: computeLightEligible(A.riskTable, A.changedLines),
+        scopeAnswer: A.scopeAnswer !== undefined ? A.scopeAnswer : null,
+        deep: derivedAgentFlags.deep !== false,
+      },
+      challenge: challengeOut.stats,
+    },
+    artifactPaths: writeOut.artifactPaths,
+    resolvedPolicy: resolvedPolicyEnvelope(policy),
+    checkpoints: writeOut.partial ? buildResumeCheckpoints(phaseOutputs) : { completed },
+    gaps,
+    // Keep bulk persistence data last so a truncated return still includes status and gaps.
+    // scripts/gauntlet/awaiting.py elides persistReturn.entries from the terminal response; materialization reads the original task file.
+    ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
+  }), replay?.record);
+}
+
 // This seam NEVER lets a throw escape so direct callers can recover completed work from its diagnostic envelope.
 export async function runWith(ctx, rawArgs) {
   // Keep this seam throw-free for direct callers while returning the entry's refusal shape.
@@ -154,6 +307,7 @@ export async function runWith(ctx, rawArgs) {
   const completed = [];
   const phaseOutputs = {};
   const measurementTrace = A.measurementTrace === true ? createMeasurementTrace(A.nonce) : null;
+  const replayArgs = measurementTrace ? deepClone(A) : null;
   let discoveryDecisions = [];
   const measured = (envelope) => appendMeasurement(envelope, measurementTrace);
   let phaseReached = 'start';
@@ -278,150 +432,14 @@ export async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(filterOut.gaps || []));
 
-    const challengeOut = await runPhase('challenge', () => challengeStage(c, {
+    await runPhase('challenge', () => challengeStage(c, {
       // Shared context would weaken the challenger's independent check, so its prompt contains only the claim and location.
       findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
     }));
-    rewriteHostPathText(challengeOut, summaryOut, A.repoRoot);
-    gaps.push(...(challengeOut.gaps || []));
-
-    // Keep replay disclosures outside checkpoints so resumes cannot duplicate them.
-    const markedCount = applyChallengeReplayBelt(challengeOut);
-    holdBackIncomplete(challengeOut);
-    if (measurementTrace) recordStage(measurementTrace, 'holdback', challengeOut, {
-      decisions: [
-        ...(challengeOut.eliminated || []).filter((f) => f.replay_belt && f.trace_id).map((f) => traceDecision(f, 'injection', f.elimination_reason)),
-        ...(challengeOut.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f,
-          f.validation === 'skipped' ? 'validation_skipped' : f.origin === 'unknown' ? 'verify_unproven' :
-            f.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed', f.validation === 'skipped' ? 'validation skipped' : f.origin === 'unknown' ? 'verification unproven' : f.challenge, [], 'held_back')),
-      ],
-    });
-    if (markedCount > 0) {
-      gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
-    }
-
-    gaps.push(...hostPathTextGaps(
-      challengeOut,
-      summaryOut,
-      [A.repoRoot, A.pluginRoot, A.outputDir],
-    ));
-
-    const deliveryTier = A.delivery && A.delivery.tier;
-    const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
-    if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
-      cap_hit: selectDelivery(challengeOut.findings, null, deliveryTier).length > postReview.length,
-      decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,
-        deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
-        'delivery selection', [], 'not_selected')),
-    });
-    if (measurementTrace) measurementTrace.complete = true;
-    stripTraceFields(phaseOutputs);
-    const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
-    const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
-      && (A.mode !== 'headless'
-        || headlessCommentsEnabled);
-
-    const pathNormalization = {};
-    for (const [phase, output] of Object.entries(phaseOutputs)) {
-      const counts = {};
-      for (const field of ['path_rewrites', 'replay_path_rejected']) {
-        if (output.stats?.[field] > 0) counts[field] = output.stats[field];
-      }
-      if (Object.keys(counts).length) pathNormalization[phase] = counts;
-    }
-    const reportInput = {
-      summary: summaryOut.summary,
-      ...(includeDelivered ? { delivered: postReview } : {}),
-      findings: challengeOut.findings,
-      unverified: challengeOut.unverified,
-      stats: {
-        pathNormalization,
-        discovered: (discoverOut.findings || []).length,
-        validate: validateOut.stats,
-        filter: filterOut.stats,
-        challenge: challengeOut.stats,
-        merge: compactMethodology(mergeOut.methodology),
-      },
-      // The report needs recorded dispatch scope because a gated agent differs from an agent returning no findings.
-      dimensions: { dispatched: discoverOut.dispatched || [], degraded: discoverOut.degraded || [], removedTestAudit: discoverOut.removedTestAudit || { status: 'unavailable' } },
-      headShaShort: A.headShaShort,
-      generatedAt: A.generatedAt,
-      prIdentity: (A.delivery || {}).prIdentity || null,
-      mode: A.mode,
-      configEcho: A.configEcho,
-      pluginRoot: A.pluginRoot,
-      pipelineVersion: c.pipelineVersion,
-      reviewScope: A.reviewScope,
-      hasReviewMd: Array.isArray(A.reviewMd) ? A.reviewMd.length > 0 : A.reviewConfigPath != null,
-      policy,
-      deliveryTier: deliveryTier ?? 'all',
-      deliveryCap: limits.deliveryCap ?? null,
-      gapCount: gaps.length,
-    };
-    const reviewBody = renderSummaryBody(reportInput);
-    // Render from pipeline data so report structure and counts remain deterministic.
-    let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
-    const reportGaps = reportOut.gaps || [];
-    gaps.push(...reportGaps);
-    // Report checkpoints cannot substitute for rendering from current data.
-    // Rebuild persisted report bytes while preserving disclosed gaps.
-    reportOut = { report: renderReport(reportInput), gaps: reportGaps };
-    phaseOutputs.report = reportOut;
-
-    // Writer failures must degrade to artifact gaps because persistence failure does not invalidate completed review work.
-    const writeOut = await writeArtifacts(c, {
-      findings: challengeOut.findings,
-      postReview,
-      prIdentity: (A.delivery || {}).prIdentity,
-      reviewBody,
-      report: reportOut.report,
-      checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, phaseReached),
-      outputDir: A.outputDir,
-      headShaShort: A.headShaShort,
-      // Echo the run id so the materializer can locate task output by content without a task id.
-      nonce: A.nonce,
-      persist: A.persist, python: A.python, pluginRoot: A.pluginRoot,
-      policy,
-    });
-    gaps.push(...(writeOut.gaps || []));
-
-    return measured({
-      ok: true,
-      phaseReached,
-      stats: {
-        pathNormalization,
-        discovered: (discoverOut.findings || []).length,
-        merged: (mergeOut.findings || []).length,
-        merge: compactMethodology(mergeOut.methodology),
-        verified: verifyOut.verified,
-        // Per-slice proof counts expose partial verification trust that a single stage boolean cannot express.
-        inputProof: verifyOut.inputProof,
-        highConfidence: (challengeOut.findings || []).length,
-        unverified: (challengeOut.unverified || []).length,
-        degraded: discoverOut.degraded || [],
-        validate: validateOut.stats,
-        filter: filterOut.stats,
-        // Provenance needs labels and counts without returning document contents.
-        // Report this run's provenance because replayed filter statistics can describe different inputs.
-        reviewConfigSource: resolvedReview.reviewConfigSource,
-        exclusionsSource: resolvedReview.exclusionsSource,
-        reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
-        reviewMdSubtrees,
-        // Echo the derived decision so readers can verify scope without recomputing it.
-        scope: {
-          lightEligible: computeLightEligible(A.riskTable, A.changedLines),
-          scopeAnswer: A.scopeAnswer !== undefined ? A.scopeAnswer : null,
-          deep: derivedAgentFlags.deep !== false,
-        },
-        challenge: challengeOut.stats,
-      },
-      artifactPaths: writeOut.artifactPaths,
-      resolvedPolicy: resolvedPolicyEnvelope(policy),
-      checkpoints: writeOut.partial ? buildResumeCheckpoints(phaseOutputs) : { completed },
-      gaps,
-      // Keep bulk persistence data last so a truncated return still includes status and gaps.
-      // scripts/gauntlet/awaiting.py elides persistReturn.entries from the terminal response; materialization reads the original task file.
-      ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
+    return await deliverFromCheckpoint(c, A, {
+      limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
+      reviewMdSubtrees, derivedAgentFlags, runPhase, measured, replayArgs,
+      get phaseReached() { return phaseReached; },
     });
   } catch (e) {
     stripTraceFields(phaseOutputs);

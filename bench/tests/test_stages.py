@@ -292,6 +292,10 @@ def test_collection_hashes_top_level_trace_and_persists_availability(tmp_path):
     binding = read_json(directory / "measurement-artifact.json")
     assert binding["sha256"] == file_hash(trace_path)
     assert (directory / binding["path"]).read_bytes() == trace_path.read_bytes()
+    replay_path = directory / "code-gauntlet-delivery-replay.json"
+    assert replay_path.read_bytes() == receipt["out"]["measurement"]["replay"][
+        "text"
+    ].encode("utf-8")
     assert stages.collect_trace(directory) == collected
     missing = stages.collect_trace(tmp_path / "missing")
     assert missing.status == "unavailable" and missing.reason
