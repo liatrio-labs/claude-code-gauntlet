@@ -80,9 +80,10 @@ export async function validateStage(ctx, input) {
     const list = res === null || res === undefined
       ? null
       : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
+    // A usable list completes the dispatch; per-finding omissions stay local and are disclosed.
+    if (list) completed += 1;
     const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ ...e, id: e.id ?? e.finding_id }));
     const rejections = [];
-    let usable = false;
     for (const finding of batch) {
       const matches = entries.filter((entry) => entry.id === finding.id);
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
@@ -91,13 +92,9 @@ export async function validateStage(ctx, input) {
         const reasons = validationRejections(finding, entry);
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
         // Missing admission evidence still warrants a retry, but does not invalidate a score.
-        if (!validationRejections(finding, entry, false).some((reason) => ['invalid_confidence', 'invalid_policy_subject', 'missing_entry'].includes(reason))) {
-          accepted.set(finding.id, entry);
-          usable = true;
-        }
+        if (!validationRejections(finding, entry, false).some((reason) => ['invalid_confidence', 'invalid_policy_subject', 'missing_entry'].includes(reason))) accepted.set(finding.id, entry);
       }
     }
-    if (usable) completed += 1;
     validatorAudit(audit, label, res, rejections);
     for (const rejection of rejections) terminalRejections.set(rejection.id, rejection.reasons);
     return list;
@@ -138,8 +135,7 @@ export async function validateStage(ctx, input) {
   for (const f of findings) {
     if (!accepted.has(f.id)) { f.validation = 'skipped'; skipped += 1; }
     else f.validation = 'validated';
-    if (accepted.has(f.id) && (assessmentGaps(f.skeptical_assessments[0]).semanticErrors.length
-      || validationRejections(f, accepted.get(f.id), false).length)) incomplete += 1;
+    if (accepted.has(f.id) && validationRejections(f, accepted.get(f.id)).length) incomplete += 1;
   }
 
   return {
