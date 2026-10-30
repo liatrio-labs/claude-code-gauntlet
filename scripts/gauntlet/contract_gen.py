@@ -137,6 +137,7 @@ _REGISTRY_FIELDS = (
     "validationReturnProperties: m.VALIDATION_RETURN_PROPERTIES",
     "verdictReturnProperties: m.VERDICT_RETURN_PROPERTIES",
     "citationRequestSchema: m.CITATION_REQUEST_SCHEMA",
+    "citeVerifierVersion: m.CITE_VERIFIER_VERSION",
     "skepticalReturnSchemas: Object.fromEntries(Object.entries(m.SKEPTICAL_CONTRACTS)"
     ".map(([stage, contract]) => [stage, contract.schema]))",
     "skepticalFindingProperties: m.SKEPTICAL_FINDING_PROPERTIES",
@@ -603,6 +604,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "Disposition": identity["dispositions"],
         "Verdict": identity["verdictReturnProperties"]["verdict"]["enum"],
         "SkepticalStage": list(identity["skepticalReturnSchemas"]),
+        "CitationStatus": identity["skepticalFindingProperties"]["cite_results"][
+            "items"
+        ]["properties"]["status"]["enum"],
         "ExclusionCategory": [
             row["category"] for row in identity["exclusionCategories"]
         ],
@@ -828,6 +832,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "RIGHT_ELIGIBILITY": identity["rightEligibility"],
         "STAGE_COSTS": identity["stageCosts"],
         "CITATION_REQUEST_SCHEMA": identity["citationRequestSchema"],
+        "CITE_VERIFIER_VERSION": identity["citeVerifierVersion"],
         "EXCLUSION_CATEGORIES": identity["exclusionCategories"],
         "EXCLUSION_FACT_DESCRIPTORS": identity["exclusionFactDescriptors"],
         "BRAND_MARK": identity["brand"]["mark"],

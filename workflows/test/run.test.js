@@ -709,7 +709,7 @@ const COARSEN_ROWS = [
   { name: 'entry changed-file pressure', changedFiles: Array.from({ length: 20000 }, (_, index) => `src/f${index}.js`),
     limits: { summarizeBucketSize: 1 }, bucketCount: 625, batchCount: 1 },
   { name: 'post-merge finding pressure', findings: Array.from({ length: 1000 }, (_, index) => makeFinding(`F${index}`)),
-    limits: { validateBatch: 1, verifySliceSize: 2000 }, bucketCount: 0, batchCount: 125 },
+    limits: { validateBatch: 1, verifySliceSize: 2000 }, bucketCount: 0, batchCount: 8 },
 ];
 for (const row of COARSEN_ROWS) test(`coarsening wiring: ${row.name}`, async () => {
   const args = validArgs({ ...(row.changedFiles ? { changedFiles: row.changedFiles, changedLines: 100000 } : {}),

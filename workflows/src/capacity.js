@@ -3,13 +3,15 @@ import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding
 
 import { pythonArgv, shellWord } from './wire.js';
 import { hostPlatformForRoots, trustedScriptPath } from './paths.js';
+import { CITE_ROLES_PER_STAGE, citeRecordKey, citeSource, collectCitations, planCiteBatches, reusableCiteResult } from './citeWire.js';
 
 // Shell quoting preserves each argv word; retry paths stay fixed so outputs
 // overwrite the first attempt.
 export function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   const v = inp.verify || {};
-  const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;
-  const outPath = `${v.outputPathBase || 'phase4-output'}.slice${i}.json`;
+  const stem = inp.citeMode ? 'cite' : 'slice';
+  const inPath = `${v.inputPathBase || 'phase4-input'}.${stem}${i}.json`;
+  const outPath = `${v.outputPathBase || 'phase4-output'}.${stem}${i}.json`;
   const parts = [
     ...pythonArgv(inp.python), inp.pluginRoot ? trustedScriptPath(inp.pluginRoot, TRUSTED_SCRIPT_BASENAMES.verify) : 'scripts/verify_findings.py',
     '--input', inPath,
@@ -32,7 +34,8 @@ export function verifyInlineBudget(input = {}) {
   if (hostPlatformForRoots(input) !== 'windows') return VERIFY_INLINE_CHAR_BUDGET;
   const prepared = { ...input, verify: { ...(input.verify || {}),
     baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
-  const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
+  const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length
+    + (input.citeMode ? 100 : 0);
   return Math.max(0, 32767 - overhead - 2048);
 }
 
@@ -138,8 +141,24 @@ function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
 }
 
-function citeCost(L, findings, challenges) {
-  return ceilDiv(challenges, effectiveBatchSize(L, findings)) * STAGE_COSTS.cite.attempts;
+function citeCost(L, findings, challenges, input = {}, baseBranch = 'main') {
+  const count = findingCount(findings);
+  const records = Array.isArray(findings) ? collectCitations(findings) : [];
+  if (records.length || (Array.isArray(findings) && findings.every((f) => Array.isArray(f.skeptical_assessments)))) {
+    const ledger = input.cite_ledger;
+    if (Object.hasOwn(input, 'cite_ledger') && (!ledger || !Array.isArray(ledger.entries) || !Array.isArray(ledger.batches))) return 0;
+    const source = citeSource(input.verify?.sourceCapture);
+    const fresh = ledger ? records.filter((r) => !ledger.entries.some((e) => e?.key === citeRecordKey(r, source))) : records;
+    const planned = planCiteBatches(fresh, effectiveBatchSize(L, count), verifyInlineBudget({ ...input, citeMode: true }),
+      baseBranch, hostPlatformForRoots(input)).batches.length * STAGE_COSTS.cite.attempts;
+    if (ledger) return planned + ledger.batches.filter((b) => Array.isArray(b?.keys)
+      && Number.isSafeInteger(b.attempts) && b.attempts >= 0 && b.attempts <= STAGE_COSTS.cite.attempts
+      && b.keys.some((key) => records.some((r) => citeRecordKey(r, source) === key))).reduce((n, b) => n
+      + (b.keys.every((key) => ledger.entries.some((e) => e?.key === key && reusableCiteResult(e, e.record, source)))
+        ? 0 : Math.max(0, STAGE_COSTS.cite.attempts - (b.attempts ?? STAGE_COSTS.cite.attempts))), 0);
+    return planned;
+  }
+  return ceilDiv((count + challenges) * CITE_ROLES_PER_STAGE, effectiveBatchSize(L, count)) * STAGE_COSTS.cite.attempts;
 }
 
 export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
@@ -150,7 +169,7 @@ export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'mai
   const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
   const validateCalls = validationCost(L, findings);
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
-  const citeCalls = citeCost(L, findings, challengeCalls);
+  const citeCalls = citeCost(L, nFindings, challengeCalls, input, baseBranch);
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + citeCalls + STAGE_COSTS.writer.attempts;
 }
 
@@ -174,7 +193,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
     // Compare each term using its full dispatch cost so retrying verify slices receive the same weight as in the guard.
     const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch, input);
     const challengeCount = Math.min(findings, effectiveChallengeCap(L, findings));
-    const citeTerm = citeCost(L, findings, challengeCount);
+    const citeTerm = citeCost(L, nFindings, challengeCount, input, baseBranch);
     const validateTerm = validationCost(L, findings) + citeTerm;
     const challengeTerm = challengeCount + citeTerm;
     const choices = [
@@ -187,7 +206,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
     const [largest] = choices;
     if (largest[0] === 'validate') {
       L.validateBatch = effectiveBatchSize(L, findings) * 2;
-      if (validationCost(L, findings) + citeCost(L, findings, challengeCount) >= validateTerm) candidates.delete('validate');
+      if (validationCost(L, findings) + citeCost(L, nFindings, challengeCount, input, baseBranch) >= validateTerm) candidates.delete('validate');
     } else if (largest[0] === 'verify') {
       L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
       if (verifyTerm(L, nFindings, baseBranch, input) >= currentVerifyTerm) candidates.delete('verify');
@@ -195,7 +214,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
       // Halving the effective cap ensures progress even when the nominal cap exceeds the finding count.
       L.challengeCap = Math.min(challengeCount, Math.max(CHALLENGE_CAP_FLOOR, Math.floor(challengeCount / 2)));
       const next = Math.min(findings, effectiveChallengeCap(L, findings));
-      if (next + citeCost(L, findings, next) >= challengeTerm) candidates.delete('challenge');
+      if (next + citeCost(L, nFindings, next, input, baseBranch) >= challengeTerm) candidates.delete('challenge');
     }
   }
   return L;

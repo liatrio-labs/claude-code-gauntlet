@@ -31,6 +31,7 @@ from gauntlet.location import (
 from gauntlet.registry import DELTA_VALUE_FIELDS, Delta
 from gauntlet.source_capture import load_capture
 from gauntlet.verify import decide
+from gauntlet.verify.cite import CiteBatch, CiteResult, run_citations
 from gauntlet.verify.decide import FindingWire, VerificationResult
 
 
@@ -83,7 +84,18 @@ class FailedEnvelope(TypedDict):
     stderr: str
 
 
-Envelope = SuccessEnvelope | FailedEnvelope
+class CitationReceipt(Receipt):
+    batch_id: str | None
+    attempt: int | None
+
+
+class CiteSuccessEnvelope(TypedDict):
+    status: Literal["ok"]
+    receipt: CitationReceipt
+    result: CiteResult
+
+
+Envelope = SuccessEnvelope | CiteSuccessEnvelope | FailedEnvelope
 # Half-up rounding mirrors the JS side's pinNumericFields.
 _NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
 _INT_RE = re.compile(r"[+-]?\d+")
@@ -317,11 +329,21 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
     try:
         # Snapshot received values before coercion or decisions can rewrite them.
         inline_checksum = fnv1a32(args.input_inline)
-        data = validate_input_shape(decode_inline_slice(args.input_inline))
+        decoded = decode_inline_slice(args.input_inline)
+        cite_mode = args.mode == "cite"
+        if cite_mode:
+            if not isinstance(decoded.get("requests"), list):
+                _inline_reject("cite mode requires request records")
+        else:
+            validate_input_shape(decoded)
+        data = cast(SliceInput, decoded)
+        records = (
+            cast(list[object], decoded["requests"]) if cite_mode else data["findings"]
+        )
         input_checksum = checksum_or_none(data)
         record_proofs: list[RecordProof] = [
             {"id": fid, "checksum": checksum_or_none(finding)}
-            for finding in data["findings"]
+            for finding in records
             if (fid := _record_id(finding)) is not None
         ]
         try:
@@ -329,6 +351,32 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
         except JsSerializationError:
             input_text = json.dumps(data, indent=2, ensure_ascii=True)
         write_atomic(args.input, input_text)
+        if cite_mode:
+            cite_result = run_citations(args, cast(CiteBatch, decoded), repo_root, sha)
+            cite_envelope: CiteSuccessEnvelope = {
+                "status": "ok",
+                "receipt": {
+                    "sha": sha,
+                    "n_in": len(records),
+                    "nonce": args.nonce,
+                    "deltas_checksum": checksum_or_none(cite_result["citations"]),
+                    "inline_checksum": inline_checksum,
+                    "base_branch": cast(
+                        str, data.get("base_branch") or args.base_branch
+                    ),
+                    "diff_source": {
+                        "path": args.diff_file,
+                        "read": bool(args.diff_file and Path(args.diff_file).is_file()),
+                    },
+                    "record_proofs": record_proofs,
+                    "batch_id": args.cite_batch,
+                    "attempt": args.cite_attempt,
+                },
+                "result": cite_result,
+            }
+            if input_checksum is not None:
+                cite_envelope["receipt"]["input_checksum"] = input_checksum
+            return cite_envelope
         for finding in data["findings"]:
             coerce_numeric_fields(finding)
         findings = cast(list[FindingWire], data["findings"])
@@ -386,6 +434,9 @@ def _parser() -> Parser:
             "line references against the diff."
         ),
     )
+    parser.add_argument("--mode", choices=("verify", "cite"), default="verify")
+    parser.add_argument("--cite-batch")
+    parser.add_argument("--cite-attempt", type=int)
     parser.add_argument(
         "--base-branch",
         default="main",

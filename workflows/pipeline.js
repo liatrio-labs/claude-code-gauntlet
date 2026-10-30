@@ -818,6 +818,16 @@ const CITATION_REQUEST_PROPERTIES = deepFreeze({
   quote: { type: 'string', minLength: 1, maxLength: ANCHOR_LIMITS.chars },
 });
 const CITATION_REQUEST_SCHEMA = deepFreeze(closedDispatchRow(CITATION_REQUEST_PROPERTIES));
+const CITE_VERIFIER_VERSION = 'cite-1';
+const CITATION_SOURCE_SCHEMA = deepFreeze(closedDispatchRow({
+  snapshot_id: { type: 'string' }, target_kind: { type: 'string' },
+  head: { type: 'string' }, base: { type: 'string' }, diff_sha256: { type: 'string' },
+  verifier_version: { type: 'string' },
+}));
+const CITATION_RESULT_SCHEMA = deepFreeze(closedDispatchRow({
+  request: CITATION_REQUEST_SCHEMA, status: { type: 'string', enum: ['matched', 'unmatched', 'rejected', 'unavailable'] },
+  detail: { type: 'string' }, source: CITATION_SOURCE_SCHEMA,
+}));
 const citationRequests = (roles) => ({ type: 'array', minItems: roles.length,
   maxItems: CITATION_REQUEST_PROPERTIES.role.enum.length, items: CITATION_REQUEST_SCHEMA,
   allOf: roles.map((role) => ({ contains: { type: 'object', properties: { role: { const: role } }, required: ['role'] } })),
@@ -834,10 +844,11 @@ function scopeAssessmentSchema(stages) {
   }))) };
 }
 const SCOPE_ASSESSMENT_SCHEMA = deepFreeze(scopeAssessmentSchema(SKEPTICAL_IDENTITY.stage.enum));
+const SKEPTICAL_SCOPE_LIMIT = EXCLUSION_CATEGORIES.filter((row) => row.stage === 'skeptical').length;
 const VERDICT_RETURN_PROPERTIES = deepFreeze({
   ...SKEPTICAL_IDENTITY, verdict: { type: 'string', enum: ['real', 'refuted', 'needs_evidence'] },
   citations: citationRequests(['claim']), missing_evidence: { type: 'string', minLength: 1 },
-  scope_assessments: { type: 'array', items: SCOPE_ASSESSMENT_SCHEMA },
+  scope_assessments: { type: 'array', maxItems: SKEPTICAL_SCOPE_LIMIT, items: SCOPE_ASSESSMENT_SCHEMA },
 });
 const VERDICT_VARIANTS = VERDICT_RETURN_PROPERTIES.verdict.enum.map((verdict) => ({
   properties: { verdict: { const: verdict } },
@@ -845,7 +856,7 @@ const VERDICT_VARIANTS = VERDICT_RETURN_PROPERTIES.verdict.enum.map((verdict) =>
 }));
 const SKEPTICAL_RETURN_SCHEMAS = deepFreeze(Object.fromEntries(SKEPTICAL_IDENTITY.stage.enum.map((stage) => {
   const properties = { ...VERDICT_RETURN_PROPERTIES, stage: { type: 'string', enum: [stage] },
-    scope_assessments: { type: 'array', items: scopeAssessmentSchema([stage]) },
+    scope_assessments: { type: 'array', maxItems: SKEPTICAL_SCOPE_LIMIT, items: scopeAssessmentSchema([stage]) },
     ...(stage === 'validator' ? { confidence: { type: 'number' }, justification: { type: 'string' },
       reachability: { type: 'string', enum: REACHABILITY_VALUES }, ...VALIDATION_RETURN_PROPERTIES } : {}) };
   return [stage, { ...closedDispatchRow(properties,
@@ -853,10 +864,7 @@ const SKEPTICAL_RETURN_SCHEMAS = deepFreeze(Object.fromEntries(SKEPTICAL_IDENTIT
 })));
 const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
   skeptical_assessments: { type: 'array', items: closedDispatchRow(VERDICT_RETURN_PROPERTIES, ['citations', 'missing_evidence']) },
-  cite_results: { type: 'array', items: closedDispatchRow({
-    request: CITATION_REQUEST_SCHEMA, status: { type: 'string', enum: ['matched', 'unmatched', 'rejected', 'unavailable'] },
-    detail: { type: 'string' },
-  }) },
+  cite_results: { type: 'array', items: CITATION_RESULT_SCHEMA },
   scope_facts: { type: 'array', items: closedDispatchRow({
     category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) }, predicate: { type: 'string' },
     value: { type: ['boolean', 'null'] }, snapshot_id: CITATION_REQUEST_PROPERTIES.snapshot_id,
@@ -869,7 +877,7 @@ const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
     request_ids: { type: 'array', items: { type: 'string' } },
   }, ['category', 'stage', 'request_ids']),
 });
-function acceptSkepticalReturn(entry, findingId, stage) {
+function dispatchSchemaValidation() {
   const errors = [];
   const check = (value, schema, path) => {
     const fail = () => errors.push(path);
@@ -902,6 +910,13 @@ function acceptSkepticalReturn(entry, findingId, stage) {
     check(value, schema, '$');
     return errors.splice(start).length === 0;
   };
+  return { errors, check, matches };
+}
+function matchesDispatchSchema(value, schema) {
+  return dispatchSchemaValidation().matches(value, schema);
+}
+function acceptSkepticalReturn(entry, findingId, stage) {
+  const { errors, check, matches } = dispatchSchemaValidation();
   const schema = SKEPTICAL_RETURN_SCHEMAS[stage];
   if (schema) check(entry, schema, '$');
   else errors.push('stage');
@@ -1562,11 +1577,68 @@ function canonicalDeltas(ids, byId) {
 function deltaContentProof(ids, deltas) {
   return fnv1a32(JSON.stringify(canonicalDeltas(ids || [], deltasById(deltas)), null, 2));
 }
+// --- citeWire.js ---
+const citeChecksum = (value) => fnv1a32(JSON.stringify(value, null, 2) ?? 'undefined');
+const citeSource = (capture = {}) => ({ snapshot_id: capture.manifest_sha256 || '',
+  target_kind: capture.target_kind || '', head: capture.head || '', base: capture.base || '',
+  diff_sha256: capture.diff_sha256 || '', verifier_version: CITE_VERIFIER_VERSION });
+const citeRecordKey = (record, source) => JSON.stringify({ record, source });
+function reusableCiteResult(entry, record, source) {
+  const result = entry?.result;
+  return result && (['matched', 'unmatched', 'rejected'].includes(result.status)
+    || (result.status === 'unavailable' && ['oversize', 'request_cap'].includes(result.detail)))
+    && typeof result.detail === 'string'
+    && citeChecksum(result.request) === citeChecksum(record?.request)
+    && citeChecksum(result.source) === citeChecksum(source)
+    && (result.status !== 'matched' || (matchesDispatchSchema(record?.request, CITATION_REQUEST_SCHEMA)
+      && record.request.snapshot_id === source.snapshot_id));
+}
+const CITE_ROLES_PER_STAGE = CITATION_REQUEST_PROPERTIES.role.enum.length
+  * (1 + EXCLUSION_CATEGORIES.filter((row) => row.stage === 'skeptical').length);
+function collectCitations(findings) {
+  return findings.flatMap((f) => {
+    const checks = [];
+    const add = (entry, stage) => {
+      for (const q of Array.isArray(entry?.citations) ? entry.citations : []) {
+        const record = { finding_id: f.id, stage, request: q };
+        checks.push({ id: citeChecksum(record), ...record });
+      }
+    };
+    for (const assessment of Array.isArray(f.skeptical_assessments) ? f.skeptical_assessments : []) {
+      const entry = assessment?.raw ?? assessment;
+      const stage = assessment?.stage;
+      add(entry, stage);
+      for (const scope of Array.isArray(entry?.scope_assessments) ? entry.scope_assessments : []) add(scope, stage);
+    }
+    for (const scope of Array.isArray(f.scope_decisions) ? f.scope_decisions : []) add(scope, scope?.stage);
+    return checks;
+  });
+}
+const citeDocument = (records, baseBranch) => ({ requests: records, base_branch: baseBranch });
+function planCiteBatches(records, batchSize, budget, baseBranch, platform) {
+  const batches = [];
+  const oversize = [];
+  const cost = (rows) => {
+    const token = encodeSliceInline(citeDocument(rows, baseBranch));
+    return token.length + (platform === 'windows' ? (token.match(/["\\]/g) || []).length : 0);
+  };
+  let batch = [];
+  for (const record of records) {
+    if (cost([record]) > budget) { oversize.push(record); continue; }
+    if (batch.length && (batch.length >= batchSize || cost([...batch, record]) > budget)) {
+      batches.push(batch); batch = [];
+    }
+    batch.push(record);
+  }
+  if (batch.length) batches.push(batch);
+  return { batches, oversize };
+}
 // --- capacity.js ---
 function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   const v = inp.verify || {};
-  const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;
-  const outPath = `${v.outputPathBase || 'phase4-output'}.slice${i}.json`;
+  const stem = inp.citeMode ? 'cite' : 'slice';
+  const inPath = `${v.inputPathBase || 'phase4-input'}.${stem}${i}.json`;
+  const outPath = `${v.outputPathBase || 'phase4-output'}.${stem}${i}.json`;
   const parts = [
     ...pythonArgv(inp.python), inp.pluginRoot ? trustedScriptPath(inp.pluginRoot, TRUSTED_SCRIPT_BASENAMES.verify) : 'scripts/verify_findings.py',
     '--input', inPath,
@@ -1587,7 +1659,8 @@ function verifyInlineBudget(input = {}) {
   if (hostPlatformForRoots(input) !== 'windows') return VERIFY_INLINE_CHAR_BUDGET;
   const prepared = { ...input, verify: { ...(input.verify || {}),
     baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
-  const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
+  const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length
+    + (input.citeMode ? 100 : 0);
   return Math.max(0, 32767 - overhead - 2048);
 }
 const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
@@ -1669,8 +1742,24 @@ function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
 }
-function citeCost(L, findings, challenges) {
-  return ceilDiv(challenges, effectiveBatchSize(L, findings)) * STAGE_COSTS.cite.attempts;
+function citeCost(L, findings, challenges, input = {}, baseBranch = 'main') {
+  const count = findingCount(findings);
+  const records = Array.isArray(findings) ? collectCitations(findings) : [];
+  if (records.length || (Array.isArray(findings) && findings.every((f) => Array.isArray(f.skeptical_assessments)))) {
+    const ledger = input.cite_ledger;
+    if (Object.hasOwn(input, 'cite_ledger') && (!ledger || !Array.isArray(ledger.entries) || !Array.isArray(ledger.batches))) return 0;
+    const source = citeSource(input.verify?.sourceCapture);
+    const fresh = ledger ? records.filter((r) => !ledger.entries.some((e) => e?.key === citeRecordKey(r, source))) : records;
+    const planned = planCiteBatches(fresh, effectiveBatchSize(L, count), verifyInlineBudget({ ...input, citeMode: true }),
+      baseBranch, hostPlatformForRoots(input)).batches.length * STAGE_COSTS.cite.attempts;
+    if (ledger) return planned + ledger.batches.filter((b) => Array.isArray(b?.keys)
+      && Number.isSafeInteger(b.attempts) && b.attempts >= 0 && b.attempts <= STAGE_COSTS.cite.attempts
+      && b.keys.some((key) => records.some((r) => citeRecordKey(r, source) === key))).reduce((n, b) => n
+      + (b.keys.every((key) => ledger.entries.some((e) => e?.key === key && reusableCiteResult(e, e.record, source)))
+        ? 0 : Math.max(0, STAGE_COSTS.cite.attempts - (b.attempts ?? STAGE_COSTS.cite.attempts))), 0);
+    return planned;
+  }
+  return ceilDiv((count + challenges) * CITE_ROLES_PER_STAGE, effectiveBatchSize(L, count)) * STAGE_COSTS.cite.attempts;
 }
 function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = limits || {};
@@ -1680,7 +1769,7 @@ function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', inp
   const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
   const validateCalls = validationCost(L, findings);
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
-  const citeCalls = citeCost(L, findings, challengeCalls);
+  const citeCalls = citeCost(L, nFindings, challengeCalls, input, baseBranch);
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + citeCalls + STAGE_COSTS.writer.attempts;
 }
 function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
@@ -1698,7 +1787,7 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {
     }
     const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch, input);
     const challengeCount = Math.min(findings, effectiveChallengeCap(L, findings));
-    const citeTerm = citeCost(L, findings, challengeCount);
+    const citeTerm = citeCost(L, nFindings, challengeCount, input, baseBranch);
     const validateTerm = validationCost(L, findings) + citeTerm;
     const challengeTerm = challengeCount + citeTerm;
     const choices = [
@@ -1711,14 +1800,14 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {
     const [largest] = choices;
     if (largest[0] === 'validate') {
       L.validateBatch = effectiveBatchSize(L, findings) * 2;
-      if (validationCost(L, findings) + citeCost(L, findings, challengeCount) >= validateTerm) candidates.delete('validate');
+      if (validationCost(L, findings) + citeCost(L, nFindings, challengeCount, input, baseBranch) >= validateTerm) candidates.delete('validate');
     } else if (largest[0] === 'verify') {
       L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
       if (verifyTerm(L, nFindings, baseBranch, input) >= currentVerifyTerm) candidates.delete('verify');
     } else {
       L.challengeCap = Math.min(challengeCount, Math.max(CHALLENGE_CAP_FLOOR, Math.floor(challengeCount / 2)));
       const next = Math.min(findings, effectiveChallengeCap(L, findings));
-      if (next + citeCost(L, findings, next) >= challengeTerm) candidates.delete('challenge');
+      if (next + citeCost(L, nFindings, next, input, baseBranch) >= challengeTerm) candidates.delete('challenge');
     }
   }
   return L;
@@ -2070,6 +2159,14 @@ function normalizeFindingPaths(findings, repoRoot, decisions = []) {
       return undefined;
     };
     const confine = (value, schema, field) => {
+      if (schema === CITATION_REQUEST_SCHEMA || schema === CITATION_RESULT_SCHEMA) {
+        const request = schema === CITATION_RESULT_SCHEMA ? value?.request : value;
+        const path = repoRelativeFindingPath('', request?.file);
+        if ('reason' in path || path.file !== request?.file) {
+          droppedReference(field, 'non-canonical citation path', 'retained for citation audit');
+        }
+        return value;
+      }
       if (schema.$comment === 'repo-path') {
         const normalized = repoRelativeFindingPath(repoRoot, value);
         if ('reason' in normalized) {
@@ -5616,6 +5713,32 @@ function selectDelivery(survivors, cap, tier) {
   if (cap !== undefined && cap !== null) ranked = ranked.slice(0, Math.max(0, cap));
   return ranked.flatMap(({ primary, corroborators }) => [primary, ...corroborators]);
 }
+// --- receiptTrust.js ---
+function receiptIdentityError(env, { nonce, headShaShort, baseBranch, diffPath }) {
+  if (!env || typeof env !== 'object') return 'executor returned no envelope';
+  if (env.status !== 'ok') return `status=${env.status == null ? 'missing' : env.status}${env.stderr ? ` (${env.stderr})` : ''}`;
+  const r = env.receipt || {};
+  if (r.nonce !== nonce) return `receipt nonce mismatch (got ${r.nonce == null ? 'missing' : r.nonce}, expected ${nonce})`;
+  if (r.sha !== headShaShort) return `receipt sha mismatch (got ${r.sha == null ? 'missing' : r.sha})`;
+  if (r.base_branch !== baseBranch) return 'receipt base_branch mismatch';
+  if (r.diff_source?.path !== diffPath || r.diff_source?.read !== true) return 'receipt diff_source mismatch or unreadable';
+  return null;
+}
+function receiptInputFault(r, n, expectedInlineChecksum, expectedInputChecksum) {
+  let diagnostic = r.n_in === n ? null : {
+    reason: `receipt n_in mismatch (got ${r.n_in == null ? 'missing' : r.n_in}, expected ${n})`, inputFault: 'mismatch',
+  };
+  for (const [field, expected, missingReason, name, noun] of [
+    ['inline_checksum', expectedInlineChecksum, 'inline token proof missing from receipt', 'token', 'token'],
+    ['input_checksum', expectedInputChecksum, 'input content proof missing from receipt', 'content', 'document'],
+  ]) {
+    if (expected == null) continue;
+    const got = typeof r[field] === 'string' ? r[field].trim() : '';
+    if (!got) diagnostic ??= { reason: missingReason, inputFault: 'missing' };
+    else if (got !== expected) diagnostic ??= { reason: `slice-input ${name} proof mismatch (receipt ${got}, dispatched ${expected}) — the ${noun} the script decoded is not the ${noun} this stage dispatched`, inputFault: 'mismatch' };
+  }
+  return diagnostic;
+}
 // --- verifyStage.js ---
 const VERIFY_RECEIPT_FIELDS = {
   sha: { type: 'string' },
@@ -5853,15 +5976,9 @@ function dispatchableIds(slice) {
   return { ok: true };
 }
 function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBranch, diffPath, expectedInputChecksum, expectedInlineChecksum }) {
-  if (!env || typeof env !== 'object') return { ok: false, reason: 'executor returned no envelope' };
-  if (env.status !== 'ok') return { ok: false, reason: `status=${env.status == null ? 'missing' : env.status}${env.stderr ? ` (${env.stderr})` : ''}` };
+  const identityError = receiptIdentityError(env, { nonce, headShaShort, baseBranch, diffPath });
+  if (identityError) return { ok: false, reason: identityError };
   const r = env.receipt || {};
-  if (r.nonce !== nonce) return { ok: false, reason: `receipt nonce mismatch (got ${r.nonce == null ? 'missing' : r.nonce}, expected ${nonce})` };
-  if (r.sha !== headShaShort) return { ok: false, reason: `receipt sha mismatch (got ${r.sha == null ? 'missing' : r.sha})` };
-  if (r.base_branch !== baseBranch) return { ok: false, reason: 'receipt base_branch mismatch' };
-  if (r.diff_source?.path !== diffPath || r.diff_source?.read !== true) {
-    return { ok: false, reason: 'receipt diff_source mismatch or unreadable' };
-  }
   if (!Array.isArray(r.record_proofs)) return {
     ok: false, reason: 'receipt missing or malformed record_proofs',
     inputFault: r.record_proofs == null ? 'missing' : 'mismatch',
@@ -5922,18 +6039,7 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
   if (proof !== recomputed) {
     return { ok: false, reason: `delta content proof mismatch (receipt ${proof}, recomputed ${recomputed}) — the echoed values are not the ones the script wrote` };
   }
-  let diagnostic = r.n_in === n ? null : {
-    reason: `receipt n_in mismatch (got ${r.n_in == null ? 'missing' : r.n_in}, expected ${n})`, inputFault: 'mismatch',
-  };
-  for (const [field, expected, missingReason, name, noun] of [
-    ['inline_checksum', expectedInlineChecksum, 'inline token proof missing from receipt', 'token', 'token'],
-    ['input_checksum', expectedInputChecksum, 'input content proof missing from receipt', 'content', 'document'],
-  ]) {
-    if (expected == null) continue;
-    const got = typeof r[field] === 'string' ? r[field].trim() : '';
-    if (!got) diagnostic ??= { reason: missingReason, inputFault: 'missing' };
-    else if (got !== expected) diagnostic ??= { reason: `slice-input ${name} proof mismatch (receipt ${got}, dispatched ${expected}) — the ${noun} the script decoded is not the ${noun} this stage dispatched`, inputFault: 'mismatch' };
-  }
+  const diagnostic = receiptInputFault(r, n, expectedInlineChecksum, expectedInputChecksum);
   const wholeSlice = [...expectedProofs.values()].some((proof) => proof === null);
   const matchesRecordProof = (id) => expectedProofs.get(id) !== null && proofs.get(id) === expectedProofs.get(id);
   if (wholeSlice && diagnostic) return { ok: false, ...diagnostic };
@@ -5951,6 +6057,178 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
 }
 function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
   return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (${Object.keys(VERIFY_RECEIPT_FIELDS).join(', ')} when present; never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token is the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do not return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered delta value costs the whole attempt its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
+}
+// --- citeStage.js ---
+const CITE_ENVELOPE_SCHEMA = { type: 'object', properties: {
+  status: { type: 'string' }, stderr: { type: 'string' },
+  receipt: { type: 'object', properties: {
+    sha: { type: 'string' }, nonce: { type: 'string' }, n_in: { type: 'number' },
+    base_branch: { type: 'string' }, deltas_checksum: { type: 'string' },
+    input_checksum: { type: 'string' }, inline_checksum: { type: 'string' },
+    batch_id: { type: 'string' }, attempt: { type: 'integer' },
+    diff_source: { type: 'object', properties: { path: { type: ['string', 'null'] }, read: { type: 'boolean' } }, required: ['path', 'read'] },
+    record_proofs: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, checksum: { type: ['string', 'null'] } }, required: ['id', 'checksum'] } },
+  } },
+  result: { type: 'object', properties: { citations: { type: 'array', items: {
+    ...CITATION_RESULT_SCHEMA, properties: { id: { type: 'string' }, ...CITATION_RESULT_SCHEMA.properties },
+    required: ['id', ...CITATION_RESULT_SCHEMA.required],
+  } } } },
+}, required: ['status'] };
+function trustedCitations(env, inp, batch, nonce, attempt, document, token, gaps) {
+  const error = receiptIdentityError(env, { nonce, headShaShort: inp.headShaShort,
+    baseBranch: document.base_branch, diffPath: inp.verify?.diffPath || null });
+  if (error) return [];
+  const r = env.receipt;
+  const rows = env.result?.citations;
+  if (r.batch_id !== batch.id || r.attempt !== attempt || !Array.isArray(rows)
+    || !Array.isArray(r.record_proofs) || r.deltas_checksum !== citeChecksum(rows)) return [];
+  const fault = receiptInputFault(r, document.requests.length, citeChecksumToken(token), citeChecksum(document));
+  if (fault) gaps.push(`cite_receipt: ${fault.reason}`);
+  const proofs = (id) => r.record_proofs.filter((p) => p?.id === id);
+  return batch.records.flatMap((record) => {
+    const matches = rows.filter((row) => row?.id === record.id);
+    const p = proofs(record.id);
+    if (matches.length !== 1 || p.length !== 1 || p[0].checksum !== citeChecksum(record)) return [];
+    const row = matches[0];
+    if (fault && firstUnsafeNumber(record, 'citation') !== null) return [];
+    if (citeChecksum(row.request) !== citeChecksum(record.request)
+      || citeChecksum(row.source) !== citeChecksum(batch.source)
+      || !CITATION_RESULT_SCHEMA.properties.status.enum.includes(row.status)
+      || typeof row.detail !== 'string') return [];
+    if (row.status === 'matched' && record.request?.snapshot_id !== batch.source.snapshot_id) return [];
+    return [row];
+  });
+}
+const citeChecksumToken = fnv1a32;
+async function citeStage(ctx, input) {
+  const inp = typeof input === 'string' ? JSON.parse(input) : input;
+  const findings = [...(inp.findings || []), ...(inp.unverified || [])];
+  const records = collectCitations(findings);
+  const source = citeSource(inp.verify?.sourceCapture);
+  const gaps = [...(inp.gaps || [])];
+  const hadLedger = Object.hasOwn(inp, 'cite_ledger');
+  const ledger = hadLedger ? inp.cite_ledger : { version: 1, entries: [], batches: [] };
+  const out = { ...inp, gaps, cite_ledger: ledger,
+    stats: { ...(inp.stats || {}), cite_planned: 0, cite_attempts: 0, cite_oversize: 0 } };
+  inp.cite_ledger = ledger;
+  const validLedger = isPlainObject(ledger) && ledger.version === 1 && Array.isArray(ledger.entries) && Array.isArray(ledger.batches)
+    && ledger.entries.every((e) => isPlainObject(e) && typeof e.key === 'string' && isPlainObject(e.record)
+      && isPlainObject(e.source) && e.key === citeRecordKey(e.record, e.source))
+    && new Set(ledger.entries.map((e) => e.key)).size === ledger.entries.length
+    && ledger.batches.every((b) => isPlainObject(b) && typeof b.id === 'string' && Array.isArray(b.keys) && Array.isArray(b.records) && isPlainObject(b.source))
+    && new Set(ledger.batches.map((b) => b.id)).size === ledger.batches.length;
+  const unavailable = (record, detail) => ({ id: record.id, request: record.request, status: 'unavailable', detail, source });
+  const results = new Map();
+  if (!validLedger || (!hadLedger && findings.some((f) => f.cite_results?.length))) {
+    gaps.push('cite_unavailable: missing or corrupt attempt identity');
+    for (const record of records) results.set(citeRecordKey(record, source), unavailable(record, 'corrupt_attempt_identity'));
+  } else {
+    const pending = [];
+    for (const record of records) {
+      const key = citeRecordKey(record, source);
+      const entry = ledger.entries.find((e) => e.key === key);
+      if (entry) {
+        if (reusableCiteResult(entry, record, source)) results.set(key, entry.result);
+        else if (!ledger.batches.some((b) => b.keys?.includes(key))) results.set(key, unavailable(record, 'missing_attempt_identity'));
+        continue;
+      }
+      if (ledger.entries.some((e) => e.record?.finding_id === record.finding_id
+        && e.record?.stage === record.stage && e.record?.request?.request_id === record.request?.request_id)) {
+        gaps.push('cite_identity_changed: dependent citation results invalidated');
+      }
+      ledger.entries.push({ key, record, source });
+      if (records.filter((r) => r.finding_id === record.finding_id && r.stage === record.stage).length > CITE_ROLES_PER_STAGE) {
+        const row = unavailable(record, 'request_cap');
+        ledger.entries[ledger.entries.length - 1].result = row;
+        results.set(key, row);
+        gaps.push('cite_unavailable: assessment exceeds bounded citation roles');
+        continue;
+      }
+      const identity = records.filter((r) => r.finding_id === record.finding_id && r.stage === record.stage
+        && r.request?.request_id === record.request?.request_id);
+      if (!matchesDispatchSchema(record.request, CITATION_REQUEST_SCHEMA) || identity.length !== 1
+        || record.request.finding_id !== record.finding_id || record.request.stage !== record.stage
+        || firstUnsafeNumber(record, 'citation') !== null) {
+        const row = { ...unavailable(record, 'malformed_or_ambiguous_request'), status: 'rejected' };
+        ledger.entries[ledger.entries.length - 1].result = row;
+        results.set(key, row);
+        continue;
+      }
+      pending.push(record);
+    }
+    const branch = effectiveVerifyBaseBranch(inp.verify?.baseBranch);
+    const plan = planCiteBatches(pending, effectiveBatchSize(inp.limits || {}, records.length),
+      verifyInlineBudget({ ...inp, citeMode: true }), branch, hostPlatformForRoots(inp));
+    for (const record of plan.oversize) {
+      const row = unavailable(record, 'oversize');
+      ledger.entries.find((e) => e.key === citeRecordKey(record, source)).result = row;
+      results.set(citeRecordKey(record, source), row);
+      out.stats.cite_oversize += 1;
+      gaps.push('cite_unavailable: encoded request exceeds inline budget');
+    }
+    for (const batchRecords of plan.batches) {
+      const identity = { records: batchRecords, source, version: CITE_VERIFIER_VERSION };
+      const id = citeChecksum(identity).slice(-8);
+      if (ledger.batches.some((b) => b.id === id)) {
+        for (const record of batchRecords) results.set(citeRecordKey(record, source), unavailable(record, 'ambiguous_batch_identity'));
+        continue;
+      }
+      ledger.batches.push({ id, ...identity, keys: batchRecords.map((r) => citeRecordKey(r, source)), attempts: 0 });
+    }
+    for (const batch of ledger.batches) {
+      if (citeChecksum(batch.source) !== citeChecksum(source) || !Array.isArray(batch.keys)
+        || !batch.keys.some((key) => records.some((r) => citeRecordKey(r, source) === key) && !results.has(key))) continue;
+      const intact = Number.isSafeInteger(batch.attempts) && batch.attempts >= 0 && batch.attempts <= STAGE_COSTS.cite.attempts
+        && Array.isArray(batch.records) && batch.records.every((r, i) => batch.keys[i] === citeRecordKey(r, source))
+        && batch.id === citeChecksum({ records: batch.records, source, version: CITE_VERIFIER_VERSION }).slice(-8);
+      if (!intact) {
+        for (const key of batch.keys) if (!results.has(key)) results.set(key, unavailable(ledger.entries.find((e) => e.key === key)?.record || {}, 'corrupt_attempt_identity'));
+        gaps.push('cite_unavailable: corrupt batch identity');
+        continue;
+      }
+      const document = citeDocument(batch.records, branch);
+      const token = encodeSliceInline(document);
+      if (verifyInlineCost(token, hostPlatformForRoots(inp)) > verifyInlineBudget({ ...inp, citeMode: true })) {
+        for (const record of batch.records) if (!results.has(citeRecordKey(record, source))) results.set(citeRecordKey(record, source), unavailable(record, 'oversize'));
+        gaps.push('cite_unavailable: resumed batch exceeds inline budget');
+        continue;
+      }
+      out.stats.cite_planned += STAGE_COSTS.cite.attempts - batch.attempts;
+      while (batch.attempts < STAGE_COSTS.cite.attempts && batch.keys.some((key) => !results.has(key))) {
+        batch.attempts += 1;
+        batch.state = 'uncertain';
+        const nonce = `${inp.nonce}.cite.${batch.id}.${batch.attempts}`;
+        let env;
+        out.stats.cite_attempts += 1;
+        try {
+          const command = verifyCommand({ ...inp, citeMode: true }, batch.id, nonce, token)
+            + ` --mode cite --cite-batch ${batch.id} --cite-attempt ${batch.attempts}`;
+          env = await ctx.agent(`Run exactly this command; read --output and copy status, receipt and result.citations exactly.\n${command}`, {
+            label: `cite-${batch.id}-${batch.attempts}`, agentType: 'code-gauntlet:executor',
+            model: modelFor('code-gauntlet:executor', inp.policy || {}), schema: CITE_ENVELOPE_SCHEMA,
+          });
+        } catch { env = null; }
+        const accepted = trustedCitations(env, inp, batch, nonce, batch.attempts, document, token, gaps);
+        for (const row of accepted) {
+          const record = batch.records.find((r) => r.id === row.id);
+          const key = citeRecordKey(record, source);
+          if (row.status !== 'unavailable') results.set(key, row);
+          ledger.entries.find((e) => e.key === key).result = row;
+        }
+        batch.state = accepted.length === batch.records.length ? 'complete' : 'uncertain';
+      }
+    }
+  }
+  const join = (f) => ({ ...f, cite_results: records.filter((r) => r.finding_id === f.id).map((r) => {
+    const key = citeRecordKey(r, source);
+    const row = results.get(key) || unavailable(r, 'exhausted_or_uncertain');
+    const { id: _id, ...result } = row;
+    return result;
+  }) });
+  out.findings = (inp.findings || []).map(join);
+  if (inp.unverified) out.unverified = inp.unverified.map(join);
+  if ([...out.findings, ...(out.unverified || [])].some((f) => f.cite_results.some((r) => r.status === 'unavailable'))) gaps.push('cite_unavailable: dependent proof could not be established');
+  return out;
 }
 // --- args.js ---
 function resolveRemovedTestsArgs(args) {
@@ -7254,8 +7532,8 @@ function checkpointDiscardGap(topLevelCheckpoints) {
         + 'than a checkpoint artifact -- it carries no phase outputs to resume from; re-run without the '
         + 'checkpoints argument to start the review fresh.'];
     }
-    return ['checkpoint-discarded: the supplied checkpoints value contains none of the eight recognized '
-      + 'phase names (summarize, discover, merge, verify, validate, filter, challenge, report) -- '
+    return ['checkpoint-discarded: the supplied checkpoints value contains none of the recognized '
+      + `phase names (${recognizedPhaseNames.join(', ')}) -- `
       + 'nothing was resumed, exactly as if no checkpoints had been supplied.'];
   }
   const tookPhasesBranch = topLevelCheckpoints.phases !== undefined;
@@ -7279,6 +7557,9 @@ const CHECKPOINT_FINDING_LISTS = [
   ['challenge', 'findings', CHECKPOINT_ARRAY_STRICT, false],
   ['challenge', 'unverified', CHECKPOINT_ARRAY_TOLERANT, false],
   ['challenge', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
+  ['cite', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['cite', 'unverified', CHECKPOINT_ARRAY_TOLERANT, false],
+  ['cite', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
 ];
 const checkpointFindingListsForPhase = (phase) => CHECKPOINT_FINDING_LISTS.filter(([name]) => name === phase);
 const findingListShape = (phase) => Object.fromEntries(checkpointFindingListsForPhase(phase)
@@ -7299,6 +7580,7 @@ const CHECKPOINT_PHASE_SHAPE_TABLE = {
     ...findingListShape('challenge'),
     gaps: CHECKPOINT_ARRAY_TOLERANT,
   },
+  cite: { ...findingListShape('cite'), gaps: CHECKPOINT_ARRAY_TOLERANT },
   report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
 };
 const CHECKPOINT_REQUIRED_CONTENT_FIELD = Object.fromEntries(CHECKPOINT_FINDING_LISTS
@@ -7376,6 +7658,10 @@ function checkpointShapeErrors(resolvedCheckpoints) {
       continue; // container failed -- no field inside it can be checked
     }
     const requiredField = CHECKPOINT_REQUIRED_CONTENT_FIELD[phase];
+    if (phase === 'cite' && value.cite_ledger != null && (!isPlainObject(value.cite_ledger)
+      || !Array.isArray(value.cite_ledger.entries) || !Array.isArray(value.cite_ledger.batches))) {
+      violations.push('checkpoint-shape: phases.cite.cite_ledger must contain entries and batches arrays');
+    }
     if (requiredField && value[requiredField] === undefined) {
       violations.push(`checkpoint-shape: phases.${phase} is missing required field ${requiredField}`);
     }
@@ -7435,7 +7721,7 @@ function buildResumeCheckpoints(phaseOutputs) {
   if (JSON.stringify(withPhases).length <= RETURN_CHAR_BUDGET) return withPhases;
   return { completed, truncated: true };
 }
-const PERSISTED_RESUME_PHASES = ['challenge'];
+const PERSISTED_RESUME_PHASES = ['challenge', 'cite'];
 function phaseFindingCount(out) {
   if (!out || typeof out !== 'object') return 0;
   if (Array.isArray(out.findings)) return out.findings.length;
@@ -7453,6 +7739,9 @@ function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) {
   const rejected = outputs.merge?.rejected || outputs.discover?.rejected;
   const validationAudit = outputs.challenge?.validation_audit || outputs.validate?.audit;
   if (validationAudit && phases.challenge) phases.challenge = { ...phases.challenge, validation_audit: validationAudit };
+  if (phases.cite) phases.cite = { ...phases.cite,
+    ...(validationAudit ? { validation_audit: validationAudit } : {}),
+    eliminated: phases.cite.eliminated || phases.challenge?.eliminated || [] };
   return signCheckpoints({ phases, completed, phaseReached, counts,
     ...(rejected?.length ? { intake_rejected: rejected } : {}) });
 }
@@ -7482,6 +7771,22 @@ function normalizePhaseFindings(name, out, replayed, args, decisions = []) {
   const warnings = [];
   let rejected = 0;
   let pathRewrites = 0;
+  if (name === 'cite') {
+    if (!Object.hasOwn(out, 'cite_ledger')) out.cite_ledger = null;
+    const source = citeSource(args.verify?.sourceCapture);
+    for (const field of ['findings', 'unverified', 'eliminated']) for (const f of out[field] || []) {
+      if (!f || !Array.isArray(f.cite_results)) continue;
+      for (const result of f.cite_results) {
+        if (!result || typeof result !== 'object') continue;
+        if (result.status !== 'matched' || (result.request?.snapshot_id === source.snapshot_id
+          && citeChecksum(result.source) === citeChecksum(source))) continue;
+        out.cite_audit = [...(out.cite_audit || []), { finding_id: f.id, result: { ...result } }];
+        result.status = 'unavailable';
+        result.detail = 'snapshot_mismatch';
+        warnings.push('cite_unavailable: replay proof source mismatch');
+      }
+    }
+  }
   for (const [, field] of checkpointFindingListsForPhase(name)) {
     if (!Array.isArray(out[field])) continue;
     for (const finding of out[field]) if (finding && typeof finding === 'object') {
@@ -7623,6 +7928,7 @@ function appendDeliveryReplay(envelope, record) {
     { ...envelope.measurement, replay: { status: 'unavailable', reason: 'return_budget' } });
 }
 // --- run.js ---
+const PREPARED_REVIEW_STAGES = { cite: citeStage };
 function defaultCtx() {
   return {
     agent: typeof agent === 'function' ? agent : undefined,

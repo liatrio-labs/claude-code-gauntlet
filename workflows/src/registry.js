@@ -376,6 +376,16 @@ export const CITATION_REQUEST_PROPERTIES = deepFreeze({
   quote: { type: 'string', minLength: 1, maxLength: ANCHOR_LIMITS.chars },
 });
 export const CITATION_REQUEST_SCHEMA = deepFreeze(closedDispatchRow(CITATION_REQUEST_PROPERTIES));
+export const CITE_VERIFIER_VERSION = 'cite-1';
+export const CITATION_SOURCE_SCHEMA = deepFreeze(closedDispatchRow({
+  snapshot_id: { type: 'string' }, target_kind: { type: 'string' },
+  head: { type: 'string' }, base: { type: 'string' }, diff_sha256: { type: 'string' },
+  verifier_version: { type: 'string' },
+}));
+export const CITATION_RESULT_SCHEMA = deepFreeze(closedDispatchRow({
+  request: CITATION_REQUEST_SCHEMA, status: { type: 'string', enum: ['matched', 'unmatched', 'rejected', 'unavailable'] },
+  detail: { type: 'string' }, source: CITATION_SOURCE_SCHEMA,
+}));
 const citationRequests = (roles) => ({ type: 'array', minItems: roles.length,
   maxItems: CITATION_REQUEST_PROPERTIES.role.enum.length, items: CITATION_REQUEST_SCHEMA,
   allOf: roles.map((role) => ({ contains: { type: 'object', properties: { role: { const: role } }, required: ['role'] } })),
@@ -392,10 +402,11 @@ function scopeAssessmentSchema(stages) {
   }))) };
 }
 export const SCOPE_ASSESSMENT_SCHEMA = deepFreeze(scopeAssessmentSchema(SKEPTICAL_IDENTITY.stage.enum));
+const SKEPTICAL_SCOPE_LIMIT = EXCLUSION_CATEGORIES.filter((row) => row.stage === 'skeptical').length;
 export const VERDICT_RETURN_PROPERTIES = deepFreeze({
   ...SKEPTICAL_IDENTITY, verdict: { type: 'string', enum: ['real', 'refuted', 'needs_evidence'] },
   citations: citationRequests(['claim']), missing_evidence: { type: 'string', minLength: 1 },
-  scope_assessments: { type: 'array', items: SCOPE_ASSESSMENT_SCHEMA },
+  scope_assessments: { type: 'array', maxItems: SKEPTICAL_SCOPE_LIMIT, items: SCOPE_ASSESSMENT_SCHEMA },
 });
 const VERDICT_VARIANTS = VERDICT_RETURN_PROPERTIES.verdict.enum.map((verdict) => ({
   properties: { verdict: { const: verdict } },
@@ -403,7 +414,7 @@ const VERDICT_VARIANTS = VERDICT_RETURN_PROPERTIES.verdict.enum.map((verdict) =>
 }));
 export const SKEPTICAL_RETURN_SCHEMAS = deepFreeze(Object.fromEntries(SKEPTICAL_IDENTITY.stage.enum.map((stage) => {
   const properties = { ...VERDICT_RETURN_PROPERTIES, stage: { type: 'string', enum: [stage] },
-    scope_assessments: { type: 'array', items: scopeAssessmentSchema([stage]) },
+    scope_assessments: { type: 'array', maxItems: SKEPTICAL_SCOPE_LIMIT, items: scopeAssessmentSchema([stage]) },
     ...(stage === 'validator' ? { confidence: { type: 'number' }, justification: { type: 'string' },
       reachability: { type: 'string', enum: REACHABILITY_VALUES }, ...VALIDATION_RETURN_PROPERTIES } : {}) };
   return [stage, { ...closedDispatchRow(properties,
@@ -411,10 +422,7 @@ export const SKEPTICAL_RETURN_SCHEMAS = deepFreeze(Object.fromEntries(SKEPTICAL_
 })));
 export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
   skeptical_assessments: { type: 'array', items: closedDispatchRow(VERDICT_RETURN_PROPERTIES, ['citations', 'missing_evidence']) },
-  cite_results: { type: 'array', items: closedDispatchRow({
-    request: CITATION_REQUEST_SCHEMA, status: { type: 'string', enum: ['matched', 'unmatched', 'rejected', 'unavailable'] },
-    detail: { type: 'string' },
-  }) },
+  cite_results: { type: 'array', items: CITATION_RESULT_SCHEMA },
   scope_facts: { type: 'array', items: closedDispatchRow({
     category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) }, predicate: { type: 'string' },
     value: { type: ['boolean', 'null'] }, snapshot_id: CITATION_REQUEST_PROPERTIES.snapshot_id,
@@ -429,7 +437,7 @@ export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
 });
 
 // Provider schema enforcement can fail; retain the raw entry and bind diagnostics to the dispatched identity.
-export function acceptSkepticalReturn(entry, findingId, stage) {
+function dispatchSchemaValidation() {
   const errors = [];
   const check = (value, schema, path) => {
     const fail = () => errors.push(path);
@@ -462,6 +470,15 @@ export function acceptSkepticalReturn(entry, findingId, stage) {
     check(value, schema, '$');
     return errors.splice(start).length === 0;
   };
+  return { errors, check, matches };
+}
+
+export function matchesDispatchSchema(value, schema) {
+  return dispatchSchemaValidation().matches(value, schema);
+}
+
+export function acceptSkepticalReturn(entry, findingId, stage) {
+  const { errors, check, matches } = dispatchSchemaValidation();
   const schema = SKEPTICAL_RETURN_SCHEMAS[stage];
   if (schema) check(entry, schema, '$');
   else errors.push('stage');
