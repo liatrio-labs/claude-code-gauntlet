@@ -306,10 +306,11 @@ export async function runWith(ctx, rawArgs) {
 
   const c = { ...defaultCtx(), ...(ctx || {}) };
   let agentCalls = 0;
+  c.remainingAgentCalls = () => AGENT_COUNT_GUARD - 1 - STAGE_COSTS.writer.attempts - agentCalls;
   const dispatchAgent = c.agent;
   c.agent = (...dispatchArgs) => {
     const persistence = ['artifact-writer', 'assemble-artifacts'].includes(dispatchArgs[1]?.label);
-    if (agentCalls >= AGENT_COUNT_GUARD - 1 - (persistence ? 0 : STAGE_COSTS.writer.attempts)) throw new Error('agent capacity exhausted');
+    if (agentCalls >= AGENT_COUNT_GUARD - 1 - (persistence ? 0 : STAGE_COSTS.writer.attempts)) return null;
     agentCalls += 1;
     return dispatchAgent(...dispatchArgs);
   };

@@ -12,7 +12,6 @@ import { captureRun, mixedSurvivors, withSandboxGlobals, drainMicrotasks } from 
 import { deriveFromPlan } from './helpers/deriveFromPlan.js';
 import { normalizeForChecksum, fnv1a32 } from '../src/wire.js';
 import { disposeFindings } from '../src/dispose.js';
-import { applyChallenges } from '../src/applyChallenges.js';
 import { renderReport, renderSummaryBody } from '../src/renderReport.js';
 import { writeArtifacts } from '../src/persist.js';
 import { deltaContentProof } from '../src/verifyWire.js';
@@ -23,13 +22,38 @@ import { normalizeFindingPaths } from '../src/mergeFindings.js';
 import { normalizePhaseFindings } from '../src/checkpoints.js';
 import { evaluateAdmission, hasAdmission } from '../src/admission.js';
 import { skepticalReturn, sourceCapture } from './helpers/verdicts.js';
+import { AGENT_COUNT_GUARD } from '../src/capacity.js';
+import { STAGE_COSTS } from '../src/registry.js';
 
 const proofArgs = (over = {}) => validArgs({ nonce: 'run', headShaShort: 'aaaaaaaa',
   verify: { targetKind: 'branch', sourceCapture }, ...over });
 
+test('run-wide agent guard returns per-dispatch degradation and reserves persistence', async () => {
+  const args = proofArgs();
+  const ctx = makeCtx(args);
+  const parallel = ctx.parallel;
+  let exhausted = false;
+  ctx.parallel = async (thunks) => {
+    if (!exhausted && ctx.calls.some((call) => call.label.startsWith('verify-slice-'))) {
+      exhausted = true;
+      // Exercise the hard guard independently of the planner by repeating host dispatches.
+      while (ctx.calls.length < AGENT_COUNT_GUARD - 1 - STAGE_COSTS.writer.attempts) await thunks[0]();
+      assert.equal(thunks[0](), null);
+    }
+    return parallel(thunks);
+  };
+  const out = await runWith(ctx, args);
+  assert.equal(exhausted, true);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(out.stats.validate.validated, 0);
+  assert.ok(out.gaps.some((gap) => gap.includes('unvalidated')));
+  assert.equal(ctx.calls.filter((call) => call.label === 'artifact-writer').length, 1);
+  assert.ok(ctx.calls.length < AGENT_COUNT_GUARD);
+});
+
 test('either proven refutation survives reduction through every final artifact', async () => {
   for (const stage of ['validator', 'challenger']) for (const dimension of ['bug', 'security']) {
-    for (const other of ['real', 'missing', 'capped', 'failed', 'needs_evidence']) {
+    for (const other of stage === 'validator' ? ['real', 'needs_evidence', 'missing'] : ['real', 'needs_evidence', 'missing', 'capped', 'failed']) {
       const refuted = makeFinding('REFUTED', { dimension, file: 'shared.txt', code: 'FORBIDDEN_FENCE',
         suggested_fix_code: 'FORBIDDEN_PATCH', suggestion: 'FORBIDDEN_TASK',
         consolidation_key: 'stale', consolidation_primary: stage === 'validator',
@@ -841,7 +865,7 @@ const COARSEN_ROWS = [
   { name: 'entry changed-file pressure', changedFiles: Array.from({ length: 20000 }, (_, index) => `src/f${index}.js`),
     limits: { summarizeBucketSize: 1 }, bucketCount: 625, batchCount: 1 },
   { name: 'post-merge finding pressure', findings: Array.from({ length: 1000 }, (_, index) => makeFinding(`F${index}`)),
-    limits: { validateBatch: 1, verifySliceSize: 2000 }, bucketCount: 0, batchCount: 1 },
+    limits: { validateBatch: 1, verifySliceSize: 2000 }, bucketCount: 0, batchCount: 125 },
 ];
 for (const row of COARSEN_ROWS) test(`coarsening wiring: ${row.name}`, async () => {
   const args = validArgs({ ...(row.changedFiles ? { changedFiles: row.changedFiles, changedLines: 100000 } : {}),
@@ -1136,7 +1160,7 @@ for (const row of HOST_RESUME_ROWS) test(`host text resume: ${row.name}`, async 
 });
 
 const HOST_BUCKET_ROWS = [
-  { bucket: 'unverified', field: 'challenge_justification' },
+  { bucket: 'unverified', field: 'validation_justification' },
   { bucket: 'eliminated', field: 'elimination_reason' },
 ];
 for (const row of HOST_BUCKET_ROWS) test(`host text bucket: ${row.bucket}`, async () => {

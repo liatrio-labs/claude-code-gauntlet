@@ -14,7 +14,7 @@ The validation pipeline runs inside `workflows/pipeline.js`. Its deterministic t
 
 **Pipeline order inside the workflow:** Merge → **Verify** → **Validate** → **Filter** → **Challenge** → **Cite** → **Dispose** → Group/select → Report.
 
-The five transform golden families under `tests/fixtures/parity/` are JavaScript-owned.
+The four transform golden families under `tests/fixtures/parity/` are JavaScript-owned.
 
 ---
 

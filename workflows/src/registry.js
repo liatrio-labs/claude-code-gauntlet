@@ -522,6 +522,18 @@ export function acceptSkepticalReturn(entry, findingId, stage) {
   return { finding_id: findingId, stage, status: errors.length ? 'incomplete' : 'complete', errors: [...new Set(errors)], raw: entry };
 }
 
+// Proof faults are diagnostic for real verdicts; only semantic gaps close ordinary delivery.
+export function assessmentGaps(assessment) {
+  const proofErrors = [];
+  const semanticErrors = [];
+  for (const error of assessment.errors) {
+    const proof = error.includes('citations') || ['citation_range', 'citation_identity', 'request_id'].includes(error)
+      || (error === '$' && ['real', 'refuted'].includes(assessment.raw?.verdict));
+    (proof ? proofErrors : semanticErrors).push(error);
+  }
+  return { proofErrors, semanticErrors };
+}
+
 export const SKEPTICAL_CONTRACTS = deepFreeze(Object.fromEntries(Object.entries(SKEPTICAL_RETURN_SCHEMAS)
   .map(([stage, schema]) => [stage, { schema, dispatchSchema: dispatchReturnSchema(schema),
     accept: (entry, findingId) => acceptSkepticalReturn(entry, findingId, stage) }])));
@@ -624,7 +636,7 @@ export const PIPELINE_FINDING_FIELDS = deepFreeze([
   'removed_test',
   'location_status', 'claimed_line_start', 'claimed_line_end',
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
-  'validation_justification', 'challenge_justification', 'elimination_reason',
+  'validation_justification', 'elimination_reason',
   'original_confidence', 'validator_confidence', 'reachability', 'original_severity',
   'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
   'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',

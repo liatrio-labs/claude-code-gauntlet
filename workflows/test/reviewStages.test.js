@@ -8,6 +8,7 @@ import { evaluateAdmission } from '../src/admission.js';
 
 import { skepticalReturn } from './helpers/verdicts.js';
 import { SKEPTICAL_CONTRACTS } from '../src/registry.js';
+import { disposeFindings } from '../src/dispose.js';
 
 function stageCtx(options = {}) {
   const upgrade = (value) => {
@@ -148,7 +149,7 @@ const VALIDATE_ROWS = [
     stats: { ...VALIDATE_STATS, validated: 1, skipped: 0 }, expected: [['F1', 80, 80, undefined, 'future_change_only', 'validated']] },
   { name: 'count batches', batch: 2,
     input: ['F1', 'F2', 'F3', 'F4', 'F5'].map((id) => finding({ id, confidence: 80 })), reply: [],
-    stats: { batches_dispatched: 3, batches_completed: 3, validated: 0, skipped: 5, adjusted: 0 },
+    stats: { batches_dispatched: 3, batches_completed: 0, validated: 0, skipped: 5, adjusted: 0 },
     labels: ['validate-batch-0', 'validate-batch-1', 'validate-batch-2'], gaps: [omittedGap(0, 2), omittedGap(1, 2), omittedGap(2, 1)], expected: [
       ['F1', 80, undefined, undefined, undefined, 'skipped'], ['F2', 80, undefined, undefined, undefined, 'skipped'],
       ['F3', 80, undefined, undefined, undefined, 'skipped'], ['F4', 80, undefined, undefined, undefined, 'skipped'],
@@ -156,7 +157,7 @@ const VALIDATE_ROWS = [
     ] },
   { name: 'null batch retains confidence', batch: 2,
     input: ['F1', 'F2', 'F3', 'F4'].map((id) => finding({ id, confidence: 80 })), reply: [], nulls: ['validate-batch-1'],
-    stats: { batches_dispatched: 2, batches_completed: 1, validated: 0, skipped: 4, adjusted: 0 },
+    stats: { batches_dispatched: 2, batches_completed: 0, validated: 0, skipped: 4, adjusted: 0 },
     labels: ['validate-batch-0', 'validate-batch-1'], gaps: [omittedGap(0, 2),
       'validate-batch-1: validator returned null/malformed \u2014 2 finding(s) unvalidated '
       + '(validation=skipped, held back to the report)',
@@ -166,14 +167,14 @@ const VALIDATE_ROWS = [
     ] },
   { name: 'malformed object retains confidence', input: [finding({ id: 'F1', confidence: 80 })], reply: {},
     expected: [['F1', 80, undefined, undefined, undefined, 'skipped']],
-    stats: { batches_dispatched: 1, batches_completed: 1, validated: 0, skipped: 1, adjusted: 0 }, gaps: [
+    stats: { batches_dispatched: 1, batches_completed: 0, validated: 0, skipped: 1, adjusted: 0 }, gaps: [
       'validate-batch-0: validator returned null/malformed \u2014 1 finding(s) unvalidated '
       + '(validation=skipped, held back to the report)',
     ] },
   { name: 'fractional batch clamps to one', batch: 0.5,
     input: [finding({ id: 'F1', confidence: 80 }), finding({ id: 'F2', confidence: 80 })], reply: [],
     expected: [['F1', 80, undefined, undefined, undefined, 'skipped'], ['F2', 80, undefined, undefined, undefined, 'skipped']],
-    stats: { batches_dispatched: 2, batches_completed: 2, validated: 0, skipped: 2, adjusted: 0 },
+    stats: { batches_dispatched: 2, batches_completed: 0, validated: 0, skipped: 2, adjusted: 0 },
     labels: ['validate-batch-0', 'validate-batch-1'], gaps: [omittedGap(0, 1), omittedGap(1, 1)] },
   { name: 'empty', input: [], reply: [], expected: [], labels: [],
     stats: { batches_dispatched: 0, batches_completed: 0, validated: 0, skipped: 0, adjusted: 0 } },
@@ -188,7 +189,6 @@ for (const row of VALIDATE_ROWS) test(`validate result: ${row.name}`, async () =
   const pendingCount = row.expected.filter((entry) => entry.at(-1) === 'skipped').length;
   const retryCount = Math.ceil(pendingCount / Math.max(1, Math.ceil((row.batch || 10) / 5)));
   expectedStats.batches_dispatched += retryCount;
-  if (row.reply !== null && row.reply !== undefined) expectedStats.batches_completed += retryCount;
   assert.deepEqual(out.stats, expectedStats);
   assert.deepEqual(out.gaps, row.gaps ?? []);
   assert.deepEqual(ctx.calls.map((call) => call.label), [...(row.labels ?? ['validate-batch-0']),
@@ -242,20 +242,51 @@ for (const row of FILTER_ROWS) test(`filter forwarding: ${row.name}`, () => {
 });
 
 test('incomplete challenger returns complete dispatch without failing siblings', async () => {
+  const oversized = skepticalReturn('oversized', 'challenger');
+  oversized.citations[0].line_end = 18;
+  oversized.citations[0].quote = Array.from({ length: 9 }, (_, i) => `source line ${i}`).join('\n');
   const ctx = rawStageCtx({ replies: {
     'challenge-0': {}, 'challenge-1': { score: 0 }, 'challenge-2': null,
     'challenge-3': skepticalReturn('real', 'challenger', { finding_id: 'foreign' }),
+    'challenge-4': oversized,
   } });
-  const input = ['missing', 'legacy', 'failed', 'real'].map((id) => finding({ id }));
+  const input = ['missing', 'legacy', 'failed', 'real', 'oversized'].map((id) => finding({ id }));
   const out = await challengeStage(ctx, { findings: input });
-  assert.equal(out.stats.completed, 3);
-  assert.equal(out.stats.dispatched, 4);
+  assert.equal(out.stats.completed, 4);
+  assert.equal(out.stats.dispatched, 5);
   assert.equal(out.stats.incomplete, 2);
   assert.deepEqual(out.unverified.map((f) => f.challenge), ['incomplete', 'incomplete', 'failed']);
-  assert.deepEqual(out.findings.map((f) => f.id), ['real']);
+  assert.deepEqual(out.findings.map((f) => f.id), ['real', 'oversized']);
+  assert.equal(out.findings[1].challenge, 'survived');
+  const reduced = disposeFindings(out).findings.find((f) => f.id === 'oversized');
+  assert.equal(reduced.disposition, 'deliver');
+  assert.ok(reduced.disposition_reasons.includes('cite_unmatched'));
   assert.equal(out.findings[0].skeptical_assessments.at(-1).finding_id, 'real');
   assert.deepEqual(out.eliminated, []);
   assert.deepEqual(ctx.violations, []);
+});
+
+test('real citation format gaps do not trigger validator retries or held-back counts', async () => {
+  for (const fault of ['omitted', 'stage', 'long', 'lines']) {
+    const reply = skepticalReturn('f1');
+    if (fault === 'omitted') delete reply.citations;
+    else if (fault === 'stage') reply.citations[0].stage = 'challenger';
+    else if (fault === 'long') reply.citations[0].quote = 'x'.repeat(401);
+    else reply.citations[0].quote = Array(9).fill('source line').join('\n');
+    const ctx = rawStageCtx({ reply: { validations: [reply] } });
+    const out = await validateStage(ctx, { findings: [finding()] });
+    assert.equal(ctx.calls.length, 1, fault);
+    assert.equal(out.stats.incomplete, 0, fault);
+    assert.equal(out.stats.validated, 1, fault);
+    const { confidence: _confidence, policy_subject: _policy, ...challenge } = reply;
+    const challenged = await challengeStage(rawStageCtx({ reply: { ...challenge, stage: 'challenger' } }), {
+      findings: out.findings.map(evaluateAdmission),
+    });
+    assert.equal(challenged.stats.incomplete, 0, fault);
+    const reduced = disposeFindings(challenged).findings[0];
+    assert.equal(reduced.disposition, 'deliver', fault);
+    assert.ok(reduced.disposition_reasons.includes('cite_unmatched'), fault);
+  }
 });
 
 test('challenge ranks capacity candidates without refilling a refutation', async () => {

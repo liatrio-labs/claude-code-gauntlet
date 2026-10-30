@@ -624,6 +624,9 @@ def workflow_stage_outcomes(pr_dir):
         validation = stats.get("validate") or {}
         if validation.get("batches_completed", 0) < validation.get(
             "batches_dispatched", 0
+        ) or (
+            validation.get("batches_dispatched", 0) > 0
+            and validation.get("validated") == 0
         ):
             failures.add("validate execution failed")
         omitted = validation.get("skipped", 0) + validation.get("incomplete", 0)

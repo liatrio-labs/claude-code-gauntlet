@@ -3,7 +3,7 @@
 import { INT_POLICY, coerceInt } from './wire.js';
 import { canonicalRange } from './location.js';
 import { matchAssessments } from './admission.js';
-import { VALIDATION_RETURN_PROPERTIES, requiredAssessments, REACHABILITY_VALUES, acceptSkepticalReturn } from './registry.js';
+import { VALIDATION_RETURN_PROPERTIES, requiredAssessments, REACHABILITY_VALUES, acceptSkepticalReturn, assessmentGaps } from './registry.js';
 
 export { REACHABILITY_VALUES };
 
@@ -21,7 +21,7 @@ export function validationRejections(finding, validation, semantic = true) {
       reasons.push(`missing_assessment:${predicate}`);
     }
   }
-  if (semantic) reasons.push(...validatorAssessment(finding, validation).errors
+  if (semantic) reasons.push(...assessmentGaps(validatorAssessment(finding, validation)).semanticErrors
     .filter((error) => !['$.confidence', '$.policy_subject'].includes(error)
       && !(error.startsWith('$.admission_assessments') && reasons.some((reason) => reason.startsWith('missing_assessment:'))))
     .map((error) => `skeptical:${error}`));

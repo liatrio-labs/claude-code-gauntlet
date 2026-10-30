@@ -957,6 +957,16 @@ function acceptSkepticalReturn(entry, findingId, stage) {
   }
   return { finding_id: findingId, stage, status: errors.length ? 'incomplete' : 'complete', errors: [...new Set(errors)], raw: entry };
 }
+function assessmentGaps(assessment) {
+  const proofErrors = [];
+  const semanticErrors = [];
+  for (const error of assessment.errors) {
+    const proof = error.includes('citations') || ['citation_range', 'citation_identity', 'request_id'].includes(error)
+      || (error === '$' && ['real', 'refuted'].includes(assessment.raw?.verdict));
+    (proof ? proofErrors : semanticErrors).push(error);
+  }
+  return { proofErrors, semanticErrors };
+}
 const SKEPTICAL_CONTRACTS = deepFreeze(Object.fromEntries(Object.entries(SKEPTICAL_RETURN_SCHEMAS)
   .map(([stage, schema]) => [stage, { schema, dispatchSchema: dispatchReturnSchema(schema),
     accept: (entry, findingId) => acceptSkepticalReturn(entry, findingId, stage) }])));
@@ -1047,7 +1057,7 @@ const PIPELINE_FINDING_FIELDS = deepFreeze([
   'removed_test',
   'location_status', 'claimed_line_start', 'claimed_line_end',
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
-  'validation_justification', 'challenge_justification', 'elimination_reason',
+  'validation_justification', 'elimination_reason',
   'original_confidence', 'validator_confidence', 'reachability', 'original_severity',
   'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
   'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
@@ -1593,62 +1603,6 @@ function canonicalDeltas(ids, byId) {
 function deltaContentProof(ids, deltas) {
   return fnv1a32(JSON.stringify(canonicalDeltas(ids || [], deltasById(deltas)), null, 2));
 }
-// --- citeWire.js ---
-const citeChecksum = (value) => fnv1a32(JSON.stringify(value, null, 2) ?? 'undefined');
-const citeSource = (capture = {}) => ({ snapshot_id: capture.manifest_sha256 || '',
-  target_kind: capture.target_kind || '', head: capture.head || '', base: capture.base || '',
-  diff_sha256: capture.diff_sha256 || '', verifier_version: CITE_VERIFIER_VERSION });
-const citeRecordKey = (record, source) => JSON.stringify({ record, source });
-function reusableCiteResult(entry, record, source) {
-  const result = entry?.result;
-  return result && (['matched', 'unmatched', 'rejected'].includes(result.status)
-    || (result.status === 'unavailable' && ['oversize', 'request_cap'].includes(result.detail)))
-    && typeof result.detail === 'string'
-    && citeChecksum(result.request) === citeChecksum(record?.request)
-    && citeChecksum(result.source) === citeChecksum(source)
-    && (result.status !== 'matched' || (matchesDispatchSchema(record?.request, CITATION_REQUEST_SCHEMA)
-      && record.request.snapshot_id === source.snapshot_id));
-}
-const CITE_ROLES_PER_STAGE = CITATION_REQUEST_PROPERTIES.role.enum.length
-  * (1 + EXCLUSION_CATEGORIES.filter((row) => row.stage === 'skeptical').length);
-function collectCitations(findings) {
-  return findings.flatMap((f) => {
-    const checks = [];
-    const add = (entry, stage) => {
-      for (const q of Array.isArray(entry?.citations) ? entry.citations : []) {
-        const record = { finding_id: f.id, stage, request: q };
-        checks.push({ id: citeChecksum(record), ...record });
-      }
-    };
-    for (const assessment of Array.isArray(f.skeptical_assessments) ? f.skeptical_assessments : []) {
-      const entry = assessment?.raw ?? assessment;
-      const stage = assessment?.stage;
-      add(entry, stage);
-      for (const scope of Array.isArray(entry?.scope_assessments) ? entry.scope_assessments : []) add(scope, stage);
-    }
-    for (const scope of Array.isArray(f.scope_decisions) ? f.scope_decisions : []) add(scope, scope?.stage);
-    return checks;
-  });
-}
-const citeDocument = (records, baseBranch) => ({ requests: records, base_branch: baseBranch });
-function planCiteBatches(records, budget, baseBranch, platform) {
-  const batches = [];
-  const oversize = [];
-  const cost = (rows) => {
-    const token = encodeSliceInline(citeDocument(rows, baseBranch));
-    return token.length + (platform === 'windows' ? (token.match(/["\\]/g) || []).length : 0);
-  };
-  let batch = [];
-  for (const record of records) {
-    if (cost([record]) > budget) { oversize.push(record); continue; }
-    if (batch.length && cost([...batch, record]) > budget) {
-      batches.push(batch); batch = [];
-    }
-    batch.push(record);
-  }
-  if (batch.length) batches.push(batch);
-  return { batches, oversize };
-}
 // --- capacity.js ---
 function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   const v = inp.verify || {};
@@ -1760,36 +1714,7 @@ function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
 }
-function citeCost(findings, input, baseBranch) {
-  const source = citeSource(input.verify?.sourceCapture);
-  const ledger = input.cite_ledger;
-  const known = Array.isArray(findings) ? collectCitations(findings) : [];
-  if (ledger) {
-    const pending = known.filter((r) => !reusableCiteResult(ledger.entries?.find((e) => e.key === citeRecordKey(r, source)), r, source));
-    const batches = ledger.batches || [];
-    const reserved = new Set(batches.flatMap((b) => b.keys || []));
-    return batches.filter((b) => b.keys?.some((key) => pending.some((r) => citeRecordKey(r, source) === key)))
-      .reduce((sum, b) => sum + Math.max(0, STAGE_COSTS.cite.attempts - (b.attempts || 0)), 0)
-      + planCiteBatches(pending.filter((r) => !reserved.has(citeRecordKey(r, source))),
-        verifyInlineBudget({ ...input, citeMode: true }), baseBranch, hostPlatformForRoots(input)).batches.length * STAGE_COSTS.cite.attempts;
-  }
-  const knownAssessments = Array.isArray(findings) && findings.every((f) => f.skeptical_assessments);
-  let records = known;
-  let multiplier = 1;
-  if (!known.length && !knownAssessments) {
-    const file = Array.isArray(findings) ? findings.reduce((longest, f) => f.file?.length > longest.length ? f.file : longest, '') : 'source';
-    multiplier = findingCount(findings);
-    records = Array.from({ length: CITE_ROLES_PER_STAGE * 2 }, (_, role) => ({
-      id: 'finding', finding_id: 'finding', stage: role < CITE_ROLES_PER_STAGE ? 'validator' : 'challenger',
-      request: { finding_id: 'finding', stage: 'challenger', request_id: String(role), role: 'applicability',
-        snapshot_id: 'x'.repeat(64), file, side: 'head', line_start: Number.MAX_SAFE_INTEGER,
-        line_end: Number.MAX_SAFE_INTEGER, quote: 'x'.repeat(ANCHOR_LIMITS.chars) },
-    }));
-  }
-  return multiplier * planCiteBatches(records, verifyInlineBudget({ ...input, citeMode: true }), baseBranch,
-    hostPlatformForRoots(input)).batches.length * STAGE_COSTS.cite.attempts;
-}
-function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}, includeCite = true) {
+function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
   const findings = findingCount(nFindings);
@@ -1797,8 +1722,7 @@ function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', inp
   const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
   const validateCalls = validationCost(L, findings);
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
-  const citeCalls = includeCite ? citeCost(nFindings, input, baseBranch) : 0;
-  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + citeCalls + STAGE_COSTS.writer.attempts;
+  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + STAGE_COSTS.writer.attempts;
 }
 function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = { ...(limits || {}) };
@@ -2874,7 +2798,7 @@ function validationRejections(finding, validation, semantic = true) {
       reasons.push(`missing_assessment:${predicate}`);
     }
   }
-  if (semantic) reasons.push(...validatorAssessment(finding, validation).errors
+  if (semantic) reasons.push(...assessmentGaps(validatorAssessment(finding, validation)).semanticErrors
     .filter((error) => !['$.confidence', '$.policy_subject'].includes(error)
       && !(error.startsWith('$.admission_assessments') && reasons.some((reason) => reason.startsWith('missing_assessment:'))))
     .map((error) => `skeptical:${error}`));
@@ -3899,16 +3823,61 @@ function rankFindings(findings) {
     return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || ka[3] - kb[3];
   });
 }
-function applyChallenges(findings, challenges) {
-  const byId = new Map(challenges.map((entry) => [entry.id, entry]));
-  const out = deepClone(findings);
-  for (const finding of out) {
-    const raw = byId.get(finding.id);
-    if (raw?.assessment) finding.skeptical_assessments = [
-      ...(finding.skeptical_assessments || []).filter((a) => a.stage !== 'challenger'), raw.assessment];
-    else if (raw) finding.challenge_audit = raw;
+// --- citeWire.js ---
+const citeChecksum = (value) => fnv1a32(JSON.stringify(value, null, 2) ?? 'undefined');
+const citeSource = (capture = {}) => ({ snapshot_id: capture.manifest_sha256 || '',
+  target_kind: capture.target_kind || '', head: capture.head || '', base: capture.base || '',
+  diff_sha256: capture.diff_sha256 || '', verifier_version: CITE_VERIFIER_VERSION });
+const citeRecordKey = (record, source) => JSON.stringify({ record, source });
+function reusableCiteResult(entry, record, source) {
+  const result = entry?.result;
+  return result && (['matched', 'unmatched', 'rejected'].includes(result.status)
+    || (result.status === 'unavailable' && ['oversize', 'request_cap'].includes(result.detail)))
+    && typeof result.detail === 'string'
+    && citeChecksum(result.request) === citeChecksum(record?.request)
+    && citeChecksum(result.source) === citeChecksum(source)
+    && (result.status !== 'matched' || (matchesDispatchSchema(record?.request, CITATION_REQUEST_SCHEMA)
+      && record.request.snapshot_id === source.snapshot_id));
+}
+const CITE_ROLES_PER_STAGE = CITATION_REQUEST_PROPERTIES.role.enum.length
+  * (1 + EXCLUSION_CATEGORIES.filter((row) => row.stage === 'skeptical').length);
+function collectCitations(findings) {
+  return findings.flatMap((f) => {
+    const checks = [];
+    const add = (entry, stage) => {
+      for (const q of Array.isArray(entry?.citations) ? entry.citations : []) {
+        const record = { finding_id: f.id, stage, request: q };
+        checks.push({ id: citeChecksum(record), ...record });
+      }
+    };
+    for (const assessment of Array.isArray(f.skeptical_assessments) ? f.skeptical_assessments : []) {
+      const entry = assessment?.raw ?? assessment;
+      const stage = assessment?.stage;
+      add(entry, stage);
+      for (const scope of Array.isArray(entry?.scope_assessments) ? entry.scope_assessments : []) add(scope, stage);
+    }
+    for (const scope of Array.isArray(f.scope_decisions) ? f.scope_decisions : []) add(scope, scope?.stage);
+    return checks;
+  });
+}
+const citeDocument = (records, baseBranch) => ({ requests: records, base_branch: baseBranch });
+function planCiteBatches(records, budget, baseBranch, platform) {
+  const batches = [];
+  const oversize = [];
+  const cost = (rows) => {
+    const token = encodeSliceInline(citeDocument(rows, baseBranch));
+    return token.length + (platform === 'windows' ? (token.match(/["\\]/g) || []).length : 0);
+  };
+  let batch = [];
+  for (const record of records) {
+    if (cost([record]) > budget) { oversize.push(record); continue; }
+    if (batch.length && cost([...batch, record]) > budget) {
+      batches.push(batch); batch = [];
+    }
+    batch.push(record);
   }
-  return { findings: rankFindings(out), eliminated: [], stats: { total_input: out.length, final_count: out.length } };
+  if (batch.length) batches.push(batch);
+  return { batches, oversize };
 }
 // --- dispose.js ---
 function skepticalOutcome(finding) {
@@ -3939,8 +3908,7 @@ function skepticalOutcome(finding) {
     }
     if (raw.verdict === 'refuted' && proof && assessment.status === 'complete') proven = { reason: 'refuted', stage,
       request_ids: requests.map((q) => q.request_id) };
-    const semanticErrors = assessment.errors.filter((e) => !e.includes('citations') && e !== 'citation_range' && e !== 'citation_identity' && e !== 'request_id'
-      && !(e === '$' && ['real', 'refuted', 'needs_evidence'].includes(raw.verdict)));
+    const { semanticErrors } = assessmentGaps(assessment);
     if (semanticErrors.length) reasons.push({ reason: 'held_back', stage, missing_fields: semanticErrors });
   }
   return { proven, reasons, held: reasons.some((r) => r.reason === 'held_back' || r.verdict === 'refuted') };
@@ -5517,9 +5485,9 @@ async function validateStage(ctx, input) {
     const list = res === null || res === undefined
       ? null
       : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
-    if (res !== null && res !== undefined) completed += 1;
     const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ ...e, id: e.id ?? e.finding_id }));
     const rejections = [];
+    let usable = false;
     for (const finding of batch) {
       const matches = entries.filter((entry) => entry.id === finding.id);
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
@@ -5527,9 +5495,13 @@ async function validateStage(ctx, input) {
         assessments.set(finding.id, entry);
         const reasons = validationRejections(finding, entry);
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
-        if (!validationRejections(finding, entry, false).some((reason) => ['invalid_confidence', 'invalid_policy_subject', 'missing_entry'].includes(reason))) accepted.set(finding.id, entry);
+        if (!validationRejections(finding, entry, false).some((reason) => ['invalid_confidence', 'invalid_policy_subject', 'missing_entry'].includes(reason))) {
+          accepted.set(finding.id, entry);
+          usable = true;
+        }
       }
     }
+    if (usable) completed += 1;
     validatorAudit(audit, label, res, rejections);
     for (const rejection of rejections) terminalRejections.set(rejection.id, rejection.reasons);
     return list;
@@ -5567,7 +5539,8 @@ async function validateStage(ctx, input) {
   for (const f of findings) {
     if (!accepted.has(f.id)) { f.validation = 'skipped'; skipped += 1; }
     else f.validation = 'validated';
-    if (accepted.has(f.id) && validationRejections(f, accepted.get(f.id)).length) incomplete += 1;
+    if (accepted.has(f.id) && (assessmentGaps(f.skeptical_assessments[0]).semanticErrors.length
+      || validationRejections(f, accepted.get(f.id), false).length)) incomplete += 1;
   }
   return {
     findings,
@@ -5661,9 +5634,11 @@ async function challengeStage(ctx, input) {
     }
     completed += 1;
     const assessment = acceptSkepticalReturn({ ...res, finding_id: finding.id }, finding.id, 'challenger');
-    const out = { ...applyChallenges([finding], [{ id: finding.id, assessment }]).findings[0],
-      challenge: assessment.status === 'complete' ? 'survived' : 'incomplete' };
-    if (assessment.status === 'incomplete') { incomplete += 1; skipped.push(out); }
+    const semanticGap = assessmentGaps(assessment).semanticErrors.length > 0;
+    const out = { ...finding, skeptical_assessments: [
+      ...(finding.skeptical_assessments || []).filter((a) => a.stage !== 'challenger'), assessment],
+      challenge: semanticGap ? 'incomplete' : 'survived' };
+    if (semanticGap) { incomplete += 1; skipped.push(out); }
     else present.push(out);
   });
   if (overflow.length) gaps.push(`challenge: ${overflow.length} finding(s) over challengeCap=${cap} left unchallenged (challenge=capped, pipeline-degraded)`);
@@ -6151,6 +6126,7 @@ async function citeStage(ctx, input) {
       const token = encodeSliceInline(document);
       out.stats.cite_planned += STAGE_COSTS.cite.attempts - batch.attempts;
       while (batch.attempts < STAGE_COSTS.cite.attempts && batch.keys.some((key) => !results.has(key))) {
+        if (ctx.remainingAgentCalls?.() <= 0) break;
         batch.attempts += 1;
         batch.state = 'uncertain';
         const nonce = `${inp.nonce}.cite.${batch.id}.${batch.attempts}`;
@@ -8127,10 +8103,11 @@ async function runWith(ctx, rawArgs) {
   }
   const c = { ...defaultCtx(), ...(ctx || {}) };
   let agentCalls = 0;
+  c.remainingAgentCalls = () => AGENT_COUNT_GUARD - 1 - STAGE_COSTS.writer.attempts - agentCalls;
   const dispatchAgent = c.agent;
   c.agent = (...dispatchArgs) => {
     const persistence = ['artifact-writer', 'assemble-artifacts'].includes(dispatchArgs[1]?.label);
-    if (agentCalls >= AGENT_COUNT_GUARD - 1 - (persistence ? 0 : STAGE_COSTS.writer.attempts)) throw new Error('agent capacity exhausted');
+    if (agentCalls >= AGENT_COUNT_GUARD - 1 - (persistence ? 0 : STAGE_COSTS.writer.attempts)) return null;
     agentCalls += 1;
     return dispatchAgent(...dispatchArgs);
   };

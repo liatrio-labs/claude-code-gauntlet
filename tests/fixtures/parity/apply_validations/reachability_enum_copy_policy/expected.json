@@ -6,25 +6,6 @@
       "id": "R7",
       "original_confidence": 40,
       "reachability": "current",
-      "skeptical_assessments": [
-        {
-          "errors": [
-            "$.finding_id",
-            "$.stage",
-            "$.verdict",
-            "$.scope_assessments",
-            "$",
-            "finding_id"
-          ],
-          "finding_id": "R7",
-          "raw": {
-            "confidence": 80,
-            "reachability": "current"
-          },
-          "stage": "validator",
-          "status": "incomplete"
-        }
-      ],
       "validator_confidence": 80
     },
     {
@@ -32,25 +13,6 @@
       "id": "R8",
       "original_confidence": 50,
       "reachability": "future_change_only",
-      "skeptical_assessments": [
-        {
-          "errors": [
-            "$.finding_id",
-            "$.stage",
-            "$.verdict",
-            "$.scope_assessments",
-            "$",
-            "finding_id"
-          ],
-          "finding_id": "R8",
-          "raw": {
-            "confidence": 81,
-            "reachability": "future_change_only"
-          },
-          "stage": "validator",
-          "status": "incomplete"
-        }
-      ],
       "validator_confidence": 81
     },
     {
@@ -58,75 +20,18 @@
       "id": "R9",
       "original_confidence": 60,
       "reachability": "uncertain",
-      "skeptical_assessments": [
-        {
-          "errors": [
-            "$.finding_id",
-            "$.stage",
-            "$.verdict",
-            "$.scope_assessments",
-            "$",
-            "finding_id"
-          ],
-          "finding_id": "R9",
-          "raw": {
-            "confidence": 82,
-            "reachability": "uncertain"
-          },
-          "stage": "validator",
-          "status": "incomplete"
-        }
-      ],
       "validator_confidence": 82
     },
     {
       "confidence": 83,
       "id": "R10",
       "original_confidence": 70,
-      "skeptical_assessments": [
-        {
-          "errors": [
-            "$.finding_id",
-            "$.stage",
-            "$.verdict",
-            "$.scope_assessments",
-            "$",
-            "finding_id"
-          ],
-          "finding_id": "R10",
-          "raw": {
-            "confidence": 83,
-            "reachability": "later"
-          },
-          "stage": "validator",
-          "status": "incomplete"
-        }
-      ],
       "validator_confidence": 83
     },
     {
       "confidence": 84,
       "id": "R11",
       "original_confidence": 75,
-      "skeptical_assessments": [
-        {
-          "errors": [
-            "$.finding_id",
-            "$.stage",
-            "$.verdict",
-            "$.scope_assessments",
-            "$",
-            "finding_id"
-          ],
-          "finding_id": "R11",
-          "raw": {
-            "confidence": 84,
-            "reachability": 42
-          },
-          "stage": "validator",
-          "status": "incomplete"
-        }
-      ],
       "validator_confidence": 84
     }
   ],

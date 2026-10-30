@@ -229,6 +229,7 @@ def test_completed_validation_omission_is_valid_with_counted_disclosure(
             "validate": {
                 "batches_dispatched": 1,
                 "batches_completed": 1,
+                "validated": 1,
                 "skipped": 1,
             },
             "challenge": {
@@ -247,6 +248,14 @@ def test_completed_validation_omission_is_valid_with_counted_disclosure(
     )
     assert "Incomplete challenge: 1 findings held back." in attempt.validity.limitations
     assert not any("challenge cap" in item for item in attempt.validity.limitations)
+    omitted = json.loads(json.dumps(out))
+    omitted["stats"]["validate"]["validated"] = 0
+    (tmp_path / "all-omitted").mkdir()
+    omitted_attempt, omitted_smoke = _collect_discovery_attempt(
+        tmp_path / "all-omitted", fingerprint, omitted
+    )
+    assert omitted_attempt.validity.state == "invalid"
+    assert not omitted_smoke["ok"]
     pr = next((tmp_path / "run").glob("pr-*"))
     record = pr / "workflows/wf_test-0001.json"
     wire = read_json(record)

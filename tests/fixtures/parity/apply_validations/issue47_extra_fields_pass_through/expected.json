@@ -20,25 +20,6 @@
       "origin": "new",
       "original_confidence": 90,
       "severity": "high",
-      "skeptical_assessments": [
-        {
-          "errors": [
-            "$.finding_id",
-            "$.stage",
-            "$.verdict",
-            "$.scope_assessments",
-            "$",
-            "finding_id"
-          ],
-          "finding_id": "test-1",
-          "raw": {
-            "confidence": 85,
-            "justification": "Confirmed the gap."
-          },
-          "stage": "validator",
-          "status": "incomplete"
-        }
-      ],
       "suggestion": "Mock the gateway to raise PaymentGatewayError and assert the transaction is rolled back.",
       "title": "Missing test for the payment failure rollback path",
       "validation_justification": "Confirmed the gap.",

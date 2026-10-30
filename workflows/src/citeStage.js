@@ -151,6 +151,7 @@ export async function citeStage(ctx, input) {
       const token = encodeSliceInline(document);
       out.stats.cite_planned += STAGE_COSTS.cite.attempts - batch.attempts;
       while (batch.attempts < STAGE_COSTS.cite.attempts && batch.keys.some((key) => !results.has(key))) {
+        if (ctx.remainingAgentCalls?.() <= 0) break;
         // Reserve synchronously before handing control to the host or executor.
         batch.attempts += 1;
         batch.state = 'uncertain';

@@ -557,7 +557,7 @@ def test_windows_live_receipt_gate(fault, tmp_path, monkeypatch):
         Path(path).write_text("defects.py\n", encoding="utf-8")
     Path(paths["findings"]).write_text(
         json.dumps(
-            [{"id": "F1", "challenge_justification": "I read D:\\repo\\defects.py"}]
+            [{"id": "F1", "validation_justification": "I read D:\\repo\\defects.py"}]
         ),
         encoding="utf-8",
     )
@@ -566,7 +566,7 @@ def test_windows_live_receipt_gate(fault, tmp_path, monkeypatch):
         "phaseReached": "report",
         "stats": {"inputProof": {"proven": 1}},
         "gaps": [
-            "host-path-text: finding F1 mentions a host path in challenge_justification"
+            "host-path-text: finding F1 mentions a host path in validation_justification"
         ],
         "artifactPaths": paths,
     }

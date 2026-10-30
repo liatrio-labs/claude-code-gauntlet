@@ -36,6 +36,19 @@ export function citeEnvelope(prompt, inp, status = () => 'matched') {
   result: { citations: rows } };
 }
 
+test('cite uses remaining run budget and leaves excess proof unavailable', async () => {
+  for (const budget of [0, 1]) {
+    const inp = citeInput();
+    const ctx = stageCtx({ reply: (prompt) => citeEnvelope(prompt, inp, () => 'unavailable') });
+    ctx.remainingAgentCalls = () => budget - ctx.calls.length;
+    const out = await citeStage(ctx, inp);
+    assert.equal(ctx.calls.length, budget);
+    assert.equal(out.stats.cite_attempts, budget);
+    assert.ok(out.findings.every((f) => f.cite_results[0].status === 'unavailable'));
+    assert.ok(out.gaps.some((gap) => gap.startsWith('cite_unavailable:')));
+  }
+});
+
 test('cite successes persist and infrastructure retries are bounded across resumes', async () => {
   const inp = citeInput();
   inp.limits.validateBatch = 1;

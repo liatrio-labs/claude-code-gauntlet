@@ -1,9 +1,8 @@
-import { AGENTS, TRUSTED_SCRIPT_BASENAMES, STAGE_COSTS, LIMIT_DEFAULTS, ANCHOR_LIMITS } from './registry.js';
+import { AGENTS, TRUSTED_SCRIPT_BASENAMES, STAGE_COSTS, LIMIT_DEFAULTS } from './registry.js';
 import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding } from './verifyWire.js';
 
 import { pythonArgv, shellWord } from './wire.js';
 import { hostPlatformForRoots, trustedScriptPath } from './paths.js';
-import { CITE_ROLES_PER_STAGE, collectCitations, planCiteBatches, citeRecordKey, citeSource, reusableCiteResult } from './citeWire.js';
 
 // Shell quoting preserves each argv word; retry paths stay fixed so outputs
 // overwrite the first attempt.
@@ -143,38 +142,7 @@ function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
 }
 
-function citeCost(findings, input, baseBranch) {
-  const source = citeSource(input.verify?.sourceCapture);
-  const ledger = input.cite_ledger;
-  const known = Array.isArray(findings) ? collectCitations(findings) : [];
-  if (ledger) {
-    const pending = known.filter((r) => !reusableCiteResult(ledger.entries?.find((e) => e.key === citeRecordKey(r, source)), r, source));
-    const batches = ledger.batches || [];
-    const reserved = new Set(batches.flatMap((b) => b.keys || []));
-    return batches.filter((b) => b.keys?.some((key) => pending.some((r) => citeRecordKey(r, source) === key)))
-      .reduce((sum, b) => sum + Math.max(0, STAGE_COSTS.cite.attempts - (b.attempts || 0)), 0)
-      + planCiteBatches(pending.filter((r) => !reserved.has(citeRecordKey(r, source))),
-        verifyInlineBudget({ ...input, citeMode: true }), baseBranch, hostPlatformForRoots(input)).batches.length * STAGE_COSTS.cite.attempts;
-  }
-  const knownAssessments = Array.isArray(findings) && findings.every((f) => f.skeptical_assessments);
-  let records = known;
-  let multiplier = 1;
-  if (!known.length && !knownAssessments) {
-    // Plan one bounded assessment envelope instead of allocating a review-sized synthetic packet.
-    const file = Array.isArray(findings) ? findings.reduce((longest, f) => f.file?.length > longest.length ? f.file : longest, '') : 'source';
-    multiplier = findingCount(findings);
-    records = Array.from({ length: CITE_ROLES_PER_STAGE * 2 }, (_, role) => ({
-      id: 'finding', finding_id: 'finding', stage: role < CITE_ROLES_PER_STAGE ? 'validator' : 'challenger',
-      request: { finding_id: 'finding', stage: 'challenger', request_id: String(role), role: 'applicability',
-        snapshot_id: 'x'.repeat(64), file, side: 'head', line_start: Number.MAX_SAFE_INTEGER,
-        line_end: Number.MAX_SAFE_INTEGER, quote: 'x'.repeat(ANCHOR_LIMITS.chars) },
-    }));
-  }
-  return multiplier * planCiteBatches(records, verifyInlineBudget({ ...input, citeMode: true }), baseBranch,
-    hostPlatformForRoots(input)).batches.length * STAGE_COSTS.cite.attempts;
-}
-
-export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}, includeCite = true) {
+export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
   const findings = findingCount(nFindings);
@@ -182,8 +150,7 @@ export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'mai
   const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
   const validateCalls = validationCost(L, findings);
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
-  const citeCalls = includeCite ? citeCost(nFindings, input, baseBranch) : 0;
-  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + citeCalls + STAGE_COSTS.writer.attempts;
+  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + STAGE_COSTS.writer.attempts;
 }
 
 // Removing terms that cannot shrink guarantees termination when the inline budget binds.

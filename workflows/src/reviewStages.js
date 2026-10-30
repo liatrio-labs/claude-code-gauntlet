@@ -2,10 +2,10 @@ import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
-import { modelFor, ADMISSION_PREDICATES, DIMENSIONS, SKEPTICAL_CONTRACTS, ANCHOR_LIMITS, acceptSkepticalReturn } from './registry.js';
+import { modelFor, ADMISSION_PREDICATES, DIMENSIONS, SKEPTICAL_CONTRACTS, ANCHOR_LIMITS, acceptSkepticalReturn, assessmentGaps } from './registry.js';
 import { applyValidations, validationRejections, validatorAssessment } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
-import { applyChallenges, rankFindings } from './applyChallenges.js';
+import { rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
 import { deliveryGroups } from './dispose.js';
 import { admissionContext, hasAdmission } from './admission.js';
@@ -80,9 +80,9 @@ export async function validateStage(ctx, input) {
     const list = res === null || res === undefined
       ? null
       : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
-    if (res !== null && res !== undefined) completed += 1;
     const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ ...e, id: e.id ?? e.finding_id }));
     const rejections = [];
+    let usable = false;
     for (const finding of batch) {
       const matches = entries.filter((entry) => entry.id === finding.id);
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
@@ -91,9 +91,13 @@ export async function validateStage(ctx, input) {
         const reasons = validationRejections(finding, entry);
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
         // Missing admission evidence still warrants a retry, but does not invalidate a score.
-        if (!validationRejections(finding, entry, false).some((reason) => ['invalid_confidence', 'invalid_policy_subject', 'missing_entry'].includes(reason))) accepted.set(finding.id, entry);
+        if (!validationRejections(finding, entry, false).some((reason) => ['invalid_confidence', 'invalid_policy_subject', 'missing_entry'].includes(reason))) {
+          accepted.set(finding.id, entry);
+          usable = true;
+        }
       }
     }
+    if (usable) completed += 1;
     validatorAudit(audit, label, res, rejections);
     for (const rejection of rejections) terminalRejections.set(rejection.id, rejection.reasons);
     return list;
@@ -134,7 +138,8 @@ export async function validateStage(ctx, input) {
   for (const f of findings) {
     if (!accepted.has(f.id)) { f.validation = 'skipped'; skipped += 1; }
     else f.validation = 'validated';
-    if (accepted.has(f.id) && validationRejections(f, accepted.get(f.id)).length) incomplete += 1;
+    if (accepted.has(f.id) && (assessmentGaps(f.skeptical_assessments[0]).semanticErrors.length
+      || validationRejections(f, accepted.get(f.id), false).length)) incomplete += 1;
   }
 
   return {
@@ -240,9 +245,11 @@ export async function challengeStage(ctx, input) {
     completed += 1;
     // The dispatch position owns the finding; an echoed identity cannot redirect an assessment.
     const assessment = acceptSkepticalReturn({ ...res, finding_id: finding.id }, finding.id, 'challenger');
-    const out = { ...applyChallenges([finding], [{ id: finding.id, assessment }]).findings[0],
-      challenge: assessment.status === 'complete' ? 'survived' : 'incomplete' };
-    if (assessment.status === 'incomplete') { incomplete += 1; skipped.push(out); }
+    const semanticGap = assessmentGaps(assessment).semanticErrors.length > 0;
+    const out = { ...finding, skeptical_assessments: [
+      ...(finding.skeptical_assessments || []).filter((a) => a.stage !== 'challenger'), assessment],
+      challenge: semanticGap ? 'incomplete' : 'survived' };
+    if (semanticGap) { incomplete += 1; skipped.push(out); }
     else present.push(out);
   });
   if (overflow.length) gaps.push(`challenge: ${overflow.length} finding(s) over challengeCap=${cap} left unchallenged (challenge=capped, pipeline-degraded)`);

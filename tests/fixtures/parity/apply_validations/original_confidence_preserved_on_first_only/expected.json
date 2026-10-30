@@ -5,24 +5,6 @@
       "confidence": 90,
       "id": "F1",
       "original_confidence": 50,
-      "skeptical_assessments": [
-        {
-          "errors": [
-            "$.finding_id",
-            "$.stage",
-            "$.verdict",
-            "$.scope_assessments",
-            "$",
-            "finding_id"
-          ],
-          "finding_id": "F1",
-          "raw": {
-            "confidence": 90
-          },
-          "stage": "validator",
-          "status": "incomplete"
-        }
-      ],
       "validator_confidence": 90
     }
   ],

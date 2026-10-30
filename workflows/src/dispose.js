@@ -4,7 +4,7 @@ import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
 import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
 import { hasAdmission } from './admission.js';
-import { acceptSkepticalReturn, CITATION_REQUEST_SCHEMA, matchesDispatchSchema } from './registry.js';
+import { acceptSkepticalReturn, assessmentGaps, CITATION_REQUEST_SCHEMA, matchesDispatchSchema } from './registry.js';
 import { citeChecksum } from './citeWire.js';
 import { validatorAssessment } from './applyValidations.js';
 
@@ -37,8 +37,7 @@ function skepticalOutcome(finding) {
     if (raw.verdict === 'refuted' && proof && assessment.status === 'complete') proven = { reason: 'refuted', stage,
       request_ids: requests.map((q) => q.request_id) };
     // A malformed real proof is diagnostic; missing semantic assessments still close delivery.
-    const semanticErrors = assessment.errors.filter((e) => !e.includes('citations') && e !== 'citation_range' && e !== 'citation_identity' && e !== 'request_id'
-      && !(e === '$' && ['real', 'refuted', 'needs_evidence'].includes(raw.verdict)));
+    const { semanticErrors } = assessmentGaps(assessment);
     if (semanticErrors.length) reasons.push({ reason: 'held_back', stage, missing_fields: semanticErrors });
   }
   return { proven, reasons, held: reasons.some((r) => r.reason === 'held_back' || r.verdict === 'refuted') };

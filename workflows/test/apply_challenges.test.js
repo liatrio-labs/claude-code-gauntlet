@@ -1,30 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyChallenges, rankFindings } from '../src/applyChallenges.js';
+import { rankFindings } from '../src/applyChallenges.js';
 import { finding, consolidationFinding } from './helpers/findings.js';
-
-test('legacy score aliases have no authority over security or ordinary findings', () => {
-  const nativeClone = globalThis.structuredClone;
-  try {
-    delete globalThis.structuredClone;
-  for (const dimension of ['security', 'bug']) for (const origin of ['new','surfaced']) for (const severity of ['critical','low','info'])
-    for (const key of ['score', 'confidence_claim_is_correct']) for (const score of [0,24,25,40,49,50,60,74,75,90,'invalid']) {
-    const input = [finding({ dimension, origin, severity })];
-    const before = JSON.parse(JSON.stringify(input));
-    let out;
-    assert.doesNotThrow(()=>{out=applyChallenges(input,[{id:'f1',[key]:score}]);});
-    assert.equal(out.findings.length,1);
-    assert.equal(out.findings[0].severity,severity);
-    assert.equal(out.findings[0].report_destination,input[0].report_destination);
-    assert.equal(out.findings[0].confidence, 90);
-    for (const field of ['challenge_score', 'challenge_contested', 'severity_downgraded', 'original_severity']) {
-      assert.equal(Object.hasOwn(out.findings[0], field), false);
-    }
-    assert.deepEqual(out.eliminated, []);
-    assert.deepEqual(input, before);
-  }
-  } finally { globalThis.structuredClone = nativeClone; }
-});
 
 const RANK_CASES = [
   { name: 'severity order', rows: [['low', 'low', 90], ['critical', 'critical', 70], ['high', 'high', 80], ['medium', 'medium', 85]],

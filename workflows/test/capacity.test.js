@@ -4,8 +4,7 @@ import {
   verifyCommand, verifyInlineCost, planVerifySlices, predictVerifySliceInlineLength, worstCaseAgentCount, coarsenLimits,
   verifyInlineBudget, effectiveVerifyBaseBranch, effectiveSliceSize, effectiveChallengeCap, effectiveBucketSize, effectiveBatchSize,
 } from '../src/capacity.js';
-import { STAGE_COSTS } from '../src/registry.js';
-import { collectCitations, planCiteBatches, citeRecordKey, citeSource } from '../src/citeWire.js';
+import { planCiteBatches } from '../src/citeWire.js';
 import { encodeSliceInline, projectVerifySliceFinding } from '../src/verifyWire.js';
 import { summarize } from '../src/discover.js';
 import { randomFindings, stageCtx } from './helpers/stageFixtures.js';
@@ -84,7 +83,7 @@ const COUNT_ROWS = [
 ];
 for (const row of COUNT_ROWS) test(`agent count: ${row.name}`, () => {
   const count = Array.isArray(row.findings) ? row.findings.length : row.findings;
-  assert.equal(worstCaseAgentCount(row.limits, row.files, row.findings, 'main', {}, false), row.count + Math.ceil(count / Math.max(1, Math.ceil((row.limits.validateBatch || count || 1) / 5))));
+  assert.equal(worstCaseAgentCount(row.limits, row.files, row.findings), row.count + Math.ceil(count / Math.max(1, Math.ceil((row.limits.validateBatch || count || 1) / 5))));
 });
 const COARSEN_ROWS = [
   { name: 'huge findings', limits: { summarizeBucketSize: 20, validateBatch: 2, challengeCap: 900, verifySliceSize: 5 },
@@ -104,11 +103,10 @@ const COARSEN_ROWS = [
 ];
 for (const row of COARSEN_ROWS) test(`coarsening: ${row.name}`, () => {
   const before = JSON.stringify(row.limits);
-  const known = Array.isArray(row.findings) ? row.findings.map(f=>({...f,skeptical_assessments:[]})) : Array.from({length:row.findings},(_,i)=>({id:String(i),skeptical_assessments:[]}));
-  const coarse = coarsenLimits(row.limits, row.files, known);
+  const coarse = coarsenLimits(row.limits, row.files, row.findings);
   assert.equal(JSON.stringify(row.limits), before);
-  assert.ok(worstCaseAgentCount(coarse, row.files, row.findings, 'main', {}, false) <= worstCaseAgentCount(row.limits, row.files, row.findings, 'main', {}, false));
-  if (row.name !== 'wire-bound term stops making progress') assert.ok(worstCaseAgentCount(coarse, row.files, row.findings, 'main', {}, false) < 900);
+  assert.ok(worstCaseAgentCount(coarse, row.files, row.findings) <= worstCaseAgentCount(row.limits, row.files, row.findings));
+  if (row.name !== 'wire-bound term stops making progress') assert.ok(worstCaseAgentCount(coarse, row.files, row.findings) < 900);
 });
 const BRANCH_ROWS = [
   { name: 'windows command budget', branch: 'main', input: { repoRoot: 'D:/repo' }, slices: 800, count: 1612 },
@@ -117,7 +115,7 @@ const BRANCH_ROWS = [
     slices: 800, count: 1612 },
 ];
 for (const row of BRANCH_ROWS) test(`array guard branch: ${row.name}`, () => {
-  const findings = Array.from({ length: 800 }, (_, i) => ({ id: `F${i}`, file: (i % 2 ? 'y' : 'x').repeat(24500), skeptical_assessments: [] }));
+  const findings = Array.from({ length: 800 }, (_, i) => ({ id: `F${i}`, file: (i % 2 ? 'y' : 'x').repeat(24500) }));
   const limits = { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 };
   assert.equal(planVerifySlices(findings, 25, verifyInlineBudget(row.input), row.branch).slices.length, row.slices);
   assert.equal(worstCaseAgentCount(limits, 0, findings, row.branch, row.input), row.count);
@@ -126,41 +124,10 @@ for (const row of BRANCH_ROWS) test(`array guard branch: ${row.name}`, () => {
   assert.ok(worstCaseAgentCount(coarse, 0, findings, row.branch, row.input) <= row.count);
 });
 
-test('cite capacity reserves future proof and reuses completed attempts', () => {
-  assert.equal(STAGE_COSTS.cite.attempts, 2);
-  const limits = { summarizeBucketSize: 20, verifySliceSize: 10, validateBatch: 2, challengeCap: 5 };
-  assert.equal(worstCaseAgentCount(limits, 0, 0), 10);
-  const without = worstCaseAgentCount(limits, 0, 5, 'main', {}, false);
-  assert.ok(worstCaseAgentCount(limits, 0, 5) > without);
-  const noChallenge = { ...limits, challengeCap: 0 };
-  assert.ok(worstCaseAgentCount(noChallenge, 0, 5) > worstCaseAgentCount(noChallenge, 0, 5, 'main', {}, false));
-  const known = [{id:'F',skeptical_assessments:[]}];
-  assert.equal(worstCaseAgentCount(limits,0,known),worstCaseAgentCount(limits,0,known,'main',{},false));
-});
-
-test('cite reserve includes both skeptical stages and byte bounded retries', () => {
-  const limits = { verifySliceSize: 10, validateBatch: 1, challengeCap: 0 };
+test('cite planning uses real requests and encoded byte bounds', () => {
   const request = { finding_id: 'F', stage: 'validator', request_id: 'claim', role: 'claim',
     snapshot_id: 'snapshot', file: 'source', side: 'head', line_start: 1, line_end: 1, quote: 'return source_value;' };
-  const finding = { id: 'F', skeptical_assessments: [{ stage: 'validator', verdict: 'refuted', citations: [request] }] };
-  const empty = [{ ...finding, skeptical_assessments: [] }];
-  const base = worstCaseAgentCount(limits, 0, empty);
-  assert.equal(worstCaseAgentCount(limits, 0, [finding]) - base, 2);
-  finding.skeptical_assessments.push({ stage: 'challenger', citations: [{ ...request, stage: 'challenger' }] });
-  assert.equal(worstCaseAgentCount(limits, 0, [finding]) - base, 2);
-  assert.equal(worstCaseAgentCount({ ...limits, validateBatch: 2 }, 0, [finding])
-    - worstCaseAgentCount({ ...limits, validateBatch: 2 }, 0, empty), 2);
-  const records = collectCitations([finding]);
-  const input = { verify: { sourceCapture: { manifest_sha256: 'snapshot' } } };
-  const source = citeSource(input.verify.sourceCapture);
-  input.cite_ledger = { entries: records.map((r) => ({ key: citeRecordKey(r, source),
-    result: { request: r.request, source, status: 'matched', detail: 'explicit_range' } })),
-  batches: [{ keys: records.map((r) => citeRecordKey(r, source)), attempts: 1 }] };
-  assert.equal(worstCaseAgentCount(limits, 0, [finding], 'main', input) - base, 0);
-  delete input.cite_ledger.entries[0].result;
-  assert.equal(worstCaseAgentCount(limits, 0, [finding], 'main', input) - base, 1);
-  input.cite_ledger.batches[0].attempts = 2;
-  assert.equal(worstCaseAgentCount(limits, 0, [finding], 'main', input) - base, 0);
+  const records = ['validator', 'challenger'].map((stage) => ({ id: stage, finding_id: 'F', stage, request: { ...request, stage } }));
   const budget = Math.max(...records.map((r) => encodeSliceInline({ requests: [r], base_branch: 'main' }).length));
   assert.equal(planCiteBatches(records, budget, 'main').batches.length, 2);
   const huge = { ...records[0], request: { ...request, file: 'é'.repeat(10000) } };
@@ -172,7 +139,7 @@ for (const [index, branch] of EMPTY_BRANCH_ROWS.entries()) test(`empty branch no
   assert.equal(effectiveVerifyBaseBranch(branch), 'main');
   assert.deepEqual(planVerifySlices(findings, 25, 352, branch).slices.map((slice) => slice.map((f) => f.id)),
     [['F0', 'F1'], ['F2', 'F3']]);
-  assert.equal(worstCaseAgentCount({ validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 }, 0, findings, branch, {}, false), 14);
+  assert.equal(worstCaseAgentCount({ validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 }, 0, findings, branch), 14);
 });
 const ACCESSOR_ROWS = [
   { name: 'absent', limits: {}, n: 7, expected: [20, 7, 7, 7] },
