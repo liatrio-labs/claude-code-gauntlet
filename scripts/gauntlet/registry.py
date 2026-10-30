@@ -642,6 +642,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
             "field": "quality_basis",
             "kinds": {
                 "current_correctness": {
+                    "description": "A demonstrated present production defect.",
                     "required": [],
                     "predicates": ["present_defect"],
                     "phase": "semantic",
@@ -649,12 +650,14 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                     "tier": "main",
                 },
                 "duplication": {
+                    "description": "Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior.",
                     "required": ["duplicate_of"],
                     "predicates": ["resolved_duplicate", "confirmed_duplication"],
                     "phase": "semantic",
                     "tier": "suggestion",
                 },
                 "simpler_equivalent": {
+                    "description": "A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths.",
                     "required": ["behavior_preserved"],
                     "anyOf": ["suggestion", "suggested_fix_code"],
                     "predicates": ["concrete_equivalent", "behavior_preserved"],
@@ -662,6 +665,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                     "tier": "suggestion",
                 },
                 "stack_idiom": {
+                    "description": "A behavior-preserving replacement supported by applicable existing repository precedent; identify the precedent and the cost it removes.",
                     "required": ["precedent"],
                     "predicates": [
                         "resolved_precedent",
@@ -672,6 +676,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                     "tier": "suggestion",
                 },
                 "other": {
+                    "description": "No demonstrated defect, redundancy, simpler equivalent or applicable precedent; unsupported preferences stay report_only.",
                     "required": [],
                     "predicates": [],
                     "phase": "deterministic",
@@ -697,7 +702,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                     "stack_idiom",
                     "other",
                 ],
-                "description": "Quality basis used to assess admission.",
+                "description": "Select the demonstrated quality basis. Behavior-preserving improvements do not require a production defect. current_correctness: A demonstrated present production defect. duplication: Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior. simpler_equivalent: A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths. stack_idiom: A behavior-preserving replacement supported by applicable existing repository precedent; identify the precedent and the cost it removes. other: No demonstrated defect, redundancy, simpler equivalent or applicable precedent; unsupported preferences stay report_only.",
             },
             "duplicate_of": {
                 "type": "object",
@@ -783,6 +788,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
             "field": "quality_basis",
             "kinds": {
                 "current_correctness": {
+                    "description": "A demonstrated present production defect.",
                     "required": [],
                     "predicates": ["present_defect"],
                     "phase": "semantic",
@@ -790,12 +796,14 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                     "tier": "main",
                 },
                 "duplication": {
+                    "description": "Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior.",
                     "required": ["duplicate_of"],
                     "predicates": ["resolved_duplicate", "confirmed_duplication"],
                     "phase": "semantic",
                     "tier": "suggestion",
                 },
                 "simpler_equivalent": {
+                    "description": "A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths.",
                     "required": ["behavior_preserved"],
                     "anyOf": ["suggestion", "suggested_fix_code"],
                     "predicates": ["concrete_equivalent", "behavior_preserved"],
@@ -803,6 +811,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                     "tier": "suggestion",
                 },
                 "stack_idiom": {
+                    "description": "A behavior-preserving replacement supported by applicable existing repository precedent; identify the precedent and the cost it removes.",
                     "required": ["precedent"],
                     "predicates": [
                         "resolved_precedent",
@@ -813,6 +822,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                     "tier": "suggestion",
                 },
                 "other": {
+                    "description": "No demonstrated defect, redundancy, simpler equivalent or applicable precedent; unsupported preferences stay report_only.",
                     "required": [],
                     "predicates": [],
                     "phase": "deterministic",
@@ -838,7 +848,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                     "stack_idiom",
                     "other",
                 ],
-                "description": "Quality basis used to assess admission.",
+                "description": "Select the demonstrated quality basis. Behavior-preserving improvements do not require a production defect. current_correctness: A demonstrated present production defect. duplication: Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior. simpler_equivalent: A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths. stack_idiom: A behavior-preserving replacement supported by applicable existing repository precedent; identify the precedent and the cost it removes. other: No demonstrated defect, redundancy, simpler equivalent or applicable precedent; unsupported preferences stay report_only.",
             },
             "duplicate_of": {
                 "type": "object",
