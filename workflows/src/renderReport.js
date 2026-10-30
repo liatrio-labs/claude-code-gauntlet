@@ -648,6 +648,11 @@ function summaryBlock(builder, input, findingsRight = 'body') {
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
   builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
+  if (['findings', 'unverified', 'eliminated'].some((key) => Array.isArray(inp[key]) && inp[key]
+    .some((f) => { const results = safeReportField(f, 'cite_results');
+      return Array.isArray(results) && results.some((r) => safeReportField(r, 'status') === 'unavailable'); }))) {
+    builder.add('Citation checking was unavailable.');
+  }
   const { indexed, reasons } = summaryIndex(rawFindings, findingsView, inp);
   const permalinks = permalinkContext(inp.prIdentity);
   const bullets = [];

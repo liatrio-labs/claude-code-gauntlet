@@ -48,7 +48,9 @@ for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves
   const report = trace.versions.find((v) => v.finding.id === 'REPORT');
   const selection = trace.snapshots.find((s) => s.stage === 'select').decisions.find((d) => d.trace_id === report.trace_id);
   assert.equal(selection.reason_code, 'report_only');
-  assert.deepEqual(selection.detail, { kind: 'additional_case' });
+  assert.equal(selection.detail.kind, 'additional_case');
+  assert.equal(selection.trace_id, report.trace_id);
+  assert.equal(selection.detail.original_producer, report.discovery_agent);
   assert.ok(trace.snapshots.some((s) => s.cap_hit));
 });
 

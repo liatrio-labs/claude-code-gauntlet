@@ -129,7 +129,8 @@ export async function deliverFromCheckpoint(c, A, state) {
   const { summarize: summaryOut, discover: discoverOut, merge: mergeOut,
     verify: verifyOut, validate: validateOut, filter: filterOut } = phaseOutputs;
   const summaryCopy = deepClone(summaryOut);
-  const rawChallenge = phaseOutputs.cite;
+  // Legacy delivery replay has no cite phase and must stay closed without dispatching proof work.
+  const rawChallenge = phaseOutputs.cite || phaseOutputs.challenge;
   rewriteHostPathText(phaseOutputs.challenge || rawChallenge, summaryCopy, A.repoRoot);
   rewriteHostPathText(rawChallenge, summaryCopy, A.repoRoot);
   for (const field of ['findings', 'unverified']) for (const finding of phaseOutputs.challenge?.[field] || []) refreshAdmission(finding);

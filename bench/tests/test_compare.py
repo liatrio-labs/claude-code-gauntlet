@@ -1053,6 +1053,7 @@ def test_admission_diagnostics_preserve_issue_and_producer(case, tmp_path):
             replace(
                 s,
                 coverage="complete",
+                verdicts=None,
                 finding_version_ids=vids if i == 0 else vids[1:],
                 decisions=(coalesced,) if s.stage in ("merge", "select") else (),
             )

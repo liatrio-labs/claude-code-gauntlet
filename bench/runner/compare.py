@@ -313,6 +313,7 @@ class DeliveryDiagnostics:
     surfaces: dict[str, DeliveryDiagnosticsWire]
     record_coalescence: DeliveryDiagnosticsWire
     admission: DeliveryDiagnosticsWire
+    verdicts: DeliveryDiagnosticsWire
 
 
 @dataclass(frozen=True, slots=True)
@@ -563,6 +564,124 @@ def _record_coalescence(trace):
     return None
 
 
+def verdict_diagnostics(trace):
+    """Pool assessment observations, retaining failed requirements and empty reviews."""
+    from gauntlet.registry import STAGE_COSTS
+
+    cite = next((s for s in trace.snapshots if s.stage == "cite"), None)
+    if cite is None or cite.verdicts is None:
+        return None
+    latest = {v.trace_id: v.finding for v in trace.versions}
+
+    def challenge_marker(r):
+        return latest[r.trace_id].get("challenge") if r.stage == "challenger" else None
+
+    def workload(snapshot):
+        if snapshot.stage != "cite":
+            return snapshot.workload
+        raw = snapshot.workload or {}
+        batches = raw.get("batches", [])
+        capture = raw.get("source_capture")
+        fields = ("copied_files", "copied_bytes", "failure_count")
+        return {
+            **raw,
+            "batches": len(batches),
+            "attempts": sum(b["attempts"] for b in batches),
+            "retries": sum(max(0, b["attempts"] - 1) for b in batches),
+            "exhausted": sum(
+                b["attempts"] >= STAGE_COSTS["cite"]["attempts"]
+                and b.get("state") != "complete"
+                for b in batches
+            ),
+            "latency_ms": None,
+            "cost_usd": None,
+            "telemetry_status": "unavailable",
+            "source_capture": {k: capture.get(k) for k in fields} if capture else None,
+        }
+
+    def counts(rows):
+        proof = [r for r in rows if r.verdict in ("real", "refuted")]
+        matched = sum(r.proved for r in proof)
+        unresolved = sum(r.unresolved for r in rows)
+        return {
+            "required": len(rows),
+            "proof_denominator": len(proof),
+            "proved": matched,
+            "proof_rate": matched / len(proof) if proof else None,
+            "unresolved": unresolved,
+            "needs_evidence_share": unresolved / len(rows) if rows else None,
+            "operational_gaps": sum(
+                challenge_marker(r) in ("failed", "capped", "skipped") for r in rows
+            ),
+            "non_dispatch": sum(
+                challenge_marker(r) in ("capped", "skipped") for r in rows
+            ),
+            "unavailable": sum(r.unavailable for r in rows),
+        }
+
+    final = next((s for s in trace.snapshots if s.stage == "dispose"), None)
+    versions = {v.version_id: v for v in trace.versions}
+    identities = {d.trace_id for d in final.decisions} if final else set()
+    if final:
+        identities.update(versions[v].trace_id for v in final.finding_version_ids)
+    records = [
+        {
+            "member_id": tid,
+            "finding_id": f.get("id"),
+            "issue_id": f.get("delivery_group", {}).get("issue_key")
+            or f.get("consolidation_key")
+            or tid,
+            "original_producer": f.get("discovery_agent", f.get("agent")),
+            "disposition": f.get("disposition"),
+            "scope": f.get("scope_decisions", []),
+            "reasons": f.get("disposition_reasons", []),
+        }
+        for tid in sorted(identities)
+        for f in [latest[tid]]
+    ]
+    challenge = next((s for s in trace.snapshots if s.stage == "challenge"), None)
+    discovery = next((s for s in trace.snapshots if s.stage == "discover"), None)
+    overflow = (
+        sum(d.reason_code == "challenge_cap" for d in challenge.decisions)
+        if challenge
+        else None
+    )
+    dispatched = sum(
+        r.stage == "challenger" and challenge_marker(r) not in ("capped", "skipped")
+        for r in cite.verdicts
+    )
+    return {
+        "aggregate": counts(cite.verdicts),
+        "stages": {
+            s: {
+                **counts([r for r in cite.verdicts if r.stage == s]),
+                "verdicts": {
+                    v: counts(
+                        [r for r in cite.verdicts if r.stage == s and r.verdict == v]
+                    )
+                    for v in ("real", "refuted")
+                },
+            }
+            for s in ("validator", "challenger")
+        },
+        "verdicts": {
+            v: counts([r for r in cite.verdicts if r.verdict == v])
+            for v in ("real", "refuted")
+        },
+        "records": records,
+        "assessments": [asdict(r) for r in cite.verdicts],
+        "candidate_records": len(discovery.finding_version_ids) if discovery else None,
+        "challenge_overflow": overflow,
+        "challenge_overflow_rate": overflow / (dispatched + overflow)
+        if overflow is not None and dispatched + overflow
+        else None,
+        "challenge_dispatched": dispatched,
+        "workload": {
+            s.stage: workload(s) for s in trace.snapshots if s.workload is not None
+        },
+    }
+
+
 def delivery_diagnostics(packet, population):
     """One row per selected review; consumers pool over rows, including empty ones."""
     inventory = read_json(packet.root / "complete.json")["files"]
@@ -636,12 +755,13 @@ def delivery_diagnostics(packet, population):
                 ),
                 reason or "surface scoring unavailable",
             )
-        fold = admission = None
+        fold = admission = verdicts = None
         trace_evidence = ("stage_trace_bindings.json",)
         if url in traces:
             path, trace = traces[url]
             trace_evidence += (path.relative_to(packet.root.resolve()).as_posix(),)
             fold = _record_coalescence(trace)
+            verdicts = verdict_diagnostics(trace)
             final = next((s for s in trace.snapshots if s.stage == "dispose"), None)
             if final is not None:
                 versions = {v.version_id: v for v in trace.versions}
@@ -675,6 +795,9 @@ def delivery_diagnostics(packet, population):
                     "complete trace unavailable",
                 ),
                 metric(admission, trace_evidence, "admission trace unavailable"),
+                metric(
+                    verdicts, trace_evidence, "recorded assessment proof unavailable"
+                ),
             )
         )
     return tuple(rows)

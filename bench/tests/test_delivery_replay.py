@@ -365,9 +365,7 @@ def test_admission_replay_requires_enriched_evidence(tmp_path, evidence, monkeyp
         assert (
             delta["before"] == finding.get("disposition") and delta["after"] == expected
         )
-        assert (
-            json.loads(result.receipt)["attribution_scope"] == "post_challenge_delivery"
-        )
+        assert json.loads(result.receipt)["attribution_scope"] == "post_cite_delivery"
 
     for mutation, error in (
         ("findings[0].confidence += 1", "finding delta"),
@@ -399,7 +397,9 @@ def test_admission_replay_requires_enriched_evidence(tmp_path, evidence, monkeyp
                 )
 
 
-@pytest.mark.parametrize("mode", ["return", "derived", "legacy", "writer-failure"])
+@pytest.mark.parametrize(
+    "mode", ["return", "derived", "legacy", "writer-failure", "proof"]
+)
 def test_replay_preserves_bytes_and_occurrence_identity(tmp_path, mode, evidence):
     manifest = _manifest(tmp_path, evidence, mode)
     before = {p: p.read_bytes() for p in tmp_path.iterdir()}
@@ -433,7 +433,10 @@ def test_replay_preserves_bytes_and_occurrence_identity(tmp_path, mode, evidence
         for s in trace["snapshots"]
         for d in s["decisions"]
     )
-    assert any(v["finding"].get("consolidation_key") for v in trace["versions"])
+    if mode == "proof":
+        assert any(d["reason_code"] == "refuted" for d in holdback["decisions"])
+    else:
+        assert any(v["finding"].get("consolidation_key") for v in trace["versions"])
     receipt = json.loads(files["replay-receipt.json"])
     assert receipt["source_plugin_sha256"] == SOURCE_DIGEST
     assert receipt["trace_availability"] == "available"
@@ -610,3 +613,88 @@ def test_replay_accepts_project_configuration_paths(tmp_path, directory, evidenc
     manifest = _manifest(root, evidence)
     result = _cli(manifest, root / "out")
     assert result.returncode == 0, result.stderr
+
+
+def test_cite_replay_requires_recorded_proof_and_preserves_disposition(
+    tmp_path, evidence
+):
+    from gauntlet.jsjson import fnv1a32
+
+    from bench.runner.delivery_replay import load_replay_inputs, replay_delivery
+
+    manifest = _manifest(tmp_path, evidence, "proof", trace=False)
+    workflow = tmp_path / "workflow.json"
+    original = json.loads(workflow.read_bytes())
+    wire = json.loads(manifest.read_bytes())
+
+    def replay(record):
+        _write(workflow, record)
+        wire["sources"]["workflow"]["sha256"] = _hash(workflow.read_bytes())
+        _write(manifest, wire)
+        return replay_delivery(load_replay_inputs(manifest), candidate=True)
+
+    for status in ("matched", "unmatched", "unavailable", "missing"):
+        record = copy.deepcopy(original)
+        cited = record["state"]["phaseOutputs"]["cite"]
+        refuted = cited["findings"][0]
+        refuted["cite_results"] = (
+            []
+            if status == "missing"
+            else [{**r, "status": status} for r in refuted["cite_results"]]
+        )
+        # Interrupted and exhausted attempts are evidence, never a reason to execute a retry offline.
+        for batch in cited["cite_ledger"]["batches"]:
+            batch.update(attempts=1 if status == "unmatched" else 2, state="uncertain")
+        result = replay(record)
+        artifacts = dict(result.artifacts)
+        findings = json.loads(
+            next(data for name, data in artifacts.items() if "findings-" in name)
+        )
+        actual = next(
+            f
+            for f in findings
+            if f["id"] == refuted["id"] and f["file"] == refuted["file"]
+        )
+        assert actual["disposition"] == (
+            "eliminate" if status == "matched" else "held_back"
+        )
+        assert actual["cite_results"] == refuted["cite_results"]
+        assert actual["skeptical_assessments"] == refuted["skeptical_assessments"]
+        checkpoint = json.loads(
+            next(data for name, data in artifacts.items() if "checkpoint-all" in name)
+        )
+        assert checkpoint["phases"]["cite"]["cite_ledger"] == cited["cite_ledger"]
+        assert any(
+            d["id"] == actual["id"] and d["after"] == actual["disposition"]
+            for d in json.loads(artifacts["delivery-deltas.json"])
+        )
+        assert json.loads(result.receipt)["proof_performance"] == "recorded"
+
+    legacy = copy.deepcopy(original)
+    legacy["replay_version"] = 1
+    state = legacy["state"]
+    del state["phaseOutputs"]["cite"]
+    state["completed"].pop()
+    state["phaseReached"] = "challenge"
+    for f in state["phaseOutputs"]["challenge"]["findings"]:
+        f.pop("skeptical_assessments", None)
+        f.pop("cite_results", None)
+    checkpoint = {"phases": {"challenge": state["phaseOutputs"]["challenge"]}}
+    checkpoint["checksum"] = fnv1a32(js_stringify_pretty(checkpoint))
+    _write(tmp_path / "checkpoint.json", checkpoint)
+    wire["sources"]["checkpoint"]["sha256"] = _hash(
+        (tmp_path / "checkpoint.json").read_bytes()
+    )
+    result = replay(legacy)
+    artifacts = dict(result.artifacts)
+    findings = json.loads(
+        next(data for name, data in artifacts.items() if "findings-" in name)
+    )
+    assert all(
+        f["disposition"] == "held_back" for f in findings if not f.get("eliminated_by")
+    )
+    assert not any(f.get("cite_results") for f in findings)
+    assert json.loads(result.receipt)["proof_performance"] == "unavailable_legacy"
+    legacy["replay_version"] = 2
+    with pytest.raises(ValueError, match="phase inputs"):
+        replay(legacy)

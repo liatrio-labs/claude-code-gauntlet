@@ -7,7 +7,8 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypedDict, get_args
 
-from gauntlet.registry import QualityBasis, TestKind
+from gauntlet import registry as contract
+from gauntlet.registry import ExclusionCategory, QualityBasis, TestKind
 
 from bench.runner.contracts import ScoreRef, artifact_allowed, exclusive_json
 from bench.runner.decode import decode
@@ -46,36 +47,36 @@ AdmissionStatus = Literal["report_only", "held_back"]
 PolicySubject = Literal["test_defect", "coverage", "ordinary", "unresolved"]
 
 
-class SelectionDetail(TypedDict):
-    kind: TestKind | QualityBasis | Literal["ordinary", "unknown"]
-
-
 class AdmissionReason(TypedDict):
     predicate: str
     status: AdmissionStatus
 
 
-class AdmissionContextDetail(SelectionDetail):
+class DecisionDetail(TypedDict, total=False):
+    kind: TestKind | QualityBasis | Literal["ordinary", "unknown"]
     policy_subject: PolicySubject
     original_producer: str
-
-
-class AdmissionDetail(AdmissionContextDetail, AdmissionReason):
-    pass
-
-
-class ChallengeTerminalDetail(AdmissionContextDetail):
-    predicate: Literal["challenge_terminal"]
-
-
-class DisposalDetail(AdmissionContextDetail):
+    predicate: str
+    status: AdmissionStatus
     predicates: list[AdmissionReason]
     surface: Literal["deliver", "body", "held_back", "report_only"]
+    finding_id: str | None
+    reduction: contract.ReductionDetailItem | contract.ReductionProvenance
+    issue_id: str
+    stage: Literal["early", "post_validation", "validator", "challenger"]
+    category: ExclusionCategory
+    source: dict[str, Any] | None
+    request_ids: list[str]
 
 
-DecisionDetail = (
-    SelectionDetail | AdmissionDetail | ChallengeTerminalDetail | DisposalDetail
-)
+@dataclass(frozen=True, slots=True)
+class VerdictObservation:
+    trace_id: str
+    stage: Literal["validator", "challenger"]
+    verdict: Literal["real", "refuted", "needs_evidence"] | None
+    unresolved: bool
+    proved: bool
+    unavailable: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +100,8 @@ class StageSnapshot:
     coverage: Coverage
     cap: int | None
     cap_hit: bool
+    verdicts: tuple[VerdictObservation, ...] | None = None
+    workload: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +146,24 @@ def _require(condition, reason):
         raise ValueError("invalid measurement trace: " + reason)
 
 
+def _detail_fields(detail):
+    context = {"kind", "policy_subject", "original_producer"}
+    if "predicates" in detail:
+        _require(
+            "predicate" not in detail or "category" in detail, "decision detail shape"
+        )
+        return context | {"surface"}
+    if "status" in detail or (
+        "kind" in detail and "predicate" in detail and "category" not in detail
+    ):
+        return (
+            context
+            if detail.get("predicate") == "challenge_terminal"
+            else context | {"predicate", "status"}
+        )
+    return set()
+
+
 def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
     _require(
         artifact_allowed(Path(trace_path)) and not Path(trace_path).is_symlink(),
@@ -185,6 +206,8 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
             len({by_id[v].trace_id for v in ids}) == len(ids), "duplicate occurrence"
         )
         for decision in snapshot.decisions:
+            detail = decision.detail or {}
+            _require(_detail_fields(detail) <= detail.keys(), "decision detail shape")
             _require(
                 decision.trace_id in identities
                 and all(t in identities for t in decision.related_trace_ids),
@@ -197,6 +220,14 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
                     and bool(decision.related_trace_ids)
                 ),
                 "fold requires constituent identities and coalescence",
+            )
+        if snapshot.verdicts is not None:
+            _require(snapshot.stage == "cite", "verdict proof seam")
+            keys = [(v.trace_id, v.stage) for v in snapshot.verdicts]
+            _require(len(keys) == len(set(keys)), "duplicate assessment observation")
+            _require(
+                all(v.trace_id in identities for v in snapshot.verdicts),
+                "assessment reference",
             )
     actual = tuple(s.stage for s in trace.snapshots)
     reducers = set(actual) & {"dispose", "holdback"}
