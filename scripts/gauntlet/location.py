@@ -4,18 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import stat
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import Literal, cast
 
-if TYPE_CHECKING:
-    from gauntlet.source_capture import SourceCapture
-
-from gauntlet import proc
 from gauntlet.diff import ContextMapEntry, OldSpan
 from gauntlet.registry import (
     ANCHOR_LIMITS,
@@ -24,8 +18,16 @@ from gauntlet.registry import (
     Disposition,
     LocationStatus,
 )
+from gauntlet.source_capture import (
+    SourceAdapter as SourceAdapter,
+)
+from gauntlet.source_capture import (
+    TargetKind as TargetKind,
+)
+from gauntlet.source_capture import (
+    source_lines as source_lines,
+)
 
-TargetKind = Literal["pr", "mr", "branch", "local"]
 ResolutionReason = Literal[
     "claimed",
     "context_map",
@@ -59,14 +61,6 @@ class Quote:
 
 def positive_safe_integer(value: object) -> bool:
     return type(value) is int and 1 <= value <= _SAFE_INTEGER
-
-
-def source_lines(text: str) -> tuple[str, ...]:
-    """Only LF and CRLF terminate source lines; other separators are content."""
-    lines = text.replace("\r\n", "\n").split("\n")
-    if lines[-1] == "":
-        lines.pop()
-    return tuple(lines)
 
 
 def presentation_lines(lines: Sequence[str]) -> Quote:
@@ -324,284 +318,3 @@ def load_context_map(
             return LoadedContextMap({}, "context map unavailable: malformed entry")
         entries[int(key)] = cast(ContextMapEntry, entry)
     return LoadedContextMap(entries)
-
-
-def _decode_source(content: bytes) -> tuple[str, ...] | None:
-    if b"\0" in content:
-        return None
-    try:
-        return source_lines(content.decode("utf-8"))
-    except UnicodeDecodeError:
-        return None
-
-
-def _local_mode(root: Path, parts: tuple[str, ...]) -> int:
-    current = root
-    mode = current.lstat().st_mode
-    if stat.S_ISLNK(mode):
-        raise OSError("source symlink")
-    for part in parts:
-        current /= part
-        mode = current.lstat().st_mode
-        if stat.S_ISLNK(mode):
-            raise OSError("source symlink")
-    return mode
-
-
-def _local_open(root: Path, parts: tuple[str, ...]) -> int:
-    if os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW"):
-        # Hold each directory open so a renamed parent cannot redirect the read.
-        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
-            for part in parts[:-1]:
-                child = os.open(
-                    part,
-                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                    dir_fd=directory,
-                )
-                os.close(directory)
-                directory = child
-            fd = os.open(
-                parts[-1],
-                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-                dir_fd=directory,
-            )
-        finally:
-            os.close(directory)
-        return fd
-    if not stat.S_ISREG(_local_mode(root, parts)):
-        raise OSError("nonregular source")
-    # O_NOFOLLOW closes the final-component race where the platform supports it.
-    return os.open(
-        root.joinpath(*parts),
-        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
-    )
-
-
-def _local_bytes(root: Path, parts: tuple[str, ...]) -> bytes:
-    with os.fdopen(_local_open(root, parts), "rb") as handle:
-        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-            raise OSError("nonregular source")
-        return handle.read()
-
-
-@dataclass(frozen=True, slots=True)
-class SourceAdapter:
-    root: Path
-    target_kind: TargetKind
-    captured_head: str | None
-    source_capture: SourceCapture | None = field(default=None, repr=False)
-    _cache: dict[tuple[TargetKind, str | None, str], tuple[str, ...] | None] = field(
-        default_factory=dict, compare=False, repr=False
-    )
-
-    @classmethod
-    def capture(
-        cls, root: Path, target_kind: TargetKind, requested_sha: str | None
-    ) -> SourceAdapter:
-        head = None
-        try:
-            result = proc.run_bytes(
-                ["git", "rev-parse", "HEAD"], cwd=str(root), timeout=3
-            )
-            revision = result.stdout.decode("ascii").strip()
-            if (
-                result.returncode == 0
-                and re.fullmatch(r"[0-9a-f]{40}", revision)
-                and (
-                    requested_sha is None
-                    or (
-                        re.fullmatch(r"[0-9a-f]{4,40}", requested_sha)
-                        and revision.startswith(requested_sha)
-                    )
-                )
-            ):
-                head = revision
-        except (OSError, UnicodeError, proc.TimeoutExpired):
-            pass
-        return cls(root, target_kind, head)
-
-    def read(self, file: str) -> tuple[str, ...] | None:
-        if self.source_capture is not None:
-            return self.read_captured_source(file)
-        key = (self.target_kind, self.captured_head, file)
-        if key not in self._cache:
-            self._cache[key] = self._read(file)
-        return self._cache[key]
-
-    def capture_sources(
-        self, output: Path, nonce: str, diff: bytes, base: str | None = None
-    ) -> SourceCapture:
-        from gauntlet.source_capture import capture_sources
-
-        return capture_sources(self, output, nonce, diff, base)
-
-    def read_captured_source(
-        self,
-        file: str,
-        *,
-        side: Literal["head", "old"] = "head",
-        start: int | None = None,
-        end: int | None = None,
-        base: str | None = None,
-        diff_sha256: str | None = None,
-    ) -> tuple[str, ...] | None:
-        if self.source_capture is None:
-            return None
-        return self.source_capture.read(self, file, side, start, end, base, diff_sha256)
-
-    def entries(self, directory: str = "") -> tuple[str, ...] | None:
-        """List immediate names from the same source identity used by reads."""
-        if self.source_capture is not None:
-            return self.source_capture.entries(self, directory)
-        parts = self._parts(directory) if directory else ()
-        if parts is None or (
-            self.target_kind != "local" and self.captured_head is None
-        ):
-            return None
-        prefix = directory + "/" if directory else ""
-        try:
-            if self.target_kind == "local":
-                fd = None
-                try:
-                    if parts and os.scandir in os.supports_fd:
-                        fd = _local_open(self.root, parts)
-                        source: int | Path = fd
-                    else:
-                        if parts and not stat.S_ISDIR(_local_mode(self.root, parts)):
-                            return None
-                        source = self.root.joinpath(*parts)
-                    with os.scandir(source) as entries:
-                        return tuple(
-                            sorted(
-                                prefix
-                                + entry.name
-                                + ("/" if entry.is_dir(follow_symlinks=False) else "")
-                                for entry in entries
-                                if entry.is_file(follow_symlinks=False)
-                                or entry.is_dir(follow_symlinks=False)
-                            )
-                        )
-                finally:
-                    if fd is not None:
-                        os.close(fd)
-            result = proc.run_bytes(
-                ["git", "ls-tree", "-z", f"{self.captured_head}:{directory}"],
-                cwd=str(self.root),
-                timeout=3,
-            )
-            if result.returncode:
-                return None
-            names = []
-            for entry in result.stdout.split(b"\0"):
-                if not entry:
-                    continue
-                metadata, name = entry.split(b"\t", 1)
-                mode, kind, _ = metadata.split(b" ")
-                if (mode, kind) in (
-                    (b"040000", b"tree"),
-                    (b"100644", b"blob"),
-                    (b"100755", b"blob"),
-                ):
-                    names.append(
-                        prefix
-                        + name.decode("utf-8", "surrogateescape")
-                        + ("/" if kind == b"tree" else "")
-                    )
-            return tuple(sorted(names))
-        except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):
-            return None
-
-    def _parts(self, file: str) -> tuple[str, ...] | None:
-        parts = tuple(file.split("/"))
-        if (
-            (self.target_kind != "local" and self.captured_head is None)
-            or not file
-            or "\0" in file
-            or any(part in ("", ".", "..") for part in parts)
-            or os.path.isabs(file)
-            or os.path.splitdrive(file)[0]
-            or "\\" in file
-            or re.match(r"^[A-Za-z]:", file)
-        ):
-            return None
-        return parts
-
-    def path_kind(self, file: str) -> Literal["file", "directory", "unknown"]:
-        if self.read(file) is not None:
-            return "file"
-        parts = self._parts(file)
-        if parts is None:
-            return "unknown"
-        if self.source_capture is not None:
-            return "directory" if self.entries(file) is not None else "unknown"
-        try:
-            if self.target_kind == "local":
-                # Some platforms cannot open directories; the checked lstat walk suffices.
-                if os.open not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"):
-                    return (
-                        "directory"
-                        if stat.S_ISDIR(_local_mode(self.root, parts))
-                        else "unknown"
-                    )
-                fd = _local_open(self.root, parts)
-                try:
-                    return (
-                        "directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "unknown"
-                    )
-                finally:
-                    os.close(fd)
-            tree = proc.run_bytes(
-                [
-                    "git",
-                    "ls-tree",
-                    "-z",
-                    cast(str, self.captured_head),
-                    "--",
-                    f":(literal){file}",
-                ],
-                cwd=str(self.root),
-                timeout=3,
-            )
-            return (
-                "directory"
-                if tree.returncode == 0
-                and tree.stdout.startswith(b"040000 tree ")
-                and tree.stdout.endswith(b"\t" + file.encode("utf-8") + b"\0")
-                else "unknown"
-            )
-        except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):
-            return "unknown"
-
-    def _read(self, file: str) -> tuple[str, ...] | None:
-        parts = self._parts(file)
-        if parts is None:
-            return None
-        try:
-            if self.target_kind == "local":
-                return _decode_source(_local_bytes(self.root, parts))
-            if self.captured_head is None:
-                return None
-            tree = proc.run_bytes(
-                ["git", "ls-tree", "-z", self.captured_head, "--", f":(literal){file}"],
-                cwd=str(self.root),
-                timeout=3,
-            )
-            if tree.returncode or not tree.stdout.endswith(b"\0"):
-                return None
-            metadata, path = tree.stdout[:-1].split(b"\t", 1)
-            mode, kind, oid = metadata.split(b" ")
-            if (
-                mode not in (b"100644", b"100755")
-                or kind != b"blob"
-                or path != file.encode("utf-8")
-            ):
-                return None
-            blob = proc.run_bytes(
-                ["git", "cat-file", "blob", oid.decode("ascii")],
-                cwd=str(self.root),
-                timeout=3,
-            )
-            return _decode_source(blob.stdout) if blob.returncode == 0 else None
-        except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):
-            return None

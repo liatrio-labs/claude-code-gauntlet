@@ -379,6 +379,7 @@ def test_description_delivery(tmp_path, invoke, mode):
     )
     data = {
         "head_sha_full": SHA.ljust(40, "0"),
+        "base_sha_full": SHA.ljust(40, "0"),
         "target": {
             "platform": "github",
             "web_origin": "https://github.com",
