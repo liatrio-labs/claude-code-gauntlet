@@ -347,13 +347,13 @@ export function parseWriterPayload(prompt) {
 
 function writeArtifactsPrompt(inp, paths) {
   const payload = JSON.stringify(writerPayload(inp));
-  return `Persist these code-gauntlet artifacts to disk exactly as given (the workflow has no disk access). Write the payload's findings (as pretty JSON) to ${paths.findings}, the payload's report (verbatim markdown) to ${paths.report}, the payload's postReview (the pre-selected delivery set, as pretty JSON) to ${paths.postReview}, and the payload's checkpoints (as JSON) to ${paths.checkpoints}. Return { artifactPaths } echoing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
+  return `Persist these code-gauntlet artifacts to disk exactly as given. Write the payload's findings (as pretty JSON) to ${paths.findings}, the payload's report (verbatim markdown) to ${paths.report}, the payload's postReview (the pre-selected delivery set, as pretty JSON) to ${paths.postReview}, and the payload's checkpoints (as JSON) to ${paths.checkpoints}. Return { artifactPaths } echoing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 
 // Exact strings constrain the writer to the byte spelling the content proof checks.
 function finalArtifactsWriterPrompt(entries) {
   const payload = JSON.stringify(entries);
-  return `Persist these code-gauntlet artifacts to disk exactly as given (the workflow has no disk access). For every entry in the payload, write its "text" VERBATIM to its "path" — byte for byte, nothing before it and NOTHING AFTER THE FINAL BYTE (no trailing commentary, no tool-call markup). Do not reformat, re-indent, or re-serialize. Return { written } listing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
+  return `Persist these code-gauntlet artifacts to disk exactly as given. For every entry in the payload, write its "text" verbatim to its "path" — byte for byte, nothing before it and nothing after the final byte (no trailing commentary, no tool-call markup). Do not reformat, re-indent, or re-serialize. Return { written } listing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 
 const ASSEMBLE_RECEIPT_SCHEMA = {

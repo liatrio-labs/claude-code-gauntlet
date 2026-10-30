@@ -137,8 +137,7 @@ for (const row of REPLAY_ROWS) test(`phase replay: ${row.name}`, async () => {
   for (const label of row.absent || []) assert.equal(ctx.calls.some((call) => call.label === label), false);
   for (const label of row.present) assert.equal(ctx.calls.some((call) => call.label === label), true);
   if (row.absentDiscovery) assert.equal(ctx.calls.some((call) => call.label.startsWith('code-gauntlet:')), false);
-  if (row.summary) assert.ok(payload.report.includes('## Change Context\n\nThis is the change summary the review '
-    + 'agents shared as context.\n\nreplayed summary'));
+  if (row.summary) assert.ok(payload.report.includes('## Change Context\n\nThis summary describes the change context for the report.\n\nreplayed summary'));
 });
 
 const SCOPE_ROWS = [
@@ -816,13 +815,13 @@ for (const row of POLICY_ROWS) test(`policy wiring: ${row.name}`, async () => {
 
 const UNMEASURED_GAP = 'context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed '
   + '\u2014 every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
-  + 'Read calls covering the file. That restores the failure mode of issue #48: a Read returns part of a large file '
+  + 'Read calls covering the file. A Read can return part of a file '
   + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
   + '(and contextChars) from the Phase 2 step that writes the context file.';
 const UNPLANNABLE_GAP = 'context_unplannable: args.contextLines was stamped (1500001) but exceeds the read-plan chunk ceiling, '
   + 'so the shared-context read plan could not be built \u2014 every agent got the count-free '
   + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
-  + 'That restores the failure mode of issue #48 for an oversized context. Shrink the shared context '
+  + 'Shrink the shared context '
   + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.';
 const CONTEXT_ROWS = [
   { name: 'measured readers include final tail and validator', input: { contextLines: 2028, contextChars: 94784 }, gaps: [],
@@ -845,7 +844,7 @@ for (const row of CONTEXT_ROWS) test(`context wiring: ${row.name}`, async () => 
   const readers = ctx.calls.filter((call) => !call.label.startsWith('verify-') && call.prompt.includes('/repo/.code-gauntlet/code-gauntlet-context-abc1234.md'));
   assert.deepEqual(readers.map((call) => call.label), ['summarize', ...DISCOVERY, 'validate-batch-0']);
   for (const call of readers) {
-    assert.ok(call.prompt.includes('NO truncation notice'));
+    assert.ok(call.prompt.includes('without a truncation notice'));
     for (const marker of row.markers) assert.ok(call.prompt.includes(marker));
     if (row.fallback) assert.doesNotMatch(call.prompt, /It is \d+ lines|undefined|NaN/);
   }

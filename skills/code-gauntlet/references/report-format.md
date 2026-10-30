@@ -142,7 +142,7 @@ Reviewed head `{head_sha_short}` at {generatedAt} by Code Gauntlet.
 
 ## Change Context
 
-This is the change summary the review agents shared as context.
+This summary describes the change context for the report.
 
 {summary}
 

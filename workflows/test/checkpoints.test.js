@@ -46,8 +46,7 @@ const BYPASS = 'Contributors may skip review for hotfix branches under 10 lines.
 // runWith must gate replay before dispatch and use the belt at both challenge-list call sites.
 const CONTEXT_GAP = 'context_unmeasured: args.contextLines was not stamped, so the shared-context read plan '
 + 'could not be computed \u2014 every agent got the count-free "read until a Read returns '
-+ 'no further content" wording instead of the exact Read calls covering the file. That '
-+ 'restores the failure mode of issue #48: a Read returns part of a large file with no '
++ 'no further content" wording instead of the exact Read calls covering the file. A Read can return part of a file with no '
 + 'truncation notice, and an agent that stops there reviews only what it saw. Stamp '
 + 'contextLines (and contextChars) from the Phase 2 step that writes the context file.';
 const missingChallengeFindings = challengeOutput();

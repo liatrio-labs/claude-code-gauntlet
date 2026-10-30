@@ -127,7 +127,11 @@ def lexical(monkeypatch):
     )
     monkeypatch.setattr(l, "generated_surfaces", lambda *args: ())
     monkeypatch.setattr(l, "_shared_context_surfaces", lambda *args: ())
-    return epoch, derived, {**policy, "entries": [], "passages": []}
+    return (
+        epoch,
+        derived,
+        {**policy, "current_wave": "0a", "entries": [], "passages": []},
+    )
 
 
 def test_repository_scan_and_no_deleted_allowance_policy(monkeypatch):
@@ -140,11 +144,12 @@ def test_repository_scan_and_no_deleted_allowance_policy(monkeypatch):
     monkeypatch.setattr(l, "generated_surfaces", generated)
     report = l.scan_repository()
     assert report.passed and not report.stale_allowances
-    assert len(report.hits) == 13 and calls == [l.ROOT]
+    assert not report.hits and not report.unallowed_hits and calls == [l.ROOT]
     policy = read_json(l.ROOT / "bench/golden/leak_allowlist.json")
-    assert policy["entries"] and all(
-        "expires_wave" not in e for e in policy["entries"] + policy["passages"]
-    )
+    assert policy["current_wave"] == "2a"
+    assert policy["entries"] == []
+    assert all(p["expected_count"] == 0 for p in policy["passages"])
+    assert all("expires_wave" not in e for e in policy["entries"] + policy["passages"])
     assert not (l.ROOT / "bench/golden/leak_allowlist_ceiling.json").exists()
 
 
@@ -297,7 +302,8 @@ def test_scan_refuses_invalid_policy(controlled, section, field, value, error):
     refuses(l.scan, derived, [surface], policy, match=error)
 
 
-def test_passages_must_be_removed_after_wave_2a(lexical):
+@pytest.mark.parametrize("wave", ["2a", "2b", "3"])
+def test_passages_must_be_removed_after_wave_2a(lexical, wave):
     _, derived, policy = lexical
     surface = l.PromptSurface(
         "generated/legacy/a", "p.js", "p.js", "legacy", "a scenario"
@@ -313,7 +319,7 @@ def test_passages_must_be_removed_after_wave_2a(lexical):
     ]
     assert l.scan(derived, [surface], policy).passed
     assert not l.scan(derived, [replace(surface, text="")], policy).passed
-    policy["current_wave"] = "2b"
+    policy["current_wave"] = wave
     refuses(l.scan, derived, [surface], policy, match="zero")
     policy["passages"][0]["expected_count"] = 0
     assert not l.scan(derived, [surface], policy).passed

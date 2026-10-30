@@ -14,25 +14,29 @@
 > 8. `agents/validator.md`
 > 9. `agents/challenger.md`
 >
-> Each agent copy has a `<!-- Canonical source: references/investigation-methodology.md -->` comment pointing back here. `change-summarizer` is excluded (works from prompt context only; `tools: Read` satisfies the harness non-empty requirement).
+> Each agent copy has a `<!-- Canonical source: references/investigation-methodology.md -->` comment pointing back here. `change-summarizer` is excluded (reads supplied shared context with `Read`, without semantic code navigation).
+
+## Investigation goals
+
+Establish the intended contract from supplied change context and applicable project rules, then test it against the changed code and its consumers. The summary describes intent, not the full set of affected paths. Investigate data flow, boundaries, failure paths and observable effects beyond the diff, using inspected code as evidence.
 
 ## LSP-first investigation
 
 Use LSP as the primary tool for semantic code navigation. LSP provides accurate symbol resolution (~50ms) that catches renamed imports, aliased references, and interface implementations that text-based search misses.
 
-**Primary operations (use first):**
+Primary semantic operations:
 
 - `goToDefinition` -- trace what a symbol actually resolves to across files and inheritance chains
 - `findReferences` -- locate every caller, consumer, or implementor of a symbol across the codebase
 - `hover` -- inspect inferred types and signatures without reading entire files
 
-**Fallback (when LSP is unavailable):**
+Fallback when LSP is unavailable:
 
 - `Grep` -- text-based search for symbol names, patterns, and string literals
 - `Glob` -- find files by name or path pattern
 - `Read` -- load file contents for surrounding context and full function bodies
 
-**When to use each:**
+Use each tool for its evidence:
 
 - LSP for symbol resolution, type checking, and reference finding (semantic accuracy)
 - Grep for text patterns, string literals, config values, and comments (LSP does not index these)
