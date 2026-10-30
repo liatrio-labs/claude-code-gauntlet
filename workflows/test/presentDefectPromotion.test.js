@@ -66,7 +66,7 @@ test('present defect promotion governs ranking even when the validator classifie
   }
 });
 
-test('incomplete validation gets one small follow-up round and only terminal omissions degrade', async () => {
+test('incomplete validation gets one small follow-up round and only score or policy omissions degrade', async () => {
   for (const arm of ['score', 'policy_subject', 'assessment', 'duplicate_assessment']) {
     for (const repaired of [true, false]) {
       const f = makeFinding('pending', { dimension: 'simplification', quality_basis: 'other' });
@@ -79,22 +79,23 @@ test('incomplete validation gets one small follow-up round and only terminal omi
       const ctx = stageCtx({ reply: { validations: [incomplete, score('sibling')] },
         replies: { 'validate-retry-0': { validations: [repaired ? complete : incomplete] } } });
       const out = await validateStage(ctx, { findings: [f, makeFinding('sibling')], limits: { validateBatch: 25 } });
+      const skipped = !repaired && ['score', 'policy_subject'].includes(arm);
       assert.deepEqual(ctx.calls.map((call) => call.label), ['validate-batch-0', 'validate-retry-0']);
       assert.equal(ctx.calls[1].prompt.includes('- sibling ['), false);
-      assert.equal(out.findings[0].validation, repaired ? 'validated' : 'skipped');
-      assert.equal(out.findings[0].confidence, repaired ? 80 : 90);
-      assert.equal(out.stats.skipped, repaired ? 0 : 1);
-      assert.equal(out.gaps.length, repaired ? 0 : 1);
+      assert.equal(out.findings[0].validation, skipped ? 'skipped' : 'validated');
+      assert.equal(out.findings[0].confidence, skipped ? 90 : 80);
+      assert.equal(out.stats.skipped, skipped ? 1 : 0);
+      assert.equal(out.gaps.length, skipped ? 1 : 0);
       assert.equal(out.findings[1].validation, 'validated');
       const rejection = out.audit.batches[0].rejections.find((entry) => entry.id === 'pending');
       assert.ok(rejection.reasons.includes(arm === 'score' ? 'invalid_confidence' : arm === 'policy_subject'
         ? 'invalid_policy_subject' : 'missing_assessment:present_defect'));
       if (!repaired) {
         const run = await runAndCapture(validArgs({ checkpoints: { validate: out } }));
-        const skipped = run.payload.findings.find((finding) => finding.id === 'pending');
-        assert.equal(skipped.disposition, 'held_back');
-        assert.ok(skipped.disposition_reasons.includes('validation_skipped'));
-        assert.equal(run.out.stats.validate.skipped, 1);
+        const held = run.payload.findings.find((finding) => finding.id === 'pending');
+        assert.equal(held.disposition, 'held_back');
+        assert.equal(held.disposition_reasons.includes('validation_skipped'), skipped);
+        assert.equal(run.out.stats.validate.skipped, skipped ? 1 : 0);
       }
     }
   }

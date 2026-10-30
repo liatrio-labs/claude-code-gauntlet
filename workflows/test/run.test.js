@@ -32,7 +32,8 @@ test('ordinary findings retain admission across path roles', () => {
 });
 
 test('a rewritten report-only verdict cannot grant admission', () => {
-  const finding = evaluateAdmission(makeFinding('other', { dimension: 'simplification', quality_basis: 'other' }));
+  const finding = evaluateAdmission(makeFinding('other', { dimension: 'simplification', quality_basis: 'other',
+    admission_assessments: [{ predicate: 'present_defect', status: 'rejected', references: ['primary'] }] }));
   assert.equal(finding.admission.status, 'report_only');
   assert.ok(hasAdmission(finding));
   finding.admission.status = 'admitted';
@@ -45,7 +46,9 @@ test('defective tests require test role and known PR ownership', () => {
     ['test', true, 'admitted'], ['source', true, 'report_only'], ['test', null, 'held_back'], ['test', false, 'report_only'],
   ]) {
     const f = evaluateAdmission(makeFinding('test', { dimension: 'test_coverage', test_kind: 'defective_test', path_role,
-      diff_validation: { in_diff }, admission_assessments: [{ predicate: 'confirmed_test_defect', status: 'confirmed', references: ['primary'] }] }));
+      diff_validation: { in_diff }, admission_assessments: [
+        { predicate: 'present_defect', status: 'rejected', references: ['primary'] },
+        { predicate: 'confirmed_test_defect', status: 'confirmed', references: ['primary'] }] }));
     assert.equal(f.admission.status, expected);
     assert.equal(f.admission.inline_eligible, path_role === 'test' && in_diff === true);
   }
@@ -55,7 +58,9 @@ test('admitted equivalent survives host path rewriting through delivery', async 
   const args = validArgs({ repoRoot: '/home/reviewer/project' });
   const f = makeFinding('equivalent', { dimension: 'simplification', quality_basis: 'simpler_equivalent',
     behavior_preserved: `Same return values as ${args.repoRoot}/source:10 helper`, suggestion: 'Return directly',
-    admission_assessments: ['concrete_equivalent', 'behavior_preserved'].map((predicate) => ({ predicate, status: 'confirmed', references: ['primary'] })) });
+    admission_assessments: [
+      { predicate: 'present_defect', status: 'rejected', references: ['primary'] },
+      ...['concrete_equivalent', 'behavior_preserved'].map((predicate) => ({ predicate, status: 'confirmed', references: ['primary'] }))] });
   const out = await runAndCapture(validArgs({ repoRoot: args.repoRoot, checkpoints: { filter: { filtered: [f], eliminated: [], gaps: [], stats: {} } } }));
   const delivered = out.payload.findings[0];
   assert.equal(delivered.disposition, 'deliver');
@@ -124,8 +129,10 @@ test('admission precedes challenge and placement on fresh and resumed runs', asy
     makeFinding('off-diff', { file: 'shared.txt', agent: 'bug-detector', diff_validation: { in_diff: false }, reachability: 'current',
       admission_assessments: [{ predicate: 'current_defect', status: 'confirmed', references: ['primary'] }] }),
     makeFinding('future', { reachability: 'future_change_only', confidence: 85 }),
-    makeFinding('extra', { dimension: 'test_coverage', test_kind: 'additional_case', criticality: 9, failure_scenario: 'Extra case' }),
-    makeFinding('other', { file: 'shared.txt', agent: 'type-design-analyzer', dimension: 'type_design', quality_basis: 'other' }),
+    makeFinding('extra', { dimension: 'test_coverage', test_kind: 'additional_case', criticality: 9, failure_scenario: 'Extra case',
+      admission_assessments: [{ predicate: 'present_defect', status: 'rejected', references: ['primary'] }] }),
+    makeFinding('other', { file: 'shared.txt', agent: 'type-design-analyzer', dimension: 'type_design', quality_basis: 'other',
+      admission_assessments: [{ predicate: 'present_defect', status: 'rejected', references: ['primary'] }] }),
     makeFinding('rejected', { dimension: 'type_design', quality_basis: 'current_correctness',
       admission_assessments: [{ predicate: 'present_defect', status: 'rejected', references: ['primary'] }] }),
     makeFinding('unresolved', { dimension: 'simplification', quality_basis: 'current_correctness' }),
@@ -137,6 +144,7 @@ test('admission precedes challenge and placement on fresh and resumed runs', asy
         candidate_tests: [{ file: 'tests/check', line_start: 1, line_end: 1, location_status: 'confirmed' }],
         production_element: { file: 'production', line_start: 1, line_end: 1, location_status: 'confirmed' } },
       admission_assessments: [
+        { predicate: 'present_defect', status: 'rejected', references: ['primary'] },
         { predicate: 'resolved_production_element', status: 'confirmed', references: ['production_element'] },
         { predicate: 'complete_searches', status: 'confirmed', references: ['searched_paths:0', 'candidate_tests:0'] },
         { predicate: 'complete_behavioral_absence', status: 'confirmed', references: ['production_element', 'searched_paths:0', 'candidate_tests:0'] },

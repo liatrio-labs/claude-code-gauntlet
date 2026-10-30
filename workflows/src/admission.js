@@ -1,4 +1,4 @@
-import { ADMISSION_PREDICATES, RIGHT_ELIGIBILITY, VERIFY_FACT_PROPERTIES, VERIFY_REFERENCE_DESCRIPTORS, FINDING_PROP_TYPES, DIMENSIONS, findingPolicy } from './registry.js';
+import { ADMISSION_PREDICATES, RIGHT_ELIGIBILITY, VERIFY_FACT_PROPERTIES, VERIFY_REFERENCE_DESCRIPTORS, FINDING_PROP_TYPES, DIMENSIONS, findingPolicy, requiredAssessments } from './registry.js';
 import { canonicalRange } from './location.js';
 import { fnv1a32 } from './wire.js';
 
@@ -141,6 +141,12 @@ export function evaluateAdmission(finding) {
   if (!row || (row.admission && !kind)) fail('kind', 'held_back');
   if (kind?.defaultDisposition === 'report_only') fail('value', 'report_only');
   for (const predicate of kind?.predicates || []) fail(predicate, predicateResult(finding, predicate));
+  const assessed = new Set(matchAssessments(finding, finding.admission_assessments).map((entry) => entry.predicate));
+  for (const predicate of requiredAssessments(finding, finding.policy_subject)) {
+    if (!assessed.has(predicate) && !reasons.some((reason) => reason.predicate === predicate && reason.status === 'held_back')) {
+      fail(predicate, 'held_back');
+    }
+  }
   let status = 'admitted';
   if (reasons.some((reason) => reason.status === 'held_back')) status = 'held_back';
   else if (reasons.length) status = 'report_only';
