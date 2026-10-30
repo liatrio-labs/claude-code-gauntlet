@@ -142,7 +142,7 @@ Missing or unknown disposition is held back. Delivery intersects these rights wi
 ### test_coverage admission
 
 - `test_kind: defective_test`: {"phase": "semantic", "predicates": ["pr_owned_test", "confirmed_test_defect", "test_diff_site_for_inline"], "required": [], "tier": "main"}; default disposition `held_back`.
-- `test_kind: critical_gap`: {"phase": "semantic", "predicates": ["criticality_at_least_8", "resolved_production_element", "complete_searches", "complete_behavioral_absence"], "required": ["criticality", "failure_scenario", "searched_paths", "candidate_tests"], "tier": "main"}; default disposition `held_back`.
+- `test_kind: critical_gap`: {"optional": ["production_element"], "phase": "semantic", "predicates": ["criticality_at_least_8", "resolved_production_element", "complete_searches", "complete_behavioral_absence"], "required": ["criticality", "failure_scenario", "searched_paths", "candidate_tests"], "tier": "main"}; default disposition `held_back`.
 - `test_kind: production_defect`: {"core": true, "dimension": "bug", "phase": "semantic", "predicates": ["present_defect"], "required": [], "tier": "main"}; default disposition `held_back`.
 - `test_kind: additional_case`: {"defaultDisposition": "report_only", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
 

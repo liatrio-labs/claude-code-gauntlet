@@ -101,7 +101,7 @@ const CANONICAL_PROPS = {
   ...(DISCOVERY_FINDING_PROP_TYPES.sites && { sites: DISCOVERY_FINDING_PROP_TYPES.sites }),
 };
 const REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
-const reference = { type: 'object', properties: { file: { type: 'string', $comment: 'repo-path' },
+const reference = { type: 'object', $comment: 'source-reference', properties: { file: { type: 'string', $comment: 'repo-path' },
   line_start: { type: 'integer', minimum: 1 }, line_end: { type: 'integer', minimum: 1 }, anchor: { type: 'string', minLength: 1 } },
   required: ['file', 'line_start', 'line_end', 'anchor'], additionalProperties: false };
 const qualityReferences = { duplicate_of: reference, precedent: reference };
@@ -117,7 +117,7 @@ const SCHEMA_ROWS = [
     extra: { affected_consumers: { type: 'array', items: { type: 'string', $comment: 'repo-path' } } }, required: ['affected_consumers'] },
   { agent: 'code-gauntlet:test-analyzer',
     extra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: { type: 'string' },
-      searched_paths: { type: 'array', items: { type: 'string', $comment: 'repo-path' } }, production_element: reference,
+      searched_paths: { type: 'array', $comment: 'search-paths', items: { type: 'string', $comment: 'repo-path' } }, production_element: reference,
       candidate_tests: { type: 'array', items: { ...reference, properties: { ...reference.properties, input: { type: 'string' }, assertion: { type: 'string' } }, required: [...reference.required, 'input', 'assertion'] } },
       test_kind: { type: 'string', enum: ['defective_test', 'critical_gap', 'production_defect', 'additional_case'] } },
     required: ['criticality', 'failure_scenario'], allOf: [{ if: { properties: { dimension: { const: 'test_coverage' } }, required: ['dimension'] }, then: { required: ['test_kind'] } }] },

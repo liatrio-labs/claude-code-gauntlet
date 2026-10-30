@@ -318,7 +318,18 @@ def _decode_source(content: bytes) -> tuple[str, ...] | None:
         return None
 
 
-def _local_bytes(root: Path, parts: tuple[str, ...]) -> bytes:
+def _local_mode(root: Path, parts: tuple[str, ...]) -> int:
+    current = root
+    mode = current.lstat().st_mode
+    for part in parts:
+        current /= part
+        mode = current.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            raise OSError("source symlink")
+    return mode
+
+
+def _local_open(root: Path, parts: tuple[str, ...]) -> int:
     if os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW"):
         # Hold each directory open so a renamed parent cannot redirect the read.
         directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
@@ -338,24 +349,18 @@ def _local_bytes(root: Path, parts: tuple[str, ...]) -> bytes:
             )
         finally:
             os.close(directory)
-        with os.fdopen(fd, "rb") as handle:
-            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                raise OSError("nonregular source")
-            return handle.read()
-    current = root
-    for part in parts:
-        current /= part
-        mode = current.lstat().st_mode
-        if stat.S_ISLNK(mode):
-            raise OSError("source symlink")
-    if not stat.S_ISREG(mode):
+        return fd
+    if not stat.S_ISREG(_local_mode(root, parts)):
         raise OSError("nonregular source")
     # O_NOFOLLOW closes the final-component race where the platform supports it.
-    fd = os.open(
-        current,
+    return os.open(
+        root.joinpath(*parts),
         os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
     )
-    with os.fdopen(fd, "rb") as handle:
+
+
+def _local_bytes(root: Path, parts: tuple[str, ...]) -> bytes:
+    with os.fdopen(_local_open(root, parts), "rb") as handle:
         if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
             raise OSError("nonregular source")
         return handle.read()
@@ -402,7 +407,7 @@ class SourceAdapter:
             self._cache[key] = self._read(file)
         return self._cache[key]
 
-    def _read(self, file: str) -> tuple[str, ...] | None:
+    def _parts(self, file: str) -> tuple[str, ...] | None:
         parts = tuple(file.split("/"))
         if (
             (self.target_kind != "local" and self.captured_head is None)
@@ -413,6 +418,56 @@ class SourceAdapter:
             or os.path.splitdrive(file)[0]
             or "\\" in file
         ):
+            return None
+        return parts
+
+    def path_kind(self, file: str) -> Literal["file", "directory", "unknown"]:
+        if self.read(file) is not None:
+            return "file"
+        parts = self._parts(file)
+        if parts is None:
+            return "unknown"
+        try:
+            if self.target_kind == "local":
+                # Some platforms cannot open directories; the checked lstat walk suffices.
+                if os.open not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"):
+                    return (
+                        "directory"
+                        if stat.S_ISDIR(_local_mode(self.root, parts))
+                        else "unknown"
+                    )
+                fd = _local_open(self.root, parts)
+                try:
+                    return (
+                        "directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "unknown"
+                    )
+                finally:
+                    os.close(fd)
+            tree = proc.run_bytes(
+                [
+                    "git",
+                    "ls-tree",
+                    "-z",
+                    cast(str, self.captured_head),
+                    "--",
+                    f":(literal){file}",
+                ],
+                cwd=str(self.root),
+                timeout=3,
+            )
+            return (
+                "directory"
+                if tree.returncode == 0
+                and tree.stdout.startswith(b"040000 tree ")
+                and tree.stdout.endswith(b"\t" + file.encode("utf-8") + b"\0")
+                else "unknown"
+            )
+        except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):
+            return "unknown"
+
+    def _read(self, file: str) -> tuple[str, ...] | None:
+        parts = self._parts(file)
+        if parts is None:
             return None
         try:
             if self.target_kind == "local":
