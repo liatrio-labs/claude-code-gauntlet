@@ -74,6 +74,33 @@ test('admitted equivalent survives host path rewriting through delivery', async 
   assert.equal(hasAdmission(delivered), false);
 });
 
+test('live and replay admission agree after filtering strips an oversized equivalent fix', async () => {
+  const f = makeFinding('equivalent', { agent: 'code-simplifier', dimension: 'simplification', quality_basis: 'simpler_equivalent',
+    behavior_preserved: 'Same return values and side effects for all inputs', suggestion: 'Return the shared helper result directly.',
+    suggested_fix_code: Array.from({ length: 120 }, (_, i) => `line ${i}`).join('\n'),
+    admission_assessments: [
+      ...['concrete_equivalent', 'behavior_preserved'].map((predicate) => ({ predicate, status: 'confirmed', references: ['primary'] })),
+      { predicate: 'present_defect', status: 'rejected', references: ['primary'] },
+    ] });
+  const live = await runAndCapture(validArgs({ checkpoints: { validate: { findings: [f], gaps: [], stats: {} } } }));
+  const filtered = filterStage({ findings: [evaluateAdmission(structuredClone(f))], generatedAt: validArgs().generatedAt });
+  assert.equal(filtered.filtered[0].suggested_fix_code_removed_by, 'injection');
+  const replay = await runAndCapture(validArgs({ checkpoints: { filter: filtered } }));
+  for (const result of [live, replay]) {
+    assert.equal(result.out.ok, true);
+    const delivered = result.payload.findings[0];
+    assert.equal(delivered.suggested_fix_code, undefined);
+    assert.equal(delivered.suggested_fix_code_removed_by, 'injection');
+    assert.equal(delivered.admission.status, 'admitted');
+    assert.ok(hasAdmission(delivered));
+    assert.equal(delivered.disposition, 'deliver');
+    assert.equal(delivered.admission.tier, filtered.filtered[0].report_tag);
+    assert.equal(delivered.report_tag, filtered.filtered[0].report_tag);
+    assert.equal(result.payload.postReview.length, 1);
+  }
+  assert.deepEqual(live.payload.findings, replay.payload.findings);
+});
+
 test('reference diagnostics distinguish absent evidence from dropped evidence by field', () => {
   for (const [dimension, extra, field, predicates] of [
     ['simplification', { quality_basis: 'duplication' }, 'duplicate_of', ['resolved_duplicate', 'confirmed_duplication']],

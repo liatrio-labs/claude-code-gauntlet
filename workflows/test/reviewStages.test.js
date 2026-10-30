@@ -28,17 +28,81 @@ test('validator classification omissions skip core findings and duplicate scores
 
 test('validator prompt shares predicate definitions across finding contexts', async () => {
   const ctx = stageCtx({ reply: [] });
-  await validateStage(ctx, { findings: [finding(), finding({ id: 'f2', dimension: 'simplification', quality_basis: 'simpler_equivalent' })] });
+  await validateStage(ctx, { findings: [finding(),
+    finding({ id: 'f2', dimension: 'simplification', quality_basis: 'simpler_equivalent' }),
+    finding({ id: 'f3', dimension: 'type_design', quality_basis: 'other' }),
+    finding({ id: 'f4', dimension: 'test_coverage', test_kind: 'additional_case' })] });
   const prompt = ctx.calls[0].prompt;
   const table = JSON.stringify(ADMISSION_PREDICATES);
   assert.equal(prompt.split(table).length - 1, 1);
   assert.ok(prompt.indexOf(table) < prompt.indexOf('\nFindings:'));
   const contexts = prompt.split('\n').filter((line) => line.startsWith('- ')).map((line) => JSON.parse(line.split(' | admission_context: ')[1]));
-  assert.deepEqual(contexts.map((context) => context.policy.predicates), [[], ['concrete_equivalent', 'behavior_preserved']]);
+  const promotionHeader = 'For test_coverage, type_design, simplification findings also assess present_defect.';
+  assert.equal(prompt.split(promotionHeader).length - 1, 1);
+  assert.ok(prompt.indexOf(promotionHeader) < prompt.indexOf('\nFindings:'));
+  assert.deepEqual(contexts.map((context) => context.policy.predicates), [[], ['concrete_equivalent', 'behavior_preserved'], [], []]);
   for (const context of contexts) {
     assert.equal(context.predicates, undefined);
+    assert.equal(Object.hasOwn(context.policy, 'promotion'), false);
     assert.deepEqual(context.policy.policy_subjects.test_defect, ['pr_owned_test', 'confirmed_test_defect', 'test_diff_site_for_inline']);
     assert.deepEqual(context.policy.body_fix_task, RIGHT_ELIGIBILITY.body.fixTask);
+  }
+});
+
+test('validation completeness accepts unlocated assessments without promoting empty confirmations', async () => {
+  for (const status of ['rejected', 'confirmed', 'unresolved']) {
+    const ctx = stageCtx({ reply: [{ finding_id: 'f1', confidence: 80, policy_subject: 'ordinary',
+      admission_assessments: [{ predicate: 'present_defect', status, references: [] }] }] });
+    const out = await validateStage(ctx, { findings: [finding({ dimension: 'test_coverage',
+      test_kind: 'additional_case', location_status: 'unconfirmed' })] });
+    assert.equal(out.stats.skipped, 0, status);
+    assert.equal(out.stats.batches_dispatched, 1, status);
+    assert.deepEqual(out.gaps, []);
+    const f = evaluateAdmission(out.findings[0]);
+    assert.equal(f.admission.status, 'report_only', status);
+    assert.equal(f.admission.kind, 'additional_case', status);
+    assert.deepEqual(f.admission_assessments, [{ predicate: 'present_defect',
+      status: status === 'confirmed' ? 'unresolved' : status, references: [] }]);
+  }
+});
+
+test('validation completeness accepts partial search references but admission holds the finding back', async () => {
+  const ctx = stageCtx({ reply: [{ finding_id: 'f1', confidence: 80, policy_subject: 'ordinary',
+    admission_assessments: [
+      { predicate: 'present_defect', status: 'confirmed', references: ['searched_paths:0'] },
+      { predicate: 'resolved_production_element', status: 'confirmed', references: ['production_element'] },
+      { predicate: 'complete_searches', status: 'confirmed', references: ['searched_paths:0'] },
+      { predicate: 'complete_behavioral_absence', status: 'confirmed', references: ['production_element', 'searched_paths:0'] },
+    ] }] });
+  const out = await validateStage(ctx, { findings: [finding({ dimension: 'test_coverage', test_kind: 'critical_gap',
+    candidate_tests: [], resolved_references: {
+      production_element: { file: 'src/x.py', line_start: 10, line_end: 10, location_status: 'confirmed' },
+      searched_paths: [{ path: 'tests/unit', available: true }, { path: 'tests/integration', available: true }],
+      candidate_tests: [],
+    } })] });
+  assert.equal(out.stats.skipped, 0);
+  assert.equal(out.stats.batches_dispatched, 1);
+  assert.deepEqual(out.gaps, []);
+  const f = evaluateAdmission(out.findings[0]);
+  assert.equal(f.admission.kind, 'critical_gap');
+  assert.equal(f.admission.status, 'held_back');
+  assert.deepEqual(f.admission.reasons, [
+    { predicate: 'complete_searches', status: 'held_back' },
+    { predicate: 'complete_behavioral_absence', status: 'held_back' },
+  ]);
+  assert.deepEqual(f.admission_assessments, [
+    { predicate: 'resolved_production_element', status: 'confirmed', references: ['production_element'] },
+  ]);
+});
+
+test('validation completeness requires one well-formed assessment per predicate', async () => {
+  const entry = { predicate: 'present_defect', status: 'rejected', references: [] };
+  for (const admission_assessments of [undefined, [], [null], [entry, entry],
+    [{ ...entry, status: 'invalid' }], [{ ...entry, references: null }], [{ ...entry, references: [1] }]]) {
+    const ctx = stageCtx({ reply: [{ finding_id: 'f1', confidence: 80, policy_subject: 'ordinary', admission_assessments }] });
+    const out = await validateStage(ctx, { findings: [finding({ dimension: 'test_coverage', test_kind: 'additional_case' })] });
+    assert.equal(out.stats.skipped, 1);
+    assert.deepEqual(out.audit.batches[0].rejections[0].reasons, ['missing_assessment:present_defect']);
   }
 });
 

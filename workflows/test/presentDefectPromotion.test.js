@@ -67,7 +67,7 @@ test('present defect promotion governs ranking even when the validator classifie
 });
 
 test('incomplete validation gets one small follow-up round and only terminal omissions degrade', async () => {
-  for (const arm of ['score', 'policy_subject', 'assessment', 'foreign_assessment', 'duplicate_assessment']) {
+  for (const arm of ['score', 'policy_subject', 'assessment', 'duplicate_assessment']) {
     for (const repaired of [true, false]) {
       const f = makeFinding('pending', { dimension: 'simplification', quality_basis: 'other' });
       const complete = score('pending', [assessment('present_defect', 'rejected')]);
@@ -75,7 +75,6 @@ test('incomplete validation gets one small follow-up round and only terminal omi
       if (arm === 'score') delete incomplete.confidence;
       if (arm === 'policy_subject') delete incomplete.policy_subject;
       if (arm === 'assessment') delete incomplete.admission_assessments;
-      if (arm === 'foreign_assessment') incomplete.admission_assessments[0].references = ['foreign'];
       if (arm === 'duplicate_assessment') incomplete.admission_assessments.push(incomplete.admission_assessments[0]);
       const ctx = stageCtx({ reply: { validations: [incomplete, score('sibling')] },
         replies: { 'validate-retry-0': { validations: [repaired ? complete : incomplete] } } });

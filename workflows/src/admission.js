@@ -31,9 +31,9 @@ export function matchAssessments(finding, entries) {
       || !Array.isArray(entry.references) || new Set(entry.references).size !== entry.references.length
       || entry.references.some((key) => typeof key !== 'string' || !Object.hasOwn(requests, key))) return false;
     const expected = Object.keys(requests).filter((key) => descriptor.references.some((name) => key === name || key.startsWith(`${name}:`)));
-    return (expected.length > 0 || entry.status === 'unresolved')
-      && expected.length === entry.references.length && expected.every((key) => entry.references.includes(key));
-  }).map(({ predicate, status, references }) => ({ predicate, status, references: [...references] }));
+    return expected.length === entry.references.length && expected.every((key) => entry.references.includes(key));
+  }).map(({ predicate, status, references }) => ({ predicate,
+    status: references.length === 0 && status === 'confirmed' ? 'unresolved' : status, references: [...references] }));
 }
 
 const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
@@ -168,7 +168,7 @@ export function evaluateAdmission(finding) {
 export function admissionContext(finding) {
   const policy = findingPolicy(finding, false);
   return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
-    policy: { predicates: policy.kind?.predicates || [], promotion: policy.row?.admission?.promotion,
+    policy: { predicates: policy.kind?.predicates || [],
       policy_subjects: Object.fromEntries(Object.keys(policy.row?.policySubjects || {}).map((subject) =>
         [subject, findingPolicy({ ...finding, policy_subject: subject }, false).kind?.predicates || []])),
       body_fix_task: RIGHT_ELIGIBILITY.body.fixTask },
