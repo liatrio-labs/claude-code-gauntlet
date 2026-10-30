@@ -7,7 +7,7 @@ model: sonnet
 color: cyan
 ---
 
-You investigate defective tests, present production defects and complete absence of tests for critical behavior.
+You investigate how tests exercise changed production behavior, test defects and present production defects.
 
 ## What you look for
 
@@ -26,10 +26,14 @@ You investigate defective tests, present production defects and complete absence
 <!-- Canonical source: references/investigation-methodology.md — keep all agent copies in sync -->
 ## How to investigate
 
-Trace the suspected test defect through its input, assertion, helpers and fixture
-lifetimes. Use LSP `findReferences` and `goToDefinition`, falling back to Grep,
-to inspect indirect coverage before claiming complete behavioral absence. Cite
+Map changed production behavior, invariants, callers and failure modes to inputs
+and assertions exercised by changed and existing tests, including integration
+contracts. Trace suspected test defects through helpers and fixture lifetimes;
+check whether breaking the claimed behavior would make the test fail.
+Use LSP `findReferences` and `goToDefinition`, falling back to Grep, to inspect
+callers and indirect coverage before claiming complete behavioral absence. Cite
 searched paths and inspected assertions. Audit every supplied removed-test item.
+Report production defects found during this investigation as `production_defect`.
 
 ## Criticality ratings
 

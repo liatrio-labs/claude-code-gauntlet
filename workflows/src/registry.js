@@ -162,11 +162,11 @@ const POLICY_SUBJECTS = {
 
 const QUALITY_ADMISSION = {
   field: 'quality_basis', promotion: { predicate: 'present_defect', kind: 'current_correctness' }, kinds: {
-    current_correctness: { required: [], predicates: ['present_defect'], phase: 'semantic', core: true, tier: 'main' },
-    duplication: { required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
-    simpler_equivalent: { required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
-    stack_idiom: { required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
-    other: { required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
+    current_correctness: { description: 'A demonstrated present production defect.', required: [], predicates: ['present_defect'], phase: 'semantic', core: true, tier: 'main' },
+    duplication: { description: 'Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior.', required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
+    simpler_equivalent: { description: 'A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths.', required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
+    stack_idiom: { description: 'A behavior-preserving replacement supported by applicable existing repository precedent; identify the precedent and the cost it removes.', required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
+    other: { description: 'No demonstrated defect, redundancy, simpler equivalent or applicable precedent; unsupported preferences stay report_only.', required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
   },
 };
 
@@ -220,7 +220,9 @@ export const DIMENSIONS = deepFreeze([
   ...row, policySubjects: POLICY_SUBJECTS,
   schemaExtra: { ...row.schemaExtra, ...(row.admission ? {
     [row.admission.field]: { type: 'string', enum: Object.keys(row.admission.kinds), description: row.admission === QUALITY_ADMISSION
-      ? 'Quality basis used to assess admission.' : 'Test issue kind used to assess admission and production-defect promotion.' },
+      ? 'Select the demonstrated quality basis. Behavior-preserving improvements do not require a production defect. '
+        + Object.entries(row.admission.kinds).map(([kind, rule]) => `${kind}: ${rule.description}`).join(' ')
+      : 'Test issue kind used to assess admission and production-defect promotion.' },
     ...(row.admission === QUALITY_ADMISSION ? {
       duplicate_of: { ...SOURCE_REFERENCE, description: 'Source reference to the existing implementation duplicated here.' },
       precedent: { ...SOURCE_REFERENCE, description: 'Source reference to an existing repository idiom supporting the change.' },
@@ -318,44 +320,46 @@ export const EXCLUSION_NEW_FACTS = deepFreeze([
 export const EXCLUSION_CATEGORIES = deepFreeze([
   { category: 'pre_existing', stage: 'early', predicate: 'blame_pre_existing', facts: ['blame_class', 'blame_source', 'in_diff'],
     applicability: 'Actual git_blame pre-existence and verified in_diff=false; git_blame provenance excludes cross-file effects.', exceptions: [],
-    proof: 'verified_fact', outcome: 'report_only', reference: 'Origin surfaced, off-diff placement and descriptions do not prove pre-existence.' },
+    outcome: 'report_only', reference: 'Origin surfaced, off-diff placement and descriptions do not prove pre-existence.' },
   { category: 'untouched_line', stage: 'early', predicate: 'off_diff', facts: ['in_diff'],
     applicability: 'Verified in_diff=false; unknown is not false.', exceptions: [],
-    proof: 'verified_fact', outcome: 'body', reference: 'Placement only after admission and vetting; still competes for challenge capacity.' },
+    outcome: 'body', reference: 'Placement only after admission and vetting; still competes for challenge capacity.' },
   { category: 'generated_vendored', stage: 'early', predicate: 'generated_or_vendored', facts: ['linguist_generated', 'linguist_vendored', 'generated_marker'],
-    applicability: 'git check-attr at captured merge base or the same canonical header in the first source lines at head and base; explicit -linguist-generated overrides markers.', exceptions: ['security_dimension'],
-    proof: 'verified_fact', outcome: 'eliminate', reference: 'PR-controlled classification cannot exclude its own changes; security findings survive.' },
+    applicability: 'git check-attr at captured merge base or the same canonical header in the first source lines at head and base; explicit -linguist-generated overrides markers.',
+    reference: 'PR-controlled classification cannot exclude its own changes; security findings survive.' },
   { category: 'docs_only', stage: 'early', predicate: 'documentation_only_code_claim', facts: ['linguist_documentation', 'all_changed_files_documentation', 'path_role'],
     applicability: 'Finding file has a source role, is proven non-documentation at base, and every changed file is documentation at base.',
-    exceptions: ['security_dimension', 'documentation_or_comment_claim', 'test_applicable_convention'], proof: 'verified_fact', outcome: 'eliminate',
+    exceptions: ['security_dimension', 'documentation_or_comment_claim', 'test_applicable_convention'],
     reference: 'Extensions and mixed PRs prove neither whole-PR documentation scope nor irrelevance; unknown stays unknown.' },
   { category: 'lockfile', stage: 'early', predicate: 'lockfile', facts: ['lockfile_basename'],
     basenames: ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'Cargo.lock', 'Gemfile.lock', 'poetry.lock', 'Pipfile.lock', 'uv.lock', 'composer.lock', 'packages.lock.json'],
-    applicability: 'Lockfile scope is basename-only membership in this closed list.', exceptions: ['security_dimension'],
-    proof: 'verified_fact', outcome: 'eliminate', reference: 'Security findings survive regardless of the lockfile basename.' },
+    applicability: 'Lockfile scope is basename-only membership in this closed list.',
+    reference: 'Security findings survive regardless of the lockfile basename.' },
   { category: 'general_quality', stage: 'admission', predicate: 'canonical_admission', facts: ['admission'],
     applicability: 'Consume canonical quality admission and its present_defect promotion.', exceptions: ['named_in_repo_convention', 'confirmed_present_defect'],
     proof: 'admission', outcome: 'admission', reference: 'A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.' },
   { category: 'latent', stage: 'post_validation', predicate: 'future_change_only', facts: ['reachability'],
     applicability: 'Existing future-change-only reachability assessment appropriate to the actual claim.', exceptions: ['present_static_defect'],
-    proof: 'verified_fact', outcome: 'body', reference: 'Placement after admission and vetting; no invented runtime trigger or early challenge exclusion.' },
+    outcome: 'body', reference: 'Placement after admission and vetting; no invented runtime trigger or early challenge exclusion.' },
   { category: 'test_only_pattern', stage: 'skeptical', predicate: 'harmless_test_pattern', facts: ['path_role'],
     applicability: 'Cited harmless test-role pattern and its applicability; test path alone is insufficient.', exceptions: ['security_dimension', 'test_coverage_origin', 'test_applicable_convention', 'genuine_test_defect'],
-    proof: 'citation', outcome: 'eliminate', reference: 'Wrong assertions, mocks and waits remain defects.' },
-  { category: 'lint_catchable', stage: 'skeptical', predicate: 'tool_covers_claim', facts: [],
+    reference: 'Wrong assertions, mocks and waits remain defects.' },
+  { category: 'lint_catchable', stage: 'skeptical', predicate: 'tool_covers_claim',
     applicability: 'Cite applicable repository tool, rule or configuration and coverage of the actual claim.', exceptions: ['security_dimension', 'present_static_defect'],
-    proof: 'citation', outcome: 'eliminate', reference: 'Familiar syntax and assumed CI tools are insufficient.' },
-  { category: 'suppressed', stage: 'skeptical', predicate: 'suppression_covers_claim', facts: [],
-    applicability: 'Cited suppression location, range and rule cover this issue.', exceptions: ['security_dimension'],
-    proof: 'citation', outcome: 'eliminate', reference: 'A nearby suppression does not establish applicability.' },
-  { category: 'opted_out', stage: 'skeptical', predicate: 'opt_out_covers_claim', facts: [],
-    applicability: 'Cite repository opt-out mechanism and applicable file or rule opt-out.', exceptions: ['security_dimension'],
-    proof: 'citation', outcome: 'eliminate', reference: 'An author assertion is not an opt-out mechanism.' },
+    reference: 'Familiar syntax and assumed CI tools are insufficient.' },
+  { category: 'suppressed', stage: 'skeptical', predicate: 'suppression_covers_claim',
+    applicability: 'Cited suppression location, range and rule cover this issue.',
+    reference: 'A nearby suppression does not establish applicability.' },
+  { category: 'opted_out', stage: 'skeptical', predicate: 'opt_out_covers_claim',
+    applicability: 'Cite repository opt-out mechanism and applicable file or rule opt-out.',
+    reference: 'An author assertion is not an opt-out mechanism.' },
   { category: 'intentional', stage: 'skeptical', predicate: 'confirmed_intent', facts: ['conventions_confirmation'],
     applicability: 'Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation; both must be outside PR-added lines in the captured diff.',
-    exceptions: ['security_dimension', 'proven_incorrect_or_dangerous_behavior_including_security'], proof: 'citation', outcome: 'eliminate',
+    exceptions: ['security_dimension', 'proven_incorrect_or_dangerous_behavior_including_security'],
     reference: 'The side record is only a gating fact, never a finding or proof; description and intentional wording are insufficient.' },
-].map((row) => ({ ...row, consumers: row.stage === 'skeptical' ? ['validator', 'challenger'] : [row.stage],
+].map((row) => ({ facts: [], exceptions: ['security_dimension'], outcome: 'eliminate',
+  proof: row.stage === 'skeptical' ? 'citation' : 'verified_fact', ...row,
+})).map((row) => ({ ...row, consumers: row.stage === 'skeptical' ? ['validator', 'challenger'] : [row.stage],
   citation_roles: row.proof === 'citation' ? ['rule', 'applicability'] : [] })));
 for (const row of EXCLUSION_CATEGORIES) {
   if (![...DISPOSITIONS, 'admission'].includes(row.outcome)) throw new Error(`Unknown exclusion outcome: ${row.outcome}`);
@@ -615,11 +619,20 @@ export function findingPolicy(finding, effective = true) {
 }
 
 // Both the return schema and runtime acceptance derive semantic requirements from the same rows.
-export function requiredAssessments(finding, policySubject) {
+export function admissionPolicy(finding, policySubject, promoted = false) {
   const original = findingPolicy({ ...finding, policy_subject: undefined }, false);
-  const selected = findingPolicy({ ...finding, policy_subject: policySubject }, false);
-  return [...new Set([original.row?.admission?.promotion?.predicate,
-    ...(original.kind?.predicates || []), ...(selected.kind?.predicates || [])])]
+  const promotion = original.row?.admission?.promotion;
+  const terminal = !promoted && original.kind?.defaultDisposition === 'report_only';
+  const policyFinding = promoted && promotion
+    ? { ...finding, policy_subject: 'ordinary', [original.row.admission.field]: promotion.kind }
+    : { ...finding, policy_subject: policySubject };
+  return { original, promotion, terminal, policyFinding,
+    ...(terminal ? original : findingPolicy(policyFinding, false)) };
+}
+
+export function requiredAssessments(finding, policySubject, promoted = false) {
+  const { promotion, kind } = admissionPolicy(finding, policySubject, promoted);
+  return [...new Set([promotion?.predicate, ...(kind?.predicates || [])])]
     .filter((predicate) => ADMISSION_PREDICATES[predicate]?.references);
 }
 

@@ -613,11 +613,11 @@ const POLICY_SUBJECTS = {
 };
 const QUALITY_ADMISSION = {
   field: 'quality_basis', promotion: { predicate: 'present_defect', kind: 'current_correctness' }, kinds: {
-    current_correctness: { required: [], predicates: ['present_defect'], phase: 'semantic', core: true, tier: 'main' },
-    duplication: { required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
-    simpler_equivalent: { required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
-    stack_idiom: { required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
-    other: { required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
+    current_correctness: { description: 'A demonstrated present production defect.', required: [], predicates: ['present_defect'], phase: 'semantic', core: true, tier: 'main' },
+    duplication: { description: 'Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior.', required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
+    simpler_equivalent: { description: 'A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths.', required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
+    stack_idiom: { description: 'A behavior-preserving replacement supported by applicable existing repository precedent; identify the precedent and the cost it removes.', required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
+    other: { description: 'No demonstrated defect, redundancy, simpler equivalent or applicable precedent; unsupported preferences stay report_only.', required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
   },
 };
 const DIMENSIONS = deepFreeze([
@@ -668,7 +668,9 @@ const DIMENSIONS = deepFreeze([
   ...row, policySubjects: POLICY_SUBJECTS,
   schemaExtra: { ...row.schemaExtra, ...(row.admission ? {
     [row.admission.field]: { type: 'string', enum: Object.keys(row.admission.kinds), description: row.admission === QUALITY_ADMISSION
-      ? 'Quality basis used to assess admission.' : 'Test issue kind used to assess admission and production-defect promotion.' },
+      ? 'Select the demonstrated quality basis. Behavior-preserving improvements do not require a production defect. '
+        + Object.entries(row.admission.kinds).map(([kind, rule]) => `${kind}: ${rule.description}`).join(' ')
+      : 'Test issue kind used to assess admission and production-defect promotion.' },
     ...(row.admission === QUALITY_ADMISSION ? {
       duplicate_of: { ...SOURCE_REFERENCE, description: 'Source reference to the existing implementation duplicated here.' },
       precedent: { ...SOURCE_REFERENCE, description: 'Source reference to an existing repository idiom supporting the change.' },
@@ -761,44 +763,46 @@ const EXCLUSION_NEW_FACTS = deepFreeze([
 const EXCLUSION_CATEGORIES = deepFreeze([
   { category: 'pre_existing', stage: 'early', predicate: 'blame_pre_existing', facts: ['blame_class', 'blame_source', 'in_diff'],
     applicability: 'Actual git_blame pre-existence and verified in_diff=false; git_blame provenance excludes cross-file effects.', exceptions: [],
-    proof: 'verified_fact', outcome: 'report_only', reference: 'Origin surfaced, off-diff placement and descriptions do not prove pre-existence.' },
+    outcome: 'report_only', reference: 'Origin surfaced, off-diff placement and descriptions do not prove pre-existence.' },
   { category: 'untouched_line', stage: 'early', predicate: 'off_diff', facts: ['in_diff'],
     applicability: 'Verified in_diff=false; unknown is not false.', exceptions: [],
-    proof: 'verified_fact', outcome: 'body', reference: 'Placement only after admission and vetting; still competes for challenge capacity.' },
+    outcome: 'body', reference: 'Placement only after admission and vetting; still competes for challenge capacity.' },
   { category: 'generated_vendored', stage: 'early', predicate: 'generated_or_vendored', facts: ['linguist_generated', 'linguist_vendored', 'generated_marker'],
-    applicability: 'git check-attr at captured merge base or the same canonical header in the first source lines at head and base; explicit -linguist-generated overrides markers.', exceptions: ['security_dimension'],
-    proof: 'verified_fact', outcome: 'eliminate', reference: 'PR-controlled classification cannot exclude its own changes; security findings survive.' },
+    applicability: 'git check-attr at captured merge base or the same canonical header in the first source lines at head and base; explicit -linguist-generated overrides markers.',
+    reference: 'PR-controlled classification cannot exclude its own changes; security findings survive.' },
   { category: 'docs_only', stage: 'early', predicate: 'documentation_only_code_claim', facts: ['linguist_documentation', 'all_changed_files_documentation', 'path_role'],
     applicability: 'Finding file has a source role, is proven non-documentation at base, and every changed file is documentation at base.',
-    exceptions: ['security_dimension', 'documentation_or_comment_claim', 'test_applicable_convention'], proof: 'verified_fact', outcome: 'eliminate',
+    exceptions: ['security_dimension', 'documentation_or_comment_claim', 'test_applicable_convention'],
     reference: 'Extensions and mixed PRs prove neither whole-PR documentation scope nor irrelevance; unknown stays unknown.' },
   { category: 'lockfile', stage: 'early', predicate: 'lockfile', facts: ['lockfile_basename'],
     basenames: ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'Cargo.lock', 'Gemfile.lock', 'poetry.lock', 'Pipfile.lock', 'uv.lock', 'composer.lock', 'packages.lock.json'],
-    applicability: 'Lockfile scope is basename-only membership in this closed list.', exceptions: ['security_dimension'],
-    proof: 'verified_fact', outcome: 'eliminate', reference: 'Security findings survive regardless of the lockfile basename.' },
+    applicability: 'Lockfile scope is basename-only membership in this closed list.',
+    reference: 'Security findings survive regardless of the lockfile basename.' },
   { category: 'general_quality', stage: 'admission', predicate: 'canonical_admission', facts: ['admission'],
     applicability: 'Consume canonical quality admission and its present_defect promotion.', exceptions: ['named_in_repo_convention', 'confirmed_present_defect'],
     proof: 'admission', outcome: 'admission', reference: 'A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.' },
   { category: 'latent', stage: 'post_validation', predicate: 'future_change_only', facts: ['reachability'],
     applicability: 'Existing future-change-only reachability assessment appropriate to the actual claim.', exceptions: ['present_static_defect'],
-    proof: 'verified_fact', outcome: 'body', reference: 'Placement after admission and vetting; no invented runtime trigger or early challenge exclusion.' },
+    outcome: 'body', reference: 'Placement after admission and vetting; no invented runtime trigger or early challenge exclusion.' },
   { category: 'test_only_pattern', stage: 'skeptical', predicate: 'harmless_test_pattern', facts: ['path_role'],
     applicability: 'Cited harmless test-role pattern and its applicability; test path alone is insufficient.', exceptions: ['security_dimension', 'test_coverage_origin', 'test_applicable_convention', 'genuine_test_defect'],
-    proof: 'citation', outcome: 'eliminate', reference: 'Wrong assertions, mocks and waits remain defects.' },
-  { category: 'lint_catchable', stage: 'skeptical', predicate: 'tool_covers_claim', facts: [],
+    reference: 'Wrong assertions, mocks and waits remain defects.' },
+  { category: 'lint_catchable', stage: 'skeptical', predicate: 'tool_covers_claim',
     applicability: 'Cite applicable repository tool, rule or configuration and coverage of the actual claim.', exceptions: ['security_dimension', 'present_static_defect'],
-    proof: 'citation', outcome: 'eliminate', reference: 'Familiar syntax and assumed CI tools are insufficient.' },
-  { category: 'suppressed', stage: 'skeptical', predicate: 'suppression_covers_claim', facts: [],
-    applicability: 'Cited suppression location, range and rule cover this issue.', exceptions: ['security_dimension'],
-    proof: 'citation', outcome: 'eliminate', reference: 'A nearby suppression does not establish applicability.' },
-  { category: 'opted_out', stage: 'skeptical', predicate: 'opt_out_covers_claim', facts: [],
-    applicability: 'Cite repository opt-out mechanism and applicable file or rule opt-out.', exceptions: ['security_dimension'],
-    proof: 'citation', outcome: 'eliminate', reference: 'An author assertion is not an opt-out mechanism.' },
+    reference: 'Familiar syntax and assumed CI tools are insufficient.' },
+  { category: 'suppressed', stage: 'skeptical', predicate: 'suppression_covers_claim',
+    applicability: 'Cited suppression location, range and rule cover this issue.',
+    reference: 'A nearby suppression does not establish applicability.' },
+  { category: 'opted_out', stage: 'skeptical', predicate: 'opt_out_covers_claim',
+    applicability: 'Cite repository opt-out mechanism and applicable file or rule opt-out.',
+    reference: 'An author assertion is not an opt-out mechanism.' },
   { category: 'intentional', stage: 'skeptical', predicate: 'confirmed_intent', facts: ['conventions_confirmation'],
     applicability: 'Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation; both must be outside PR-added lines in the captured diff.',
-    exceptions: ['security_dimension', 'proven_incorrect_or_dangerous_behavior_including_security'], proof: 'citation', outcome: 'eliminate',
+    exceptions: ['security_dimension', 'proven_incorrect_or_dangerous_behavior_including_security'],
     reference: 'The side record is only a gating fact, never a finding or proof; description and intentional wording are insufficient.' },
-].map((row) => ({ ...row, consumers: row.stage === 'skeptical' ? ['validator', 'challenger'] : [row.stage],
+].map((row) => ({ facts: [], exceptions: ['security_dimension'], outcome: 'eliminate',
+  proof: row.stage === 'skeptical' ? 'citation' : 'verified_fact', ...row,
+})).map((row) => ({ ...row, consumers: row.stage === 'skeptical' ? ['validator', 'challenger'] : [row.stage],
   citation_roles: row.proof === 'citation' ? ['rule', 'applicability'] : [] })));
 for (const row of EXCLUSION_CATEGORIES) {
   if (![...DISPOSITIONS, 'admission'].includes(row.outcome)) throw new Error(`Unknown exclusion outcome: ${row.outcome}`);
@@ -1042,11 +1046,19 @@ function findingPolicy(finding, effective = true) {
   return { row: selected, kind, core: kind?.core ?? selected?.core ?? false,
     tier: kind?.tier ?? selected?.defaultTier, defaultDisposition: kind?.defaultDisposition ?? selected?.defaultDisposition };
 }
-function requiredAssessments(finding, policySubject) {
+function admissionPolicy(finding, policySubject, promoted = false) {
   const original = findingPolicy({ ...finding, policy_subject: undefined }, false);
-  const selected = findingPolicy({ ...finding, policy_subject: policySubject }, false);
-  return [...new Set([original.row?.admission?.promotion?.predicate,
-    ...(original.kind?.predicates || []), ...(selected.kind?.predicates || [])])]
+  const promotion = original.row?.admission?.promotion;
+  const terminal = !promoted && original.kind?.defaultDisposition === 'report_only';
+  const policyFinding = promoted && promotion
+    ? { ...finding, policy_subject: 'ordinary', [original.row.admission.field]: promotion.kind }
+    : { ...finding, policy_subject: policySubject };
+  return { original, promotion, terminal, policyFinding,
+    ...(terminal ? original : findingPolicy(policyFinding, false)) };
+}
+function requiredAssessments(finding, policySubject, promoted = false) {
+  const { promotion, kind } = admissionPolicy(finding, policySubject, promoted);
+  return [...new Set([promotion?.predicate, ...(kind?.predicates || [])])]
     .filter((predicate) => ADMISSION_PREDICATES[predicate]?.references);
 }
 function normalizePipelineStamps(finding) {
@@ -2741,6 +2753,11 @@ function matchAssessments(finding, entries) {
   }).map(({ predicate, status, references }) => ({ predicate,
     status: references.length === 0 && status === 'confirmed' ? 'unresolved' : status, references: [...references] }));
 }
+function hasPresentDefect(finding, entries) {
+  const { promotion } = admissionPolicy(finding);
+  return !!promotion && matchAssessments(finding, entries)
+    .some((entry) => entry.predicate === promotion.predicate && entry.status === 'confirmed');
+}
 const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
   'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
   'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
@@ -2821,13 +2838,8 @@ function predicateResult(finding, predicate) {
 function evaluateAdmission(finding) {
   delete finding.admission;
   delete finding.effective_test_kind;
-  const original = findingPolicy({ ...finding, policy_subject: undefined });
-  const promotion = original.row?.admission?.promotion;
-  const promoted = promotion && matchAssessments(finding, finding.admission_assessments)
-    .some((entry) => entry.predicate === promotion.predicate && entry.status === 'confirmed');
-  const terminal = !promoted && original.kind?.defaultDisposition === 'report_only';
-  const policyFinding = promoted ? { ...finding, policy_subject: 'ordinary', [original.row.admission.field]: promotion.kind } : finding;
-  const { row, kind, core, tier } = terminal ? original : findingPolicy(policyFinding);
+  const promoted = hasPresentDefect(finding, finding.admission_assessments);
+  const { original, promotion, terminal, policyFinding, row, kind, core, tier } = admissionPolicy(finding, finding.policy_subject, promoted);
   const subject = row?.policySubjects[policyFinding.policy_subject];
   const reasons = [];
   const fail = (predicate, status) => { if (status) reasons.push({ predicate, status }); };
@@ -2838,7 +2850,7 @@ function evaluateAdmission(finding) {
   if (kind?.defaultDisposition === 'report_only') fail('value', 'report_only');
   for (const predicate of kind?.predicates || []) fail(predicate, predicateResult(finding, predicate));
   const assessed = new Set(matchAssessments(finding, finding.admission_assessments).map((entry) => entry.predicate));
-  for (const predicate of requiredAssessments(finding, finding.policy_subject)) {
+  for (const predicate of requiredAssessments(finding, finding.policy_subject, promoted)) {
     if (!assessed.has(predicate) && !reasons.some((reason) => reason.predicate === predicate && reason.status === 'held_back')) {
       fail(predicate, 'held_back');
     }
@@ -2869,15 +2881,21 @@ function evaluateAdmission(finding) {
 function refreshAdmission(finding) {
   return hasAdmission(finding) ? finding : evaluateAdmission(finding);
 }
-function admissionContext(finding) {
-  const policy = findingPolicy(finding, false);
-  return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
-    policy: { predicates: policy.kind?.predicates || [],
-      policy_subjects: Object.fromEntries(Object.keys(policy.row?.policySubjects || {}).map((subject) =>
-        [subject, findingPolicy({ ...finding, policy_subject: subject }, false).kind?.predicates || []])),
-      body_fix_task: RIGHT_ELIGIBILITY.body.fixTask },
-    claim: Object.fromEntries(DIMENSIONS.flatMap((row) => Object.keys(row.schemaExtra)).map((key) => [key, finding[key]])),
-    fix: finding.suggestion || finding.suggested_fix_code };
+function admissionContext(f, score) {
+  const { promotion, original } = admissionPolicy(f);
+  const promoted = hasPresentDefect(f, score?.admission_assessments);
+  const subjects = score ? [score.policy_subject] : Object.keys(original.row?.policySubjects || {});
+  const assessed = matchAssessments(f, score?.admission_assessments);
+  const requirements = Object.fromEntries(subjects.map((subject) =>
+    [subject, requiredAssessments(f, subject, promoted).filter((predicate) =>
+      !score || !assessed.some((entry) => entry.predicate === predicate))]));
+  return { requests: admissionRequests(f), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, f[key]])),
+    policy: { policy_subjects: requirements,
+      ...(!score && promotion ? { promotion: { predicate: promotion.predicate,
+        confirmed: requiredAssessments(f, 'ordinary', true) } } : {}),
+      ...(!score ? { body_fix_task: RIGHT_ELIGIBILITY.body.fixTask } : {}) },
+    claim: Object.fromEntries(DIMENSIONS.flatMap((row) => Object.keys(row.schemaExtra)).map((key) => [key, f[key]])),
+    fix: f.suggestion || f.suggested_fix_code };
 }
 // --- applyValidations.js ---
 function validationRejections(finding, validation, semantic = true) {
@@ -2886,7 +2904,7 @@ function validationRejections(finding, validation, semantic = true) {
   if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
   if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
   const assessments = Array.isArray(validation.admission_assessments) ? validation.admission_assessments : [];
-  for (const predicate of requiredAssessments(finding, validation.policy_subject)) {
+  for (const predicate of requiredAssessments(finding, validation.policy_subject, hasPresentDefect(finding, assessments))) {
     const entries = assessments.filter((entry) => entry?.predicate === predicate);
     if (entries.length !== 1
       || !VALIDATION_RETURN_PROPERTIES.admission_assessments.items.properties.status.enum.includes(entries[0].status)
@@ -5551,30 +5569,23 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
   return builder.finish();
 }
 // --- reviewStages.js ---
-const VALIDATE_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    validations: {
-      type: 'array',
-      items: SKEPTICAL_CONTRACTS.validator.dispatchSchema,
-    },
-  },
-  required: ['validations'],
-};
-function validateReturnDescriptor() {
-  return Object.entries(VALIDATE_SCHEMA.properties.validations.items.properties)
-    .map(([name, schema]) => {
-      const values = Array.isArray(schema.enum) ? ` (${schema.enum.join(' | ')})` : '';
-      return `${name}${values}`;
-    })
-    .join(', ');
+const VALIDATE_ITEM = SKEPTICAL_CONTRACTS.validator.dispatchSchema;
+const VALIDATE_RETURN = Object.entries(VALIDATE_ITEM.properties)
+  .map(([name, { enum: values }]) => name + (values ? ` (${values.join(' | ')})` : '')).join(', ');
+function admissionOnlyRetry(batch, accepted) {
+  return batch.every((f) => accepted.has(f.id)
+    && validationRejections(f, accepted.get(f.id)).every((reason) => reason.startsWith('missing_assessment:')));
 }
-function validateSchema(batch) {
-  const base = VALIDATE_SCHEMA.properties.validations.items;
-  return { ...VALIDATE_SCHEMA, properties: { validations: { type: 'array', items: { ...base,
-    properties: { ...base.properties, finding_id: { type: 'string', enum: batch.map((f) => f.id) } },
-  } } } };
+function validateSchema(batch, accepted) {
+  const onlyAdmission = admissionOnlyRetry(batch, accepted);
+  const fields = onlyAdmission ? ['finding_id', 'admission_assessments'] : Object.keys(VALIDATE_ITEM.properties);
+  let required = VALIDATE_ITEM.required;
+  if (onlyAdmission) required = fields;
+  else if (batch.some((f) => accepted.has(f.id))) required = ['finding_id'];
+  const properties = Object.fromEntries(fields.map((key) => [key, VALIDATE_ITEM.properties[key]]));
+  properties.finding_id = { type: 'string', enum: batch.map((f) => f.id) };
+  return { type: 'object', additionalProperties: false, required: ['validations'],
+    properties: { validations: { type: 'array', items: { ...VALIDATE_ITEM, required, properties } } } };
 }
 function validatorAudit(audit, label, result, rejections) {
   const raw = JSON.stringify(result ?? null);
@@ -5587,12 +5598,10 @@ async function validateStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
   const limits = inp.limits || {};
-  const policy = inp.policy || {};
   const batchSize = effectiveBatchSize(limits, findings.length);
   if (findings.length === 0) {
     return { findings: [], gaps: [], stats: { batches_dispatched: 0, batches_completed: 0, validated: 0, skipped: 0, incomplete: 0, adjusted: 0 } };
   }
-  const model = modelFor('code-gauntlet:validator', policy);
   const batches = [];
   for (let i = 0; i < findings.length; i += batchSize) batches.push(findings.slice(i, i + batchSize));
   const gaps = [];
@@ -5601,25 +5610,36 @@ async function validateStage(ctx, input) {
   const audit = { batches: [], omitted_batches: 0 };
   const terminalRejections = new Map();
   let completed = 0;
-  let dispatched = 0;
-  const dispatch = (batch, label) => () => ctx.agent(validatePrompt(inp, batch), {
-    label, agentType: 'code-gauntlet:validator', model, schema: validateSchema(batch),
+  let dispatched = batches.length;
+  const dispatch = (batch, label) => () => ctx.agent(validatePrompt(inp, batch, accepted), {
+    label, agentType: 'code-gauntlet:validator', model: modelFor('code-gauntlet:validator', inp.policy || {}), schema: validateSchema(batch, accepted),
   });
   const consume = (res, batch, label) => {
-    const list = res === null || res === undefined
-      ? null
-      : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
+    const list = Array.isArray(res) ? res : Array.isArray(res?.validations) ? res.validations : null;
     if (list) completed += 1;
     const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ ...e, id: e.id ?? e.finding_id }));
     const rejections = [];
-    for (const finding of batch) {
-      const matches = entries.filter((entry) => entry.id === finding.id);
-      if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
+    for (const f of batch) {
+      const matches = entries.filter((entry) => entry.id === f.id);
+      if (!matches.length) rejections.push({ id: String(f.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
-        assessments.set(finding.id, entry);
-        const reasons = validationRejections(finding, entry);
-        if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
-        if (!validationRejections(finding, entry, false).some((reason) => ['invalid_confidence', 'invalid_policy_subject', 'missing_entry'].includes(reason))) accepted.set(finding.id, entry);
+        const prior = accepted.get(f.id);
+        let merged = entry;
+        if (prior && label.startsWith('validate-retry-')) {
+          const missing = validationRejections(f, prior, false);
+          const field = 'admission_assessments';
+          const updates = (Array.isArray(entry[field]) ? entry[field] : [])
+            .filter((a) => missing.includes(`missing_assessment:${a?.predicate}`));
+          merged = { ...prior, [field]: [...(Array.isArray(prior[field]) ? prior[field] : [])
+            .filter((a) => !updates.some((u) => u?.predicate === a?.predicate)), ...updates] };
+          if (assessmentGaps(validatorAssessment(f, prior)).semanticErrors.length)
+            for (const key of ['stage', 'verdict', 'citations', 'missing_evidence', 'scope_assessments'])
+              if (Object.hasOwn(entry, key)) merged[key] = entry[key];
+        }
+        assessments.set(f.id, merged);
+        const reasons = validationRejections(f, merged);
+        if (reasons.length) rejections.push({ id: String(f.id).slice(0, 128), reasons });
+        if (!reasons.some((reason) => ['invalid_confidence', 'invalid_policy_subject', 'missing_entry'].includes(reason))) accepted.set(f.id, merged);
       }
     }
     validatorAudit(audit, label, res, rejections);
@@ -5627,9 +5647,8 @@ async function validateStage(ctx, input) {
     return list;
   };
   const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
-  dispatched += batches.length;
   const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
-  const pending = findings.filter((finding) => validationRejections(finding, accepted.get(finding.id)).length);
+  const pending = findings.filter((f) => validationRejections(f, accepted.get(f.id)).length);
   if (pending.length) {
     const retries = [];
     const retrySize = effectiveValidationRetrySize(limits, findings.length);
@@ -5639,9 +5658,9 @@ async function validateStage(ctx, input) {
     retries.forEach((batch, idx) => consume(retried[idx], batch, `validate-retry-${idx}`));
   }
   batches.forEach((batch, idx) => {
-    const unscored = batch.filter((finding) => !accepted.has(finding.id));
+    const unscored = batch.filter((f) => !accepted.has(f.id));
     if (unscored.length) {
-      const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))]
+      const reasons = [...new Set(unscored.flatMap((f) => terminalRejections.get(String(f.id).slice(0, 128)) || []))]
         .filter((reason) => !reason.startsWith('missing_assessment:'));
       let problem = mainLists[idx] ? 'omitted scores' : 'returned null/malformed';
       if (reasons.some((reason) => !['missing_entry', 'malformed_return'].includes(reason))) {
@@ -5651,35 +5670,22 @@ async function validateStage(ctx, input) {
     }
   });
   const { adjustedCount } = applyValidations(findings, [...accepted.values()]);
-  for (const finding of findings) if (!accepted.has(finding.id) && assessments.has(finding.id)) {
-    finding.skeptical_assessments = [validatorAssessment(finding, assessments.get(finding.id))];
-  }
   let skipped = 0;
   let incomplete = 0;
   for (const f of findings) {
-    if (!accepted.has(f.id)) { f.validation = 'skipped'; skipped += 1; }
-    else f.validation = 'validated';
-    if (accepted.has(f.id) && validationRejections(f, accepted.get(f.id)).length) incomplete += 1;
+    const score = accepted.get(f.id);
+    f.validation = score ? 'validated' : 'skipped';
+    if (score) incomplete += Number(validationRejections(f, score).length > 0);
+    else {
+      skipped += 1;
+      if (assessments.has(f.id)) f.skeptical_assessments = [validatorAssessment(f, assessments.get(f.id))];
+    }
   }
-  return {
-    findings,
-    gaps,
-    audit,
-    stats: {
-      batches_dispatched: dispatched,
-      batches_completed: completed,
-      validated: findings.length - skipped,
-      skipped,
-      incomplete,
-      adjusted: adjustedCount,
-    },
-  };
+  return { findings, gaps, audit, stats: { batches_dispatched: dispatched, batches_completed: completed,
+    validated: findings.length - skipped, skipped, incomplete, adjusted: adjustedCount } };
 }
-function validatePrompt(inp, batch) {
+function validatePrompt(inp, batch, accepted) {
   const ctxLine = inp.contextLine || '';
-  const promotionRows = DIMENSIONS.filter((row) => row.admission?.promotion);
-  const promotionHeader = [...new Set(promotionRows.map((row) => row.admission.promotion.predicate))].map((predicate) =>
-    `For ${promotionRows.filter((row) => row.admission.promotion.predicate === predicate).map((row) => row.dimension).join(', ')} findings also assess ${predicate}.`).join(' ');
   const scope = EXCLUSION_CATEGORIES.filter((row) => row.consumers.includes('validator'))
     .map((row) => `- ${row.category}: ${row.applicability} Exceptions: ${row.exceptions.join(', ') || 'none'}. Proof: ${row.proof}; outcome: ${row.outcome}. ${row.reference}`).join('\n');
   const block = batch.map((f) => {
@@ -5689,9 +5695,11 @@ function validatePrompt(inp, batch) {
     const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
     const sites = (f.resolved_sites || []).filter((site) => locationAllows(site, 'sourceLink'));
     const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
-    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f))}`;
+    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f, accepted.get(f.id)))}`;
   }).join('\n');
-  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Admission predicates: ${JSON.stringify(ADMISSION_PREDICATES)}\n${promotionHeader}\n${VERDICT_GUIDANCE}\nScope rows:\n${scope}\nTarget identity: ${JSON.stringify(inp.sourceCapture || {})}\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
+  const admission = `Assess confirmed/rejected/unresolved; references name inspected requests. Admission predicates: ${JSON.stringify(ADMISSION_PREDICATES)}`;
+  if (admissionOnlyRetry(batch, accepted)) return `${ctxLine}Supply only the missing admission assessments in admission_context. ${admission}\nFindings:\n${block}\nReturn { validations: [{ finding_id, admission_assessments }] } (one entry per finding).`;
+  return `${ctxLine}Independently validate using the code-evidence and disproof contract. First judge the correctness, confidence, justification and reachability from code; missing admission evidence or posting value must not lower confidence or change reachability. Then classify policy_subject independently of producer/location. Assess admission_context's subject predicates or promotion.confirmed when confirmed; resolution/confidence cannot confirm. Assess body_fix_task separately. Confirm requested sites: same defect requiring the same correction. Preserve accepted judgments. ${admission}\n${VERDICT_GUIDANCE}\nScope rows:\n${scope}\nTarget identity: ${JSON.stringify(inp.sourceCapture || {})}\nFindings:\n${block}\nReturn { validations: [{ ${VALIDATE_RETURN} }] } — confidence 0-100 (one entry per finding).`;
 }
 function filterStage(input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -5700,7 +5708,6 @@ function filterStage(input) {
   const exclusionPatterns = inp.exclusionPatterns || [];
   return applyFilterPipeline(findings, config, exclusionPatterns, inp.generatedAt);
 }
-const CHALLENGE_SCHEMA = SKEPTICAL_CONTRACTS.challenger.dispatchSchema;
 function blindChallengeFields(finding, diffPath) {
   return {
     title: finding.title || '',
@@ -5717,11 +5724,11 @@ function blindChallengeFields(finding, diffPath) {
     } : {}),
   };
 }
-const VERDICT_GUIDANCE = `Use real, refuted or needs_evidence with scope_assessments (possibly empty). Real and refuted require claim citations against the supplied snapshot identity, with file, side, line_start, line_end and exact quote (at most ${ANCHOR_LIMITS.lines} lines and ${ANCHOR_LIMITS.chars} characters). Needs_evidence must name the missing evidence and cannot resolve itself. For each scope assertion cite both rule and applicability with those roles; use inapplicable or contradicted when exceptions or code defeat it. Cite proven incorrect or dangerous behavior with the exception role on a real verdict. Return finding_id and stage for every assessment.`;
+const VERDICT_GUIDANCE = `Use real, refuted or needs_evidence. Real/refuted: snapshot-bound exact claim citations (max ${ANCHOR_LIMITS.lines} lines/${ANCHOR_LIMITS.chars} chars). needs_evidence names missing evidence; no self-resolution. scope_assessments: empty or cite rule/applicability; defeated assertions: inapplicable/contradicted. Cite proven incorrect/dangerous behavior as exception on real.`;
 function challengePrompt(finding, diffPath, sourceCapture) {
   const b = blindChallengeFields(finding, diffPath);
   const removed = b.removed_test ? `Read saved diff ${diffPath}: deleted test ${JSON.stringify(b.removed_test.path)}, old lines ${b.removed_test.old_start}-${b.removed_test.old_end}. Check the deleted assertion and surviving tests.` : '';
-  return `Independently check the claim's central facts against raw code. Runtime failures require a current trigger; static defects require evidence of the static claim. ${removed}\nTarget identity: ${JSON.stringify(sourceCapture || {})}\nFinding identity: ${finding.id}\nClaim/location: ${JSON.stringify(b)}\n${VERDICT_GUIDANCE}`;
+  return `Independently check the claim's central facts against raw code. Prove a current trigger for runtime failures, the static claim for static defects. ${removed}\nTarget identity: ${JSON.stringify(sourceCapture || {})}\nFinding identity: ${finding.id}\nClaim/location: ${JSON.stringify(b)}\n${VERDICT_GUIDANCE}`;
 }
 async function challengeStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -5742,7 +5749,7 @@ async function challengeStage(ctx, input) {
   const results = candidates.length ? await ctx.parallel(candidates.map((finding, idx) => () => ctx.agent(
     challengePrompt(finding, inp.diffPath, inp.sourceCapture), {
       label: `challenge-${idx}`, agentType: 'code-gauntlet:challenger',
-      model: modelFor('code-gauntlet:challenger', inp.policy || {}), schema: CHALLENGE_SCHEMA,
+      model: modelFor('code-gauntlet:challenger', inp.policy || {}), schema: SKEPTICAL_CONTRACTS.challenger.dispatchSchema,
     }))) : [];
   const gaps = [];
   const present = [];
