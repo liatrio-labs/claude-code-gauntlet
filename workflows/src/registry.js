@@ -327,7 +327,7 @@ export const EXCLUSION_CATEGORIES = deepFreeze([
     proof: 'verified_fact', outcome: 'eliminate', reference: 'PR-controlled classification cannot exclude its own changes; security findings survive.' },
   { category: 'docs_only', stage: 'early', predicate: 'documentation_only_code_claim', facts: ['linguist_documentation', 'all_changed_files_documentation', 'path_role'],
     applicability: 'Finding file has a source role, is proven non-documentation at base, and every changed file is documentation at base.',
-    exceptions: ['security_dimension', 'documentation_or_comment_claim', 'test_applicable_documented_convention'], proof: 'verified_fact', outcome: 'eliminate',
+    exceptions: ['security_dimension', 'documentation_or_comment_claim', 'test_applicable_convention'], proof: 'verified_fact', outcome: 'eliminate',
     reference: 'Extensions and mixed PRs prove neither whole-PR documentation scope nor irrelevance; unknown stays unknown.' },
   { category: 'lockfile', stage: 'early', predicate: 'lockfile', facts: ['lockfile_basename'],
     basenames: ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'Cargo.lock', 'Gemfile.lock', 'poetry.lock', 'Pipfile.lock', 'uv.lock', 'composer.lock', 'packages.lock.json'],

@@ -34,6 +34,7 @@ function scopeAssessment(id, stage, category, extra = {}) {
     opted_out: 'rules/opt-outs', intentional: 'rules/intent' }[category] || request.file;
   return { finding_id: id, stage, category, applicability: 'applicable',
     citations: ['rule', 'applicability'].map((role) => ({ ...request, role,
+      ...(category === 'intentional' && role === 'applicability' ? { line_start: 11, line_end: 11 } : {}),
       file: role === 'rule' ? ruleFile : request.file, request_id: `${category}-${role}` })), ...extra };
 }
 
@@ -41,14 +42,21 @@ test('cited skeptical scope exclusions retain their exact applicability', async 
   for (const stage of ['validator', 'challenger']) for (const category of ['lint_catchable', 'suppressed', 'opted_out', 'intentional', 'test_only_pattern']) {
     for (const fault of ['matched', 'unmatched', 'unavailable', 'uncited', 'missing_role', 'wrong_snapshot', 'contradicted', 'incorrect',
       'security_dimension', 'security_agent', 'needs_evidence', 'incomplete_assessment', 'claim_unmatched', 'other_contradicted', 'capped', 'failed', 'other_needs_evidence',
-      ...(category === 'test_only_pattern' ? ['unresolved_subject', 'missing_subject'] : []),
+      ...(category === 'test_only_pattern' ? ['unresolved_subject', 'missing_subject', 'unknown_role', 'source_role'] : []),
       ...(category === 'lint_catchable' ? ['current_defect', 'uncertain_reachability', 'missing_reachability'] : []),
-      ...(category === 'intentional' ? ['exception_unmatched', 'exception_unavailable', 'exception_malformed', 'nested_exception', 'added_rule', 'added_confirmation', 'unknown_diff'] : [])]) {
+      ...(category === 'intentional' ? ['exception_unmatched', 'exception_unavailable', 'exception_malformed', 'nested_exception', 'added_rule', 'added_confirmation', 'unknown_diff', 'uncovered_confirmation', 'old_confirmation', 'foreign_confirmation', 'added_then_existing', 'existing_then_added', 'duplicate_confirmation'] : [])]) {
       const scope = scopeAssessment('SCOPE', stage, category);
       if (fault === 'uncited') scope.citations = [];
       if (fault === 'missing_role') scope.citations.pop();
       if (fault === 'wrong_snapshot') scope.citations[0].snapshot_id = 'other';
       if (fault === 'contradicted') scope.applicability = fault;
+      const confirmationCitation = scope.citations.find((q) => q.role === 'applicability');
+      if (fault === 'uncovered_confirmation') Object.assign(confirmationCitation, { line_start: 10, line_end: 10 });
+      if (fault === 'old_confirmation') confirmationCitation.side = 'old';
+      if (fault === 'foreign_confirmation') confirmationCitation.file = 'elsewhere';
+      if (['added_then_existing', 'existing_then_added', 'duplicate_confirmation'].includes(fault)) {
+        scope.citations.push({ ...confirmationCitation, request_id: 'second-confirmation', line_start: 12, line_end: 12 });
+      }
       const assessment = skepticalReturn('SCOPE', stage, { scope_assessments: [scope] });
       if (fault === 'needs_evidence') Object.assign(assessment, { verdict: 'needs_evidence', missing_evidence: 'Missing source', citations: [] });
       if (fault === 'incomplete_assessment') assessment.scope_assessments.push(scopeAssessment('SCOPE', stage, 'general_quality'));
@@ -65,11 +73,16 @@ test('cited skeptical scope exclusions retain their exact applicability', async 
           : fault === 'uncertain_reachability' ? 'uncertain' : fault === 'missing_reachability' ? undefined : 'future_change_only' } : {}),
         ...(['capped', 'failed'].includes(fault) ? { challenge: fault } : {}),
         ...(['unresolved_subject', 'missing_subject'].includes(fault) ? { policy_subject: fault === 'missing_subject' ? undefined : 'unresolved' } : {}),
-        path_role: category === 'test_only_pattern' ? 'test' : 'source',
+        path_role: fault === 'unknown_role' ? 'unknown' : category === 'test_only_pattern' && fault !== 'source_role' ? 'test' : 'source',
         code: 'SCOPE_FENCE', suggested_fix_code: 'SCOPE_PATCH', suggestion: 'SCOPE_TASK',
         skeptical_assessments: [assessment, other] });
+      const confirmations = [{ id: 'rule-confirmation', file: 'SCOPE.js', line_start: 11 }];
+      if (['added_then_existing', 'existing_then_added', 'duplicate_confirmation'].includes(fault)) {
+        confirmations.push({ id: fault === 'duplicate_confirmation' ? 'rule-confirmation' : 'existing', file: 'SCOPE.js', line_start: 12 });
+        if (fault === 'existing_then_added') confirmations.reverse();
+      }
       const args = proofArgs({ checkpoints: { challenge: challengeOutput({ findings: [scoped, makeFinding('SIBLING')],
-        conventions_confirmations: [{ id: 'rule-confirmation', file: 'SCOPE.js', line_start: 11 }] }) } });
+        conventions_confirmations: confirmations }) } });
       let payload;
       const ctx = makeCtx(args, { onPersist: (p) => { payload = p; } });
       const agent = ctx.agent;
@@ -79,31 +92,35 @@ test('cited skeptical scope exclusions retain their exact applicability', async 
           ? fault.slice('exception_'.length) : fault === 'claim_unmatched' && r.request.role === 'claim' && r.request.stage === stage
             ? 'unmatched' : r.request.role !== 'claim' && ['unmatched', 'unavailable'].includes(fault) ? fault : 'matched',
         (r) => fault === 'unknown_diff' ? undefined : fault === 'added_rule' && r.request.role === 'rule' ? [10]
-          : fault === 'added_confirmation' && r.request.file === 'SCOPE.js' ? [11] : []);
+          : ['added_confirmation', 'added_then_existing', 'existing_then_added'].includes(fault) && r.request.file === 'SCOPE.js'
+            && r.request.line_start === 11 ? [11] : []);
       };
       const out = await runWith(ctx, args);
       assert.equal(out.ok, true, `${category}/${stage}/${fault}`);
       const result = payload.findings.find((f) => f.id === 'SCOPE');
-      if (['needs_evidence', 'incomplete_assessment', 'claim_unmatched', 'unresolved_subject', 'missing_subject', 'added_rule', 'added_confirmation', 'unknown_diff', 'uncertain_reachability', 'missing_reachability'].includes(fault)) {
+      if (['needs_evidence', 'incomplete_assessment', 'claim_unmatched', 'unresolved_subject', 'missing_subject', 'unknown_role', 'unknown_diff', 'uncertain_reachability', 'missing_reachability'].includes(fault)) {
         assert.equal(result.scope_decisions.find((r) => r.category === category && r.stage === stage).applies, null, `${category}/${stage}/${fault} proof`);
       }
-      const disposition = ['contradicted', 'security_dimension', 'security_agent', 'current_defect'].includes(fault)
+      const disposition = ['contradicted', 'security_dimension', 'security_agent', 'current_defect', 'source_role', 'added_rule', 'added_confirmation', 'uncovered_confirmation', 'old_confirmation', 'foreign_confirmation', 'duplicate_confirmation'].includes(fault)
         || (category === 'intentional' && ['incorrect', 'nested_exception'].includes(fault))
         ? category === 'lint_catchable' && fault !== 'current_defect' ? 'body' : 'deliver'
-          : ['matched', 'incorrect'].includes(fault) ? 'eliminate' : 'held_back';
+          : ['matched', 'incorrect', 'added_then_existing', 'existing_then_added'].includes(fault) ? 'eliminate' : 'held_back';
       assert.equal(result.disposition, disposition, `${category}/${stage}/${fault}`);
       assert.ok(payload.postReview.some((f) => f.id === 'SIBLING'));
       if (disposition === 'eliminate') {
         assert.equal(result.reduction_provenance.category, category);
         assert.equal(result.reduction_provenance.stage, stage);
-        assert.equal(result.reduction_provenance.request_ids.length, 2);
+        assert.equal(result.reduction_provenance.request_ids.length, scope.citations.length);
+        if (['added_then_existing', 'existing_then_added'].includes(fault)) {
+          assert.equal(result.scope_decisions.find((r) => r.category === category && r.stage === stage).confirmation_id, 'existing');
+        }
         assert.equal(payload.postReview.some((f) => f.id === 'SCOPE'), false);
         assert.doesNotMatch(payload.report, /SCOPE_FENCE|SCOPE_PATCH|SCOPE_TASK|SCOPE\.js/);
       } else if (['deliver', 'body'].includes(disposition)) {
         assert.ok(result.reduction_detail.some((r) => r.reason === 'scope_contradicted'));
       } else {
         assert.ok(result.reduction_detail.some((r) => ['held_back', fault.endsWith('unavailable') ? 'cite_unavailable' : 'cite_unmatched'].includes(r.reason)));
-        if (['added_rule', 'added_confirmation', 'unknown_diff'].includes(fault)) {
+        if (fault === 'unknown_diff') {
           assert.equal(result.scope_decisions.find((r) => r.category === category && r.stage === stage).reason, 'held_back');
         }
       }
@@ -319,6 +336,29 @@ test('either proven refutation survives reduction through every final artifact',
         assert.deepEqual(citeOnly.payload.findings, result.payload.findings);
         assert.equal(citeOnly.ctx.calls.some((c) => /^(validate-|verify-|challenge-|code-gauntlet:)/.test(c.label)), false);
       }
+    }
+  }
+});
+
+test('security refutations require every claim outside PR-added lines', async () => {
+  for (const stage of ['validator', 'challenger']) for (const kind of ['bug', 'security', 'security_agent']) {
+    for (const provenance of ['outside', 'added', 'unknown']) {
+      const assessment = skepticalReturn('REFUTED', stage, { verdict: 'refuted' });
+      assessment.citations.push({ ...assessment.citations[0], request_id: 'second-claim', line_start: 11, line_end: 11 });
+      const refuted = makeFinding('REFUTED', { dimension: kind === 'security' ? 'security' : 'bug',
+        ...(kind === 'security_agent' ? { agent: 'security-reviewer' } : {}),
+        skeptical_assessments: [assessment], challenge: 'validator_terminal' });
+      const args = proofArgs({ checkpoints: { challenge: challengeOutput({ findings: [refuted] }) } });
+      let payload;
+      const ctx = makeCtx(args, { onPersist: (p) => { payload = p; } });
+      const agent = ctx.agent;
+      ctx.agent = (prompt, dispatch) => dispatch.label.startsWith('cite-')
+        ? citationEnvelope(prompt, args, () => 'matched', (r) => r.request.request_id !== 'second-claim' || provenance === 'outside'
+          ? [] : provenance === 'added' ? [11] : undefined) : agent(prompt, dispatch);
+      assert.equal((await runWith(ctx, args)).ok, true);
+      assert.equal(payload.findings[0].disposition, kind === 'bug' || provenance === 'outside' ? 'eliminate' : 'held_back',
+        `${stage}/${kind}/${provenance}`);
+      assert.equal(payload.postReview.length, 0);
     }
   }
 });

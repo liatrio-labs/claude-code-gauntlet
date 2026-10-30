@@ -220,7 +220,7 @@ def run_citations(
         write_atomic(ledger_path, json.dumps(ledger, ensure_ascii=True))
         source = SourceAdapter(Path(root), "local", None)
         store = None
-        added_lines: dict[str, list[int]] | None = None
+        facts = None
         try:
             diff = Path(args.diff_file).read_bytes()
             store = load_capture(
@@ -234,10 +234,6 @@ def run_citations(
             annotate_diff(diff)
             text = diff.decode("utf-8", "surrogateescape")
             facts = parse_diff(text, policy=patch_report_policy(text))
-            added_lines = {}
-            for (file, line), old_line in facts.valid_lines.items():
-                if old_line is None:
-                    added_lines.setdefault(file, []).append(line)
         except (OSError, ValueError, TypeError):
             pass
         ids = Counter(r.get("id") for r in records)
@@ -304,8 +300,13 @@ def run_citations(
                     else "unmatched"
                 )
             row = result(record, cache[key], "explicit_source_range")
-            if added_lines is not None:
-                row["added_lines"] = sorted(added_lines.get(q["file"], []))
+            if facts is not None:
+                row["added_lines"] = [
+                    line
+                    for line in range(q["line_start"], q["line_end"] + 1)
+                    if q["side"] == "head"
+                    and facts.valid_lines.get((q["file"], line), 0) is None
+                ]
             rows.append(row)
         attempts[-1]["results"] = rows
         write_atomic(ledger_path, json.dumps(ledger, ensure_ascii=True))

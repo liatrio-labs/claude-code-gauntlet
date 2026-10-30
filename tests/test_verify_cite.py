@@ -47,7 +47,11 @@ def test_citation_quote_checks_are_explicit_and_bounded(tmp_path, monkeypatch, i
         assert row["source"]["snapshot_id"] == capture["manifest_sha256"]
         if expected == "matched":
             assert row["added_lines"] == (
-                [3] if row["request"]["file"] == "source" else []
+                [3]
+                if row["request"]["file"] == "source"
+                and row["request"]["side"] == "head"
+                and row["request"]["line_start"] <= 3 <= row["request"]["line_end"]
+                else []
             )
     malformed, _, _ = call([None, q], batch="fffffff0")
     assert [r["status"] for r in malformed["result"]["citations"]] == [

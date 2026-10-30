@@ -46,7 +46,7 @@ Finding file has a source role, is proven non-documentation at base, and every c
 
 Extensions and mixed PRs prove neither whole-PR documentation scope nor irrelevance; unknown stays unknown.
 
-Exceptions: security_dimension, documentation_or_comment_claim, test_applicable_documented_convention.
+Exceptions: security_dimension, documentation_or_comment_claim, test_applicable_convention.
 
 Facts: linguist_documentation, all_changed_files_documentation, path_role.
 

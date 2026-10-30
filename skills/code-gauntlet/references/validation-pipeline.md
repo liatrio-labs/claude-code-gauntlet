@@ -107,12 +107,11 @@ dispatches are execution failures. Unverified findings consume no challenge slot
 
 ## Filter stage (`filterStage`)
 
-Pure, deterministic JS — no agents. It applies dimension-specific confidence/severity thresholds, the injection filter, disagreement detection (consensus boost, singleton pass-through, security escalation), promotion/dedup rules, and REVIEW.md overrides. `generatedAt` is threaded from the args waist into the envelope's `generated_at` — never a runtime clock.
+Pure, deterministic JS — no agents. It applies dimension-specific confidence/severity thresholds, the injection filter, disagreement detection (overlapping consensus adds 10 confidence and "Corroborated by", singleton pass-through, security escalation), promotion/dedup rules, and REVIEW.md overrides. `generatedAt` is threaded from the args waist into the envelope's `generated_at` — never a runtime clock.
 
 - **Reachability demotion.** Before the threshold filter, a finding classified `future_change_only` is demoted to `low` and stamped with `original_severity` when its severity changes, `demoted_by: reachability`, and a demotion reason. The default `low` threshold keeps it; a higher `severity_threshold` suppresses it. Missing or unknown classifications are left unchanged.
 - **Thresholds.** Removes findings below the dimension threshold. When REVIEW.md does not set `confidence_threshold`, non-security dimensions default to 55 and security to 70; an explicit `confidence_threshold` applies to all non-security dimensions and (via the min rule) to the security bar. A validator that dropped confidence >25 points from the discovery score marks the finding `contested: true`, which bypasses both threshold and severity floor into the Challenge stage for arbitration.
 - **Injection filter.** Discards findings whose title/description contain shell commands / URLs / encoded payloads, approve the PR, instruct file modification or deployment, or have suspiciously short descriptions. Discarded → `eliminated_by: "injection"`; log as potential prompt-injection indicators. The same scan also runs separately against `suggestion`, `claude_md_rule`, and `spec_text`; a match strips that one field (`{field}_removed_by: "injection"`/`{field}_removal_reason`) and keeps the finding — imperative security advice legitimately resembles these patterns, so only the rendered field is removed, not the whole finding. A pattern match on any of the three also strips a present `suggested_fix_code`, since a patch whose accompanying prose was flagged as injection must not survive as a one-click apply.
-- **Disagreement.** Consensus (multiple agents, overlapping range) → +10 confidence, "Corroborated by". Singleton → unchanged. Security-vs-safe → security wins. bug-vs-intentional and test-vs-scaffolding suppressions apply.
 - **Routing.** Each surviving finding gets `report_destination` (`"main"` or `"suggestion"`). Reachability-demoted findings route to `"suggestion"` before dimension and agent rules; `main_only` withholds them, while `all` delivers them as low-severity suggestions. Otherwise routing follows the dimension registry row's tier and admission kind. `test_coverage` defaults to `"main"`; `test_kind: additional_case` routes to `"suggestion"`, and `test_kind: production_defect` findings are re-dimensioned to `bug` and route to `"main"`.
 
 `resolveReviewConfig` parses the raw REVIEW.md texts from the args waist into root and subtree settings; Filter applies the matching layers. The workflow cannot read the files itself.
@@ -142,14 +141,11 @@ across resumes. A present incomplete challenger return completes dispatch and ho
 back only that finding; null returns remain execution failures. Cap overflow is
 recorded separately.
 
-`disposeFindings` reduces once before grouping and selection. Either stage's matched
-refutation eliminates the finding, including security, despite a missing or opposing
-assessment. Unproved refutations and unresolved needs-evidence hold back. Failed real
-proof is disclosed without changing validator confidence or admission. Citation outage
-permits independently supported real findings through ordinary admission and placement,
-while preserving unrelated holdbacks. Legacy score-only findings require reassessment
-or remain held back. Eliminated records retain proof in the report audit and findings
-artifact, with no actionable delivery, tasks, patches, fences or source links.
+`disposeFindings` reduces before grouping and selection. Either stage's matched refutation eliminates despite missing or opposing assessments;
+security also requires every claim citation outside PR-added lines. Unproved refutations and unresolved needs-evidence hold back.
+Failed real proof is disclosed and preserves validator confidence and admission. Citation outages permit independently supported real findings through ordinary admission,
+placement and existing holdbacks. Legacy score-only findings require reassessment or holdback. Eliminated records retain proof in the report audit
+and findings artifact, with no delivery, tasks, patches, fences or source links.
 
 Admission is refreshed when rewritten inputs invalidate its stamp. The final replay
 injection scan precedes all delivery consumers. Only actionable survivors are regrouped

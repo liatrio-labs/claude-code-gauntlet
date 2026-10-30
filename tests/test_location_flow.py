@@ -213,7 +213,13 @@ process.stdout.write(JSON.stringify(results));
 """
     result = subprocess.run(
         _flow_command(
-            script, work, head, base, str(output), json.dumps(cases), json.dumps(files)
+            script,
+            work,
+            head,
+            base,
+            output.as_posix(),
+            json.dumps(cases),
+            json.dumps(files),
         ),
         cwd=work,
         capture_output=True,
@@ -302,11 +308,11 @@ def test_cited_refutation_is_absent_from_delivery_and_local_actions(
     work.mkdir()
     init_git_repo(work, monkeypatch)
     source = work / "source.txt"
-    source.write_text("return old_value;\n", encoding="utf-8", newline="")
+    source.write_bytes(b"return old_value;\nreturn process(value);\n")
     git(work, "add", ".")
     git(work, "commit", "-qm", "base")
     base = git(work, "rev-parse", "HEAD")
-    source.write_text("return process(value);\n", encoding="utf-8", newline="")
+    source.write_bytes(b"return process(value);\nreturn process(value);\n")
     git(work, "add", ".")
     git(work, "commit", "-qm", "head")
     head = git(work, "rev-parse", "HEAD")
@@ -333,7 +339,7 @@ const {shellSplit}=await load('test/helpers/shellWords');
 const findings=['validator','challenger'].flatMap(stage=>['bug','security'].map(dimension=>{
  const id=`${stage}-${dimension}`;
  const assessment=skepticalReturn(id,stage,{verdict:'refuted'});
- Object.assign(assessment.citations[0],{snapshot_id:JSON.parse(capture).manifest_sha256,file:'source.txt',line_start:1,line_end:1});
+ Object.assign(assessment.citations[0],{snapshot_id:JSON.parse(capture).manifest_sha256,file:'source.txt',line_start:dimension==='security'?2:1,line_end:dimension==='security'?2:1});
  return makeFinding(id,{file:'source.txt',line_start:1,line_end:1,dimension,
   description:`REMOVED_ACTION_${id} describes a purported source defect.`,suggestion:`REMOVED_TASK_${id}`,
   code:`REMOVED_FENCE_${id}`,suggested_fix_code:`REMOVED_PATCH_${id}`,

@@ -1318,7 +1318,7 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
         "exceptions": [
             "security_dimension",
             "documentation_or_comment_claim",
-            "test_applicable_documented_convention",
+            "test_applicable_convention",
         ],
         "proof": "verified_fact",
         "outcome": "eliminate",

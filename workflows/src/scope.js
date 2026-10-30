@@ -33,7 +33,6 @@ const scopeExceptions = {
   // The producing agent counts too: a security reviewer's free-text dimension may not say "security".
   security_dimension: (f) => f.dimension === 'security' || f.agent === AGENT_SECURITY_REVIEWER,
   documentation_or_comment_claim: (f) => dimensionRow(f.dimension)?.dimension === 'comment_accuracy',
-  test_applicable_documented_convention: (f) => dimensionRow(f.dimension)?.dimension === 'convention',
   present_static_defect: (f) => f.reachability === 'current' ? true : f.reachability === 'future_change_only' ? false : null,
   test_coverage_origin: (f) => findingPolicy({ ...f, policy_subject: undefined }, false).row?.dimension === 'test_coverage',
   test_applicable_convention: (f) => dimensionRow(f.dimension)?.dimension === 'convention',
@@ -44,11 +43,11 @@ const scopeExceptions = {
   },
 };
 
-function outsideAddedLines(finding, request, start = request.line_start, end = request.line_end) {
+export function outsideAddedLines(finding, request) {
   const result = citeResult(finding, request);
   if (!matchedCitation(finding, request, request.stage) || result?.source?.verifier_version !== CITE_VERIFIER_VERSION
     || !Array.isArray(result?.added_lines) || !result.added_lines.every((line) => Number.isSafeInteger(line) && line > 0)) return null;
-  return !result.added_lines.some((line) => line >= start && line <= end);
+  return !result.added_lines.some((line) => line >= request.line_start && line <= request.line_end);
 }
 
 function skepticalScope(finding, confirmations) {
@@ -58,20 +57,21 @@ function skepticalScope(finding, confirmations) {
     return (Array.isArray(raw.scope_assessments) ? raw.scope_assessments : []).flatMap((scope) => {
       const row = EXCLUSION_CATEGORIES.find((r) => r.category === scope?.category && r.consumers.includes(a.stage));
       if (!row) return [];
-      const confirmation = confirmations.find((c) => matchesDispatchSchema(c,
+      const citations = Array.isArray(scope.citations) ? scope.citations : [];
+      const confirmed = confirmations.filter((c) => matchesDispatchSchema(c,
         DISPATCH_RESULTS['code-gauntlet:conventions-and-intent'].conventions_confirmations.items)
         && confirmations.filter((other) => other?.id === c.id).length === 1
-        && canonicalRange(finding) && c.file === finding.file && lineBucket(c.line_start, 10) === lineBucket(finding.line_start, 10));
+        && canonicalRange(finding) && c.file === finding.file && lineBucket(c.line_start, 10) === lineBucket(finding.line_start, 10))
+        .map((c) => ({ confirmation: c, proof: scopeOr(...citations
+        .filter((q) => q.file === c.file && q.side === 'head' && q.line_start <= c.line_start && q.line_end >= c.line_start)
+        .map((q) => outsideAddedLines(finding, q))) }));
+      const confirmation = (confirmed.find((c) => c.proof === true) || confirmed[0])?.confirmation;
       const exceptions = row.exceptions.map((name) => scopeExceptions[name]?.(finding));
-      const excepted = exceptions.includes(true);
-      const contradicted = ['inapplicable', 'contradicted'].includes(scope.applicability) || excepted
-        || scopePredicates[row.predicate]?.(finding) === false
-        || (row.predicate === 'confirmed_intent' && !confirmation);
-      const citations = Array.isArray(scope.citations) ? scope.citations : [];
       const intent = row.predicate !== 'confirmed_intent' ? true : scopeAnd(
         ...citations.filter((q) => q.role === 'rule').map((q) => q.side === 'old' ? true : outsideAddedLines(finding, q)),
-        confirmation ? scopeOr(...citations.filter((q) => q.file === confirmation.file && q.side === 'head')
-          .map((q) => outsideAddedLines(finding, q, confirmation.line_start, confirmation.line_start))) : false);
+        scopeOr(...confirmed.map((c) => c.proof)));
+      const contradicted = ['inapplicable', 'contradicted'].includes(scope.applicability) || exceptions.includes(true)
+        || scopePredicates[row.predicate]?.(finding) === false || intent === false;
       const proved = proof.proved && intent === true
         && !exceptions.includes(null)
         && finding.skeptical_assessments.filter((other) => other?.stage === a.stage).length === 1

@@ -4,10 +4,10 @@ import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
 import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
 import { hasAdmission } from './admission.js';
-import { assessmentGaps } from './registry.js';
+import { AGENT_SECURITY_REVIEWER, assessmentGaps } from './registry.js';
 import { citeResult } from './citeWire.js';
 import { skepticalProof } from './skepticalProof.js';
-import { scopeDecisions } from './scope.js';
+import { outsideAddedLines, scopeDecisions } from './scope.js';
 
 function skepticalOutcome(finding) {
   const reasons = [];
@@ -28,8 +28,12 @@ function skepticalOutcome(finding) {
       const unavailable = requests.some((q) => citeResult(finding, q)?.status === 'unavailable');
       reasons.push({ reason: unavailable ? 'cite_unavailable' : 'cite_unmatched', stage, verdict: raw.verdict });
     }
-    if (raw.verdict === 'refuted' && proved) proven = { reason: 'refuted', stage,
-      request_ids: requests.map((q) => q.request_id) };
+    if (raw.verdict === 'refuted' && proved) {
+      if ((finding.dimension !== 'security' && finding.agent !== AGENT_SECURITY_REVIEWER)
+        || requests.filter((q) => q.role === 'claim').every((q) => outsideAddedLines(finding, q) === true))
+        proven = { reason: 'refuted', stage, request_ids: requests.map((q) => q.request_id) };
+      else reasons.push({ reason: 'held_back', stage, verdict: raw.verdict });
+    }
     // A malformed real proof is diagnostic; missing semantic assessments still close delivery.
     const { semanticErrors } = assessmentGaps(assessment);
     if (semanticErrors.length) reasons.push({ reason: 'held_back', stage, missing_fields: semanticErrors });
