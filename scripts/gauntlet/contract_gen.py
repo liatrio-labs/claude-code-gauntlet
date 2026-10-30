@@ -142,6 +142,8 @@ _REGISTRY_FIELDS = (
     "skepticalFindingProperties: m.SKEPTICAL_FINDING_PROPERTIES",
     "scopeAssessmentSchema: m.SCOPE_ASSESSMENT_SCHEMA",
     "exclusionCategories: m.EXCLUSION_CATEGORIES",
+    "exclusionStages: m.EXCLUSION_STAGES",
+    "exclusionProofs: m.EXCLUSION_PROOFS",
     "exclusionFactDescriptors: m.EXCLUSION_FACT_DESCRIPTORS",
     "anchorLimits: m.ANCHOR_LIMITS",
     "locationRights: m.LOCATION_RIGHTS",
@@ -604,6 +606,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "ExclusionCategory": [
             row["category"] for row in identity["exclusionCategories"]
         ],
+        "ExclusionStage": identity["exclusionStages"],
+        "ExclusionOutcome": [*identity["dispositions"], "admission"],
+        "ExclusionProof": identity["exclusionProofs"],
         "Dimension": [row["dimension"] for row in identity["dimensionRows"]],
         "DeltaKey": delta_keys,
         "DeltaValueField": delta_value_fields,
@@ -645,6 +650,18 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
 
     def schema_type(schema: Any, name: str, *, public_enum: bool = False) -> str:
         if isinstance(schema, dict) and "enum" in schema:
+            for field, alias in (
+                ("Stage", "SkepticalStage"),
+                ("Category", "ExclusionCategory"),
+            ):
+                if name.endswith(field) and set(schema["enum"]) <= set(
+                    enum_types[alias]
+                ):
+                    return alias
+            if not public_enum:
+                for alias, values in enum_types.items():
+                    if values == schema["enum"]:
+                        return alias
             # Private aliases cannot shadow generated TypedDict class names.
             base = name if public_enum else f"_{name}_Literal"
             alias = base
@@ -811,7 +828,6 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "RIGHT_ELIGIBILITY": identity["rightEligibility"],
         "STAGE_COSTS": identity["stageCosts"],
         "CITATION_REQUEST_SCHEMA": identity["citationRequestSchema"],
-        "SKEPTICAL_RETURN_SCHEMAS": identity["skepticalReturnSchemas"],
         "EXCLUSION_CATEGORIES": identity["exclusionCategories"],
         "EXCLUSION_FACT_DESCRIPTORS": identity["exclusionFactDescriptors"],
         "BRAND_MARK": identity["brand"]["mark"],
@@ -836,7 +852,31 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "VERIFY_SLICE_FIELDS": "tuple[str, ...]",
         "VERIFY_REFERENCE_DESCRIPTORS": "Mapping[str, VerifyReferenceKind]",
         "DIMENSION_ROWS": "list[Mapping[str, Any]]",
+        "EXCLUSION_CATEGORIES": "list[ExclusionRow]",
     }
+    lines.extend(
+        [
+            "",
+            "class _ExclusionRowRequired(TypedDict):",
+            "    category: ExclusionCategory",
+            "    stage: ExclusionStage",
+            "    predicate: str",
+            "    facts: list[str]",
+            "    applicability: str",
+            "    exceptions: list[str]",
+            "    proof: ExclusionProof",
+            "    outcome: ExclusionOutcome",
+            "    reference: str",
+            "    consumers: list[str]",
+            "    citation_roles: list[str]",
+            "",
+            "",
+            "class ExclusionRow(_ExclusionRowRequired, total=False):",
+            "    basenames: list[str]",
+            "",
+            "",
+        ]
+    )
     for name, value in values.items():
         annotation = f": {annotations[name]}" if name in annotations else ""
         prefix = f"{name}{annotation} = "
@@ -1553,6 +1593,8 @@ def skeptical_targets(registry: Mapping[str, Any]) -> dict[str, str]:
         ]
         lines.extend(["## Scope rows", ""])
         for row in registry["exclusionCategories"]:
+            if stage not in row["consumers"]:
+                continue
             lines.extend(
                 [
                     f"- `{row['category']}`: {row['applicability']} Exceptions: {', '.join(row['exceptions']) or 'none'}. Proof: `{row['proof']}`; outcome: `{row['outcome']}`. {row['reference']}"

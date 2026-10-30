@@ -746,8 +746,15 @@ const ADMISSION_STAMP_PROPERTIES = deepFreeze({
 });
 const VERIFY_FACT_KEYS = deepFreeze(Object.keys(VERIFY_FACT_PROPERTIES));
 const REACHABILITY_VALUES = deepFreeze(['current', 'future_change_only', 'uncertain']);
+const EXCLUSION_STAGES = deepFreeze(['early', 'admission', 'post_validation', 'skeptical']);
+const EXCLUSION_PROOFS = deepFreeze(['verified_fact', 'admission', 'citation']);
+const EXCLUSION_NEW_FACTS = deepFreeze([
+  'cross_file_refs', 'in_diff', 'linguist-generated', 'linguist-vendored', 'generated_marker',
+  'linguist-documentation', 'all_changed_files_documentation', 'lockfile_basename', 'mechanical_change',
+  'admission', 'reachability', 'conventions_confirmation',
+]);
 const EXCLUSION_CATEGORIES = deepFreeze([
-  { category: 'pre_existing', stage: 'early', predicate: 'blame_pre_existing', facts: ['git_blame', 'affected_cross_file_refs'],
+  { category: 'pre_existing', stage: 'early', predicate: 'blame_pre_existing', facts: ['blame_class', 'blame_source', 'cross_file_refs'],
     applicability: 'Actual git_blame pre-existence with no affected cross-file references.', exceptions: ['cross_file_effect_created_by_pr'],
     proof: 'verified_fact', outcome: 'report_only', reference: 'Origin surfaced, off-diff placement and descriptions do not prove pre-existence.' },
   { category: 'untouched_line', stage: 'early', predicate: 'off_diff', facts: ['in_diff'],
@@ -767,7 +774,7 @@ const EXCLUSION_CATEGORIES = deepFreeze([
   { category: 'general_quality', stage: 'admission', predicate: 'canonical_admission', facts: ['admission'],
     applicability: 'Consume canonical quality admission and its present_defect promotion.', exceptions: ['named_in_repo_convention', 'confirmed_present_defect'],
     proof: 'admission', outcome: 'admission', reference: 'A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.' },
-  { category: 'latent', stage: 'early', predicate: 'future_change_only', facts: ['reachability'],
+  { category: 'latent', stage: 'post_validation', predicate: 'future_change_only', facts: ['reachability'],
     applicability: 'Existing future-change-only reachability assessment appropriate to the actual claim.', exceptions: ['present_static_defect'],
     proof: 'verified_fact', outcome: 'body', reference: 'Placement after admission and vetting; no invented runtime trigger or early challenge exclusion.' },
   { category: 'test_only_pattern', stage: 'skeptical', predicate: 'harmless_test_pattern', facts: ['path_role'],
@@ -788,6 +795,14 @@ const EXCLUSION_CATEGORIES = deepFreeze([
     reference: 'The side record is only a gating fact, never a finding or proof; description and intentional wording are insufficient.' },
 ].map((row) => ({ ...row, consumers: row.stage === 'skeptical' ? ['validator', 'challenger'] : [row.stage],
   citation_roles: row.proof === 'citation' ? ['rule', 'applicability'] : [] })));
+for (const row of EXCLUSION_CATEGORIES) {
+  if (![...DISPOSITIONS, 'admission'].includes(row.outcome)) throw new Error(`Unknown exclusion outcome: ${row.outcome}`);
+  if (!EXCLUSION_STAGES.includes(row.stage)) throw new Error(`Unknown exclusion stage: ${row.stage}`);
+  if (!EXCLUSION_PROOFS.includes(row.proof)) throw new Error(`Unknown exclusion proof: ${row.proof}`);
+  for (const fact of row.facts) {
+    if (![...VERIFY_FACT_KEYS, ...EXCLUSION_NEW_FACTS].includes(fact)) throw new Error(`Unknown exclusion fact: ${fact}`);
+  }
+}
 const EXCLUSION_BY_CATEGORY = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row])));
 const EXCLUSION_FACT_DESCRIPTORS = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row.facts])));
 const SKEPTICAL_IDENTITY = {
@@ -807,14 +822,18 @@ const citationRequests = (roles) => ({ type: 'array', minItems: roles.length,
   maxItems: CITATION_REQUEST_PROPERTIES.role.enum.length, items: CITATION_REQUEST_SCHEMA,
   allOf: roles.map((role) => ({ contains: { type: 'object', properties: { role: { const: role } }, required: ['role'] } })),
 });
-const SCOPE_ASSESSMENT_SCHEMA = deepFreeze({ ...closedDispatchRow({
-  ...SKEPTICAL_IDENTITY,
-  category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) },
-  applicability: { type: 'string', enum: ['applicable', 'inapplicable', 'contradicted'] },
-  citations: citationRequests([]),
-}), anyOf: EXCLUSION_CATEGORIES.map((row) => ({
-  properties: { category: { const: row.category }, citations: citationRequests(row.citation_roles) },
-})) });
+function scopeAssessmentSchema(stages) {
+  const rows = EXCLUSION_CATEGORIES.filter((row) => row.consumers.some((stage) => stages.includes(stage)));
+  return { ...closedDispatchRow({
+    ...SKEPTICAL_IDENTITY, stage: { type: 'string', enum: stages },
+    category: { type: 'string', enum: rows.map((row) => row.category) },
+    applicability: { type: 'string', enum: ['applicable', 'inapplicable', 'contradicted'] },
+    citations: citationRequests([]),
+  }), anyOf: rows.flatMap((row) => stages.filter((stage) => row.consumers.includes(stage)).map((stage) => ({
+    properties: { stage: { const: stage }, category: { const: row.category }, citations: citationRequests(row.citation_roles) },
+  }))) };
+}
+const SCOPE_ASSESSMENT_SCHEMA = deepFreeze(scopeAssessmentSchema(SKEPTICAL_IDENTITY.stage.enum));
 const VERDICT_RETURN_PROPERTIES = deepFreeze({
   ...SKEPTICAL_IDENTITY, verdict: { type: 'string', enum: ['real', 'refuted', 'needs_evidence'] },
   citations: citationRequests(['claim']), missing_evidence: { type: 'string', minLength: 1 },
@@ -826,6 +845,7 @@ const VERDICT_VARIANTS = VERDICT_RETURN_PROPERTIES.verdict.enum.map((verdict) =>
 }));
 const SKEPTICAL_RETURN_SCHEMAS = deepFreeze(Object.fromEntries(SKEPTICAL_IDENTITY.stage.enum.map((stage) => {
   const properties = { ...VERDICT_RETURN_PROPERTIES, stage: { type: 'string', enum: [stage] },
+    scope_assessments: { type: 'array', items: scopeAssessmentSchema([stage]) },
     ...(stage === 'validator' ? { confidence: { type: 'number' }, justification: { type: 'string' },
       reachability: { type: 'string', enum: REACHABILITY_VALUES }, ...VALIDATION_RETURN_PROPERTIES } : {}) };
   return [stage, { ...closedDispatchRow(properties,
@@ -838,14 +858,14 @@ const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
     detail: { type: 'string' },
   }) },
   scope_facts: { type: 'array', items: closedDispatchRow({
-    category: SCOPE_ASSESSMENT_SCHEMA.properties.category, predicate: { type: 'string' },
+    category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) }, predicate: { type: 'string' },
     value: { type: ['boolean', 'null'] }, snapshot_id: CITATION_REQUEST_PROPERTIES.snapshot_id,
   }) },
   scope_decisions: { type: 'array', items: SCOPE_ASSESSMENT_SCHEMA },
   reduction_provenance: closedDispatchRow({
     finding_id: SKEPTICAL_IDENTITY.finding_id, disposition: { type: 'string', enum: DISPOSITIONS },
     reason: { type: 'string', enum: ['report_only', 'held_back', 'body_routed', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable'] },
-    category: SCOPE_ASSESSMENT_SCHEMA.properties.category, stage: SKEPTICAL_IDENTITY.stage,
+    category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) }, stage: SKEPTICAL_IDENTITY.stage,
     request_ids: { type: 'array', items: { type: 'string' } },
   }, ['category', 'stage', 'request_ids']),
 });
