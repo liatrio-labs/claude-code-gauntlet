@@ -2,9 +2,9 @@ import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
-import { modelFor, VALIDATION_RETURN_PROPERTIES, ADMISSION_PREDICATES, DIMENSIONS, requiredAssessments } from './registry.js';
+import { modelFor, VALIDATION_RETURN_PROPERTIES, ADMISSION_PREDICATES, DIMENSIONS, requiredAssessments, REACHABILITY_VALUES } from './registry.js';
 import { INT_POLICY, coerceInt } from './wire.js';
-import { applyValidations, REACHABILITY_VALUES, validationRejections } from './applyValidations.js';
+import { applyValidations, validationRejections } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
 import { applyChallenges, rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
