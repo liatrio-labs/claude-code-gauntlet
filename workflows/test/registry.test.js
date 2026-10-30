@@ -104,7 +104,7 @@ test('exclusion rows use verified blame facts and defer latent placement until a
   const row = (category) => EXCLUSION_CATEGORIES.find((item) => item.category === category);
   assert.equal(row('latent').stage, 'post_validation');
   assert.deepEqual(row('latent').consumers, ['post_validation']);
-  assert.deepEqual(row('pre_existing').facts, ['blame_class', 'blame_source', 'cross_file_refs']);
+  assert.deepEqual(row('pre_existing').facts, ['blame_class', 'blame_source', 'in_diff']);
   assert.ok(EXCLUSION_NEW_FACTS.includes('in_diff'));
 });
 

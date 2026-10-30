@@ -558,6 +558,7 @@ def _candidate_artifacts(
                     "reduction_detail",
                     "reduction_provenance",
                     "scope_decisions",
+                    "scope_input_proof",
                     "eliminated_by",
                     "elimination_reason",
                     "admission",

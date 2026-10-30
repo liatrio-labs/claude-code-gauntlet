@@ -93,7 +93,6 @@ For convention findings, `rule_source` selects the heading for `claude_md_rule`:
 |-------|------|-----------|----------|-------------|
 | `hidden_errors` | string | bug | no | How an error is hidden or silently swallowed. |
 | `attack_vector` | string | security | yes | Concrete attack path and its preconditions. |
-| `security_kind` | string | security | no | Dependency vulnerability claim or another security claim; omit when unknown. |
 | `affected_consumers` | array | cross_file_impact | yes | Repository paths of consumers affected by the change. |
 | `criticality` | number | test_coverage | yes | Impact of the untested behavior on a 1 to 10 scale. |
 | `failure_scenario` | string | test_coverage | yes | Concrete input or condition and the failure it exposes. |

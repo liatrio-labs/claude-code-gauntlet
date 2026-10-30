@@ -83,7 +83,6 @@ DeltaValueField = Literal[
 ]
 VerifyReferenceKind = Literal["search_paths", "reference_list", "reference"]
 EffectiveTestKind = Literal["defective_test", "production_defect"]
-SecurityKind = Literal["dependency_vulnerability", "other"]
 TestKind = Literal[
     "defective_test", "critical_gap", "production_defect", "additional_case"
 ]
@@ -257,6 +256,15 @@ VERIFY_REFERENCE_DESCRIPTORS: Mapping[str, VerifyReferenceKind] = {
     "duplicate_of": "reference",
     "precedent": "reference",
 }
+
+SCOPE_FACT_KEYS = (
+    "linguist_generated",
+    "linguist_vendored",
+    "linguist_documentation",
+    "generated_marker",
+    "all_changed_files_documentation",
+    "lockfile_basename",
+)
 
 DISPATCH_RESULTS = {
     "code-gauntlet:conventions-and-intent": {
@@ -527,11 +535,6 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
             "attack_vector": {
                 "type": "string",
                 "description": "Concrete attack path and its preconditions.",
-            },
-            "security_kind": {
-                "type": "string",
-                "enum": ["dependency_vulnerability", "other"],
-                "description": "Dependency vulnerability claim or another security claim; omit when unknown.",
             },
         },
         "requiredExtra": ["attack_vector"],
@@ -1267,9 +1270,9 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
         "category": "pre_existing",
         "stage": "early",
         "predicate": "blame_pre_existing",
-        "facts": ["blame_class", "blame_source", "cross_file_refs"],
-        "applicability": "Actual git_blame pre-existence with no affected cross-file references.",
-        "exceptions": ["cross_file_effect_created_by_pr"],
+        "facts": ["blame_class", "blame_source", "in_diff"],
+        "applicability": "Actual git_blame pre-existence and verified in_diff=false; git_blame provenance excludes cross-file effects.",
+        "exceptions": [],
         "proof": "verified_fact",
         "outcome": "report_only",
         "reference": "Origin surfaced, off-diff placement and descriptions do not prove pre-existence.",
@@ -1293,12 +1296,12 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
         "category": "generated_vendored",
         "stage": "early",
         "predicate": "generated_or_vendored",
-        "facts": ["linguist-generated", "linguist-vendored", "generated_marker"],
-        "applicability": "git check-attr at captured head or generated markers in the first source lines.",
-        "exceptions": ["security_dependency_vulnerability_claim"],
+        "facts": ["linguist_generated", "linguist_vendored", "generated_marker"],
+        "applicability": "git check-attr at captured merge base or the same canonical header in the first source lines at head and base; explicit -linguist-generated overrides markers.",
+        "exceptions": ["security_dimension"],
         "proof": "verified_fact",
         "outcome": "eliminate",
-        "reference": "A conventions word is not classification; the security exception requires no confirmed vulnerable version.",
+        "reference": "PR-controlled classification cannot exclude its own changes; security findings survive.",
         "consumers": ["early"],
         "citation_roles": [],
     },
@@ -1307,12 +1310,13 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
         "stage": "early",
         "predicate": "documentation_only_code_claim",
         "facts": [
-            "linguist-documentation",
+            "linguist_documentation",
             "all_changed_files_documentation",
             "path_role",
         ],
-        "applicability": "Finding file has a source role and every changed file is documentation, verified at captured head by git check-attr.",
+        "applicability": "Finding file has a source role, is proven non-documentation at base, and every changed file is documentation at base.",
         "exceptions": [
+            "security_dimension",
             "documentation_or_comment_claim",
             "test_applicable_documented_convention",
         ],
@@ -1325,8 +1329,8 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
     {
         "category": "lockfile",
         "stage": "early",
-        "predicate": "mechanical_lockfile",
-        "facts": ["lockfile_basename", "mechanical_change"],
+        "predicate": "lockfile",
+        "facts": ["lockfile_basename"],
         "basenames": [
             "package-lock.json",
             "npm-shrinkwrap.json",
@@ -1340,11 +1344,11 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
             "composer.lock",
             "packages.lock.json",
         ],
-        "applicability": "Closed basename list and verified mechanical scope.",
-        "exceptions": ["security_dependency_vulnerability_claim"],
+        "applicability": "Lockfile scope is basename-only membership in this closed list.",
+        "exceptions": ["security_dimension"],
         "proof": "verified_fact",
         "outcome": "eliminate",
-        "reference": "The security exception is claim-based and needs no prior vulnerable-version confirmation.",
+        "reference": "Security findings survive regardless of the lockfile basename.",
         "consumers": ["early"],
         "citation_roles": [],
     },
@@ -1446,19 +1450,19 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
 ]
 
 EXCLUSION_FACT_DESCRIPTORS = {
-    "pre_existing": ["blame_class", "blame_source", "cross_file_refs"],
+    "pre_existing": ["blame_class", "blame_source", "in_diff"],
     "untouched_line": ["in_diff"],
     "generated_vendored": [
-        "linguist-generated",
-        "linguist-vendored",
+        "linguist_generated",
+        "linguist_vendored",
         "generated_marker",
     ],
     "docs_only": [
-        "linguist-documentation",
+        "linguist_documentation",
         "all_changed_files_documentation",
         "path_role",
     ],
-    "lockfile": ["lockfile_basename", "mechanical_change"],
+    "lockfile": ["lockfile_basename"],
     "general_quality": ["admission"],
     "latent": ["reachability"],
     "test_only_pattern": ["path_role"],
@@ -1503,7 +1507,7 @@ CODE_OWNED_HEADINGS = [
 
 DETAIL_FIELDS_BY_DIMENSION = {
     "bug": ("hidden_errors",),
-    "security": ("attack_vector", "security_kind"),
+    "security": ("attack_vector",),
     "cross_file_impact": ("affected_consumers",),
     "test_coverage": (
         "criticality",
@@ -2184,7 +2188,6 @@ class ScopeDecisionsItem(TypedDict, total=False):
     category: ExclusionCategory
     applies: bool | None
     outcome: Disposition
-    input_proof: str
     reason: _ReductionDetailItemReason_Literal
     request_ids: list[str]
     confirmation_id: str
@@ -2201,7 +2204,6 @@ class ReductionProvenance(TypedDict, total=False):
 
 class ScopeFacts(TypedDict, total=False):
     file: str
-    head: str
     snapshot_id: str
     linguist_generated: bool | None
     linguist_vendored: bool | None
@@ -2209,7 +2211,6 @@ class ScopeFacts(TypedDict, total=False):
     generated_marker: bool | None
     all_changed_files_documentation: bool | None
     lockfile_basename: bool | None
-    mechanical_change: bool | None
 
 
 class ResolvedReferencesSearchedPathsItem(TypedDict):
@@ -2351,6 +2352,7 @@ class FindingMetadata(FindingFacts, total=False):
     cite_results: list[CiteResultsItem]
     reduction_detail: list[ReductionDetailItem]
     scope_decisions: list[ScopeDecisionsItem]
+    scope_input_proof: str
     reduction_provenance: ReductionProvenance
     origin_dimension: Dimension
     effective_test_kind: EffectiveTestKind
@@ -2366,7 +2368,6 @@ class FindingMetadata(FindingFacts, total=False):
     sites: list[ResolvedSitesItem]
     hidden_errors: str
     attack_vector: str
-    security_kind: SecurityKind
     affected_consumers: list[str]
     criticality: float
     failure_scenario: str

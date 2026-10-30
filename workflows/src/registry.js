@@ -174,7 +174,7 @@ const QUALITY_ADMISSION = {
 export const DIMENSIONS = deepFreeze([
   { dimension: 'bug', core: true, agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: { type: 'string', description: 'How an error is hidden or silently swallowed.' } },
     requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'security', core: true, agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: { type: 'string', description: 'Concrete attack path and its preconditions.' }, security_kind: { type: 'string', enum: ['dependency_vulnerability', 'other'], description: 'Dependency vulnerability claim or another security claim; omit when unknown.' } },
+  { dimension: 'security', core: true, agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: { type: 'string', description: 'Concrete attack path and its preconditions.' } },
     requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: null },
   { dimension: 'cross_file_impact', core: true, agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
     schemaExtra: { affected_consumers: { type: 'array', description: 'Repository paths of consumers affected by the change.', items: { type: 'string', $comment: 'repo-path' } } }, requiredExtra: ['affected_consumers'],
@@ -246,14 +246,14 @@ const SEARCH_FACT_SCHEMA = { type: 'object', properties: {
   path: { type: 'string' }, available: { type: 'boolean' }, kind: { type: 'string', enum: ['file', 'directory', 'unknown'] },
 }, required: ['path', 'available', 'kind'], additionalProperties: false };
 
+export const SCOPE_FACT_KEYS = deepFreeze(['linguist_generated', 'linguist_vendored', 'linguist_documentation',
+  'generated_marker', 'all_changed_files_documentation', 'lockfile_basename']);
 export const VERIFY_FACT_PROPERTIES = deepFreeze({
   path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
   scope_facts: { type: 'object', properties: {
-    file: { type: 'string' }, head: { type: 'string' }, snapshot_id: { type: 'string' },
-    ...Object.fromEntries(['linguist_generated', 'linguist_vendored', 'linguist_documentation',
-      'generated_marker', 'all_changed_files_documentation', 'lockfile_basename', 'mechanical_change']
-      .map((key) => [key, { type: ['boolean', 'null'] }])),
-  }, required: ['file', 'head', 'snapshot_id'], additionalProperties: false },
+    file: { type: 'string' }, snapshot_id: { type: 'string' },
+    ...Object.fromEntries(SCOPE_FACT_KEYS.map((key) => [key, { type: ['boolean', 'null'] }])),
+  }, required: ['file', 'snapshot_id'], additionalProperties: false },
   blame_class: { type: 'string', enum: ['new', 'pre_existing', 'surfaced', 'unknown'] },
   blame_source: { type: 'string', enum: ['git_blame', 'local_diff', 'cross_file_refs', 'off_diff', 'removed_loss', 'unavailable'] },
   resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, kind]) => {
@@ -311,29 +311,28 @@ export const REACHABILITY_VALUES = deepFreeze(['current', 'future_change_only', 
 export const EXCLUSION_STAGES = deepFreeze(['early', 'admission', 'post_validation', 'skeptical']);
 export const EXCLUSION_PROOFS = deepFreeze(['verified_fact', 'admission', 'citation']);
 export const EXCLUSION_NEW_FACTS = deepFreeze([
-  'cross_file_refs', 'in_diff', 'linguist-generated', 'linguist-vendored', 'generated_marker',
-  'linguist-documentation', 'all_changed_files_documentation', 'lockfile_basename', 'mechanical_change',
+  'in_diff', ...SCOPE_FACT_KEYS,
   'admission', 'reachability', 'conventions_confirmation',
 ]);
 
 export const EXCLUSION_CATEGORIES = deepFreeze([
-  { category: 'pre_existing', stage: 'early', predicate: 'blame_pre_existing', facts: ['blame_class', 'blame_source', 'cross_file_refs'],
-    applicability: 'Actual git_blame pre-existence with no affected cross-file references.', exceptions: ['cross_file_effect_created_by_pr'],
+  { category: 'pre_existing', stage: 'early', predicate: 'blame_pre_existing', facts: ['blame_class', 'blame_source', 'in_diff'],
+    applicability: 'Actual git_blame pre-existence and verified in_diff=false; git_blame provenance excludes cross-file effects.', exceptions: [],
     proof: 'verified_fact', outcome: 'report_only', reference: 'Origin surfaced, off-diff placement and descriptions do not prove pre-existence.' },
   { category: 'untouched_line', stage: 'early', predicate: 'off_diff', facts: ['in_diff'],
     applicability: 'Verified in_diff=false; unknown is not false.', exceptions: [],
     proof: 'verified_fact', outcome: 'body', reference: 'Placement only after admission and vetting; still competes for challenge capacity.' },
-  { category: 'generated_vendored', stage: 'early', predicate: 'generated_or_vendored', facts: ['linguist-generated', 'linguist-vendored', 'generated_marker'],
-    applicability: 'git check-attr at captured head or generated markers in the first source lines.', exceptions: ['security_dependency_vulnerability_claim'],
-    proof: 'verified_fact', outcome: 'eliminate', reference: 'A conventions word is not classification; the security exception requires no confirmed vulnerable version.' },
-  { category: 'docs_only', stage: 'early', predicate: 'documentation_only_code_claim', facts: ['linguist-documentation', 'all_changed_files_documentation', 'path_role'],
-    applicability: 'Finding file has a source role and every changed file is documentation, verified at captured head by git check-attr.',
-    exceptions: ['documentation_or_comment_claim', 'test_applicable_documented_convention'], proof: 'verified_fact', outcome: 'eliminate',
+  { category: 'generated_vendored', stage: 'early', predicate: 'generated_or_vendored', facts: ['linguist_generated', 'linguist_vendored', 'generated_marker'],
+    applicability: 'git check-attr at captured merge base or the same canonical header in the first source lines at head and base; explicit -linguist-generated overrides markers.', exceptions: ['security_dimension'],
+    proof: 'verified_fact', outcome: 'eliminate', reference: 'PR-controlled classification cannot exclude its own changes; security findings survive.' },
+  { category: 'docs_only', stage: 'early', predicate: 'documentation_only_code_claim', facts: ['linguist_documentation', 'all_changed_files_documentation', 'path_role'],
+    applicability: 'Finding file has a source role, is proven non-documentation at base, and every changed file is documentation at base.',
+    exceptions: ['security_dimension', 'documentation_or_comment_claim', 'test_applicable_documented_convention'], proof: 'verified_fact', outcome: 'eliminate',
     reference: 'Extensions and mixed PRs prove neither whole-PR documentation scope nor irrelevance; unknown stays unknown.' },
-  { category: 'lockfile', stage: 'early', predicate: 'mechanical_lockfile', facts: ['lockfile_basename', 'mechanical_change'],
+  { category: 'lockfile', stage: 'early', predicate: 'lockfile', facts: ['lockfile_basename'],
     basenames: ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'Cargo.lock', 'Gemfile.lock', 'poetry.lock', 'Pipfile.lock', 'uv.lock', 'composer.lock', 'packages.lock.json'],
-    applicability: 'Closed basename list and verified mechanical scope.', exceptions: ['security_dependency_vulnerability_claim'],
-    proof: 'verified_fact', outcome: 'eliminate', reference: 'The security exception is claim-based and needs no prior vulnerable-version confirmation.' },
+    applicability: 'Lockfile scope is basename-only membership in this closed list.', exceptions: ['security_dimension'],
+    proof: 'verified_fact', outcome: 'eliminate', reference: 'Security findings survive regardless of the lockfile basename.' },
   { category: 'general_quality', stage: 'admission', predicate: 'canonical_admission', facts: ['admission'],
     applicability: 'Consume canonical quality admission and its present_defect promotion.', exceptions: ['named_in_repo_convention', 'confirmed_present_defect'],
     proof: 'admission', outcome: 'admission', reference: 'A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.' },
@@ -455,11 +454,12 @@ export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
   scope_decisions: { type: 'array', items: { ...closedDispatchRow({
     stage: { type: 'string', enum: ['early', 'post_validation', ...SKEPTICAL_IDENTITY.stage.enum] },
     category: { type: 'string', enum: EXCLUSION_CATEGORIES.filter((row) => row.stage !== 'admission').map((row) => row.category) },
-    applies: { type: ['boolean', 'null'] }, outcome: { type: 'string', enum: DISPOSITIONS }, input_proof: { type: 'string' },
+    applies: { type: ['boolean', 'null'] }, outcome: { type: 'string', enum: DISPOSITIONS },
     reason: REDUCTION_REASON_SCHEMA, request_ids: { type: 'array', items: { type: 'string' } }, confirmation_id: { type: 'string' },
   }, ['reason', 'request_ids', 'confirmation_id']), anyOf: EXCLUSION_CATEGORIES.filter((row) => row.stage !== 'admission').flatMap((row) => row.consumers.map((stage) => ({
     properties: { stage: { const: stage }, category: { const: row.category }, outcome: { const: row.outcome } },
   }))) } },
+  scope_input_proof: { type: 'string' },
   reduction_provenance: closedDispatchRow({
     finding_id: SKEPTICAL_IDENTITY.finding_id, disposition: { type: 'string', enum: DISPOSITIONS },
     reason: REDUCTION_REASON_SCHEMA,

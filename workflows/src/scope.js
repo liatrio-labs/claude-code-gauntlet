@@ -1,4 +1,4 @@
-import { EXCLUSION_CATEGORIES, SKEPTICAL_FINDING_PROPERTIES, SCOPE_ASSESSMENT_SCHEMA, DISPATCH_RESULTS, acceptSkepticalReturn, assessmentGaps, matchesDispatchSchema, dimensionRow, findingPolicy } from './registry.js';
+import { AGENT_SECURITY_REVIEWER, EXCLUSION_CATEGORIES, SCOPE_FACT_KEYS, SCOPE_ASSESSMENT_SCHEMA, DISPATCH_RESULTS, acceptSkepticalReturn, assessmentGaps, matchesDispatchSchema, dimensionRow, findingPolicy } from './registry.js';
 import { canonicalRange } from './location.js';
 import { fnv1a32 } from './wire.js';
 import { citeChecksum, collectCitations, matchedCitation } from './citeWire.js';
@@ -6,30 +6,33 @@ import { lineBucket } from './filterFindings.js';
 import { validatorAssessment } from './applyValidations.js';
 
 const scopeRows = EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage));
-const scopeInputFields = ['id', 'file', 'agent', 'dimension', 'origin_dimension', 'test_kind', 'quality_basis', 'security_kind', 'path_role', 'cross_file_refs',
+const scopeInputFields = ['id', 'file', 'agent', 'dimension', 'origin_dimension', 'test_kind', 'quality_basis', 'path_role',
   'blame_class', 'blame_source', 'scope_facts', 'diff_validation', 'reachability', 'validation', 'admission',
   'line_start', 'line_end', 'location_status', 'policy_subject', 'skeptical_assessments', 'cite_results'];
 const scopeAnd = (...values) => values.includes(false) ? false : values.every((value) => value === true) ? true : null;
 const scopeOr = (...values) => values.includes(true) ? true : values.every((value) => value === false) ? false : null;
-const capturedScope = (f) => f.scope_facts?.file === f.file && f.scope_facts.head && f.scope_facts.snapshot_id ? f.scope_facts : {};
 const exceptionRequests = (f) => collectCitations([f]).filter((r) => r.request?.role === 'exception'
   && f.skeptical_assessments.some((a) => a.stage === r.stage && (a.raw ?? a).verdict === 'real')).map((r) => r.request);
+const capturedScope = (f) => f.scope_facts?.file === f.file && f.scope_facts.snapshot_id
+  ? Object.fromEntries(SCOPE_FACT_KEYS.map((key) => [key, f.scope_facts[key]])) : {};
+const offDiff = (f) => f.diff_validation?.in_diff == null ? null : f.diff_validation.in_diff === false;
 const scopePredicates = {
-  blame_pre_existing: (f) => scopeAnd(capturedScope(f).file ? true : null,
+  blame_pre_existing: (f) => scopeAnd(Object.keys(capturedScope(f)).length > 0,
     f.blame_class === 'unknown' || !f.blame_class ? null : f.blame_class === 'pre_existing',
-    f.blame_source === 'git_blame', Array.isArray(f.cross_file_refs) ? f.cross_file_refs.length === 0 : null),
-  off_diff: (f) => f.diff_validation?.in_diff == null ? null : f.diff_validation.in_diff === false,
-  generated_or_vendored: (f) => scopeOr(...['linguist_generated', 'linguist_vendored', 'generated_marker'].map((key) => capturedScope(f)[key])),
-  documentation_only_code_claim: (f) => scopeAnd(capturedScope(f).all_changed_files_documentation,
-    f.path_role === 'unknown' || !f.path_role ? null : f.path_role === 'source'),
-  mechanical_lockfile: (f) => scopeAnd(capturedScope(f).lockfile_basename, capturedScope(f).mechanical_change),
+    f.blame_source === 'git_blame', offDiff(f)),
+  off_diff: offDiff,
+  generated_or_vendored: (f) => { const facts = capturedScope(f); return scopeOr(facts.linguist_generated, facts.linguist_vendored,
+    facts.linguist_generated === false ? false : facts.generated_marker); },
+  documentation_only_code_claim: (f) => { const facts = capturedScope(f); return scopeAnd(facts.all_changed_files_documentation,
+    facts.linguist_documentation == null ? null : facts.linguist_documentation === false,
+    f.path_role === 'unknown' || !f.path_role ? null : f.path_role === 'source'); },
+  lockfile: (f) => capturedScope(f).lockfile_basename,
   future_change_only: (f) => f.validation === 'validated' ? f.reachability === 'future_change_only' : null,
   harmless_test_pattern: (f) => !f.path_role || f.path_role === 'unknown' ? null : f.path_role === 'test',
 };
 const scopeExceptions = {
-  cross_file_effect_created_by_pr: (f) => Array.isArray(f.cross_file_refs) ? f.cross_file_refs.length > 0 : null,
-  security_dependency_vulnerability_claim: (f) => f.dimension !== 'security' ? false
-    : f.security_kind === 'dependency_vulnerability' ? true : f.security_kind === 'other' ? false : null,
+  // The producing agent counts too: a security reviewer's free-text dimension may not say "security".
+  security_dimension: (f) => f.dimension === 'security' || f.agent === AGENT_SECURITY_REVIEWER,
   documentation_or_comment_claim: (f) => dimensionRow(f.dimension)?.dimension === 'comment_accuracy',
   test_applicable_documented_convention: (f) => dimensionRow(f.dimension)?.dimension === 'convention',
   present_static_defect: (f) => f.reachability === 'current',
@@ -78,19 +81,15 @@ function skepticalScope(finding, confirmations) {
   });
 }
 
-// Stamps include the row definitions so replay cannot reuse outcomes from changed policy.
+// One audit stamp binds the recomputed decisions to their policy and inputs.
 export function scopeDecisions(finding, confirmations = []) {
   const identity = JSON.stringify([EXCLUSION_CATEGORIES, scopeInputFields.map((key) => finding[key] ?? null), confirmations]);
-  const proof = (decisions) => fnv1a32(JSON.stringify([identity, decisions.map(({ input_proof, ...row }) => row)]));
-  const saved = finding.scope_decisions;
-  if (matchesDispatchSchema(saved, SKEPTICAL_FINDING_PROPERTIES.scope_decisions) && saved.length >= scopeRows.length
-    && saved.every((row) => row.input_proof === proof(saved))) return saved;
   const decisions = scopeRows.map((row) => ({ category: row.category, stage: row.stage, outcome: row.outcome,
     applies: scopeAnd(scopePredicates[row.predicate]?.(finding),
       !finding.admission?.reasons?.some((reason) => reason.predicate === 'present_defect' && reason.status === 'held_back'),
       ...row.exceptions.map((name) => { const value = scopeExceptions[name]?.(finding); return value == null ? null : !value; })) }));
   decisions.push(...skepticalScope(finding, confirmations));
-  const inputProof = proof(decisions);
-  finding.scope_decisions = decisions.map((row) => ({ ...row, input_proof: inputProof }));
+  finding.scope_input_proof = fnv1a32(JSON.stringify([identity, decisions]));
+  finding.scope_decisions = decisions;
   return finding.scope_decisions;
 }
