@@ -402,7 +402,7 @@ function scopeAssessmentSchema(stages) {
   }))) };
 }
 export const SCOPE_ASSESSMENT_SCHEMA = deepFreeze(scopeAssessmentSchema(SKEPTICAL_IDENTITY.stage.enum));
-const SKEPTICAL_SCOPE_LIMIT = EXCLUSION_CATEGORIES.filter((row) => row.stage === 'skeptical').length;
+export const SKEPTICAL_SCOPE_LIMIT = EXCLUSION_CATEGORIES.filter((row) => row.stage === 'skeptical').length;
 export const VERDICT_RETURN_PROPERTIES = deepFreeze({
   ...SKEPTICAL_IDENTITY, verdict: { type: 'string', enum: ['real', 'refuted', 'needs_evidence'] },
   citations: citationRequests(['claim']), missing_evidence: { type: 'string', minLength: 1 },
@@ -436,7 +436,6 @@ export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
   }, ['category', 'stage', 'request_ids']),
 });
 
-// Provider schema enforcement can fail; retain the raw entry and bind diagnostics to the dispatched identity.
 function dispatchSchemaValidation() {
   const errors = [];
   const check = (value, schema, path) => {
@@ -477,6 +476,7 @@ export function matchesDispatchSchema(value, schema) {
   return dispatchSchemaValidation().matches(value, schema);
 }
 
+// Provider schema enforcement can fail; retain the raw entry and bind diagnostics to the dispatched identity.
 export function acceptSkepticalReturn(entry, findingId, stage) {
   const { errors, check, matches } = dispatchSchemaValidation();
   const schema = SKEPTICAL_RETURN_SCHEMAS[stage];

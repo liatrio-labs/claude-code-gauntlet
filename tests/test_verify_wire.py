@@ -74,16 +74,17 @@ def test_cite_mode_receipts_bind_requests_and_source(tmp_path, monkeypatch, invo
     packet = {
         "nonce": "run",
         "headShaShort": capture["head"][:8],
-        "repoRoot": str(root),
-        "pluginRoot": str(project),
-        "outputDir": str(output),
+        "repoRoot": root.as_posix(),
+        "pluginRoot": project.as_posix(),
+        "outputDir": output.as_posix(),
+        "python": "python",
         "verify": {
             "sourceCapture": capture,
             "targetKind": "branch",
             "baseBranch": "main",
-            "diffPath": str(output / "diff.patch"),
-            "inputPathBase": str(output / "in"),
-            "outputPathBase": str(output / "out"),
+            "diffPath": (output / "diff.patch").as_posix(),
+            "inputPathBase": (output / "in").as_posix(),
+            "outputPathBase": (output / "out").as_posix(),
         },
         "findings": [
             {
@@ -94,10 +95,11 @@ def test_cite_mode_receipts_bind_requests_and_source(tmp_path, monkeypatch, invo
     }
     program = (
         f"import {{citeStage}} from {json.dumps((project / 'workflows/src/citeStage.js').as_uri())};"
-        "import {execSync} from 'node:child_process'; import fs from 'node:fs';"
+        f"import {{shellSplit}} from {json.dumps((project / 'workflows/test/helpers/shellWords.js').as_uri())};"
+        "import {execFileSync} from 'node:child_process'; import fs from 'node:fs';"
         "let s=''; for await (const c of process.stdin) s+=c; const inp=JSON.parse(s); let calls=0;"
         "const ctx={agent:async (prompt,opts)=>{calls++; if(calls===1)throw new Error('dispatch never launched');"
-        "execSync(prompt.split('\\n').at(-1),{cwd:inp.repoRoot});"
+        "const [exe,...argv]=shellSplit(prompt.split('\\n').at(-1)); execFileSync(exe,argv,{cwd:inp.repoRoot});"
         "return JSON.parse(fs.readFileSync(inp.verify.outputPathBase+'.cite'+opts.label.split('-')[1]+'.json','utf8'));}};"
         "const first=await citeStage(ctx,inp); const resumed=await citeStage(ctx,JSON.parse(JSON.stringify(first)));"
         "process.stdout.write(JSON.stringify({calls,resumed}));"
