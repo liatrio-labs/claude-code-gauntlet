@@ -51,7 +51,9 @@ test('kind routing preserves origin and core ranking', async () => {
   assert.equal(byId.production.test_kind, 'production_defect');
   assert.equal(byId.quality.dimension, 'type_design');
   assert.equal(byId.simplify.dimension, 'simplification');
-  assert.deepEqual(out.eliminated.map((f) => f.id), ['extra', 'other', 'convention', 'comment']);
+  assert.deepEqual(out.eliminated, []);
+  assert.equal(byId.convention.confidence, 65);
+  assert.equal(byId.comment.confidence, 65);
   const routed = filterStage({ findings: merged.findings.map((f) => ({ ...f, confidence: 95 })), reviewConfig: { confidence_threshold: 70 } });
   assert.equal(routed.filtered.find((f) => f.id === 'other').report_destination, 'suggestion');
   assert.equal(routed.filtered.find((f) => f.id === 'extra').report_destination, 'suggestion');
@@ -85,8 +87,8 @@ test('kind routing preserves origin and core ranking', async () => {
   const contested = filterStage({ findings: [70, 75].map((confidence) => makeFinding(`drop-${confidence}`, {
     dimension: 'type_design', quality_basis: 'other', file: `drop-${confidence}.txt`, confidence, original_confidence: 100,
   })), reviewConfig: { confidence_threshold: 70 } });
-  assert.deepEqual(contested.filtered.map((f) => [f.id, f.contested]), [['drop-70', true]]);
-  assert.deepEqual(contested.eliminated.map((f) => f.id), ['drop-75']);
+  assert.deepEqual(contested.filtered.map((f) => [f.id, f.contested]), [['drop-70', true], ['drop-75', undefined]]);
+  assert.deepEqual(contested.eliminated, []);
   assert.equal(contested.stats.contested_count, 1);
   for (const witness of [{ confidence: 60 }, { confidence: 95, description: 'banned phrase' }]) {
     const eligible = filterStage({ findings: [makeFinding('eligible', { file: 'witness.txt', confidence: 75 }),
@@ -97,7 +99,15 @@ test('kind routing preserves origin and core ranking', async () => {
   }
 });
 
-test('PR 1 cannot deliver an unadmitted test kind', () => {
+test('lone convention at 65 survives the default threshold before ranking', () => {
+  const out = filterStage({ findings: [makeFinding('default-convention', {
+    dimension: 'convention', agent: 'conventions-and-intent', confidence: 65,
+  })] });
+  assert.deepEqual(out.filtered.map((f) => [f.id, f.confidence]), [['default-convention', 50]]);
+  assert.deepEqual(out.eliminated, []);
+});
+
+test('PR 1 cannot deliver an unadmitted test kind', async (t) => {
   const records = DIMENSION_ROWS.filter((row) => row.admission).flatMap((row) =>
     [undefined, ...Object.keys(row.admission.kinds)].map((kind) => makeFinding(`${row.dimension}:${kind}`, {
       dimension: kind && row.admission.kinds[kind].dimension || row.dimension, origin_dimension: row.dimension,
@@ -112,16 +122,40 @@ test('PR 1 cannot deliver an unadmitted test kind', () => {
     assert.ok(finding.disposition_reasons.includes(finding.disposition));
   }
   assert.equal(out.findings.length, 3);
-  const legacy = disposeFindings({ findings: [
+  const checkpoint = { findings: [
     makeFinding('promoted-legacy', { dimension: 'bug', test_kind: 'production_defect' }),
     makeFinding('producer-legacy', { dimension: 'unknown', agent: 'test-analyzer' }),
     makeFinding('missing-dimension', { dimension: undefined, agent: 'test-analyzer' }),
     makeFinding('forged-origin', { dimension: 'bug', origin_dimension: 'bug', agent: 'test-analyzer' }),
     makeFinding('forged-promotion', { dimension: 'bug', origin_dimension: 'bug', test_kind: 'production_defect' }),
     makeFinding('removed-legacy', { dimension: 'test_coverage', removed_test: { id: 'loss' } }),
-  ] });
+    makeFinding('test-security', { agent: 'test-analyzer', dimension: 'security' }),
+    makeFinding('type-intent', { agent: 'type-design-analyzer', dimension: 'intent' }),
+    makeFinding('simplifier-convention', { agent: 'code-simplifier', dimension: 'convention' }),
+    makeFinding('forged-security', { agent: 'test-analyzer', dimension: 'security', origin_dimension: 'security' }),
+  ] };
+  normalizePhaseFindings('challenge', checkpoint, true, { repoRoot: '/repo' });
+  const legacy = disposeFindings(checkpoint);
+  for (const record of checkpoint.findings.slice(-4)) await t.test(record.id, () => {
+    const finding = [...legacy.findings, ...legacy.unverified].find((f) => f.id === record.id);
+    assert.equal(finding.disposition, 'held_back');
+  });
   assert.equal(legacy.findings.length, 0);
-  assert.equal(legacy.unverified.length, 6);
+  assert.equal(legacy.unverified.length, 10);
+  assert.ok(legacy.unverified.every((f) => f.disposition === 'held_back'));
+  const unvetted = disposeFindings({ findings: [
+    makeFinding('unvetted-extra', { dimension: 'test_coverage', test_kind: 'additional_case', challenge: 'failed' }),
+    makeFinding('unvetted-quality', { dimension: 'type_design', quality_basis: 'other', validation: 'skipped' }),
+  ] });
+  for (const id of ['unvetted-extra', 'unvetted-quality']) await t.test(id, () => {
+    const finding = [...unvetted.findings, ...unvetted.unverified].find((f) => f.id === id);
+    assert.equal(finding.disposition, 'held_back');
+  });
+  assert.deepEqual(unvetted.findings, []);
+  assert.deepEqual(unvetted.unverified.map((f) => [f.id, f.disposition]), [
+    ['unvetted-extra', 'held_back'], ['unvetted-quality', 'held_back'],
+  ]);
+  assert.equal(unvetted.stats.held_back, 2);
   const incomplete = disposeFindings({ findings: [{ ...records[0], origin: 'unknown', validation: 'skipped' }] });
   assert.ok(incomplete.unverified[0].disposition_reasons.includes('verify_unproven'));
   assert.ok(incomplete.unverified[0].disposition_reasons.includes('validation_skipped'));

@@ -24,11 +24,11 @@ export function disposeFindings(challenged) {
     if ((input.unverified || []).includes(finding) && !reasons.length) reasons.push('held_back');
     let disposition = 'body';
     const policy = findingPolicy(finding);
-    if (policy.row?.admission) {
+    if (reasons.length) disposition = 'held_back';
+    else if (policy.row?.admission) {
       disposition = policy.defaultDisposition === 'report_only' ? 'report_only' : 'held_back';
       reasons.push(disposition);
-    } else if (reasons.length) disposition = 'held_back';
-    else if ((finding.diff_validation === undefined || finding.diff_validation?.in_diff === true) && locationAllows(finding, 'inline')) {
+    } else if ((finding.diff_validation === undefined || finding.diff_validation?.in_diff === true) && locationAllows(finding, 'inline')) {
       disposition = 'deliver';
     } else reasons.push('body_routed');
     finding.disposition = disposition;
@@ -63,7 +63,7 @@ export function disposeFindings(challenged) {
   }
   return { findings, unverified, eliminated, groups, decisions, stats: { ...input.stats,
     skipped: unverified.filter((f) => Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
-    held_back: unverified.filter((f) => !Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
+    held_back: unverified.length,
     cross_agent_consolidated: consolidatedCount, final_count: findings.length } };
 }
 

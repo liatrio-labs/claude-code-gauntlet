@@ -1,6 +1,6 @@
 // Finding path normalization, validation, deduplication, and merge envelopes.
 import { repoRelativeFindingPath, safeFindingLabel } from './paths.js';
-import { AGENTS, DIMENSIONS, FINDING_PROP_TYPES, FINDING_PATH_DESCRIPTORS, producerRow, findingPolicy, normalizePipelineStamps } from './registry.js';
+import { AGENTS, DIMENSIONS, FINDING_PROP_TYPES, FINDING_PATH_DESCRIPTORS, producerRow, findingPolicy } from './registry.js';
 import { measurementDecisions, traceDecision } from './measurementTrace.js';
 import { deepClone } from './wire.js';
 
@@ -102,7 +102,7 @@ export function normalizeFindingPaths(findings, repoRoot, decisions = []) {
   return { valid, warnings, path_rewrites: pathRewrites };
 }
 
-export function validateFindings(findings, decisions = [], { replayed = false } = {}) {
+export function validateFindings(findings, decisions = []) {
   const valid = [];
   const warnings = [];
   const rejected = [];
@@ -113,10 +113,8 @@ export function validateFindings(findings, decisions = [], { replayed = false } 
       rejected.push(f);
       continue;
     }
-    if (!replayed) {
-      delete f.origin_dimension;
-      delete f.effective_test_kind;
-    } else normalizePipelineStamps(f);
+    delete f.origin_dimension;
+    delete f.effective_test_kind;
     const fid = 'id' in f ? f.id : '<no id>';
     let reject = false;
 
@@ -129,7 +127,7 @@ export function validateFindings(findings, decisions = [], { replayed = false } 
       }
     }
 
-    const row = replayed ? findingPolicy(f).row : producerRow(f);
+    const row = producerRow(f);
     const kind = row?.admission?.kinds[f[row.admission.field]];
     const required = row ? [...row.requiredExtra, ...row.requiredWhenDimension, ...(kind?.required || [])] : [];
     if (!reject && row && !f.removed_test) for (const field of required) {
@@ -196,9 +194,9 @@ export function merge(findingsByAgent, meta) {
 
   // Validate before deduplication so warnings cover every raw finding.
   const allFlat = Object.values(selected).flat();
-  const { valid, warnings: preValWarnings, rejected } = validateFindings(allFlat, decisions, { replayed: M.replayed === true });
+  const { valid, warnings: preValWarnings, rejected } = validateFindings(allFlat, decisions);
   for (const finding of valid) {
-    const row = M.replayed === true ? findingPolicy(finding).row : producerRow(finding);
+    const row = producerRow(finding);
     if (row) {
       finding.origin_dimension = row.dimension;
       if (row.admission) finding.dimension = row.dimension;

@@ -217,12 +217,6 @@ const FINDING_PROP_TYPES = deepFreeze({
   suggestion: 'string', claude_md_rule: 'string',
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
-  searched_paths: { type: 'array', description: 'Repository files or directories searched for coverage.', items: { type: 'string', $comment: 'repo-path' } },
-  candidate_tests: { type: 'array', description: 'Inspected tests, including their input and assertion.', items: {
-    ...SOURCE_REFERENCE, properties: { ...SOURCE_REFERENCE.properties, input: { type: 'string' }, assertion: { type: 'string' } },
-    required: [...SOURCE_REFERENCE.required, 'input', 'assertion'],
-  } },
-  production_element: SOURCE_REFERENCE, duplicate_of: SOURCE_REFERENCE, precedent: SOURCE_REFERENCE,
   sites: { discovery: true, type: 'array', description: 'Additional locations of this issue.', items: {
     type: 'object', properties: {
       file: { type: 'string', $comment: 'repo-path' },
@@ -299,12 +293,12 @@ const QUALITY_ADMISSION = {
   },
 };
 const DIMENSIONS = deepFreeze([
-  { dimension: 'bug', core: true, agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' },
+  { dimension: 'bug', core: true, agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: { type: 'string', description: 'How an error is hidden or silently swallowed.' } },
     requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'security', core: true, agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' },
+  { dimension: 'security', core: true, agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: { type: 'string', description: 'Concrete attack path and its preconditions.' } },
     requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: null },
   { dimension: 'cross_file_impact', core: true, agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
-    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string', $comment: 'repo-path' } } }, requiredExtra: ['affected_consumers'],
+    schemaExtra: { affected_consumers: { type: 'array', description: 'Repository paths of consumers affected by the change.', items: { type: 'string', $comment: 'repo-path' } } }, requiredExtra: ['affected_consumers'],
       requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'test_coverage', agentType: AGENT_TYPE_TEST_ANALYZER, conditionalFlag: DEEP,
     defaultDisposition: 'held_back', defaultTier: 'main', admission: { field: 'test_kind', kinds: {
@@ -313,31 +307,46 @@ const DIMENSIONS = deepFreeze([
       production_defect: { required: [], predicates: ['present_defect'], phase: 'semantic', dimension: 'bug', core: true, tier: 'main' },
       additional_case: { required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
     } },
-    schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
+    schemaExtra: {
+      criticality: { type: 'number', minimum: 1, maximum: 10, description: 'Impact of the untested behavior on a 1 to 10 scale.' },
+      failure_scenario: { type: 'string', description: 'Concrete input or condition and the failure it exposes.' },
+      searched_paths: { type: 'array', description: 'Repository files or directories searched for coverage.', items: { type: 'string', $comment: 'repo-path' } },
+      candidate_tests: { type: 'array', description: 'Inspected tests, including their input and assertion.', items: {
+        ...SOURCE_REFERENCE, properties: { ...SOURCE_REFERENCE.properties, input: { type: 'string' }, assertion: { type: 'string' } },
+        required: [...SOURCE_REFERENCE.required, 'input', 'assertion'],
+      } },
+      production_element: { ...SOURCE_REFERENCE, description: 'Source reference to the production behavior whose coverage is assessed.' },
+    },
     requiredExtra: ['criticality', 'failure_scenario'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, functionalRouting: true, agentFallback: true,
-    schemaExtra: { rule_source: 'string' }, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null,
+    schemaExtra: { rule_source: { type: 'string', description: 'Basis for the cited rule: documented_rule, code_comment, repo_precedent, or self_inconsistency.' } }, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null,
     promptExtra: null },
   { dimension: 'intent', core: true, agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
-    schemaExtra: { spec_text: 'string' }, requiredExtra: [], requiredWhenDimension: ['spec_text'], modelOverride: null,
+    schemaExtra: { spec_text: { type: 'string', description: 'Quoted specification or requirement contradicted by the implementation.' } }, requiredExtra: [], requiredWhenDimension: ['spec_text'], modelOverride: null,
       promptExtra: null },
   { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, defaultTier: 'suggestion', aliases: ['comment-accuracy', 'documentation', 'doc-accuracy'], schemaExtra: {},
     requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: DEEP,
     defaultDisposition: 'held_back', defaultTier: 'suggestion', admission: QUALITY_ADMISSION,
-    schemaExtra: { invalid_state_example: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
+    schemaExtra: { invalid_state_example: { type: 'string', description: 'Concrete invalid state permitted by the type design.' } }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
       promptExtra: null },
   { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
     defaultDisposition: 'held_back', defaultTier: 'suggestion', admission: QUALITY_ADMISSION,
-    schemaExtra: { behavior_preserved: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
+    schemaExtra: { behavior_preserved: { type: 'string', description: 'How the proposed simplification preserves observable behavior.' } }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
       promptExtra: null },
 ].map((row) => ({
   core: false,
   defaultDisposition: 'deliver', defaultTier: 'main', aliases: [], admission: null,
   ...row, policySubjects: POLICY_SUBJECTS,
   schemaExtra: { ...row.schemaExtra, ...(row.admission ? {
-    [row.admission.field]: { type: 'string', enum: Object.keys(row.admission.kinds) },
-    ...(row.admission === QUALITY_ADMISSION ? { behavior_preserved: 'string' } : {}),
+    [row.admission.field]: { type: 'string', enum: Object.keys(row.admission.kinds), description: row.admission === QUALITY_ADMISSION
+      ? 'Quality basis used to assess admission.' : 'Test issue kind used to assess admission and production-defect promotion.' },
+    ...(row.admission === QUALITY_ADMISSION ? {
+      duplicate_of: { ...SOURCE_REFERENCE, description: 'Source reference to the existing implementation duplicated here.' },
+      precedent: { ...SOURCE_REFERENCE, description: 'Source reference to an existing repository idiom supporting the change.' },
+      behavior_preserved: { type: 'string', description: 'Why the simpler equivalent preserves observable behavior.' },
+    } : {}),
+    ...row.schemaExtra,
   } : {}) },
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
@@ -353,10 +362,10 @@ function findingPolicy(finding) {
   const promotion = original?.admission?.kinds[finding[original.admission.field]]?.dimension;
   const producer = DIMENSIONS.filter((candidate) => candidate.agentType.split(':').pop() === finding.agent);
   const typedProducer = producer.length === 1 && producer[0].admission ? producer[0] : null;
-  const row = DIMENSIONS.find((candidate) => typeof finding.dimension === 'string' && candidate.admission?.kinds[finding[candidate.admission.field]]?.dimension === finding.dimension)
+  const row = typedProducer
+    || DIMENSIONS.find((candidate) => typeof finding.dimension === 'string' && candidate.admission?.kinds[finding[candidate.admission.field]]?.dimension === finding.dimension)
     || (original && (original.dimension === finding.dimension || promotion === finding.dimension)
-      && (!typedProducer || original === typedProducer || finding.dimension !== 'bug') ? original : null)
-    || (typedProducer && (!dimensionRow(finding.dimension) || finding.dimension === 'bug') ? typedProducer : null)
+      ? original : null)
     || dimensionRow(finding.dimension) || producer.find((candidate) => candidate.agentFallback) || producer[0];
   const kind = row?.admission?.kinds[finding[row.admission.field]];
   return { row, kind, core: kind?.core ?? row?.core ?? false,
@@ -509,12 +518,6 @@ function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
   const field = fields.find((entry) => entry.name === name);
   return Boolean(field && field.check(identity[name]));
 }
-const CORE_DIMENSIONS = deepFreeze(DIMENSIONS.filter((row) => row.core).map((row) => row.dimension));
-const SUGGESTION_DIMENSIONS = deepFreeze(DIMENSIONS.filter((row) => row.defaultTier === 'suggestion').flatMap((row) => [row.dimension, ...row.aliases]));
-const fallbackRows = DIMENSIONS.filter((row) => row.agentFallback || DIMENSIONS.filter((sibling) => sibling.agentType === row.agentType).length === 1);
-const MAIN_REPORT_AGENTS = deepFreeze(fallbackRows.filter((row) => row.defaultTier === 'main').map((row) => row.agentType.split(':').pop()));
-const SUGGESTION_AGENTS = deepFreeze(fallbackRows.filter((row) => row.defaultTier === 'suggestion').map((row) => row.agentType.split(':').pop()));
-const COMMENT_ACCURACY_DIMENSIONS = deepFreeze(DIMENSIONS.filter((row) => row.agentType === dimensionRow('convention').agentType && row.defaultTier === 'suggestion').flatMap((row) => [row.dimension, ...row.aliases]));
 const REPORT_PLACED_FIELDS = deepFreeze([
   'sites',
   'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
@@ -1795,7 +1798,7 @@ function normalizeFindingPaths(findings, repoRoot, decisions = []) {
   }
   return { valid, warnings, path_rewrites: pathRewrites };
 }
-function validateFindings(findings, decisions = [], { replayed = false } = {}) {
+function validateFindings(findings, decisions = []) {
   const valid = [];
   const warnings = [];
   const rejected = [];
@@ -1805,10 +1808,8 @@ function validateFindings(findings, decisions = [], { replayed = false } = {}) {
       rejected.push(f);
       continue;
     }
-    if (!replayed) {
-      delete f.origin_dimension;
-      delete f.effective_test_kind;
-    } else normalizePipelineStamps(f);
+    delete f.origin_dimension;
+    delete f.effective_test_kind;
     const fid = 'id' in f ? f.id : '<no id>';
     let reject = false;
     for (const field of REQUIRED_FIELDS) {
@@ -1819,7 +1820,7 @@ function validateFindings(findings, decisions = [], { replayed = false } = {}) {
         break;
       }
     }
-    const row = replayed ? findingPolicy(f).row : producerRow(f);
+    const row = producerRow(f);
     const kind = row?.admission?.kinds[f[row.admission.field]];
     const required = row ? [...row.requiredExtra, ...row.requiredWhenDimension, ...(kind?.required || [])] : [];
     if (!reject && row && !f.removed_test) for (const field of required) {
@@ -1878,9 +1879,9 @@ function merge(findingsByAgent, meta) {
   }
   for (const [agent, findings] of Object.entries(selected)) injectAgentField(findings, agent);
   const allFlat = Object.values(selected).flat();
-  const { valid, warnings: preValWarnings, rejected } = validateFindings(allFlat, decisions, { replayed: M.replayed === true });
+  const { valid, warnings: preValWarnings, rejected } = validateFindings(allFlat, decisions);
   for (const finding of valid) {
-    const row = M.replayed === true ? findingPolicy(finding).row : producerRow(finding);
+    const row = producerRow(finding);
     if (row) {
       finding.origin_dimension = row.dimension;
       if (row.admission) finding.dimension = row.dimension;
@@ -2132,6 +2133,7 @@ async function discover(ctx, input) {
   const findings = [];
   const intake = [];
   const rejected = [];
+  const decisions = [];
   const trace = inp.measurementTrace;
   const degradedDims = [];
   const schemaActive = conditionalSchemaActive(policy);
@@ -2167,7 +2169,7 @@ async function discover(ctx, input) {
         for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics']) delete f[key];
         f.agent = spec.agentType.split(':').pop();
       }
-      const checked = validateFindings([f]);
+      const checked = validateFindings([f], decisions);
       gaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
       rejected.push(...checked.rejected);
       findings.push(...checked.valid);
@@ -2210,14 +2212,14 @@ async function discover(ctx, input) {
   if (droppedNoLineEnd > 0) {
     gaps.push(`discover: ${droppedNoLineEnd} finding(s) emitted suggested_fix_code without line_end — field dropped (a patch must state its range)`);
   }
-  return {
+  return measurementDecisions({
     findings,
     ...(rejected.length ? { rejected } : {}),
     gaps,
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
-  };
+  }, decisions);
 }
 function discoverPrompt(inp, spec) {
   const ctxLine = inp.contextLine || '';
@@ -2898,7 +2900,7 @@ const FILTER_DEFAULTS = deepFreeze({
   severityThreshold: 'low',
 });
 const CONTESTATION_DROP_THRESHOLD = 25;
-function applyThresholdFilter(findings, config, severityOrder = SEVERITY_ORDER, validationConfidence = new Map()) {
+function applyThresholdFilter(findings, config, severityOrder = SEVERITY_ORDER) {
   const kept = [];
   const eliminated = [];
   let contestedCount = 0;
@@ -2918,7 +2920,7 @@ function applyThresholdFilter(findings, config, severityOrder = SEVERITY_ORDER, 
     let isContested = false;
     const originalConfidence = 'original_confidence' in finding ? finding.original_confidence : undefined;
     if (originalConfidence !== undefined && originalConfidence !== null) {
-      const drop = originalConfidence - (validationConfidence.get(finding) ?? confidence);
+      const drop = originalConfidence - confidence;
       if (drop > CONTESTATION_DROP_THRESHOLD) {
         isContested = true;
         contestedCount += 1;
@@ -3200,12 +3202,9 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   const suggestedFixCodesRemoved = afterInjection.filter(
     (f) => f.suggested_fix_code_removed_by === 'injection',
   ).length;
-  const validationConfidence = new Map(afterInjection.map((finding) => [finding, asConfidence(finding.confidence)]));
   const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
   allEliminated.push(...elimSuppressed);
-  const { kept: afterAdjustment, eliminated: elimAdjustment } = applyThresholdFilter(active, config, SEVERITY_ORDER, validationConfidence);
-  allEliminated.push(...elimAdjustment);
-  const { tagged, mainCount, suggestionCount } = tagFindings(afterAdjustment);
+  const { tagged, mainCount, suggestionCount } = tagFindings(active);
   const promotedCount = tagged.filter((finding) => {
     const { row, kind } = findingPolicy(finding);
     return kind?.dimension && kind.dimension === finding.dimension && row.dimension !== finding.dimension;
@@ -3377,11 +3376,11 @@ function disposeFindings(challenged) {
     if ((input.unverified || []).includes(finding) && !reasons.length) reasons.push('held_back');
     let disposition = 'body';
     const policy = findingPolicy(finding);
-    if (policy.row?.admission) {
+    if (reasons.length) disposition = 'held_back';
+    else if (policy.row?.admission) {
       disposition = policy.defaultDisposition === 'report_only' ? 'report_only' : 'held_back';
       reasons.push(disposition);
-    } else if (reasons.length) disposition = 'held_back';
-    else if ((finding.diff_validation === undefined || finding.diff_validation?.in_diff === true) && locationAllows(finding, 'inline')) {
+    } else if ((finding.diff_validation === undefined || finding.diff_validation?.in_diff === true) && locationAllows(finding, 'inline')) {
       disposition = 'deliver';
     } else reasons.push('body_routed');
     finding.disposition = disposition;
@@ -3416,7 +3415,7 @@ function disposeFindings(challenged) {
   }
   return { findings, unverified, eliminated, groups, decisions, stats: { ...input.stats,
     skipped: unverified.filter((f) => Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
-    held_back: unverified.filter((f) => !Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
+    held_back: unverified.length,
     cross_agent_consolidated: consolidatedCount, final_count: findings.length } };
 }
 function deliveryGroups(findings) {

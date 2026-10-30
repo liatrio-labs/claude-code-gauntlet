@@ -250,7 +250,10 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "agentType": "code-gauntlet:bug-detector",
         "conditionalFlag": None,
         "schemaExtra": {
-            "hidden_errors": "string",
+            "hidden_errors": {
+                "type": "string",
+                "description": "How an error is hidden or silently swallowed.",
+            },
         },
         "requiredExtra": [],
         "requiredWhenDimension": [],
@@ -284,7 +287,10 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "agentType": "code-gauntlet:security-reviewer",
         "conditionalFlag": None,
         "schemaExtra": {
-            "attack_vector": "string",
+            "attack_vector": {
+                "type": "string",
+                "description": "Concrete attack path and its preconditions.",
+            },
         },
         "requiredExtra": ["attack_vector"],
         "requiredWhenDimension": [],
@@ -320,6 +326,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "schemaExtra": {
             "affected_consumers": {
                 "type": "array",
+                "description": "Repository paths of consumers affected by the change.",
                 "items": {
                     "type": "string",
                     "$comment": "repo-path",
@@ -407,8 +414,84 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                 "type": "number",
                 "minimum": 1,
                 "maximum": 10,
+                "description": "Impact of the untested behavior on a 1 to 10 scale.",
             },
-            "failure_scenario": "string",
+            "failure_scenario": {
+                "type": "string",
+                "description": "Concrete input or condition and the failure it exposes.",
+            },
+            "searched_paths": {
+                "type": "array",
+                "description": "Repository files or directories searched for coverage.",
+                "items": {
+                    "type": "string",
+                    "$comment": "repo-path",
+                },
+            },
+            "candidate_tests": {
+                "type": "array",
+                "description": "Inspected tests, including their input and assertion.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "file": {
+                            "type": "string",
+                            "$comment": "repo-path",
+                        },
+                        "line_start": {
+                            "type": "integer",
+                            "minimum": 1,
+                        },
+                        "line_end": {
+                            "type": "integer",
+                            "minimum": 1,
+                        },
+                        "anchor": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
+                        "input": {
+                            "type": "string",
+                        },
+                        "assertion": {
+                            "type": "string",
+                        },
+                    },
+                    "required": [
+                        "file",
+                        "line_start",
+                        "line_end",
+                        "anchor",
+                        "input",
+                        "assertion",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+            "production_element": {
+                "type": "object",
+                "properties": {
+                    "file": {
+                        "type": "string",
+                        "$comment": "repo-path",
+                    },
+                    "line_start": {
+                        "type": "integer",
+                        "minimum": 1,
+                    },
+                    "line_end": {
+                        "type": "integer",
+                        "minimum": 1,
+                    },
+                    "anchor": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                },
+                "required": ["file", "line_start", "line_end", "anchor"],
+                "additionalProperties": False,
+                "description": "Source reference to the production behavior whose coverage is assessed.",
+            },
             "test_kind": {
                 "type": "string",
                 "enum": [
@@ -417,6 +500,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                     "production_defect",
                     "additional_case",
                 ],
+                "description": "Test issue kind used to assess admission and production-defect promotion.",
             },
         },
         "requiredExtra": ["criticality", "failure_scenario"],
@@ -453,7 +537,10 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "functionalRouting": True,
         "agentFallback": True,
         "schemaExtra": {
-            "rule_source": "string",
+            "rule_source": {
+                "type": "string",
+                "description": "Basis for the cited rule: documented_rule, code_comment, repo_precedent, or self_inconsistency.",
+            },
         },
         "requiredExtra": [],
         "requiredWhenDimension": ["claude_md_rule"],
@@ -487,7 +574,10 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "agentType": "code-gauntlet:conventions-and-intent",
         "conditionalFlag": "deep",
         "schemaExtra": {
-            "spec_text": "string",
+            "spec_text": {
+                "type": "string",
+                "description": "Quoted specification or requirement contradicted by the implementation.",
+            },
         },
         "requiredExtra": [],
         "requiredWhenDimension": ["spec_text"],
@@ -594,7 +684,10 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "agentType": "code-gauntlet:type-design-analyzer",
         "conditionalFlag": "deep",
         "schemaExtra": {
-            "invalid_state_example": "string",
+            "invalid_state_example": {
+                "type": "string",
+                "description": "Concrete invalid state permitted by the type design.",
+            },
             "quality_basis": {
                 "type": "string",
                 "enum": [
@@ -604,8 +697,60 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                     "stack_idiom",
                     "other",
                 ],
+                "description": "Quality basis used to assess admission.",
             },
-            "behavior_preserved": "string",
+            "duplicate_of": {
+                "type": "object",
+                "properties": {
+                    "file": {
+                        "type": "string",
+                        "$comment": "repo-path",
+                    },
+                    "line_start": {
+                        "type": "integer",
+                        "minimum": 1,
+                    },
+                    "line_end": {
+                        "type": "integer",
+                        "minimum": 1,
+                    },
+                    "anchor": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                },
+                "required": ["file", "line_start", "line_end", "anchor"],
+                "additionalProperties": False,
+                "description": "Source reference to the existing implementation duplicated here.",
+            },
+            "precedent": {
+                "type": "object",
+                "properties": {
+                    "file": {
+                        "type": "string",
+                        "$comment": "repo-path",
+                    },
+                    "line_start": {
+                        "type": "integer",
+                        "minimum": 1,
+                    },
+                    "line_end": {
+                        "type": "integer",
+                        "minimum": 1,
+                    },
+                    "anchor": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                },
+                "required": ["file", "line_start", "line_end", "anchor"],
+                "additionalProperties": False,
+                "description": "Source reference to an existing repository idiom supporting the change.",
+            },
+            "behavior_preserved": {
+                "type": "string",
+                "description": "Why the simpler equivalent preserves observable behavior.",
+            },
         },
         "requiredExtra": [],
         "requiredWhenDimension": ["quality_basis"],
@@ -680,7 +825,10 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "agentType": "code-gauntlet:code-simplifier",
         "conditionalFlag": "deep",
         "schemaExtra": {
-            "behavior_preserved": "string",
+            "behavior_preserved": {
+                "type": "string",
+                "description": "How the proposed simplification preserves observable behavior.",
+            },
             "quality_basis": {
                 "type": "string",
                 "enum": [
@@ -690,6 +838,55 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                     "stack_idiom",
                     "other",
                 ],
+                "description": "Quality basis used to assess admission.",
+            },
+            "duplicate_of": {
+                "type": "object",
+                "properties": {
+                    "file": {
+                        "type": "string",
+                        "$comment": "repo-path",
+                    },
+                    "line_start": {
+                        "type": "integer",
+                        "minimum": 1,
+                    },
+                    "line_end": {
+                        "type": "integer",
+                        "minimum": 1,
+                    },
+                    "anchor": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                },
+                "required": ["file", "line_start", "line_end", "anchor"],
+                "additionalProperties": False,
+                "description": "Source reference to the existing implementation duplicated here.",
+            },
+            "precedent": {
+                "type": "object",
+                "properties": {
+                    "file": {
+                        "type": "string",
+                        "$comment": "repo-path",
+                    },
+                    "line_start": {
+                        "type": "integer",
+                        "minimum": 1,
+                    },
+                    "line_end": {
+                        "type": "integer",
+                        "minimum": 1,
+                    },
+                    "anchor": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                },
+                "required": ["file", "line_start", "line_end", "anchor"],
+                "additionalProperties": False,
+                "description": "Source reference to an existing repository idiom supporting the change.",
             },
         },
         "requiredExtra": [],
@@ -715,32 +912,6 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         },
     },
 ]
-
-ROUTING = {
-    "core": ["bug", "security", "cross_file_impact", "intent"],
-    "suggestion": [
-        "comment_accuracy",
-        "comment-accuracy",
-        "documentation",
-        "doc-accuracy",
-        "type_design",
-        "simplification",
-    ],
-    "mainAgents": [
-        "bug-detector",
-        "security-reviewer",
-        "cross-file-impact",
-        "test-analyzer",
-        "conventions-and-intent",
-    ],
-    "suggestionAgents": ["type-design-analyzer", "code-simplifier"],
-    "commentAccuracy": [
-        "comment_accuracy",
-        "comment-accuracy",
-        "documentation",
-        "doc-accuracy",
-    ],
-}
 
 BRAND_MARK = "⚔️"
 
@@ -778,12 +949,30 @@ DETAIL_FIELDS_BY_DIMENSION = {
     "bug": ("hidden_errors",),
     "security": ("attack_vector",),
     "cross_file_impact": ("affected_consumers",),
-    "test_coverage": ("criticality", "failure_scenario", "test_kind"),
+    "test_coverage": (
+        "criticality",
+        "failure_scenario",
+        "searched_paths",
+        "candidate_tests",
+        "production_element",
+        "test_kind",
+    ),
     "convention": ("rule_source", "claude_md_rule"),
     "intent": ("spec_text",),
     "comment_accuracy": (),
-    "type_design": ("invalid_state_example", "quality_basis", "behavior_preserved"),
-    "simplification": ("behavior_preserved", "quality_basis"),
+    "type_design": (
+        "invalid_state_example",
+        "quality_basis",
+        "duplicate_of",
+        "precedent",
+        "behavior_preserved",
+    ),
+    "simplification": (
+        "behavior_preserved",
+        "quality_basis",
+        "duplicate_of",
+        "precedent",
+    ),
 }
 
 KNOB_REGISTRY = (
@@ -1141,6 +1330,13 @@ DISPOSITION_RIGHTS: Mapping[Disposition, Mapping[str, bool | str]] = MappingProx
 )
 
 
+class SitesItem(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    anchor: str
+
+
 class CandidateTestsItem(TypedDict):
     file: str
     line_start: int
@@ -1165,13 +1361,6 @@ class DuplicateOf(TypedDict):
 
 
 class Precedent(TypedDict):
-    file: str
-    line_start: int
-    line_end: int
-    anchor: str
-
-
-class SitesItem(TypedDict):
     file: str
     line_start: int
     line_end: int
@@ -1216,22 +1405,22 @@ class FindingMetadata(TypedDict, total=False):
     claude_md_rule: str
     suggested_fix_code: str
     cross_file_refs: list[str]
-    searched_paths: list[str]
-    candidate_tests: list[CandidateTestsItem]
-    production_element: ProductionElement
-    duplicate_of: DuplicateOf
-    precedent: Precedent
     sites: list[SitesItem]
     hidden_errors: str
     attack_vector: str
     affected_consumers: list[str]
     criticality: float
     failure_scenario: str
+    searched_paths: list[str]
+    candidate_tests: list[CandidateTestsItem]
+    production_element: ProductionElement
     test_kind: TestKind
     rule_source: str
     spec_text: str
     invalid_state_example: str
     quality_basis: QualityBasis
+    duplicate_of: DuplicateOf
+    precedent: Precedent
     behavior_preserved: str
 
 

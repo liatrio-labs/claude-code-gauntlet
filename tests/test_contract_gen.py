@@ -88,8 +88,6 @@ def test_admission_row_generates_consumers(registry_tree, invoke):
         namespace,
     )
     assert "special_case" in str(namespace["TestKind"])
-    assert "test_coverage" in namespace["ROUTING"]["core"]
-    assert "test_coverage" in namespace["ROUTING"]["suggestion"]
     assert namespace["DIMENSION_ROWS"] == registry["dimensionRows"]
     for path in ("agents/test-analyzer.md", REPORT):
         text = (registry_tree / path).read_text(encoding="utf-8")
@@ -383,8 +381,8 @@ def test_dispatch_result_descriptor_generates_agent_contract_and_python_registry
         f"  'code-gauntlet:{agent}': {{ audit_note: {{ type: 'string' }} }},",
     )
     text = text.replace(
-        "schemaExtra: { hidden_errors: 'string' }",
-        "schemaExtra: { extension_field: 'string', hidden_errors: 'string' }",
+        "schemaExtra: { hidden_errors:",
+        "schemaExtra: { extension_field: 'string', hidden_errors:",
     ).replace("requiredExtra: []", "requiredExtra: ['extension_field']", 1)
     source.write_text(text, encoding="utf-8")
     (registry_tree / "agents" / f"{agent}.md").write_text(
@@ -409,6 +407,17 @@ def test_dispatch_result_descriptor_generates_agent_contract_and_python_registry
     assert (
         "`extension_field`" in block.split("Required finding fields:")[1].split("\n")[0]
     )
+    runtime = gen.proc.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.path.insert(0, 'scripts'); "
+            "from gauntlet.delivery.input import Finding; "
+            "assert Finding.__annotations__['extension_field'] is str",
+        ],
+        cwd=str(registry_tree),
+    )
+    assert runtime.returncode == 0, runtime.stderr
     generated = (registry_tree / "scripts/gauntlet/registry.py").read_text(
         encoding="utf-8"
     )
@@ -735,13 +744,18 @@ Headless config:
 
 def test_dispatch_sentence():
     assert gen.dispatch_required_sentence(["criticality", "failure_scenario"]) == (
-        "`criticality` and `failure_scenario` are required by the dispatch schema "
-        "\u2014 a finding missing any of them is rejected at the StructuredOutput "
-        "boundary and retried, so all must always be present."
+        "`criticality` and `failure_scenario` are required at intake on every provider "
+        "and gateway."
     )
 
 
 def test_conditional_paragraphs():
+    assert gen.conditional_paragraphs(
+        [{"dimension": "test_coverage", "requiredWhenDimension": ["test_kind"]}]
+    ) == [
+        "For test_coverage findings, `test_kind` is required at intake on every provider "
+        "and gateway, which enforces its type and vocabulary."
+    ]
     paragraphs = gen.conditional_paragraphs(
         [
             {"dimension": "convention", "requiredWhenDimension": ["claude_md_rule"]},
@@ -757,15 +771,9 @@ def test_conditional_paragraphs():
         "On a dispatch that targets the first-party API directly (no third-party "
         "provider, no gateway), "
         "the schema enforces it specifically for findings whose dimension "
-        "is convention — sibling intent/comment_accuracy findings correctly omit it — "
-        "and this contract is the enforcement floor on every run, including "
-        "third-party providers "
-        "and gateway sessions where the schema stays flat. This agent's dispatch mixes "
-        "convention, intent, and comment_accuracy findings in one schema, so a "
-        "dimension-blind schema requirement (the flat `requiredExtra` mechanism, which "
-        "only single-dimension agents can use) was never an option here — omitting "
-        "the field on the wrong dimension is correct while omitting it on this one is "
-        "a contract violation."
+        "is convention — sibling intent/comment_accuracy findings correctly omit it. "
+        "Runtime intake enforces claude_md_rule/spec_text "
+        "on every provider and gateway for the owning dimension."
     )
 
 
@@ -827,6 +835,21 @@ def test_required_column(field_registry):
         "| `claude_md_rule` | string | conditional | citation |\n"
         "| `not_a_real_field` | string | yes | invented |\n"
     )
+
+
+def test_report_fields_preserve_row_descriptions():
+    registry = gen.load_registry(str(ROOT))
+    text = gen.rewrite_required_column(
+        "### Per-dimension fields\n\n| old | table |\n\n", registry
+    )
+    for row in registry["dimensionRows"]:
+        for field, schema in row["schemaExtra"].items():
+            assert isinstance(schema, dict) and schema["description"]
+            assert (
+                f"| `{field}` | {schema['type']} | {row['dimension']} | "
+                f"{gen.field_required_status(field, registry)} | {schema['description']} |"
+            ) in text
+    assert '"type":' not in text
 
 
 @pytest.mark.parametrize(
@@ -922,7 +945,8 @@ def test_command_drift(registry_tree, invoke):
     target = registry_tree / "agents/test-analyzer.md"
     original = target.read_bytes()
     target.write_text(
-        original.decode().replace("all must always be present", "x"), encoding="utf-8"
+        original.decode().replace("are required at intake on every provider", "x"),
+        encoding="utf-8",
     )
     broken = target.read_bytes()
     stale = invoke(

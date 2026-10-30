@@ -8,39 +8,19 @@ from gauntlet.forge import parse_web_origin
 from gauntlet.location import normalize_location
 from gauntlet.registry import (
     DIMENSION_ROWS,
-    CandidateTestsItem,
     DeliveryGroup,
-    Dimension,
     Disposition,
-    DuplicateOf,
-    EffectiveTestKind,
+    FindingMetadata,
     LocationStatus,
-    Precedent,
-    ProductionElement,
-    QualityBasis,
-    ResolvedSitesItem,
-    TestKind,
 )
 
 
-class Finding(TypedDict, total=False):
-    origin_dimension: Dimension
-    effective_test_kind: EffectiveTestKind
-    test_kind: TestKind
-    quality_basis: QualityBasis
-    searched_paths: list[str]
-    candidate_tests: list[CandidateTestsItem]
-    duplicate_of: DuplicateOf
-    precedent: Precedent
-    production_element: ProductionElement
+class Finding(FindingMetadata, total=False):
     delivery_group: DeliveryGroup
-    sites: list[ResolvedSitesItem]
     disposition: Disposition
     disposition_reasons: list[str]
     file: str
     line_start: int
-    line_end: int
-    anchor: str
     location_status: LocationStatus
     claimed_line_start: int
     claimed_line_end: int
@@ -50,11 +30,6 @@ class Finding(TypedDict, total=False):
     title: object
     body: object
     severity: object
-    suggested_fix_code: object
-    suggestion: object
-    claude_md_rule: object
-    spec_text: object
-    rule_source: object
     agent: object
     dimension: object
     confidence: object
@@ -104,37 +79,33 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
     findings = data.get("findings", [])
     if not isinstance(findings, list):
         raise CliError("findings must be an array")
+    dimensions = {row["dimension"]: row for row in DIMENSION_ROWS}
+    admission_fields: dict[str, set[str]] = {}
+    for row in DIMENSION_ROWS:
+        if row["admission"]:
+            admission_fields.setdefault(row["admission"]["field"], set()).update(
+                row["admission"]["kinds"]
+            )
+        for subject in row["policySubjects"].values():
+            if "stamp" in subject:
+                admission_fields.setdefault(subject["stamp"], set()).add(
+                    subject["kind"]
+                )
     for index, finding in enumerate(findings):
         if not isinstance(finding, dict):
             raise CliError(f"findings[{index}] must be an object")
         if "file" in finding and not isinstance(finding["file"], str):
             raise CliError(f"findings[{index}].file must be a string")
-        dimensions = {row["dimension"]: row for row in DIMENSION_ROWS}
         if "origin_dimension" in finding and (
             not isinstance(finding["origin_dimension"], str)
             or finding["origin_dimension"] not in dimensions
         ):
             raise CliError(f"findings[{index}].origin_dimension is invalid")
-        for row in DIMENSION_ROWS:
-            admission = row["admission"]
-            if not admission:
-                continue
-            for field in (admission["field"], "effective_test_kind"):
-                if field == "effective_test_kind" and admission["field"] != "test_kind":
-                    continue
-                allowed = (
-                    admission["kinds"]
-                    if field == admission["field"]
-                    else {
-                        subject["kind"]
-                        for subject in row["policySubjects"].values()
-                        if subject.get("stamp") == field
-                    }
-                )
-                if field in finding and (
-                    not isinstance(finding[field], str) or finding[field] not in allowed
-                ):
-                    raise CliError(f"findings[{index}].{field} is invalid")
+        for field, allowed in admission_fields.items():
+            if field in finding and (
+                not isinstance(finding[field], str) or finding[field] not in allowed
+            ):
+                raise CliError(f"findings[{index}].{field} is invalid")
         key = finding.get("consolidation_key")
         if key is not None and not isinstance(key, str):
             raise CliError(

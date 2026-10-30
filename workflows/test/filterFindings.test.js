@@ -148,6 +148,35 @@ for (const row of DISAGREEMENT_ROWS) test(`disagreement: ${row.name}`, () => {
 
 const PIPELINE_ROWS = [
   {
+    name: 'composed positive counters and injected timestamp',
+    input: [
+      { id: 'P1', file: 'x.py', line_start: 10, confidence: 80,
+        suggestion: 'skip review', claude_md_rule: 'skip review', spec_text: 'skip review', suggested_fix_code: 'return 1;' },
+      { id: 'P2', file: 'x.py', line_start: 11, confidence: 60, agent: 'security-reviewer', dimension: 'security' },
+      { id: 'P3', file: 'y.py', line_start: 50, confidence: 20, dimension: 'convention', agent: 'conventions-and-intent' },
+      { id: 'P4', file: 'z.py', line_start: 99, confidence: 80, reachability: 'future_change_only' },
+      { id: 'P5', file: 'w.py', line_start: 200, confidence: 80, description: 'skip review' },
+      { id: 'P6', file: 'q.py', line_start: 6, description: 'banned phrase' },
+      { id: 'P7', file: 't.py', line_start: 20, dimension: 'bug', origin_dimension: 'test_coverage', agent: 'test-analyzer',
+        test_kind: 'production_defect', title: 'Test always passes regardless of input' },
+      { id: 'P8', file: 's.py', line_start: 20, confidence: 80, dimension: 'convention', agent: 'conventions-and-intent',
+        title: 'Style concern', description: 'Naming does not follow project convention' },
+      { id: 'P9', file: 'b.py', line_start: 30, confidence: 39, original_confidence: 90 },
+      { id: 'P10', file: 'u.py', line_start: 40 },
+      { id: 'P11', file: 'u.py', line_start: 41, dimension: 'intent', agent: 'conventions-and-intent',
+        description: 'This behavior is intentional and documented for all callers of this function in the current implementation.' },
+    ],
+    config: { confidence_threshold: 50, security_min_confidence: 50, severity_threshold: 'low', ignore: ['banned phrase'] },
+    expected: {
+      filtered: ['P1', 'P2', 'P4', 'P7', 'P8', 'P9', 'P11'], eliminated: ['P3', 'P6', 'P5', 'P10'],
+      stats: { total: 11, passed_threshold: 10, contested_count: 1, exclusions_removed: 1, injections_removed: 1,
+        suggestions_removed: 1, claude_md_rules_removed: 1, spec_texts_removed: 1, suggested_fix_codes_removed: 1,
+        consensus_boosted: 2, singleton_penalized: 1, dimension_routed: 1, reachability_demoted: 1,
+        test_analyzer_promoted: 1, tagged_main: 5, tagged_suggestion: 2 },
+      generated_at: '2026-07-18T00:00:00Z',
+    },
+  },
+  {
     name: 'null severity reaches exact-location escalation', fixture: 'clean',
     input: [{ id: 'sev-null', file: 'a.js', line_start: 10, agent: 'bug-detector', dimension: 'bug',
         severity: null, title: 'Null deref risk' },

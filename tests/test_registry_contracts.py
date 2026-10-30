@@ -187,14 +187,14 @@ def test_contract_schema(agent_type: str) -> None:
         assert re.findall(r"`([^`]+)`", line) == fields
     assert "Omit inapplicable optional fields; never send null." in body
     if contract["requiredExtra"]:
-        assert "required by the dispatch schema" in body
+        assert "required at intake on every provider" in body
     declared = declared_by_agent()[agent_type]
     for field in optional:
         assert item["properties"][field]["type"] == declared[field]
     for row in rows:
         for field in row["requiredWhenDimension"]:
             if field in {"test_kind", "quality_basis"}:
-                assert f"`{field}` is required by the dispatch schema" in body
+                assert f"`{field}` is required at intake on every provider" in body
                 continue
             assert f"`{field}` is a dimension-conditional dispatch requirement" in body
             assert (
@@ -209,8 +209,8 @@ def test_contract_schema(agent_type: str) -> None:
         for field in row["requiredWhenDimension"]
     ):
         assert (
-            "third-party providers" in body
-            and "gateway sessions where the schema stays flat" in body
+            "Runtime intake enforces claude_md_rule/spec_text" in body
+            and "on every provider and gateway" in body
         )
     assert "line_start` through `line_end`" in text
     assert "Include `line_end` with every patch" in text
@@ -253,7 +253,11 @@ def test_handwritten_field_tables():
         )
         assert cells[1].lower() == expected
     for field, cells in per_dimension:
-        row = next(row for row in registry()["dimensions"] if field in row["extras"])
+        row = next(
+            row
+            for row in registry()["dimensions"]
+            if row["dimension"] == cells[1] and field in row["extras"]
+        )
         assert cells[0] == row["extras"][field]
         assert cells[1] == row["dimension"]
         expected = (

@@ -4,7 +4,9 @@ import copy
 import json
 
 import pytest
+from gauntlet.cli import CliError
 from gauntlet.delivery import compose, fold, post
+from gauntlet.delivery import input as delivery_input
 from gauntlet.delivery.input import validate_review_input
 from gauntlet.forge import JsonFetch, PostResult, parse_remote
 from gauntlet.marker import find_finding_markers, find_marker
@@ -955,6 +957,23 @@ _INVALID_ADMISSION_METADATA: list[tuple[dict[str, object], str]] = [
     ({"origin_dimension": []}, "origin_dimension"),
     ({"effective_test_kind": "additional_case"}, "effective_test_kind"),
 ]
+
+
+def test_policy_subject_stamps_follow_registry_rows(monkeypatch):
+    rows = copy.deepcopy(delivery_input.DIMENSION_ROWS)
+    rows[0]["policySubjects"]["ordinary"] = {
+        "stamp": "effective_quality_basis",
+        "kind": "duplication",
+    }
+    monkeypatch.setattr(delivery_input, "DIMENSION_ROWS", rows)
+    data = review(findings=[located(effective_quality_basis="duplication")])
+    assert (
+        validate_review_input(data)["findings"][0]["effective_quality_basis"]
+        == "duplication"
+    )
+    data["findings"][0]["effective_quality_basis"] = "other"
+    with pytest.raises(CliError, match="effective_quality_basis is invalid"):
+        validate_review_input(data)
 
 
 @pytest.mark.parametrize(
