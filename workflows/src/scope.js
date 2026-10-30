@@ -1,17 +1,23 @@
-import { AGENT_SECURITY_REVIEWER, EXCLUSION_CATEGORIES, SCOPE_FACT_KEYS, SCOPE_ASSESSMENT_SCHEMA, DISPATCH_RESULTS, CITE_VERIFIER_VERSION, VALIDATION_RETURN_PROPERTIES, matchesDispatchSchema, dimensionRow, findingPolicy } from './registry.js';
+import { AGENT_SECURITY_REVIEWER, SCOPE_ROWS, SCOPE_FACT_KEYS, SCOPE_ASSESSMENT_SCHEMA, DISPATCH_RESULTS, CITE_VERIFIER_VERSION, VALIDATION_RETURN_PROPERTIES, matchesDispatchSchema, dimensionRow, findingPolicy } from './registry.js';
 import { canonicalRange, lineBucket } from './location.js';
 import { fnv1a32 } from './wire.js';
 import { citeResult, collectCitations, matchedCitation } from './citeWire.js';
 import { skepticalProof } from './skepticalProof.js';
 
-const scopeRows = EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage));
+const scopeRows = SCOPE_ROWS.filter((row) => row.proof === 'verified_fact');
 const scopeInputFields = ['id', 'file', 'agent', 'dimension', 'origin_dimension', 'test_kind', 'quality_basis', 'path_role',
   'blame_class', 'blame_source', 'scope_facts', 'diff_validation', 'reachability', 'validation', 'admission',
   'line_start', 'line_end', 'location_status', 'policy_subject', 'skeptical_assessments', 'cite_results'];
-const scopeAnd = (...values) => values.includes(false) ? false : values.every((value) => value === true) ? true : null;
-const scopeOr = (...values) => values.includes(true) ? true : values.every((value) => value === false) ? false : null;
+const scopeAnd = (...values) => {
+  if (values.includes(false)) return false;
+  return values.every((value) => value === true) ? true : null;
+};
+const scopeOr = (...values) => {
+  if (values.includes(true)) return true;
+  return values.every((value) => value === false) ? false : null;
+};
 const exceptionRequests = (f) => collectCitations([f]).filter((r) => r.request?.role === 'exception'
-  && f.skeptical_assessments.some((a) => a.stage === r.stage && (a.raw ?? a).verdict === 'real')).map((r) => r.request);
+  && f.skeptical_assessments.some((a) => a.stage === r.stage && a.raw?.verdict === 'real')).map((r) => r.request);
 const capturedScope = (f) => f.scope_facts?.file === f.file && f.scope_facts.snapshot_id
   ? Object.fromEntries(SCOPE_FACT_KEYS.map((key) => [key, f.scope_facts[key]])) : {};
 const offDiff = (f) => f.diff_validation?.in_diff == null ? null : f.diff_validation.in_diff === false;
@@ -33,7 +39,6 @@ const scopeExceptions = {
   // The producing agent counts too: a security reviewer's free-text dimension may not say "security".
   security_dimension: (f) => f.dimension === 'security' || f.agent === AGENT_SECURITY_REVIEWER,
   documentation_or_comment_claim: (f) => dimensionRow(f.dimension)?.dimension === 'comment_accuracy',
-  test_applicable_documented_convention: (f) => dimensionRow(f.dimension)?.dimension === 'convention',
   present_static_defect: (f) => f.reachability === 'current' ? true : f.reachability === 'future_change_only' ? false : null,
   test_coverage_origin: (f) => findingPolicy({ ...f, policy_subject: undefined }, false).row?.dimension === 'test_coverage',
   test_applicable_convention: (f) => dimensionRow(f.dimension)?.dimension === 'convention',
@@ -44,34 +49,35 @@ const scopeExceptions = {
   },
 };
 
-function outsideAddedLines(finding, request, start = request.line_start, end = request.line_end) {
+export function outsideAddedLines(finding, request) {
   const result = citeResult(finding, request);
   if (!matchedCitation(finding, request, request.stage) || result?.source?.verifier_version !== CITE_VERIFIER_VERSION
     || !Array.isArray(result?.added_lines) || !result.added_lines.every((line) => Number.isSafeInteger(line) && line > 0)) return null;
-  return !result.added_lines.some((line) => line >= start && line <= end);
+  return !result.added_lines.some((line) => line >= request.line_start && line <= request.line_end);
 }
 
 function skepticalScope(finding, confirmations) {
   return (finding.skeptical_assessments || []).flatMap((a) => {
-    const raw = a.raw ?? a;
+    const raw = a.raw ?? {};
     const proof = skepticalProof(finding, raw, a.stage);
     return (Array.isArray(raw.scope_assessments) ? raw.scope_assessments : []).flatMap((scope) => {
-      const row = EXCLUSION_CATEGORIES.find((r) => r.category === scope?.category && r.consumers.includes(a.stage));
+      const row = SCOPE_ROWS.find((r) => r.category === scope?.category && r.consumers.includes(a.stage));
       if (!row) return [];
-      const confirmation = confirmations.find((c) => matchesDispatchSchema(c,
+      const citations = Array.isArray(scope.citations) ? scope.citations : [];
+      const confirmed = confirmations.filter((c) => matchesDispatchSchema(c,
         DISPATCH_RESULTS['code-gauntlet:conventions-and-intent'].conventions_confirmations.items)
         && confirmations.filter((other) => other?.id === c.id).length === 1
-        && canonicalRange(finding) && c.file === finding.file && lineBucket(c.line_start, 10) === lineBucket(finding.line_start, 10));
+        && canonicalRange(finding) && c.file === finding.file && lineBucket(c.line_start, 10) === lineBucket(finding.line_start, 10))
+        .map((c) => ({ confirmation: c, proof: scopeOr(...citations
+        .filter((q) => q.file === c.file && q.side === 'head' && q.line_start <= c.line_start && q.line_end >= c.line_start)
+        .map((q) => outsideAddedLines(finding, q))) }));
+      const confirmation = (confirmed.find((c) => c.proof === true) || confirmed[0])?.confirmation;
       const exceptions = row.exceptions.map((name) => scopeExceptions[name]?.(finding));
-      const excepted = exceptions.includes(true);
-      const contradicted = ['inapplicable', 'contradicted'].includes(scope.applicability) || excepted
-        || scopePredicates[row.predicate]?.(finding) === false
-        || (row.predicate === 'confirmed_intent' && !confirmation);
-      const citations = Array.isArray(scope.citations) ? scope.citations : [];
       const intent = row.predicate !== 'confirmed_intent' ? true : scopeAnd(
         ...citations.filter((q) => q.role === 'rule').map((q) => q.side === 'old' ? true : outsideAddedLines(finding, q)),
-        confirmation ? scopeOr(...citations.filter((q) => q.file === confirmation.file && q.side === 'head')
-          .map((q) => outsideAddedLines(finding, q, confirmation.line_start, confirmation.line_start))) : false);
+        scopeOr(...confirmed.map((c) => c.proof)));
+      const contradicted = ['inapplicable', 'contradicted'].includes(scope.applicability) || exceptions.includes(true)
+        || scopePredicates[row.predicate]?.(finding) === false || intent === false;
       const proved = proof.proved && intent === true
         && !exceptions.includes(null)
         && finding.skeptical_assessments.filter((other) => other?.stage === a.stage).length === 1
@@ -93,7 +99,7 @@ function skepticalScope(finding, confirmations) {
 
 // One audit stamp binds the recomputed decisions to their policy and inputs.
 export function scopeDecisions(finding, confirmations = []) {
-  const identity = JSON.stringify([EXCLUSION_CATEGORIES, scopeInputFields.map((key) => finding[key] ?? null), confirmations]);
+  const identity = JSON.stringify([SCOPE_ROWS, scopeInputFields.map((key) => finding[key] ?? null), confirmations]);
   const decisions = scopeRows.map((row) => ({ category: row.category, stage: row.stage, outcome: row.outcome,
     applies: scopeAnd(scopePredicates[row.predicate]?.(finding),
       !finding.admission?.reasons?.some((reason) => reason.predicate === 'present_defect' && reason.status === 'held_back'),

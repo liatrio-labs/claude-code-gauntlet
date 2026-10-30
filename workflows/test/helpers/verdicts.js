@@ -1,5 +1,6 @@
 import { citeChecksum, citeSource } from '../../src/citeWire.js';
 import { fnv1a32 } from '../../src/wire.js';
+import { acceptSkepticalReturn } from '../../src/registry.js';
 
 export const sourceCapture = { version: 1, nonce: 'run', head: 'a'.repeat(40), base: 'b'.repeat(40),
   diff_sha256: 'c'.repeat(64), manifest_sha256: 'd'.repeat(64), target_kind: 'branch',
@@ -12,6 +13,9 @@ export function skepticalReturn(id, stage = 'validator', extra = {}) {
       snapshot_id: sourceCapture.manifest_sha256, file: `${id}.js`, side: 'head',
       line_start: 10, line_end: 10, quote: 'return process(value);' }], ...extra };
 }
+
+export const skepticalAssessment = (id, stage = 'validator', extra = {}) =>
+  acceptSkepticalReturn(skepticalReturn(id, stage, extra), id, stage);
 
 export function citationEnvelope(prompt, args, status = () => 'matched', addedLines = () => []) {
   const token = prompt.match(/--input-inline '([^']*)'/)[1];

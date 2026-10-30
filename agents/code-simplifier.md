@@ -49,7 +49,7 @@ LLMs are systematically overconfident. Calibrate carefully:
 - 70-79: The simplification would help but is more of a preference — reasonable developers might disagree.
 - 60-69: Marginal improvement with significant subjectivity.
 
-- Below 60: Uncertain; retain a evidence-grounded candidate with inspected evidence.
+- Below 60: Uncertain; retain an evidence-grounded candidate with inspected evidence.
 
 Confidence measures certainty the issue exists, not its impact. A verified redundant null check where the surrounding branch already guarantees non-null is still confidence 90+ (you verified the redundancy). A function that looks overly complex but might have subtle reasons for its structure is confidence 60-70. Use severity for impact, confidence for certainty.
 

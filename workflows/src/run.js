@@ -24,6 +24,7 @@ import { appendMeasurement, createMeasurementTrace, recordStage, traceDecision, 
 import { captureDeliveryReplay, appendDeliveryReplay } from './measurementReplay.js';
 import { deepClone } from './wire.js';
 import { refreshAdmission } from './admission.js';
+import { CHALLENGE_REASON_CODES } from './vetting.js';
 
 // The host injects runtime globals, while tests supply context explicitly.
 function defaultCtx() {
@@ -365,6 +366,10 @@ export async function runWith(ctx, rawArgs) {
       python: A.python, repoRoot: A.repoRoot, outputDir: A.outputDir, pluginRoot: A.pluginRoot,
       verify: { ...(A.verify || {}), baseBranch: A.baseBranch, diffPath: A.diffPath },
     });
+    if (replayed && name === 'cite') for (const key of ['cite_planned', 'cite_attempts', 'cite_oversize']) {
+      const prior = checkpoints.cite.stats?.[key] || 0;
+      out.stats[key] = key === 'cite_attempts' ? prior + out.stats[key] : Math.max(prior, out.stats[key]);
+    }
     let verifyRequests;
     if (name === 'verify') {
       verifyRequests = out.findings || [];
@@ -382,7 +387,7 @@ export async function runWith(ctx, rawArgs) {
         ...(name === 'merge' ? { decisions: [...discoveryDecisions, ...rejected] } : rejected.length ? { decisions: rejected } : {}),
         ...(name === 'filter' || name === 'challenge' ? { decisions: [
           ...rejected, ...eliminationDecisions(out),
-          ...(name === 'challenge' ? (out.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f, f.challenge === 'capped' ? 'challenge_cap' : f.challenge === 'incomplete' ? 'held_back' : 'challenge_failed', f.challenge, [], 'held_back')) : []),
+          ...(name === 'challenge' ? (out.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f, CHALLENGE_REASON_CODES[f.challenge] || 'challenge_failed', f.challenge, [], 'held_back')) : []),
           ...(name === 'challenge' ? (out.findings || []).filter((f) => f.trace_id && f.challenge === 'admission_terminal').map((f) => {
             const status = f.admission?.status === 'report_only' ? 'report_only' : 'held_back';
             return traceDecision(f, status, 'intentional admission-terminal challenge skip', [], status,

@@ -216,6 +216,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
                 capture = source.capture_sources(
                     Path(args.output_dir), args.nonce, diff, args.base_sha
                 )
+                source = capture.adapter(source.root)
                 if not capture.receipt["head"].startswith(args.head_sha) or (
                     args.head_sha_full and capture.receipt["head"] != args.head_sha_full
                 ):

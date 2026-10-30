@@ -50,7 +50,7 @@ LLMs are systematically overconfident. Calibrate carefully:
 - 70-79: This looks like a real gap that warrants attention, but there might be test coverage in a related file or integration test you haven't found
 - 60-69: Plausible gap but significant uncertainty — the code may be tested through a different entry point
 
-- Below 60: Uncertain; retain a evidence-grounded candidate with inspected evidence.
+- Below 60: Uncertain; retain an evidence-grounded candidate with inspected evidence.
 
 Confidence measures certainty the gap exists, not its impact. A verified missing test for a code path you can trace is still confidence 90+ (you verified the gap). A suspected gap where tests might exist in a related file or integration suite is confidence 60-70. Use criticality for impact, confidence for certainty.
 

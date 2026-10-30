@@ -1,8 +1,9 @@
-import { CITE_VERIFIER_VERSION, CITATION_REQUEST_PROPERTIES, CITATION_REQUEST_SCHEMA, EXCLUSION_CATEGORIES, matchesDispatchSchema } from './registry.js';
+import { CITE_VERIFIER_VERSION, CITATION_REQUEST_PROPERTIES, CITATION_REQUEST_SCHEMA, SKEPTICAL_SCOPE_LIMIT, matchesDispatchSchema } from './registry.js';
 import { encodeSliceInline } from './verifyWire.js';
 import { fnv1a32 } from './wire.js';
 
 export const citeChecksum = (value) => fnv1a32(JSON.stringify(value, null, 2) ?? 'undefined');
+export const sameCiteValue = (a, b) => citeChecksum(a) === citeChecksum(b);
 export const citeSource = (capture = {}) => ({ snapshot_id: capture.manifest_sha256 || '',
   target_kind: capture.target_kind || '', head: capture.head || '', base: capture.base || '',
   diff_sha256: capture.diff_sha256 || '', verifier_version: CITE_VERIFIER_VERSION });
@@ -23,13 +24,13 @@ export function reusableCiteResult(entry, record, source) {
   return result && (['matched', 'unmatched', 'rejected'].includes(result.status)
     || (result.status === 'unavailable' && ['oversize', 'request_cap'].includes(result.detail)))
     && typeof result.detail === 'string'
-    && citeChecksum(result.request) === citeChecksum(record?.request)
-    && citeChecksum(result.source) === citeChecksum(source)
+    && sameCiteValue(result.request, record?.request)
+    && sameCiteValue(result.source, source)
     && (result.status !== 'matched' || (matchesDispatchSchema(record?.request, CITATION_REQUEST_SCHEMA)
       && record.request.snapshot_id === source.snapshot_id));
 }
 export const CITE_ROLES_PER_STAGE = CITATION_REQUEST_PROPERTIES.role.enum.length
-  * (1 + EXCLUSION_CATEGORIES.filter((row) => row.stage === 'skeptical').length);
+  * (1 + SKEPTICAL_SCOPE_LIMIT);
 
 // Ownership comes from the enclosing assessment, never from an untrusted request.
 export function collectCitations(findings) {
@@ -42,12 +43,11 @@ export function collectCitations(findings) {
       }
     };
     for (const assessment of Array.isArray(f.skeptical_assessments) ? f.skeptical_assessments : []) {
-      const entry = assessment?.raw ?? assessment;
+      const entry = assessment?.raw;
       const stage = assessment?.stage;
       add(entry, stage);
       for (const scope of Array.isArray(entry?.scope_assessments) ? entry.scope_assessments : []) add(scope, stage);
     }
-    for (const scope of Array.isArray(f.scope_decisions) ? f.scope_decisions : []) add(scope, scope?.stage);
     return checks;
   });
 }

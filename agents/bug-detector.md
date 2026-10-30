@@ -160,7 +160,7 @@ LLMs are systematically overconfident. Calibrate carefully:
 - 70-79: This looks suspicious and warrants attention, but there might be handling you're not seeing
 - 60-69: Plausible issue but significant uncertainty remains
 
-- Below 60: Uncertain; retain a evidence-grounded candidate with inspected evidence.
+- Below 60: Uncertain; retain an evidence-grounded candidate with inspected evidence.
 
 Confidence measures certainty the issue exists, not its impact. A verified interface mismatch that may never cause a runtime crash is still confidence 90+ (you verified it exists). A plausible race condition you can't prove is reachable is confidence 60-70. Use severity for impact, confidence for certainty.
 

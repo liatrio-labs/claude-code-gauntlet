@@ -1,13 +1,13 @@
 import { deepClone } from './wire.js';
-import { incompleteVetting, UNVERIFIED_REASONS } from './vetting.js';
+import { incompleteVetting, UNVERIFIED_REASONS, CHALLENGE_REASON_CODES } from './vetting.js';
 import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
 import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
 import { hasAdmission } from './admission.js';
-import { assessmentGaps } from './registry.js';
+import { AGENT_SECURITY_REVIEWER, assessmentGaps } from './registry.js';
 import { citeResult } from './citeWire.js';
 import { skepticalProof } from './skepticalProof.js';
-import { scopeDecisions } from './scope.js';
+import { outsideAddedLines, scopeDecisions } from './scope.js';
 
 function skepticalOutcome(finding) {
   const reasons = [];
@@ -24,7 +24,7 @@ function skepticalOutcome(finding) {
       reasons.push({ reason: 'held_back', stage, missing_field: 'verdict' });
       continue;
     }
-    const raw = entries[0].raw ?? entries[0];
+    const raw = entries[0].raw ?? {};
     const { assessment, requests, proved } = skepticalProof(finding, raw, stage);
     const { semanticErrors } = assessmentGaps(assessment);
     Object.assign(proof, { verdict: ['real', 'refuted', 'needs_evidence'].includes(raw.verdict) ? raw.verdict : null,
@@ -35,8 +35,12 @@ function skepticalOutcome(finding) {
       const unavailable = requests.some((q) => citeResult(finding, q)?.status === 'unavailable');
       reasons.push({ reason: unavailable ? 'cite_unavailable' : 'cite_unmatched', stage, verdict: raw.verdict });
     }
-    if (raw.verdict === 'refuted' && proved) proven = { reason: 'refuted', stage,
-      request_ids: requests.map((q) => q.request_id) };
+    if (raw.verdict === 'refuted' && proved) {
+      if ((finding.dimension !== 'security' && finding.agent !== AGENT_SECURITY_REVIEWER)
+        || requests.filter((q) => q.role === 'claim').every((q) => outsideAddedLines(finding, q) === true))
+        proven = { reason: 'refuted', stage, request_ids: requests.map((q) => q.request_id) };
+      else reasons.push({ reason: 'held_back', stage, verdict: raw.verdict });
+    }
     // A malformed real proof is diagnostic; missing semantic assessments still close delivery.
     if (semanticErrors.length) reasons.push({ reason: 'held_back', stage, missing_fields: semanticErrors });
   }
@@ -102,9 +106,7 @@ export function disposeFindings(challenged) {
       continue;
     }
     const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
-    if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
-      reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : finding.challenge === 'incomplete' ? 'held_back' : 'challenge_failed');
-    }
+    if (Object.hasOwn(CHALLENGE_REASON_CODES, finding.challenge)) reasons.push(CHALLENGE_REASON_CODES[finding.challenge]);
     let disposition = 'body';
     const admitted = hasAdmission(finding);
     const valueTerminal = admitted && finding.admission.status === 'report_only' && finding.challenge === 'admission_terminal';

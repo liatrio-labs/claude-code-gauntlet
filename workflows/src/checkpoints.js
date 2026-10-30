@@ -4,7 +4,7 @@ import { fnv1a32, isPlainObject, RETURN_CHAR_BUDGET } from './wire.js';
 import { applyInjectedProseStrip, applyReplayInjectionScan } from './injection.js';
 import { normalizeFieldNames } from './filterFindings.js';
 import { normalizePipelineStamps } from './registry.js';
-import { citeChecksum, citeSource } from './citeWire.js';
+import { sameCiteValue, citeSource } from './citeWire.js';
 
 // Arrays are unusable phase maps: indexing a phase name can otherwise replay an Array prototype method.
 function unwrapCheckpointMap(cp) {
@@ -276,7 +276,7 @@ export function buildResumeCheckpoints(phaseOutputs) {
   return { completed, truncated: true };
 }
 
-// Challenge preserves the delivered findings for resume; other finding arrays need not be duplicated.
+// Challenge findings and the cite attempt ledger preserve completed work without renewing dispatch allowances.
 const PERSISTED_RESUME_PHASES = ['challenge', 'cite'];
 
 function phaseFindingCount(out) {
@@ -352,7 +352,7 @@ export function normalizePhaseFindings(name, out, replayed, args, decisions = []
       for (const result of f.cite_results) {
         if (!result || typeof result !== 'object') continue;
         if (result.status !== 'matched' || (result.request?.snapshot_id === source.snapshot_id
-          && citeChecksum(result.source) === citeChecksum(source))) continue;
+          && sameCiteValue(result.source, source))) continue;
         out.cite_audit = [...(out.cite_audit || []), { finding_id: f.id, result: { ...result } }];
         result.status = 'unavailable';
         result.detail = 'snapshot_mismatch';
