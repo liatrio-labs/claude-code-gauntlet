@@ -91,7 +91,7 @@ def test_exclusion_row_edit_updates_both_skeptics_and_reference(tmp_path, invoke
         assert "snapshot_id" in schema["properties"]["citations"]["items"]["properties"]
         for row in reg["exclusionCategories"]:
             assert (f"`{row['category']}`: {row['applicability']}" in contract) == (
-                row in consumed or row["stage"] == "admission"
+                row in consumed
             )
     reference = (
         tmp_path / "workflows/contracts/scope-exclusion-contract.md"
@@ -707,8 +707,8 @@ def test_agent_mirrors(mirror):
         assert "Do not report a finding without grounding." in read(
             "agents/conventions-and-intent.md"
         )
-        assert sentence in read("agents/challenger.md")
-        assert sentence in read("workflows/contracts/validator-return-contract.md")
+        assert sentence not in read("agents/challenger.md")
+        assert sentence not in read("workflows/contracts/validator-return-contract.md")
 
 
 @pytest.mark.parametrize(

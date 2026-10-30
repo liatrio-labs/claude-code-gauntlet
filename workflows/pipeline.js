@@ -783,20 +783,20 @@ const EXCLUSION_CATEGORIES = deepFreeze([
     applicability: 'Existing future-change-only reachability assessment appropriate to the actual claim.', exceptions: ['present_static_defect'],
     proof: 'verified_fact', outcome: 'body', reference: 'Placement after admission and vetting; no invented runtime trigger or early challenge exclusion.' },
   { category: 'test_only_pattern', stage: 'skeptical', predicate: 'harmless_test_pattern', facts: ['path_role'],
-    applicability: 'Cited harmless test-role pattern and its applicability; test path alone is insufficient.', exceptions: ['test_coverage_origin', 'test_applicable_convention', 'genuine_test_defect'],
+    applicability: 'Cited harmless test-role pattern and its applicability; test path alone is insufficient.', exceptions: ['security_dimension', 'test_coverage_origin', 'test_applicable_convention', 'genuine_test_defect'],
     proof: 'citation', outcome: 'eliminate', reference: 'Wrong assertions, mocks and waits remain defects.' },
   { category: 'lint_catchable', stage: 'skeptical', predicate: 'tool_covers_claim', facts: [],
-    applicability: 'Cite applicable repository tool, rule or configuration and coverage of the actual claim.', exceptions: [],
+    applicability: 'Cite applicable repository tool, rule or configuration and coverage of the actual claim.', exceptions: ['security_dimension', 'present_static_defect'],
     proof: 'citation', outcome: 'eliminate', reference: 'Familiar syntax and assumed CI tools are insufficient.' },
   { category: 'suppressed', stage: 'skeptical', predicate: 'suppression_covers_claim', facts: [],
-    applicability: 'Cited suppression location, range and rule cover this issue.', exceptions: [],
+    applicability: 'Cited suppression location, range and rule cover this issue.', exceptions: ['security_dimension'],
     proof: 'citation', outcome: 'eliminate', reference: 'A nearby suppression does not establish applicability.' },
   { category: 'opted_out', stage: 'skeptical', predicate: 'opt_out_covers_claim', facts: [],
-    applicability: 'Cite repository opt-out mechanism and applicable file or rule opt-out.', exceptions: [],
+    applicability: 'Cite repository opt-out mechanism and applicable file or rule opt-out.', exceptions: ['security_dimension'],
     proof: 'citation', outcome: 'eliminate', reference: 'An author assertion is not an opt-out mechanism.' },
   { category: 'intentional', stage: 'skeptical', predicate: 'confirmed_intent', facts: ['conventions_confirmation'],
-    applicability: 'Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation.',
-    exceptions: ['proven_incorrect_or_dangerous_behavior_including_security'], proof: 'citation', outcome: 'eliminate',
+    applicability: 'Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation; both must be outside PR-added lines in the captured diff.',
+    exceptions: ['security_dimension', 'proven_incorrect_or_dangerous_behavior_including_security'], proof: 'citation', outcome: 'eliminate',
     reference: 'The side record is only a gating fact, never a finding or proof; description and intentional wording are insufficient.' },
 ].map((row) => ({ ...row, consumers: row.stage === 'skeptical' ? ['validator', 'challenger'] : [row.stage],
   citation_roles: row.proof === 'citation' ? ['rule', 'applicability'] : [] })));
@@ -823,7 +823,7 @@ const CITATION_REQUEST_PROPERTIES = deepFreeze({
   quote: { type: 'string', minLength: 1, maxLength: ANCHOR_LIMITS.chars },
 });
 const CITATION_REQUEST_SCHEMA = deepFreeze(closedDispatchRow(CITATION_REQUEST_PROPERTIES));
-const CITE_VERIFIER_VERSION = 'cite-1';
+const CITE_VERIFIER_VERSION = 'cite-2';
 const CITATION_SOURCE_SCHEMA = deepFreeze(closedDispatchRow({
   snapshot_id: { type: 'string' }, target_kind: { type: 'string' },
   head: { type: 'string' }, base: { type: 'string' }, diff_sha256: { type: 'string' },
@@ -832,7 +832,8 @@ const CITATION_SOURCE_SCHEMA = deepFreeze(closedDispatchRow({
 const CITATION_RESULT_SCHEMA = deepFreeze(closedDispatchRow({
   request: CITATION_REQUEST_SCHEMA, status: { type: 'string', enum: ['matched', 'unmatched', 'rejected', 'unavailable'] },
   detail: { type: 'string' }, source: CITATION_SOURCE_SCHEMA,
-}));
+  added_lines: { type: 'array', items: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER } },
+}, ['added_lines']));
 const citationRequests = (roles) => ({ type: 'array', minItems: roles.length,
   maxItems: CITATION_REQUEST_PROPERTIES.role.enum.length, items: CITATION_REQUEST_SCHEMA,
   allOf: roles.map((role) => ({ contains: { type: 'object', properties: { role: { const: role } }, required: ['role'] } })),
@@ -1206,6 +1207,13 @@ const REPORT_PLACED_FIELDS = deepFreeze([
   'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
 ]);
 // --- location.js ---
+function lineBucket(line, proximity) {
+  const n = coerceInt(line, INT_POLICY.filter);
+  if (n === null) return 0;
+  const value = n / proximity;
+  const floor = Math.floor(value);
+  return (value - floor === 0.5 ? (floor % 2 === 0 ? floor : floor + 1) : Math.round(value)) * proximity;
+}
 function canonicalRange(finding) {
   if (!['confirmed', 'relocated'].includes(finding?.location_status)) return null;
   const start = finding.line_start;
@@ -3563,18 +3571,6 @@ function applyReachabilityDemotion(findings) {
 function pyGet(obj, key, dflt) {
   return key in obj ? obj[key] : dflt;
 }
-function pyRound(x) {
-  const floor = Math.floor(x);
-  const diff = x - floor;
-  if (diff < 0.5) return floor;
-  if (diff > 0.5) return floor + 1;
-  return floor % 2 === 0 ? floor : floor + 1; // exact .5 -> nearest even
-}
-function lineBucket(line, proximity) {
-  const n = coerceInt(line, INT_POLICY.filter);
-  if (n === null) return 0;
-  return pyRound(n / proximity) * proximity;
-}
 const CONSENSUS_BOOST = 10;
 const SINGLETON_PENALTY = 15;
 function groupFilterFindings(findings, keyFor) {
@@ -3590,8 +3586,7 @@ function detectDisagreement(findings) {
   for (const f of findings) {
     for (const key of ['consensus_count', 'consensus_boost', 'corroborated_by', 'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note']) delete f[key];
   }
-  const active = findings;
-  const consensusGroups = groupFilterFindings(active, (finding) => JSON.stringify([
+  const consensusGroups = groupFilterFindings(findings, (finding) => JSON.stringify([
     pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10), pyGet(finding, 'origin', '') === 'unknown',
   ]));
   let boostedCount = 0;
@@ -3621,7 +3616,7 @@ function detectDisagreement(findings) {
       }
     }
   }
-  const locationGroupsActive = groupFilterFindings(active, (finding) => JSON.stringify([
+  const locationGroupsActive = groupFilterFindings(findings, (finding) => JSON.stringify([
     pyGet(finding, 'file', ''), pyGet(finding, 'line_start', 0),
   ]));
   for (const group of locationGroupsActive.values()) {
@@ -3645,7 +3640,7 @@ function detectDisagreement(findings) {
       }
     }
   }
-  return { active, boostedCount };
+  return { active: findings, boostedCount };
 }
 function routeByDimension(finding, routes = FILTER_DIMENSION_ROUTES) {
   const dimension = pyGet(finding, 'dimension', '').toLowerCase();
@@ -3797,7 +3792,7 @@ function rankKey(finding) {
   const sev = (finding.severity ?? 'low').toLowerCase();
   let sevIdx = SEVERITY_ORDER.indexOf(sev);
   if (sevIdx < 0) sevIdx = SEVERITY_ORDER.length;
-  const degraded = finding.origin === 'unknown' ? 1 : 0;
+  const degraded = (finding.diff_validation?.in_diff === true ? 0 : 2) + (finding.origin === 'unknown' ? 1 : 0);
   const conf = finding.confidence ?? 0;
   let tertiary;
   const rl = finding.risk_level;
@@ -3907,12 +3902,18 @@ const scopeExceptions = {
   present_static_defect: (f) => f.reachability === 'current',
   test_coverage_origin: (f) => findingPolicy({ ...f, policy_subject: undefined }, false).row?.dimension === 'test_coverage',
   test_applicable_convention: (f) => dimensionRow(f.dimension)?.dimension === 'convention',
-  genuine_test_defect: (f) => f.policy_subject === 'test_defect',
+  genuine_test_defect: (f) => !VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(f.policy_subject) || f.policy_subject === 'unresolved' ? null : f.policy_subject === 'test_defect',
   proven_incorrect_or_dangerous_behavior_including_security: (f) => {
     const requests = exceptionRequests(f);
     return requests.some((q) => matchedCitation(f, q, q.stage)) ? true : requests.length ? null : false;
   },
 };
+function outsideAddedLines(finding, request, start = request.line_start, end = request.line_end) {
+  const result = finding.cite_results?.find((r) => citeChecksum(r.request) === citeChecksum(request));
+  if (!matchedCitation(finding, request, request.stage) || result?.source?.verifier_version !== CITE_VERIFIER_VERSION
+    || !Array.isArray(result?.added_lines) || !result.added_lines.every((line) => Number.isSafeInteger(line) && line > 0)) return null;
+  return !result.added_lines.some((line) => line >= start && line <= end);
+}
 function skepticalScope(finding, confirmations) {
   return (finding.skeptical_assessments || []).flatMap((a) => {
     const raw = a.raw ?? a;
@@ -3930,7 +3931,14 @@ function skepticalScope(finding, confirmations) {
         || scopePredicates[row.predicate]?.(finding) === false
         || (row.predicate === 'confirmed_intent' && !confirmation);
       const citations = Array.isArray(scope.citations) ? scope.citations : [];
-      const proved = !assessmentGaps(accepted).semanticErrors.length
+      const intent = row.predicate !== 'confirmed_intent' ? true : scopeAnd(
+        ...citations.filter((q) => q.role === 'rule').map((q) => q.side === 'old' ? true : outsideAddedLines(finding, q)),
+        confirmation ? scopeOr(...citations.filter((q) => q.file === confirmation.file && q.side === 'head')
+          .map((q) => outsideAddedLines(finding, q, confirmation.line_start, confirmation.line_start))) : false);
+      const proved = accepted.status === 'complete' && ['real', 'refuted'].includes(raw.verdict)
+        && Array.isArray(raw.citations) && raw.citations.some((q) => q.role === 'claim')
+        && raw.citations.every((q) => matchedCitation(finding, q, a.stage))
+        && intent === true
         && !exceptions.includes(null)
         && finding.skeptical_assessments.filter((other) => other?.stage === a.stage).length === 1
         && raw.scope_assessments.filter((other) => other?.category === row.category).length === 1
@@ -4016,7 +4024,14 @@ function disposeFindings(challenged) {
       eliminated.push(finding);
       continue;
     }
-    const terminalScope = scope.find((row) => row.outcome === 'eliminate') || scope.find((row) => row.outcome === 'report_only');
+    const terminal = scope.filter((row) => !row.request_ids || (!skeptical.held
+      && ['survived', 'validator_terminal'].includes(finding.challenge)
+      && !scopeRows.some((other) => other.category === row.category && other.stage !== row.stage && other.applies !== true)));
+    const terminalScope = terminal.find((row) => row.outcome === 'eliminate') || terminal.find((row) => row.outcome === 'report_only');
+    if (scope.some((row) => row.request_ids && !terminal.includes(row))) {
+      skeptical.held = true;
+      skeptical.reasons.push({ reason: 'held_back', missing_field: 'agreed_scope' });
+    }
     if (terminalScope) {
       finding.disposition = terminalScope.outcome;
       finding.disposition_reasons = [terminalScope.outcome === 'eliminate' ? 'out_of_scope' : 'report_only'];
@@ -5656,7 +5671,7 @@ function validatePrompt(inp, batch) {
   const promotionRows = DIMENSIONS.filter((row) => row.admission?.promotion);
   const promotionHeader = [...new Set(promotionRows.map((row) => row.admission.promotion.predicate))].map((predicate) =>
     `For ${promotionRows.filter((row) => row.admission.promotion.predicate === predicate).map((row) => row.dimension).join(', ')} findings also assess ${predicate}.`).join(' ');
-  const scope = EXCLUSION_CATEGORIES.filter((row) => row.consumers.includes('validator') || row.stage === 'admission')
+  const scope = EXCLUSION_CATEGORIES.filter((row) => row.consumers.includes('validator'))
     .map((row) => `- ${row.category}: ${row.applicability} Exceptions: ${row.exceptions.join(', ') || 'none'}. Proof: ${row.proof}; outcome: ${row.outcome}. ${row.reference}`).join('\n');
   const block = batch.map((f) => {
     const range = !locationAllows(f, 'sourceLink') ? 'location unconfirmed' : f.line_end != null && f.line_end !== f.line_start

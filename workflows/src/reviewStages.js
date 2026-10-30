@@ -159,7 +159,7 @@ function validatePrompt(inp, batch) {
   const promotionRows = DIMENSIONS.filter((row) => row.admission?.promotion);
   const promotionHeader = [...new Set(promotionRows.map((row) => row.admission.promotion.predicate))].map((predicate) =>
     `For ${promotionRows.filter((row) => row.admission.promotion.predicate === predicate).map((row) => row.dimension).join(', ')} findings also assess ${predicate}.`).join(' ');
-  const scope = EXCLUSION_CATEGORIES.filter((row) => row.consumers.includes('validator') || row.stage === 'admission')
+  const scope = EXCLUSION_CATEGORIES.filter((row) => row.consumers.includes('validator'))
     .map((row) => `- ${row.category}: ${row.applicability} Exceptions: ${row.exceptions.join(', ') || 'none'}. Proof: ${row.proof}; outcome: ${row.outcome}. ${row.reference}`).join('\n');
   // Locations and claims let validators inspect the relevant code instead of scoring identifiers without evidence.
   const block = batch.map((f) => {

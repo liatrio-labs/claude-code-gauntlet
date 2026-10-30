@@ -96,7 +96,7 @@ Cited harmless test-role pattern and its applicability; test path alone is insuf
 
 Wrong assertions, mocks and waits remain defects.
 
-Exceptions: test_coverage_origin, test_applicable_convention, genuine_test_defect.
+Exceptions: security_dimension, test_coverage_origin, test_applicable_convention, genuine_test_defect.
 
 Facts: path_role.
 
@@ -108,7 +108,7 @@ Cite applicable repository tool, rule or configuration and coverage of the actua
 
 Familiar syntax and assumed CI tools are insufficient.
 
-Exceptions: none.
+Exceptions: security_dimension, present_static_defect.
 
 Facts: none.
 
@@ -120,7 +120,7 @@ Cited suppression location, range and rule cover this issue.
 
 A nearby suppression does not establish applicability.
 
-Exceptions: none.
+Exceptions: security_dimension.
 
 Facts: none.
 
@@ -132,7 +132,7 @@ Cite repository opt-out mechanism and applicable file or rule opt-out.
 
 An author assertion is not an opt-out mechanism.
 
-Exceptions: none.
+Exceptions: security_dimension.
 
 Facts: none.
 
@@ -140,11 +140,11 @@ Facts: none.
 
 Consumers: validator, challenger; predicate: `confirmed_intent`; proof: `citation`; outcome: `eliminate`.
 
-Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation.
+Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation; both must be outside PR-added lines in the captured diff.
 
 The side record is only a gating fact, never a finding or proof; description and intentional wording are insufficient.
 
-Exceptions: proven_incorrect_or_dangerous_behavior_including_security.
+Exceptions: security_dimension, proven_incorrect_or_dangerous_behavior_including_security.
 
 Facts: conventions_confirmation.
 

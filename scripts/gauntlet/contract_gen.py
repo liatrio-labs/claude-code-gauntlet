@@ -1612,7 +1612,7 @@ def skeptical_targets(
         ]
         lines.extend(["## Scope rows", ""])
         for row in registry["exclusionCategories"]:
-            if stage not in row["consumers"] and row["stage"] != "admission":
+            if stage not in row["consumers"]:
                 continue
             lines.extend(
                 [

@@ -67,7 +67,14 @@ export function disposeFindings(challenged) {
       eliminated.push(finding);
       continue;
     }
-    const terminalScope = scope.find((row) => row.outcome === 'eliminate') || scope.find((row) => row.outcome === 'report_only');
+    const terminal = scope.filter((row) => !row.request_ids || (!skeptical.held
+      && ['survived', 'validator_terminal'].includes(finding.challenge)
+      && !scopeRows.some((other) => other.category === row.category && other.stage !== row.stage && other.applies !== true)));
+    const terminalScope = terminal.find((row) => row.outcome === 'eliminate') || terminal.find((row) => row.outcome === 'report_only');
+    if (scope.some((row) => row.request_ids && !terminal.includes(row))) {
+      skeptical.held = true;
+      skeptical.reasons.push({ reason: 'held_back', missing_field: 'agreed_scope' });
+    }
     if (terminalScope) {
       finding.disposition = terminalScope.outcome;
       finding.disposition_reasons = [terminalScope.outcome === 'eliminate' ? 'out_of_scope' : 'report_only'];

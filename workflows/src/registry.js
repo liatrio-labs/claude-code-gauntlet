@@ -340,20 +340,20 @@ export const EXCLUSION_CATEGORIES = deepFreeze([
     applicability: 'Existing future-change-only reachability assessment appropriate to the actual claim.', exceptions: ['present_static_defect'],
     proof: 'verified_fact', outcome: 'body', reference: 'Placement after admission and vetting; no invented runtime trigger or early challenge exclusion.' },
   { category: 'test_only_pattern', stage: 'skeptical', predicate: 'harmless_test_pattern', facts: ['path_role'],
-    applicability: 'Cited harmless test-role pattern and its applicability; test path alone is insufficient.', exceptions: ['test_coverage_origin', 'test_applicable_convention', 'genuine_test_defect'],
+    applicability: 'Cited harmless test-role pattern and its applicability; test path alone is insufficient.', exceptions: ['security_dimension', 'test_coverage_origin', 'test_applicable_convention', 'genuine_test_defect'],
     proof: 'citation', outcome: 'eliminate', reference: 'Wrong assertions, mocks and waits remain defects.' },
   { category: 'lint_catchable', stage: 'skeptical', predicate: 'tool_covers_claim', facts: [],
-    applicability: 'Cite applicable repository tool, rule or configuration and coverage of the actual claim.', exceptions: [],
+    applicability: 'Cite applicable repository tool, rule or configuration and coverage of the actual claim.', exceptions: ['security_dimension', 'present_static_defect'],
     proof: 'citation', outcome: 'eliminate', reference: 'Familiar syntax and assumed CI tools are insufficient.' },
   { category: 'suppressed', stage: 'skeptical', predicate: 'suppression_covers_claim', facts: [],
-    applicability: 'Cited suppression location, range and rule cover this issue.', exceptions: [],
+    applicability: 'Cited suppression location, range and rule cover this issue.', exceptions: ['security_dimension'],
     proof: 'citation', outcome: 'eliminate', reference: 'A nearby suppression does not establish applicability.' },
   { category: 'opted_out', stage: 'skeptical', predicate: 'opt_out_covers_claim', facts: [],
-    applicability: 'Cite repository opt-out mechanism and applicable file or rule opt-out.', exceptions: [],
+    applicability: 'Cite repository opt-out mechanism and applicable file or rule opt-out.', exceptions: ['security_dimension'],
     proof: 'citation', outcome: 'eliminate', reference: 'An author assertion is not an opt-out mechanism.' },
   { category: 'intentional', stage: 'skeptical', predicate: 'confirmed_intent', facts: ['conventions_confirmation'],
-    applicability: 'Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation.',
-    exceptions: ['proven_incorrect_or_dangerous_behavior_including_security'], proof: 'citation', outcome: 'eliminate',
+    applicability: 'Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation; both must be outside PR-added lines in the captured diff.',
+    exceptions: ['security_dimension', 'proven_incorrect_or_dangerous_behavior_including_security'], proof: 'citation', outcome: 'eliminate',
     reference: 'The side record is only a gating fact, never a finding or proof; description and intentional wording are insufficient.' },
 ].map((row) => ({ ...row, consumers: row.stage === 'skeptical' ? ['validator', 'challenger'] : [row.stage],
   citation_roles: row.proof === 'citation' ? ['rule', 'applicability'] : [] })));
@@ -381,7 +381,7 @@ export const CITATION_REQUEST_PROPERTIES = deepFreeze({
   quote: { type: 'string', minLength: 1, maxLength: ANCHOR_LIMITS.chars },
 });
 export const CITATION_REQUEST_SCHEMA = deepFreeze(closedDispatchRow(CITATION_REQUEST_PROPERTIES));
-export const CITE_VERIFIER_VERSION = 'cite-1';
+export const CITE_VERIFIER_VERSION = 'cite-2';
 export const CITATION_SOURCE_SCHEMA = deepFreeze(closedDispatchRow({
   snapshot_id: { type: 'string' }, target_kind: { type: 'string' },
   head: { type: 'string' }, base: { type: 'string' }, diff_sha256: { type: 'string' },
@@ -390,7 +390,8 @@ export const CITATION_SOURCE_SCHEMA = deepFreeze(closedDispatchRow({
 export const CITATION_RESULT_SCHEMA = deepFreeze(closedDispatchRow({
   request: CITATION_REQUEST_SCHEMA, status: { type: 'string', enum: ['matched', 'unmatched', 'rejected', 'unavailable'] },
   detail: { type: 'string' }, source: CITATION_SOURCE_SCHEMA,
-}));
+  added_lines: { type: 'array', items: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER } },
+}, ['added_lines']));
 const citationRequests = (roles) => ({ type: 'array', minItems: roles.length,
   maxItems: CITATION_REQUEST_PROPERTIES.role.enum.length, items: CITATION_REQUEST_SCHEMA,
   allOf: roles.map((role) => ({ contains: { type: 'object', properties: { role: { const: role } }, required: ['role'] } })),

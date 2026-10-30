@@ -21,9 +21,9 @@
 > Each agent copy is preceded by a `<!-- Canonical source: references/complete-read-contract.md -->`
 > comment pointing back here. `tests/test_registry_contracts.py::test_agent_mirrors[complete-read]`
 > asserts every copy is byte-identical to the block below — the guard that stops the
-> copies drifting apart. Same duplication rationale as
-> `references/false-positive-exclusions.md`: every agent must carry the rule even if a
-> file read fails, so it is not refactored into a shared read.
+> copies drifting apart. Every file-reading agent carries this backstop so it survives
+> a failed shared-file read. Scope rows in `references/false-positive-exclusions.md`
+> are generated separately.
 
 ## Why this exists
 

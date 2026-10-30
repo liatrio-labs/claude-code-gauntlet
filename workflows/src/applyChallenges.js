@@ -6,7 +6,7 @@ export function rankKey(finding) {
   const sev = (finding.severity ?? 'low').toLowerCase();
   let sevIdx = SEVERITY_ORDER.indexOf(sev);
   if (sevIdx < 0) sevIdx = SEVERITY_ORDER.length;
-  const degraded = finding.origin === 'unknown' ? 1 : 0;
+  const degraded = (finding.diff_validation?.in_diff === true ? 0 : 2) + (finding.origin === 'unknown' ? 1 : 0);
   const conf = finding.confidence ?? 0;
   let tertiary;
   const rl = finding.risk_level;

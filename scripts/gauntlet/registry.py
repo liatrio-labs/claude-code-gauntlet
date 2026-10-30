@@ -1263,7 +1263,7 @@ CITATION_REQUEST_SCHEMA = {
     "additionalProperties": False,
 }
 
-CITE_VERIFIER_VERSION = "cite-1"
+CITE_VERIFIER_VERSION = "cite-2"
 
 EXCLUSION_CATEGORIES: list[ExclusionRow] = [
     {
@@ -1385,6 +1385,7 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
         "facts": ["path_role"],
         "applicability": "Cited harmless test-role pattern and its applicability; test path alone is insufficient.",
         "exceptions": [
+            "security_dimension",
             "test_coverage_origin",
             "test_applicable_convention",
             "genuine_test_defect",
@@ -1401,7 +1402,7 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
         "predicate": "tool_covers_claim",
         "facts": [],
         "applicability": "Cite applicable repository tool, rule or configuration and coverage of the actual claim.",
-        "exceptions": [],
+        "exceptions": ["security_dimension", "present_static_defect"],
         "proof": "citation",
         "outcome": "eliminate",
         "reference": "Familiar syntax and assumed CI tools are insufficient.",
@@ -1414,7 +1415,7 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
         "predicate": "suppression_covers_claim",
         "facts": [],
         "applicability": "Cited suppression location, range and rule cover this issue.",
-        "exceptions": [],
+        "exceptions": ["security_dimension"],
         "proof": "citation",
         "outcome": "eliminate",
         "reference": "A nearby suppression does not establish applicability.",
@@ -1427,7 +1428,7 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
         "predicate": "opt_out_covers_claim",
         "facts": [],
         "applicability": "Cite repository opt-out mechanism and applicable file or rule opt-out.",
-        "exceptions": [],
+        "exceptions": ["security_dimension"],
         "proof": "citation",
         "outcome": "eliminate",
         "reference": "An author assertion is not an opt-out mechanism.",
@@ -1439,8 +1440,11 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
         "stage": "skeptical",
         "predicate": "confirmed_intent",
         "facts": ["conventions_confirmation"],
-        "applicability": "Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation.",
-        "exceptions": ["proven_incorrect_or_dangerous_behavior_including_security"],
+        "applicability": "Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation; both must be outside PR-added lines in the captured diff.",
+        "exceptions": [
+            "security_dimension",
+            "proven_incorrect_or_dangerous_behavior_including_security",
+        ],
         "proof": "citation",
         "outcome": "eliminate",
         "reference": "The side record is only a gating fact, never a finding or proof; description and intentional wording are insufficient.",
@@ -2166,11 +2170,12 @@ class CiteResultsItemSource(TypedDict):
     verifier_version: str
 
 
-class CiteResultsItem(TypedDict):
+class CiteResultsItem(TypedDict, total=False):
     request: CiteResultsItemRequest
     status: CitationStatus
     detail: str
     source: CiteResultsItemSource
+    added_lines: list[int]
 
 
 class ReductionDetailItem(TypedDict, total=False):

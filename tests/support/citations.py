@@ -29,6 +29,9 @@ def citation_cli(tmp_path, monkeypatch, invoke, *, in_repo_output=False):
     git(root, "commit", "-qm", "base")
     base = git(root, "rev-parse", "HEAD")
     (root / "gone").unlink()
+    (root / "source").write_bytes(
+        (QUOTE + "\nsecond_source_line();\n" + QUOTE + "\n").encode()
+    )
     git(root, "add", ".")
     git(root, "commit", "-qm", "target")
     head = git(root, "rev-parse", "HEAD")
