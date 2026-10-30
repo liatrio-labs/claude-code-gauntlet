@@ -526,6 +526,9 @@ def _candidate_artifacts(inputs, artifacts, paths, before, expected_checkpoint):
                     "disposition_reasons",
                     "consolidation_key",
                     "consolidation_primary",
+                    "delivery_group",
+                    "site_requests",
+                    "resolved_sites",
                 )
             },
             sort_keys=True,

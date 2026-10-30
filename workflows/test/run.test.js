@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { runWith, compactMethodology } from '../src/run.js';
-import { checkpointArgs, validArgs } from './helpers/argsFixtures.js';
+import { checkpointArgs, validArgs, prIdentity } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { PATHS, challengeOutput, replayProducedCheckpoint, runAndCapture, persistCtx, persistInput } from './helpers/persistFixtures.js';
 import { captureRun, mixedSurvivors, withSandboxGlobals, drainMicrotasks } from './helpers/runFixtures.js';
@@ -27,6 +27,92 @@ const DIMENSIONS = ['bug', 'security', 'cross_file_impact', 'test_coverage', 'co
   'type_design', 'simplification'];
 const PROOF = { slices: 1, proven: 1, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,
   retried: 0, retriedMismatch: 0, retriedMissing: 0, localised: 0, retriedFindings: 0, degradedFindings: 0 };
+test('whole issue groups reach every artifact', async (t) => {
+  const site = (n) => ({ file: `site-${n}.txt`, line_start: n, line_end: n, anchor: 'quote', location_status: 'confirmed', diff_validation: { in_diff: true } });
+  const member = (id, over = {}) => makeFinding(id, { agent: 'bug-detector', report_tag: 'main', ...over });
+  const raw = challengeOutput({ findings: [
+    member('SUGGESTION', { file: 'group.txt', dimension: 'test_coverage', agent: 'test-analyzer', confidence: 99, report_tag: 'suggestion' }),
+    member('CORE-LOW', { file: 'group.txt', agent: 'security-reviewer', dimension: 'security', confidence: 80 }),
+    member('CORE', { file: 'group.txt', confidence: 85, sites: [1, 2, 3, 4].map(site) }),
+    member('SAME-A', { file: 'same.txt', confidence: 70 }), member('SAME-B', { file: 'same.txt', confidence: 65 }),
+    member('STALE', { confidence: 60, consolidation_key: 'old', consolidation_primary: false,
+      delivery_group: { issue_key: 'old', lead_id: 'gone', finding_ids: ['gone', 'STALE'] } }),
+    member('OFF', { file: 'anchor.txt', confidence: 100, diff_validation: { in_diff: false } }),
+    member('ANCHOR', { file: 'anchor.txt', confidence: 75, agent: 'test-analyzer', dimension: 'test_coverage', report_tag: 'suggestion' }),
+    member('BODY', { diff_validation: { in_diff: false }, confidence: 99 }),
+    member('BODY-SUGGESTION', { diff_validation: { in_diff: false }, report_tag: 'suggestion' }),
+    member('UNRELATED', { title: 'finding CORE', confidence: 55 }),
+  ] });
+  await t.test('group selection, ranking and persistence', async () => {
+  const args = validArgs({ delivery: { prIdentity: prIdentity() }, limits: { deliveryCap: 1 }, checkpoints: { challenge: raw } });
+  const first = await runAndCapture(args);
+  assert.equal(first.out.ok, true, JSON.stringify(first.out));
+  const post = first.payload.postReview.findings;
+  assert.deepEqual(post.map((f) => f.id), ['ANCHOR', 'OFF']);
+  const grouped = await runAndCapture(validArgs({ ...args, checkpoints: { challenge: challengeOutput({ findings: raw.findings.slice(0, 3) }) } }));
+  const groupPost = grouped.payload.postReview.findings;
+  assert.deepEqual(groupPost.map((f) => f.id), ['CORE', 'SUGGESTION', 'CORE-LOW']);
+  assert.deepEqual(groupPost[0].delivery_group, { issue_key: 'group:group.txt:10', lead_id: 'CORE', finding_ids: ['CORE', 'SUGGESTION', 'CORE-LOW'] });
+  assert.equal(groupPost[0].sites.length, 4);
+  const all = first.payload.findings;
+  assert.deepEqual(all.filter((f) => f.delivery_group?.lead_id === 'ANCHOR').map((f) => f.id), ['OFF', 'ANCHOR']);
+  for (const id of ['SAME-A', 'SAME-B', 'STALE', 'UNRELATED']) {
+    const f = all.find((f) => f.id === id);
+    assert.deepEqual(f.delivery_group.finding_ids, [id]);
+    assert.equal(f.consolidation_key, undefined);
+  }
+  assert.equal((first.payload.report.match(/\*\*Additional site:\*\*/g) || []).length, 4);
+  assert.equal((first.payload.report.match(/#### finding CORE\n/g) || []).length, 2);
+  const resumed = await replayProducedCheckpoint(args, first.payload.checkpoints);
+  assert.deepEqual(resumed.payload.postReview, first.payload.postReview);
+  const returned = await runAndCapture(validArgs({ ...args, persist: { returnPrimaries: true }, checkpoints: { challenge: challengeOutput({ findings: raw.findings.slice(0, 3) }) } }));
+  const entries = returned.out.persistReturn.entries;
+  assert.deepEqual(deriveFromPlan(JSON.parse(entries.at(-1).text), entries[0].text).postReview.findings, groupPost);
+  const main = await runAndCapture(validArgs({ limits: { deliveryCap: 100 }, delivery: { prIdentity: prIdentity(), tier: 'main_only' }, checkpoints: { challenge: raw } }));
+  const mainIds = main.payload.postReview.findings.map((f) => f.id);
+  assert.ok(mainIds.includes('CORE') && mainIds.includes('CORE-LOW') && mainIds.includes('OFF'));
+  assert.equal(mainIds.includes('SUGGESTION'), false);
+  assert.equal(mainIds.includes('ANCHOR'), false);
+  assert.equal(mainIds.includes('BODY-SUGGESTION'), false);
+  const uncapped = await runAndCapture(validArgs({ delivery: { prIdentity: prIdentity() }, limits: { deliveryCap: 100 }, checkpoints: { challenge: raw } }));
+  assert.equal(uncapped.out.ok, true, JSON.stringify(uncapped.out));
+  assert.ok(uncapped.payload.postReview.findings.some((f) => f.id === 'UNRELATED'));
+  });
+  await t.test('removed primary leaves an independent issue', async () => {
+  const orphan = applyChallenges([
+    member('REMOVED', { file: 'orphan.txt', consolidation_key: 'old', consolidation_primary: true }),
+    member('ORPHAN', { file: 'orphan.txt', agent: 'test-analyzer', consolidation_key: 'old' }),
+  ], [{ id: 'REMOVED', score: 0 }, { id: 'ORPHAN', score: 90 }]);
+  const orphanRun = await runAndCapture(validArgs({ checkpoints: { challenge: challengeOutput(orphan) } }));
+  assert.deepEqual(orphanRun.payload.postReview.map((f) => f.delivery_group.finding_ids), [['ORPHAN']]);
+  assert.equal(orphanRun.payload.postReview[0].consolidation_key, undefined);
+  });
+  const idless = disposeFindings({ findings: [member(undefined, { file: 'idless.txt', confidence: 100 }),
+    member('HAS-ID', { file: 'idless.txt', confidence: 50, agent: 'test-analyzer' })] });
+  assert.equal(idless.findings.find((f) => f.id === 'HAS-ID').consolidation_primary, true);
+  const freshArgs = validArgs();
+  let freshPayload;
+  const freshCtx = makeCtx(freshArgs, { findings: [member('FRESH', { sites: [site(1), site(2)] })], onPersist: (value) => { freshPayload = value; } });
+  const freshAgent = freshCtx.agent;
+  freshCtx.agent = async (prompt, dispatch) => {
+    const response = await freshAgent(prompt, dispatch);
+    if (dispatch.label.startsWith('verify-slice-')) {
+      for (const delta of response.result.deltas) delta.resolved_sites = [site(1), site(2)];
+      response.receipt.deltas_checksum = deltaContentProof(response.result.deltas.map((d) => d.id), response.result.deltas);
+    }
+    if (dispatch.label.startsWith('validate-batch-')) for (const validation of response.validations) {
+      validation.site_confirmations = [site(1), site(2)].map((s, i) => ({ ...s, confirmed: i === 0 }));
+    }
+    return response;
+  };
+  assert.equal((await runWith(freshCtx, freshArgs)).ok, true);
+  assert.deepEqual(freshPayload.postReview[0].sites, [site(1)]);
+  assert.equal(freshPayload.checkpoints.phases.challenge.findings[0].site_requests.length, 2);
+  const heldReport = renderReport({ prIdentity: prIdentity(), findings: [
+    { ...member('HELD-SITES'), disposition: 'held_back', sites: [{ ...site(1), disposition: 'deliver' }] },
+  ] });
+  assert.equal(heldReport.includes('site-1.txt'), false);
+});
 test('final disposition survives replay and persistence', async () => {
   const fresh = await runAndCapture(validArgs({ limits: { verifySliceSize: 2, validateBatch: 1 } }), {
     findings: ['BOTH', 'VERIFY', 'VALIDATE', 'CLEAN'].map((id) => makeFinding(id, { disposition: 'deliver', disposition_reasons: ['untrusted'] })),
@@ -127,7 +213,7 @@ test('final disposition survives replay and persistence', async () => {
   assert.equal(body.includes('claim-0'), false);
 });
 
-test('body and inline findings share the ranked delivery cap', async () => {
+test('body findings rank with inline findings under the delivery cap', async () => {
   const raw = challengeOutput({ findings: [
     makeFinding('INLINE', { severity: 'low' }),
     makeFinding('BODY', { severity: 'critical', diff_validation: { in_diff: false } }),

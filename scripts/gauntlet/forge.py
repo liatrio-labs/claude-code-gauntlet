@@ -68,7 +68,7 @@ class Poster:
 class PostRequest:
     platform: Platform
     endpoint: str
-    method: Literal["POST"]
+    method: Literal["POST", "PUT"]
     headers: tuple[str, ...]
     payload: Mapping[str, object]
 

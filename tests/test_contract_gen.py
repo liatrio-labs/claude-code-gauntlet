@@ -94,6 +94,100 @@ def test_disposition_row_generates_consumers(registry_tree, invoke):
     assert json.loads(dispatched.stdout) == [True, False, True, False]
 
 
+@pytest.mark.parametrize("discovery_enabled", [False, True])
+def test_site_descriptor_gates_discovery_consumers(
+    registry_tree, invoke, discovery_enabled
+):
+    source = registry_tree / "workflows/src/registry.js"
+    source.write_text(
+        source.read_text(encoding="utf-8").replace(
+            "  sites: {",
+            "  related: { type: 'array', description: 'Related paths.', items: { type: 'object', properties: { path: { type: 'string', $comment: 'repo-path' }, active: { type: 'boolean' } }, required: ['path', 'active'], additionalProperties: false } },\n  sites: {",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    source.write_text(
+        re.sub(
+            r"\bdiscovery: (false|true)\b",
+            "discovery: " + str(discovery_enabled).lower(),
+            source.read_text(encoding="utf-8"),
+            count=1,
+        ),
+        encoding="utf-8",
+    )
+    result = invoke(
+        "generate_contract_requirements",
+        ["--repo-root", str(registry_tree)],
+        registry_tree,
+    )
+    assert result.returncode == 0, result.stderr
+    namespace = {}
+    exec(
+        (registry_tree / "scripts/gauntlet/registry.py").read_text(encoding="utf-8"),
+        namespace,
+    )
+    assert namespace["RelatedItem"].__annotations__ == {"path": str, "active": bool}
+    assert namespace["SitesItem"].__annotations__ == {
+        "file": str,
+        "line_start": int,
+        "line_end": int,
+        "anchor": str,
+    }
+    assert "resolved_sites" in namespace["Delta"].__annotations__
+    contracts = {}
+    for agent in gen.load_registry(str(registry_tree))["agents"]:
+        contract = (registry_tree / f"agents/{agent.split(':')[1]}.md").read_text(
+            encoding="utf-8"
+        )
+        block = contract.split(gen.MARKER_OPEN)[1].split(gen.MARKER_CLOSE)[0]
+        contracts[agent] = json.loads(
+            re.search(r"```json\n(.*?)\n```", block, re.DOTALL).group(1)
+        )
+    assert "| `related` | array | no | Related paths. |" in (
+        registry_tree / REPORT
+    ).read_text(encoding="utf-8")
+    report = (registry_tree / REPORT).read_text(encoding="utf-8")
+    assert ("| `sites` |" in report) is discovery_enabled
+    result = gen.proc.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import { normalizePhaseFindings } from './workflows/src/checkpoints.js';
+import { discover } from './workflows/src/discover.js';
+const schemas = {};
+await discover({agent: async (_, o) => { schemas[o.label] = o.schema; return {findings:[], complete:true, total_seen:0, removed_test_audit:[]}; }, parallel: async ts => Promise.all(ts.map(t=>t()))}, {});
+const out = { findings: [{file:'main.txt', related:[{path:'/repo/ok.txt',active:true},{path:'../escape',active:false}], sites:[{file:'../escape',line_start:1,line_end:1,anchor:'q'}]}] };
+normalizePhaseFindings('discover', out, false, {repoRoot:'/repo'});
+console.log(JSON.stringify({out, schemas}, (key, value) => key === '$comment' ? undefined : value));
+""",
+        ],
+        cwd=str(registry_tree),
+        check=True,
+    )
+    value = json.loads(result.stdout)
+    assert value["out"]["findings"][0]["related"] == [
+        {"path": "ok.txt", "active": True}
+    ]
+    assert value["out"]["findings"][0]["sites"] == []
+    assert len(value["out"]["gaps"]) == 2
+    assert contracts == value["schemas"]
+    for schema in value["schemas"].values():
+        item = schema["properties"]["findings"]["items"]
+        properties = item["properties"]
+        assert properties["related"]["items"]["properties"]["active"] == {
+            "type": "boolean"
+        }
+        assert "related" not in item["required"]
+        assert ("sites" in properties) is discovery_enabled
+        if discovery_enabled:
+            assert "sites" not in item["required"]
+            assert properties["sites"]["items"]["additionalProperties"] is False
+            assert "discovery" not in properties["sites"]
+
+
 def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
     before = gen.load_registry(str(registry_tree))
     description = before["findingTypes"]["anchor"]["description"]
@@ -132,7 +226,7 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
             + "schemas[options.label] = options.schema;"
             + "return {findings: [], complete: true, total_seen: 0, removed_test_audit: []};"
             + "}, parallel: async tasks => Promise.all(tasks.map(task => task()))}, {});"
-            + "console.log(JSON.stringify(schemas));",
+            + "console.log(JSON.stringify(schemas, (key, value) => key === '$comment' ? undefined : value));",
         ],
         cwd=str(registry_tree),
         check=True,
@@ -916,7 +1010,7 @@ def live_identity():
 
 def test_registry_diagnostic(registry_tree, live_identity, monkeypatch, invoke):
     identity = deepcopy(live_identity)
-    identity["findingTypes"]["id"] = "boolean"
+    identity["findingTypes"]["id"] = "unknown"
     monkeypatch.setattr(gen, "load_registry", lambda root: identity)
     result = invoke(
         "generate_contract_requirements",
@@ -925,7 +1019,7 @@ def test_registry_diagnostic(registry_tree, live_identity, monkeypatch, invoke):
     )
     assert result.returncode == 1
     assert result.stdout == b""
-    assert "unknown finding schema type for id: 'boolean'" in result.stderr.decode()
+    assert "unknown finding schema type for Id: 'unknown'" in result.stderr.decode()
     assert re.fullmatch(
         r"generate_contract_requirements: [^\n]+\n", result.stderr.decode()
     )

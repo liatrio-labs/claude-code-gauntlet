@@ -13,7 +13,7 @@ def js_values() -> dict:
         "Promise.all([import('./workflows/src/registry.js'), "
         "import('./workflows/src/filterFindings.js')]).then(([m, f]) => "
         "console.log(JSON.stringify({registryProjection: {"
-        "propTypes: Object.fromEntries(Object.entries(m.FINDING_PROP_TYPES).map(([k, v]) => [k, t(v)])),"
+        "propTypes: Object.fromEntries(Object.entries(m.DISCOVERY_FINDING_PROP_TYPES).map(([k, v]) => [k, t(v)])),"
         "required: m.FINDING_REQUIRED,"
         "dimensions: m.DIMENSIONS.map(d => ({"
         "dimension: d.dimension, agentType: d.agentType,"

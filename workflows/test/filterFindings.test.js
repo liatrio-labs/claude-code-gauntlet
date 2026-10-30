@@ -159,35 +159,6 @@ for (const row of TAG_ROWS) test('tag: ' + row.name, () => {
     out.mainCount, out.suggestionCount], row.expected);
 });
 
-const CONSOLIDATION_ROWS = [
-  { name: "three agents retain all and core confidence wins", input: [
-             { id: "sec-1", line_start: 20, agent: "security-reviewer", dimension: "security", confidence: 75 },
-             { id: "bug-1", line_start: 21, confidence: 80 },
-             { id: "test-1", line_start: 22, agent: "test-analyzer", dimension: "test_coverage", confidence: 95 } ],
-    expected: { count: 3, primary: ["bug-1"], stamped: 3, ids: ["sec-1", "bug-1", "test-1"] } },
-
-  { name: "same-agent group has no stamps", input: [{ id: "f1" }, { id: "f2", line_start: 11 }],
-    expected: { count: 0, primary: [], stamped: 0, ids: ["f1", "f2"] } },
-
-  { name: "singleton clears stale stamps", input: [{ id: "only-1", consolidation_key: "old", consolidation_primary: true }],
-    expected: { count: 0, primary: [], stamped: 0, ids: ["only-1"] } },
-
-  { name: "idless winner is skipped", input: [ { id: undefined, confidence: 95 },
-             { id: "has-id", line_start: 11, agent: "test-analyzer", dimension: "test_coverage", confidence: 50 } ],
-    expected: { count: 1, primary: ["has-id"], stamped: 1, ids: [undefined, "has-id"] } },
-  { name: 'different report routes still consolidate', input: [
-    { id: 'bug-2', file: 'AssertEvents.java', line_start: 483, report_destination: 'main', confidence: 95 },
-    { id: 'conv-2', file: 'AssertEvents.java', line_start: 483, dimension: 'comment_accuracy',
-      agent: 'conventions-and-intent', report_destination: 'suggestion', confidence: 97 }],
-    expected: { count: 2, primary: ['bug-2'], stamped: 2, ids: ['bug-2', 'conv-2'] } }
-];
-for (const row of CONSOLIDATION_ROWS) test('consolidate: ' + row.name, () => {
-  const out = consolidateCrossAgent(row.input.map(consolidationFinding));
-  assert.deepEqual({ count: out.consolidatedCount,
-    primary: out.findings.filter((item) => item.consolidation_primary).map((item) => item.id),
-    stamped: out.findings.filter((item) => Object.hasOwn(item, 'consolidation_key')).length,
-    ids: out.findings.map((item) => item.id) }, row.expected);
-});
 
 const BUCKET_ROWS = [
   { name: "line coercion 6", input: "\u001c99", expected: { key: "src/x.py:100", confidence: 100, bucket10: 100 } },

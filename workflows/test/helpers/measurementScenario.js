@@ -9,7 +9,7 @@ import { fnv1a32 } from '../../src/wire.js';
 export function measurementScenario(mode = 'return', overrides = {}, options = {}) {
   const id = { owner: 'synthetic', repo: 'fixture', pr_number: 1, sha_full: 'a'.repeat(40), platform: 'github', web_origin: 'https://github.com' };
   const args = validArgs({ delivery: { tier: 'all', prIdentity: id },
-    limits: { challengeCap: 6, deliveryCap: 2 },
+    limits: { challengeCap: 6, deliveryCap: 1 },
     ...(mode === 'return' ? { persist: { returnPrimaries: true } } : mode === 'derived' ? { persist: {} } : {}),
     ...overrides,
   });

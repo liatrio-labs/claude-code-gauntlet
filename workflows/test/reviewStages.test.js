@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { validateStage, filterStage, challengeStage, blindChallengeFields, selectDelivery } from '../src/reviewStages.js';
 import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
+import { VALIDATION_RETURN_PROPERTIES } from '../src/registry.js';
 
 const omittedGap = (idx, count) => `validate-batch-${idx}: validator omitted scores — ${count} finding(s) unvalidated (validation=skipped, held back to the report)`;
 const VALIDATE_STATS = { batches_dispatched: 1, batches_completed: 1, validated: 1, skipped: 1, adjusted: 1 };
@@ -87,6 +88,7 @@ for (const row of VALIDATE_PROMPT_ROWS) test(`validate prompt: ${row.name}`, asy
     type: 'array', items: { type: 'object', properties: {
       finding_id: { type: 'string' }, confidence: { type: 'number' }, justification: { type: 'string' },
       reachability: { type: 'string', enum: ['current', 'future_change_only', 'uncertain'] },
+      ...VALIDATION_RETURN_PROPERTIES,
     }, required: ['finding_id', 'confidence'] },
   } }, required: ['validations'] });
 });
@@ -236,6 +238,30 @@ const MIXED = [
 ];
 const DELIVERY_GOLDEN = ['MAIN_CRIT', 'SUGG_HIGH', 'MAIN_MED', 'SUGG_LOW'];
 const DELIVERY_ROWS = [
+  { name: 'critical corroborator ranks its group above a medium lead', cap: 1, input: [
+    finding({ id: 'OTHER', severity: 'medium', confidence: 99 }),
+    finding({ id: 'LEAD', severity: 'medium', confidence: 90, consolidation_key: 'issue', consolidation_primary: true }),
+    finding({ id: 'CRITICAL', severity: 'critical', confidence: 80, consolidation_key: 'issue' }),
+  ], expected: ['LEAD', 'CRITICAL'] },
+  { name: 'main only filters each member before grouping', tier: 'main_only', input: [
+    finding({ id: 'SUGG_LEAD', report_tag: 'suggestion', consolidation_key: 'one', consolidation_primary: true }),
+    finding({ id: 'MAIN_CHILD', report_tag: 'main', consolidation_key: 'one' }),
+    finding({ id: 'MAIN_LEAD', report_tag: 'main', consolidation_key: 'two', consolidation_primary: true }),
+    finding({ id: 'SUGG_CHILD', report_tag: 'suggestion', consolidation_key: 'two' }),
+    finding({ id: 'SUGG_ONLY', report_tag: 'suggestion', consolidation_key: 'three' }),
+  ], expected: ['MAIN_CHILD', 'MAIN_LEAD'] },
+  { name: 'body groups compete with inline groups under the cap', cap: 1, input: [
+    finding({ id: 'INLINE', disposition: 'deliver', severity: 'low' }),
+    finding({ id: 'BODY', disposition: 'body', severity: 'critical' }),
+  ], expected: ['BODY'] },
+  { name: 'zero cap includes body groups', cap: 0, input: [finding({ id: 'BODY', disposition: 'body' })], expected: [] },
+  { name: 'persisted membership overrides legacy grouping', cap: 1, input: [
+    finding({ id: 'CHILD', confidence: 99, consolidation_key: 'stale-child', consolidation_primary: true,
+      delivery_group: { issue_key: 'current', lead_id: 'LEAD', finding_ids: ['LEAD', 'CHILD'] } }),
+    finding({ id: 'LEAD', confidence: 95, consolidation_key: 'stale-lead', consolidation_primary: false,
+      delivery_group: { issue_key: 'current', lead_id: 'LEAD', finding_ids: ['LEAD', 'CHILD'] } }),
+    finding({ id: 'OTHER', confidence: 90 }),
+  ], expected: ['LEAD', 'CHILD'] },
   { name: 'absent cap and tier' }, { name: 'null cap and tier', cap: null, tier: null },
   { name: 'nonbinding cap', cap: 25 },
   { name: 'negative cap', cap: -1, expected: [] },

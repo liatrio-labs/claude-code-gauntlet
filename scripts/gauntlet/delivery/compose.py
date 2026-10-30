@@ -3,6 +3,7 @@
 import hashlib
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 from gauntlet import registry
 from gauntlet.delivery import gate
@@ -19,6 +20,7 @@ from gauntlet.delivery.input import Finding
 from gauntlet.location import canonical_range, delivery_allows
 from gauntlet.markdown import fence_run
 from gauntlet.marker import LEGACY_PRODUCT, build_footer, build_prose_footer
+from gauntlet.prior_review import site_key
 from gauntlet.text import (
     neutralize_comment_openers,
     normalize_report_severity,
@@ -100,6 +102,7 @@ class ComposedBody:
     omitted: int
     folded_bytes: int
     omitted_entries: tuple[OmittedEntry, ...]
+    shown_entries: tuple[SkippedEntry, ...]
 
 
 class ReportShapeError(Exception):
@@ -253,6 +256,23 @@ def render_group_sections(
 ) -> str:
     # Corroborators cannot supply patches or choose the primary's anchor offsets.
     body = render_finding_sections(primary, fence_offsets=fence_offsets, style=style)
+    seen: set[str] = set()
+    sites = []
+    for finding in (primary, *corroborators):
+        for site in cast(Sequence[Mapping[str, object]], finding.get("sites", [])):
+            if not delivery_allows(
+                {**site, "disposition": finding.get("disposition")}, "sourceLink"
+            ):
+                continue
+            key = site_key(site)
+            if key in seen:
+                continue
+            seen.add(key)
+            sites.append(
+                f"- {prepare_location(str(site['file']) + ':' + str(site['line_start']) + '-' + str(site['line_end']))}"
+            )
+    if sites:
+        body += "\n\n**Additional sites:**\n" + "\n".join(sites)
     if not corroborators:
         return body
     section = "\n\n".join(_render_corroboration(c) for c in corroborators)
@@ -318,7 +338,7 @@ def _skipped_piece(filepath: object, finding: Mapping[str, object]) -> str:
     # Neutralize the assembled heading as well as its prepared finding fields.
     location = _skipped_location(filepath, finding)
     piece = (
-        f"\n\n#### {prepare_location(location)}\n\n{render_finding_sections(finding)}"
+        f"\n\n#### {prepare_location(location)}\n\n{render_group_sections(finding, [])}"
     )
     return neutralize_comment_openers(piece)
 
@@ -463,7 +483,7 @@ def compose_review_body(
     )
     body = _compose_fragments(review_body, section, footer)
     if utf8_len(body) <= limits.bytes:
-        return ComposedBody(body, n, 0, 0, ())
+        return ComposedBody(body, n, 0, 0, (), tuple(skipped))
 
     footer = build_footer(findings_count, sha)
     fixed = utf8_len(BRAND_SUMMARY_HEADER) + utf8_len(footer)
@@ -485,6 +505,7 @@ def compose_review_body(
             n,
             folded_bytes,
             _omitted_entries(skipped),
+            (),
         )
 
     remaining = allowance - (utf8_len(review_body) if review_body else 0)
@@ -512,6 +533,7 @@ def compose_review_body(
         len(omitted_entries),
         0,
         _omitted_entries(omitted_entries),
+        tuple(shown_entries),
     )
 
 
@@ -551,7 +573,8 @@ def consolidate_delivery(findings: Sequence[Finding]) -> list[Group]:
     members_by_group: list[list[Finding]] = []
     key_to_group: dict[str, int] = {}
     for finding in findings:
-        key = finding.get("consolidation_key")
+        stamp = finding.get("delivery_group")
+        key = stamp["issue_key"] if stamp else finding.get("consolidation_key")
         if not key or not delivery_allows(finding, "body"):
             members_by_group.append([finding])
             continue
@@ -565,11 +588,19 @@ def consolidate_delivery(findings: Sequence[Finding]) -> list[Group]:
 
     groups: list[Group] = []
     for members in members_by_group:
+        stamp = members[0].get("delivery_group")
+        if stamp:
+            finding_ids = stamp["finding_ids"]
+            members.sort(key=lambda member: finding_ids.index(str(member.get("id"))))
         primary_index = next(
             (
                 index
                 for index, member in enumerate(members)
-                if member.get("consolidation_primary")
+                if (
+                    member.get("id") == stamp["lead_id"]
+                    if stamp
+                    else member.get("consolidation_primary")
+                )
             ),
             0,
         )

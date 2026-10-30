@@ -90,6 +90,13 @@ delete discoveryArgs.configEcho.review_md;
 const discoveredEcho = normalizeArgs(discoveryArgs).configEcho;
 
 const REPORT_ROWS = [
+  { name: 'additional sites use their own location rights', input: { findings: [finding('SITES', { sites: [
+    { file: 'kept.txt', line_start: 1, line_end: 1, anchor: 'quote', location_status: 'confirmed' },
+    { file: 'unconfirmed.txt', line_start: 2, line_end: 2, anchor: 'quote', location_status: 'unconfirmed' },
+    { file: 'invalid-range.txt', line_start: 3, line_end: 2, anchor: 'quote', location_status: 'confirmed' },
+  ] })] }, prefix: '- **Additional site:', all: true,
+  expected: ['- **Additional site:** [`kept.txt:1`](https://github.com/acme/widget/blob/ffffffffffffffffffffffffffffffffffffffff/kept.txt#L1)'],
+  absent: ['unconfirmed.txt', 'invalid-range.txt'] },
   { name: 'path arrays retain the whole-field prose fold', input: { findings: [finding('A', {
     cross_file_refs: Array.from({ length: 3000 }, (_, index) => `src/module_${index}/file.js`),
   })] }, start: '- **Cross-file refs:** ', end: '\n\n## Review Dimensions Summary',

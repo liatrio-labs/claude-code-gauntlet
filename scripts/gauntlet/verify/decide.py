@@ -30,7 +30,12 @@ from gauntlet.location import (
     resolve_location,
 )
 from gauntlet.paths import entry
-from gauntlet.registry import SEVERITY_ORDER, LocationStatus, VerifySliceFinding
+from gauntlet.registry import (
+    SEVERITY_ORDER,
+    LocationStatus,
+    ResolvedSitesItem,
+    VerifySliceFinding,
+)
 
 Origin = Literal["new", "surfaced"]
 
@@ -60,6 +65,7 @@ class DiffValidation(TypedDict):
 
 
 class FindingWire(VerifySliceFinding, total=False):
+    resolved_sites: list[ResolvedSitesItem]
     line: object
     end_line: object
     origin: Origin
@@ -494,6 +500,38 @@ def run_verification(
         warn("context map unavailable: context/map paths not supplied")
     sources = context.sources()
     for finding in findings:
+        if "sites" in finding:
+            finding["resolved_sites"] = []
+        for request in finding.get("sites", []):
+            site_file = request.get("file", "")
+            site_resolution = resolve_location(
+                request,
+                sources.read(site_file),
+                context.map_entries,
+                indexed.hunks.get(site_file, ()) if indexed else (),
+                indexed.old_spans.get(site_file, ()) if indexed else (),
+            )
+            if site_resolution.start is None:
+                continue
+            start, end = site_resolution.start, site_resolution.end
+            assert end is not None
+            finding["resolved_sites"].append(
+                {
+                    "file": site_file,
+                    "line_start": start,
+                    "line_end": end,
+                    "anchor": request["anchor"],
+                    "location_status": site_resolution.status,
+                    "diff_validation": {
+                        "in_diff": None
+                        if facts is None
+                        else any(
+                            is_line_valid(facts, site_file, line)
+                            for line in range(start, end + 1)
+                        )
+                    },
+                }
+            )
         file = finding.get("file", "")
         resolution = resolve_location(
             finding,

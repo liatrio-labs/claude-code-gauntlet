@@ -94,8 +94,17 @@ def payload_to_candidates(
     if selected_findings is not None:
         from bench.runner.provenance import map_delivery
 
-        mapped = map_delivery(payload, selected_findings, diff_text or "")
-        for candidate, source in zip(candidates, mapped, strict=True):
+        body_inputs = {}
+        if isinstance(selected_findings, dict):
+            body_inputs = {
+                key: selected_findings.get(key) for key in ("review_body", "sha")
+            }
+            selected_findings = selected_findings.get("findings", [])
+        mapped = map_delivery(
+            payload, selected_findings, diff_text or "", **body_inputs
+        )
+        inline = [source for source in mapped if source.surface == "inline"]
+        for candidate, source in zip(candidates, inline, strict=True):
             candidate["source_trace_ids"] = list(source.source_trace_ids)
             candidate["discovery_dimensions"] = list(source.discovery_dimensions)
             candidate["provenance_status"] = source.provenance_status

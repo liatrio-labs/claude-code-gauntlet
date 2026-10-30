@@ -4,6 +4,7 @@ import { merge, mergeStage, validateFindings, normalizeFindingPaths, dedupById }
 import { finding } from './helpers/findings.js';
 import { discover } from '../src/discover.js';
 import { stageCtx } from './helpers/stageFixtures.js';
+import { normalizePhaseFindings } from '../src/checkpoints.js';
 
 const META = { agents: ['bug-detector'], base_branch: 'main', head_sha: 'abc123full', pr_number: 42, owner: 'org', repo: 'myrepo' };
 const KNOWN_DIMENSIONS = ['bug', 'security', 'cross_file_impact', 'test_coverage', 'convention',
@@ -165,6 +166,13 @@ for (const row of STAGE_ROWS) test(`merge stage: ${row.name}`, async () => {
 
 const PATH_GOLDEN = { files: ['src/a.js'], refs: undefined, consumers: undefined, warnings: [], rewrites: 1 };
 const PATH_ROWS = [
+  ...[String.raw`C:\repo\a.txt`, String.raw`C:\repo/a.txt`, String.raw`C:/repo\a.txt`].map((file) => ({
+    name: `Windows top-level and nested paths ${file}`, root: String.raw`C:\repo`, input: [finding({ file,
+      sites: [{ file, line_start: 7, line_end: 7, anchor: 'return process(value);' }],
+      cross_file_refs: [file], affected_consumers: [file],
+    })], expected: { ...PATH_GOLDEN, files: ['a.txt'], refs: ['a.txt'], consumers: ['a.txt'], rewrites: 4 },
+    nested: true,
+  })),
   { name: 'file confinement', root: '/private/tmp/wt-410', input: [
     finding({ id: 'UNDER_ROOT', file: '/private/tmp/wt-410/scripts/gauntlet/proc.py' }),
     finding({ id: 'OUTSIDE_ROOT', file: '/private/tmp/wt-411/scripts/gauntlet/proc.py' }),
@@ -202,6 +210,18 @@ for (const row of PATH_ROWS) test(`finding paths: ${row.name}`, () => {
   assert.deepEqual(out.valid[0]?.affected_consumers, expected.consumers);
   assert.deepEqual(out.warnings, expected.warnings);
   assert.equal(out.path_rewrites, expected.rewrites);
+  if (row.nested) {
+    assert.deepEqual(out.valid[0].sites.map((site) => site.file), expected.files);
+    const replay = { findings: structuredClone(row.input).map((f) => ({ ...f,
+      site_requests: structuredClone(f.sites), resolved_sites: structuredClone(f.sites),
+    })) };
+    normalizePhaseFindings('verify', replay, true, { repoRoot: row.root });
+    assert.deepEqual(replay.gaps, undefined);
+    assert.deepEqual(replay.findings.map((f) => f.file), expected.files);
+    for (const field of ['sites', 'site_requests', 'resolved_sites']) {
+      assert.deepEqual(replay.findings[0][field].map((site) => site.file), expected.files);
+    }
+  }
   const snapshot = structuredClone(out.valid);
   const twice = normalizeFindingPaths(out.valid, row.root);
   assert.deepEqual(twice.valid, snapshot);

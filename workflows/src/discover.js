@@ -1,5 +1,5 @@
 // Summary and discovery stages, finding schemas, and scope flags.
-import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISPATCH_RESULTS, modelFor, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
+import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISPATCH_RESULTS, modelFor, DISCOVERY_FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { computeLightEligible } from './knobs.js';
 import { LIMIT_DEFAULTS } from './registry.js';
 import { effectiveBucketSize } from './capacity.js';
@@ -144,7 +144,7 @@ export function allActiveDimensionsDegraded(dispatched, degraded) {
 function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
   const props = {};
   // Dimension extras may narrow canonical fields, so they take precedence.
-  for (const [k, t] of Object.entries({ ...FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
+  for (const [k, t] of Object.entries({ ...DISCOVERY_FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
     // The host may normalize schema fragments in place; copies keep registry data immutable.
     props[k] = typeof t === 'string' ? { type: t } : deepClone(t);
   }

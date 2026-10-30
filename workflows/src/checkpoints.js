@@ -329,6 +329,19 @@ export function normalizePhaseFindings(name, out, replayed, args, decisions = []
     for (const finding of out[field]) if (finding && typeof finding === 'object') {
       delete finding.disposition;
       delete finding.disposition_reasons;
+      delete finding.delivery_group;
+      if (name === 'discover' || name === 'merge') {
+        delete finding.site_requests;
+        delete finding.resolved_sites;
+      }
+      for (const key of ['site_requests', 'resolved_sites']) {
+        if (!Array.isArray(finding[key])) continue;
+        const nested = { id: finding.id, file: finding.file, sites: finding[key] };
+        const normalized = normalizeFindingPaths([nested], args.repoRoot);
+        finding[key] = normalized.valid[0]?.sites || [];
+        pathRewrites += normalized.path_rewrites;
+        warnings.push(...normalized.warnings);
+      }
     }
     const normalized = normalizeFindingPaths(out[field], args.repoRoot, decisions);
     rejected += out[field].length - normalized.valid.length;

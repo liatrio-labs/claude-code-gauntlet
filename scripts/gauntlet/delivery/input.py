@@ -6,10 +6,17 @@ from gauntlet.cli import CliError
 from gauntlet.delivery.gate import is_plain_int
 from gauntlet.forge import parse_web_origin
 from gauntlet.location import normalize_location
-from gauntlet.registry import Disposition, LocationStatus
+from gauntlet.registry import (
+    DeliveryGroup,
+    Disposition,
+    LocationStatus,
+    ResolvedSitesItem,
+)
 
 
 class Finding(TypedDict, total=False):
+    delivery_group: DeliveryGroup
+    sites: list[ResolvedSitesItem]
     disposition: Disposition
     disposition_reasons: list[str]
     file: str
@@ -89,6 +96,29 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
             raise CliError(
                 f"findings[{index}].consolidation_key must be a string or null"
             )
+        stamp = finding.get("delivery_group")
+        if stamp is not None and (
+            not isinstance(stamp, dict)
+            or set(stamp) != {"issue_key", "lead_id", "finding_ids"}
+            or not all(
+                isinstance(stamp.get(k), str) and stamp[k]
+                for k in ("issue_key", "lead_id")
+            )
+            or not isinstance(stamp.get("finding_ids"), list)
+            or not all(isinstance(k, str) and k for k in stamp["finding_ids"])
+            or len(set(stamp["finding_ids"])) != len(stamp["finding_ids"])
+            or finding.get("id") not in stamp["finding_ids"]
+            or stamp["lead_id"] not in stamp["finding_ids"]
+        ):
+            raise CliError(f"findings[{index}].delivery_group is malformed")
+        sites = finding.get("sites", [])
+        if not isinstance(sites, list) or any(
+            not isinstance(site, dict)
+            or not isinstance(site.get("file"), str)
+            or not isinstance(site.get("anchor"), str)
+            for site in sites
+        ):
+            raise CliError(f"findings[{index}].sites is malformed")
     normalized = [normalize_location(f) for f in findings]
     # Only a wholly unstamped caller input predates disposition enforcement.
     if not any("disposition" in f for f in findings):

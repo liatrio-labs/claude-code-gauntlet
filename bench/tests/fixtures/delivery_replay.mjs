@@ -23,7 +23,8 @@ const grouped = finding(1, { file: winner.file, title: 'corroborating defect',
 const held = finding(3, { validation: 'skipped' });
 const eliminated = finding(4, { eliminated_by: 'challenge:removed', elimination_reason: 'disproved' });
 const filtered = finding(5, { confidence: 10, eliminated_by: 'threshold', elimination_reason: 'below threshold' });
-const findings = [winner, grouped, held, eliminated, filtered];
+const capped = finding(2, { confidence: 60 });
+const findings = [winner, grouped, held, eliminated, filtered, capped];
 const phaseInputs = {
   summarize: { summary: 'Synthetic replay', gaps: [] },
   discover: { findings, dispatched: ['code-gauntlet:bug-detector'], degraded: [], removedTestAudit: {} },
@@ -31,7 +32,7 @@ const phaseInputs = {
   verify: { findings, verified: true, inputProof: { trusted: findings.length } },
   validate: { findings, stats: { skipped: 1 } },
   filter: { filtered: findings.filter((f) => f !== filtered), eliminated: [filtered], stats: {} },
-  challenge: { findings: [winner, grouped], unverified: [{ ...held, challenge: 'capped' }],
+  challenge: { findings: [winner, grouped, capped], unverified: [{ ...held, challenge: 'capped' }],
     eliminated: [filtered, eliminated], stats: {} },
 };
 const rows = {};

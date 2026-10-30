@@ -139,6 +139,23 @@ def find_marker(text: object) -> dict[str, object] | None:
     return found
 
 
+def split_summary_footer(text: str) -> tuple[str, str]:
+    """Separate a terminal summary signal and its optional canonical prose."""
+    marker = find_marker(text)
+    if marker is None:
+        return text, ""
+    tail = text.rstrip()
+    start = 0
+    for match in _MARKER_OPENER_RE.finditer(tail):
+        start = match.start()
+    if tail[:start].endswith("\n\n"):
+        start -= 2
+    prose = "\n\n---\n" + build_prose_footer(marker.get("sha"))
+    if tail[:start].endswith(prose):
+        start -= len(prose)
+    return tail[:start], tail[start:]
+
+
 def find_finding_markers(text: object) -> list[FindingMarkerWire]:
     """Read valid sha/key pairs in the trailing run, in reverse order.
 
@@ -149,7 +166,7 @@ def find_finding_markers(text: object) -> list[FindingMarkerWire]:
         return []
     found: list[FindingMarkerWire] = []
     try:
-        tail = text.rstrip()
+        tail = split_summary_footer(text)[0].rstrip()
         candidates: list[str] = []
         for line in reversed(tail.splitlines()):
             if not line.strip():

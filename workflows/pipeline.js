@@ -209,10 +209,40 @@ const FINDING_PROP_TYPES = deepFreeze({
   anchor: { type: 'string', description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
   suggestion: 'string', claude_md_rule: 'string',
   suggested_fix_code: 'string',
-  cross_file_refs: { type: 'array', items: { type: 'string' } },
+  cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
+  sites: { discovery: false, type: 'array', description: 'Additional locations of this issue.', items: {
+    type: 'object', properties: {
+      file: { type: 'string', $comment: 'repo-path' },
+      line_start: { type: 'integer', minimum: 1 }, line_end: { type: 'integer', minimum: 1 },
+      anchor: { type: 'string' },
+    }, required: ['file', 'line_start', 'line_end', 'anchor'], additionalProperties: false,
+  } },
 });
-const FINDING_PATH_ARRAY_FIELDS = deepFreeze(['cross_file_refs', 'affected_consumers']);
-const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'file', ...FINDING_PATH_ARRAY_FIELDS, 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
+const DISCOVERY_FINDING_PROP_TYPES = deepFreeze(Object.fromEntries(Object.entries(FINDING_PROP_TYPES)
+  .filter(([, schema]) => schema.discovery !== false)
+  .map(([name, schema]) => {
+    if (typeof schema === 'string') return [name, schema];
+    const { discovery, ...wireSchema } = schema;
+    return [name, wireSchema];
+  })));
+const VALIDATION_RETURN_PROPERTIES = deepFreeze({
+  site_confirmations: { type: 'array', items: {
+    type: 'object', properties: {
+      file: { type: 'string' }, line_start: { type: 'integer', minimum: 1 },
+      line_end: { type: 'integer', minimum: 1 }, confirmed: { type: 'boolean' },
+    }, required: ['file', 'line_start', 'line_end', 'confirmed'], additionalProperties: false,
+  } },
+});
+const RESOLVED_SITE_SCHEMA = deepFreeze({ type: 'array', items: {
+  ...FINDING_PROP_TYPES.sites.items,
+  properties: { ...FINDING_PROP_TYPES.sites.items.properties,
+    location_status: { type: 'string', enum: LOCATION_STATUSES },
+    diff_validation: { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false },
+  }, required: [...FINDING_PROP_TYPES.sites.items.required, 'location_status', 'diff_validation'],
+} });
+const DELIVERY_GROUP_SCHEMA = deepFreeze({ type: 'object', properties: {
+  issue_key: { type: 'string' }, lead_id: { type: 'string' }, finding_ids: { type: 'array', items: { type: 'string' } },
+}, required: ['issue_key', 'lead_id', 'finding_ids'], additionalProperties: false });
 const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
 const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
 const closedDispatchRow = (properties, optional = []) => ({
@@ -247,7 +277,7 @@ const DIMENSIONS = deepFreeze([
   { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' },
     requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: null },
   { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
-    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'],
+    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string', $comment: 'repo-path' } } }, requiredExtra: ['affected_consumers'],
       requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'test_coverage', agentType: AGENT_TYPE_TEST_ANALYZER, conditionalFlag: DEEP,
     schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
@@ -267,6 +297,12 @@ const DIMENSIONS = deepFreeze([
     schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], requiredWhenDimension: [], modelOverride: null,
       promptExtra: null },
 ]);
+const FINDING_PATH_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries({
+  ...FINDING_PROP_TYPES, ...Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)),
+}).filter(([, schema]) => JSON.stringify(schema).includes('repo-path'))));
+const FINDING_PATH_ARRAY_FIELDS = deepFreeze(Object.entries(FINDING_PATH_DESCRIPTORS)
+  .filter(([, schema]) => schema.type === 'array' && schema.items.$comment === 'repo-path').map(([key]) => key));
+const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'delivery_group', 'file', ...Object.keys(FINDING_PATH_DESCRIPTORS), 'site_requests', 'resolved_sites', 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
 const PIPELINE_FINDING_FIELDS = deepFreeze([
   'trace_id', 'discovery_agent', 'discovery_dimension',
   'removed_test',
@@ -405,6 +441,7 @@ const MAIN_REPORT_AGENTS = deepFreeze([AGENT_BUG_DETECTOR, AGENT_SECURITY_REVIEW
 const SUGGESTION_AGENTS = deepFreeze([AGENT_TEST_ANALYZER, 'code-simplifier']);
 const COMMENT_ACCURACY_DIMENSIONS = deepFreeze(['comment-accuracy', 'documentation', 'doc-accuracy']);
 const REPORT_PLACED_FIELDS = deepFreeze([
+  'sites',
   'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
   'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
   'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
@@ -744,12 +781,12 @@ function pathUnderRoot(root, path) {
 }
 function repoRelativeFindingPath(repoRoot, file) {
   if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
-  const driveRoot = /^[A-Za-z]:\//.test(repoRoot || '');
+  const driveRoot = /^[A-Za-z]:[/\\]/.test(repoRoot || '');
+  const normalizedRoot = driveRoot ? repoRoot.replace(/\\/g, '/') : repoRoot;
   let normalized = file;
   let driveAbsolute = false;
   if (driveRoot) {
-    if (/^[A-Za-z]:\//.test(file)) driveAbsolute = true;
-    else if (/^[A-Za-z]:\\/.test(file)) {
+    if (/^[A-Za-z]:[/\\]/.test(file)) {
       normalized = file.replace(/\\/g, '/');
       driveAbsolute = true;
     } else if (/^\/[A-Za-z]\//.test(file)) {
@@ -776,7 +813,7 @@ function repoRelativeFindingPath(repoRoot, file) {
     relative = normalizePathString(path);
     while (relative.startsWith('./')) relative = relative.slice(2);
   } else {
-    const root = normalizeAbsoluteRoot(repoRoot);
+    const root = normalizeAbsoluteRoot(normalizedRoot);
     if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
     const absolute = normalizePathString(path);
     if (pathComparisonKey(absolute) === pathComparisonKey(root)) return { reason: 'absolute file path resolves to repoRoot' };
@@ -1075,7 +1112,7 @@ function encodeSliceInline(content) {
   return encoded;
 }
 const VERIFY_INLINE_CHAR_BUDGET = 50000;
-const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation'];
+const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites'];
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
 const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
 function deltasById(deltas) {
@@ -1093,6 +1130,8 @@ function joinVerifyDeltas(slice, deltas) {
     if (!delta || delta.verified === false) continue;
     const joined = clearLocation(pinNumericFields(f));
     delete joined.diff_validation;
+    delete joined.sites;
+    if (Array.isArray(f.sites)) joined.site_requests = projectVerifySliceFinding(f).sites;
     for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
     if (canonicalRange(joined) && (Object.hasOwn(f, 'line') || Object.hasOwn(f, 'end_line'))) {
       joined.line = joined.line_start;
@@ -1111,7 +1150,7 @@ function pinNumericFields(finding) {
   }
   return out;
 }
-const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'severity', 'confidence', 'anchor'];
+const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'severity', 'confidence', 'anchor', 'sites'];
 const VERIFY_SLICE_FIELDS = [...VERIFY_SLICE_SCALAR_FIELDS, 'has_cross_file_refs', 'has_removed_test_location', 'symbols'];
 const verifyProjectionCache = new WeakMap();
 function projectFinding(finding) {
@@ -1119,6 +1158,8 @@ function projectFinding(finding) {
   for (const k of VERIFY_SLICE_SCALAR_FIELDS) {
     if (Object.hasOwn(finding, k) && finding[k] !== undefined) projected[k] = finding[k];
   }
+  if (Array.isArray(finding.sites)) projected.sites = finding.sites.map((site) => Object.fromEntries(
+    ['file', 'line_start', 'line_end', 'anchor'].filter((key) => site?.[key] !== undefined).map((key) => [key, site[key]])));
   if (Array.isArray(finding.cross_file_refs) && finding.cross_file_refs.length > 0) projected.has_cross_file_refs = true;
   if (hasRemovedTestLocation(finding)) projected.has_removed_test_location = true;
   const symbols = [...extractSymbols(finding.description, finding.evidence)].sort().join(' ');
@@ -1698,7 +1739,7 @@ function allActiveDimensionsDegraded(dispatched, degraded) {
 }
 function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
   const props = {};
-  for (const [k, t] of Object.entries({ ...FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
+  for (const [k, t] of Object.entries({ ...DISCOVERY_FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
     props[k] = typeof t === 'string' ? { type: t } : deepClone(t);
   }
   props.anchor.minLength = 1;
@@ -1876,6 +1917,7 @@ const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
 function applyValidations(findings, validations) {
   const findingById = new Map();
   for (const finding of findings) {
+    delete finding.sites;
     const fid = 'id' in finding ? finding.id : undefined;
     if (fid !== null && fid !== undefined) findingById.set(fid, finding);
   }
@@ -1903,6 +1945,10 @@ function applyValidations(findings, validations) {
     if (justification) finding.validation_justification = justification;
     const reachability = 'reachability' in validation ? validation.reachability : undefined;
     if (REACHABILITY_VALUES.includes(reachability)) finding.reachability = reachability;
+    const key = (site) => JSON.stringify([site.file, site.line_start, site.line_end]);
+    const confirmations = new Map((Array.isArray(validation.site_confirmations) ? validation.site_confirmations : [])
+      .filter((site) => site && typeof site === 'object').map((site) => [key(site), site.confirmed === true]));
+    if (finding.resolved_sites) finding.sites = finding.resolved_sites.filter((site) => canonicalRange(site) && confirmations.get(key(site)) === true);
     adjustedCount += 1;
   }
   return { adjustedCount, unmatchedIds };
@@ -2758,7 +2804,7 @@ function groupByProximity(findings, lineProximity) {
     pyGet(finding, 'file', ''), lineBucket(finding.line_start, lineProximity),
   ]));
 }
-function consolidateCrossAgent(findings) {
+function consolidateCrossAgent(findings, prefer = () => false) {
   const LINE_PROXIMITY = 5;
   for (const f of findings) {
     if (f && typeof f === 'object') {
@@ -2771,7 +2817,7 @@ function consolidateCrossAgent(findings) {
     const isCore = CORE_DIMENSIONS.includes(dim) ? 1 : 0;
     const conf = asConfidence(f.confidence);
     const descLen = asText(f.description).length;
-    return [isCore, conf, descLen];
+    return [prefer(f) ? 1 : 0, isCore, conf, descLen];
   };
   const compareWinnerDesc = (a, b) => {
     const ka = winnerKey(a);
@@ -3021,6 +3067,80 @@ function applyChallenges(findings, challenges) {
       final_count: ranked.length,
     },
   };
+}
+// --- dispose.js ---
+function disposeFindings(challenged) {
+  const input = deepClone(challenged);
+  const findings = [];
+  const unverified = [];
+  const eliminated = input.eliminated || [];
+  const decisions = [];
+  for (const finding of [...(input.findings || []), ...(input.unverified || [])]) {
+    delete finding.consolidation_key;
+    delete finding.consolidation_primary;
+    delete finding.delivery_group;
+    delete finding.site_requests;
+    delete finding.resolved_sites;
+    const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
+    if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
+      reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed');
+    }
+    if ((input.unverified || []).includes(finding) && !reasons.length) reasons.push('held_back');
+    let disposition = 'body';
+    if (reasons.length) disposition = 'held_back';
+    else if ((finding.diff_validation === undefined || finding.diff_validation?.in_diff === true) && locationAllows(finding, 'inline')) {
+      disposition = 'deliver';
+    } else reasons.push('body_routed');
+    finding.disposition = disposition;
+    finding.disposition_reasons = reasons;
+    (disposition === 'held_back' ? unverified : findings).push(finding);
+    if (finding.trace_id) for (const reason of finding.disposition_reasons) {
+      decisions.push(traceDecision(finding, reason, reason, [], disposition === 'held_back' ? 'held_back' : 'body_routed'));
+    }
+  }
+  const eliminations = eliminationDecisions({ eliminated: eliminated.map((f) => ({ ...f, trace_id: f.trace_id || 'unused' })) });
+  for (const [index, finding] of eliminated.entries()) {
+    delete finding.consolidation_key;
+    delete finding.consolidation_primary;
+    finding.disposition = 'eliminate';
+    finding.disposition_reasons = [eliminations[index].reason_code];
+  }
+  decisions.push(...eliminations.filter((_, index) => eliminated[index].trace_id));
+  const { consolidatedCount } = consolidateCrossAgent(findings, (f) => deliveryAllows(f, 'inline'));
+  const groups = deliveryGroups(findings).map(({ primary, corroborators }, index) => {
+    const members = [primary, ...corroborators];
+    const ids = members.map((f) => f.id);
+    const issueKey = primary.consolidation_key ? `group:${primary.consolidation_key}` : `issue:${primary.id || index}`;
+    const stamp = { issue_key: issueKey, lead_id: primary.id, finding_ids: ids };
+    if (ids.every((id) => typeof id === 'string' && id)) for (const member of members) member.delivery_group = stamp;
+    return { ...stamp, sites: members.flatMap((f) => f.sites || []),
+      tier: members.some((f) => (f.report_tag ?? f.report_destination) === 'main') ? 'main' : 'suggestion',
+      disposition: primary.disposition };
+  });
+  for (const finding of findings.filter((f) => f.consolidation_key && !f.consolidation_primary && f.trace_id)) {
+    const related = findings.filter((f) => f.consolidation_key === finding.consolidation_key && f !== finding && f.trace_id).map((f) => f.trace_id);
+    if (related.length) decisions.push(traceDecision(finding, 'folded', 'cross-agent consolidation', related, 'coalesced'));
+  }
+  return { findings, unverified, eliminated, groups, decisions, stats: { ...input.stats,
+    skipped: unverified.filter((f) => Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
+    held_back: unverified.filter((f) => !Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
+    cross_agent_consolidated: consolidatedCount, final_count: findings.length } };
+}
+function deliveryGroups(findings) {
+  const groups = [];
+  const byKey = new Map();
+  for (const finding of findings || []) {
+    const key = finding.delivery_group?.issue_key || finding.consolidation_key;
+    if (!key) { groups.push([finding]); continue; }
+    if (!byKey.has(key)) { byKey.set(key, []); groups.push(byKey.get(key)); }
+    byKey.get(key).push(finding);
+  }
+  return groups.map((members) => {
+    const stamp = members[0].delivery_group;
+    const ordered = stamp ? [...members].sort((a, b) => stamp.finding_ids.indexOf(a.id) - stamp.finding_ids.indexOf(b.id)) : members;
+    const primary = ordered.find((f) => stamp ? f.id === stamp.lead_id : f.consolidation_primary) || ordered[0];
+    return { primary, corroborators: ordered.filter((f) => f !== primary) };
+  });
 }
 // --- outboundText.js ---
 const OUTBOUND_NAMED_ENTITIES = deepFreeze({
@@ -3691,32 +3811,12 @@ function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
   return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
 }
 function consolidateForReport(findings) {
-  const list = findings || [];
-  const groups = [];
-  const keyToGroup = new Map();
-  for (const f of list) {
-    const key = f && f.consolidation_key;
-    if (!key) {
-      groups.push({ primary: f, corroborators: [] });
-      continue;
-    }
-    let group = keyToGroup.get(key);
-    if (!group) {
-      group = { primary: null, corroborators: [] };
-      keyToGroup.set(key, group);
-      groups.push(group);
-    }
-    if (f.consolidation_primary) {
-      if (!group.primary) group.primary = f;
-      else group.corroborators.push(f);
-    } else group.corroborators.push(f);
-  }
-  return groups.map((group) => {
-    const primary = group.primary || group.corroborators.shift();
-    if (!group.corroborators.length) return primary;
+  return deliveryGroups(findings).map(({ primary, corroborators }) => {
+    if (!corroborators.length) return primary;
     return {
       ...primary,
-      corroborations: group.corroborators.map((c) => ({
+      sites: [primary, ...corroborators].flatMap((f) => f.sites || []),
+      corroborations: corroborators.map((c) => ({
         agent: c.agent,
         dimension: c.dimension,
         confidence: c.confidence,
@@ -3777,7 +3877,9 @@ function coerceReportFinding(finding, severities) {
       value = reportAsConfidence(raw);
     } else if (key === 'corroborations') {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
-    } else if (key === 'disposition_reasons') {
+    } else if (key === 'sites') {
+      value = Array.isArray(raw) ? raw : [];
+    } else if (['disposition_reasons', 'delivery_group'].includes(key)) {
       value = raw;
     } else if (key === 'consolidation_primary' || key === 'challenge_contested') {
       value = raw;
@@ -3968,6 +4070,11 @@ function renderFinding(builder, finding, unverified, permalinks) {
   const where = location(finding);
   const url = locationUrl(finding, permalinks, where);
   if (where) bullets.push(url ? `- **Location:** [${where}](${url})` : `- **Location:** ${where}`);
+  for (const site of finding.sites || []) {
+    const located = { ...site, disposition: finding.disposition };
+    const link = locationUrl(located, permalinks);
+    if (link) bullets.push(`- **Additional site:** [${location(located)}](${link})`);
+  }
   const classification = [];
   if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
   if (isPresent(finding.confidence)) classification.push(`**Confidence:** ${inline(finding.confidence)}%`);
@@ -4440,6 +4547,7 @@ const VALIDATE_SCHEMA = {
           confidence: { type: 'number' },
           justification: { type: 'string' },
           reachability: { type: 'string', enum: REACHABILITY_VALUES },
+          ...VALIDATION_RETURN_PROPERTIES,
         },
         required: ['finding_id', 'confidence'],
       },
@@ -4449,6 +4557,7 @@ const VALIDATE_SCHEMA = {
 };
 function validateReturnDescriptor() {
   return Object.entries(VALIDATE_SCHEMA.properties.validations.items.properties)
+    .filter(([name]) => !Object.hasOwn(VALIDATION_RETURN_PROPERTIES, name))
     .map(([name, schema]) => {
       const values = Array.isArray(schema.enum) ? ` (${schema.enum.join(' | ')})` : '';
       return `${name}${values}`;
@@ -4639,14 +4748,15 @@ async function challengeStage(ctx, input) {
   };
 }
 function selectDelivery(survivors, cap, tier) {
-  const pool = tier === 'main_only'
+  const members = tier === 'main_only'
     ? (survivors || []).filter((f) => (f.report_tag ?? f.report_destination) === 'main')
     : (survivors || []);
-  const rankable = coerceReportFindings(pool);
+  const pool = deliveryGroups(members);
+  const rankable = pool.map(({ primary, corroborators }) => rankFindings(coerceReportFindings([primary, ...corroborators]))[0]);
   const originalByRankable = new Map(rankable.map((finding, index) => [finding, pool[index]]));
-  const ranked = rankFindings(rankable).map((finding) => originalByRankable.get(finding));
-  if (cap === undefined || cap === null) return ranked;
-  return ranked.slice(0, Math.max(0, cap));
+  let ranked = rankFindings(rankable).map((finding) => originalByRankable.get(finding));
+  if (cap !== undefined && cap !== null) ranked = ranked.slice(0, Math.max(0, cap));
+  return ranked.flatMap(({ primary, corroborators }) => [primary, ...corroborators]);
 }
 // --- mergeFindings.js ---
 const KNOWN_DIMENSIONS = new Set(DIMENSIONS.map((d) => d.dimension));
@@ -4696,24 +4806,38 @@ function normalizeFindingPaths(findings, repoRoot, decisions = []) {
       continue;
     }
     if (result.rewritten) pathRewrites += 1;
-    for (const field of FINDING_PATH_ARRAY_FIELDS) {
-      if (!(field in finding)) continue;
-      if (!Array.isArray(finding[field])) {
-        delete finding[field];
-        warnings.push(invalidFindingPathWarning(finding, field, 'expected an array', 'field dropped'));
-        continue;
-      }
-      const refs = [];
-      for (const ref of finding[field]) {
-        const normalized = repoRelativeFindingPath(repoRoot, ref);
+    const confine = (value, schema, field) => {
+      if (schema.$comment === 'repo-path') {
+        const normalized = repoRelativeFindingPath(repoRoot, value);
         if ('reason' in normalized) {
           warnings.push(invalidFindingPathWarning(finding, field, normalized.reason, 'reference dropped'));
-        } else {
-          refs.push(normalized.file);
-          if (normalized.file !== ref) pathRewrites += 1;
+          return undefined;
         }
+        if (normalized.file !== value) pathRewrites += 1;
+        return normalized.file;
       }
-      finding[field] = refs;
+      if (schema.type === 'array') {
+        if (Array.isArray(value)) return value.flatMap((entry) => {
+          const normalized = confine(entry, schema.items, field);
+          return normalized === undefined ? [] : [normalized];
+        });
+      } else if (schema.type === 'object' && value && typeof value === 'object' && !Array.isArray(value)) {
+        const out = { ...value };
+        for (const [key, child] of Object.entries(schema.properties)) {
+          const normalized = confine(value[key], child, `${field}.${key}`);
+          if (normalized === undefined && schema.required.includes(key)) return undefined;
+          out[key] = normalized;
+        }
+        return out;
+      } else if (!['array', 'object'].includes(schema.type)) return value;
+      warnings.push(invalidFindingPathWarning(finding, field, schema.type === 'array' ? 'expected an array' : `expected ${schema.type}`, 'field dropped'));
+      return undefined;
+    };
+    for (const [field, schema] of Object.entries(FINDING_PATH_DESCRIPTORS)) {
+      if (!(field in finding)) continue;
+      const refs = confine(finding[field], schema, field);
+      if (refs === undefined) delete finding[field];
+      else finding[field] = refs;
     }
     valid.push(finding);
   }
@@ -4880,6 +5004,7 @@ const VERIFY_SCHEMA = {
               line_end: { type: 'integer', minimum: 1 },
               location_status: { type: 'string', enum: LOCATION_STATUSES },
               diff_validation: { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false },
+              resolved_sites: RESOLVED_SITE_SCHEMA,
             },
             required: ['id', 'verified', 'location_status'],
           },
@@ -4990,7 +5115,7 @@ async function verifyStage(ctx, input) {
     eliminated.filter((f) => f.trace_id).map((f) => traceDecision(f, 'verify_eliminated', f.elimination_reason)));
 }
 function degradedSlice(slice) {
-  return slice.map((f) => ({ ...clearLocation(pinNumericFields(f)), origin: 'unknown' }));
+  return slice.map((f) => ({ ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' }));
 }
 const emptyInputProof = () => ({
   slices: 0, proven: 0, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,
@@ -5106,6 +5231,9 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
         : !canonicalRange(d))) malformedLocations.add(id);
     if (d.diff_validation !== undefined && (!d.diff_validation || typeof d.diff_validation !== 'object'
       || ![true, false, null].includes(d.diff_validation.in_diff))) malformedLocations.add(id);
+    if (d.resolved_sites !== undefined && (!Array.isArray(d.resolved_sites) || d.resolved_sites.some((site) =>
+      !site || typeof site.file !== 'string' || typeof site.anchor !== 'string' || !canonicalRange(site)
+      || ![true, false, null].includes(site.diff_validation?.in_diff)))) malformedLocations.add(id);
     const stamp = typeof d.elimination_reason === 'string' ? d.elimination_reason.trim() : '';
     if (d.verified === false && stamp === '') {
       return { ok: false, reason: `delta ${id}: eliminated without the elimination_reason stamp (fabricated elimination — the verify script always stamps a real one)` };
@@ -6673,6 +6801,19 @@ function normalizePhaseFindings(name, out, replayed, args, decisions = []) {
     for (const finding of out[field]) if (finding && typeof finding === 'object') {
       delete finding.disposition;
       delete finding.disposition_reasons;
+      delete finding.delivery_group;
+      if (name === 'discover' || name === 'merge') {
+        delete finding.site_requests;
+        delete finding.resolved_sites;
+      }
+      for (const key of ['site_requests', 'resolved_sites']) {
+        if (!Array.isArray(finding[key])) continue;
+        const nested = { id: finding.id, file: finding.file, sites: finding[key] };
+        const normalized = normalizeFindingPaths([nested], args.repoRoot);
+        finding[key] = normalized.valid[0]?.sites || [];
+        pathRewrites += normalized.path_rewrites;
+        warnings.push(...normalized.warnings);
+      }
     }
     const normalized = normalizeFindingPaths(out[field], args.repoRoot, decisions);
     rejected += out[field].length - normalized.valid.length;
@@ -6729,51 +6870,6 @@ function applyChallengeReplayBelt(challengeOut) {
     challengeOut.stats.replay_belt_eliminated = k1 + k2;
   }
   return challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
-}
-// --- dispose.js ---
-function disposeFindings(challenged) {
-  const input = deepClone(challenged);
-  const findings = [];
-  const unverified = [];
-  const eliminated = input.eliminated || [];
-  const decisions = [];
-  for (const finding of [...(input.findings || []), ...(input.unverified || [])]) {
-    delete finding.consolidation_key;
-    delete finding.consolidation_primary;
-    const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
-    if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
-      reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed');
-    }
-    if ((input.unverified || []).includes(finding) && !reasons.length) reasons.push('held_back');
-    let disposition = 'body';
-    if (reasons.length) disposition = 'held_back';
-    else if ((finding.diff_validation === undefined || finding.diff_validation?.in_diff === true) && locationAllows(finding, 'inline')) {
-      disposition = 'deliver';
-    } else reasons.push('body_routed');
-    finding.disposition = disposition;
-    finding.disposition_reasons = reasons;
-    (disposition === 'held_back' ? unverified : findings).push(finding);
-    if (finding.trace_id) for (const reason of finding.disposition_reasons) {
-      decisions.push(traceDecision(finding, reason, reason, [], disposition === 'held_back' ? 'held_back' : 'body_routed'));
-    }
-  }
-  const eliminations = eliminationDecisions({ eliminated: eliminated.map((f) => ({ ...f, trace_id: f.trace_id || 'unused' })) });
-  for (const [index, finding] of eliminated.entries()) {
-    delete finding.consolidation_key;
-    delete finding.consolidation_primary;
-    finding.disposition = 'eliminate';
-    finding.disposition_reasons = [eliminations[index].reason_code];
-  }
-  decisions.push(...eliminations.filter((_, index) => eliminated[index].trace_id));
-  const { consolidatedCount } = consolidateCrossAgent(findings);
-  for (const finding of findings.filter((f) => f.consolidation_key && !f.consolidation_primary && f.trace_id)) {
-    const related = findings.filter((f) => f.consolidation_key === finding.consolidation_key && f !== finding && f.trace_id).map((f) => f.trace_id);
-    if (related.length) decisions.push(traceDecision(finding, 'folded', 'cross-agent consolidation', related, 'coalesced'));
-  }
-  return { findings, unverified, eliminated, decisions, stats: { ...input.stats,
-    skipped: unverified.filter((f) => Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
-    held_back: unverified.filter((f) => !Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
-    cross_agent_consolidated: consolidatedCount, final_count: findings.length } };
 }
 // --- measurementReplay.js ---
 function promptSha256(text) {
@@ -6852,6 +6948,7 @@ function walkHostPathText(value, transform, field = null, exempt = false) {
   if (typeof value === 'string') return transform(value, field ?? 'other', exempt);
   if (value === null || typeof value !== 'object') return value;
   for (const [key, entry] of Object.entries(value)) {
+    if (key === 'delivery_group') continue;
     const name = Array.isArray(value) ? field : field ?? (FINDING_TEXT_FIELD_NAMES.includes(key) ? key : 'other');
     if (!Array.isArray(value)) transform(key, name, true);
     const rewritten = walkHostPathText(entry, transform, name, exempt || FINDING_REWRITE_EXEMPT_FIELDS.includes(key));
@@ -6941,8 +7038,7 @@ async function deliverFromCheckpoint(c, A, state) {
   const deliveryTier = A.delivery && A.delivery.tier;
   const eligible = challengeOut.findings.filter((f) => deliveryAllows(f, 'body'));
   const selected = selectDelivery(eligible, limits.deliveryCap, deliveryTier);
-  const postReview = [...selected.filter((f) => deliveryAllows(f, 'inline')),
-    ...selected.filter((f) => f.disposition === 'body')];
+  const postReview = selected;
   if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
     cap_hit: selectDelivery(eligible, null, deliveryTier).length > postReview.length,
     decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,

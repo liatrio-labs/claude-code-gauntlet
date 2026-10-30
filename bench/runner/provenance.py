@@ -361,11 +361,10 @@ def reconstruct_delivery(
                 )
             )
             continue
-        # Resolving every member proves group lineage independently of text/location joins.
-        corroborators = post.resolve_corroborators(group, facts)
+        corroborators = group.group.corroborators
         inline = post.render_inline(
             group.primary,
-            tuple(m.finding for m in corroborators),
+            corroborators,
             surface="inline" if platform == "github" else "discussion",
             plan=plan,
             facts=facts,
@@ -380,7 +379,7 @@ def reconstruct_delivery(
                         f.get("trace_id")
                         for f in (
                             group.primary.finding,
-                            *(m.finding for m in corroborators),
+                            *corroborators,
                         )
                     ),
                     "body_budget",
@@ -397,7 +396,7 @@ def reconstruct_delivery(
                 inline.body.body,
                 anchor.path,
                 line,
-                (group.primary.finding, *(m.finding for m in corroborators)),
+                (group.primary.finding, *corroborators),
             )
         )
     summary = None
