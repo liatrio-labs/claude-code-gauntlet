@@ -13,13 +13,15 @@ Use these literal recipes for target preparation and the raw-input handoff.
 
 ## Phase 2 Composite A — pre-gather (status → checkout → SHA → prior-review gate → stale truncation)
 
+Generate the run nonce before this call and preserve it on resume. The status producer fetches and validates before exclusively creating `code-gauntlet-inputs-{nonce}/pr-description.json`. A valid existing snapshot is reused without fetching; malformed input stops preparation. Fetch failures before creation can be retried.
+
 Run status → checkout → SHA → prior-review gate → stale truncation in one Bash call, in that order. Resolve the PR URL from its status receipt, since `origin` may be a fork. Substitute `{platform}`, `{pr_number}`, and `{plugin_root}` from Phase 1 before dispatch.
 
 **GitHub PR Composite A:**
 
 ```bash
 echo "=== status ==="
-PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform github --pr {pr_number}) || exit 1
+PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform github --pr {pr_number} --output-dir "{output_dir}" --snapshot-destination "code-gauntlet-inputs-{nonce}/pr-description.json") || exit 1
 TARGET_SHA=${PR_STATUS%%$'\n'*}
 TARGET_SHA=${TARGET_SHA#head_sha=}
 CURRENT_SHA=$(git rev-parse HEAD)
@@ -59,7 +61,7 @@ The headless mismatch branch stops before SHA resolution, prior-review detection
 
 ```bash
 echo "=== status ==="
-PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform gitlab --pr {pr_number}) || exit 1
+PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform gitlab --pr {pr_number} --output-dir "{output_dir}" --snapshot-destination "code-gauntlet-inputs-{nonce}/pr-description.json") || exit 1
 TARGET_SHA=${PR_STATUS%%$'\n'*}
 TARGET_SHA=${TARGET_SHA#head_sha=}
 CURRENT_SHA=$(git rev-parse HEAD)
@@ -287,17 +289,17 @@ pre-parsed form for the same axis (single authority).
 
 ## Write the shared agent context file
 
-Run this after 2d, 2e and 2k:
+Run this after 2d, 2e and 2k. Set `{target_type}` to `pr`, `mr`, `branch` or `local`. For PR/MR, replace `{snapshot_args}` with `--snapshot-file "code-gauntlet-inputs-{nonce}/pr-description.json"`; otherwise omit it. Branch/local calls need no snapshot and never fetch descriptions:
 
 ```bash
-{python} "{plugin_root}/scripts/write_shared_context.py" --output-dir "{output_dir}" --head-sha {head_sha_short} <<'CODE_GAUNTLET_TRIAGE_{nonce}'
+{python} "{plugin_root}/scripts/write_shared_context.py" --output-dir "{output_dir}" --head-sha {head_sha_short} --target-type {target_type} --head-sha-full {head_sha_full} {snapshot_args} <<'CODE_GAUNTLET_TRIAGE_{nonce}'
 {risk classification (2e) and AI-generated-code status (2k)}
 CODE_GAUNTLET_TRIAGE_{nonce}
 ```
 
 The quoted delimiter passes the text verbatim. Never pipe it through `echo` or unquote the delimiter.
 The nonce in the delimiter keeps any line of the text from ending it.
-The script writes the context file threaded to the discovery, validate and summarize agents from the collector's `--out` file, stdin text and saved diff, in that order.
+The script writes the context file threaded to the discovery, validate and summarize agents from the collector's `--out` file, stdin text, framed unverified PR/MR claims when applicable, and saved diff, in that order.
 Stamp the printed `contextLines`, `contextChars` and `removedTests` into the args waist verbatim, never estimated, carried over or re-derived.
 An exit 2 wrote no usable context; stop and report its one-line error.
 `scripts/gauntlet/shared_context.py`'s docstring holds the content and measurement rules.

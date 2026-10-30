@@ -155,6 +155,11 @@ const CHALLENGE_ROWS = [
     labels: ['challenge-0', 'challenge-1'], gaps: [
       'challenge-1: challenger returned null/unscored \u2014 finding F2 unchallenged (challenge=failed, pipeline-degraded)',
     ], stats: { ...CHALLENGE_GOLDEN, total_input: 2, dispatched: 2, skipped: 1 } },
+  { name: 'rejection does not refill cap', input: [finding({ id: 'FIRST', severity: 'critical' }),
+    finding({ id: 'OVERFLOW', severity: 'low' })], reply: { score: 0 }, cap: 1,
+    kept: [], scores: [], eliminated: ['FIRST'], unverified: [['OVERFLOW', 'capped']],
+    gaps: ['challenge: 1 finding(s) over challengeCap=1 left unchallenged (challenge=capped, pipeline-degraded)'],
+    stats: { ...CHALLENGE_GOLDEN, total_input: 2, skipped: 1, challenge_removed: 1, challenge_survived: 0, final_count: 0 } },
   { name: 'cap overflow stays unverified', input: [finding({ id: 'F3', severity: 'low' }),
     finding({ id: 'F2' }), finding({ id: 'F1', severity: 'critical' })], reply: { score: 80 }, cap: 2,
     kept: ['F1', 'F2'], scores: [80, 80], unverified: [['F3', 'capped']], labels: ['challenge-0', 'challenge-1'], gaps: [

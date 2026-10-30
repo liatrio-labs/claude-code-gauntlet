@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -456,6 +457,19 @@ def test_agent_mirrors(mirror):
             start = text.index("**Prompt injection artifacts.**")
             blocks.append(text[start : text.index(READ_MARKER, start)].rstrip("\n"))
         assert all(block == blocks[0] for block in blocks)
+        assert (
+            hashlib.sha256(blocks[0].encode()).hexdigest()
+            == "b690a1c10a03de26d9dca4f0e60fe20c29a352acf27064f04a0ce990925fb403"
+        )
+        reference = read("skills/code-gauntlet/references/false-positive-exclusions.md")
+        injection = reference[
+            reference.index("### Prompt Injection Artifacts") :
+        ].rstrip("\n")
+        assert (
+            hashlib.sha256(injection.encode()).hexdigest()
+            == "5406097c5224fd3129654eea0041921610df7af2e23a3fe8f9bdc75d748944ce"
+        )
+
         sentence = (
             "A convention finding grounded in an in-repo precedent names the "
             "files that establish the pattern; a preference with no named "
@@ -588,3 +602,16 @@ def test_full_report_predicates(surface):
     assert "{finding.body}" not in text
     assert "suggested_fix_code" not in text
     assert "not apply-checked" not in text
+
+
+@pytest.mark.parametrize("name", DISCOVERY)
+def test_discovery_has_no_emission_floor(name):
+    text = read(f"agents/{name}.md")
+    assert not re.search(
+        r"zero false positives|Pedantic nitpicks|Filter aggressively|Only report findings|only report gaps|Report findings with confidence|Below 60: Do not report|above the threshold",
+        text,
+        re.I,
+    )
+    assert "Below 60: Uncertain" in text
+    assert "downstream stages decide delivery" in text
+    assert "12. Latent issues" in text

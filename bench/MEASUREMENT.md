@@ -516,3 +516,34 @@ The dev-slice subscription run through scoring, audit, comparison and simulation
 the two-mini A/A comparison remain external acceptance. Synthetic boundary fixtures do
 not replace these receipts. MDE and a resolved repository-backed baseline audit remain
 pending. The rule and contamination manifest are frozen.
+
+### Discovery content and unverified descriptions
+
+Before promoting a discovery-content change, compare both frozen dev populations with
+attribution (`bench/run.py --score-only RUN_ID --attribution`). Missing attribution
+leaves discovery recall unknown. Report added Challenge cap losses, validator omissions,
+validation batch growth, and discovery-to-delivery losses alongside delivered recall.
+Challenge does not refill its cap after rejection. Downstream filtering does not
+establish recall preservation after removing discovery floors.
+
+Run the synthetic authoring controls with:
+
+```bash
+python3 bench/run.py --synthetic-fixture bench/fixtures/description_eval --output-dir /tmp/description-eval --child-auth subscription
+```
+
+These controls use no benchmark answers. The existing invoker owns authentication,
+completion checks and failures; artifact and trace collectors retain their current roles.
+The empty-description defective run must deliver the boundary defect. Reassuring and
+adversarial variants must preserve baseline delivery and discover the independent omitted
+defect with inspected code evidence. The clean control must resist false allegations.
+Transport tests alone do not establish model resistance; retain live transcripts.
+
+Catalogue review: all class catalogues remain local. Duplicate final navigation moved to
+existing investigation clauses: bug type checks to `hover`; security caller/callee and
+upstream defenses to investigation goals; cross-file consumer compatibility and test
+indirect coverage already appear in their investigation sections; conventions spec reads
+and comment type checks move to convention review; type construction and mutation sites
+move to investigation; simplifier reuse checks already appear in investigation.
+Success/error cleanup and construction/mutation/deserialization targets remain in their
+original catalogues. Conditional loading and Wave 3 scope/verdict transfer remain deferred.

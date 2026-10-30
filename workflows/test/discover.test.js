@@ -222,6 +222,9 @@ for (const contextLine of ['CONTEXT_SENTINEL ', '']) test(`discovery transport: 
     assert.ok(prompt.includes('LSP first, Grep fallback'));
     assert.ok(prompt.includes('full codebase context around the diff'));
     assert.ok(prompt.includes('no cap and no minimum'));
+    assert.ok(prompt.includes('regardless of importance or confidence'));
+    assert.ok(prompt.includes('metadata as unverified hypotheses'));
+    assert.ok(prompt.includes('including paths it omits'));
     assert.ok(prompt.includes('evidence field must be non-empty') && prompt.includes('real lines you actually inspected'));
     assert.ok(prompt.includes('name in evidence the specific file or path you checked'));
     assert.ok(prompt.includes('Return { findings, complete, total_seen }'));
