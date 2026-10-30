@@ -876,7 +876,7 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
   builder.add('## Change Context');
   builder.add();
   if (isPresent(inp.summary)) {
-    builder.add('This is the change summary the review agents shared as context.');
+    builder.add('This summary describes the change context for the report.');
     builder.add();
     builder.add(foldedProse(inp.summary, REPORT_FOLD_LIMITS.summaryChars));
   } else {

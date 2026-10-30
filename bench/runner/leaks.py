@@ -267,6 +267,25 @@ def _shared_context_surfaces(root: Path) -> tuple[PromptSurface, ...]:
             (output / ("code-gauntlet-" + name)).write_text(
                 "Synthetic input.\n", encoding="utf-8"
             )
+        snapshot = output / "description.json"
+        sha = "abc1234" + "0" * 33
+        snapshot.write_text(
+            json.dumps(
+                {
+                    "head_sha_full": sha,
+                    "target": {
+                        "platform": "github",
+                        "web_origin": "https://github.com",
+                        "owner": "synthetic",
+                        "repo": "fixture",
+                        "pr_number": 1,
+                        "sha_full": sha,
+                    },
+                    "body": "Synthetic unverified author claims.",
+                }
+            ),
+            encoding="utf-8",
+        )
         subprocess.run(
             [
                 sys.executable,
@@ -277,6 +296,12 @@ def _shared_context_surfaces(root: Path) -> tuple[PromptSurface, ...]:
                 directory,
                 "--head-sha",
                 "abc1234",
+                "--target-type",
+                "pr",
+                "--head-sha-full",
+                sha,
+                "--snapshot-file",
+                str(snapshot),
             ],
             input=b"Synthetic risk classification and code status.\n",
             capture_output=True,

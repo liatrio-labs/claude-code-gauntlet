@@ -24,12 +24,12 @@ HEADLESS = "skills/code-gauntlet/references/headless-mode.md"
 DELIVER_PHASE = "skills/code-gauntlet/references/phase8-delivery.md"
 TARGETS = (
     "agents/bug-detector.md",
+    "agents/type-design-analyzer.md",
     "agents/security-reviewer.md",
     "agents/cross-file-impact.md",
     "agents/test-analyzer.md",
     "agents/code-simplifier.md",
     "agents/conventions-and-intent.md",
-    "agents/type-design-analyzer.md",
     REPORT,
     DELIVERY,
     SKILL,
@@ -135,18 +135,15 @@ def test_site_descriptor_gates_discovery_consumers(
         "anchor": str,
     }
     assert "resolved_sites" in namespace["Delta"].__annotations__
+    contracts = {}
     for agent in gen.load_registry(str(registry_tree))["agents"]:
         contract = (registry_tree / f"agents/{agent.split(':')[1]}.md").read_text(
             encoding="utf-8"
         )
-        assert '"related": [{"path": "<string>", "active": "<boolean>"}]' in contract
-        if discovery_enabled:
-            assert (
-                '"sites": [{"file": "<string>", "line_start": 1, "line_end": 1, "anchor": "<string>"}]'
-                in contract
-            )
-        else:
-            assert '"sites":' not in contract
+        block = contract.split(gen.MARKER_OPEN)[1].split(gen.MARKER_CLOSE)[0]
+        contracts[agent] = json.loads(
+            re.search(r"```json\n(.*?)\n```", block, re.DOTALL).group(1)
+        )
     assert "| `related` | array | no | Related paths. |" in (
         registry_tree / REPORT
     ).read_text(encoding="utf-8")
@@ -160,11 +157,11 @@ def test_site_descriptor_gates_discovery_consumers(
             """
 import { normalizePhaseFindings } from './workflows/src/checkpoints.js';
 import { discover } from './workflows/src/discover.js';
-const schemas = [];
-await discover({agent: async (_, o) => { schemas.push(o.schema.properties.findings.items.properties); return {findings:[], complete:true, total_seen:0, removed_test_audit:[]}; }, parallel: async ts => Promise.all(ts.map(t=>t()))}, {});
+const schemas = {};
+await discover({agent: async (_, o) => { schemas[o.label] = o.schema; return {findings:[], complete:true, total_seen:0, removed_test_audit:[]}; }, parallel: async ts => Promise.all(ts.map(t=>t()))}, {});
 const out = { findings: [{file:'main.txt', related:[{path:'/repo/ok.txt',active:true},{path:'../escape',active:false}], sites:[{file:'../escape',line_start:1,line_end:1,anchor:'q'}]}] };
 normalizePhaseFindings('discover', out, false, {repoRoot:'/repo'});
-console.log(JSON.stringify({out, schemas}));
+console.log(JSON.stringify({out, schemas}, (key, value) => key === '$comment' ? undefined : value));
 """,
         ],
         cwd=str(registry_tree),
@@ -176,12 +173,19 @@ console.log(JSON.stringify({out, schemas}));
     ]
     assert value["out"]["findings"][0]["sites"] == []
     assert len(value["out"]["gaps"]) == 2
-    for schema in value["schemas"]:
-        assert schema["related"]["items"]["properties"]["active"] == {"type": "boolean"}
-        assert ("sites" in schema) is discovery_enabled
+    assert contracts == value["schemas"]
+    for schema in value["schemas"].values():
+        item = schema["properties"]["findings"]["items"]
+        properties = item["properties"]
+        assert properties["related"]["items"]["properties"]["active"] == {
+            "type": "boolean"
+        }
+        assert "related" not in item["required"]
+        assert ("sites" in properties) is discovery_enabled
         if discovery_enabled:
-            assert schema["sites"]["items"]["additionalProperties"] is False
-            assert "discovery" not in schema["sites"]
+            assert "sites" not in item["required"]
+            assert properties["sites"]["items"]["additionalProperties"] is False
+            assert "discovery" not in properties["sites"]
 
 
 def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
@@ -222,7 +226,7 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
             + "schemas[options.label] = options.schema;"
             + "return {findings: [], complete: true, total_seen: 0, removed_test_audit: []};"
             + "}, parallel: async tasks => Promise.all(tasks.map(task => task()))}, {});"
-            + "console.log(JSON.stringify(schemas));",
+            + "console.log(JSON.stringify(schemas, (key, value) => key === '$comment' ? undefined : value));",
         ],
         cwd=str(registry_tree),
         check=True,
@@ -242,27 +246,21 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
     assert losses["required"] == [
         key for key in losses["properties"] if key != "anchor"
     ]
-    optional_block = re.compile(
-        re.escape(gen.OPTIONAL_MARKER_OPEN)
-        + r"\n(.*?)\n"
-        + re.escape(gen.OPTIONAL_MARKER_CLOSE),
+    generated_block = re.compile(
+        re.escape(gen.MARKER_OPEN) + r"\n(.*?)\n" + re.escape(gen.MARKER_CLOSE),
         re.DOTALL,
     )
     for agent, original in contracts.items():
         contract = (registry_tree / f"agents/{agent.split(':')[1]}.md").read_text(
             encoding="utf-8"
         )
-        blocks = optional_block.findall(contract)
+        blocks = generated_block.findall(contract)
         assert len(blocks) == 1
-        assert (
-            json.loads(blocks[0].removeprefix("```json\n").removesuffix("\n```"))[
-                "anchor"
-            ]
-            == "<" + replacement + ">"
+        schema = json.loads(
+            re.search(r"```json\n(.*?)\n```", blocks[0], re.DOTALL).group(1)
         )
-        if agent == "code-gauntlet:test-analyzer":
-            original = original.replace(description, replacement)
-        assert optional_block.sub("", contract) == optional_block.sub("", original)
+        assert schema == schemas[agent]
+        assert generated_block.sub("", contract) == generated_block.sub("", original)
     namespace: dict[str, Any] = {}
     exec(
         (registry_tree / "scripts/gauntlet/registry.py").read_text(encoding="utf-8"),
@@ -291,6 +289,10 @@ def test_dispatch_result_descriptor_generates_agent_contract_and_python_registry
         "export const DISPATCH_RESULTS = deepFreeze({\n"
         f"  'code-gauntlet:{agent}': {{ audit_note: {{ type: 'string' }} }},",
     )
+    text = text.replace(
+        "schemaExtra: { hidden_errors: 'string' }",
+        "schemaExtra: { extension_field: 'string', hidden_errors: 'string' }",
+    ).replace("requiredExtra: []", "requiredExtra: ['extension_field']", 1)
     source.write_text(text, encoding="utf-8")
     (registry_tree / "agents" / f"{agent}.md").write_text(
         (ROOT / "agents" / f"{agent}.md").read_text(encoding="utf-8"), encoding="utf-8"
@@ -299,8 +301,21 @@ def test_dispatch_result_descriptor_generates_agent_contract_and_python_registry
     result = invoke("generate_contract_requirements", args, registry_tree)
     assert result.returncode == 0, result.stderr
     contract = (registry_tree / "agents" / f"{agent}.md").read_text(encoding="utf-8")
-    assert '"audit_note": {\n      "type": "string"' in contract
-    assert '"required": [\n    "audit_note"' in contract
+    block = contract.split(gen.MARKER_OPEN)[1].split(gen.MARKER_CLOSE)[0]
+    schema = json.loads(re.search(r"```json\n(.*?)\n```", block, re.DOTALL).group(1))
+    assert schema["properties"]["audit_note"] == {"type": "string"}
+    assert "audit_note" in schema["required"]
+    bug_contract = (registry_tree / "agents/bug-detector.md").read_text(
+        encoding="utf-8"
+    )
+    block = bug_contract.split(gen.MARKER_OPEN)[1].split(gen.MARKER_CLOSE)[0]
+    schema = json.loads(re.search(r"```json\n(.*?)\n```", block, re.DOTALL).group(1))
+    item = schema["properties"]["findings"]["items"]
+    assert item["properties"]["extension_field"] == {"type": "string"}
+    assert "extension_field" in item["required"]
+    assert (
+        "`extension_field`" in block.split("Required finding fields:")[1].split("\n")[0]
+    )
     generated = (registry_tree / "scripts/gauntlet/registry.py").read_text(
         encoding="utf-8"
     )
@@ -643,7 +658,7 @@ def test_conditional_paragraphs():
     )
     assert len(paragraphs) == 2
     assert paragraphs[0] == (
-        "For convention findings: the `claude_md_rule` field MUST be non-null and MUST "
+        "For convention findings: the `claude_md_rule` field must be non-null and must "
         "quote the specific rule. Findings without a cited rule will be rejected. "
         "`claude_md_rule` is a dimension-conditional dispatch requirement. "
         "On a dispatch that targets the first-party API directly (no third-party "
@@ -653,7 +668,7 @@ def test_conditional_paragraphs():
         "and this contract is the enforcement floor on every run, including "
         "third-party providers "
         "and gateway sessions where the schema stays flat. This agent's dispatch mixes "
-        "convention, intent, and comment_accuracy findings in ONE schema, so a "
+        "convention, intent, and comment_accuracy findings in one schema, so a "
         "dimension-blind schema requirement (the flat `requiredExtra` mechanism, which "
         "only single-dimension agents can use) was never an option here — omitting "
         "the field on the wrong dimension is correct while omitting it on this one is "
@@ -663,13 +678,14 @@ def test_conditional_paragraphs():
 
 def test_block_anchor():
     assert gen.splice(
-        "before\n`a` is required by the dispatch schema - old wording.\nafter\n",
-        gen._SINGLE_SENTENCE_ANCHOR,
+        "before\nReturn JSON Schema (first-party direct dispatch):\n"
+        "old schema\n\nOnly report findings\nafter\n",
+        gen._DISCOVERY_ANCHOR,
         "new",
     ) == (
         "before\n<!-- generated-from-registry: do not edit; "
         "scripts/generate_contract_requirements.py -->\nnew\n"
-        "<!-- /generated-from-registry -->\nafter\n"
+        "<!-- /generated-from-registry -->\n\nOnly report findings\nafter\n"
     )
 
 
@@ -682,7 +698,7 @@ def test_block_anchor():
 )
 def test_block_diagnostic(text, message):
     with pytest.raises(CliError, match=re.escape(message)):
-        gen.splice(text, gen._SINGLE_SENTENCE_ANCHOR, "new")
+        gen.splice(text, gen._DISCOVERY_ANCHOR, "new")
 
 
 @pytest.fixture

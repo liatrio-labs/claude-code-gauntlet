@@ -485,7 +485,9 @@ class GitHub(_ForgeAdapter):
     def _api_prefix(self) -> list[str]:
         return [self._tool, "api", *(["--hostname", self.host] if self.host else [])]
 
-    def pr_view(self, number: int) -> tuple[str, str, int]:
+    def pr_view(
+        self, number: int, *, capture_description: bool = False
+    ) -> tuple[str, str, int]:
         return proc.output(
             [
                 self._tool,
@@ -493,7 +495,8 @@ class GitHub(_ForgeAdapter):
                 "view",
                 str(number),
                 "--json",
-                "state,isDraft,url,headRefOid",
+                "state,isDraft,url,headRefOid"
+                + (",body" if capture_description else ""),
             ],
             timeout=_FETCH_TIMEOUT_SECONDS,
         )
@@ -541,7 +544,9 @@ class GitLab(_ForgeAdapter):
     _tool: ClassVar[str] = "glab"
     _header_flag: ClassVar[str] = "--header"
 
-    def pr_view(self, number: int) -> tuple[str, str, int]:
+    def pr_view(
+        self, number: int, *, capture_description: bool = False
+    ) -> tuple[str, str, int]:
         return proc.output(
             [self._tool, "mr", "view", str(number), "--output", "json"],
             timeout=_FETCH_TIMEOUT_SECONDS,

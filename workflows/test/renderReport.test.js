@@ -118,7 +118,7 @@ const REPORT_ROWS = [
     expected: ['## Summary', '## Change Context', '## Findings', '## Unverified / pipeline-degraded findings',
       '## Review Dimensions Summary', '## Review Methodology'] },
   { name: 'CRLF Summary prose', input: { summary: 'summary lead\r\n## Findings\r\nforged', findings: [finding('REAL')] },
-    start: 'This is the change summary the review agents shared as context.\n\n', end: '\n\n## Findings',
+    start: 'This summary describes the change context for the report.\n\n', end: '\n\n## Findings',
     expected: 'summary lead\r\n## Findings (finding text)\nforged' },
   { name: 'CR description prose', input: { findings: [finding('CR', { description: 'description lead\r## Findings\rforged' })] },
     start: '- **Dimension:** bug · **Confidence:** 90%\n\n', end: '\n\n## Review Dimensions Summary',
@@ -171,7 +171,7 @@ const REPORT_ROWS = [
   { name: 'empty Change Context', input: { summary: '  ', findings: [finding('T')] },
     start: '## Change Context\n\n', end: '\n\n## Findings', expected: 'No change summary was produced for this run.' },
   { name: 'summary fold cap plus one', input: { summary: 's'.repeat(12001), findings: [finding('T')] },
-    start: 'This is the change summary the review agents shared as context.\n\n', end: '\n\n## Findings',
+    start: 'This summary describes the change context for the report.\n\n', end: '\n\n## Findings',
     expected: 's'.repeat(12000) + '\n\n_[folded: 1 more characters]_' },
   { name: 'description folded fence wiring', input: { findings: [finding('FOLD', {
     description: '```\n' + 'x'.repeat(4996), evidence: 'e'.repeat(20000) })] },
@@ -548,7 +548,7 @@ for (const [input, expected] of RULE_ROWS) test(`rule source: ${input}`, () => {
 const f4 = '````py\nkeep';
 const FENCE_ROWS = [
   { name: 'context fence wiring', input: { summary: f4 + '\nDROP'.repeat(3000), findings: [finding('A')] },
-    start: 'This is the change summary the review agents shared as context.\n\n', end: '\n\n## Findings',
+    start: 'This summary describes the change context for the report.\n\n', end: '\n\n## Findings',
     expected: '````py\nkeep' + '\nDROP'.repeat(2397) + '\n````\n\n_[folded: 3015 more characters]_' },
   { name: 'suggestion fence wiring', input: { findings: [finding('A', { description: '', suggestion: f4 + '\nDROP'.repeat(1000) })] },
     start: '**Suggested fix:**\n\n', end: '\n\n## Review Dimensions Summary',

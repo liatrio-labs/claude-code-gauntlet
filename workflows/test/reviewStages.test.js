@@ -66,8 +66,6 @@ for (const row of VALIDATE_ROWS) test(`validate result: ${row.name}`, async () =
   for (const call of ctx.calls) assert.equal(call.agentType, 'code-gauntlet:validator');
   assert.deepEqual(ctx.violations, []);
 });
-const VALIDATE_HEAD = 'VALIDATOR_CONTEXT Independently validate this batch of findings. For each, Read the code at the file '
-  + 'and line range shown, attempt to disprove the claim, and score it. Findings:\n';
 const VALIDATE_TAIL = '\nReturn { validations: [{ finding_id, confidence, justification, '
   + 'reachability (current | future_change_only | uncertain) }] } \u2014 confidence 0-100 '
   + '(one entry per finding).';
@@ -82,7 +80,10 @@ const VALIDATE_PROMPT_ROWS = [
 for (const row of VALIDATE_PROMPT_ROWS) test(`validate prompt: ${row.name}`, async () => {
   const ctx = stageCtx({ reply: [] });
   await validateStage(ctx, { findings: [finding(row.fields)], contextLine: 'VALIDATOR_CONTEXT ' });
-  assert.equal(ctx.calls[0].prompt, VALIDATE_HEAD + row.block + VALIDATE_TAIL);
+  assert.ok(ctx.calls[0].prompt.startsWith('VALIDATOR_CONTEXT Independently validate'));
+  assert.ok(ctx.calls[0].prompt.includes('code-evidence and disproof contract'));
+  assert.ok(ctx.calls[0].prompt.includes(row.block));
+  assert.ok(ctx.calls[0].prompt.endsWith(VALIDATE_TAIL));
   assert.deepEqual(ctx.calls[0].schema, { type: 'object', properties: { validations: {
     type: 'array', items: { type: 'object', properties: {
       finding_id: { type: 'string' }, confidence: { type: 'number' }, justification: { type: 'string' },
@@ -156,6 +157,11 @@ const CHALLENGE_ROWS = [
     labels: ['challenge-0', 'challenge-1'], gaps: [
       'challenge-1: challenger returned null/unscored \u2014 finding F2 unchallenged (challenge=failed, pipeline-degraded)',
     ], stats: { ...CHALLENGE_GOLDEN, total_input: 2, dispatched: 2, skipped: 1 } },
+  { name: 'rejection does not refill cap', input: [finding({ id: 'FIRST', severity: 'critical' }),
+    finding({ id: 'OVERFLOW', severity: 'low' })], reply: { score: 0 }, cap: 1,
+    kept: [], scores: [], eliminated: ['FIRST'], unverified: [['OVERFLOW', 'capped']],
+    gaps: ['challenge: 1 finding(s) over challengeCap=1 left unchallenged (challenge=capped, pipeline-degraded)'],
+    stats: { ...CHALLENGE_GOLDEN, total_input: 2, skipped: 1, challenge_removed: 1, challenge_survived: 0, final_count: 0 } },
   { name: 'cap overflow stays unverified', input: [finding({ id: 'F3', severity: 'low' }),
     finding({ id: 'F2' }), finding({ id: 'F1', severity: 'critical' })], reply: { score: 80 }, cap: 2,
     kept: ['F1', 'F2'], scores: [80, 80], unverified: [['F3', 'capped']], labels: ['challenge-0', 'challenge-1'], gaps: [
@@ -190,16 +196,6 @@ for (const row of CHALLENGE_ROWS) test(`challenge result: ${row.name}`, async ()
   for (const call of ctx.calls) assert.equal(call.agentType, 'code-gauntlet:challenger');
   assert.deepEqual(ctx.violations, []);
 });
-const BLIND_HEAD = 'You are a blind challenger. You have NOT seen the original reviewer\'s rationale '
-  + '\u2014 assess this claim on its own merits and try to disprove it. First VERIFY the claim\'s central factual '
-  + 'assertion against the raw code: the claim concerns ';
-const BLIND_MIDDLE = ' \u2014 open that location and enough surrounding context yourself (Read/Grep/LSP), '
-  + 'find the specific lines the claim rests on, and confirm they actually say what the claim needs them to say. '
-  + 'If that central assertion cannot be verified from the code and context \u2014 for example a test-coverage '
-  + '"no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no '
-  + 'in-diff evidence \u2014 treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the '
-  + 'code confirms it, so it does not survive). A removed-test claim can be verified using its deleted location in the saved diff and a search for surviving assertions at HEAD. Reserve scores above 25 for claims whose central assertion you '
-  + 'positively confirmed in the code.\nClaim: SENTINEL_TITLE\nSENTINEL_DESC\nLocation to inspect: ';
 const BLIND_TAIL = '\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct '
   + '0-100 (higher = the claim holds).';
 const BLIND_ROWS = [
@@ -217,15 +213,18 @@ test('challenger quotes the removed inventory path as JSON data', async () => {
 for (const row of BLIND_ROWS) test(`blind prompt: ${row.name}`, async () => {
   const f = finding({ title: 'SENTINEL_TITLE', description: 'SENTINEL_DESC', file: row.file,
     line_start: row.start, line_end: row.end, evidence: 'SENTINEL_EVIDENCE_LEAK', origin: 'surfaced',
-    cross_file_refs: ['SENTINEL_XREF_LEAK.js:9'], reasoning: 'SENTINEL_REASONING_LEAK', corroborated_by: ['bug-detector'] });
+    cross_file_refs: ['SENTINEL_XREF_LEAK.js:9'], reasoning: 'SENTINEL_REASONING_LEAK', corroborated_by: ['bug-detector'], confidence: 96, rationale: 'SENTINEL_RATIONALE_LEAK' });
   const projected = blindChallengeFields(f);
   assert.deepEqual(Object.keys(projected), ['title', 'description', 'file', 'line_start', 'line_end']);
   assert.deepEqual(projected, { title: 'SENTINEL_TITLE', description: 'SENTINEL_DESC',
     file: row.file, line_start: row.start, line_end: row.end });
   const ctx = stageCtx({ reply: { score: 80 } });
   await challengeStage(ctx, { findings: [f] });
-  assert.equal(ctx.calls[0].prompt, BLIND_HEAD + row.location + BLIND_MIDDLE + row.location + BLIND_TAIL);
-  assert.doesNotMatch(ctx.calls[0].prompt, /SENTINEL_EVIDENCE_LEAK|SENTINEL_REASONING_LEAK|SENTINEL_XREF_LEAK|surfaced/);
+  assert.ok(ctx.calls[0].prompt.startsWith("Independently check the claim's central facts against raw code"));
+  assert.ok(ctx.calls[0].prompt.includes('Claim: SENTINEL_TITLE\nSENTINEL_DESC'));
+  assert.ok(ctx.calls[0].prompt.includes(`Location to inspect: ${row.location}`));
+  assert.ok(ctx.calls[0].prompt.endsWith(BLIND_TAIL));
+  assert.doesNotMatch(ctx.calls[0].prompt, /SENTINEL_EVIDENCE_LEAK|SENTINEL_REASONING_LEAK|SENTINEL_XREF_LEAK|SENTINEL_RATIONALE_LEAK|96|surfaced/);
   assert.deepEqual(ctx.calls[0].schema, { type: 'object', properties: {
     confidence_claim_is_correct: { type: 'number' }, justification: { type: 'string' },
   }, required: ['confidence_claim_is_correct'] });

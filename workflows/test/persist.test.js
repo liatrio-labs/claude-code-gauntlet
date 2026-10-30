@@ -184,8 +184,8 @@ for (const [name, first, second, partial, artifactPaths, gaps] of RETRY_ROWS) {
     }
   });
 }
-const LEGACY_WRITER_LINE = 'Persist these code-gauntlet artifacts to disk exactly as given '
-  + `(the workflow has no disk access). Write the payload's findings (as pretty JSON) to ${PATHS.findings}, `
+const LEGACY_WRITER_LINE = 'Persist these code-gauntlet artifacts to disk exactly as given. '
+  + `Write the payload's findings (as pretty JSON) to ${PATHS.findings}, `
   + `the payload's report (verbatim markdown) to ${PATHS.report}, the payload's postReview `
   + `(the pre-selected delivery set, as pretty JSON) to ${PATHS.postReview}, and the payload's checkpoints `
   + `(as JSON) to ${PATHS.checkpoints}. Return { artifactPaths } echoing the paths you wrote. `
@@ -235,9 +235,9 @@ test('JSON input uses the same artifact paths', async () => {
   assert.deepEqual(await writeArtifacts(ctx, input), { artifactPaths: PATHS, gaps: [], partial: false });
   assert.deepEqual(labels(ctx), ['artifact-writer']);
 });
-const DERIVED_WRITER_LINE = 'Persist these code-gauntlet artifacts to disk exactly as given '
-  + '(the workflow has no disk access). For every entry in the payload, write its "text" VERBATIM to its "path" '
-  + '\u2014 byte for byte, nothing before it and NOTHING AFTER THE FINAL BYTE (no trailing commentary, no tool-call markup). '
+const DERIVED_WRITER_LINE = 'Persist these code-gauntlet artifacts to disk exactly as given. '
+  + 'For every entry in the payload, write its "text" verbatim to its "path" '
+  + '\u2014 byte for byte, nothing before it and nothing after the final byte (no trailing commentary, no tool-call markup). '
   + 'Do not reformat, re-indent, or re-serialize. Return { written } listing the paths you wrote. '
   + 'The payload is the single JSON line after the marker below.';
 const ASSEMBLE_LINE = 'Run exactly this command, then return its single line of stdout JSON verbatim via the schema:';

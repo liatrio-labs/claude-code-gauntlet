@@ -26,11 +26,6 @@ MARKER_OPEN = (
     "scripts/generate_contract_requirements.py -->"
 )
 MARKER_CLOSE = "<!-- /generated-from-registry -->"
-OPTIONAL_MARKER_OPEN = (
-    "<!-- generated-from-registry-optional: do not edit; "
-    "scripts/generate_contract_requirements.py -->"
-)
-OPTIONAL_MARKER_CLOSE = "<!-- /generated-from-registry-optional -->"
 LOCATION_MARKER_OPEN = (
     "<!-- generated-from-registry-location: do not edit; "
     "scripts/generate_contract_requirements.py -->"
@@ -112,7 +107,7 @@ def _run_node(node_src: str, repo_root: str) -> proc.CompletedProcess[str]:
         raise CliError(_node_failure_message(command, error.stderr)) from None
 
 
-# Import order binds the module aliases m, a, v, f, o and w used below.
+# Import order binds the module aliases used below.
 _REGISTRY_MODULES = (
     "registry",
     "knobs",
@@ -120,6 +115,7 @@ _REGISTRY_MODULES = (
     "injection",
     "outputPaths",
     "verifyWire",
+    "discover",
 )
 # Field order is the JSON key order the generated registry is checked against.
 _REGISTRY_FIELDS = (
@@ -137,6 +133,12 @@ _REGISTRY_FIELDS = (
     "dispositionRights: m.DISPOSITION_RIGHTS",
     "dispositions: m.DISPOSITIONS",
     "dispatchResults: m.DISPATCH_RESULTS",
+    # Path-normalization metadata must not change the discovery prompt.
+    "discoveryContracts: d.agentSpecs().map(spec => ({"
+    " agentType: spec.agentType, schema: JSON.parse(JSON.stringify("
+    "d.findingSchema(spec, {}), (key, value) => key === '$comment' ? undefined : value)),"
+    " requiredExtra: spec.requiredExtra,"
+    " conditionalRequired: spec.conditionalRequired}))",
     "dimensions: m.DIMENSIONS.map(d => ({dimension: d.dimension,"
     " agentType: d.agentType, requiredExtra: d.requiredExtra || [],"
     " requiredWhenDimension: d.requiredWhenDimension || [],"
@@ -182,7 +184,7 @@ def load_registry(repo_root: str) -> Mapping[str, Any]:
         + ", ".join(
             f"import('./workflows/src/{name}.js')" for name in _REGISTRY_MODULES
         )
-        + "]).then(([m, a, v, f, o, w]) => console.log(JSON.stringify({"
+        + "]).then(([m, a, v, f, o, w, d]) => console.log(JSON.stringify({"
         + fields
         + "})))"
     )
@@ -220,10 +222,10 @@ def _conditional_paragraph(
     all_dims: Sequence[str],
     first_field: str | None,
 ) -> str:
-    noun, noun2 = _CONDITIONAL_NOUNS[field]
+    noun, noun2 = _CONDITIONAL_NOUNS.get(field, (field.replace("_", " "),) * 2)
     lead = (
-        f"For {dimension} findings: the `{field}` field MUST be non-null "
-        f"and MUST quote "
+        f"For {dimension} findings: the `{field}` field must be non-null "
+        f"and must quote "
         f"the specific {noun}. Findings without a cited {noun2} will be rejected. "
         f"`{field}` is a dimension-conditional dispatch requirement"
     )
@@ -240,7 +242,7 @@ def _conditional_paragraph(
             "third-party providers "
             "and gateway sessions where the schema stays flat. This "
             "agent's dispatch mixes "
-            f"{dims} findings in ONE schema, so a dimension-blind schema "
+            f"{dims} findings in one schema, so a dimension-blind schema "
             f"requirement (the flat "
             "`requiredExtra` mechanism, which only single-dimension agents "
             "can use) was never "
@@ -278,14 +280,10 @@ def conditional_paragraphs(agent_rows: Sequence[Mapping[str, Any]]) -> list[str]
     return paragraphs
 
 
-# Unfenced contracts need anchors so regeneration can introduce ownership markers.
-_SINGLE_SENTENCE_ANCHOR = re.compile(
-    "`[a-z_]+`(?:, `[a-z_]+`)*(?:,? and `[a-z_]+`)? (?:is|are) required by "
-    "the dispatch "
-    r"schema[^\n]*"
-)
-_CONDITIONAL_ANCHOR = re.compile(
-    r"For convention findings:.*?\n\nFor intent findings:.*?(?=\n\n)", re.DOTALL
+_DISCOVERY_ANCHOR = re.compile(
+    r"Return JSON Schema \(first-party direct dispatch\):\n.*?"
+    r"(?=\n\n(?:Only report|For ordinary findings|Scores describe uncertainty)|\Z)",
+    re.DOTALL,
 )
 
 
@@ -328,24 +326,36 @@ def splice(
     return text[: match.start()] + new_block + text[match.end() :]
 
 
-def single_dimension_targets(registry: Mapping[str, Any]) -> dict[str, str]:
+def discovery_targets(registry: Mapping[str, Any]) -> dict[str, str]:
+    """Derive every agent contract from the same specs used for dispatch."""
     targets: dict[str, str] = {}
-    for row in registry["dimensions"]:
-        fields = row["requiredExtra"]
-        if not fields:
-            continue
-        path = f"agents/{row['agentType'].split(':', 1)[1]}.md"
-        targets[path] = dispatch_required_sentence(fields)
-    for agent, fields in registry.get("dispatchResults", {}).items():
+    for contract in registry["discoveryContracts"]:
+        agent = contract["agentType"]
+        schema = contract["schema"]
+        item = schema["properties"]["findings"]["items"]
+        optional = [f for f in item["properties"] if f not in item["required"]]
+        parts = [
+            "Return JSON Schema (first-party direct dispatch):\n\n```json\n"
+            + json.dumps(schema, separators=(",", ":"))
+            + "\n```",
+            "Required finding fields: "
+            + ", ".join(f"`{f}`" for f in item["required"])
+            + ".",
+            "Optional finding fields: " + ", ".join(f"`{f}`" for f in optional) + ". "
+            "Omit inapplicable optional fields; never send null.",
+        ]
+        if contract["requiredExtra"]:
+            parts.append(dispatch_required_sentence(contract["requiredExtra"]))
+        rows = [r for r in registry["dimensions"] if r["agentType"] == agent]
+        parts.extend(conditional_paragraphs(rows))
+        if "rule_source" in item["properties"]:
+            parts.append(
+                "Allowed rule_source values: "
+                + ", ".join(f"`{value}`" for value in registry["ruleSourceLabels"])
+                + "."
+            )
         path = f"agents/{agent.split(':', 1)[1]}.md"
-        schema = {"type": "object", "properties": fields, "required": list(fields)}
-        contract = (
-            "Required dispatch-result fields (alongside findings, complete, total_seen):\n\n"
-            "```json\n" + json.dumps(schema, indent=2) + "\n```"
-        )
-        targets[path] = "\n\n".join(
-            part for part in (targets.get(path), contract) if part
-        )
+        targets[path] = "\n\n".join(parts)
     return targets
 
 
@@ -1293,71 +1303,14 @@ def rendered_targets(
     repo_root: str, registry: Mapping[str, Any], source: str
 ) -> dict[str, str | Callable[[str], str]]:
     steps: dict[str, list[Callable[[str], str]]] = {}
-    bodies = single_dimension_targets(registry)
-    rows = [
-        row
-        for row in registry["dimensions"]
-        if row["agentType"] == "code-gauntlet:conventions-and-intent"
-    ]
-    conditional_path = "agents/conventions-and-intent.md"
-    bodies[conditional_path] = "\n\n".join(
-        [
-            *conditional_paragraphs(rows),
-            *([bodies[conditional_path]] if conditional_path in bodies else []),
-        ]
-    )
-    dispatch_paths = {
-        f"agents/{agent.split(':', 1)[1]}.md"
-        for agent in registry.get("dispatchResults", {})
-    }
+    bodies = discovery_targets(registry)
     for rel_path, body in bodies.items():
         steps.setdefault(rel_path, []).append(
             partial(
                 splice,
-                anchor_re=_CONDITIONAL_ANCHOR
-                if rel_path == conditional_path
-                else _SINGLE_SENTENCE_ANCHOR,
+                anchor_re=_DISCOVERY_ANCHOR,
                 body=body,
-                allow_append=rel_path in dispatch_paths,
-            )
-        )
-
-    def sample(schema: Any) -> Any:
-        if isinstance(schema, str):
-            return f"<{schema}>"
-        if schema["type"] == "array":
-            return [sample(schema["items"])]
-        if schema["type"] == "object":
-            return {key: sample(child) for key, child in schema["properties"].items()}
-        if schema["type"] == "integer":
-            return schema.get("minimum", 1)
-        return f"<{schema.get('description', schema['type'])}>"
-
-    optional_body = (
-        "```json\n"
-        + json.dumps(
-            {
-                key: sample(schema)
-                for key, schema in registry["discoveryFindingTypes"].items()
-                if isinstance(schema, dict)
-                and (key == "anchor" or schema.get("description"))
-            },
-            ensure_ascii=False,
-        )
-        + "\n```"
-    )
-    for agent in registry["agents"]:
-        rel_path = f"agents/{agent.split(':', 1)[1]}.md"
-        steps.setdefault(rel_path, []).append(
-            partial(
-                splice,
-                anchor_re=re.compile(
-                    r"^Each finding is a JSON object with this shape:", re.M
-                ),
-                body=optional_body,
-                marker_open=OPTIONAL_MARKER_OPEN,
-                marker_close=OPTIONAL_MARKER_CLOSE,
-                insert_before=True,
+                allow_append=True,
             )
         )
     steps.setdefault(REPORT_FORMAT_REL, []).append(
