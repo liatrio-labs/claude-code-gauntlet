@@ -302,6 +302,8 @@ def test_description_delivery(tmp_path, invoke, mode):
     if mode not in ("present", "empty"):
         assert result.returncode == 2 and not path.exists()
         assert not map_path.exists()
+        assert result.stdout == b""
+        assert result.stderr.startswith(b"write_shared_context: ")
         return
     assert result.returncode == 0, result.stderr
     assert result.stderr == b""
