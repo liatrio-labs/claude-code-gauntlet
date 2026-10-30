@@ -1203,7 +1203,7 @@ def test_comparison_diagnostics_keep_full_denominators(case, tmp_path):
     assert selected.record_coalescence["evidence_sha256"][
         "sources/trace.json"
     ] == file_hash(root / "sources/trace.json")
-    # Comparisons often read runs linked in from another checkout.
+    # A comparison may read runs linked in from another checkout.
     link = tmp_path / "linked-packet"
     try:
         link.symlink_to(root, target_is_directory=True)
