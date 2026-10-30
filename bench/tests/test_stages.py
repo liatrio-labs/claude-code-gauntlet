@@ -119,6 +119,12 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
         "duplicate_occurrence",
         "reason",
         "folded_elimination",
+        "detail_missing_field",
+        "detail_surface",
+        "detail_status",
+        "detail_kind",
+        "detail_policy_subject",
+        "detail_shape",
     ],
 )
 def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
@@ -140,6 +146,25 @@ def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
             snapshot["stage"] = "deliver"
         elif mutation == "reason":
             raw["snapshots"][1]["decisions"][0]["reason_code"] = None
+        elif mutation.startswith("detail_"):
+            detail = next(
+                decision["detail"]
+                for snap in raw["snapshots"]
+                for decision in snap["decisions"]
+                if (decision.get("detail") or {}).get("predicates")
+            )
+            if mutation == "detail_missing_field":
+                del detail["original_producer"]
+            elif mutation == "detail_surface":
+                detail["surface"] = "invalid"
+            elif mutation == "detail_status":
+                detail["predicates"][0]["status"] = "invalid"
+            elif mutation == "detail_kind":
+                detail["kind"] = "invalid"
+            elif mutation == "detail_policy_subject":
+                detail["policy_subject"] = "invalid"
+            else:
+                detail["predicate"] = "challenge_terminal"
         elif mutation == "folded_elimination":
             raw["snapshots"][1]["decisions"][0]["reason_code"] = "folded"
         elif mutation == "flag":

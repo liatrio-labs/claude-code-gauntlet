@@ -1,10 +1,10 @@
 import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { incompleteVetting } from './vetting.js';
-import { effectiveBatchSize, effectiveChallengeCap } from './capacity.js';
-import { modelFor, VALIDATION_RETURN_PROPERTIES, ADMISSION_PREDICATES } from './registry.js';
+import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
+import { modelFor, VALIDATION_RETURN_PROPERTIES, ADMISSION_PREDICATES, requiredAssessments } from './registry.js';
 import { INT_POLICY, coerceInt } from './wire.js';
-import { applyValidations, REACHABILITY_VALUES } from './applyValidations.js';
+import { applyValidations, REACHABILITY_VALUES, validationRejections } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
 import { applyChallenges, rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
@@ -42,6 +42,27 @@ function validateReturnDescriptor() {
     .join(', ');
 }
 
+function validateSchema(batch) {
+  const base = VALIDATE_SCHEMA.properties.validations.items;
+  const variants = batch.flatMap((finding) => VALIDATION_RETURN_PROPERTIES.policy_subject.enum.map((subject) => {
+    const predicates = requiredAssessments(finding, subject);
+    return { properties: { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] },
+      ...(predicates.length ? { admission_assessments: { allOf: predicates.map((predicate) => ({
+        contains: { properties: { predicate: { const: predicate } }, required: ['predicate'] },
+      })) } } : {}) }, required: predicates.length ? ['admission_assessments'] : [] };
+  }));
+  return { ...VALIDATE_SCHEMA, properties: { validations: { type: 'array', items: { ...base, anyOf: variants } } } };
+}
+
+// Keep exact small returns and explicit truncation receipts without consuming the checkpoint budget.
+function validatorAudit(audit, label, result, rejections) {
+  const raw = JSON.stringify(result ?? null);
+  const record = { label, raw: raw.slice(0, 8192), raw_characters: raw.length, truncated: raw.length > 8192,
+    rejections: rejections.slice(0, 100), omitted_rejections: Math.max(0, rejections.length - 100) };
+  if (audit.batches.length < 64 && JSON.stringify(audit).length + JSON.stringify(record).length < 64000) audit.batches.push(record);
+  else audit.omitted_batches += 1;
+}
+
 // Parallel results retain batch positions so gaps identify the exact findings left unvalidated.
 // Failed batches keep findings at their original confidence because dispatch failure supplies no evidence against them.
 export async function validateStage(ctx, input) {
@@ -60,42 +81,58 @@ export async function validateStage(ctx, input) {
   const batches = [];
   for (let i = 0; i < findings.length; i += batchSize) batches.push(findings.slice(i, i + batchSize));
 
-  const thunks = batches.map((batch, idx) => () => ctx.agent(validatePrompt(inp, batch), {
-    label: `validate-batch-${idx}`,
-    agentType: 'code-gauntlet:validator',
-    model,
-    schema: VALIDATE_SCHEMA,
-  }));
-
-  const results = await ctx.parallel(thunks);
-
   const gaps = [];
   const validations = [];
-  const skippedSet = new Set();
+  const accepted = new Set();
+  const audit = { batches: [], omitted_batches: 0 };
+  const terminalRejections = new Map();
   let completed = 0;
-
-  results.forEach((res, idx) => {
-    const batch = batches[idx];
+  let dispatched = 0;
+  const dispatch = (batch, label) => () => ctx.agent(validatePrompt(inp, batch), {
+    label, agentType: 'code-gauntlet:validator', model, schema: validateSchema(batch),
+  });
+  const consume = (res, batch, label) => {
     const list = res === null || res === undefined
       ? null
       : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
-    if (list === null) {
-      gaps.push(`validate-batch-${idx}: validator returned null/malformed — ${batch.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
-      for (const f of batch) skippedSet.add(f);
-      return;
+    if (list) completed += 1;
+    const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ ...e, id: e.id ?? e.finding_id }));
+    const rejections = [];
+    for (const finding of batch) {
+      const matches = entries.filter((entry) => entry.id === finding.id);
+      if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
+      for (const entry of matches) {
+        const reasons = validationRejections(finding, entry);
+        if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
+        else { validations.push(entry); accepted.add(finding.id); }
+      }
     }
-    completed += 1;
-    const entries = list.filter((e) => e && typeof e === 'object')
-      .map((e) => ({ ...e, id: e.id ?? e.finding_id }))
-      .filter((e) => batch.some((f) => f.id === e.id));
-    const scoredEntries = entries.filter((e) => coerceInt(e.confidence, INT_POLICY.validation) !== null
-      && VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(e.policy_subject));
-    validations.push(...scoredEntries);
-    const scored = new Set(scoredEntries.map((e) => e.id));
-    const unscored = batch.filter((f) => !scored.has(f.id));
+    validatorAudit(audit, label, res, rejections);
+    for (const rejection of rejections) terminalRejections.set(rejection.id, rejection.reasons);
+    return list;
+  };
+  const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
+  dispatched += batches.length;
+  const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
+  const pending = findings.filter((finding) => !accepted.has(finding.id));
+  if (pending.length) {
+    // One follow-up round only; small batches isolate incomplete records from successful siblings.
+    const retries = [];
+    const retrySize = effectiveValidationRetrySize(limits, findings.length);
+    for (let i = 0; i < pending.length; i += retrySize) retries.push(pending.slice(i, i + retrySize));
+    const retried = await ctx.parallel(retries.map((batch, idx) => dispatch(batch, `validate-retry-${idx}`)));
+    dispatched += retries.length;
+    retries.forEach((batch, idx) => consume(retried[idx], batch, `validate-retry-${idx}`));
+  }
+  batches.forEach((batch, idx) => {
+    const unscored = batch.filter((finding) => !accepted.has(finding.id));
     if (unscored.length) {
-      gaps.push(`validate-batch-${idx}: validator omitted scores — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
-      for (const f of unscored) skippedSet.add(f);
+      const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))];
+      let problem = mainLists[idx] ? 'omitted scores' : 'returned null/malformed';
+      if (reasons.some((reason) => !['missing_entry', 'malformed_return'].includes(reason))) {
+        problem = `returned invalid/incomplete entries (${reasons.join(', ')})`;
+      }
+      gaps.push(`validate-batch-${idx}: validator ${problem} — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
     }
   });
 
@@ -103,15 +140,16 @@ export async function validateStage(ctx, input) {
 
   let skipped = 0;
   for (const f of findings) {
-    if (skippedSet.has(f)) { f.validation = 'skipped'; skipped += 1; }
+    if (!accepted.has(f.id)) { f.validation = 'skipped'; skipped += 1; }
     else f.validation = 'validated';
   }
 
   return {
     findings,
     gaps,
+    audit,
     stats: {
-      batches_dispatched: batches.length,
+      batches_dispatched: dispatched,
       batches_completed: completed,
       validated: findings.length - skipped,
       skipped,

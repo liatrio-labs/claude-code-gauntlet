@@ -3,9 +3,21 @@
 import { INT_POLICY, coerceInt } from './wire.js';
 import { canonicalRange } from './location.js';
 import { matchAssessments } from './admission.js';
-import { VALIDATION_RETURN_PROPERTIES } from './registry.js';
+import { VALIDATION_RETURN_PROPERTIES, requiredAssessments } from './registry.js';
 
 export const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
+
+export function validationRejections(finding, validation) {
+  if (!validation) return ['missing_entry'];
+  const reasons = [];
+  if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
+  if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
+  const matched = matchAssessments(finding, validation.admission_assessments);
+  for (const predicate of requiredAssessments(finding, validation.policy_subject)) {
+    if (!matched.some((entry) => entry.predicate === predicate)) reasons.push(`missing_assessment:${predicate}`);
+  }
+  return reasons;
+}
 
 export function applyValidations(findings, validations) {
   const findingById = new Map();

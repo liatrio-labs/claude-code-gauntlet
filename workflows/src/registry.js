@@ -80,7 +80,7 @@ export const DISPOSITION_RIGHTS = deepFreeze({
 });
 export const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
 export const RIGHT_ELIGIBILITY = deepFreeze({ body: { fixTask: ['current_defect', 'current_reachability', 'confirmed_location'] } });
-export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2 }, cite: { attempts: 2 }, writer: { attempts: 2 } });
+export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2 }, validate: { retryBatchDivisor: 5 }, cite: { attempts: 2 }, writer: { attempts: 2 } });
 
 const SOURCE_REFERENCE = {
   type: 'object', $comment: 'source-reference', properties: {
@@ -159,7 +159,7 @@ const POLICY_SUBJECTS = {
 };
 
 const QUALITY_ADMISSION = {
-  field: 'quality_basis', kinds: {
+  field: 'quality_basis', promotion: { predicate: 'present_defect', kind: 'current_correctness' }, kinds: {
     current_correctness: { required: [], predicates: ['present_defect'], phase: 'semantic', core: true, tier: 'main' },
     duplication: { required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
     simpler_equivalent: { required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
@@ -178,7 +178,7 @@ export const DIMENSIONS = deepFreeze([
     schemaExtra: { affected_consumers: { type: 'array', description: 'Repository paths of consumers affected by the change.', items: { type: 'string', $comment: 'repo-path' } } }, requiredExtra: ['affected_consumers'],
       requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'test_coverage', agentType: AGENT_TYPE_TEST_ANALYZER, conditionalFlag: DEEP,
-    defaultDisposition: 'held_back', defaultTier: 'main', admission: { field: 'test_kind', kinds: {
+    defaultDisposition: 'held_back', defaultTier: 'main', admission: { field: 'test_kind', promotion: { predicate: 'present_defect', kind: 'production_defect', stamp: 'effective_test_kind' }, kinds: {
       defective_test: { required: [], predicates: ['pr_owned_test', 'confirmed_test_defect', 'test_diff_site_for_inline'], phase: 'semantic', tier: 'main' },
       critical_gap: { required: ['criticality', 'failure_scenario', 'searched_paths', 'candidate_tests'], optional: ['production_element'], predicates: ['criticality_at_least_8', 'resolved_production_element', 'complete_searches', 'complete_behavioral_absence'], phase: 'semantic', tier: 'main' },
       production_defect: { required: [], predicates: ['present_defect'], phase: 'semantic', dimension: 'bug', core: true, tier: 'main' },
@@ -229,9 +229,10 @@ export const DIMENSIONS = deepFreeze([
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
 
+export const VERIFY_REFERENCE_FIELDS = deepFreeze(Object.keys(SOURCE_REFERENCE.properties));
 export const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)))
   .filter(([, schema]) => schema.$comment === 'source-reference' || schema.items?.$comment === 'source-reference' || schema.$comment === 'search-paths')
-  .map(([key, schema]) => [key, { array: schema.type === 'array', search: schema.$comment === 'search-paths', fields: Object.keys(SOURCE_REFERENCE.properties) }])));
+  .map(([key, schema]) => [key, schema.$comment === 'search-paths' ? 'search_paths' : schema.type === 'array' ? 'reference_list' : 'reference'])));
 
 const PATH_ROLE_SCHEMA = { type: 'string', enum: ['source', 'test', 'non_source', 'unknown'] };
 const DIFF_FACT_SCHEMA = { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false };
@@ -247,9 +248,9 @@ export const VERIFY_FACT_PROPERTIES = deepFreeze({
   path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
   blame_class: { type: 'string', enum: ['new', 'pre_existing', 'surfaced', 'unknown'] },
   blame_source: { type: 'string', enum: ['git_blame', 'local_diff', 'cross_file_refs', 'off_diff', 'removed_loss', 'unavailable'] },
-  resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, descriptor]) => {
-    const schema = descriptor.search ? SEARCH_FACT_SCHEMA : RESOLVED_REFERENCE_SCHEMA;
-    return [key, descriptor.array ? { type: 'array', items: schema } : schema];
+  resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, kind]) => {
+    const schema = kind === 'search_paths' ? SEARCH_FACT_SCHEMA : RESOLVED_REFERENCE_SCHEMA;
+    return [key, kind !== 'reference' ? { type: 'array', items: schema } : schema];
   })), additionalProperties: false },
 });
 
@@ -297,6 +298,7 @@ export const ADMISSION_STAMP_PROPERTIES = deepFreeze({
   }, required: ['version', 'input_proof', 'input_fields', 'status', 'reasons', 'kind', 'core', 'tier', 'inline_eligible'], additionalProperties: false },
   body_fix_task_eligible: { type: 'boolean' },
 });
+export const VERIFY_FACT_KEYS = deepFreeze(Object.keys(VERIFY_FACT_PROPERTIES));
 
 export function dimensionRow(dimension) {
   return DIMENSIONS.find((row) => row.dimension === dimension || row.aliases.includes(dimension));
@@ -336,9 +338,10 @@ export function producerRow(finding) {
   return rows.length === 1 && rows[0].admission ? rows[0] : dimensionRow(finding.dimension);
 }
 
-export function findingPolicy(finding) {
+export function findingPolicy(finding, effective = true) {
   const original = dimensionRow(finding.origin_dimension);
-  const promotion = original?.admission?.kinds[finding[original.admission.field]]?.dimension;
+  const promotion = original?.admission?.kinds[finding[original.admission.field]]?.dimension
+    || original?.admission?.kinds[original.admission.promotion?.kind]?.dimension;
   const producer = DIMENSIONS.filter((candidate) => candidate.agentType.split(':').pop() === finding.agent);
   const typedProducer = producer.length === 1 && producer[0].admission ? producer[0] : null;
   const row = typedProducer
@@ -347,17 +350,31 @@ export function findingPolicy(finding) {
       ? original : null)
     || dimensionRow(finding.dimension) || producer.find((candidate) => candidate.agentFallback) || producer[0];
   const subject = row?.policySubjects[finding.policy_subject];
-  const selected = subject?.dimension ? dimensionRow(subject.dimension) : row;
-  const kind = selected?.admission?.kinds[subject?.kind || finding[selected.admission.field]];
+  const stampedKind = effective && finding.admission?.status === 'admitted' ? finding.admission.kind : undefined;
+  const selected = stampedKind && stampedKind === row?.admission?.promotion?.kind ? row
+    : subject?.dimension ? dimensionRow(subject.dimension) : row;
+  const kind = selected?.admission?.kinds[stampedKind || subject?.kind || finding[selected.admission.field]];
   return { row: selected, kind, core: kind?.core ?? selected?.core ?? false,
     tier: kind?.tier ?? selected?.defaultTier, defaultDisposition: kind?.defaultDisposition ?? selected?.defaultDisposition };
+}
+
+// Both the return schema and runtime acceptance derive semantic requirements from the same rows.
+export function requiredAssessments(finding, policySubject) {
+  const original = findingPolicy({ ...finding, policy_subject: undefined }, false);
+  const selected = findingPolicy({ ...finding, policy_subject: policySubject }, false);
+  return [...new Set([original.row?.admission?.promotion?.predicate,
+    ...(original.kind?.predicates || []), ...(selected.kind?.predicates || [])])]
+    .filter((predicate) => ADMISSION_PREDICATES[predicate]?.references);
 }
 
 export function normalizePipelineStamps(finding) {
   const { row } = findingPolicy({ ...finding, policy_subject: undefined });
   if (finding.origin_dimension !== row?.dimension) delete finding.origin_dimension;
   const subject = row?.policySubjects[finding.policy_subject];
-  if (subject?.stamp !== 'effective_test_kind' || subject.kind !== finding.effective_test_kind) {
+  const promotion = row?.admission?.promotion;
+  if ((subject?.stamp !== 'effective_test_kind' || subject.kind !== finding.effective_test_kind)
+    && !(promotion?.stamp === 'effective_test_kind' && promotion.kind === finding.effective_test_kind
+      && finding.admission?.kind === promotion.kind && finding.admission.status === 'admitted')) {
     delete finding.effective_test_kind;
   }
 }
@@ -375,7 +392,7 @@ export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_ke
 export const PIPELINE_FINDING_FIELDS = deepFreeze([
   ...Object.keys(ADMISSION_STAMP_PROPERTIES),
   'origin_dimension', 'effective_test_kind', 'reference_diagnostics',
-  ...Object.keys(VERIFY_FACT_PROPERTIES),
+  ...VERIFY_FACT_KEYS,
   'trace_id', 'discovery_agent', 'discovery_dimension',
   'removed_test',
   'location_status', 'claimed_line_start', 'claimed_line_end',

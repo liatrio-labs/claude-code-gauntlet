@@ -552,6 +552,14 @@ class SurfaceScoreView:
     source_artifact_hashes: dict[str, str]
 
 
+def _merge_tristate(left: bool | None, right: bool | None) -> bool | None:
+    if left or right:
+        return True
+    if left is None or right is None:
+        return None
+    return False
+
+
 def surface_candidates(mapped):
     """One explicit issue credit, preferring its inline occurrence."""
     mapped = tuple(mapped)
@@ -569,16 +577,8 @@ def surface_candidates(mapped):
             previous = result[index]
             result[index] = replace(
                 previous,
-                test_claim=True
-                if previous.test_claim or c.test_claim
-                else None
-                if None in (previous.test_claim, c.test_claim)
-                else False,
-                test_site=True
-                if previous.test_site or c.test_site
-                else None
-                if None in (previous.test_site, c.test_site)
-                else False,
+                test_claim=_merge_tristate(previous.test_claim, c.test_claim),
+                test_site=_merge_tristate(previous.test_site, c.test_site),
                 discovery_dimensions=tuple(
                     sorted(set(previous.discovery_dimensions + c.discovery_dimensions))
                 ),

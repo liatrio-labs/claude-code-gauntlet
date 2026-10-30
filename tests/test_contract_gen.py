@@ -225,6 +225,12 @@ def test_site_descriptor_gates_discovery_consumers(
         "line_end": int,
         "anchor": str,
     }
+    metadata = namespace["FindingMetadata"].__annotations__
+    assert metadata["line_end"] is int
+    assert get_args(metadata["sites"]) == (namespace["ResolvedSitesItem"],)
+    assert {"location_status", "diff_validation"} <= namespace[
+        "ResolvedSitesItem"
+    ].__annotations__.keys()
     assert "resolved_sites" in namespace["Delta"].__annotations__
     contracts = {}
     for agent in gen.load_registry(str(registry_tree))["agents"]:

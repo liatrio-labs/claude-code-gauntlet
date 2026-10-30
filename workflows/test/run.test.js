@@ -31,6 +31,15 @@ test('ordinary findings retain admission across path roles', () => {
   }
 });
 
+test('a rewritten report-only verdict cannot grant admission', () => {
+  const finding = evaluateAdmission(makeFinding('other', { dimension: 'simplification', quality_basis: 'other' }));
+  assert.equal(finding.admission.status, 'report_only');
+  assert.ok(hasAdmission(finding));
+  finding.admission.status = 'admitted';
+  assert.equal(hasAdmission(finding), false);
+  assert.equal(disposeFindings({ findings: [finding] }).unverified[0].disposition, 'held_back');
+});
+
 test('defective tests require test role and known PR ownership', () => {
   for (const [path_role, in_diff, expected] of [
     ['test', true, 'admitted'], ['source', true, 'report_only'], ['test', null, 'held_back'], ['test', false, 'report_only'],
@@ -56,6 +65,11 @@ test('admitted equivalent survives host path rewriting through delivery', async 
   const tampered = structuredClone(delivered);
   tampered.resolved_references = { production_element: { file: 'foreign' } };
   assert.equal(hasAdmission(tampered), false);
+  for (const [field, value] of [['status', 'held_back'], ['reasons', [{ predicate: 'validation', status: 'held_back' }]], ['tier', 'main']]) {
+    const rewritten = structuredClone(delivered);
+    rewritten.admission[field] = value;
+    assert.equal(hasAdmission(rewritten), false, field);
+  }
   delivered.behavior_preserved = '';
   assert.equal(hasAdmission(delivered), false);
 });
@@ -660,7 +674,7 @@ const COARSEN_ROWS = [
   { name: 'entry changed-file pressure', changedFiles: Array.from({ length: 20000 }, (_, index) => `src/f${index}.js`),
     limits: { summarizeBucketSize: 1 }, bucketCount: 625, batchCount: 1 },
   { name: 'post-merge finding pressure', findings: Array.from({ length: 1000 }, (_, index) => makeFinding(`F${index}`)),
-    limits: { validateBatch: 1, verifySliceSize: 2000 }, bucketCount: 0, batchCount: 500 },
+    limits: { validateBatch: 1, verifySliceSize: 2000 }, bucketCount: 0, batchCount: 125 },
 ];
 for (const row of COARSEN_ROWS) test(`coarsening wiring: ${row.name}`, async () => {
   const args = validArgs({ ...(row.changedFiles ? { changedFiles: row.changedFiles, changedLines: 100000 } : {}),

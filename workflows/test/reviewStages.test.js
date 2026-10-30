@@ -15,7 +15,7 @@ test('validator classification omissions skip core findings and duplicate scores
       assert.equal(f.validation, subject === 'ordinary' ? 'validated' : 'skipped');
       assert.equal(f.admission.status, subject === 'ordinary' ? 'admitted' : 'held_back');
       assert.deepEqual(f.admission.reasons, subject === 'ordinary' ? [] : [{ predicate: 'validation', status: 'held_back' }]);
-      assert.deepEqual(out.gaps, subject === 'ordinary' ? [] : [omittedGap(0, 1)]);
+      assert.deepEqual(out.gaps, subject === 'ordinary' ? [] : [invalidGap('invalid_policy_subject')]);
     }
   }
   const ctx = stageCtx({ reply: [70, 85].map((confidence) => ({ id: 'f1', confidence, policy_subject: 'ordinary', reachability: 'current' })) });
@@ -43,11 +43,12 @@ test('validator prompt shares predicate definitions across finding contexts', as
 });
 
 const omittedGap = (idx, count) => `validate-batch-${idx}: validator omitted scores — ${count} finding(s) unvalidated (validation=skipped, held back to the report)`;
+const invalidGap = (reasons) => `validate-batch-0: validator returned invalid/incomplete entries (${reasons}) — 1 finding(s) unvalidated (validation=skipped, held back to the report)`;
 const VALIDATE_STATS = { batches_dispatched: 1, batches_completed: 1, validated: 1, skipped: 1, adjusted: 1 };
 const VALIDATE_ROWS = [
   { name: 'id adjustment', input: [finding({ id: 'F1', confidence: 90 }), finding({ id: 'F2', confidence: 80 })],
     reply: [{ id: 'F1', confidence: 50, policy_subject: 'ordinary', justification: 'weak' }, { id: 'F2', confidence: 'invalid' }, null],
-    gaps: [omittedGap(0, 1)],
+    gaps: [invalidGap('invalid_confidence, invalid_policy_subject')],
     expected: [['F1', 50, 90, 'weak', undefined, 'validated'], ['F2', 80, undefined, undefined, undefined, 'skipped']] },
   { name: 'finding_id adjustment', input: [finding({ id: 'F1', confidence: 90 }), finding({ id: 'F2', confidence: 80 })],
     reply: [{ finding_id: 'F1', confidence: 40, policy_subject: 'ordinary', justification: 'reachable only hypothetically' }], gaps: [omittedGap(0, 1)],
@@ -94,12 +95,18 @@ const VALIDATE_ROWS = [
 for (const row of VALIDATE_ROWS) test(`validate result: ${row.name}`, async () => {
   const ctx = stageCtx({ reply: row.reply, nulls: row.nulls });
   const out = await validateStage(ctx, { findings: structuredClone(row.input), limits: { validateBatch: row.batch ?? 10 } });
-  assert.deepEqual(Object.keys(out), ['findings', 'gaps', 'stats']);
+  assert.deepEqual(Object.keys(out), row.input.length ? ['findings', 'gaps', 'audit', 'stats'] : ['findings', 'gaps', 'stats']);
   assert.deepEqual(out.findings.map((f) => [f.id, f.confidence, f.original_confidence,
     f.validation_justification, f.reachability, f.validation]), row.expected);
-  assert.deepEqual(out.stats, row.stats ?? VALIDATE_STATS);
+  const expectedStats = { ...(row.stats ?? VALIDATE_STATS) };
+  const pendingCount = row.expected.filter((entry) => entry.at(-1) === 'skipped').length;
+  const retryCount = Math.ceil(pendingCount / Math.max(1, Math.ceil((row.batch || 10) / 5)));
+  expectedStats.batches_dispatched += retryCount;
+  if (Array.isArray(row.reply) || Array.isArray(row.reply.validations)) expectedStats.batches_completed += retryCount;
+  assert.deepEqual(out.stats, expectedStats);
   assert.deepEqual(out.gaps, row.gaps ?? []);
-  assert.deepEqual(ctx.calls.map((call) => call.label), row.labels ?? ['validate-batch-0']);
+  assert.deepEqual(ctx.calls.map((call) => call.label), [...(row.labels ?? ['validate-batch-0']),
+    ...Array.from({ length: retryCount }, (_, idx) => `validate-retry-${idx}`)]);
   for (const call of ctx.calls) assert.equal(call.agentType, 'code-gauntlet:validator');
   assert.deepEqual(ctx.violations, []);
 });
@@ -121,7 +128,9 @@ for (const row of VALIDATE_PROMPT_ROWS) test(`validate prompt: ${row.name}`, asy
   assert.ok(ctx.calls[0].prompt.includes('code-evidence and disproof contract'));
   assert.ok(ctx.calls[0].prompt.includes(row.block));
   assert.ok(ctx.calls[0].prompt.endsWith(VALIDATE_TAIL));
-  assert.deepEqual(ctx.calls[0].schema, { type: 'object', properties: { validations: {
+  const { anyOf, ...base } = ctx.calls[0].schema.properties.validations.items;
+  assert.ok(anyOf.length > 0);
+  assert.deepEqual({ ...ctx.calls[0].schema, properties: { validations: { type: 'array', items: base } } }, { type: 'object', properties: { validations: {
     type: 'array', items: { type: 'object', properties: {
       finding_id: { type: 'string' }, confidence: { type: 'number' }, justification: { type: 'string' },
       reachability: { type: 'string', enum: ['current', 'future_change_only', 'uncertain'] },
