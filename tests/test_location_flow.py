@@ -81,7 +81,7 @@ const rows = [
  ['mock','test_coverage',{...ref('tests/mock','unused_mock.return_value = fixture_value;'),test_kind:'defective_test'},['confirmed_test_defect'],'admitted'],
  ['wait','test_coverage',{...ref('tests/wait','finish_operation();'),test_kind:'defective_test'},['confirmed_test_defect'],'admitted'],
  ['sound-test','test_coverage',{...test,test_kind:'defective_test'},['confirmed_test_defect'],'report_only','ordinary','confirmed_test_defect'],
- ['source-test','test_coverage',{test_kind:'defective_test'},['confirmed_test_defect'],'admitted'],
+ ['source-test','test_coverage',{test_kind:'defective_test'},['confirmed_test_defect'],'report_only'],
  ['gap','test_coverage',gap,['resolved_production_element','complete_searches','complete_behavioral_absence'],'admitted'],
  ['production','test_coverage',{test_kind:'production_defect'},['present_defect'],'admitted'],
  ['additional','test_coverage',{test_kind:'additional_case'},[],'report_only'],
@@ -142,7 +142,7 @@ assert.equal(mapped.effective_test_kind,'defective_test');assert.equal(mapped.te
 const challenged=await challengeStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async()=>({score:90})},{findings:validated.findings});
 const out=disposeFindings(challenged);
 for(const f of [...out.findings,...out.unverified])assert.equal(deliveryAllows(f,'body'),f.admission.status==='admitted',f.id);
-assert.equal(out.findings.find(f=>f.id==='source-test').disposition,'body');
+assert.equal(out.findings.find(f=>f.id==='source-test').disposition,'report_only');
 const first=out.findings.find(f=>f.id==='gap');first.criticality=7;
 assert.equal(disposeFindings({findings:[first]}).unverified[0].disposition,'held_back');
 process.stdout.write(JSON.stringify({rows:rows.length,findings:out.findings.length}));

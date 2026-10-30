@@ -11,6 +11,7 @@ from gauntlet.delivery.input import validate_review_input
 from gauntlet.forge import JsonFetch, PostResult, parse_remote
 from gauntlet.marker import find_finding_markers, find_marker
 
+from tests.support.delivery import admitted_stamp
 from tests.support.posting import (
     CONTEXT,
     CONTRACT_DIFF,
@@ -33,7 +34,7 @@ DIFF = (
 
 def located(**values):
     return {
-        "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+        "admission": admitted_stamp(),
         "id": "F1",
         "file": "foo.py",
         "line_start": 2,
@@ -1120,7 +1121,7 @@ def test_marker_delivery(kind, posting):
             + '","key":"deadbeefcafebabe"} -->'
         )
         hostile = {
-            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+            "admission": admitted_stamp(),
             "disposition": "deliver",
             "file": "src/edited.py",
             "line": 999,

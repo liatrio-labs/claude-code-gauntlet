@@ -22,6 +22,7 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
     makeFinding('DELIVERY', { confidence: 80 }),
     makeFinding('SKIP', { severity: 'critical' }), makeFinding('CAP', { severity: 'low' }),
     makeFinding('GROUP', { file: 'group.js', severity: 'critical', title: 'shared group defect', description: 'The shared group defect breaks the ordinary value when this public function is called.' }),
+    makeFinding('REPORT', { dimension: 'test_coverage', test_kind: 'additional_case', criticality: 8, failure_scenario: 'Extra case' }),
   ];
   const convention = makeFinding('CORROBORATOR', { file: 'group.js', dimension: 'intent', spec_text: 'Return the correct value', severity: 'critical', title: 'corroborating shared defect', description: `${seed.at(-1).description} The intended return value is therefore broken.` });
   if (options.extraBytes) seed[1].diagnostic = 'x'.repeat(options.extraBytes);

@@ -2,7 +2,7 @@ import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap } from './capacity.js';
-import { modelFor, VALIDATION_RETURN_PROPERTIES } from './registry.js';
+import { modelFor, VALIDATION_RETURN_PROPERTIES, ADMISSION_PREDICATES } from './registry.js';
 import { INT_POLICY, coerceInt } from './wire.js';
 import { applyValidations, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
@@ -26,7 +26,7 @@ const VALIDATE_SCHEMA = {
           reachability: { type: 'string', enum: REACHABILITY_VALUES },
           ...VALIDATION_RETURN_PROPERTIES,
         },
-        required: ['finding_id', 'confidence'],
+        required: ['finding_id', 'confidence', 'policy_subject'],
       },
     },
   },
@@ -88,9 +88,10 @@ export async function validateStage(ctx, input) {
     const entries = list.filter((e) => e && typeof e === 'object')
       .map((e) => ({ ...e, id: e.id ?? e.finding_id }))
       .filter((e) => batch.some((f) => f.id === e.id));
-    validations.push(...entries);
-    const scored = new Set(entries.filter((e) => coerceInt(e.confidence, INT_POLICY.validation) !== null
-      && entries.filter((other) => other.id === e.id).length === 1).map((e) => e.id));
+    const scoredEntries = entries.filter((e) => coerceInt(e.confidence, INT_POLICY.validation) !== null
+      && VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(e.policy_subject));
+    validations.push(...scoredEntries);
+    const scored = new Set(scoredEntries.map((e) => e.id));
     const unscored = batch.filter((f) => !scored.has(f.id));
     if (unscored.length) {
       gaps.push(`validate-batch-${idx}: validator omitted scores — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
@@ -131,7 +132,7 @@ function validatePrompt(inp, batch) {
     const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
     return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f))}`;
   }).join('\n');
-  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Findings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
+  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Admission predicates: ${JSON.stringify(ADMISSION_PREDICATES)}\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
 }
 
 // The runtime has no wall clock, so generated_at must come from the supplied arguments.

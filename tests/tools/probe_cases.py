@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, cast
 
+from tests.support.delivery import admitted_stamp
 from tests.tools.probe_fixtures import (
     input_text,
 )
@@ -28,7 +29,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
             "line_start": 1,
             "line_end": 1,
             "location_status": "confirmed",
-            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+            "admission": admitted_stamp(),
             "disposition": "deliver",
             "end_line": 1,
             "severity": "medium",

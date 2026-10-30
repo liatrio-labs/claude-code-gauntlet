@@ -8,6 +8,7 @@ import gauntlet.text as outbound_text
 import pytest
 from gauntlet.delivery import compose
 
+from tests.support.delivery import admitted_stamp
 from tests.support.outbound import (
     line_vectors,
     summary_cases,
@@ -385,11 +386,7 @@ def test_summary_containment(title: str, path: str, expected: str) -> None:
                         "line_start": 1,
                         "line_end": 1,
                         "location_status": "confirmed",
-                        "admission": {
-                            "version": 1,
-                            "status": "admitted",
-                            "input_proof": "fixture",
-                        },
+                        "admission": admitted_stamp(),
                         "disposition": "deliver",
                         "severity": "high",
                     }

@@ -9,6 +9,7 @@ from gauntlet import proc
 from gauntlet.delivery import post
 from gauntlet.forge import JsonFetch, Platform, PostRequest
 
+from tests.support.delivery import admitted_stamp
 from tests.support.forge import FakeForge, FakeGitLab
 
 UNKNOWN_WARNING = (
@@ -31,7 +32,7 @@ FOOTER = (
 )
 
 CONTEXT = {
-    "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+    "admission": admitted_stamp(),
     "file": "src/edited.py",
     "line": 61,
     "line_start": 61,
@@ -45,7 +46,7 @@ CONTEXT = {
 }
 
 ADDED = {
-    "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+    "admission": admitted_stamp(),
     "disposition": "deliver",
     "file": "src/edited.py",
     "line": 62,
@@ -59,7 +60,7 @@ ADDED = {
 }
 
 NEW = {
-    "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+    "admission": admitted_stamp(),
     "disposition": "deliver",
     "file": "src/app/clients/api/__init__.py",
     "line": 1,

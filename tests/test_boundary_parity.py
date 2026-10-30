@@ -17,6 +17,7 @@ from gauntlet.delivery.input import Finding
 from gauntlet.verify import wire as verify_wire
 
 from bench.runner import invoke
+from tests.support.delivery import admitted_stamp
 from tests.support.forge import FakeForgeFactory
 from tests.support.pipeline import (
     REPO,
@@ -62,7 +63,7 @@ def test_summary_and_skipped_location_bytes(
         "line_start": 12,
         "line_end": 12,
         "location_status": status,
-        "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+        "admission": admitted_stamp(),
         "disposition": "deliver",
         "title": "Location",
     }
@@ -101,11 +102,7 @@ def test_permalinked_summary_slice_and_guard_equality() -> None:
                 "line_start": 8,
                 "line_end": 8,
                 "location_status": "confirmed",
-                "admission": {
-                    "version": 1,
-                    "status": "admitted",
-                    "input_proof": "fixture",
-                },
+                "admission": admitted_stamp(),
                 "disposition": "deliver",
                 "title": (
                     "Use `foo()` and `<Slot>`; mail dev@example.test; &#\u0666\u0664;"
@@ -118,11 +115,7 @@ def test_permalinked_summary_slice_and_guard_equality() -> None:
                 "line_start": 1,
                 "line_end": 1,
                 "location_status": "confirmed",
-                "admission": {
-                    "version": 1,
-                    "status": "admitted",
-                    "input_proof": "fixture",
-                },
+                "admission": admitted_stamp(),
                 "disposition": "deliver",
                 "title": "Path boundary",
             },
@@ -156,7 +149,7 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             "line_start": 1,
             "line_end": 1,
             "location_status": "confirmed",
-            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+            "admission": admitted_stamp(),
             "disposition": "deliver",
             "severity": "high",
             "confidence": 10,
@@ -170,7 +163,7 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             "line_start": 11,
             "line_end": 11,
             "location_status": "confirmed",
-            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+            "admission": admitted_stamp(),
             "disposition": "deliver",
             "severity": "high",
             "confidence": 60,
@@ -184,7 +177,7 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             "line_start": 12,
             "line_end": 12,
             "location_status": "confirmed",
-            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+            "admission": admitted_stamp(),
             "disposition": "deliver",
             "severity": "high",
             "confidence": 95,
@@ -763,7 +756,7 @@ def test_verify_localises_real_receipt_input_typo(
             "line_start": 1,
             "line_end": 1,
             "location_status": "confirmed",
-            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+            "admission": admitted_stamp(),
             "disposition": "deliver",
             "severity": "high",
             "confidence": 80,

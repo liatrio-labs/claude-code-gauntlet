@@ -62,7 +62,7 @@ export function normalizeFindingPaths(findings, repoRoot, decisions = []) {
       const warning = invalidFindingPathWarning(finding, field, reason, action);
       warnings.push(warning);
       if (!Array.isArray(finding.reference_diagnostics)) finding.reference_diagnostics = [];
-      finding.reference_diagnostics.push(warning);
+      finding.reference_diagnostics.push({ field: field.split('.')[0], reason, action });
       return undefined;
     };
     const confine = (value, schema, field) => {

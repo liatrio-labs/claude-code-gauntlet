@@ -3,24 +3,61 @@ import assert from 'node:assert/strict';
 import { validateStage, filterStage, challengeStage, blindChallengeFields, selectDelivery } from '../src/reviewStages.js';
 import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
-import { VALIDATION_RETURN_PROPERTIES } from '../src/registry.js';
+import { VALIDATION_RETURN_PROPERTIES, ADMISSION_PREDICATES, RIGHT_ELIGIBILITY } from '../src/registry.js';
+import { evaluateAdmission } from '../src/admission.js';
+
+test('validator classification omissions skip core findings and duplicate scores retain base behavior', async () => {
+  for (const dimension of ['bug', 'security', 'cross_file_impact', 'intent', 'convention', 'comment_accuracy']) {
+    for (const subject of [undefined, 'invalid', 'ordinary']) {
+      const ctx = stageCtx({ reply: [{ id: 'f1', confidence: 80, policy_subject: subject }] });
+      const out = await validateStage(ctx, { findings: [finding({ dimension })] });
+      const f = evaluateAdmission(out.findings[0]);
+      assert.equal(f.validation, subject === 'ordinary' ? 'validated' : 'skipped');
+      assert.equal(f.admission.status, subject === 'ordinary' ? 'admitted' : 'held_back');
+      assert.deepEqual(f.admission.reasons, subject === 'ordinary' ? [] : [{ predicate: 'validation', status: 'held_back' }]);
+      assert.deepEqual(out.gaps, subject === 'ordinary' ? [] : [omittedGap(0, 1)]);
+    }
+  }
+  const ctx = stageCtx({ reply: [70, 85].map((confidence) => ({ id: 'f1', confidence, policy_subject: 'ordinary', reachability: 'current' })) });
+  const out = await validateStage(ctx, { findings: [finding()] });
+  assert.deepEqual(out.gaps, []);
+  assert.equal(out.findings[0].confidence, 85);
+  assert.equal(out.findings[0].reachability, 'current');
+  assert.equal(evaluateAdmission(out.findings[0]).admission.status, 'admitted');
+});
+
+test('validator prompt shares predicate definitions across finding contexts', async () => {
+  const ctx = stageCtx({ reply: [] });
+  await validateStage(ctx, { findings: [finding(), finding({ id: 'f2', dimension: 'simplification', quality_basis: 'simpler_equivalent' })] });
+  const prompt = ctx.calls[0].prompt;
+  const table = JSON.stringify(ADMISSION_PREDICATES);
+  assert.equal(prompt.split(table).length - 1, 1);
+  assert.ok(prompt.indexOf(table) < prompt.indexOf('\nFindings:'));
+  const contexts = prompt.split('\n').filter((line) => line.startsWith('- ')).map((line) => JSON.parse(line.split(' | admission_context: ')[1]));
+  assert.deepEqual(contexts.map((context) => context.policy.predicates), [[], ['concrete_equivalent', 'behavior_preserved']]);
+  for (const context of contexts) {
+    assert.equal(context.predicates, undefined);
+    assert.deepEqual(context.policy.policy_subjects.test_defect, ['pr_owned_test', 'confirmed_test_defect', 'test_diff_site_for_inline']);
+    assert.deepEqual(context.policy.body_fix_task, RIGHT_ELIGIBILITY.body.fixTask);
+  }
+});
 
 const omittedGap = (idx, count) => `validate-batch-${idx}: validator omitted scores — ${count} finding(s) unvalidated (validation=skipped, held back to the report)`;
 const VALIDATE_STATS = { batches_dispatched: 1, batches_completed: 1, validated: 1, skipped: 1, adjusted: 1 };
 const VALIDATE_ROWS = [
   { name: 'id adjustment', input: [finding({ id: 'F1', confidence: 90 }), finding({ id: 'F2', confidence: 80 })],
-    reply: [{ id: 'F1', confidence: 50, justification: 'weak' }, { id: 'F2', confidence: 'invalid' }, null],
+    reply: [{ id: 'F1', confidence: 50, policy_subject: 'ordinary', justification: 'weak' }, { id: 'F2', confidence: 'invalid' }, null],
     gaps: [omittedGap(0, 1)],
     expected: [['F1', 50, 90, 'weak', undefined, 'validated'], ['F2', 80, undefined, undefined, undefined, 'skipped']] },
   { name: 'finding_id adjustment', input: [finding({ id: 'F1', confidence: 90 }), finding({ id: 'F2', confidence: 80 })],
-    reply: [{ finding_id: 'F1', confidence: 40, justification: 'reachable only hypothetically' }], gaps: [omittedGap(0, 1)],
+    reply: [{ finding_id: 'F1', confidence: 40, policy_subject: 'ordinary', justification: 'reachable only hypothetically' }], gaps: [omittedGap(0, 1)],
     expected: [['F1', 40, 90, 'reachable only hypothetically', undefined, 'validated'],
       ['F2', 80, undefined, undefined, undefined, 'skipped']] },
   { name: 'validations envelope', input: [finding({ confidence: 40 })],
-    reply: { validations: [{ id: 'f1', confidence: 85 }] }, stats: { ...VALIDATE_STATS, validated: 1, skipped: 0 },
+    reply: { validations: [{ id: 'f1', confidence: 85, policy_subject: 'ordinary' }] }, stats: { ...VALIDATE_STATS, validated: 1, skipped: 0 },
     expected: [['f1', 85, 40, undefined, undefined, 'validated']] },
   { name: 'known reachability', input: [finding({ id: 'F1', confidence: 80 })],
-    reply: [{ finding_id: 'F1', confidence: 80, reachability: 'future_change_only' }],
+    reply: [{ finding_id: 'F1', confidence: 80, policy_subject: 'ordinary', reachability: 'future_change_only' }],
     stats: { ...VALIDATE_STATS, validated: 1, skipped: 0 }, expected: [['F1', 80, 80, undefined, 'future_change_only', 'validated']] },
   { name: 'count batches', batch: 2,
     input: ['F1', 'F2', 'F3', 'F4', 'F5'].map((id) => finding({ id, confidence: 80 })), reply: [],
@@ -89,7 +126,7 @@ for (const row of VALIDATE_PROMPT_ROWS) test(`validate prompt: ${row.name}`, asy
       finding_id: { type: 'string' }, confidence: { type: 'number' }, justification: { type: 'string' },
       reachability: { type: 'string', enum: ['current', 'future_change_only', 'uncertain'] },
       ...VALIDATION_RETURN_PROPERTIES,
-    }, required: ['finding_id', 'confidence'] },
+    }, required: ['finding_id', 'confidence', 'policy_subject'] },
   } }, required: ['validations'] });
 });
 

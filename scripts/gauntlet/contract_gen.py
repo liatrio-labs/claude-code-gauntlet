@@ -852,6 +852,12 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             *(field_annotation(field, kind) for field, kind in fact_types.items()),
             "",
             "",
+            "class ReferenceDiagnostic(TypedDict):",
+            "    field: str",
+            "    reason: str",
+            "    action: str",
+            "",
+            "",
             "class FindingMetadata(FindingFacts, total=False):",
             *(field_annotation(field, kind) for field, kind in admission_types.items()),
             "    origin_dimension: Dimension",
@@ -859,7 +865,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
                 f"    {field}: {''.join(part.title() for part in field.split('_'))}"
                 for field in stamp_kinds
             ),
-            "    reference_diagnostics: list[str]",
+            "    reference_diagnostics: list[ReferenceDiagnostic]",
             *(
                 field_annotation(field, kind)
                 for field, kind in wire_types.items()

@@ -1740,6 +1740,12 @@ class FindingFacts(TypedDict, total=False):
     resolved_references: ResolvedReferences
 
 
+class ReferenceDiagnostic(TypedDict):
+    field: str
+    reason: str
+    action: str
+
+
 class FindingMetadata(FindingFacts, total=False):
     policy_subject: _PolicySubject_Literal
     admission_assessments: list[AdmissionAssessmentsItem]
@@ -1747,7 +1753,7 @@ class FindingMetadata(FindingFacts, total=False):
     body_fix_task_eligible: bool
     origin_dimension: Dimension
     effective_test_kind: EffectiveTestKind
-    reference_diagnostics: list[str]
+    reference_diagnostics: list[ReferenceDiagnostic]
     line_end: float
     origin: str
     evidence: str
