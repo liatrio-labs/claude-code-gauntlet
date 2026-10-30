@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v3.54.1 (2026-10-30)
+
+### Bug Fixes
+
+- Refuse a bad description snapshot on stderr like other context refusals
+  ([#565](https://github.com/liatrio-labs/claude-code-gauntlet/pull/565),
+  [`5355080`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/53550807a98cb01eca83ac8fdefb9869c46a770f))
+
+- Two follow-ups from the Wave 2 merges (#46)
+  ([#565](https://github.com/liatrio-labs/claude-code-gauntlet/pull/565),
+  [`5355080`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/53550807a98cb01eca83ac8fdefb9869c46a770f))
+
+- **bench**: Read delivery evidence of runs linked in from another checkout
+  ([#565](https://github.com/liatrio-labs/claude-code-gauntlet/pull/565),
+  [`5355080`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/53550807a98cb01eca83ac8fdefb9869c46a770f))
+
+### Testing
+
+- **bench**: Drop an unmeasured frequency claim from a comment
+  ([#565](https://github.com/liatrio-labs/claude-code-gauntlet/pull/565),
+  [`5355080`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/53550807a98cb01eca83ac8fdefb9869c46a770f))
+
+
 ## v3.54.0 (2026-10-30)
 
 ### Bug Fixes
