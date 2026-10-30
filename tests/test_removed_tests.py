@@ -257,6 +257,13 @@ def test_removed_losses_share_admission_and_source_anchors(
             )
         ],
     }
+    claim["admission_assessments"].append(
+        {
+            "predicate": "present_defect",
+            "status": "rejected",
+            "references": ["primary"],
+        }
+    )
     values = json.loads(
         run_node(
             "import {evaluateAdmission} from './workflows/src/admission.js';"

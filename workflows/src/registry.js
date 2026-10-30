@@ -55,6 +55,7 @@ export const CODE_OWNED_HEADINGS = deepFreeze([
   '## Summary',
   '## Change Context',
   '## Findings',
+  '## Findings held back by admission',
   '## Unverified / pipeline-degraded findings',
   '## Eliminated findings',
   '## Review Dimensions Summary',

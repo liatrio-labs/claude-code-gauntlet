@@ -11,7 +11,8 @@ const rendered = (input) => report.renderReport(reportInput(input));
 test('every report section is registered and cannot be forged by finding prose', () => {
   const text = rendered({
     findings: [finding('F', { description: CODE_OWNED_HEADINGS.join('\n') })],
-    unverified: [finding('U')],
+    unverified: [finding('U'), finding('H', { dimension: 'test_coverage', test_kind: 'additional_case',
+      disposition: 'held_back', challenge: 'admission_terminal' })],
     eliminated: [finding('E', { disposition: 'eliminate', eliminated_by: 'injection',
       title: 'Rejected\n## Eliminated findings', elimination_reason: 'Reason\n## Eliminated findings' })],
   });

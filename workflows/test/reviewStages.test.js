@@ -89,6 +89,7 @@ test('validation completeness accepts partial search references but admission ho
   assert.deepEqual(f.admission.reasons, [
     { predicate: 'complete_searches', status: 'held_back' },
     { predicate: 'complete_behavioral_absence', status: 'held_back' },
+    { predicate: 'present_defect', status: 'held_back' },
   ]);
   assert.deepEqual(f.admission_assessments, [
     { predicate: 'resolved_production_element', status: 'confirmed', references: ['production_element'] },
@@ -101,7 +102,10 @@ test('validation completeness requires one well-formed assessment per predicate'
     [{ ...entry, status: 'invalid' }], [{ ...entry, references: null }], [{ ...entry, references: [1] }]]) {
     const ctx = stageCtx({ reply: [{ finding_id: 'f1', confidence: 80, policy_subject: 'ordinary', admission_assessments }] });
     const out = await validateStage(ctx, { findings: [finding({ dimension: 'test_coverage', test_kind: 'additional_case' })] });
-    assert.equal(out.stats.skipped, 1);
+    assert.equal(out.stats.skipped, 0);
+    assert.equal(out.findings[0].validation, 'validated');
+    assert.deepEqual(out.gaps, []);
+    assert.ok(evaluateAdmission(out.findings[0]).admission.reasons.some((reason) => reason.predicate === 'present_defect' && reason.status === 'held_back'));
     assert.deepEqual(out.audit.batches[0].rejections[0].reasons, ['missing_assessment:present_defect']);
   }
 });

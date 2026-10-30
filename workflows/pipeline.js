@@ -182,6 +182,7 @@ const CODE_OWNED_HEADINGS = deepFreeze([
   '## Summary',
   '## Change Context',
   '## Findings',
+  '## Findings held back by admission',
   '## Unverified / pipeline-degraded findings',
   '## Eliminated findings',
   '## Review Dimensions Summary',
@@ -2494,6 +2495,12 @@ function evaluateAdmission(finding) {
   if (!row || (row.admission && !kind)) fail('kind', 'held_back');
   if (kind?.defaultDisposition === 'report_only') fail('value', 'report_only');
   for (const predicate of kind?.predicates || []) fail(predicate, predicateResult(finding, predicate));
+  const assessed = new Set(matchAssessments(finding, finding.admission_assessments).map((entry) => entry.predicate));
+  for (const predicate of requiredAssessments(finding, finding.policy_subject)) {
+    if (!assessed.has(predicate) && !reasons.some((reason) => reason.predicate === predicate && reason.status === 'held_back')) {
+      fail(predicate, 'held_back');
+    }
+  }
   let status = 'admitted';
   if (reasons.some((reason) => reason.status === 'held_back')) status = 'held_back';
   else if (reasons.length) status = 'report_only';
@@ -4658,7 +4665,14 @@ function locationUrl(finding, permalinks, displayedLocation) {
     { start: String(start), end: String(end) });
   return `${permalinks.blobBase}${path}${anchor}`;
 }
+function admissionHoldback(finding) {
+  return finding.challenge === 'admission_terminal' && incompleteVetting(finding).length === 0
+    && finding.validation === 'validated' && finding.admission?.status === 'held_back'
+    && Array.isArray(finding.admission.reasons);
+}
 function unverifiedReason(finding) {
+  if (admissionHoldback(finding)) return `admission predicates not established: ${finding.admission.reasons
+    .filter((reason) => reason.status === 'held_back').map((reason) => inline(reason.predicate)).join(', ')}`;
   const reasons = incompleteVetting(finding).map((check) => UNVERIFIED_REASONS[check]);
   if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge)) {
     reasons.push(UNVERIFIED_REASONS.challenge[finding.challenge]);
@@ -4684,7 +4698,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   if (finding.origin === 'surfaced') {
     bullets.push('- **Origin:** surfaced — pre-existing, surfaced by this change');
   }
-  if (unverified) bullets.push(`- **Unverified because:** ${unverifiedReason(finding)}`);
+  if (unverified) bullets.push(`- **${admissionHoldback(finding) ? 'Held back' : 'Unverified'} because:** ${unverifiedReason(finding)}`);
   if ((finding.report_tag ?? finding.report_destination) === 'suggestion') {
     bullets.push('- **Routing:** improvement suggestion');
   }
@@ -4784,7 +4798,9 @@ function countsSentence(findings, rawCount, unverified, view) {
   sentence += count > 0 && breakdown.length ? ` — ${breakdown.join(', ')}.` : '.';
   const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
   if (suggestions) sentence += ` ${suggestions} routed as improvement ${plural(suggestions, 'suggestion')}.`;
-  if (unverified.length) sentence += ` ${unverified.length} unverified / pipeline-degraded.`;
+  const held = unverified.filter(admissionHoldback).length;
+  if (held) sentence += ` ${held} held back by admission.`;
+  if (unverified.length > held) sentence += ` ${unverified.length - held} unverified / pipeline-degraded.`;
   return sentence;
 }
 function reportUnitKey(finding, original) {
@@ -5041,8 +5057,9 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
   const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, 'report');
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
+  const held = unverified.filter(admissionHoldback);
+  const degraded = unverified.filter((finding) => !admissionHoldback(finding));
   const findingsView = severityView(findings);
-  const unverifiedView = severityView(unverified);
   const identity = inp.prIdentity && typeof inp.prIdentity === 'object' && !Array.isArray(inp.prIdentity)
     ? inp.prIdentity
     : null;
@@ -5102,13 +5119,20 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
     builder.add('## Findings');
     renderSeverityBuckets(builder, findingsView, false, permalinks);
   }
-  if (unverified.length) {
+  if (held.length) {
+    builder.add();
+    builder.add('## Findings held back by admission');
+    builder.add();
+    builder.add('These findings retain their validation but lack the evidence required for admission.');
+    renderSeverityBuckets(builder, severityView(held), true, permalinks);
+  }
+  if (degraded.length) {
     builder.add();
     builder.add('## Unverified / pipeline-degraded findings');
     builder.add();
     builder.add('These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. '
       + 'They are not confirmed findings.');
-    renderSeverityBuckets(builder, unverifiedView, true, permalinks);
+    renderSeverityBuckets(builder, severityView(degraded), true, permalinks);
   }
   const eliminated = [...projected, ...coerceReportFindings(inp.eliminated)].filter((f) => deliveryAllows(f, 'eliminated'));
   if (eliminated.length) {
@@ -5196,8 +5220,7 @@ async function validateStage(ctx, input) {
   const batches = [];
   for (let i = 0; i < findings.length; i += batchSize) batches.push(findings.slice(i, i + batchSize));
   const gaps = [];
-  const validations = [];
-  const accepted = new Set();
+  const accepted = new Map();
   const audit = { batches: [], omitted_batches: 0 };
   const terminalRejections = new Map();
   let completed = 0;
@@ -5218,7 +5241,7 @@ async function validateStage(ctx, input) {
       for (const entry of matches) {
         const reasons = validationRejections(finding, entry);
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
-        else { validations.push(entry); accepted.add(finding.id); }
+        if (reasons.every((reason) => reason.startsWith('missing_assessment:'))) accepted.set(finding.id, entry);
       }
     }
     validatorAudit(audit, label, res, rejections);
@@ -5228,7 +5251,7 @@ async function validateStage(ctx, input) {
   const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
   dispatched += batches.length;
   const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
-  const pending = findings.filter((finding) => !accepted.has(finding.id));
+  const pending = findings.filter((finding) => validationRejections(finding, accepted.get(finding.id)).length);
   if (pending.length) {
     const retries = [];
     const retrySize = effectiveValidationRetrySize(limits, findings.length);
@@ -5240,7 +5263,8 @@ async function validateStage(ctx, input) {
   batches.forEach((batch, idx) => {
     const unscored = batch.filter((finding) => !accepted.has(finding.id));
     if (unscored.length) {
-      const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))];
+      const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))]
+        .filter((reason) => !reason.startsWith('missing_assessment:'));
       let problem = mainLists[idx] ? 'omitted scores' : 'returned null/malformed';
       if (reasons.some((reason) => !['missing_entry', 'malformed_return'].includes(reason))) {
         problem = `returned invalid/incomplete entries (${reasons.join(', ')})`;
@@ -5248,7 +5272,7 @@ async function validateStage(ctx, input) {
       gaps.push(`validate-batch-${idx}: validator ${problem} — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
     }
   });
-  const { adjustedCount } = applyValidations(findings, validations);
+  const { adjustedCount } = applyValidations(findings, [...accepted.values()]);
   let skipped = 0;
   for (const f of findings) {
     if (!accepted.has(f.id)) { f.validation = 'skipped'; skipped += 1; }

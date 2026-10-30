@@ -82,8 +82,7 @@ export async function validateStage(ctx, input) {
   for (let i = 0; i < findings.length; i += batchSize) batches.push(findings.slice(i, i + batchSize));
 
   const gaps = [];
-  const validations = [];
-  const accepted = new Set();
+  const accepted = new Map();
   const audit = { batches: [], omitted_batches: 0 };
   const terminalRejections = new Map();
   let completed = 0;
@@ -104,7 +103,8 @@ export async function validateStage(ctx, input) {
       for (const entry of matches) {
         const reasons = validationRejections(finding, entry);
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
-        else { validations.push(entry); accepted.add(finding.id); }
+        // Missing admission evidence still warrants a retry, but does not invalidate a score.
+        if (reasons.every((reason) => reason.startsWith('missing_assessment:'))) accepted.set(finding.id, entry);
       }
     }
     validatorAudit(audit, label, res, rejections);
@@ -114,7 +114,7 @@ export async function validateStage(ctx, input) {
   const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
   dispatched += batches.length;
   const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
-  const pending = findings.filter((finding) => !accepted.has(finding.id));
+  const pending = findings.filter((finding) => validationRejections(finding, accepted.get(finding.id)).length);
   if (pending.length) {
     // One follow-up round only; small batches isolate incomplete records from successful siblings.
     const retries = [];
@@ -127,7 +127,8 @@ export async function validateStage(ctx, input) {
   batches.forEach((batch, idx) => {
     const unscored = batch.filter((finding) => !accepted.has(finding.id));
     if (unscored.length) {
-      const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))];
+      const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))]
+        .filter((reason) => !reason.startsWith('missing_assessment:'));
       let problem = mainLists[idx] ? 'omitted scores' : 'returned null/malformed';
       if (reasons.some((reason) => !['missing_entry', 'malformed_return'].includes(reason))) {
         problem = `returned invalid/incomplete entries (${reasons.join(', ')})`;
@@ -136,7 +137,7 @@ export async function validateStage(ctx, input) {
     }
   });
 
-  const { adjustedCount } = applyValidations(findings, validations);
+  const { adjustedCount } = applyValidations(findings, [...accepted.values()]);
 
   let skipped = 0;
   for (const f of findings) {
