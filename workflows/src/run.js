@@ -441,7 +441,7 @@ export async function runWith(ctx, rawArgs) {
     gaps.push(...(filterOut.gaps || []));
 
     await runPhase('challenge', async () => {
-      const admitted = replay('filter') ? (filterOut.filtered || []).map((finding) => evaluateAdmission(deepClone(finding))) : filterOut.filtered || [];
+      const admitted = (filterOut.filtered || []).map((finding) => evaluateAdmission(deepClone(finding)));
       if (measurementTrace) recordStage(measurementTrace, 'admission', { findings: admitted }, {
         decisions: admitted.filter((f) => f.trace_id).flatMap((f) => f.admission.reasons.map((detail) =>
           traceDecision(f, detail.status, 'admission', [], detail.status, admissionDetail(f, detail)))),

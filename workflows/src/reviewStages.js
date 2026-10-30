@@ -2,7 +2,7 @@ import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
-import { modelFor, VALIDATION_RETURN_PROPERTIES, ADMISSION_PREDICATES, requiredAssessments } from './registry.js';
+import { modelFor, VALIDATION_RETURN_PROPERTIES, ADMISSION_PREDICATES, DIMENSIONS, requiredAssessments } from './registry.js';
 import { INT_POLICY, coerceInt } from './wire.js';
 import { applyValidations, REACHABILITY_VALUES, validationRejections } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
@@ -160,6 +160,9 @@ export async function validateStage(ctx, input) {
 
 function validatePrompt(inp, batch) {
   const ctxLine = inp.contextLine || '';
+  const promotionRows = DIMENSIONS.filter((row) => row.admission?.promotion);
+  const promotionHeader = [...new Set(promotionRows.map((row) => row.admission.promotion.predicate))].map((predicate) =>
+    `For ${promotionRows.filter((row) => row.admission.promotion.predicate === predicate).map((row) => row.dimension).join(', ')} findings also assess ${predicate}.`).join(' ');
   // Locations and claims let validators inspect the relevant code instead of scoring identifiers without evidence.
   const block = batch.map((f) => {
     const range = !locationAllows(f, 'sourceLink') ? 'location unconfirmed' : f.line_end != null && f.line_end !== f.line_start
@@ -170,7 +173,7 @@ function validatePrompt(inp, batch) {
     const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
     return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f))}`;
   }).join('\n');
-  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Admission predicates: ${JSON.stringify(ADMISSION_PREDICATES)}\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
+  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Admission predicates: ${JSON.stringify(ADMISSION_PREDICATES)}\n${promotionHeader}\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
 }
 
 // The runtime has no wall clock, so generated_at must come from the supplied arguments.

@@ -12,9 +12,14 @@ export function validationRejections(finding, validation) {
   const reasons = [];
   if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
   if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
-  const matched = matchAssessments(finding, validation.admission_assessments);
+  const assessments = Array.isArray(validation.admission_assessments) ? validation.admission_assessments : [];
   for (const predicate of requiredAssessments(finding, validation.policy_subject)) {
-    if (!matched.some((entry) => entry.predicate === predicate)) reasons.push(`missing_assessment:${predicate}`);
+    const entries = assessments.filter((entry) => entry?.predicate === predicate);
+    if (entries.length !== 1
+      || !VALIDATION_RETURN_PROPERTIES.admission_assessments.items.properties.status.enum.includes(entries[0].status)
+      || !Array.isArray(entries[0].references) || entries[0].references.some((key) => typeof key !== 'string')) {
+      reasons.push(`missing_assessment:${predicate}`);
+    }
   }
   return reasons;
 }

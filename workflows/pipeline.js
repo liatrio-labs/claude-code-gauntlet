@@ -2396,9 +2396,9 @@ function matchAssessments(finding, entries) {
       || !Array.isArray(entry.references) || new Set(entry.references).size !== entry.references.length
       || entry.references.some((key) => typeof key !== 'string' || !Object.hasOwn(requests, key))) return false;
     const expected = Object.keys(requests).filter((key) => descriptor.references.some((name) => key === name || key.startsWith(`${name}:`)));
-    return (expected.length > 0 || entry.status === 'unresolved')
-      && expected.length === entry.references.length && expected.every((key) => entry.references.includes(key));
-  }).map(({ predicate, status, references }) => ({ predicate, status, references: [...references] }));
+    return expected.length === entry.references.length && expected.every((key) => entry.references.includes(key));
+  }).map(({ predicate, status, references }) => ({ predicate,
+    status: references.length === 0 && status === 'confirmed' ? 'unresolved' : status, references: [...references] }));
 }
 const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
   'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
@@ -2522,7 +2522,7 @@ function evaluateAdmission(finding) {
 function admissionContext(finding) {
   const policy = findingPolicy(finding, false);
   return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
-    policy: { predicates: policy.kind?.predicates || [], promotion: policy.row?.admission?.promotion,
+    policy: { predicates: policy.kind?.predicates || [],
       policy_subjects: Object.fromEntries(Object.keys(policy.row?.policySubjects || {}).map((subject) =>
         [subject, findingPolicy({ ...finding, policy_subject: subject }, false).kind?.predicates || []])),
       body_fix_task: RIGHT_ELIGIBILITY.body.fixTask },
@@ -2536,9 +2536,14 @@ function validationRejections(finding, validation) {
   const reasons = [];
   if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
   if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
-  const matched = matchAssessments(finding, validation.admission_assessments);
+  const assessments = Array.isArray(validation.admission_assessments) ? validation.admission_assessments : [];
   for (const predicate of requiredAssessments(finding, validation.policy_subject)) {
-    if (!matched.some((entry) => entry.predicate === predicate)) reasons.push(`missing_assessment:${predicate}`);
+    const entries = assessments.filter((entry) => entry?.predicate === predicate);
+    if (entries.length !== 1
+      || !VALIDATION_RETURN_PROPERTIES.admission_assessments.items.properties.status.enum.includes(entries[0].status)
+      || !Array.isArray(entries[0].references) || entries[0].references.some((key) => typeof key !== 'string')) {
+      reasons.push(`missing_assessment:${predicate}`);
+    }
   }
   return reasons;
 }
@@ -5266,6 +5271,9 @@ async function validateStage(ctx, input) {
 }
 function validatePrompt(inp, batch) {
   const ctxLine = inp.contextLine || '';
+  const promotionRows = DIMENSIONS.filter((row) => row.admission?.promotion);
+  const promotionHeader = [...new Set(promotionRows.map((row) => row.admission.promotion.predicate))].map((predicate) =>
+    `For ${promotionRows.filter((row) => row.admission.promotion.predicate === predicate).map((row) => row.dimension).join(', ')} findings also assess ${predicate}.`).join(' ');
   const block = batch.map((f) => {
     const range = !locationAllows(f, 'sourceLink') ? 'location unconfirmed' : f.line_end != null && f.line_end !== f.line_start
       ? `${f.line_start}-${f.line_end}`
@@ -5275,7 +5283,7 @@ function validatePrompt(inp, batch) {
     const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
     return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f))}`;
   }).join('\n');
-  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Admission predicates: ${JSON.stringify(ADMISSION_PREDICATES)}\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
+  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Admission predicates: ${JSON.stringify(ADMISSION_PREDICATES)}\n${promotionHeader}\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
 }
 function filterStage(input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -7751,7 +7759,7 @@ async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(filterOut.gaps || []));
     await runPhase('challenge', async () => {
-      const admitted = replay('filter') ? (filterOut.filtered || []).map((finding) => evaluateAdmission(deepClone(finding))) : filterOut.filtered || [];
+      const admitted = (filterOut.filtered || []).map((finding) => evaluateAdmission(deepClone(finding)));
       if (measurementTrace) recordStage(measurementTrace, 'admission', { findings: admitted }, {
         decisions: admitted.filter((f) => f.trace_id).flatMap((f) => f.admission.reasons.map((detail) =>
           traceDecision(f, detail.status, 'admission', [], detail.status, admissionDetail(f, detail)))),
