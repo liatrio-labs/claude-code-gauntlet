@@ -32,8 +32,7 @@ def test_source_capture_rejects_untrusted_proof_origins(
         "code-gauntlet-inputs-other/manifest.json",
         "pr-description.json",
         "artifacts/author.md",
-        "vendor/generated",
-        "dist/pipeline",
+        "source-capture.json",
     ]
     for name in [*artifacts, "binary", "invalid", "dirty"]:
         file = root / name
@@ -47,7 +46,8 @@ def test_source_capture_rejects_untrusted_proof_origins(
     (root / "linked").symlink_to(tmp_path, target_is_directory=True)
     original = SourceAdapter.capture(root, "local", None)
     capture = original.capture_sources(output, "origins", b"diff")
-    assert capture.receipt["failures"] == ["binary", "invalid", "link", "linked"]
+    assert capture.receipt["failure_count"] == 4
+    assert capture.receipt["failure_sample"] == ["binary", "invalid", "link", "linked"]
     source = capture.adapter(root)
     assert source.read("source") == ("return trusted_value;",)
     for name in [

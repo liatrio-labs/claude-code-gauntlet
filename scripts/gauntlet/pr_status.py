@@ -5,7 +5,8 @@ import json
 import os
 from typing import TypedDict, cast
 
-from gauntlet.cli import CliError, Command, Parser
+from gauntlet import proc
+from gauntlet.cli import CliError, Command, Parser, require_full_sha
 from gauntlet.forge import Platform
 from gauntlet.fs import confined
 from gauntlet.pr_files import fetch_pr_view
@@ -14,6 +15,7 @@ from gauntlet.pr_identity import PrIdentityWire, resolve
 
 class DescriptionSnapshot(TypedDict):
     head_sha_full: str
+    base_sha_full: str
     target: PrIdentityWire
     body: str
 
@@ -31,11 +33,13 @@ def load_snapshot(path: str, root: str) -> DescriptionSnapshot:
             data = json.load(stream)
         if not isinstance(data, dict) or set(data) != {
             "head_sha_full",
+            "base_sha_full",
             "target",
             "body",
         }:
             raise ValueError("invalid snapshot shape")
         target = data["target"]
+        require_full_sha(data["base_sha_full"], "snapshot base")
         if not isinstance(target, dict) or target.get("platform") not in (
             "github",
             "gitlab",
@@ -70,7 +74,7 @@ def load_snapshot(path: str, root: str) -> DescriptionSnapshot:
 
 def _fetch(
     platform: Platform, number: int, capture: bool
-) -> tuple[str, str, PrIdentityWire, str]:
+) -> tuple[str, str, PrIdentityWire, str, str]:
     try:
         view = fetch_pr_view(platform, number, capture_description=capture)
         sha = view.get("headRefOid" if platform == "github" else "sha")
@@ -81,6 +85,7 @@ def _fetch(
             raise CliError("forge URL must not contain whitespace or controls", 2)
         target = resolve(platform, url, sha)
         body = ""
+        base = ""
         if capture:
             if target["pr_number"] != number:
                 raise CliError("description target does not match selected PR/MR", 2)
@@ -89,11 +94,36 @@ def _fetch(
                 raise ValueError("invalid description")
             body = "" if raw_body is None else raw_body
             body.encode("utf-8")
-        return sha, url, target, body
-    except (CliError, KeyError, ValueError, UnicodeError):
+            ref = view["baseRefName" if platform == "github" else "target_branch"]
+            if not isinstance(ref, str):
+                raise ValueError("invalid base ref")
+            repository = (
+                f"{target['web_origin']}/{target['owner']}/{target['repo']}.git"
+            )
+            head_ref = (
+                f"refs/pull/{number}/head"
+                if platform == "github"
+                else f"refs/merge-requests/{number}/head"
+            )
+            _git("check-ref-format", f"refs/heads/{ref}")
+            _git("fetch", "--no-tags", repository, head_ref)
+            if _git("rev-parse", "FETCH_HEAD") != sha:
+                raise ValueError("fetched PR/MR head changed")
+            _git("fetch", "--no-tags", repository, f"refs/heads/{ref}")
+            base = _git("merge-base", sha, "FETCH_HEAD")
+            require_full_sha(base, "comparison base")
+        return sha, url, target, body, base
+    except (CliError, KeyError, ValueError, UnicodeError, OSError, proc.TimeoutExpired):
         if capture:
             raise CliError("cannot capture validated PR/MR description", 2) from None
         raise
+
+
+def _git(*args: str) -> str:
+    result = proc.run_bytes(["git", *args], timeout=180)
+    if result.returncode:
+        raise ValueError("comparison base unavailable")
+    return result.stdout.decode("ascii").strip()
 
 
 def _handle(args: argparse.Namespace) -> int:
@@ -107,8 +137,10 @@ def _handle(args: argparse.Namespace) -> int:
         if os.path.lexists(path):
             data = load_snapshot(path, args.output_dir)
         else:
-            sha, _, target, body = _fetch(args.platform, args.pr, True)
-            data = DescriptionSnapshot(head_sha_full=sha, target=target, body=body)
+            sha, _, target, body, base = _fetch(args.platform, args.pr, True)
+            data = DescriptionSnapshot(
+                head_sha_full=sha, base_sha_full=base, target=target, body=body
+            )
             serialized = json.dumps(data, ensure_ascii=True) + "\n"
             try:
                 os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -125,7 +157,9 @@ def _handle(args: argparse.Namespace) -> int:
             raise CliError("description snapshot target mismatch", 2)
         sha, url = data["head_sha_full"], snapshot_url(data["target"])
     else:
-        sha, url, _, _ = _fetch(args.platform, args.pr, False)
+        sha, url, _, _, _ = _fetch(args.platform, args.pr, False)
+    if path:
+        print(f"base_sha_full={data['base_sha_full']}")
     print(f"head_sha={sha}\npr_url={url}")
     return 0
 

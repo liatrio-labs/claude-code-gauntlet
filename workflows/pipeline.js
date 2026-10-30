@@ -6505,8 +6505,8 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
     || !/^[0-9a-f]{40}$/.test(capture.head) || !capture.head.startsWith(args.headShaShort)
     || !/^[0-9a-f]{40}$/.test(capture.base)
     || !['diff_sha256', 'manifest_sha256'].every(key => /^[0-9a-f]{64}$/.test(capture[key]))
-    || !['copied_bytes', 'copied_files'].every(key => Number.isSafeInteger(capture[key]) && capture[key] >= 0)
-    || !Array.isArray(capture.failures) || !capture.failures.every(file => typeof file === 'string'))) {
+    || !['copied_bytes', 'copied_files', 'failure_count'].every(key => Number.isSafeInteger(capture[key]) && capture[key] >= 0)
+    || !Array.isArray(capture.failure_sample) || !capture.failure_sample.every(file => typeof file === 'string'))) {
     errors.push('verify.sourceCapture must be the complete preparation receipt bound to this nonce, target and head');
   }
   for (const field of ARGS_SHAPES.pathFields) {

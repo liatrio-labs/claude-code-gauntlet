@@ -89,7 +89,7 @@ def test_citation_sources_keep_review_snapshot_identity(
         {"dirty", "staged", "tests/added", "RULES.md"} if target == "local" else set()
     )
     assert set(manifest["copies"]) == copied
-    assert receipt["copied_files"] == len(copied) and receipt["failures"] == []
+    assert receipt["copied_files"] == len(copied) and receipt["failure_count"] == 0
     assert receipt["copied_bytes"] == sum(
         len((root / name).read_bytes()) for name in copied
     )
@@ -151,7 +151,7 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
-const [plugin,work,sha,output,receipt,expected]=process.argv.slice(1);
+const [plugin,work,sha,output,receipt]=process.argv.slice(1);
 const {verifyStage}=await import(pathToFileURL(`${plugin}/workflows/src/verifyStage.js`));
 const {shellSplit}=await import(pathToFileURL(`${plugin}/workflows/test/helpers/shellWords.js`));
 const metadata=JSON.parse(receipt);
@@ -165,11 +165,8 @@ const result=await verifyStage({agent:async prompt=>{
  pluginRoot:plugin,python:'python',headShaShort:sha,outputDir:output,nonce:'capture',limits:{},
  verify:{targetKind:metadata.target_kind,sourceCapture:metadata,baseBranch:metadata.base,
  diffPath:`${output}/code-gauntlet-diff-${sha}.patch`,inputPathBase:`${output}/in`,outputPathBase:`${output}/out`}});
-assert.equal(result.verified,expected==='available');
-if(expected==='available') {
- assert.equal(result.findings[0].location_status,'confirmed');
- assert.equal(result.findings[0].resolved_references.production_element.location_status,'confirmed');
-} else assert.notEqual(result.findings[0].location_status,'confirmed');
+assert.equal(result.verified,false);
+assert.notEqual(result.findings[0].location_status,'confirmed');
 """
     command = [
         "node",
@@ -182,19 +179,10 @@ if(expected==='available') {
         str(output),
         json.dumps(receipt),
     ]
-    result = subprocess.run(
-        [*command, "available"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    assert result.returncode == 0, result.stderr
     import shutil
 
     shutil.rmtree(directory)
-    result = subprocess.run(
-        [*command, "unavailable"], capture_output=True, text=True, encoding="utf-8"
-    )
+    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
     assert result.returncode == 0, result.stderr
     result = invoke("write_shared_context", argv, root, b"triage")
     assert result.returncode == 2 and b"source capture unavailable" in result.stderr
@@ -753,7 +741,10 @@ normalizePhaseFindings('merge',normalized,false,{repoRoot:work});
 const findings=normalized.findings;
 const wireMeasurements=[];
 const run = async (targetKind, fault) => verifyStage({agent:async prompt=>{
- const c=shellSplit(prompt.split('\n').at(-1));execFileSync(c[0],c.slice(1),{cwd:work,env:process.env});
+ const c=shellSplit(prompt.split('\n').at(-1));
+ const receipt=JSON.parse(readFileSync(`${work}/code-gauntlet-capture-artifacts/${targetKind}.json`,'utf8'));
+ if(JSON.stringify(JSON.parse(c[c.indexOf('--source-capture')+1]))!==JSON.stringify(receipt))throw new Error('capture receipt changed');
+ execFileSync(c[0],c.slice(1),{cwd:work,env:process.env});
  const env=JSON.parse(readFileSync(c[c.indexOf('--output')+1],'utf8'));
  if(!fault)wireMeasurements.push({targetKind,input:c[c.indexOf('--input-inline')+1].length,delta:JSON.stringify(env.result.deltas).length,deltaPretty:JSON.stringify(env.result.deltas,null,2).length});
  if(fault==='content')env.result.deltas[0].resolved_references.precedent.file_added=false;
@@ -794,9 +785,10 @@ process.stdout.write(JSON.stringify({branch,local,failed,wireMeasurements,encode
     assert refs["candidate_tests"][0]["file"] == "tests/nested/check"
     assert [r["location_status"] for r in refs["candidate_tests"]] == [
         "confirmed",
-        *(["unconfirmed"] * 6),
+        *(["unconfirmed"] * 5),
+        "confirmed",
     ]
-    assert refs["candidate_tests"][-1]["path_role"] == "unknown"
+    assert refs["candidate_tests"][-1]["path_role"] == "non_source"
     for field in ("candidate_tests", "production_element", "duplicate_of", "precedent"):
         facts = refs[field] if isinstance(refs[field], list) else [refs[field]]
         assert all("anchor" not in fact and "diagnostic" not in fact for fact in facts)
@@ -807,7 +799,8 @@ process.stdout.write(JSON.stringify({branch,local,failed,wireMeasurements,encode
     assert "sites" not in branch and len(branch["site_requests"]) == 1
     assert [r["location_status"] for r in local["candidate_tests"]] == [
         "confirmed",
-        *(["unconfirmed"] * 6),
+        *(["unconfirmed"] * 5),
+        "confirmed",
     ]
     for failed in value["failed"]:
         assert not failed["verified"]

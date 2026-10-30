@@ -1048,7 +1048,7 @@ def test_shipped_forge_status_and_url(platform, outcome, tmp_path, monkeypatch):
         assert "single capture/status recipe" in skill_text(
             REPO / "skills/code-gauntlet/references" / rel
         )
-    from tests.support.git_diff import patch_repo
+    from tests.support.git_diff import git, patch_repo
     from tests.support.pr_files import gitlab_view
 
     _, sha = patch_repo(tmp_path, monkeypatch)
@@ -1082,13 +1082,27 @@ def test_shipped_forge_status_and_url(platform, outcome, tmp_path, monkeypatch):
             sha=sha,
             web_url="https://gitlab.com/group/sub/r/-/merge_requests/7",
             description="synthetic",
+            target_branch="main",
         )
         if platform == "gitlab"
         else {
             "headRefOid": sha,
             "url": "https://github.com/upstream/project/pull/7",
             "body": "synthetic",
+            "baseRefName": "main",
         }
+    )
+    repository = (
+        "https://github.com/upstream/project.git"
+        if platform == "github"
+        else "https://gitlab.com/group/sub/r.git"
+    )
+    git(tmp_path, "config", f"url.{tmp_path.as_posix()}.insteadOf", repository)
+    git(
+        tmp_path,
+        "update-ref",
+        ("refs/pull/7/head" if platform == "github" else "refs/merge-requests/7/head"),
+        sha,
     )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -1126,7 +1140,7 @@ def test_shipped_forge_status_and_url(platform, outcome, tmp_path, monkeypatch):
         timeout=10,
     )
     assert json.loads(capture.read_text(encoding="utf-8")) == (
-        ["pr", "view", "7", "--json", "state,isDraft,url,headRefOid,body"]
+        ["pr", "view", "7", "--json", "state,isDraft,url,headRefOid,baseRefName,body"]
         if platform == "github"
         else ["mr", "view", "7", "--output", "json"]
     )
@@ -1238,6 +1252,7 @@ def test_shipped_branch_composite(outcome, tmp_path, monkeypatch):
             .replace("<base name exactly as chosen>", base)
             .replace("<branch name exactly as the user gave it>", branch)
             .replace("{target_sha}", target)
+            .replace("{base_ref_sha}", base)
             .replace("{output_dir}", output.as_posix())
         )
         return subprocess.run(
