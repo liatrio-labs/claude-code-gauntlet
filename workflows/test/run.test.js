@@ -50,10 +50,12 @@ test('scope terminal decisions precede challenge without bypassing body vetting'
     assert.equal(terminal.reduction_provenance.category, category);
     assert.deepEqual(payload.postReview.map((f) => f.id), ['VETTED']);
     if (['generated_vendored', 'lockfile', 'docs_only'].includes(category)) {
-      const other = makeFinding('TERMINAL', { ...over, dimension: 'security' });
-      const checked = await runAndCapture(proofArgs({ checkpoints: { validate: { findings: [other], gaps: [], stats: {} } } }));
-      assert.equal(checked.out.stats.challenge.dispatched, 1, category);
-      assert.equal(checked.payload.findings[0].disposition, 'deliver', category);
+      for (const security of [{ dimension: 'security' }, { agent: 'security-reviewer', dimension: 'Security' }]) {
+        const other = makeFinding('TERMINAL', { ...over, ...security });
+        const checked = await runAndCapture(proofArgs({ checkpoints: { validate: { findings: [other], gaps: [], stats: {} } } }));
+        assert.equal(checked.out.stats.challenge.dispatched, 1, category);
+        assert.equal(checked.payload.findings[0].disposition, 'deliver', category);
+      }
     }
     const checkpoint = structuredClone(payload.checkpoints.phases.cite);
     const saved = checkpoint.findings.find((f) => f.id === 'TERMINAL');

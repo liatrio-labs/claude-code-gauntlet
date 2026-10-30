@@ -3889,27 +3889,28 @@ function planCiteBatches(records, budget, baseBranch, platform) {
 }
 // --- scope.js ---
 const scopeRows = EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage));
-const scopeInputFields = ['id', 'file', 'dimension', 'origin_dimension', 'path_role',
+const scopeInputFields = ['id', 'file', 'agent', 'dimension', 'origin_dimension', 'path_role',
   'blame_class', 'blame_source', 'scope_facts', 'diff_validation', 'reachability', 'validation', 'admission'];
 const scopeAnd = (...values) => values.includes(false) ? false : values.every((value) => value === true) ? true : null;
 const scopeOr = (...values) => values.includes(true) ? true : values.every((value) => value === false) ? false : null;
 const capturedScope = (f) => f.scope_facts?.file === f.file && f.scope_facts.snapshot_id
   ? Object.fromEntries(SCOPE_FACT_KEYS.map((key) => [key, f.scope_facts[key]])) : {};
+const offDiff = (f) => f.diff_validation?.in_diff == null ? null : f.diff_validation.in_diff === false;
 const scopePredicates = {
-  blame_pre_existing: (f) => scopeAnd(f.scope_facts?.file === f.file && !!f.scope_facts.snapshot_id,
+  blame_pre_existing: (f) => scopeAnd(Object.keys(capturedScope(f)).length > 0,
     f.blame_class === 'unknown' || !f.blame_class ? null : f.blame_class === 'pre_existing',
-    f.blame_source === 'git_blame', f.diff_validation?.in_diff == null ? null : f.diff_validation.in_diff === false),
-  off_diff: (f) => f.diff_validation?.in_diff == null ? null : f.diff_validation.in_diff === false,
+    f.blame_source === 'git_blame', offDiff(f)),
+  off_diff: offDiff,
   generated_or_vendored: (f) => { const facts = capturedScope(f); return scopeOr(facts.linguist_generated, facts.linguist_vendored,
     facts.linguist_generated === false ? false : facts.generated_marker); },
-  documentation_only_code_claim: (f) => scopeAnd(capturedScope(f).all_changed_files_documentation,
-    capturedScope(f).linguist_documentation == null ? null : capturedScope(f).linguist_documentation === false,
-    f.path_role === 'unknown' || !f.path_role ? null : f.path_role === 'source'),
+  documentation_only_code_claim: (f) => { const facts = capturedScope(f); return scopeAnd(facts.all_changed_files_documentation,
+    facts.linguist_documentation == null ? null : facts.linguist_documentation === false,
+    f.path_role === 'unknown' || !f.path_role ? null : f.path_role === 'source'); },
   lockfile: (f) => capturedScope(f).lockfile_basename,
   future_change_only: (f) => f.validation === 'validated' ? f.reachability === 'future_change_only' : null,
 };
 const scopeExceptions = {
-  security_dimension: (f) => f.dimension === 'security',
+  security_dimension: (f) => f.dimension === 'security' || f.agent === AGENT_SECURITY_REVIEWER,
   documentation_or_comment_claim: (f) => dimensionRow(f.dimension)?.dimension === 'comment_accuracy',
   test_applicable_documented_convention: (f) => dimensionRow(f.dimension)?.dimension === 'convention',
   present_static_defect: (f) => f.reachability === 'current',

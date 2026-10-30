@@ -52,6 +52,7 @@ def test_early_scope_facts_use_captured_attributes_and_claim_exceptions(
         "marker_new",
         "pr_attribute",
         "pr_added/target",
+        "vendored_new",
     ]
     markers = dict(
         marker="// @generated\n",
@@ -76,11 +77,11 @@ def test_early_scope_facts_use_captured_attributes_and_claim_exceptions(
     attributes = (
         "* -linguist-documentation\nnote linguist-documentation\nclassified linguist-generated\n"
         "vendored linguist-vendored\nmarker_disabled -linguist-generated\n"
-        "unknown !linguist-documentation\n"
+        "unknown !linguist-documentation\nvendored_new linguist-vendored\n"
     )
     (work / ".gitattributes").write_text(attributes, encoding="utf-8", newline="")
     for file in files:
-        if file == "marker_new":
+        if file in ("marker_new", "vendored_new"):
             continue
         (work / file).parent.mkdir(parents=True, exist_ok=True)
         (work / file).write_text(
@@ -209,6 +210,7 @@ process.stdout.write(JSON.stringify(results));
             assert facts["linguist_generated"] is None
             assert facts["linguist_vendored"] is None
             assert facts["linguist_documentation"] is False
+        assert verified["vendored_new"]["scope_facts"]["linguist_vendored"] is None
         assert verified["late_marker"]["scope_facts"]["generated_marker"] is False
         assert verified["existing"]["blame_class"] == "pre_existing"
         assert verified["existing"]["blame_source"] == "git_blame"

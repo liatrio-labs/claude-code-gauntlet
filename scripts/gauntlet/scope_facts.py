@@ -11,8 +11,13 @@ from gauntlet.diff import AnnotatedDiff
 from gauntlet.registry import EXCLUSION_CATEGORIES, SCOPE_FACT_KEYS, ScopeFacts
 from gauntlet.source_capture import SourceAdapter
 
+
+def attribute_name(key: str) -> str:
+    return key.replace("_", "-")
+
+
 ATTRIBUTES = tuple(
-    key.replace("_", "-") for key in SCOPE_FACT_KEYS if key.startswith("linguist_")
+    attribute_name(key) for key in SCOPE_FACT_KEYS if key.startswith("linguist_")
 )
 GENERATED_MARKER = re.compile(
     r"@generated\b|^\s*// Code generated .+ DO NOT EDIT\.\s*$|"
@@ -88,19 +93,22 @@ def repository_scope(
             "all_changed_files_documentation": all_docs,
             "lockfile_basename": file.rsplit("/", 1)[-1] in basenames,
         }
+        # A path absent at base was chosen by this PR, so base patterns cannot classify it.
+        known = bool(base) and old_lines is not None
+        values = {
+            key: attrs.get(attribute_name(key)) if known else None
+            for key in SCOPE_FACT_KEYS
+            if key.startswith("linguist_")
+        }
+        values.update(
+            {
+                key: derived.get(key) if base else None
+                for key in SCOPE_FACT_KEYS
+                if key not in values
+            }
+        )
         facts[file] = cast(
             ScopeFacts,
-            {
-                "file": file,
-                "snapshot_id": capture.receipt["manifest_sha256"],
-                **{
-                    key: None
-                    if not base
-                    else attrs.get(key.replace("_", "-"))
-                    if key.startswith("linguist_")
-                    else derived.get(key)
-                    for key in SCOPE_FACT_KEYS
-                },
-            },
+            {"file": file, "snapshot_id": capture.receipt["manifest_sha256"], **values},
         )
     return facts
