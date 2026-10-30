@@ -2,6 +2,57 @@
 
 <!-- version list -->
 
+## v3.55.0 (2026-10-30)
+
+### Bug Fixes
+
+- Keep injection-eliminated prose out of persisted artifacts
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+- **bench**: Keep surface order and confine surface source copies
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+### Features
+
+- One final disposition decides every finding's delivery rights
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+- One final disposition decides every finding's delivery rights (#46)
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+- **bench**: Replay stored delivery and capture its inputs on measured runs
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+- **bench**: Report delivery burden and attribution in comparisons
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+- **bench**: Trace disposition reasons and score body findings beside inline
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+### Refactoring
+
+- **bench**: Surface replay child errors and share the measured return budget fallback
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+### Testing
+
+- **bench**: Cover multi-producer sole matches and name the coalescence helper
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+- **bench**: Description eval fixture emits the dispose stage and disposition
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+
 ## v3.54.1 (2026-10-30)
 
 ### Bug Fixes
