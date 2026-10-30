@@ -2,6 +2,64 @@
 
 <!-- version list -->
 
+## v3.54.0 (2026-10-30)
+
+### Bug Fixes
+
+- **bench**: The clean description control no longer changes take()'s behaviour
+  ([#550](https://github.com/liatrio-labs/claude-code-gauntlet/pull/550),
+  [`c83cab6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c83cab62ffe18e705c0da6fee081f0556d779fee))
+
+- **bench**: The description runner delegates to the run path and is covered
+  ([#550](https://github.com/liatrio-labs/claude-code-gauntlet/pull/550),
+  [`c83cab6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c83cab62ffe18e705c0da6fee081f0556d779fee))
+
+### Chores
+
+- **scripts**: Drop the orphaned single-sentence anchor and stale parser rows
+  ([#550](https://github.com/liatrio-labs/claude-code-gauntlet/pull/550),
+  [`c83cab6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c83cab62ffe18e705c0da6fee081f0556d779fee))
+
+- **scripts**: Drop the orphaned single-sentence anchor and stale parser rows
+  ([#549](https://github.com/liatrio-labs/claude-code-gauntlet/pull/549),
+  [`9bde277`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9bde2773e09ee582d7255b2e3e0f6d5a55fa08d5))
+
+### Features
+
+- **agents**: Discovery content (#46 Wave 2b)
+  ([#550](https://github.com/liatrio-labs/claude-code-gauntlet/pull/550),
+  [`c83cab6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c83cab62ffe18e705c0da6fee081f0556d779fee))
+
+- **agents**: Discovery content: no precision screening, beyond-diff exploration, PR description as
+  unverified claims (#46 Wave 2b)
+  ([#550](https://github.com/liatrio-labs/claude-code-gauntlet/pull/550),
+  [`c83cab6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c83cab62ffe18e705c0da6fee081f0556d779fee))
+
+### Refactoring
+
+- **agents**: Agent-body hygiene and decontamination (#46 Wave 2a)
+  ([#550](https://github.com/liatrio-labs/claude-code-gauntlet/pull/550),
+  [`c83cab6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c83cab62ffe18e705c0da6fee081f0556d779fee))
+
+- **agents**: Agent-body hygiene and decontamination (#46 Wave 2a)
+  ([#549](https://github.com/liatrio-labs/claude-code-gauntlet/pull/549),
+  [`9bde277`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9bde2773e09ee582d7255b2e3e0f6d5a55fa08d5))
+
+- **agents**: Drop the two security sentences the leakage lens found benchmark-shaped
+  ([#550](https://github.com/liatrio-labs/claude-code-gauntlet/pull/550),
+  [`c83cab6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c83cab62ffe18e705c0da6fee081f0556d779fee))
+
+- **agents**: Drop the two security sentences the leakage lens found benchmark-shaped
+  ([#549](https://github.com/liatrio-labs/claude-code-gauntlet/pull/549),
+  [`9bde277`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9bde2773e09ee582d7255b2e3e0f6d5a55fa08d5))
+
+### Testing
+
+- **bench**: Trim the description tests and drop two unused paths
+  ([#550](https://github.com/liatrio-labs/claude-code-gauntlet/pull/550),
+  [`c83cab6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c83cab62ffe18e705c0da6fee081f0556d779fee))
+
+
 ## v3.53.0 (2026-10-29)
 
 ### Bug Fixes

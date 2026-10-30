@@ -72,12 +72,14 @@ and context calls separate; announce triage before dispatch.
 
 ### Write the shared agent context file
 
+Generate `nonce` matching `^[A-Za-z0-9._-]+$` before Composite A description capture and preserve it on resume.
+
 After 2d, 2e and 2k, run the [shared context command](references/phase2-preparation.md#write-the-shared-agent-context-file).
 Stamp its measured receipt; stop on exit 2.
 
 ### Assemble the args object
 
-Stamp `generatedAt` at assembly and `nonce` matching `^[A-Za-z0-9._-]+$`; preserve both on resume.
+Stamp `generatedAt` at assembly and preserve it on resume.
 Reuse Phase 1's Python argv (`python3`, `python`, or `py -3`) in commands and `args.python`.
 Omit unavailable optional values; keep `reviewConfigPath: null` without root REVIEW.md.
 Stamp `limits: {}` absent genuine REVIEW.md overrides, and `delivery: { prIdentity }` for PR/MR.

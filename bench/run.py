@@ -714,12 +714,15 @@ def _run_prs(
     child_model="inherit",
     child_auth=ledger.API_AUTH_MODE,
     epoch=None,
+    fixture_mirror=None,
 ):
     """Execute only scheduled URLs; preserve failed setup and review attempts alike."""
     run_dir = Path(run_dir)
     output_dir = run_dir / "output"
     fixture_text = (
-        FIXTURE_PATH.read_text(encoding="utf-8") if FIXTURE_PATH.exists() else ""
+        FIXTURE_PATH.read_text(encoding="utf-8")
+        if fixture_urls and FIXTURE_PATH.exists()
+        else ""
     )
     counts = defaultdict(int)
     drifted = []
@@ -792,7 +795,7 @@ def _run_prs(
         # Mirror clone/fetch is per-PR: a single bad repo must fail only its own PR,
         # never abort the tier. Input drift (make_worktree) is a distinct outcome.
         try:
-            mirror = mirrors.ensure_mirror(clone_url, MIRRORS_DIR)
+            mirror = fixture_mirror or mirrors.ensure_mirror(clone_url, MIRRORS_DIR)
             mirrors.make_worktree(
                 mirror,
                 meta["head_sha"],
@@ -1343,6 +1346,8 @@ def parse_args(argv=None):
         prog="bench/run.py",
         description="Drive the code-gauntlet skill over a tier's golden PRs and checkpoint outcomes. Tool labels and scorer keys keep their pre-rename deep-review-* names for measurement continuity.",
     )
+    parser.add_argument("--synthetic-fixture", type=Path)
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument(
         "--tier",
         choices=["smoke", "mini", "subset", "holdout", "full"],
@@ -1468,6 +1473,15 @@ def decision_hook(event, **context):
 
 def main(argv=None):
     args = parse_args(argv)
+
+    if args.synthetic_fixture:
+        if not args.output_dir or args.child_auth != "subscription":
+            raise ValueError(
+                "synthetic fixtures require --output-dir and --child-auth subscription"
+            )
+        from bench.runner.description_eval import run
+
+        return run(args)
 
     modes = [
         bool(args.resume),

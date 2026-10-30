@@ -208,6 +208,9 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
         command.replace("{plugin_root}", REPO.as_posix())
         .replace("{output_dir}", output_dir.as_posix())
         .replace("{head_sha_short}", SHA)
+        .replace("{target_type}", "local")
+        .replace("{head_sha_full}", SHA.ljust(40, "0"))
+        .replace("{snapshot_args}", "")
     )
     parts = shlex.split(command, posix=True)
     assert parts and parts[0] == "python3", parts
@@ -265,6 +268,9 @@ def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) ->
         "{output_dir}": output_dir.as_posix(),
         "{head_sha_short}": SHA,
         "{nonce}": NONCE,
+        "{target_type}": "local",
+        "{head_sha_full}": SHA.ljust(40, "0"),
+        "{snapshot_args}": "",
         "{risk classification (2e) and AI-generated-code status (2k)}": triage,
     }
     for placeholder, value in replacements.items():
@@ -311,6 +317,9 @@ def _run_shipped(
         command.replace("{plugin_root}", REPO.as_posix())
         .replace("{output_dir}", output_dir.as_posix())
         .replace("{head_sha_short}", SHA)
+        .replace("{target_type}", "local")
+        .replace("{head_sha_full}", SHA.ljust(40, "0"))
+        .replace("{snapshot_args}", "")
         .replace("$HEAD_SHA_SHORT", SHA)
     )
     parts = shlex.split(expanded, posix=True)
@@ -1010,18 +1019,15 @@ def test_skill_and_reference_shell_blocks_have_no_jq():
     assert offenders == []
 
 
-@pytest.mark.parametrize(
-    "source",
-    [
-        "references/phase2-preparation.md",
-        "references/phase1-preflight.md",
-        "references/phase2-triage.md",
-    ],
-)
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
 @pytest.mark.parametrize("outcome", ["success", "failure"])
 @POSIX_FAKES
-def test_shipped_forge_status_and_url(source, platform, outcome, tmp_path, monkeypatch):
+def test_shipped_forge_status_and_url(platform, outcome, tmp_path, monkeypatch):
+    source = "references/phase2-preparation.md"
+    for rel in ("phase1-preflight.md", "phase2-triage.md"):
+        assert "single capture/status recipe" in skill_text(
+            REPO / "skills/code-gauntlet/references" / rel
+        )
     from tests.support.git_diff import patch_repo
     from tests.support.pr_files import gitlab_view
 
@@ -1051,9 +1057,18 @@ def test_shipped_forge_status_and_url(source, platform, outcome, tmp_path, monke
     )[0]
     command = status + "\n" + url + '\nprintf "fields=%s|%s\\n" "$TARGET_SHA" "$PR_URL"'
     view = (
-        dict(gitlab_view(), sha=sha)
+        dict(
+            gitlab_view(),
+            sha=sha,
+            web_url="https://gitlab.com/group/sub/r/-/merge_requests/7",
+            description="synthetic",
+        )
         if platform == "gitlab"
-        else {"headRefOid": sha, "url": "https://github.com/upstream/project/pull/7"}
+        else {
+            "headRefOid": sha,
+            "url": "https://github.com/upstream/project/pull/7",
+            "body": "synthetic",
+        }
     )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -1070,6 +1085,9 @@ def test_shipped_forge_status_and_url(source, platform, outcome, tmp_path, monke
     fake.chmod(0o755)
     command = command.replace("{plugin_root}", REPO.as_posix()).replace(
         "{pr_number}", "7"
+    )
+    command = command.replace("{output_dir}", tmp_path.as_posix()).replace(
+        "{nonce}", NONCE
     )
     capture = tmp_path / "capture"
     result = subprocess.run(
@@ -1088,14 +1106,14 @@ def test_shipped_forge_status_and_url(source, platform, outcome, tmp_path, monke
         timeout=10,
     )
     assert json.loads(capture.read_text(encoding="utf-8")) == (
-        ["pr", "view", "7", "--json", "state,isDraft,url,headRefOid"]
+        ["pr", "view", "7", "--json", "state,isDraft,url,headRefOid,body"]
         if platform == "github"
         else ["mr", "view", "7", "--output", "json"]
     )
     if outcome == "failure":
         assert result.returncode == 1
         assert result.stdout == "=== status ===\n"
-        assert "pr_status: FAILED:" in result.stderr
+        assert "pr_status: cannot capture validated PR/MR description" in result.stderr
     else:
         assert result.returncode == 0, result.stderr
         expected_url = view["url" if platform == "github" else "web_url"]
