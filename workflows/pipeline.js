@@ -2246,11 +2246,15 @@ const citeSource = (capture = {}) => ({ snapshot_id: capture.manifest_sha256 || 
   target_kind: capture.target_kind || '', head: capture.head || '', base: capture.base || '',
   diff_sha256: capture.diff_sha256 || '', verifier_version: CITE_VERIFIER_VERSION });
 const citeRecordKey = (record, source) => JSON.stringify({ record, source });
-function matchedCitation(finding, request, stage) {
+function citeResult(finding, request) {
   const results = (finding.cite_results || []).filter((r) => citeChecksum(r.request) === citeChecksum(request));
+  return results.length === 1 ? results[0] : undefined;
+}
+function matchedCitation(finding, request, stage) {
+  const result = citeResult(finding, request);
   return matchesDispatchSchema(request, CITATION_REQUEST_SCHEMA)
-    && request.finding_id === finding.id && request.stage === stage && results.length === 1
-    && results[0].status === 'matched' && results[0].source?.snapshot_id === request.snapshot_id;
+    && request.finding_id === finding.id && request.stage === stage
+    && result?.status === 'matched' && result.source?.snapshot_id === request.snapshot_id;
 }
 function reusableCiteResult(entry, record, source) {
   const result = entry?.result;
@@ -3833,6 +3837,14 @@ function rankFindings(findings) {
     return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || ka[3] - kb[3];
   });
 }
+// --- skepticalProof.js ---
+function skepticalProof(finding, raw, stage) {
+  const assessment = stage === 'validator' ? validatorAssessment(finding, raw) : acceptSkepticalReturn(raw, finding.id, stage);
+  const requests = Array.isArray(raw.citations) ? raw.citations : [];
+  const proved = assessment.status === 'complete' && ['real', 'refuted'].includes(raw.verdict)
+    && requests.some((q) => q.role === 'claim') && requests.every((q) => matchedCitation(finding, q, stage));
+  return { assessment, requests, proved };
+}
 // --- scope.js ---
 const scopeRows = EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage));
 const scopeInputFields = ['id', 'file', 'agent', 'dimension', 'origin_dimension', 'test_kind', 'quality_basis', 'path_role',
@@ -3863,7 +3875,7 @@ const scopeExceptions = {
   security_dimension: (f) => f.dimension === 'security' || f.agent === AGENT_SECURITY_REVIEWER,
   documentation_or_comment_claim: (f) => dimensionRow(f.dimension)?.dimension === 'comment_accuracy',
   test_applicable_documented_convention: (f) => dimensionRow(f.dimension)?.dimension === 'convention',
-  present_static_defect: (f) => f.reachability === 'current',
+  present_static_defect: (f) => f.reachability === 'current' ? true : f.reachability === 'future_change_only' ? false : null,
   test_coverage_origin: (f) => findingPolicy({ ...f, policy_subject: undefined }, false).row?.dimension === 'test_coverage',
   test_applicable_convention: (f) => dimensionRow(f.dimension)?.dimension === 'convention',
   genuine_test_defect: (f) => !VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(f.policy_subject) || f.policy_subject === 'unresolved' ? null : f.policy_subject === 'test_defect',
@@ -3873,7 +3885,7 @@ const scopeExceptions = {
   },
 };
 function outsideAddedLines(finding, request, start = request.line_start, end = request.line_end) {
-  const result = finding.cite_results?.find((r) => citeChecksum(r.request) === citeChecksum(request));
+  const result = citeResult(finding, request);
   if (!matchedCitation(finding, request, request.stage) || result?.source?.verifier_version !== CITE_VERIFIER_VERSION
     || !Array.isArray(result?.added_lines) || !result.added_lines.every((line) => Number.isSafeInteger(line) && line > 0)) return null;
   return !result.added_lines.some((line) => line >= start && line <= end);
@@ -3881,7 +3893,7 @@ function outsideAddedLines(finding, request, start = request.line_start, end = r
 function skepticalScope(finding, confirmations) {
   return (finding.skeptical_assessments || []).flatMap((a) => {
     const raw = a.raw ?? a;
-    const accepted = a.stage === 'validator' ? validatorAssessment(finding, raw) : acceptSkepticalReturn(raw, finding.id, a.stage);
+    const proof = skepticalProof(finding, raw, a.stage);
     return (Array.isArray(raw.scope_assessments) ? raw.scope_assessments : []).flatMap((scope) => {
       const row = EXCLUSION_CATEGORIES.find((r) => r.category === scope?.category && r.consumers.includes(a.stage));
       if (!row) return [];
@@ -3899,10 +3911,7 @@ function skepticalScope(finding, confirmations) {
         ...citations.filter((q) => q.role === 'rule').map((q) => q.side === 'old' ? true : outsideAddedLines(finding, q)),
         confirmation ? scopeOr(...citations.filter((q) => q.file === confirmation.file && q.side === 'head')
           .map((q) => outsideAddedLines(finding, q, confirmation.line_start, confirmation.line_start))) : false);
-      const proved = accepted.status === 'complete' && ['real', 'refuted'].includes(raw.verdict)
-        && Array.isArray(raw.citations) && raw.citations.some((q) => q.role === 'claim')
-        && raw.citations.every((q) => matchedCitation(finding, q, a.stage))
-        && intent === true
+      const proved = proof.proved && intent === true
         && !exceptions.includes(null)
         && finding.skeptical_assessments.filter((other) => other?.stage === a.stage).length === 1
         && raw.scope_assessments.filter((other) => other?.category === row.category).length === 1
@@ -3910,11 +3919,11 @@ function skepticalScope(finding, confirmations) {
         && matchesDispatchSchema(scope, SCOPE_ASSESSMENT_SCHEMA) && scope.finding_id === finding.id && scope.stage === a.stage
         && citations.every((q) => matchedCitation(finding, q, a.stage));
       const necessary = [...citations, ...(exceptions.includes(null) ? exceptionRequests(finding) : [])];
-      const unavailable = necessary.some((q) => finding.cite_results?.some((r) =>
-        citeChecksum(r.request) === citeChecksum(q) && r.status === 'unavailable'));
+      const unavailable = necessary.some((q) => citeResult(finding, q)?.status === 'unavailable');
       return [{ category: row.category, stage: a.stage, outcome: row.outcome,
         applies: contradicted ? false : proved ? true : null,
-        reason: contradicted ? 'scope_contradicted' : proved ? 'out_of_scope' : unavailable ? 'cite_unavailable' : 'cite_unmatched',
+        reason: contradicted ? 'scope_contradicted' : proved ? 'out_of_scope' : unavailable ? 'cite_unavailable'
+          : intent !== true ? 'held_back' : 'cite_unmatched',
         request_ids: citations.map((q) => q?.request_id).filter((id) => typeof id === 'string'),
         ...(row.predicate === 'confirmed_intent' && confirmation ? { confirmation_id: confirmation.id } : {}) }];
     });
@@ -3945,17 +3954,13 @@ function skepticalOutcome(finding) {
       continue;
     }
     const raw = entries[0].raw ?? entries[0];
-    const assessment = stage === 'validator' ? validatorAssessment(finding, raw) : acceptSkepticalReturn(raw, finding.id, stage);
+    const { assessment, requests, proved } = skepticalProof(finding, raw, stage);
     if (raw.verdict === 'needs_evidence') reasons.push({ reason: 'held_back', stage, missing_evidence: raw.missing_evidence });
-    const requests = Array.isArray(raw.citations) ? raw.citations : [];
-    const proof = requests.length > 0 && requests.some((q) => q.role === 'claim')
-      && requests.every((q) => matchedCitation(finding, q, stage));
-    if (['real', 'refuted'].includes(raw.verdict) && !proof) {
-      const unavailable = requests.some((q) => finding.cite_results?.some((r) =>
-        citeChecksum(r.request) === citeChecksum(q) && r.status === 'unavailable'));
+    if (['real', 'refuted'].includes(raw.verdict) && !proved) {
+      const unavailable = requests.some((q) => citeResult(finding, q)?.status === 'unavailable');
       reasons.push({ reason: unavailable ? 'cite_unavailable' : 'cite_unmatched', stage, verdict: raw.verdict });
     }
-    if (raw.verdict === 'refuted' && proof && assessment.status === 'complete') proven = { reason: 'refuted', stage,
+    if (raw.verdict === 'refuted' && proved) proven = { reason: 'refuted', stage,
       request_ids: requests.map((q) => q.request_id) };
     const { semanticErrors } = assessmentGaps(assessment);
     if (semanticErrors.length) reasons.push({ reason: 'held_back', stage, missing_fields: semanticErrors });

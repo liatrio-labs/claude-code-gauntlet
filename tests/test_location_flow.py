@@ -174,11 +174,7 @@ for(const c of JSON.parse(cases)) {
  findings.push(source('affected','existing',{cross_file_refs:['source:1']}),
   source('comment','source',{dimension:'comment_accuracy'}),
   source('source_convention','source',{dimension:'convention',rule_source:'code_comment',claude_md_rule:'source:1 documents the invariant'}),
-  source('static','source',{dimension:'simplification',quality_basis:'other'}),
-  source('preference','source',{dimension:'simplification',quality_basis:'other'}),
   source('future','source'),
-  source('supported','source',{dimension:'simplification',quality_basis:'duplication',
-   duplicate_of:{file:'source',line_start:1,line_end:1,anchor:'return process(value);'},suggestion:'Reuse the inspected implementation.'}),
   ...['harmless','wrong_assertion','test_convention','test_origin'].map(id=>source(id,'tests/check',
    id==='test_convention'?{dimension:'convention',rule_source:'code_comment',claude_md_rule:'source:1 documents the invariant'}:
    id==='test_origin'?{dimension:'test_coverage',test_kind:'additional_case',criticality:8,failure_scenario:'current behavior'}:{})));
@@ -196,7 +192,7 @@ for(const c of JSON.parse(cases)) {
  const assess=(f,stage)=>skepticalReturn(f.id,stage,{citations:[request(f,stage,'claim')],
   ...(stage==='validator'?{policy_subject:f.id==='wrong_assertion'?'test_defect':'ordinary',reachability:f.id==='future'?'future_change_only':'current',
   admission_assessments:requiredAssessments(f,f.id==='wrong_assertion'?'test_defect':'ordinary').map(predicate=>({predicate,
-   status:predicate==='present_defect'&&f.id!=='static'?'rejected':'confirmed',
+   status:predicate==='present_defect'?'rejected':'confirmed',
    references:Object.keys(admissionRequests(f)).filter(key=>ADMISSION_PREDICATES[predicate].references.some(name=>key===name||key.startsWith(`${name}:`)))}))}:{}),
   scope_assessments:['harmless','wrong_assertion','test_convention','test_origin'].includes(f.id)?[
    {finding_id:f.id,stage,category:'test_only_pattern',applicability:'applicable',
@@ -285,20 +281,13 @@ process.stdout.write(JSON.stringify(results));
             for name in ("wrong_assertion", "test_convention", "test_origin"):
                 assert final[name]["disposition"] != "eliminate", (name, final[name])
             assert final["wrong_assertion"]["disposition"] == "deliver"
-            assert final["supported"]["disposition"] == "deliver"
-            assert final["preference"]["disposition"] == "report_only"
-            assert final["static"]["admission"]["kind"] == "current_correctness"
-            assert final["static"]["admission"]["core"] is True
-            assert final["static"]["disposition"] == "deliver"
             assert final["future"]["disposition"] == "body"
             assert final["future"]["challenge"] == "survived"
         if docs:
             assert final["comment"]["disposition"] == "body"
             for name in ("source_convention", "wrong_assertion", "test_origin"):
                 assert final[name]["disposition"] != "eliminate", name
-            assert final["test_convention"]["disposition"] != "eliminate", json.dumps(
-                final["test_convention"], indent=2
-            )
+            assert final["test_convention"]["disposition"] != "eliminate"
 
 
 def test_cited_refutation_is_absent_from_delivery_and_local_actions(

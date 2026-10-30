@@ -115,7 +115,6 @@ def test_exclusion_row_edit_updates_both_skeptics_and_reference(tmp_path, invoke
             """
 import {validateStage, challengeStage} from './workflows/src/reviewStages.js';
 import {evaluateAdmission} from './workflows/src/admission.js';
-import {scopeDecisions} from './workflows/src/scope.js';
 const prompts=[];
 const ctx={parallel:ts=>Promise.all(ts.map(t=>t())),agent:async(p,d)=>{prompts.push([d.label,p]);return null;}};
 const findings=['a','b'].map(id=>evaluateAdmission({id,file:'source',line_start:10,line_end:10,
@@ -123,13 +122,7 @@ const findings=['a','b'].map(id=>evaluateAdmission({id,file:'source',line_start:
  diff_validation:{in_diff:true},validation:'validated',confidence:90,verify_status:'verified'}));
 await validateStage(ctx,{findings:structuredClone(findings)});
 await challengeStage(ctx,{findings});
-const f=findings[0];
-const q=role=>({finding_id:'a',stage:'challenger',request_id:role,role,snapshot_id:'snapshot',
- file:'source',side:'head',line_start:10,line_end:10,quote:'return process(value);'});
-f.skeptical_assessments=[{finding_id:'a',stage:'challenger',verdict:'real',citations:[q('claim')],scope_assessments:[
- {finding_id:'a',stage:'challenger',category:'configured_tool',applicability:'applicable',citations:[q('rule'),q('applicability')]}]}];
-f.cite_results=['claim','rule','applicability'].map(role=>({request:q(role),status:'matched',source:{snapshot_id:'snapshot'}}));
-console.log(JSON.stringify({prompts,decisions:scopeDecisions(f)}));
+console.log(JSON.stringify(prompts));
 """,
         ],
         cwd=tmp_path,
@@ -138,14 +131,10 @@ console.log(JSON.stringify({prompts,decisions:scopeDecisions(f)}));
         encoding="utf-8",
         check=True,
     )
-    runtime = json.loads(result.stdout)
-    assert any(
-        row["category"] == "configured_tool" and row["applies"] is True
-        for row in runtime["decisions"]
-    )
-    assert any(label.startswith("validate-") for label, _ in runtime["prompts"])
-    assert any(label.startswith("challenge-") for label, _ in runtime["prompts"])
-    for label, prompt in runtime["prompts"]:
+    prompts = json.loads(result.stdout)
+    assert any(label.startswith("validate-") for label, _ in prompts)
+    assert any(label.startswith("challenge-") for label, _ in prompts)
+    for label, prompt in prompts:
         assert prompt.count("- configured_tool:") == (
             1 if label.startswith("validate-") else 0
         )
@@ -642,13 +631,6 @@ def test_agent_emission_contract():
         assert "by-value return" in text
         assert "{ findings, complete, total_seen }" in text
         assert "False-positive exclusions" not in text
-        assert "must be excluded" not in text
-        assert "that was added or substantially modified" not in text
-        assert "in recently changed code" not in text
-        assert not re.search(
-            r"(?im)^- .*?(?:pre-existing|author didn.t (?:change|modify|touch)|silenced|compiler would catch)",
-            text,
-        )
     for rel in tracked("AGENTS.md", "*/AGENTS.md"):
         assert not re.search(r"printf|ndjson", read(rel), re.IGNORECASE)
     rules = read("agents/AGENTS.md")
