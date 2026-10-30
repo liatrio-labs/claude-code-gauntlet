@@ -23,7 +23,7 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
     makeFinding('SKIP', { severity: 'critical' }), makeFinding('CAP', { severity: 'low' }),
     makeFinding('GROUP', { file: 'group.js', severity: 'critical', title: 'shared group defect', description: 'The shared group defect breaks the ordinary value when this public function is called.' }),
   ];
-  const convention = makeFinding('CORROBORATOR', { file: 'group.js', dimension: 'intent', severity: 'critical', title: 'corroborating shared defect', description: `${seed.at(-1).description} The intended return value is therefore broken.` });
+  const convention = makeFinding('CORROBORATOR', { file: 'group.js', dimension: 'intent', spec_text: 'Return the correct value', severity: 'critical', title: 'corroborating shared defect', description: `${seed.at(-1).description} The intended return value is therefore broken.` });
   if (options.extraBytes) seed[1].diagnostic = 'x'.repeat(options.extraBytes);
   const ctx = makeCtx(args, { findings: seed });
   const baseAgent = ctx.agent;
@@ -33,7 +33,7 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
     const label = dispatch.label;
     if (options.auditOverlap && dispatch.agentType === 'code-gauntlet:test-analyzer') {
       ctx.calls.push({ prompt, ...dispatch });
-      const finding = makeFinding('AUDIT', { file: 'audit.js', dimension: 'test_coverage' });
+      const finding = makeFinding('AUDIT', { file: 'audit.js', dimension: 'test_coverage', test_kind: 'defective_test', criticality: 8, failure_scenario: 'Broken assertion' });
       return { findings: [finding], complete: true, total_seen: 1, removed_test_audit: [{ id: removed.items[0].id, status: 'lost', covered_by: [],
         losses: [{ anchor: finding.anchor, file: finding.file, line: finding.line_start, title: finding.title, description: finding.description,
           severity: 'high', confidence: 90, criticality: 8, failure_scenario: 'Override precedence silently chooses the wrong value.' }] }] };

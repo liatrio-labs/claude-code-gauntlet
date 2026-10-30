@@ -1,6 +1,6 @@
 // Finding path normalization, validation, deduplication, and merge envelopes.
 import { repoRelativeFindingPath, safeFindingLabel } from './paths.js';
-import { AGENTS, DIMENSIONS, FINDING_PATH_DESCRIPTORS } from './registry.js';
+import { AGENTS, DIMENSIONS, FINDING_PROP_TYPES, FINDING_PATH_DESCRIPTORS, producerRow, findingPolicy, normalizePipelineStamps } from './registry.js';
 import { measurementDecisions, traceDecision } from './measurementTrace.js';
 import { deepClone } from './wire.js';
 
@@ -58,12 +58,18 @@ export function normalizeFindingPaths(findings, repoRoot, decisions = []) {
       continue;
     }
     if (result.rewritten) pathRewrites += 1;
+    const droppedReference = (field, reason, action = 'reference dropped') => {
+      const warning = invalidFindingPathWarning(finding, field, reason, action);
+      warnings.push(warning);
+      if (!Array.isArray(finding.reference_diagnostics)) finding.reference_diagnostics = [];
+      finding.reference_diagnostics.push(warning);
+      return undefined;
+    };
     const confine = (value, schema, field) => {
       if (schema.$comment === 'repo-path') {
         const normalized = repoRelativeFindingPath(repoRoot, value);
         if ('reason' in normalized) {
-          warnings.push(invalidFindingPathWarning(finding, field, normalized.reason, 'reference dropped'));
-          return undefined;
+          return droppedReference(field, normalized.reason);
         }
         if (normalized.file !== value) pathRewrites += 1;
         return normalized.file;
@@ -81,9 +87,9 @@ export function normalizeFindingPaths(findings, repoRoot, decisions = []) {
           out[key] = normalized;
         }
         return out;
-      } else if (!['array', 'object'].includes(schema.type)) return value;
-      warnings.push(invalidFindingPathWarning(finding, field, schema.type === 'array' ? 'expected an array' : `expected ${schema.type}`, 'field dropped'));
-      return undefined;
+      } else if (!['array', 'object'].includes(schema.type)
+        && (schema.type === 'integer' ? Number.isInteger(value) : jsonTypeName(value) === schema.type)) return value;
+      return droppedReference(field, schema.type === 'array' ? 'expected an array' : `expected ${schema.type}`, 'field dropped');
     };
     for (const [field, schema] of Object.entries(FINDING_PATH_DESCRIPTORS)) {
       if (!(field in finding)) continue;
@@ -96,11 +102,21 @@ export function normalizeFindingPaths(findings, repoRoot, decisions = []) {
   return { valid, warnings, path_rewrites: pathRewrites };
 }
 
-export function validateFindings(findings, decisions = []) {
+export function validateFindings(findings, decisions = [], { replayed = false } = {}) {
   const valid = [];
   const warnings = [];
+  const rejected = [];
 
   for (const f of findings) {
+    if (!f || typeof f !== 'object' || Array.isArray(f)) {
+      warnings.push('Invalid finding shape: expected an object — finding rejected');
+      rejected.push(f);
+      continue;
+    }
+    if (!replayed) {
+      delete f.origin_dimension;
+      delete f.effective_test_kind;
+    } else normalizePipelineStamps(f);
     const fid = 'id' in f ? f.id : '<no id>';
     let reject = false;
 
@@ -113,7 +129,26 @@ export function validateFindings(findings, decisions = []) {
       }
     }
 
+    const row = replayed ? findingPolicy(f).row : producerRow(f);
+    const kind = row?.admission?.kinds[f[row.admission.field]];
+    const required = row ? [...row.requiredExtra, ...row.requiredWhenDimension, ...(kind?.required || [])] : [];
+    if (!reject && row && !f.removed_test) for (const field of required) {
+      const schema = row.schemaExtra[field] || FINDING_PROP_TYPES[field];
+      const type = typeof schema === 'string' ? schema : schema.type;
+      const value = f[field];
+      if (jsonTypeName(value) !== type
+        || (typeof value === 'string' && !value.trim()) || (schema.enum && !schema.enum.includes(value))) {
+        warnings.push(`[${fid}] Invalid required field '${field}' for ${row.dimension} — finding rejected`);
+        reject = true;
+        break;
+      }
+    }
+    if (!reject && kind?.anyOf && !kind.anyOf.some((field) => typeof f[field] === 'string' && f[field].trim())) {
+      warnings.push(`[${fid}] Missing concrete fix (${kind.anyOf.join('/')}) — finding rejected`);
+      reject = true;
+    }
     if (reject) {
+      rejected.push(deepClone(f));
       if (f.trace_id) decisions.push(traceDecision(f, 'invalid_shape', warnings[warnings.length - 1]));
       continue;
     }
@@ -128,7 +163,7 @@ export function validateFindings(findings, decisions = []) {
     valid.push(f);
   }
 
-  return { valid, warnings };
+  return { valid, warnings, rejected };
 }
 
 export function merge(findingsByAgent, meta) {
@@ -161,7 +196,16 @@ export function merge(findingsByAgent, meta) {
 
   // Validate before deduplication so warnings cover every raw finding.
   const allFlat = Object.values(selected).flat();
-  const { valid, warnings: preValWarnings } = validateFindings(allFlat, decisions);
+  const { valid, warnings: preValWarnings, rejected } = validateFindings(allFlat, decisions, { replayed: M.replayed === true });
+  for (const finding of valid) {
+    const row = M.replayed === true ? findingPolicy(finding).row : producerRow(finding);
+    if (row) {
+      finding.origin_dimension = row.dimension;
+      if (row.admission) finding.dimension = row.dimension;
+    }
+    const { kind } = findingPolicy(finding);
+    if (kind?.dimension) finding.dimension = kind.dimension;
+  }
 
   let droppedNoId = 0;
   for (const f of allFlat) {
@@ -174,6 +218,7 @@ export function merge(findingsByAgent, meta) {
 
   return measurementDecisions({
     findings: merged,
+    ...((M.rejected?.length || rejected.length) ? { rejected: [...(M.rejected || []), ...rejected] } : {}),
     base_branch: M.base_branch,
     head_sha: M.head_sha,
     pr_number: M.pr_number,
@@ -209,7 +254,7 @@ export function mergeStage(discoverOut, meta) {
   const agents = Array.isArray(out.dispatched)
     ? out.dispatched.map(shortAgentName)
     : (Object.keys(byAgent).length ? Object.keys(byAgent) : AGENTS.map(shortAgentName));
-  return merge(byAgent, { ...M, agents });
+  return merge(byAgent, { ...M, agents, rejected: out.rejected });
 }
 
 export function dedupById(findings, decisions = []) {

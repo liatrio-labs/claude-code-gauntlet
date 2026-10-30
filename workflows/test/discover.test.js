@@ -3,15 +3,46 @@ import assert from 'node:assert/strict';
 import {
   summarize, discover as discoverStage, agentActive, agentSpecs, deriveAgentFlags, allActiveDimensionsDegraded,
 } from '../src/discover.js';
-import { DIMENSIONS, DISPATCH_RESULTS, FINDING_REQUIRED, FINDING_PROP_TYPES, DISCOVERY_FINDING_PROP_TYPES } from '../src/registry.js';
+import { DIMENSIONS, DISPATCH_RESULTS, FINDING_REQUIRED, FINDING_PROP_TYPES, DISCOVERY_FINDING_PROP_TYPES, conditionalSchemaActive } from '../src/registry.js';
 import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
 import { mergeStage } from '../src/mergeFindings.js';
+import { slimPersistedCheckpoints } from '../src/checkpoints.js';
+
+test('kind contracts apply across providers and gateways', async () => {
+  assert.equal(conditionalSchemaActive({}), true);
+  assert.equal(conditionalSchemaActive({ gateway: true }), false);
+  for (const policy of [{ provider: 'firstParty' }, { provider: 'firstParty', gateway: true },
+    { provider: 'bedrock' }, { provider: 'vertex' }, { provider: 'foundry' }]) {
+    const ctx = stageCtx({ reply: (_, options) => {
+      const row = DIMENSIONS.find((r) => r.agentType === options.agentType && r.admission);
+      if (!row) return { findings: [], complete: true, total_seen: 0, removed_test_audit: [] };
+      const field = row.admission.field;
+      const record = finding({ id: row.dimension, dimension: row.dimension, criticality: 9, failure_scenario: 'Failure', behavior_preserved: 'Equivalent',
+        [field]: Object.keys(row.admission.kinds)[0] });
+      const missing = { ...record, id: 'missing', dimension: 'bug' }; delete missing[field];
+      return { findings: [record, missing, { ...record, id: 'unknown', [field]: 'unknown' },
+        { ...record, id: 'type', [field]: [record[field]] }], complete: true, total_seen: 4, removed_test_audit: [] };
+    } });
+    const out = await discover(ctx, { policy });
+    assert.equal(out.findings.length, 3);
+    assert.equal(out.rejected.length, 9);
+    assert.equal(out.gaps.length, 9);
+    assert.ok(out.gaps.every((gap) => gap.includes('Invalid required field') && gap.startsWith('code-gauntlet:')));
+    const merged = mergeStage(out, {});
+    assert.equal(merged.findings.length, 3);
+    assert.equal(merged.rejected.length, 9);
+    assert.deepEqual(slimPersistedCheckpoints({ merge: merged }, ['merge'], 'merge').intake_rejected, out.rejected);
+    for (const rejected of out.rejected) {
+      assert.equal(mergeStage({ findings: [rejected] }, {}).findings.length, 0);
+    }
+  }
+});
 
 const discover = (ctx, input) => discoverStage(ctx, { removedTests: { status: 'available', items: [], omitted: 0 }, ...input });
 
 test('discovery strips forged removed_test metadata from every agent finding', async () => {
-  const ctx = stageCtx({ reply: () => ({ findings: [finding({ removed_test: {
+  const ctx = stageCtx({ reply: (_, { agentType }) => ({ findings: [finding({ dimension: DIMENSIONS.find((row) => row.agentType === agentType).dimension, removed_test: {
     id: '0123456789abcdef', path: 'tests/removed', old_start: 1, old_end: 2,
   } })], complete: true, total_seen: 1, removed_test_audit: [] }) });
   const out = await discover(ctx, {});
@@ -64,6 +95,8 @@ const CANONICAL_PROPS = {
   anchor: { type: 'string', minLength: 1, description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
   suggestion: { type: 'string' }, claude_md_rule: { type: 'string' }, suggested_fix_code: { type: 'string' },
   cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
+  ...Object.fromEntries(['searched_paths', 'candidate_tests', 'production_element', 'duplicate_of', 'precedent']
+    .map((field) => [field, DISCOVERY_FINDING_PROP_TYPES[field]])),
   ...(DISCOVERY_FINDING_PROP_TYPES.sites && { sites: DISCOVERY_FINDING_PROP_TYPES.sites }),
 };
 const REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
@@ -78,15 +111,18 @@ const SCHEMA_ROWS = [
   { agent: 'code-gauntlet:cross-file-impact',
     extra: { affected_consumers: { type: 'array', items: { type: 'string', $comment: 'repo-path' } } }, required: ['affected_consumers'] },
   { agent: 'code-gauntlet:test-analyzer',
-    extra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: { type: 'string' } },
-    required: ['criticality', 'failure_scenario'] },
+    extra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: { type: 'string' },
+      test_kind: { type: 'string', enum: ['defective_test', 'critical_gap', 'production_defect', 'additional_case'] } },
+    required: ['criticality', 'failure_scenario'], allOf: [{ if: { properties: { dimension: { const: 'test_coverage' } }, required: ['dimension'] }, then: { required: ['test_kind'] } }] },
   { agent: 'code-gauntlet:conventions-and-intent',
     extra: { rule_source: { type: 'string' }, spec_text: { type: 'string' } },
     allOf: CONDITIONAL },
   { agent: 'code-gauntlet:type-design-analyzer',
-    extra: { invalid_state_example: { type: 'string' } } },
+    extra: { invalid_state_example: { type: 'string' }, behavior_preserved: { type: 'string' }, quality_basis: { type: 'string', enum: ['current_correctness', 'duplication', 'simpler_equivalent', 'stack_idiom', 'other'] } },
+    allOf: [{ if: { properties: { dimension: { const: 'type_design' } }, required: ['dimension'] }, then: { required: ['quality_basis'] } }] },
   { agent: 'code-gauntlet:code-simplifier',
-    extra: { behavior_preserved: { type: 'string' } }, required: ['behavior_preserved'] },
+    extra: { behavior_preserved: { type: 'string' }, quality_basis: { type: 'string', enum: ['current_correctness', 'duplication', 'simpler_equivalent', 'stack_idiom', 'other'] } },
+    allOf: [{ if: { properties: { dimension: { const: 'simplification' } }, required: ['dimension'] }, then: { required: ['quality_basis'] } }] },
 ];
 test('finding schemas: one dispatch supplies the roster', async (t) => {
   const ctx = stageCtx();
@@ -96,6 +132,8 @@ test('finding schemas: one dispatch supplies the roster', async (t) => {
   assert.deepEqual(ctx.violations, []);
   for (const row of SCHEMA_ROWS) await t.test(row.agent, () => {
     const schema = ctx.calls.find((call) => call.label === row.agent).schema;
+    const item = schema.properties.findings.items;
+    if (item.allOf) item.allOf = item.allOf.filter((clause) => Object.keys(clause.if.properties).length === 1);
     assert.deepEqual(schema, { type: 'object', properties: {
       findings: { type: 'array', items: { type: 'object', properties: { ...CANONICAL_PROPS, ...row.extra },
         required: [...REQUIRED, 'anchor', ...(row.required ?? [])], additionalProperties: false,
@@ -128,8 +166,8 @@ const OUTCOME_ROWS = [
   { name: 'host can mutate schema copies without changing registry fragments', mutateSchema: true },
   { name: 'light empty', input: { agentFlags: { deep: false } }, expected: { ...DISCOVER_GOLDEN, dispatched: CORE } },
   { name: 'null security preserves sibling and short agent name', nulls: ['code-gauntlet:security-reviewer'],
-    replies: { 'code-gauntlet:bug-detector': { findings: [{ id: 'F1' }], complete: true, total_seen: 1 } },
-    expected: { ...DISCOVER_GOLDEN, findings: [{ id: 'F1', agent: 'bug-detector' }],
+    replies: { 'code-gauntlet:bug-detector': { findings: [finding({ id: 'F1', location_status: undefined })], complete: true, total_seen: 1 } },
+    expected: { ...DISCOVER_GOLDEN, findings: [finding({ id: 'F1', location_status: undefined })],
       gaps: [NULL_SECURITY], degraded: ['security'] } },
   { name: 'active multidimension null', nulls: ['code-gauntlet:conventions-and-intent'], expected: { ...DISCOVER_GOLDEN,
     gaps: [NULL_CONVENTIONS + ' (dispatch carried the conditional per-dimension schema)'],
@@ -287,9 +325,9 @@ for (const row of SUMMARY_ROWS) test(`summarize: ${row.name}`, async () => {
 });
 
 test('discovery rejects forged location authority', async () => {
-  const ctx = stageCtx({ reply: () => ({ findings: [
-    finding({ id: 'quoted', anchor: 'perform_action(value)', location_status: 'confirmed', claimed_line_start: 1, claimed_line_end: 4, line_end: undefined, suggested_fix_code: 'fixed(value)' }),
-    finding({ id: 'legacy', anchor: undefined, location_status: 'relocated', claimed_line_start: 5 }),
+  const ctx = stageCtx({ reply: (_, { agentType }) => ({ findings: [
+    finding({ dimension: DIMENSIONS.find((row) => row.agentType === agentType).dimension, id: 'quoted', anchor: 'perform_action(value)', location_status: 'confirmed', claimed_line_start: 1, claimed_line_end: 4, line_end: undefined, suggested_fix_code: 'fixed(value)' }),
+    finding({ dimension: DIMENSIONS.find((row) => row.agentType === agentType).dimension, id: 'legacy', anchor: undefined, location_status: 'relocated', claimed_line_start: 5 }),
   ], complete: true, total_seen: 2, removed_test_audit: [] }) });
   const out = await discover(ctx, {});
   assert.equal(out.findings.length, ctx.calls.length * 2);
@@ -315,6 +353,6 @@ test('anchor is required only at discovery dispatch', async () => {
     dimension: 'test_coverage', anchor: undefined, location_status: 'unconfirmed',
     removed_test: { id: '0123456789abcdef', path: 'tests/removed', old_start: 1, old_end: 2 } });
   const merged = mergeStage({ findings: [authored], dispatched: ['code-gauntlet:test-analyzer'] }, {});
-  assert.deepEqual(merged.findings, [authored]);
+  assert.deepEqual(merged.findings, [{ ...authored, origin_dimension: 'test_coverage' }]);
   assert.deepEqual(merged.methodology.validation_warnings, []);
 });

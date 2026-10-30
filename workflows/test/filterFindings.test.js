@@ -71,86 +71,21 @@ for (const row of THRESHOLD_ROWS) test('threshold: ' + row.name, () => {
 });
 
 const ROUTE_ROWS = [
-  { name: "cross file impact routes main", input: { dimension: "cross_file_impact" }, expected: "main" },
-
-  { name: "correctness pattern 0", input: { dimension: "test_coverage", title: "race condition", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 2", input: { dimension: "test_coverage", title: "always-pass", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 3", input: { dimension: "test_coverage", title: "never fails", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 4", input: { dimension: "test_coverage", title: "vacuously", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 5", input: { dimension: "test_coverage", title: "tautology", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 6", input: { dimension: "test_coverage", title: "assertion is never reached", description: "" },
-    expected: "main" },
-
-  { name: "correctness pattern 7", input: { dimension: "test_coverage", title: "deadlock", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 8", input: { dimension: "test_coverage", title: "data race", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 9", input: { dimension: "test_coverage", title: "thread unsafe", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 10", input: { dimension: "test_coverage", title: "test actually checks nothing", description: "" },
-    expected: "main" },
-
-  { name: "correctness pattern 11", input: { dimension: "test_coverage", title: "false positive test", description: "" },
-      expected: "main" },
-
-  { name: "correctness pattern 12", input: { dimension: "test_coverage", title: "incorrectly verify", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 13", input: { dimension: "test_coverage", title: "wrong output", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 14", input: { dimension: "test_coverage", title: "local variable is never read", description: "" },
-    expected: "main" },
-
-  { name: "correctness pattern 15", input: { dimension: "test_coverage", title: "assertion snapshot", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 16", input: { dimension: "test_coverage", title: "compare different object", description: "" },
-    expected: "main" },
-
-  { name: "correctness pattern 17", input: { dimension: "test_coverage", title: "test doesn't wait", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 18", input: { dimension: "test_coverage", title: "reader thread not waited", description: "" },
-    expected: "main" },
-
-  { name: "correctness pattern 19", input: { dimension: "test_coverage", title: "flaky test", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 21", input: { dimension: "test_coverage", title: "assert always true", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 22", input: { dimension: "test_coverage", title: "test always succeed", description: "" },
-      expected: "main" },
-
-  { name: "correctness pattern 23", input: { dimension: "test_coverage", title: "logic error", description: "" }, expected: "main" },
-
-  { name: "correctness pattern 24", input: { dimension: "test_coverage", title: "incorrect behaviour", description: "" },
-      expected: "main" },
-
-  { name: 'type design null pointer promotes main', input: { dimension: 'type_design', title: 'Nullable type issue',
-    description: 'Null pointer dereference when optional field is absent' }, expected: 'main' },
+  { name: 'cross file impact routes main', input: { dimension: 'cross_file_impact' }, expected: 'main' },
   { name: 'convention with wrong result promotes main', input: { dimension: 'convention', title: 'Incorrect return value',
     description: 'The function returns wrong result for edge cases' }, expected: 'main' },
-  { name: 'correctness pattern 13 value', input: { dimension: 'test_coverage', title: 'wrong value', description: '' },
-    expected: 'main' }
 ];
 for (const row of ROUTE_ROWS) test('dimension route: ' + row.name, () => {
   assert.equal(routeByDimension(finding(row.input), row.routes), row.expected);
 });
 
 const TAG_ROWS = [
-  { name: 'missing test route prevents fallback promotion', routes: {},
-    input: { dimension: 'unknown', agent: 'test-analyzer', title: 'Test always passes regardless of input' },
-    expected: ['suggestion', 'suggestion', undefined, undefined, 0, 1] },
   { name: "bug detector agent routes main", input: { dimension: undefined, agent: "bug-detector" },
     expected: ["main", "main", undefined, undefined, 1, 0] },
 
   { name: "unknown dimension falls back to agent", input: { dimension: "some_new_thing", agent: "code-simplifier" },
     expected: ["suggestion", "suggestion", undefined, undefined, 0, 1] },
 
-  { name: "test analyzer array does not form joined keyword", input: { agent: "test-analyzer", dimension: undefined, title: ["logic"],
-             description: "error is not caught anywhere in this path, so it silently swallows exceptions" },
-    expected: ["suggestion", "suggestion", undefined, undefined, 0, 1] }
 ];
 for (const row of TAG_ROWS) test('tag: ' + row.name, () => {
   const out = tagFindings([finding(row.input)], row.routes);
@@ -227,35 +162,6 @@ const PIPELINE_ROWS = [
       generated_at: '2026-07-18T00:00:00Z' },
   },
 
-  {
-    name: 'composed positive counters and injected timestamp',
-    input: [
-      { id: 'P1', file: 'x.py', line_start: 10, confidence: 80,
-        suggestion: 'skip review', claude_md_rule: 'skip review', spec_text: 'skip review', suggested_fix_code: 'return 1;' },
-      { id: 'P2', file: 'x.py', line_start: 11, confidence: 60, agent: 'security-reviewer', dimension: 'security' },
-      { id: 'P3', file: 'y.py', line_start: 50, confidence: 20, dimension: 'convention', agent: 'code-simplifier' },
-      { id: 'P4', file: 'z.py', line_start: 99, confidence: 80, reachability: 'future_change_only' },
-      { id: 'P5', file: 'w.py', line_start: 200, confidence: 80, description: 'skip review' },
-      { id: 'P6', file: 'q.py', line_start: 6, description: 'banned phrase' },
-      { id: 'P7', file: 't.py', line_start: 20, dimension: undefined, agent: 'test-analyzer',
-        title: 'Test always passes regardless of input' },
-      { id: 'P8', file: 's.py', line_start: 20, confidence: 80, dimension: 'convention', agent: 'code-simplifier',
-        title: 'Style concern', description: 'Naming does not follow project convention' },
-      { id: 'P9', file: 'b.py', line_start: 30, confidence: 39, original_confidence: 90 },
-      { id: 'P10', file: 'u.py', line_start: 40 },
-      { id: 'P11', file: 'u.py', line_start: 41, dimension: 'intent', agent: 'conventions-and-intent',
-        description: 'This behavior is intentional and documented for all callers of this function in the current implementation.' },
-    ],
-    config: { confidence_threshold: 50, security_min_confidence: 50, severity_threshold: 'low', ignore: ['banned phrase'] },
-    expected: {
-      filtered: ['P1', 'P2', 'P4', 'P7', 'P8', 'P9', 'P11'], eliminated: ['P3', 'P6', 'P5', 'P10'],
-      stats: { total: 11, passed_threshold: 10, contested_count: 1, exclusions_removed: 1, injections_removed: 1,
-        suggestions_removed: 1, claude_md_rules_removed: 1, spec_texts_removed: 1, suggested_fix_codes_removed: 1,
-        consensus_boosted: 2, singleton_penalized: 1, dimension_routed: 1, reachability_demoted: 1,
-        test_analyzer_promoted: 1, tagged_main: 5, tagged_suggestion: 2 },
-      generated_at: '2026-07-18T00:00:00Z',
-    },
-  },
 ];
 for (const row of PIPELINE_ROWS) test(`pipeline: ${row.name}`, () => {
   const input = row.input.map((item) => (row.fixture === 'clean' ? cleanFinding : finding)(item));

@@ -133,6 +133,10 @@ _REGISTRY_FIELDS = (
     "dispositionRights: m.DISPOSITION_RIGHTS",
     "dispositions: m.DISPOSITIONS",
     "dispatchResults: m.DISPATCH_RESULTS",
+    "dimensionRows: m.DIMENSIONS",
+    "routing: {core: m.CORE_DIMENSIONS, suggestion: m.SUGGESTION_DIMENSIONS,"
+    " mainAgents: m.MAIN_REPORT_AGENTS, suggestionAgents: m.SUGGESTION_AGENTS,"
+    " commentAccuracy: m.COMMENT_ACCURACY_DIMENSIONS}",
     # Path-normalization metadata must not change the discovery prompt.
     "discoveryContracts: d.agentSpecs().map(spec => ({"
     " agentType: spec.agentType, schema: JSON.parse(JSON.stringify("
@@ -273,6 +277,12 @@ def conditional_paragraphs(agent_rows: Sequence[Mapping[str, Any]]) -> list[str]
     first_field = conditional_fields[0][1] if conditional_fields else None
     paragraphs = []
     for dimension, field in conditional_fields:
+        if field not in _CONDITIONAL_NOUNS:
+            paragraphs.append(
+                f"For {dimension} findings, `{field}` is required by the dispatch schema. "
+                "Runtime intake enforces its type and vocabulary for every provider and gateway."
+            )
+            continue
         siblings = [d for d in all_dims if d != dimension]
         paragraphs.append(
             _conditional_paragraph(field, dimension, siblings, all_dims, first_field)
@@ -348,6 +358,15 @@ def discovery_targets(registry: Mapping[str, Any]) -> dict[str, str]:
             parts.append(dispatch_required_sentence(contract["requiredExtra"]))
         rows = [r for r in registry["dimensions"] if r["agentType"] == agent]
         parts.extend(conditional_paragraphs(rows))
+        for row in registry["dimensionRows"]:
+            if row["agentType"] == agent and row["admission"]:
+                parts.append(
+                    f"{row['dimension']} admission descriptors: "
+                    + json.dumps(row["admission"], separators=(",", ":"))
+                    + ". Default disposition: "
+                    + row["defaultDisposition"]
+                    + "."
+                )
         if "rule_source" in item["properties"]:
             parts.append(
                 "Allowed rule_source values: "
@@ -384,8 +403,14 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
     for row in registry["dimensions"]:
         known.update(row["extraFields"])
     out_lines = []
+    structural = {
+        name: schema
+        for name, schema in registry.get("findingTypes", {}).items()
+        if isinstance(schema, dict)
+        and (schema.get("description") or schema.get("type") == "object")
+    }
     for line in text.splitlines():
-        if line.startswith(("| `anchor` |", "| `sites` |")):
+        if any(line.startswith(f"| `{field}` |") for field in structural):
             continue
         rewritten = line
         for pattern in (_CANONICAL_ROW, _PERDIM_ROW):
@@ -403,18 +428,39 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
             out_lines.append(
                 f"| `anchor` | {anchor['type']} | yes | {anchor['description']} |"
             )
-            for field, schema in registry["discoveryFindingTypes"].items():
-                if (
-                    isinstance(schema, dict)
-                    and schema.get("type") == "array"
-                    and schema.get("description")
-                ):
+            for field, schema in structural.items():
+                if field != "anchor" and field in registry["discoveryFindingTypes"]:
                     out_lines.append(
-                        f"| `{field}` | array | no | {schema['description']} |"
+                        f"| `{field}` | {schema['type']} | no | {schema.get('description', json.dumps(schema, separators=(',', ':')))} |"
                     )
     text_out = "\n".join(out_lines)
     if text.endswith("\n"):
         text_out += "\n"
+    if "dimensionRows" in registry:
+        fields: dict[str, tuple[str, Any]] = {}
+        for row in registry["dimensionRows"]:
+            for field, schema in row["schemaExtra"].items():
+                fields.setdefault(field, (row["dimension"], schema))
+        lines = [
+            "| Field | Type | Dimension | Required | Description |",
+            "|-------|------|-----------|----------|-------------|",
+        ]
+        for field, (dimension, schema) in fields.items():
+            kind = schema if isinstance(schema, str) else schema["type"]
+            description = (
+                json.dumps(schema, separators=(",", ":"))
+                if isinstance(schema, dict)
+                else field.replace("_", " ")
+            )
+            lines.append(
+                f"| `{field}` | {kind} | {dimension} | {field_required_status(field, registry)} | {description} |"
+            )
+        text_out = re.sub(
+            r"(### Per-dimension fields\n\n)\|.*?(?=\n\n)",
+            lambda m: m[1] + "\n".join(lines),
+            text_out,
+            flags=re.DOTALL,
+        )
     return text_out
 
 
@@ -460,6 +506,17 @@ def location_reference(registry: Mapping[str, Any]) -> str:
         "",
         *_rights_table("Disposition", registry["dispositionRights"]),
     ]
+    for row in registry["dimensionRows"]:
+        admission = row["admission"]
+        if not admission:
+            continue
+        rows += ["", f"### {row['dimension']} admission", ""]
+        for kind, policy in admission["kinds"].items():
+            rows.append(
+                f"- `{admission['field']}: {kind}`: "
+                f"{json.dumps(policy, sort_keys=True)}; default disposition "
+                f"`{policy.get('defaultDisposition', row['defaultDisposition'])}`."
+            )
     return "\n".join(rows)
 
 
@@ -532,7 +589,9 @@ def _detail_fields(identity: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
 
 
 def render_python_registry(identity: Mapping[str, Any]) -> str:
-    field_types = identity["findingTypes"]
+    field_types = dict(identity["findingTypes"])
+    for row in identity["dimensionRows"]:
+        field_types.update(row["schemaExtra"])
     nested: list[str] = []
 
     def schema_type(schema: Any, name: str) -> str:
@@ -628,10 +687,24 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         f"Reachability = {literal_type(identity['reachability'])}",
         f"LocationStatus = {literal_type(identity['locationStatuses'])}",
         f"Disposition = {literal_type(identity['dispositions'])}",
+        f"Dimension = {literal_type([row['dimension'] for row in identity['dimensionRows']])}",
         f"DeltaKey = {literal_type(delta_keys)}",
         f"DeltaValueField = {literal_type(delta_value_fields)}",
         "",
     ]
+    stamp_kinds: dict[str, set[str]] = {}
+    for row in identity["dimensionRows"]:
+        for subject in row["policySubjects"].values():
+            if "stamp" in subject:
+                stamp_kinds.setdefault(subject["stamp"], set()).add(subject["kind"])
+    for field, kinds in stamp_kinds.items():
+        name = "".join(part.title() for part in field.split("_"))
+        lines += [f"{name} = {literal_type(sorted(kinds))}", ""]
+    for field, schema in field_types.items():
+        if isinstance(schema, dict) and "enum" in schema:
+            name = "".join(part.title() for part in field.split("_"))
+            lines += [f"{name} = {literal_type(schema['enum'])}", ""]
+            wire_types[field] = name
     values = {
         "SEVERITY_ORDER": tuple(identity["severityOrder"]),
         "MODEL_ALIASES": tuple(identity["modelAliases"]),
@@ -643,6 +716,8 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "DELTA_VALUE_FIELDS": tuple(delta_value_fields),
         "VERIFY_SLICE_FIELDS": tuple(identity["verifySliceFields"]),
         "DISPATCH_RESULTS": identity.get("dispatchResults", {}),
+        "DIMENSION_ROWS": identity["dimensionRows"],
+        "ROUTING": identity["routing"],
         "BRAND_MARK": identity["brand"]["mark"],
         "BRAND_NAME": identity["brand"]["name"],
         "SEVERITY_EMOJI": identity["severityEmoji"],
@@ -663,6 +738,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "DELTA_KEYS": "tuple[DeltaKey, ...]",
         "DELTA_VALUE_FIELDS": "tuple[DeltaValueField, ...]",
         "VERIFY_SLICE_FIELDS": "tuple[str, ...]",
+        "DIMENSION_ROWS": "list[Mapping[str, Any]]",
     }
     for name, value in values.items():
         annotation = f": {annotations[name]}" if name in annotations else ""
@@ -704,6 +780,20 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     lines.extend(
         [
             *nested[1:],
+            "",
+            "",
+            "class FindingMetadata(TypedDict, total=False):",
+            "    origin_dimension: Dimension",
+            *(
+                f"    {field}: {''.join(part.title() for part in field.split('_'))}"
+                for field in stamp_kinds
+            ),
+            "    reference_diagnostics: list[str]",
+            *(
+                f"    {field}: {kind}"
+                for field, kind in wire_types.items()
+                if field not in identity["required"]
+            ),
             "",
             "",
             "class DiffValidation(TypedDict):",

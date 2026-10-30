@@ -16,6 +16,116 @@ import { applyChallenges } from '../src/applyChallenges.js';
 import { renderReport, renderSummaryBody } from '../src/renderReport.js';
 import { writeArtifacts } from '../src/persist.js';
 import { deltaContentProof } from '../src/verifyWire.js';
+import { mergeStage } from '../src/mergeFindings.js';
+import { filterStage } from '../src/reviewStages.js';
+import { DIMENSIONS as DIMENSION_ROWS } from '../src/registry.js';
+import { normalizeFindingPaths } from '../src/mergeFindings.js';
+import { normalizePhaseFindings } from '../src/checkpoints.js';
+
+test('kind routing preserves origin and core ranking', async () => {
+  const raw = [
+    ['production', 'test_coverage', { test_kind: 'production_defect', criticality: 9, failure_scenario: 'Failure' }],
+    ['quality', 'type_design', { quality_basis: 'current_correctness' }],
+    ['simplify', 'simplification', { quality_basis: 'current_correctness', behavior_preserved: 'Unchanged' }],
+    ['other', 'type_design', { quality_basis: 'other', title: 'Runtime null pointer type error' }],
+    ['extra', 'test_coverage', { test_kind: 'additional_case', criticality: 9, failure_scenario: 'Failure', title: 'Race condition always passes' }],
+    ['convention', 'convention', { claude_md_rule: 'A rule', title: 'Incorrect result' }],
+    ['comment', 'documentation', {}],
+  ].map(([id, dimension, extra], index) => makeFinding(id, { dimension, file: `${id}.txt`, line_start: index + 1,
+    agent: dimension === 'test_coverage' ? 'test-analyzer' : dimension === 'simplification' ? 'code-simplifier'
+      : dimension === 'type_design' ? 'type-design-analyzer' : 'conventions-and-intent', confidence: 80,
+    title: 'A grounded observation', origin_dimension: 'security', effective_test_kind: 'defective_test', ...extra }));
+  const merged = mergeStage({ findings: raw }, {});
+  const out = filterStage({ findings: merged.findings, reviewConfig: { confidence_threshold: 70 } });
+  const byId = Object.fromEntries(out.filtered.map((f) => [f.id, f]));
+  for (const id of ['production', 'quality', 'simplify']) {
+    assert.ok(byId[id], `${id} must survive the configured threshold`);
+    assert.equal(byId[id].confidence, 80);
+    assert.equal(byId[id].singleton_penalty, undefined);
+    assert.equal(byId[id].report_destination, 'main');
+    assert.equal(byId[id].effective_test_kind, undefined);
+  }
+  assert.equal(byId.production.dimension, 'bug');
+  assert.equal(byId.production.origin_dimension, 'test_coverage');
+  assert.equal(byId.production.agent, 'test-analyzer');
+  assert.equal(byId.production.test_kind, 'production_defect');
+  assert.equal(byId.quality.dimension, 'type_design');
+  assert.equal(byId.simplify.dimension, 'simplification');
+  assert.deepEqual(out.eliminated.map((f) => f.id), ['extra', 'other', 'convention', 'comment']);
+  const routed = filterStage({ findings: merged.findings.map((f) => ({ ...f, confidence: 95 })), reviewConfig: { confidence_threshold: 70 } });
+  assert.equal(routed.filtered.find((f) => f.id === 'other').report_destination, 'suggestion');
+  assert.equal(routed.filtered.find((f) => f.id === 'extra').report_destination, 'suggestion');
+  assert.equal(routed.filtered.find((f) => f.id === 'convention').report_destination, 'main');
+  assert.equal(routed.filtered.find((f) => f.id === 'comment').report_destination, 'suggestion');
+  assert.equal(out.stats.test_analyzer_promoted, 1);
+  const persisted = await runAndCapture(validArgs({ checkpoints: { challenge: challengeOutput({ findings: merged.findings }) } }));
+  const promotion = persisted.payload.findings.find((f) => f.id === 'production');
+  assert.equal(promotion.origin_dimension, 'test_coverage');
+  assert.equal(promotion.test_kind, 'production_defect');
+  assert.equal(promotion.agent, 'test-analyzer');
+  assert.equal(promotion.disposition, 'held_back');
+  const replayed = { findings: [{ ...promotion, effective_test_kind: 'defective_test' }] };
+  normalizePhaseFindings('challenge', replayed, true, { repoRoot: '/repo' });
+  assert.equal(replayed.findings[0].origin_dimension, 'test_coverage');
+  assert.equal(replayed.findings[0].effective_test_kind, 'defective_test');
+  const forged = { findings: [{ ...promotion, origin_dimension: 'security', effective_test_kind: 'additional_case' }] };
+  normalizePhaseFindings('challenge', forged, true, { repoRoot: '/repo' });
+  assert.equal(forged.findings[0].origin_dimension, undefined);
+  assert.equal(forged.findings[0].effective_test_kind, undefined);
+  const reference = { file: '/repo/source', line_start: 1, line_end: 1, anchor: '@structural quote' };
+  const nested = normalizeFindingPaths([makeFinding('refs', { file: 'source', searched_paths: ['/repo/tests', '../escape'],
+    duplicate_of: reference, candidate_tests: [{ ...reference, input: 'input', assertion: 'assertion' }],
+    precedent: { ...reference, file: '../escape' }, production_element: reference })], '/repo');
+  assert.deepEqual(nested.valid[0].searched_paths, ['tests']);
+  assert.equal(nested.valid[0].duplicate_of.file, 'source');
+  assert.equal(nested.valid[0].candidate_tests[0].anchor, '@structural quote');
+  assert.equal(nested.valid[0].production_element.file, 'source');
+  assert.equal(nested.valid[0].precedent, undefined);
+  assert.equal(nested.valid[0].reference_diagnostics.length, 2);
+  const contested = filterStage({ findings: [70, 75].map((confidence) => makeFinding(`drop-${confidence}`, {
+    dimension: 'type_design', quality_basis: 'other', file: `drop-${confidence}.txt`, confidence, original_confidence: 100,
+  })), reviewConfig: { confidence_threshold: 70 } });
+  assert.deepEqual(contested.filtered.map((f) => [f.id, f.contested]), [['drop-70', true]]);
+  assert.deepEqual(contested.eliminated.map((f) => f.id), ['drop-75']);
+  assert.equal(contested.stats.contested_count, 1);
+  for (const witness of [{ confidence: 60 }, { confidence: 95, description: 'banned phrase' }]) {
+    const eligible = filterStage({ findings: [makeFinding('eligible', { file: 'witness.txt', confidence: 75 }),
+      makeFinding('witness', { file: 'witness.txt', agent: 'security-reviewer', ...witness })],
+    reviewConfig: { confidence_threshold: 70, ignore: ['banned phrase'] } });
+    assert.deepEqual(eligible.filtered.map((f) => [f.id, f.confidence]), [['eligible', 75]]);
+    assert.equal(eligible.stats.consensus_boosted, 0);
+  }
+});
+
+test('PR 1 cannot deliver an unadmitted test kind', () => {
+  const records = DIMENSION_ROWS.filter((row) => row.admission).flatMap((row) =>
+    [undefined, ...Object.keys(row.admission.kinds)].map((kind) => makeFinding(`${row.dimension}:${kind}`, {
+      dimension: kind && row.admission.kinds[kind].dimension || row.dimension, origin_dimension: row.dimension,
+      [row.admission.field]: kind, report_destination: 'main', disposition: 'deliver',
+      verified: true, validation: 'validated', challenge: 'survived',
+    })));
+  const out = disposeFindings({ findings: records });
+  for (const finding of [...out.findings, ...out.unverified]) {
+    const row = DIMENSION_ROWS.find((r) => r.dimension === finding.origin_dimension);
+    const reportOnly = row.admission.kinds[finding[row.admission.field]]?.defaultDisposition === 'report_only';
+    assert.equal(finding.disposition, reportOnly ? 'report_only' : 'held_back');
+    assert.ok(finding.disposition_reasons.includes(finding.disposition));
+  }
+  assert.equal(out.findings.length, 3);
+  const legacy = disposeFindings({ findings: [
+    makeFinding('promoted-legacy', { dimension: 'bug', test_kind: 'production_defect' }),
+    makeFinding('producer-legacy', { dimension: 'unknown', agent: 'test-analyzer' }),
+    makeFinding('missing-dimension', { dimension: undefined, agent: 'test-analyzer' }),
+    makeFinding('forged-origin', { dimension: 'bug', origin_dimension: 'bug', agent: 'test-analyzer' }),
+    makeFinding('forged-promotion', { dimension: 'bug', origin_dimension: 'bug', test_kind: 'production_defect' }),
+    makeFinding('removed-legacy', { dimension: 'test_coverage', removed_test: { id: 'loss' } }),
+  ] });
+  assert.equal(legacy.findings.length, 0);
+  assert.equal(legacy.unverified.length, 6);
+  const incomplete = disposeFindings({ findings: [{ ...records[0], origin: 'unknown', validation: 'skipped' }] });
+  assert.ok(incomplete.unverified[0].disposition_reasons.includes('verify_unproven'));
+  assert.ok(incomplete.unverified[0].disposition_reasons.includes('validation_skipped'));
+});
 
 const PHASES = ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'];
 const DISCOVERY = [
@@ -31,14 +141,14 @@ test('whole issue groups reach every artifact', async (t) => {
   const site = (n) => ({ file: `site-${n}.txt`, line_start: n, line_end: n, anchor: 'quote', location_status: 'confirmed', diff_validation: { in_diff: true } });
   const member = (id, over = {}) => makeFinding(id, { agent: 'bug-detector', report_tag: 'main', ...over });
   const raw = challengeOutput({ findings: [
-    member('SUGGESTION', { file: 'group.txt', dimension: 'test_coverage', agent: 'test-analyzer', confidence: 99, report_tag: 'suggestion' }),
+    member('SUGGESTION', { file: 'group.txt', dimension: 'comment_accuracy', agent: 'conventions-and-intent', confidence: 99, report_tag: 'suggestion' }),
     member('CORE-LOW', { file: 'group.txt', agent: 'security-reviewer', dimension: 'security', confidence: 80 }),
     member('CORE', { file: 'group.txt', confidence: 85, sites: [1, 2, 3, 4].map(site) }),
     member('SAME-A', { file: 'same.txt', confidence: 70 }), member('SAME-B', { file: 'same.txt', confidence: 65 }),
     member('STALE', { confidence: 60, consolidation_key: 'old', consolidation_primary: false,
       delivery_group: { issue_key: 'old', lead_id: 'gone', finding_ids: ['gone', 'STALE'] } }),
     member('OFF', { file: 'anchor.txt', confidence: 100, diff_validation: { in_diff: false } }),
-    member('ANCHOR', { file: 'anchor.txt', confidence: 75, agent: 'test-analyzer', dimension: 'test_coverage', report_tag: 'suggestion' }),
+    member('ANCHOR', { file: 'anchor.txt', confidence: 75, agent: 'conventions-and-intent', dimension: 'comment_accuracy', report_tag: 'suggestion' }),
     member('BODY', { diff_validation: { in_diff: false }, confidence: 99 }),
     member('BODY-SUGGESTION', { diff_validation: { in_diff: false }, report_tag: 'suggestion' }),
     member('UNRELATED', { title: 'finding CORE', confidence: 55 }),
@@ -81,14 +191,14 @@ test('whole issue groups reach every artifact', async (t) => {
   await t.test('removed primary leaves an independent issue', async () => {
   const orphan = applyChallenges([
     member('REMOVED', { file: 'orphan.txt', consolidation_key: 'old', consolidation_primary: true }),
-    member('ORPHAN', { file: 'orphan.txt', agent: 'test-analyzer', consolidation_key: 'old' }),
+    member('ORPHAN', { file: 'orphan.txt', agent: 'security-reviewer', consolidation_key: 'old' }),
   ], [{ id: 'REMOVED', score: 0 }, { id: 'ORPHAN', score: 90 }]);
   const orphanRun = await runAndCapture(validArgs({ checkpoints: { challenge: challengeOutput(orphan) } }));
   assert.deepEqual(orphanRun.payload.postReview.map((f) => f.delivery_group.finding_ids), [['ORPHAN']]);
   assert.equal(orphanRun.payload.postReview[0].consolidation_key, undefined);
   });
   const idless = disposeFindings({ findings: [member(undefined, { file: 'idless.txt', confidence: 100 }),
-    member('HAS-ID', { file: 'idless.txt', confidence: 50, agent: 'test-analyzer' })] });
+    member('HAS-ID', { file: 'idless.txt', confidence: 50, agent: 'security-reviewer' })] });
   assert.equal(idless.findings.find((f) => f.id === 'HAS-ID').consolidation_primary, true);
   const freshArgs = validArgs();
   let freshPayload;

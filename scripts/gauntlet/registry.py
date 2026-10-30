@@ -10,6 +10,17 @@ PolicyProvider = Literal["firstParty", "bedrock", "vertex", "foundry"]
 Reachability = Literal["current", "future_change_only", "uncertain"]
 LocationStatus = Literal["confirmed", "relocated", "unconfirmed"]
 Disposition = Literal["deliver", "body", "held_back", "report_only", "eliminate"]
+Dimension = Literal[
+    "bug",
+    "security",
+    "cross_file_impact",
+    "test_coverage",
+    "convention",
+    "intent",
+    "comment_accuracy",
+    "type_design",
+    "simplification",
+]
 DeltaKey = Literal[
     "id",
     "verified",
@@ -33,6 +44,20 @@ DeltaValueField = Literal[
     "location_status",
     "diff_validation",
     "resolved_sites",
+]
+
+EffectiveTestKind = Literal["defective_test"]
+
+TestKind = Literal[
+    "defective_test", "critical_gap", "production_defect", "additional_case"
+]
+
+QualityBasis = Literal[
+    "current_correctness",
+    "duplication",
+    "simpler_equivalent",
+    "stack_idiom",
+    "other",
 ]
 
 SEVERITY_ORDER: tuple[Severity, ...] = ("critical", "high", "medium", "low")
@@ -214,6 +239,509 @@ DISPATCH_RESULTS = {
     },
 }
 
+DIMENSION_ROWS: list[Mapping[str, Any]] = [
+    {
+        "core": True,
+        "defaultDisposition": "deliver",
+        "defaultTier": "main",
+        "aliases": [],
+        "admission": None,
+        "dimension": "bug",
+        "agentType": "code-gauntlet:bug-detector",
+        "conditionalFlag": None,
+        "schemaExtra": {
+            "hidden_errors": "string",
+        },
+        "requiredExtra": [],
+        "requiredWhenDimension": [],
+        "modelOverride": None,
+        "promptExtra": None,
+        "policySubjects": {
+            "test_defect": {
+                "dimension": "test_coverage",
+                "kind": "defective_test",
+                "stamp": "effective_test_kind",
+            },
+            "coverage": {
+                "dimension": "test_coverage",
+                "kind": "critical_gap",
+            },
+            "ordinary": {
+                "original": True,
+            },
+            "unresolved": {
+                "defaultDisposition": "held_back",
+            },
+        },
+    },
+    {
+        "core": True,
+        "defaultDisposition": "deliver",
+        "defaultTier": "main",
+        "aliases": [],
+        "admission": None,
+        "dimension": "security",
+        "agentType": "code-gauntlet:security-reviewer",
+        "conditionalFlag": None,
+        "schemaExtra": {
+            "attack_vector": "string",
+        },
+        "requiredExtra": ["attack_vector"],
+        "requiredWhenDimension": [],
+        "modelOverride": "opus",
+        "promptExtra": None,
+        "policySubjects": {
+            "test_defect": {
+                "dimension": "test_coverage",
+                "kind": "defective_test",
+                "stamp": "effective_test_kind",
+            },
+            "coverage": {
+                "dimension": "test_coverage",
+                "kind": "critical_gap",
+            },
+            "ordinary": {
+                "original": True,
+            },
+            "unresolved": {
+                "defaultDisposition": "held_back",
+            },
+        },
+    },
+    {
+        "core": True,
+        "defaultDisposition": "deliver",
+        "defaultTier": "main",
+        "aliases": [],
+        "admission": None,
+        "dimension": "cross_file_impact",
+        "agentType": "code-gauntlet:cross-file-impact",
+        "conditionalFlag": "deep",
+        "schemaExtra": {
+            "affected_consumers": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "$comment": "repo-path",
+                },
+            },
+        },
+        "requiredExtra": ["affected_consumers"],
+        "requiredWhenDimension": [],
+        "modelOverride": None,
+        "promptExtra": None,
+        "policySubjects": {
+            "test_defect": {
+                "dimension": "test_coverage",
+                "kind": "defective_test",
+                "stamp": "effective_test_kind",
+            },
+            "coverage": {
+                "dimension": "test_coverage",
+                "kind": "critical_gap",
+            },
+            "ordinary": {
+                "original": True,
+            },
+            "unresolved": {
+                "defaultDisposition": "held_back",
+            },
+        },
+    },
+    {
+        "core": False,
+        "defaultDisposition": "held_back",
+        "defaultTier": "main",
+        "aliases": [],
+        "admission": {
+            "field": "test_kind",
+            "kinds": {
+                "defective_test": {
+                    "required": [],
+                    "predicates": [
+                        "pr_owned_test",
+                        "confirmed_test_defect",
+                        "test_diff_site_for_inline",
+                    ],
+                    "phase": "semantic",
+                    "tier": "main",
+                },
+                "critical_gap": {
+                    "required": [
+                        "criticality",
+                        "failure_scenario",
+                        "searched_paths",
+                        "candidate_tests",
+                    ],
+                    "predicates": [
+                        "criticality_at_least_8",
+                        "resolved_production_element",
+                        "complete_searches",
+                        "complete_behavioral_absence",
+                    ],
+                    "phase": "semantic",
+                    "tier": "main",
+                },
+                "production_defect": {
+                    "required": [],
+                    "predicates": ["present_defect"],
+                    "phase": "semantic",
+                    "dimension": "bug",
+                    "core": True,
+                    "tier": "main",
+                },
+                "additional_case": {
+                    "required": [],
+                    "predicates": [],
+                    "phase": "deterministic",
+                    "defaultDisposition": "report_only",
+                    "tier": "suggestion",
+                },
+            },
+        },
+        "dimension": "test_coverage",
+        "agentType": "code-gauntlet:test-analyzer",
+        "conditionalFlag": "deep",
+        "schemaExtra": {
+            "criticality": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 10,
+            },
+            "failure_scenario": "string",
+            "test_kind": {
+                "type": "string",
+                "enum": [
+                    "defective_test",
+                    "critical_gap",
+                    "production_defect",
+                    "additional_case",
+                ],
+            },
+        },
+        "requiredExtra": ["criticality", "failure_scenario"],
+        "requiredWhenDimension": ["test_kind"],
+        "modelOverride": None,
+        "promptExtra": None,
+        "policySubjects": {
+            "test_defect": {
+                "dimension": "test_coverage",
+                "kind": "defective_test",
+                "stamp": "effective_test_kind",
+            },
+            "coverage": {
+                "dimension": "test_coverage",
+                "kind": "critical_gap",
+            },
+            "ordinary": {
+                "original": True,
+            },
+            "unresolved": {
+                "defaultDisposition": "held_back",
+            },
+        },
+    },
+    {
+        "core": False,
+        "defaultDisposition": "deliver",
+        "defaultTier": "main",
+        "aliases": [],
+        "admission": None,
+        "dimension": "convention",
+        "agentType": "code-gauntlet:conventions-and-intent",
+        "conditionalFlag": "deep",
+        "functionalRouting": True,
+        "agentFallback": True,
+        "schemaExtra": {
+            "rule_source": "string",
+        },
+        "requiredExtra": [],
+        "requiredWhenDimension": ["claude_md_rule"],
+        "modelOverride": None,
+        "promptExtra": None,
+        "policySubjects": {
+            "test_defect": {
+                "dimension": "test_coverage",
+                "kind": "defective_test",
+                "stamp": "effective_test_kind",
+            },
+            "coverage": {
+                "dimension": "test_coverage",
+                "kind": "critical_gap",
+            },
+            "ordinary": {
+                "original": True,
+            },
+            "unresolved": {
+                "defaultDisposition": "held_back",
+            },
+        },
+    },
+    {
+        "core": True,
+        "defaultDisposition": "deliver",
+        "defaultTier": "main",
+        "aliases": [],
+        "admission": None,
+        "dimension": "intent",
+        "agentType": "code-gauntlet:conventions-and-intent",
+        "conditionalFlag": "deep",
+        "schemaExtra": {
+            "spec_text": "string",
+        },
+        "requiredExtra": [],
+        "requiredWhenDimension": ["spec_text"],
+        "modelOverride": None,
+        "promptExtra": None,
+        "policySubjects": {
+            "test_defect": {
+                "dimension": "test_coverage",
+                "kind": "defective_test",
+                "stamp": "effective_test_kind",
+            },
+            "coverage": {
+                "dimension": "test_coverage",
+                "kind": "critical_gap",
+            },
+            "ordinary": {
+                "original": True,
+            },
+            "unresolved": {
+                "defaultDisposition": "held_back",
+            },
+        },
+    },
+    {
+        "core": False,
+        "defaultDisposition": "deliver",
+        "defaultTier": "suggestion",
+        "aliases": ["comment-accuracy", "documentation", "doc-accuracy"],
+        "admission": None,
+        "dimension": "comment_accuracy",
+        "agentType": "code-gauntlet:conventions-and-intent",
+        "conditionalFlag": "deep",
+        "schemaExtra": {},
+        "requiredExtra": [],
+        "requiredWhenDimension": [],
+        "modelOverride": None,
+        "promptExtra": None,
+        "policySubjects": {
+            "test_defect": {
+                "dimension": "test_coverage",
+                "kind": "defective_test",
+                "stamp": "effective_test_kind",
+            },
+            "coverage": {
+                "dimension": "test_coverage",
+                "kind": "critical_gap",
+            },
+            "ordinary": {
+                "original": True,
+            },
+            "unresolved": {
+                "defaultDisposition": "held_back",
+            },
+        },
+    },
+    {
+        "core": False,
+        "defaultDisposition": "held_back",
+        "defaultTier": "suggestion",
+        "aliases": [],
+        "admission": {
+            "field": "quality_basis",
+            "kinds": {
+                "current_correctness": {
+                    "required": [],
+                    "predicates": ["present_defect"],
+                    "phase": "semantic",
+                    "core": True,
+                    "tier": "main",
+                },
+                "duplication": {
+                    "required": ["duplicate_of"],
+                    "predicates": ["resolved_duplicate", "confirmed_duplication"],
+                    "phase": "semantic",
+                    "tier": "suggestion",
+                },
+                "simpler_equivalent": {
+                    "required": ["behavior_preserved"],
+                    "anyOf": ["suggestion", "suggested_fix_code"],
+                    "predicates": ["concrete_equivalent", "behavior_preserved"],
+                    "phase": "semantic",
+                    "tier": "suggestion",
+                },
+                "stack_idiom": {
+                    "required": ["precedent"],
+                    "predicates": [
+                        "resolved_precedent",
+                        "precedent_not_added",
+                        "applicable",
+                    ],
+                    "phase": "semantic",
+                    "tier": "suggestion",
+                },
+                "other": {
+                    "required": [],
+                    "predicates": [],
+                    "phase": "deterministic",
+                    "defaultDisposition": "report_only",
+                    "tier": "suggestion",
+                },
+            },
+        },
+        "dimension": "type_design",
+        "agentType": "code-gauntlet:type-design-analyzer",
+        "conditionalFlag": "deep",
+        "schemaExtra": {
+            "invalid_state_example": "string",
+            "quality_basis": {
+                "type": "string",
+                "enum": [
+                    "current_correctness",
+                    "duplication",
+                    "simpler_equivalent",
+                    "stack_idiom",
+                    "other",
+                ],
+            },
+            "behavior_preserved": "string",
+        },
+        "requiredExtra": [],
+        "requiredWhenDimension": ["quality_basis"],
+        "modelOverride": None,
+        "promptExtra": None,
+        "policySubjects": {
+            "test_defect": {
+                "dimension": "test_coverage",
+                "kind": "defective_test",
+                "stamp": "effective_test_kind",
+            },
+            "coverage": {
+                "dimension": "test_coverage",
+                "kind": "critical_gap",
+            },
+            "ordinary": {
+                "original": True,
+            },
+            "unresolved": {
+                "defaultDisposition": "held_back",
+            },
+        },
+    },
+    {
+        "core": False,
+        "defaultDisposition": "held_back",
+        "defaultTier": "suggestion",
+        "aliases": [],
+        "admission": {
+            "field": "quality_basis",
+            "kinds": {
+                "current_correctness": {
+                    "required": [],
+                    "predicates": ["present_defect"],
+                    "phase": "semantic",
+                    "core": True,
+                    "tier": "main",
+                },
+                "duplication": {
+                    "required": ["duplicate_of"],
+                    "predicates": ["resolved_duplicate", "confirmed_duplication"],
+                    "phase": "semantic",
+                    "tier": "suggestion",
+                },
+                "simpler_equivalent": {
+                    "required": ["behavior_preserved"],
+                    "anyOf": ["suggestion", "suggested_fix_code"],
+                    "predicates": ["concrete_equivalent", "behavior_preserved"],
+                    "phase": "semantic",
+                    "tier": "suggestion",
+                },
+                "stack_idiom": {
+                    "required": ["precedent"],
+                    "predicates": [
+                        "resolved_precedent",
+                        "precedent_not_added",
+                        "applicable",
+                    ],
+                    "phase": "semantic",
+                    "tier": "suggestion",
+                },
+                "other": {
+                    "required": [],
+                    "predicates": [],
+                    "phase": "deterministic",
+                    "defaultDisposition": "report_only",
+                    "tier": "suggestion",
+                },
+            },
+        },
+        "dimension": "simplification",
+        "agentType": "code-gauntlet:code-simplifier",
+        "conditionalFlag": "deep",
+        "schemaExtra": {
+            "behavior_preserved": "string",
+            "quality_basis": {
+                "type": "string",
+                "enum": [
+                    "current_correctness",
+                    "duplication",
+                    "simpler_equivalent",
+                    "stack_idiom",
+                    "other",
+                ],
+            },
+        },
+        "requiredExtra": [],
+        "requiredWhenDimension": ["quality_basis"],
+        "modelOverride": None,
+        "promptExtra": None,
+        "policySubjects": {
+            "test_defect": {
+                "dimension": "test_coverage",
+                "kind": "defective_test",
+                "stamp": "effective_test_kind",
+            },
+            "coverage": {
+                "dimension": "test_coverage",
+                "kind": "critical_gap",
+            },
+            "ordinary": {
+                "original": True,
+            },
+            "unresolved": {
+                "defaultDisposition": "held_back",
+            },
+        },
+    },
+]
+
+ROUTING = {
+    "core": ["bug", "security", "cross_file_impact", "intent"],
+    "suggestion": [
+        "comment_accuracy",
+        "comment-accuracy",
+        "documentation",
+        "doc-accuracy",
+        "type_design",
+        "simplification",
+    ],
+    "mainAgents": [
+        "bug-detector",
+        "security-reviewer",
+        "cross-file-impact",
+        "test-analyzer",
+        "conventions-and-intent",
+    ],
+    "suggestionAgents": ["type-design-analyzer", "code-simplifier"],
+    "commentAccuracy": [
+        "comment_accuracy",
+        "comment-accuracy",
+        "documentation",
+        "doc-accuracy",
+    ],
+}
+
 BRAND_MARK = "⚔️"
 
 BRAND_NAME = "Code Gauntlet"
@@ -250,12 +778,12 @@ DETAIL_FIELDS_BY_DIMENSION = {
     "bug": ("hidden_errors",),
     "security": ("attack_vector",),
     "cross_file_impact": ("affected_consumers",),
-    "test_coverage": ("criticality", "failure_scenario"),
+    "test_coverage": ("criticality", "failure_scenario", "test_kind"),
     "convention": ("rule_source", "claude_md_rule"),
     "intent": ("spec_text",),
     "comment_accuracy": (),
-    "type_design": ("invalid_state_example",),
-    "simplification": ("behavior_preserved",),
+    "type_design": ("invalid_state_example", "quality_basis", "behavior_preserved"),
+    "simplification": ("behavior_preserved", "quality_basis"),
 }
 
 KNOB_REGISTRY = (
@@ -613,6 +1141,36 @@ DISPOSITION_RIGHTS: Mapping[Disposition, Mapping[str, bool | str]] = MappingProx
 )
 
 
+class CandidateTestsItem(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    anchor: str
+    input: str
+    assertion: str
+
+
+class ProductionElement(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    anchor: str
+
+
+class DuplicateOf(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    anchor: str
+
+
+class Precedent(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    anchor: str
+
+
 class SitesItem(TypedDict):
     file: str
     line_start: int
@@ -644,6 +1202,37 @@ class SiteConfirmationsItem(TypedDict):
     line_start: int
     line_end: int
     confirmed: bool
+
+
+class FindingMetadata(TypedDict, total=False):
+    origin_dimension: Dimension
+    effective_test_kind: EffectiveTestKind
+    reference_diagnostics: list[str]
+    line_end: float
+    origin: str
+    evidence: str
+    anchor: str
+    suggestion: str
+    claude_md_rule: str
+    suggested_fix_code: str
+    cross_file_refs: list[str]
+    searched_paths: list[str]
+    candidate_tests: list[CandidateTestsItem]
+    production_element: ProductionElement
+    duplicate_of: DuplicateOf
+    precedent: Precedent
+    sites: list[SitesItem]
+    hidden_errors: str
+    attack_vector: str
+    affected_consumers: list[str]
+    criticality: float
+    failure_scenario: str
+    test_kind: TestKind
+    rule_source: str
+    spec_text: str
+    invalid_state_example: str
+    quality_basis: QualityBasis
+    behavior_preserved: str
 
 
 class DiffValidation(TypedDict):

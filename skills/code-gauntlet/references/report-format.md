@@ -79,6 +79,12 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `origin` | string | no | Blame classification stamped by `scripts/verify_findings.py` — the one canonical field no agent emits. |
 | `evidence` | string | no | Code snippet or behavior demonstrating the issue. Required by the discovery PROMPT (must be non-empty) though schema-optional. |
 | `anchor` | string | yes | Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters. |
+| `searched_paths` | array | no | Repository files or directories searched for coverage. |
+| `candidate_tests` | array | no | Inspected tests, including their input and assertion. |
+| `production_element` | object | no | {"type":"object","properties":{"file":{"type":"string","$comment":"repo-path"},"line_start":{"type":"integer","minimum":1},"line_end":{"type":"integer","minimum":1},"anchor":{"type":"string","minLength":1}},"required":["file","line_start","line_end","anchor"],"additionalProperties":false} |
+| `duplicate_of` | object | no | {"type":"object","properties":{"file":{"type":"string","$comment":"repo-path"},"line_start":{"type":"integer","minimum":1},"line_end":{"type":"integer","minimum":1},"anchor":{"type":"string","minLength":1}},"required":["file","line_start","line_end","anchor"],"additionalProperties":false} |
+| `precedent` | object | no | {"type":"object","properties":{"file":{"type":"string","$comment":"repo-path"},"line_start":{"type":"integer","minimum":1},"line_end":{"type":"integer","minimum":1},"anchor":{"type":"string","minLength":1}},"required":["file","line_start","line_end","anchor"],"additionalProperties":false} |
+| `sites` | array | no | Additional locations of this issue. |
 | `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
 | `claude_md_rule` | string | conditional | The cited project rule, quoted with its source file; required by contract for convention findings; OMITTED (never null) when no rule applies. |
 | `cross_file_refs` | array | no | Other files involved in the finding |
@@ -90,15 +96,17 @@ For convention findings, `rule_source` selects the heading for `claude_md_rule`:
 
 | Field | Type | Dimension | Required | Description |
 |-------|------|-----------|----------|-------------|
-| `hidden_errors` | string | bug | no | Errors the fix would surface that the visible code path hides |
-| `attack_vector` | string | security | yes | How the issue is exploited |
-| `affected_consumers` | array | cross_file_impact | yes | Other call sites/files impacted by the change |
-| `criticality` | number | test_coverage | yes | A 1-10 IMPACT scale, distinct from `confidence`'s 0-100 certainty scale, emitted as a number and never quoted. |
-| `failure_scenario` | string | test_coverage | yes | Concrete scenario the missing coverage would miss |
-| `spec_text` | string | intent | conditional | The spec/requirement text the code is checked against |
-| `rule_source` | string | convention | no | The grounding kind that selects the cited heading when `claude_md_rule` is rendered |
-| `invalid_state_example` | string | type_design | no | A concrete value the current types allow but shouldn't |
-| `behavior_preserved` | string | simplification | yes | Why the simplification is behavior-preserving |
+| `hidden_errors` | string | bug | no | hidden errors |
+| `attack_vector` | string | security | yes | attack vector |
+| `affected_consumers` | array | cross_file_impact | yes | {"type":"array","items":{"type":"string","$comment":"repo-path"}} |
+| `criticality` | number | test_coverage | yes | {"type":"number","minimum":1,"maximum":10} |
+| `failure_scenario` | string | test_coverage | yes | failure scenario |
+| `test_kind` | string | test_coverage | conditional | {"type":"string","enum":["defective_test","critical_gap","production_defect","additional_case"]} |
+| `rule_source` | string | convention | no | rule source |
+| `spec_text` | string | intent | conditional | spec text |
+| `invalid_state_example` | string | type_design | no | invalid state example |
+| `quality_basis` | string | type_design | conditional | {"type":"string","enum":["current_correctness","duplication","simpler_equivalent","stack_idiom","other"]} |
+| `behavior_preserved` | string | type_design | no | behavior preserved |
 
 Required is tri-state. A `yes` field is appended to that dimension's dispatch required list (FINDING_REQUIRED plus the row's `requiredExtra`, never the other way around — FINDING_REQUIRED itself never carries a per-dimension field): the platform rejects a finding missing it at the StructuredOutput boundary, and the agent retries. A `conditional` field (`claude_md_rule`, `spec_text` — registry.js's `requiredWhenDimension`) is schema-required only on a dispatch that targets the first-party API directly with no gateway (`resolvedPolicy.conditionalSchema`), and only for a finding whose `dimension` matches the field's owning dimension — a nested `allOf`/`if`/`then` in the conventions-and-intent item schema, the one provider-measured shape that survives dispatch (a top-level conditional construct 400s). A `no` field carries neither promotion. Both `conditional` and `no` fields are contract-enforced by the agent's `.md` prose where its own dimension calls for it, everywhere the schema construct does not ride — third-party providers, gateway sessions, and every sibling dimension of a `conditional` field's own dispatch — and `no` fields are never schema-promoted at all: only a field the owning contract emits unconditionally (no OMIT branch, within its own dimension for `conditional`, within every dimension for `yes`) can be promoted to schema-required. Every per-dimension field is never nullable regardless: a not-applicable value is OMITTED, not emitted as null.
 
@@ -126,6 +134,29 @@ Missing or unknown disposition is held back. Delivery intersects these rights wi
 | held_back | no | no | unverified | no | no | no | no |
 | report_only | no | no | finding | no | no | no | no |
 | eliminate | no | no | eliminated | no | no | no | no |
+
+### test_coverage admission
+
+- `test_kind: defective_test`: {"phase": "semantic", "predicates": ["pr_owned_test", "confirmed_test_defect", "test_diff_site_for_inline"], "required": [], "tier": "main"}; default disposition `held_back`.
+- `test_kind: critical_gap`: {"phase": "semantic", "predicates": ["criticality_at_least_8", "resolved_production_element", "complete_searches", "complete_behavioral_absence"], "required": ["criticality", "failure_scenario", "searched_paths", "candidate_tests"], "tier": "main"}; default disposition `held_back`.
+- `test_kind: production_defect`: {"core": true, "dimension": "bug", "phase": "semantic", "predicates": ["present_defect"], "required": [], "tier": "main"}; default disposition `held_back`.
+- `test_kind: additional_case`: {"defaultDisposition": "report_only", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
+
+### type_design admission
+
+- `quality_basis: current_correctness`: {"core": true, "phase": "semantic", "predicates": ["present_defect"], "required": [], "tier": "main"}; default disposition `held_back`.
+- `quality_basis: duplication`: {"phase": "semantic", "predicates": ["resolved_duplicate", "confirmed_duplication"], "required": ["duplicate_of"], "tier": "suggestion"}; default disposition `held_back`.
+- `quality_basis: simpler_equivalent`: {"anyOf": ["suggestion", "suggested_fix_code"], "phase": "semantic", "predicates": ["concrete_equivalent", "behavior_preserved"], "required": ["behavior_preserved"], "tier": "suggestion"}; default disposition `held_back`.
+- `quality_basis: stack_idiom`: {"phase": "semantic", "predicates": ["resolved_precedent", "precedent_not_added", "applicable"], "required": ["precedent"], "tier": "suggestion"}; default disposition `held_back`.
+- `quality_basis: other`: {"defaultDisposition": "report_only", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
+
+### simplification admission
+
+- `quality_basis: current_correctness`: {"core": true, "phase": "semantic", "predicates": ["present_defect"], "required": [], "tier": "main"}; default disposition `held_back`.
+- `quality_basis: duplication`: {"phase": "semantic", "predicates": ["resolved_duplicate", "confirmed_duplication"], "required": ["duplicate_of"], "tier": "suggestion"}; default disposition `held_back`.
+- `quality_basis: simpler_equivalent`: {"anyOf": ["suggestion", "suggested_fix_code"], "phase": "semantic", "predicates": ["concrete_equivalent", "behavior_preserved"], "required": ["behavior_preserved"], "tier": "suggestion"}; default disposition `held_back`.
+- `quality_basis: stack_idiom`: {"phase": "semantic", "predicates": ["resolved_precedent", "precedent_not_added", "applicable"], "required": ["precedent"], "tier": "suggestion"}; default disposition `held_back`.
+- `quality_basis: other`: {"defaultDisposition": "report_only", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
 <!-- /generated-from-registry-location -->
 
 ---

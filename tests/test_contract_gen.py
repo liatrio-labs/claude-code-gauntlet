@@ -47,6 +47,99 @@ def registry_tree(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def test_admission_row_generates_consumers(registry_tree, invoke):
+    source = registry_tree / "workflows/src/registry.js"
+    original = source.read_text(encoding="utf-8")
+    changed = original.replace(
+        "additional_case: { required: []",
+        "special_case: { required: ['searched_paths']",
+    ).replace(
+        "defaultDisposition: 'held_back', defaultTier: 'main', admission:",
+        "core: true, defaultDisposition: 'report_only', defaultTier: 'suggestion', admission:",
+    )
+    assert changed != original
+    source.write_text(changed, encoding="utf-8", newline="")
+    result = invoke(
+        "generate_contract_requirements",
+        ["--repo-root", str(registry_tree)],
+        registry_tree,
+    )
+    assert result.returncode == 0, result.stderr
+    registry = gen.load_registry(str(registry_tree))
+    row = next(
+        r for r in registry["dimensionRows"] if r["dimension"] == "test_coverage"
+    )
+    assert row["admission"]["kinds"]["special_case"]["required"] == ["searched_paths"]
+    contract = next(
+        c
+        for c in registry["discoveryContracts"]
+        if c["agentType"].endswith(":test-analyzer")
+    )
+    item = contract["schema"]["properties"]["findings"]["items"]
+    assert "special_case" in item["properties"]["test_kind"]["enum"]
+    assert any(
+        c["if"]["properties"].get("test_kind", {}).get("const") == "special_case"
+        and c["then"]["required"] == ["searched_paths"]
+        for c in item["allOf"]
+    )
+    namespace = {}
+    exec(
+        (registry_tree / "scripts/gauntlet/registry.py").read_text(encoding="utf-8"),
+        namespace,
+    )
+    assert "special_case" in str(namespace["TestKind"])
+    assert "test_coverage" in namespace["ROUTING"]["core"]
+    assert "test_coverage" in namespace["ROUTING"]["suggestion"]
+    assert namespace["DIMENSION_ROWS"] == registry["dimensionRows"]
+    for path in ("agents/test-analyzer.md", REPORT):
+        text = (registry_tree / path).read_text(encoding="utf-8")
+        assert (
+            "special_case" in text
+            and "searched_paths" in text
+            and "report_only" in text
+        )
+        if path == REPORT:
+            policy_line = next(
+                line
+                for line in text.splitlines()
+                if line.startswith("- `test_kind: special_case`")
+            )
+            assert '"required": ["searched_paths"]' in policy_line
+            assert policy_line.endswith("default disposition `report_only`.")
+        else:
+            descriptor = next(
+                line
+                for line in text.splitlines()
+                if line.startswith("test_coverage admission descriptors: ")
+            )
+            admission = json.loads(
+                descriptor.split(": ", 1)[1].split(". Default disposition:", 1)[0]
+            )
+            assert admission["kinds"]["special_case"]["required"] == ["searched_paths"]
+    runtime = gen.proc.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import assert from 'node:assert/strict';
+import {mergeStage} from './workflows/src/mergeFindings.js';
+import {findingPolicy} from './workflows/src/registry.js';
+const f = {id:'one',file:'source',line_start:1,title:'A claim',description:'Evidence',severity:'high',confidence:90,
+ dimension:'test_coverage',agent:'test-analyzer',test_kind:'special_case',criticality:9,failure_scenario:'Failure'};
+assert.equal(mergeStage({findings:[f]},{}).findings.length,0);
+const good = mergeStage({findings:[{...f,searched_paths:['tests']}]},{}).findings[0];
+assert.equal(findingPolicy(good).defaultDisposition,'report_only');
+assert.equal(findingPolicy({...good,test_kind:undefined}).tier,'suggestion');
+assert.equal(findingPolicy({...good,test_kind:undefined}).defaultDisposition,'report_only');
+assert.equal(findingPolicy(good).core,true);
+""",
+        ],
+        cwd=str(registry_tree),
+    )
+    assert runtime.returncode == 0, runtime.stderr
+
+
 def test_disposition_row_generates_consumers(registry_tree, invoke):
     source = registry_tree / "workflows/src/registry.js"
     original = source.read_text(encoding="utf-8")

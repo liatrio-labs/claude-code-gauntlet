@@ -193,6 +193,9 @@ def test_contract_schema(agent_type: str) -> None:
         assert item["properties"][field]["type"] == declared[field]
     for row in rows:
         for field in row["requiredWhenDimension"]:
+            if field in {"test_kind", "quality_basis"}:
+                assert f"`{field}` is required by the dispatch schema" in body
+                continue
             assert f"`{field}` is a dimension-conditional dispatch requirement" in body
             assert (
                 f"For {row['dimension']} findings: the `{field}` field must be non-null"
@@ -200,7 +203,11 @@ def test_contract_schema(agent_type: str) -> None:
             )
             siblings = [r["dimension"] for r in rows if r != row]
             assert "/".join(siblings) in body or "on the same terms" in body
-    if contract["conditionalRequired"]:
+    if any(
+        field in {"claude_md_rule", "spec_text"}
+        for row in rows
+        for field in row["requiredWhenDimension"]
+    ):
         assert (
             "third-party providers" in body
             and "gateway sessions where the schema stays flat" in body

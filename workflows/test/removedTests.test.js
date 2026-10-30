@@ -99,6 +99,7 @@ test('audit anchors reach Verify without numeric suppression', async () => {
   const anchor = { ...loss, file: '/repo/bin/seat', line: 545, anchor: 'return selected_value;' };
   const ordinary = (id, fields = {}) => makeFinding(id, {
     file: 'bin/seat', line_start: 545, line_end: undefined, dimension: 'test_coverage',
+    test_kind: 'defective_test', criticality: 8, failure_scenario: 'Broken assertion',
     title: anchor.title, ...fields,
   });
   const ctx = stageCtx({ replies: {
@@ -255,7 +256,7 @@ for (const [status, input] of [
   if (status === 'overflow' || status === 'unavailable') assert.ok(!out.gaps.some((gap) => gap.includes('possibly incomplete')));
 });
 
-test('removed coverage reaches capped delivery and main_only with real Verify and discovery replay', async () => {
+test('removed coverage remains held back with real Verify and discovery replay', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'removed-tests-'));
   const outputDir = join(dir, 'out');
   mkdirSync(outputDir);
@@ -303,17 +304,16 @@ test('removed coverage reaches capped delivery and main_only with real Verify an
     assert.equal(out.stats.verified, true, JSON.stringify(out.gaps));
     assert.equal(payload.postReview.length, 6);
     assert.ok(payload.postReview.every((finding) => finding.disposition === 'body'));
-    const delivered = payload.postReview.find((finding) => finding.removed_test);
-    assert.ok(delivered, `${tier} must deliver the removed coverage loss above medium bugs`);
-    assert.equal(delivered.origin, 'new');
-    assert.equal(delivered.severity, 'high');
-    assert.equal(delivered.report_destination, 'main');
-    assert.equal(delivered.removed_test.path, item.path);
+    assert.ok(!payload.postReview.some((finding) => finding.removed_test));
+    const held = payload.findings.find((finding) => finding.removed_test);
+    assert.equal(held.disposition, 'held_back');
+    assert.equal(held.origin, 'new');
+    assert.equal(held.removed_test.path, item.path);
     const challenge = ctx.calls.find((call) => call.label.startsWith('challenge-') && call.prompt.includes(loss.title));
     assert.ok(challenge.prompt.includes(diffPath));
     assert.ok(challenge.prompt.includes(`${JSON.stringify(item.path)}, old lines 3-7`));
     assert.doesNotMatch(challenge.prompt, /failure_scenario|criticality|covered_by/);
-    assert.match(payload.report, /\| Test Coverage \| test-analyzer \| 1 \|/);
+    assert.match(payload.report, /\| Test Coverage \| test-analyzer \| 0 \(\+1 unverified\) \|/);
     if (tier === 'all') {
       discoverOutput = out.checkpoints.phases.discover;
       assert.deepEqual(discoverOutput.removedTestAudit, { status: 'ran-clean' });

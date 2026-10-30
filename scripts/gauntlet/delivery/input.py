@@ -7,14 +7,32 @@ from gauntlet.delivery.gate import is_plain_int
 from gauntlet.forge import parse_web_origin
 from gauntlet.location import normalize_location
 from gauntlet.registry import (
+    DIMENSION_ROWS,
+    CandidateTestsItem,
     DeliveryGroup,
+    Dimension,
     Disposition,
+    DuplicateOf,
+    EffectiveTestKind,
     LocationStatus,
+    Precedent,
+    ProductionElement,
+    QualityBasis,
     ResolvedSitesItem,
+    TestKind,
 )
 
 
 class Finding(TypedDict, total=False):
+    origin_dimension: Dimension
+    effective_test_kind: EffectiveTestKind
+    test_kind: TestKind
+    quality_basis: QualityBasis
+    searched_paths: list[str]
+    candidate_tests: list[CandidateTestsItem]
+    duplicate_of: DuplicateOf
+    precedent: Precedent
+    production_element: ProductionElement
     delivery_group: DeliveryGroup
     sites: list[ResolvedSitesItem]
     disposition: Disposition
@@ -91,6 +109,32 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
             raise CliError(f"findings[{index}] must be an object")
         if "file" in finding and not isinstance(finding["file"], str):
             raise CliError(f"findings[{index}].file must be a string")
+        dimensions = {row["dimension"]: row for row in DIMENSION_ROWS}
+        if "origin_dimension" in finding and (
+            not isinstance(finding["origin_dimension"], str)
+            or finding["origin_dimension"] not in dimensions
+        ):
+            raise CliError(f"findings[{index}].origin_dimension is invalid")
+        for row in DIMENSION_ROWS:
+            admission = row["admission"]
+            if not admission:
+                continue
+            for field in (admission["field"], "effective_test_kind"):
+                if field == "effective_test_kind" and admission["field"] != "test_kind":
+                    continue
+                allowed = (
+                    admission["kinds"]
+                    if field == admission["field"]
+                    else {
+                        subject["kind"]
+                        for subject in row["policySubjects"].values()
+                        if subject.get("stamp") == field
+                    }
+                )
+                if field in finding and (
+                    not isinstance(finding[field], str) or finding[field] not in allowed
+                ):
+                    raise CliError(f"findings[{index}].{field} is invalid")
         key = finding.get("consolidation_key")
         if key is not None and not isinstance(key, str):
             raise CliError(
@@ -123,5 +167,15 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
     # Only a wholly unstamped caller input predates disposition enforcement.
     if not any("disposition" in f for f in findings):
         for finding in normalized:
-            finding["disposition"] = "deliver"
+            legacy_admission = any(
+                row["admission"]
+                and (
+                    row["dimension"]
+                    in (finding.get("origin_dimension"), finding.get("dimension"))
+                    or row["admission"]["field"] in finding
+                    or row["agentType"].split(":")[-1] == finding.get("agent")
+                )
+                for row in DIMENSION_ROWS
+            )
+            finding["disposition"] = "held_back" if legacy_admission else "deliver"
     return cast(ReviewInput, {**data, "findings": normalized})

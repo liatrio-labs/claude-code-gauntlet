@@ -2,51 +2,14 @@ import { canonicalRange } from './location.js';
 import { INT_POLICY, coerceInt, asText, asConfidence, deepFreeze } from './wire.js';
 import { FIELD_RENAMES, SEVERITY_ORDER, INJECTION_STRIPPED_PROSE_FIELDS, AGENT_BUG_DETECTOR } from './registry.js';
 import { AGENT_TEST_ANALYZER, AGENT_SECURITY_REVIEWER, AGENT_CONVENTIONS } from './registry.js';
-import { CORE_DIMENSIONS, SUGGESTION_DIMENSIONS } from './registry.js';
-import { MAIN_REPORT_AGENTS, SUGGESTION_AGENTS, COMMENT_ACCURACY_DIMENSIONS } from './registry.js';
+import { DIMENSIONS, dimensionRow, findingPolicy } from './registry.js';
 import { cfgGet, configForFile, applyExclusions } from './reviewConfig.js';
 import { applyInjectionFilter } from './injection.js';
 
 const FUNCTIONAL_VIOLATION_KEYWORDS =
   /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
 
-const TYPE_SAFETY_BUG_KEYWORDS =
-  /\bruntime\b|\bcastexception\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bclasscastexception\b|\bnull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pointer\b|\bnullpointer\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+mismatch\b/i;
-
-// Promote test findings for existing correctness failures, while keeping coverage gaps as suggestions.
-const TEST_CORRECTNESS_PATTERNS = deepFreeze([
-  /\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b/i,
-  /\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b/i,
-  /\balways[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]pass(?:es)?\b/i,
-  /\bnever[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+fail(?:s)?\b/i,
-  /\bvacuous(?:ly)?\b/i,
-  /\btautolog(?:y|ical)\b/i,
-  /\bassert(?:ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+reached\b/i,
-  /\bdeadlock\b/i,
-  /\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+race\b/i,
-  /\bthread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:safety|unsafe|race)\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:actually[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:verif|test|check)(?:s|ies)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+nothing\b/i,
-  /\bfalse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+positive[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:test|assertion)\b/i,
-  /\bincorrect(?:ly)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:assert|verify|test)\b/i,
-  /\bwrong[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:value|result|output)\b/i,
-  /\blocal[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+variable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:used|read)\b/i,
-  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:on[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:a[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:local|copy|snapshot)\b/i,
-  /\bcompares?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wrong|incorrect|different)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+object\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:does[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not|doesn'?t)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wait|join|block)\b/i,
-  /\breader[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+thread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+waited\b/i,
-  /\bflaky[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+test\b/i,
-  /\bassertion[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|passes?|succeed)\b/i,
-  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
-  /\blogic[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b/i,
-  /\bincorrect[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:logic|behavior|behaviour|result)\b/i,
-]);
-
-const FILTER_DIMENSION_ROUTES = deepFreeze({
-  test_coverage: { patterns: TEST_CORRECTNESS_PATTERNS },
-  convention: { patterns: [FUNCTIONAL_VIOLATION_KEYWORDS] },
-  type_design: { patterns: [TYPE_SAFETY_BUG_KEYWORDS] },
-});
+const FILTER_DIMENSION_ROUTES = deepFreeze({ convention: { patterns: [FUNCTIONAL_VIOLATION_KEYWORDS] } });
 
 const FILTER_SUPPRESSION_RULES = deepFreeze([
   { agent: AGENT_BUG_DETECTOR, pattern: /\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/,
@@ -82,7 +45,7 @@ export const FILTER_DEFAULTS = deepFreeze({
 
 const CONTESTATION_DROP_THRESHOLD = 25;
 
-export function applyThresholdFilter(findings, config, severityOrder = SEVERITY_ORDER) {
+export function applyThresholdFilter(findings, config, severityOrder = SEVERITY_ORDER, validationConfidence = new Map()) {
   const kept = [];
   const eliminated = [];
   let contestedCount = 0;
@@ -106,7 +69,7 @@ export function applyThresholdFilter(findings, config, severityOrder = SEVERITY_
     let isContested = false;
     const originalConfidence = 'original_confidence' in finding ? finding.original_confidence : undefined;
     if (originalConfidence !== undefined && originalConfidence !== null) {
-      const drop = originalConfidence - confidence;
+      const drop = originalConfidence - (validationConfidence.get(finding) ?? confidence);
       if (drop > CONTESTATION_DROP_THRESHOLD) {
         isContested = true;
         contestedCount += 1;
@@ -266,8 +229,7 @@ export function detectDisagreement(findings, rules = FILTER_SUPPRESSION_RULES) {
       finding.consensus_boost = 0;
       if (!('corroborated_by' in finding)) finding.corroborated_by = [];
 
-      const dimension = pyGet(finding, 'dimension', '').toLowerCase();
-      if (dimension && !CORE_DIMENSIONS.includes(dimension)) {
+      if (finding.dimension && !findingPolicy(finding).core) {
         const originalConf = asConfidence(finding.confidence);
         finding.confidence = Math.max(0, originalConf - SINGLETON_PENALTY);
         finding.singleton_penalty = true;
@@ -311,11 +273,13 @@ export function detectDisagreement(findings, rules = FILTER_SUPPRESSION_RULES) {
 export function routeByDimension(finding, routes = FILTER_DIMENSION_ROUTES) {
   const dimension = pyGet(finding, 'dimension', '').toLowerCase();
   if (!dimension) return null;
+  if (!dimensionRow(finding.origin_dimension) && !dimensionRow(dimension)) return null;
 
-  if (CORE_DIMENSIONS.includes(dimension)) return 'main';
-  if (SUGGESTION_DIMENSIONS.includes(dimension)) return 'suggestion';
-  if (!Object.hasOwn(routes, dimension)) return null;
-  return findingMatchesPatterns(finding, routes[dimension].patterns) ? 'main' : 'suggestion';
+  const policy = findingPolicy(finding);
+  if (policy.row?.functionalRouting && Object.hasOwn(routes, dimension)) {
+    return findingMatchesPatterns(finding, routes[dimension].patterns) ? 'main' : 'suggestion';
+  }
+  return policy.tier ?? null;
 }
 
 function findingMatchesPatterns(finding, patterns) {
@@ -341,8 +305,7 @@ export function consolidateCrossAgent(findings, prefer = () => false) {
   }
 
   const winnerKey = (f) => {
-    const dim = pyGet(f, 'dimension', '').toLowerCase();
-    const isCore = CORE_DIMENSIONS.includes(dim) ? 1 : 0;
+    const isCore = findingPolicy(f).core ? 1 : 0;
     const conf = asConfidence(f.confidence);
     // Ranking uses UTF-16 length; code-point counting would change winners for astral text.
     const descLen = asText(f.description).length;
@@ -393,38 +356,19 @@ export function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
     const agent = pyGet(finding, 'agent', '').toLowerCase();
-    const dimension = finding.dimension ? String(finding.dimension).toLowerCase() : '';
 
     let destination;
     if (finding.demoted_by === 'reachability') {
       destination = 'suggestion';
       finding.routed_by = 'reachability';
-    } else if (finding.removed_test) {
-      destination = 'main';
-      finding.routed_by = 'removed_test';
     } else {
       const dimRoute = routeByDimension(finding, routes);
       if (dimRoute !== null) {
         destination = dimRoute;
         if (dimRoute === 'suggestion') finding.routed_by = 'dimension';
-      } else if (MAIN_REPORT_AGENTS.includes(agent)) {
-        destination = 'main';
-      } else if (agent === AGENT_CONVENTIONS) {
-        destination = COMMENT_ACCURACY_DIMENSIONS.includes(dimension) ? 'suggestion' : 'main';
-      } else if (SUGGESTION_AGENTS.includes(agent)) {
-        if (agent === AGENT_TEST_ANALYZER && routes.test_coverage
-          && findingMatchesPatterns(finding, routes.test_coverage.patterns)) {
-          destination = 'main';
-          finding.promoted_from = 'test-analyzer';
-          finding.promotion_reason =
-            'test-analyzer finding describes a functional correctness issue that exists today ' +
-            '(not a missing-coverage gap)';
-        } else {
-          destination = 'suggestion';
-        }
       } else {
-        // Unknown agents go to main so an unrecognized producer cannot silently hide a finding.
-        destination = 'main';
+        const rows = DIMENSIONS.filter((row) => row.agentType.split(':').pop() === agent);
+        destination = (rows.find((row) => row.agentFallback) || rows[0])?.defaultTier || 'main';
       }
     }
 
@@ -470,12 +414,18 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
     (f) => f.suggested_fix_code_removed_by === 'injection',
   ).length;
 
+  // Only eligible findings may corroborate; ranking adjustments must not change the measured validator drop.
+  const validationConfidence = new Map(afterInjection.map((finding) => [finding, asConfidence(finding.confidence)]));
   const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
   allEliminated.push(...elimSuppressed);
+  const { kept: afterAdjustment, eliminated: elimAdjustment } = applyThresholdFilter(active, config, SEVERITY_ORDER, validationConfidence);
+  allEliminated.push(...elimAdjustment);
+  const { tagged, mainCount, suggestionCount } = tagFindings(afterAdjustment);
 
-  const { tagged, mainCount, suggestionCount } = tagFindings(active);
-
-  const promotedCount = tagged.filter((f) => f.promoted_from === 'test-analyzer').length;
+  const promotedCount = tagged.filter((finding) => {
+    const { row, kind } = findingPolicy(finding);
+    return kind?.dimension && kind.dimension === finding.dimension && row.dimension !== finding.dimension;
+  }).length;
   const dimensionRouted = tagged.filter((f) => f.routed_by === 'dimension').length;
   const reachabilityDemoted = [...tagged, ...allEliminated]
     .filter((f) => f.demoted_by === 'reachability').length;

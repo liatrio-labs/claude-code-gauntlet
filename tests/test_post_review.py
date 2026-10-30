@@ -948,6 +948,15 @@ def test_gitlab_version_failure_posts_nothing(refs, posting):
     assert run.code == 1 and not run.requests
 
 
+_INVALID_ADMISSION_METADATA: list[tuple[dict[str, object], str]] = [
+    ({"test_kind": "unknown"}, "test_kind"),
+    ({"test_kind": []}, "test_kind"),
+    ({"quality_basis": "unknown"}, "quality_basis"),
+    ({"origin_dimension": []}, "origin_dimension"),
+    ({"effective_test_kind": "additional_case"}, "effective_test_kind"),
+]
+
+
 @pytest.mark.parametrize(
     "data,message",
     [
@@ -956,6 +965,10 @@ def test_gitlab_version_failure_posts_nothing(refs, posting):
         (
             {"owner": "o", "repo": "r", "pr_number": 1, "findings": [None]},
             "must be an object",
+        ),
+        *(
+            (review(findings=[located(**metadata)]), field + " is invalid")
+            for metadata, field in _INVALID_ADMISSION_METADATA
         ),
     ],
 )
@@ -1212,6 +1225,29 @@ def test_review_input_defaults_and_unknown_fields(platform, posting):
     )
     assert "Range bug" in comments[0]["body"]
     assert "Return the current value." in comments[0]["body"]
+    for metadata in [
+        {"dimension": "test_coverage"},
+        {"dimension": "simplification"},
+        {"dimension": "type_design"},
+        {"dimension": "bug", "test_kind": "production_defect"},
+        {"dimension": "unknown", "agent": "test-analyzer"},
+        {
+            "dimension": "bug",
+            "origin_dimension": "test_coverage",
+            "test_kind": "production_defect",
+            "effective_test_kind": "defective_test",
+        },
+    ]:
+        legacy = located(**metadata)
+        del legacy["disposition"]
+        run = posting(review(platform, [legacy]), diff=DIFF)
+        assert (run.code, run.err) == (0, "")
+        comments = (
+            run.payload["payload"]["comments"]
+            if platform == "github"
+            else run.payload["discussions"]
+        )
+        assert comments == []
 
 
 @pytest.mark.parametrize(
