@@ -1203,6 +1203,15 @@ def test_comparison_diagnostics_keep_full_denominators(case, tmp_path):
     assert selected.record_coalescence["evidence_sha256"][
         "sources/trace.json"
     ] == file_hash(root / "sources/trace.json")
+    # Comparisons often read runs linked in from another checkout.
+    link = tmp_path / "linked-packet"
+    try:
+        link.symlink_to(root, target_is_directory=True)
+    except OSError:
+        pass
+    else:
+        linked = paired(spec, {**packets, ref: replace(packets[ref], root=link)})
+        assert linked.delivery_diagnostics == result.delivery_diagnostics
     empty = next(row for u, row in rows.items() if u != url)
     assert empty.surfaces["all"]["values"]["issues"] == 0
     assert empty.surfaces["all"]["values"]["precision"] is None
