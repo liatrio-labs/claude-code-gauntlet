@@ -421,6 +421,69 @@ class SourceAdapter:
             self._cache[key] = self._read(file)
         return self._cache[key]
 
+    def entries(self, directory: str = "") -> tuple[str, ...] | None:
+        """List immediate names from the same source identity used by reads."""
+        parts = self._parts(directory) if directory else ()
+        if parts is None or (
+            self.target_kind != "local" and self.captured_head is None
+        ):
+            return None
+        prefix = directory + "/" if directory else ""
+        try:
+            if self.target_kind == "local":
+                fd = None
+                try:
+                    if parts and os.scandir in os.supports_fd:
+                        fd = _local_open(self.root, parts)
+                        source: int | Path = fd
+                    else:
+                        if parts and not stat.S_ISDIR(_local_mode(self.root, parts)):
+                            return None
+                        source = self.root.joinpath(*parts)
+                    with os.scandir(source) as entries:
+                        return tuple(
+                            sorted(
+                                prefix
+                                + entry.name
+                                + ("/" if entry.is_dir(follow_symlinks=False) else "")
+                                for entry in entries
+                                if not entry.is_symlink()
+                                and (
+                                    entry.is_file(follow_symlinks=False)
+                                    or entry.is_dir(follow_symlinks=False)
+                                )
+                            )
+                        )
+                finally:
+                    if fd is not None:
+                        os.close(fd)
+            result = proc.run_bytes(
+                ["git", "ls-tree", "-z", f"{self.captured_head}:{directory}"],
+                cwd=str(self.root),
+                timeout=3,
+            )
+            if result.returncode:
+                return None
+            names = []
+            for entry in result.stdout.split(b"\0"):
+                if not entry:
+                    continue
+                metadata, name = entry.split(b"\t", 1)
+                mode, kind, _ = metadata.split(b" ")
+                if (mode, kind) in (
+                    (b"040000", b"tree"),
+                    (b"100644", b"blob"),
+                    (b"100755", b"blob"),
+                ):
+                    names.append(
+                        prefix
+                        + name.decode("utf-8", "surrogateescape")
+                        + ("/" if kind == b"tree" else "")
+                    )
+            return tuple(sorted(names))
+        except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):
+            return None
+
     def _parts(self, file: str) -> tuple[str, ...] | None:
         parts = tuple(file.split("/"))
         if (

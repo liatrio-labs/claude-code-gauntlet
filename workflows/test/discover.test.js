@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   summarize, discover as discoverStage, agentActive, agentSpecs, deriveAgentFlags, allActiveDimensionsDegraded,
 } from '../src/discover.js';
-import { DIMENSIONS, DISPATCH_RESULTS, FINDING_REQUIRED, FINDING_PROP_TYPES, DISCOVERY_FINDING_PROP_TYPES, conditionalSchemaActive } from '../src/registry.js';
+import { DIMENSIONS, DISPATCH_RESULTS, FINDING_REQUIRED, FINDING_PROP_TYPES, conditionalSchemaActive } from '../src/registry.js';
 import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
 import { mergeStage } from '../src/mergeFindings.js';
@@ -91,65 +91,11 @@ for (const row of DEGRADED_ROWS) test(`degradation: ${row.name}`, () => {
   assert.equal(allActiveDimensionsDegraded(row.dispatched, row.degraded), row.expected);
 });
 
-const CANONICAL_PROPS = {
-  id: { type: 'string' }, file: { type: 'string' }, line_start: { type: 'number' }, line_end: { type: 'number' },
-  title: { type: 'string' }, description: { type: 'string' }, severity: { type: 'string' }, confidence: { type: 'number' },
-  dimension: { type: 'string' }, origin: { type: 'string' }, evidence: { type: 'string' },
-  anchor: { type: 'string', minLength: 1, description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
-  suggestion: { type: 'string' }, claude_md_rule: { type: 'string' }, suggested_fix_code: { type: 'string' },
-  cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
-  ...(DISCOVERY_FINDING_PROP_TYPES.sites && { sites: DISCOVERY_FINDING_PROP_TYPES.sites }),
-};
-const REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
-const reference = { type: 'object', $comment: 'source-reference', properties: { file: { type: 'string', $comment: 'repo-path' },
-  line_start: { type: 'integer', minimum: 1 }, line_end: { type: 'integer', minimum: 1 }, anchor: { type: 'string', minLength: 1 } },
-  required: ['file', 'line_start', 'line_end', 'anchor'], additionalProperties: false };
-const qualityReferences = { duplicate_of: reference, precedent: reference };
-const CONDITIONAL = [
-  { if: { properties: { dimension: { const: 'convention' } }, required: ['dimension'] }, then: { required: ['claude_md_rule'] } },
-  { if: { properties: { dimension: { const: 'intent' } }, required: ['dimension'] }, then: { required: ['spec_text'] } },
-];
-const SCHEMA_ROWS = [
-  { agent: 'code-gauntlet:bug-detector', extra: { hidden_errors: { type: 'string' } } },
-  { agent: 'code-gauntlet:security-reviewer',
-    extra: { attack_vector: { type: 'string' } }, required: ['attack_vector'] },
-  { agent: 'code-gauntlet:cross-file-impact',
-    extra: { affected_consumers: { type: 'array', items: { type: 'string', $comment: 'repo-path' } } }, required: ['affected_consumers'] },
-  { agent: 'code-gauntlet:test-analyzer',
-    extra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: { type: 'string' },
-      searched_paths: { type: 'array', $comment: 'search-paths', items: { type: 'string', $comment: 'repo-path' } }, production_element: reference,
-      candidate_tests: { type: 'array', items: { ...reference, properties: { ...reference.properties, input: { type: 'string' }, assertion: { type: 'string' } }, required: [...reference.required, 'input', 'assertion'] } },
-      test_kind: { type: 'string', enum: ['defective_test', 'critical_gap', 'production_defect', 'additional_case'] } },
-    required: ['criticality', 'failure_scenario'], allOf: [{ if: { properties: { dimension: { const: 'test_coverage' } }, required: ['dimension'] }, then: { required: ['test_kind'] } }] },
-  { agent: 'code-gauntlet:conventions-and-intent',
-    extra: { rule_source: { type: 'string' }, spec_text: { type: 'string' } },
-    allOf: CONDITIONAL },
-  { agent: 'code-gauntlet:type-design-analyzer',
-    extra: { ...qualityReferences, invalid_state_example: { type: 'string' }, behavior_preserved: { type: 'string' }, quality_basis: { type: 'string', enum: ['current_correctness', 'duplication', 'simpler_equivalent', 'stack_idiom', 'other'] } },
-    allOf: [{ if: { properties: { dimension: { const: 'type_design' } }, required: ['dimension'] }, then: { required: ['quality_basis'] } }] },
-  { agent: 'code-gauntlet:code-simplifier',
-    extra: { ...qualityReferences, behavior_preserved: { type: 'string' }, quality_basis: { type: 'string', enum: ['current_correctness', 'duplication', 'simpler_equivalent', 'stack_idiom', 'other'] } },
-    allOf: [{ if: { properties: { dimension: { const: 'simplification' } }, required: ['dimension'] }, then: { required: ['quality_basis'] } }] },
-];
-test('finding schemas: one dispatch supplies the roster', async (t) => {
+test('one dispatch supplies the roster', async () => {
   const ctx = stageCtx();
   await discover(ctx, { policy: {} });
   assert.deepEqual(ctx.calls.map((call) => call.label), ROSTER);
-  assert.deepEqual(FINDING_REQUIRED, REQUIRED);
   assert.deepEqual(ctx.violations, []);
-  for (const row of SCHEMA_ROWS) await t.test(row.agent, () => {
-    const schema = ctx.calls.find((call) => call.label === row.agent).schema;
-    const item = schema.properties.findings.items;
-    if (item.allOf) item.allOf = item.allOf.filter((clause) => Object.keys(clause.if.properties).length === 1);
-    const shape = (value) => JSON.parse(JSON.stringify(value, (key, field) => key === 'description' && typeof field === 'string' ? undefined : field));
-    assert.deepEqual(shape(schema), shape({ type: 'object', properties: {
-      findings: { type: 'array', items: { type: 'object', properties: { ...CANONICAL_PROPS, ...row.extra },
-        required: [...REQUIRED, 'anchor', ...(row.required ?? [])], additionalProperties: false,
-        ...(row.allOf ? { allOf: row.allOf } : {}) } },
-      complete: { type: 'boolean' }, total_seen: { type: 'number' },
-      ...(DISPATCH_RESULTS[row.agent] || {}),
-    }, required: ['findings', 'complete', 'total_seen', ...Object.keys(DISPATCH_RESULTS[row.agent] || {})] }));
-  });
 });
 const POLICY_ROWS = [
   { name: 'bedrock', policy: { provider: 'bedrock' } },

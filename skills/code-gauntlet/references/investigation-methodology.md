@@ -41,3 +41,11 @@ Use each tool for its evidence:
 - LSP for symbol resolution, type checking, and reference finding (semantic accuracy)
 - Grep for text patterns, string literals, config values, and comments (LSP does not index these)
 - Read for understanding surrounding context, control flow, and full function bodies
+
+## Test and quality investigation
+
+Trace a suspected test defect through its actual input, assertion, helpers and
+fixture lifetimes. Search indirect coverage before claiming complete behavioral
+absence; inspect candidate assertions and audit every supplied removed-test item.
+For quality findings, prove a present defect, duplication, a behavior-preserving
+simpler equivalent or an applicable idiom established in existing repository code.

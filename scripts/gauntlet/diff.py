@@ -84,6 +84,7 @@ class AnnotatedDiff:
     entries: Mapping[int, ContextMapEntry]
     hunks: Mapping[str, tuple[tuple[int, int], ...]]
     old_spans: Mapping[str, tuple[OldSpan, ...]]
+    files: tuple[str, ...]
 
 
 # Prefixes may be syntax or real directories; policies decide after decoding.
@@ -355,6 +356,7 @@ def annotate_diff(
     entries: dict[int, ContextMapEntry] = {}
     hunks: dict[str, list[tuple[int, int]]] = {}
     old_spans: dict[str, list[OldSpan]] = {}
+    files: set[str] = set()
     git_header: str | None = None
     old_side: str | None = None
     path: str | None = None
@@ -371,6 +373,12 @@ def annotate_diff(
             finish_old_span()
             if event.kind == "git_header":
                 git_header = event.value
+                # Binary and empty-file changes may have no paired path headers.
+                middle = len(git_header) // 2
+                old_name = _decode_header_path(git_header[:middle])
+                new_name = _decode_header_path(git_header[middle + 1 :])
+                if old_name.startswith("a/") and new_name == "b/" + old_name[2:]:
+                    files.add(new_name[2:])
                 old_side = path = None
             elif event.kind == "old_path":
                 old_side = event.value
@@ -385,6 +393,7 @@ def annotate_diff(
                     old_side = old_side.removeprefix("a/")
                     new_side = new_side.removeprefix("b/")
                 path = old_side if new_side == "/dev/null" else new_side
+                files.add(path)
                 git_header = None
         elif isinstance(event, HunkEvent):
             finish_old_span()
@@ -417,6 +426,9 @@ def annotate_diff(
             rendered[index] = gutter + event.text
             entries[index + 1] = {"file": path, "side": side, "line": number}
     finish_old_span()
+    for line in lines:
+        if line.startswith(("rename to ", "copy to ")):
+            files.add(_decode_header_path(line.split(" to ", 1)[1].removesuffix("\r")))
     return AnnotatedDiff(
         ("\n".join(rendered) + ("\n" if final_lf else "")).encode(
             "utf-8", "surrogateescape"
@@ -424,6 +436,7 @@ def annotate_diff(
         entries,
         {file: tuple(spans) for file, spans in hunks.items()},
         {file: tuple(spans) for file, spans in old_spans.items()},
+        tuple(sorted(files)),
     )
 
 

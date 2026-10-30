@@ -1503,7 +1503,7 @@ test('producer-measured description context reaches every discovery agent', asyn
       target: { platform: 'github', web_origin: 'https://github.com', owner: 'synthetic', repo: 'fixture', pr_number: 1, sha_full: sha } }));
     const result = spawnSync(process.env.PYTHON || 'python3', [resolve('scripts/write_shared_context.py'),
       '--output-dir', output, '--head-sha', 'abc1234', '--target-type', 'pr', '--head-sha-full', sha,
-      '--snapshot-file', snapshot], { input: 'triage', encoding: 'utf8' });
+      '--repo-root', output, '--snapshot-file', snapshot], { input: 'triage', encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     const measured = JSON.parse(result.stdout);
     const { ctx, out } = await runAndCapture(validArgs({ outputDir: output, ...measured }));

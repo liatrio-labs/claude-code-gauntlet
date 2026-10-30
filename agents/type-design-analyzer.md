@@ -49,45 +49,11 @@ For each significant type (class, interface, struct, record, enum, union type) t
 - Is it impossible to create an instance in an invalid state?
 - Are partial construction and intermediate invalid states prevented?
 
-## Anti-patterns to flag
+## Investigation basis
 
-Anemic domain models
-
-- Types that are just bags of public fields with no behavior
-- Business logic scattered across service classes instead of living on the types it operates on
-- Types that can be put into any state because they have no constraints
-
-Exposed mutable internals
-
-- Public mutable collections that allow external code to bypass invariant checks
-- Mutable fields that should be readonly/final
-- Getter methods that return mutable references to internal state
-
-Invariants enforced only by documentation
-
-- Comments saying "this field must be positive" without validation
-- README/docstring constraints that aren't checked in code
-- Naming conventions used as the sole enforcement mechanism (e.g., `unsafeX` prefix)
-
-Types with too many responsibilities
-
-- God objects that accumulate unrelated fields and methods
-- Types that serve multiple bounded contexts with different invariants
-- Types where half the fields are optional because they only apply in certain modes
-
-Missing validation at construction boundaries
-
-- Constructors that accept raw primitives without validation
-- Factory methods that don't check preconditions
-- Deserialization that creates instances without invariant checks
-- Builder patterns that allow build() to be called in incomplete states
-
-## Key design principles
-
-- Prefer compile-time guarantees over runtime checks. A type that can't represent an invalid state is better than a type that validates at runtime.
-- Make illegal states unrepresentable. Use the type system to exclude impossible combinations rather than checking for them.
-- Immutability simplifies invariant maintenance. If a type is immutable and valid at construction, it stays valid forever.
-- Parse, don't validate. Convert unstructured data into structured types at the boundary, then work with the structured types internally.
+Trace present invariant violations through construction and mutation paths.
+Ground other improvements in inspected duplication, a concrete behavior-preserving
+simpler equivalent or an applicable idiom from existing repository code.
 
 ## What you do NOT report
 
@@ -97,25 +63,9 @@ Missing validation at construction boundaries
 - Language limitations that prevent ideal type design (e.g., lack of union types in Java)
 - Style preferences about naming, casing, or organization that don't affect type safety
 
-## Severity calibration
-
-- Critical: Type allows construction of provably invalid instances that will cause crashes, data corruption, or security issues at runtime
-- High: Exposed mutable internals or missing construction validation that will likely lead to invariant violations in practice
-- Medium: Type design weakness that creates maintenance risk and makes bugs more likely over time
-- Low: Minor improvement to type expressiveness that would be nice but isn't urgent
-
 ## Confidence calibration
 
-LLMs are systematically overconfident. Calibrate carefully:
-
-- 90-100: The type has a clear invariant violation — you can show a code path that creates an invalid instance or bypasses enforcement
-- 80-89: The type design has a significant weakness that will likely lead to bugs — exposed mutable internals, missing construction validation, or clearly anemic design in a domain that needs invariants
-- 70-79: The type design could be improved and the current design creates maintenance risk, but it's not immediately dangerous
-- 60-69: Plausible type design issue but significant uncertainty remains
-
 - Below 60: Uncertain; retain a scope-compliant candidate with inspected evidence.
-
-Confidence measures certainty the issue exists, not its impact. A verified exposed mutable field or interface contract violation is still confidence 90+ (you verified it exists via LSP). A type that seems under-encapsulated but might have design reasons you can't see is confidence 60-70. Use severity for impact, confidence for certainty.
 
 ## False-positive exclusions
 
