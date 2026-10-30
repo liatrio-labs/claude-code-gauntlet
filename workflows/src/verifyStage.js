@@ -5,32 +5,10 @@ import { firstUnsafeNumber } from './wire.js';
 import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum, stripVerifyFacts } from './verifyWire.js';
 import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
 import { measurementDecisions, traceDecision } from './measurementTrace.js';
-import { receiptIdentityError, receiptInputFault } from './receiptTrust.js';
+import { VERIFY_RECEIPT_FIELDS, receiptIdentityError, receiptInputFault } from './receiptTrust.js';
 
 // Allow honest failures in the schema to avoid fabricated successes under retry
 // pressure. Deltas avoid retranscribing finding fields.
-const VERIFY_RECEIPT_FIELDS = {
-  sha: { type: 'string' },
-  n_in: { type: 'number' },
-  nonce: { type: 'string' },
-  deltas_checksum: { type: 'string' },
-  input_checksum: { type: 'string' },
-  inline_checksum: { type: 'string' },
-  base_branch: { type: 'string' },
-  diff_source: {
-    type: 'object',
-    properties: { path: { type: ['string', 'null'] }, read: { type: 'boolean' } },
-    required: ['path', 'read'],
-  },
-  record_proofs: {
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: { id: { type: 'string' }, checksum: { type: ['string', 'null'] } },
-      required: ['id', 'checksum'],
-    },
-  },
-};
 const VERIFY_SCHEMA = {
   type: 'object',
   properties: {

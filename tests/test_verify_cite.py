@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from gauntlet.location import SourceAdapter
 
 from tests.support.citations import QUOTE, citation_cli
@@ -63,10 +64,13 @@ def test_cite_cli_reserves_attempts_and_reuses_terminal_siblings(
     call, q, capture, root, output = citation_cli(tmp_path, monkeypatch, invoke)
     original = SourceAdapter.read_captured_source
     reads = []
+    ledger_batch = "12345678"
 
     def read(self, file, **kwargs):
         ledger = json.loads(
-            (output / "code-gauntlet-inputs-run/cite-12345678/ledger.json").read_bytes()
+            (
+                output / f"code-gauntlet-inputs-run/cite-{ledger_batch}/ledger.json"
+            ).read_bytes()
         )
         assert ledger["attempts"][-1]["results"] is None
         reads.append(file)
@@ -95,10 +99,11 @@ def test_cite_cli_reserves_attempts_and_reuses_terminal_siblings(
         call(altered)[0]["result"]["citations"][0]["detail"]
         == "corrupt_attempt_identity"
     )
+    ledger_batch = "abcdef99"
     assert (
         call([q], batch="abcdef99")[0]["result"]["citations"][0]["status"] == "matched"
     )
-    assert reads == ["source", "missing", "missing"]
+    assert reads == ["source", "missing", "missing", "source"]
     assert (
         call(requests, attempt=3)[0]["result"]["citations"][0]["detail"]
         == "missing_attempt_identity"
@@ -119,3 +124,42 @@ def test_cite_cli_reserves_attempts_and_reuses_terminal_siblings(
     )
     ledger_path.unlink()
     assert call(requests)[0]["result"]["citations"][0]["status"] == "unavailable"
+
+
+@pytest.mark.parametrize("interruption", ["dispatch", "lock", "reserved"])
+def test_cite_retry_runs_after_interrupted_first_dispatch(
+    tmp_path, monkeypatch, invoke, interruption
+):
+    call, q, _, _, output = citation_cli(tmp_path, monkeypatch, invoke)
+    directory = output / "code-gauntlet-inputs-run/cite-12345678"
+    if interruption != "dispatch":
+        call([q])
+        ledger_path = directory / "ledger.json"
+        ledger = json.loads(ledger_path.read_bytes())
+        ledger["attempts"] = (
+            [] if interruption == "lock" else [{"nonce": "lost", "results": None}]
+        )
+        ledger_path.write_text(json.dumps(ledger), encoding="utf-8", newline="")
+        (directory / "lock").touch()
+    retried = call([q], attempt=2, real=True)[0]
+    assert retried["result"]["citations"][0]["status"] == "matched"
+    assert call([q], nonce="run.12345678.2")[0]["result"] == retried["result"]
+    if interruption == "dispatch":
+        assert call([q], nonce="another")[0]["result"] == retried["result"]
+    exhausted = call([q], nonce="beyond-cap")[0]
+    assert exhausted["result"]["citations"][0]["detail"] == "exhausted_attempts"
+    assert len(json.loads((directory / "ledger.json").read_bytes())["attempts"]) == 2
+
+
+def test_cite_rejects_captured_output_directory_as_terminal(
+    tmp_path, monkeypatch, invoke
+):
+    call, q, _, _, output = citation_cli(
+        tmp_path, monkeypatch, invoke, in_repo_output=True
+    )
+    (output / "evidence").write_text(QUOTE, encoding="utf-8", newline="")
+    requests = [{**q, "file": "output/evidence"}]
+    first = call(requests)[0]
+    assert first["result"]["citations"][0]["status"] == "rejected"
+    assert first["result"]["citations"][0]["detail"] == "rejected_origin"
+    assert call(requests, attempt=2)[0]["result"] == first["result"]

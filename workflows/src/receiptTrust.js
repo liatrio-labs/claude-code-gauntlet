@@ -1,3 +1,11 @@
+export const VERIFY_RECEIPT_FIELDS = {
+  sha: { type: 'string' }, n_in: { type: 'number' }, nonce: { type: 'string' },
+  deltas_checksum: { type: 'string' }, input_checksum: { type: 'string' }, inline_checksum: { type: 'string' },
+  base_branch: { type: 'string' },
+  diff_source: { type: 'object', properties: { path: { type: ['string', 'null'] }, read: { type: 'boolean' } }, required: ['path', 'read'] },
+  record_proofs: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, checksum: { type: ['string', 'null'] } }, required: ['id', 'checksum'] } },
+};
+
 // These checks pair both executor modes with the command that produced their data.
 export function receiptIdentityError(env, { nonce, headShaShort, baseBranch, diffPath }) {
   if (!env || typeof env !== 'object') return 'executor returned no envelope';

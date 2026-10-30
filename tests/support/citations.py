@@ -13,8 +13,9 @@ ROOT = Path(__file__).resolve().parents[2]
 QUOTE = 'return "café 😀 value";'
 
 
-def citation_cli(tmp_path, monkeypatch, invoke):
-    root, output = tmp_path / "repo", tmp_path / "output"
+def citation_cli(tmp_path, monkeypatch, invoke, *, in_repo_output=False):
+    root = tmp_path / "repo"
+    output = root / "output" if in_repo_output else tmp_path / "output"
     root.mkdir()
     output.mkdir()
     init_git_repo(root, monkeypatch)

@@ -96,7 +96,8 @@ def test_cite_mode_receipts_bind_requests_and_source(tmp_path, monkeypatch, invo
         f"import {{citeStage}} from {json.dumps((project / 'workflows/src/citeStage.js').as_uri())};"
         "import {execSync} from 'node:child_process'; import fs from 'node:fs';"
         "let s=''; for await (const c of process.stdin) s+=c; const inp=JSON.parse(s); let calls=0;"
-        "const ctx={agent:async (prompt,opts)=>{calls++; execSync(prompt.split('\\n').at(-1),{cwd:inp.repoRoot});"
+        "const ctx={agent:async (prompt,opts)=>{calls++; if(calls===1)throw new Error('dispatch never launched');"
+        "execSync(prompt.split('\\n').at(-1),{cwd:inp.repoRoot});"
         "return JSON.parse(fs.readFileSync(inp.verify.outputPathBase+'.cite'+opts.label.split('-')[1]+'.json','utf8'));}};"
         "const first=await citeStage(ctx,inp); const resumed=await citeStage(ctx,JSON.parse(JSON.stringify(first)));"
         "process.stdout.write(JSON.stringify({calls,resumed}));"
@@ -111,7 +112,7 @@ def test_cite_mode_receipts_bind_requests_and_source(tmp_path, monkeypatch, invo
             check=True,
         ).stdout
     )
-    assert integrated["calls"] == 1
+    assert integrated["calls"] == 2
     assert (
         integrated["resumed"]["findings"][0]["cite_results"][0]["status"] == "matched"
     )

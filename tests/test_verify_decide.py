@@ -898,14 +898,8 @@ def foreign_reads(source):
 
 def test_field_guard_live():
     for path in Path(verify.__file__).parent.glob("*.py"):
-        source = path.read_text(encoding="utf-8")
-        # Citation requests use their own schema rather than the finding projection.
-        if any(
-            isinstance(node, ast.Name)
-            and node.id in {"FindingWire", "VerifySliceFinding"}
-            for node in ast.walk(ast.parse(source))
-        ):
-            assert foreign_reads(source) == [], str(path)
+        if path.name != "cite.py":
+            assert foreign_reads(path.read_text(encoding="utf-8")) == [], str(path)
 
 
 def test_field_guard_added_unprojected_read():

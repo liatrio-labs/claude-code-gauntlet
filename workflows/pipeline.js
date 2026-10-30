@@ -1615,7 +1615,7 @@ function collectCitations(findings) {
   });
 }
 const citeDocument = (records, baseBranch) => ({ requests: records, base_branch: baseBranch });
-function planCiteBatches(records, batchSize, budget, baseBranch, platform) {
+function planCiteBatches(records, budget, baseBranch, platform) {
   const batches = [];
   const oversize = [];
   const cost = (rows) => {
@@ -1625,7 +1625,7 @@ function planCiteBatches(records, batchSize, budget, baseBranch, platform) {
   let batch = [];
   for (const record of records) {
     if (cost([record]) > budget) { oversize.push(record); continue; }
-    if (batch.length && (batch.length >= batchSize || cost([...batch, record]) > budget)) {
+    if (batch.length && cost([...batch, record]) > budget) {
       batches.push(batch); batch = [];
     }
     batch.push(record);
@@ -1648,6 +1648,7 @@ function verifyCommand(inp, i, sliceNonce, inlinePayload) {
     '--head-sha', inp.headShaShort,
     '--base-branch', effectiveVerifyBaseBranch(v.baseBranch),
   ];
+  if (inp.citeMode) parts.push('--mode', 'cite', '--cite-batch', i, '--cite-attempt', inp.citeAttempt ?? STAGE_COSTS.cite.attempts);
   if (v.diffPath) parts.push('--diff-file', v.diffPath);
   if (v.sourceCapture) parts.push('--source-capture', JSON.stringify(v.sourceCapture), '--capture-output-dir', inp.outputDir);
   for (const [key, flag] of [['contextMap', '--context-map'], ['contextFile', '--context-file'], ['targetKind', '--target-kind']]) {
@@ -1659,8 +1660,9 @@ function verifyInlineBudget(input = {}) {
   if (hostPlatformForRoots(input) !== 'windows') return VERIFY_INLINE_CHAR_BUDGET;
   const prepared = { ...input, verify: { ...(input.verify || {}),
     baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
-  const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length
-    + (input.citeMode ? 100 : 0);
+  const index = input.citeMode ? 'ffffffff' : 999999999;
+  const nonce = input.citeMode ? `${input.nonce || ''}.cite.${index}.${STAGE_COSTS.cite.attempts}` : `${input.nonce || ''}.${index}.r1`;
+  const overhead = verifyCommand(prepared, index, nonce, '').length;
   return Math.max(0, 32767 - overhead - 2048);
 }
 const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
@@ -1742,26 +1744,12 @@ function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
 }
-function citeCost(L, findings, challenges, input = {}, baseBranch = 'main') {
-  const count = findingCount(findings);
+function citeCost(findings, input, baseBranch) {
   const records = Array.isArray(findings) ? collectCitations(findings) : [];
-  if (records.length || (Array.isArray(findings) && findings.every((f) => Array.isArray(f.skeptical_assessments)))) {
-    const ledger = input.cite_ledger;
-    if (Object.hasOwn(input, 'cite_ledger') && (!ledger || !Array.isArray(ledger.entries) || !Array.isArray(ledger.batches))) return 0;
-    const source = citeSource(input.verify?.sourceCapture);
-    const fresh = ledger ? records.filter((r) => !ledger.entries.some((e) => e?.key === citeRecordKey(r, source))) : records;
-    const planned = planCiteBatches(fresh, effectiveBatchSize(L, count), verifyInlineBudget({ ...input, citeMode: true }),
-      baseBranch, hostPlatformForRoots(input)).batches.length * STAGE_COSTS.cite.attempts;
-    if (ledger) return planned + ledger.batches.filter((b) => Array.isArray(b?.keys)
-      && Number.isSafeInteger(b.attempts) && b.attempts >= 0 && b.attempts <= STAGE_COSTS.cite.attempts
-      && b.keys.some((key) => records.some((r) => citeRecordKey(r, source) === key))).reduce((n, b) => n
-      + (b.keys.every((key) => ledger.entries.some((e) => e?.key === key && reusableCiteResult(e, e.record, source)))
-        ? 0 : Math.max(0, STAGE_COSTS.cite.attempts - (b.attempts ?? STAGE_COSTS.cite.attempts))), 0);
-    return planned;
-  }
-  return ceilDiv((count + challenges) * CITE_ROLES_PER_STAGE, effectiveBatchSize(L, count)) * STAGE_COSTS.cite.attempts;
+  return planCiteBatches(records, verifyInlineBudget({ ...input, citeMode: true }),
+    baseBranch, hostPlatformForRoots(input)).batches.length * STAGE_COSTS.cite.attempts;
 }
-function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
+function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}, includeCite = true) {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
   const findings = findingCount(nFindings);
@@ -1769,7 +1757,7 @@ function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', inp
   const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
   const validateCalls = validationCost(L, findings);
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
-  const citeCalls = citeCost(L, nFindings, challengeCalls, input, baseBranch);
+  const citeCalls = includeCite ? citeCost(nFindings, input, baseBranch) : 0;
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + citeCalls + STAGE_COSTS.writer.attempts;
 }
 function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
@@ -1777,7 +1765,7 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {
   const files = Math.max(0, nFiles || 0);
   const findings = findingCount(nFindings);
   const candidates = new Set(['summarize', 'verify', 'validate', 'challenge']);
-  while (worstCaseAgentCount(L, files, nFindings, baseBranch, input) >= AGENT_COUNT_GUARD && candidates.size > 0) {
+  while (worstCaseAgentCount(L, files, nFindings, baseBranch, input, false) >= AGENT_COUNT_GUARD && candidates.size > 0) {
     const summarizeTerm = ceilDiv(files, effectiveBucketSize(L)) + 1;
     if (summarizeTerm > SUMMARIZE_TERM_BOUND && candidates.has('summarize')) {
       const before = summarizeTerm;
@@ -1787,9 +1775,8 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {
     }
     const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch, input);
     const challengeCount = Math.min(findings, effectiveChallengeCap(L, findings));
-    const citeTerm = citeCost(L, nFindings, challengeCount, input, baseBranch);
-    const validateTerm = validationCost(L, findings) + citeTerm;
-    const challengeTerm = challengeCount + citeTerm;
+    const validateTerm = validationCost(L, findings);
+    const challengeTerm = challengeCount;
     const choices = [
       ['validate', validateTerm],
       ['verify', currentVerifyTerm],
@@ -1800,14 +1787,14 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {
     const [largest] = choices;
     if (largest[0] === 'validate') {
       L.validateBatch = effectiveBatchSize(L, findings) * 2;
-      if (validationCost(L, findings) + citeCost(L, nFindings, challengeCount, input, baseBranch) >= validateTerm) candidates.delete('validate');
+      if (validationCost(L, findings) >= validateTerm) candidates.delete('validate');
     } else if (largest[0] === 'verify') {
       L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
       if (verifyTerm(L, nFindings, baseBranch, input) >= currentVerifyTerm) candidates.delete('verify');
     } else {
       L.challengeCap = Math.min(challengeCount, Math.max(CHALLENGE_CAP_FLOOR, Math.floor(challengeCount / 2)));
       const next = Math.min(findings, effectiveChallengeCap(L, findings));
-      if (next + citeCost(L, nFindings, next, input, baseBranch) >= challengeTerm) candidates.delete('challenge');
+      if (next >= challengeTerm) candidates.delete('challenge');
     }
   }
   return L;
@@ -5714,6 +5701,13 @@ function selectDelivery(survivors, cap, tier) {
   return ranked.flatMap(({ primary, corroborators }) => [primary, ...corroborators]);
 }
 // --- receiptTrust.js ---
+const VERIFY_RECEIPT_FIELDS = {
+  sha: { type: 'string' }, n_in: { type: 'number' }, nonce: { type: 'string' },
+  deltas_checksum: { type: 'string' }, input_checksum: { type: 'string' }, inline_checksum: { type: 'string' },
+  base_branch: { type: 'string' },
+  diff_source: { type: 'object', properties: { path: { type: ['string', 'null'] }, read: { type: 'boolean' } }, required: ['path', 'read'] },
+  record_proofs: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, checksum: { type: ['string', 'null'] } }, required: ['id', 'checksum'] } },
+};
 function receiptIdentityError(env, { nonce, headShaShort, baseBranch, diffPath }) {
   if (!env || typeof env !== 'object') return 'executor returned no envelope';
   if (env.status !== 'ok') return `status=${env.status == null ? 'missing' : env.status}${env.stderr ? ` (${env.stderr})` : ''}`;
@@ -5740,28 +5734,6 @@ function receiptInputFault(r, n, expectedInlineChecksum, expectedInputChecksum) 
   return diagnostic;
 }
 // --- verifyStage.js ---
-const VERIFY_RECEIPT_FIELDS = {
-  sha: { type: 'string' },
-  n_in: { type: 'number' },
-  nonce: { type: 'string' },
-  deltas_checksum: { type: 'string' },
-  input_checksum: { type: 'string' },
-  inline_checksum: { type: 'string' },
-  base_branch: { type: 'string' },
-  diff_source: {
-    type: 'object',
-    properties: { path: { type: ['string', 'null'] }, read: { type: 'boolean' } },
-    required: ['path', 'read'],
-  },
-  record_proofs: {
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: { id: { type: 'string' }, checksum: { type: ['string', 'null'] } },
-      required: ['id', 'checksum'],
-    },
-  },
-};
 const VERIFY_SCHEMA = {
   type: 'object',
   properties: {
@@ -6062,12 +6034,8 @@ function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
 const CITE_ENVELOPE_SCHEMA = { type: 'object', properties: {
   status: { type: 'string' }, stderr: { type: 'string' },
   receipt: { type: 'object', properties: {
-    sha: { type: 'string' }, nonce: { type: 'string' }, n_in: { type: 'number' },
-    base_branch: { type: 'string' }, deltas_checksum: { type: 'string' },
-    input_checksum: { type: 'string' }, inline_checksum: { type: 'string' },
+    ...VERIFY_RECEIPT_FIELDS,
     batch_id: { type: 'string' }, attempt: { type: 'integer' },
-    diff_source: { type: 'object', properties: { path: { type: ['string', 'null'] }, read: { type: 'boolean' } }, required: ['path', 'read'] },
-    record_proofs: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, checksum: { type: ['string', 'null'] } }, required: ['id', 'checksum'] } },
   } },
   result: { type: 'object', properties: { citations: { type: 'array', items: {
     ...CITATION_RESULT_SCHEMA, properties: { id: { type: 'string' }, ...CITATION_RESULT_SCHEMA.properties },
@@ -6075,31 +6043,35 @@ const CITE_ENVELOPE_SCHEMA = { type: 'object', properties: {
   } } } },
 }, required: ['status'] };
 function trustedCitations(env, inp, batch, nonce, attempt, document, token, gaps) {
+  const reject = (reason) => { gaps.push(`cite_receipt: ${reason}`); return []; };
   const error = receiptIdentityError(env, { nonce, headShaShort: inp.headShaShort,
     baseBranch: document.base_branch, diffPath: inp.verify?.diffPath || null });
-  if (error) return [];
+  if (error) return reject(error);
   const r = env.receipt;
   const rows = env.result?.citations;
   if (r.batch_id !== batch.id || r.attempt !== attempt || !Array.isArray(rows)
-    || !Array.isArray(r.record_proofs) || r.deltas_checksum !== citeChecksum(rows)) return [];
+    || !Array.isArray(r.record_proofs) || r.deltas_checksum !== citeChecksum(rows)) return reject('batch, attempt, records or content proof mismatch');
   const fault = receiptInputFault(r, document.requests.length, citeChecksumToken(token), citeChecksum(document));
   if (fault) gaps.push(`cite_receipt: ${fault.reason}`);
   const proofs = (id) => r.record_proofs.filter((p) => p?.id === id);
-  return batch.records.flatMap((record) => {
+  return document.requests.flatMap((record) => {
     const matches = rows.filter((row) => row?.id === record.id);
     const p = proofs(record.id);
-    if (matches.length !== 1 || p.length !== 1 || p[0].checksum !== citeChecksum(record)) return [];
+    if (matches.length !== 1 || p.length !== 1 || p[0].checksum !== citeChecksum(record)) return reject(`${record.id}: row or record proof mismatch`);
     const row = matches[0];
-    if (fault && firstUnsafeNumber(record, 'citation') !== null) return [];
+    if (fault && firstUnsafeNumber(record, 'citation') !== null) return reject(`${record.id}: unsafe request number`);
     if (citeChecksum(row.request) !== citeChecksum(record.request)
       || citeChecksum(row.source) !== citeChecksum(batch.source)
       || !CITATION_RESULT_SCHEMA.properties.status.enum.includes(row.status)
-      || typeof row.detail !== 'string') return [];
-    if (row.status === 'matched' && record.request?.snapshot_id !== batch.source.snapshot_id) return [];
+      || typeof row.detail !== 'string') return reject(`${record.id}: request, source or result shape mismatch`);
+    if (row.status === 'matched' && record.request?.snapshot_id !== batch.source.snapshot_id) return reject(`${record.id}: snapshot mismatch`);
     return [row];
   });
 }
 const citeChecksumToken = fnv1a32;
+function citeKeyIdentity(key) {
+  try { return JSON.parse(key) || {}; } catch { return {}; }
+}
 async function citeStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : input;
   const findings = [...(inp.findings || []), ...(inp.unverified || [])];
@@ -6112,10 +6084,13 @@ async function citeStage(ctx, input) {
     stats: { ...(inp.stats || {}), cite_planned: 0, cite_attempts: 0, cite_oversize: 0 } };
   inp.cite_ledger = ledger;
   const validLedger = isPlainObject(ledger) && ledger.version === 1 && Array.isArray(ledger.entries) && Array.isArray(ledger.batches)
-    && ledger.entries.every((e) => isPlainObject(e) && typeof e.key === 'string' && isPlainObject(e.record)
-      && isPlainObject(e.source) && e.key === citeRecordKey(e.record, e.source))
+    && ledger.entries.every((e) => {
+      if (!isPlainObject(e) || typeof e.key !== 'string') return false;
+      const identity = citeKeyIdentity(e.key);
+      return isPlainObject(identity.record) && isPlainObject(identity.source) && e.key === citeRecordKey(identity.record, identity.source);
+    })
     && new Set(ledger.entries.map((e) => e.key)).size === ledger.entries.length
-    && ledger.batches.every((b) => isPlainObject(b) && typeof b.id === 'string' && Array.isArray(b.keys) && Array.isArray(b.records) && isPlainObject(b.source))
+    && ledger.batches.every((b) => isPlainObject(b) && typeof b.id === 'string' && Array.isArray(b.keys) && isPlainObject(b.source))
     && new Set(ledger.batches.map((b) => b.id)).size === ledger.batches.length;
   const unavailable = (record, detail) => ({ id: record.id, request: record.request, status: 'unavailable', detail, source });
   const results = new Map();
@@ -6132,11 +6107,14 @@ async function citeStage(ctx, input) {
         else if (!ledger.batches.some((b) => b.keys?.includes(key))) results.set(key, unavailable(record, 'missing_attempt_identity'));
         continue;
       }
-      if (ledger.entries.some((e) => e.record?.finding_id === record.finding_id
-        && e.record?.stage === record.stage && e.record?.request?.request_id === record.request?.request_id)) {
+      if (ledger.entries.some((e) => {
+        const prior = citeKeyIdentity(e.key).record;
+        return prior.finding_id === record.finding_id && prior.stage === record.stage
+          && prior.request?.request_id === record.request?.request_id;
+      })) {
         gaps.push('cite_identity_changed: dependent citation results invalidated');
       }
-      ledger.entries.push({ key, record, source });
+      ledger.entries.push({ key });
       if (records.filter((r) => r.finding_id === record.finding_id && r.stage === record.stage).length > CITE_ROLES_PER_STAGE) {
         const row = unavailable(record, 'request_cap');
         ledger.entries[ledger.entries.length - 1].result = row;
@@ -6157,8 +6135,7 @@ async function citeStage(ctx, input) {
       pending.push(record);
     }
     const branch = effectiveVerifyBaseBranch(inp.verify?.baseBranch);
-    const plan = planCiteBatches(pending, effectiveBatchSize(inp.limits || {}, records.length),
-      verifyInlineBudget({ ...inp, citeMode: true }), branch, hostPlatformForRoots(inp));
+    const plan = planCiteBatches(pending, verifyInlineBudget({ ...inp, citeMode: true }), branch, hostPlatformForRoots(inp));
     for (const record of plan.oversize) {
       const row = unavailable(record, 'oversize');
       ledger.entries.find((e) => e.key === citeRecordKey(record, source)).result = row;
@@ -6173,26 +6150,22 @@ async function citeStage(ctx, input) {
         for (const record of batchRecords) results.set(citeRecordKey(record, source), unavailable(record, 'ambiguous_batch_identity'));
         continue;
       }
-      ledger.batches.push({ id, ...identity, keys: batchRecords.map((r) => citeRecordKey(r, source)), attempts: 0 });
+      ledger.batches.push({ id, source, keys: batchRecords.map((r) => citeRecordKey(r, source)), attempts: 0 });
     }
     for (const batch of ledger.batches) {
       if (citeChecksum(batch.source) !== citeChecksum(source) || !Array.isArray(batch.keys)
         || !batch.keys.some((key) => records.some((r) => citeRecordKey(r, source) === key) && !results.has(key))) continue;
+      const batchRecords = batch.keys.map((key) => citeKeyIdentity(key).record);
       const intact = Number.isSafeInteger(batch.attempts) && batch.attempts >= 0 && batch.attempts <= STAGE_COSTS.cite.attempts
-        && Array.isArray(batch.records) && batch.records.every((r, i) => batch.keys[i] === citeRecordKey(r, source))
-        && batch.id === citeChecksum({ records: batch.records, source, version: CITE_VERIFIER_VERSION }).slice(-8);
+        && batch.keys.every((key, i) => ledger.entries.some((e) => e.key === key) && key === citeRecordKey(batchRecords[i], source))
+        && batch.id === citeChecksum({ records: batchRecords, source, version: CITE_VERIFIER_VERSION }).slice(-8);
       if (!intact) {
-        for (const key of batch.keys) if (!results.has(key)) results.set(key, unavailable(ledger.entries.find((e) => e.key === key)?.record || {}, 'corrupt_attempt_identity'));
+        for (const key of batch.keys) if (!results.has(key)) results.set(key, unavailable(citeKeyIdentity(key).record || {}, 'corrupt_attempt_identity'));
         gaps.push('cite_unavailable: corrupt batch identity');
         continue;
       }
-      const document = citeDocument(batch.records, branch);
+      const document = citeDocument(batchRecords, branch);
       const token = encodeSliceInline(document);
-      if (verifyInlineCost(token, hostPlatformForRoots(inp)) > verifyInlineBudget({ ...inp, citeMode: true })) {
-        for (const record of batch.records) if (!results.has(citeRecordKey(record, source))) results.set(citeRecordKey(record, source), unavailable(record, 'oversize'));
-        gaps.push('cite_unavailable: resumed batch exceeds inline budget');
-        continue;
-      }
       out.stats.cite_planned += STAGE_COSTS.cite.attempts - batch.attempts;
       while (batch.attempts < STAGE_COSTS.cite.attempts && batch.keys.some((key) => !results.has(key))) {
         batch.attempts += 1;
@@ -6201,8 +6174,7 @@ async function citeStage(ctx, input) {
         let env;
         out.stats.cite_attempts += 1;
         try {
-          const command = verifyCommand({ ...inp, citeMode: true }, batch.id, nonce, token)
-            + ` --mode cite --cite-batch ${batch.id} --cite-attempt ${batch.attempts}`;
+          const command = verifyCommand({ ...inp, citeMode: true, citeAttempt: batch.attempts }, batch.id, nonce, token);
           env = await ctx.agent(`Run exactly this command; read --output and copy status, receipt and result.citations exactly.\n${command}`, {
             label: `cite-${batch.id}-${batch.attempts}`, agentType: 'code-gauntlet:executor',
             model: modelFor('code-gauntlet:executor', inp.policy || {}), schema: CITE_ENVELOPE_SCHEMA,
@@ -6210,12 +6182,12 @@ async function citeStage(ctx, input) {
         } catch { env = null; }
         const accepted = trustedCitations(env, inp, batch, nonce, batch.attempts, document, token, gaps);
         for (const row of accepted) {
-          const record = batch.records.find((r) => r.id === row.id);
+          const record = batchRecords.find((r) => r.id === row.id);
           const key = citeRecordKey(record, source);
           if (row.status !== 'unavailable') results.set(key, row);
           ledger.entries.find((e) => e.key === key).result = row;
         }
-        batch.state = accepted.length === batch.records.length ? 'complete' : 'uncertain';
+        batch.state = accepted.length === batchRecords.length ? 'complete' : 'uncertain';
       }
     }
   }

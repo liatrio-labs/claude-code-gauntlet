@@ -38,6 +38,7 @@ export function citeEnvelope(prompt, inp, status = () => 'matched') {
 
 test('cite successes persist and infrastructure retries are bounded across resumes', async () => {
   const inp = citeInput();
+  inp.limits.validateBatch = 1;
   let reserved;
   const ctx = stageCtx({ reply: (prompt) => {
     const batch = inp.cite_ledger.batches[0];
@@ -97,6 +98,7 @@ for (const [name, corrupt] of Object.entries(RECEIPT_FAULTS)) test(`cite receipt
   assert.equal(out.findings[0].cite_results[0].status, 'unavailable');
   const local = ['records', 'duplicate', 'source', 'request'].includes(name);
   assert.equal(out.findings[1].cite_results[0].status, local ? 'matched' : 'unavailable');
+  assert.ok(out.gaps.some((g) => g.startsWith('cite_receipt:')));
 });
 
 for (const field of ['input_checksum', 'inline_checksum', 'n_in']) test(`cite receipt ${field} faults localize by attributable record proofs`, async () => {
@@ -118,7 +120,7 @@ test('cite preserves rejected audit paths, legacy packets and upstream records',
   assert.equal(out.findings[0].cite_results[0].status, 'rejected');
   assert.equal(out.unverified[0].cite_results[0].status, 'matched');
   assert.deepEqual(out.eliminated, inp.eliminated);
-  assert.equal(out.cite_ledger.entries.some((e) => e.record.finding_id === 'threshold'), false);
+  assert.equal(out.cite_ledger.entries.some((e) => JSON.parse(e.key).record.finding_id === 'threshold'), false);
   const cp = JSON.parse(JSON.stringify(buildResumeCheckpoints({ cite: out, challenge: inp })));
   normalizePhaseFindings('cite', cp.phases.cite, true, { repoRoot: '/repo', verify: inp.verify });
   assert.equal(cp.phases.cite.findings[0].skeptical_assessments[0].citations[0].file, '../source');
@@ -136,7 +138,7 @@ test('cite preserves rejected audit paths, legacy packets and upstream records',
   }
   const noLedger = JSON.parse(JSON.stringify(out)); delete noLedger.cite_ledger;
   assert.equal((await citeStage({}, noLedger)).findings[0].cite_results[0].status, 'unavailable');
-  assert.equal(planCiteBatches(collectCitations(citeInput().findings), 2, 1, 'main').oversize.length, 2);
+  assert.equal(planCiteBatches(collectCitations(citeInput().findings), 1, 'main').oversize.length, 2);
 });
 
 test('cite terminal requests reuse proof while oversize and changed snapshots hold only dependents', async () => {
@@ -188,14 +190,13 @@ test('cite holds bounded or corrupt resume dependents while retaining successful
   const first = await citeStage(ctx, inp);
   for (const change of [
     (p) => { p.cite_ledger.batches[0].attempts = -1; },
-    (p) => { p.cite_ledger.batches[0].attempts = 1; p.pluginRoot = `C:/${'x'.repeat(33000)}`; },
   ]) {
     const resumed = JSON.parse(JSON.stringify(first)); change(resumed);
     const noDispatch = stageCtx();
     const held = await citeStage(noDispatch, resumed);
     assert.equal(noDispatch.calls.length, 0);
     assert.deepEqual(held.findings.map((f) => f.cite_results[0].status), ['matched', 'unavailable']);
-    assert.ok(['corrupt_attempt_identity', 'oversize'].includes(held.findings[1].cite_results[0].detail));
+    assert.equal(held.findings[1].cite_results[0].detail, 'corrupt_attempt_identity');
   }
   const capped = citeInput();
   const q = capped.findings[0].skeptical_assessments[0].citations[0];

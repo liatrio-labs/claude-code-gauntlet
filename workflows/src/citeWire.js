@@ -44,7 +44,7 @@ export function collectCitations(findings) {
 export const citeDocument = (records, baseBranch) => ({ requests: records, base_branch: baseBranch });
 
 // Count and byte limits constrain the same encoded document sent to the executor.
-export function planCiteBatches(records, batchSize, budget, baseBranch, platform) {
+export function planCiteBatches(records, budget, baseBranch, platform) {
   const batches = [];
   const oversize = [];
   const cost = (rows) => {
@@ -54,7 +54,7 @@ export function planCiteBatches(records, batchSize, budget, baseBranch, platform
   let batch = [];
   for (const record of records) {
     if (cost([record]) > budget) { oversize.push(record); continue; }
-    if (batch.length && (batch.length >= batchSize || cost([...batch, record]) > budget)) {
+    if (batch.length && cost([...batch, record]) > budget) {
       batches.push(batch); batch = [];
     }
     batch.push(record);
