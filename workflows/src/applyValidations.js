@@ -2,7 +2,7 @@
 
 import { INT_POLICY, coerceInt } from './wire.js';
 import { canonicalRange } from './location.js';
-import { matchAssessments } from './admission.js';
+import { matchAssessments, hasPresentDefect } from './admission.js';
 import { VALIDATION_RETURN_PROPERTIES, requiredAssessments, REACHABILITY_VALUES } from './registry.js';
 
 export function validationRejections(finding, validation) {
@@ -11,7 +11,7 @@ export function validationRejections(finding, validation) {
   if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
   if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
   const assessments = Array.isArray(validation.admission_assessments) ? validation.admission_assessments : [];
-  for (const predicate of requiredAssessments(finding, validation.policy_subject)) {
+  for (const predicate of requiredAssessments(finding, validation.policy_subject, hasPresentDefect(finding, assessments))) {
     const entries = assessments.filter((entry) => entry?.predicate === predicate);
     if (entries.length !== 1
       || !VALIDATION_RETURN_PROPERTIES.admission_assessments.items.properties.status.enum.includes(entries[0].status)

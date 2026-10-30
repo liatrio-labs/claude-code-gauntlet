@@ -613,11 +613,11 @@ const POLICY_SUBJECTS = {
 };
 const QUALITY_ADMISSION = {
   field: 'quality_basis', promotion: { predicate: 'present_defect', kind: 'current_correctness' }, kinds: {
-    current_correctness: { required: [], predicates: ['present_defect'], phase: 'semantic', core: true, tier: 'main' },
-    duplication: { required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
-    simpler_equivalent: { required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
-    stack_idiom: { required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
-    other: { required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
+    current_correctness: { description: 'A demonstrated present production defect.', required: [], predicates: ['present_defect'], phase: 'semantic', core: true, tier: 'main' },
+    duplication: { description: 'Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior.', required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
+    simpler_equivalent: { description: 'A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths.', required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
+    stack_idiom: { description: 'A behavior-preserving replacement supported by applicable existing repository precedent; identify the precedent and the cost it removes.', required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
+    other: { description: 'No demonstrated defect, redundancy, simpler equivalent or applicable precedent; unsupported preferences stay report_only.', required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
   },
 };
 const DIMENSIONS = deepFreeze([
@@ -668,7 +668,9 @@ const DIMENSIONS = deepFreeze([
   ...row, policySubjects: POLICY_SUBJECTS,
   schemaExtra: { ...row.schemaExtra, ...(row.admission ? {
     [row.admission.field]: { type: 'string', enum: Object.keys(row.admission.kinds), description: row.admission === QUALITY_ADMISSION
-      ? 'Quality basis used to assess admission.' : 'Test issue kind used to assess admission and production-defect promotion.' },
+      ? 'Select the demonstrated quality basis. Behavior-preserving improvements do not require a production defect. '
+        + Object.entries(row.admission.kinds).map(([kind, rule]) => `${kind}: ${rule.description}`).join(' ')
+      : 'Test issue kind used to assess admission and production-defect promotion.' },
     ...(row.admission === QUALITY_ADMISSION ? {
       duplicate_of: { ...SOURCE_REFERENCE, description: 'Source reference to the existing implementation duplicated here.' },
       precedent: { ...SOURCE_REFERENCE, description: 'Source reference to an existing repository idiom supporting the change.' },
@@ -981,11 +983,19 @@ function findingPolicy(finding, effective = true) {
   return { row: selected, kind, core: kind?.core ?? selected?.core ?? false,
     tier: kind?.tier ?? selected?.defaultTier, defaultDisposition: kind?.defaultDisposition ?? selected?.defaultDisposition };
 }
-function requiredAssessments(finding, policySubject) {
+function admissionPolicy(finding, policySubject, promoted = false) {
   const original = findingPolicy({ ...finding, policy_subject: undefined }, false);
-  const selected = findingPolicy({ ...finding, policy_subject: policySubject }, false);
-  return [...new Set([original.row?.admission?.promotion?.predicate,
-    ...(original.kind?.predicates || []), ...(selected.kind?.predicates || [])])]
+  const promotion = original.row?.admission?.promotion;
+  const terminal = !promoted && original.kind?.defaultDisposition === 'report_only';
+  const policyFinding = promoted && promotion
+    ? { ...finding, policy_subject: 'ordinary', [original.row.admission.field]: promotion.kind }
+    : { ...finding, policy_subject: policySubject };
+  return { original, promotion, terminal, policyFinding,
+    ...(terminal ? original : findingPolicy(policyFinding, false)) };
+}
+function requiredAssessments(finding, policySubject, promoted = false) {
+  const { promotion, kind } = admissionPolicy(finding, policySubject, promoted);
+  return [...new Set([promotion?.predicate, ...(kind?.predicates || [])])]
     .filter((predicate) => ADMISSION_PREDICATES[predicate]?.references);
 }
 function normalizePipelineStamps(finding) {
@@ -2585,6 +2595,11 @@ function matchAssessments(finding, entries) {
   }).map(({ predicate, status, references }) => ({ predicate,
     status: references.length === 0 && status === 'confirmed' ? 'unresolved' : status, references: [...references] }));
 }
+function hasPresentDefect(finding, entries) {
+  const { promotion } = admissionPolicy(finding);
+  return !!promotion && matchAssessments(finding, entries)
+    .some((entry) => entry.predicate === promotion.predicate && entry.status === 'confirmed');
+}
 const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
   'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
   'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
@@ -2665,13 +2680,8 @@ function predicateResult(finding, predicate) {
 function evaluateAdmission(finding) {
   delete finding.admission;
   delete finding.effective_test_kind;
-  const original = findingPolicy({ ...finding, policy_subject: undefined });
-  const promotion = original.row?.admission?.promotion;
-  const promoted = promotion && matchAssessments(finding, finding.admission_assessments)
-    .some((entry) => entry.predicate === promotion.predicate && entry.status === 'confirmed');
-  const terminal = !promoted && original.kind?.defaultDisposition === 'report_only';
-  const policyFinding = promoted ? { ...finding, policy_subject: 'ordinary', [original.row.admission.field]: promotion.kind } : finding;
-  const { row, kind, core, tier } = terminal ? original : findingPolicy(policyFinding);
+  const promoted = hasPresentDefect(finding, finding.admission_assessments);
+  const { original, promotion, terminal, policyFinding, row, kind, core, tier } = admissionPolicy(finding, finding.policy_subject, promoted);
   const subject = row?.policySubjects[policyFinding.policy_subject];
   const reasons = [];
   const fail = (predicate, status) => { if (status) reasons.push({ predicate, status }); };
@@ -2682,7 +2692,7 @@ function evaluateAdmission(finding) {
   if (kind?.defaultDisposition === 'report_only') fail('value', 'report_only');
   for (const predicate of kind?.predicates || []) fail(predicate, predicateResult(finding, predicate));
   const assessed = new Set(matchAssessments(finding, finding.admission_assessments).map((entry) => entry.predicate));
-  for (const predicate of requiredAssessments(finding, finding.policy_subject)) {
+  for (const predicate of requiredAssessments(finding, finding.policy_subject, promoted)) {
     if (!assessed.has(predicate) && !reasons.some((reason) => reason.predicate === predicate && reason.status === 'held_back')) {
       fail(predicate, 'held_back');
     }
@@ -2710,13 +2720,22 @@ function evaluateAdmission(finding) {
   if (status === 'admitted') finding.report_destination = finding.report_tag = finding.admission.tier;
   return finding;
 }
-function admissionContext(finding) {
-  const policy = findingPolicy(finding, false);
+function admissionContext(finding, validation) {
+  const { promotion, original } = admissionPolicy(finding);
+  const promoted = hasPresentDefect(finding, validation?.admission_assessments);
+  const subjects = validation ? [validation.policy_subject] : Object.keys(original.row?.policySubjects || {});
+  const requirements = Object.fromEntries(subjects.map((subject) =>
+    [subject, requiredAssessments(finding, subject, promoted)]));
+  const missing = validation ? requiredAssessments(finding, validation.policy_subject, promoted).filter((predicate) =>
+    !matchAssessments(finding, validation.admission_assessments).some((entry) => entry.predicate === predicate)) : null;
+  const predicates = [...new Set(missing || [...Object.values(requirements).flat(), ...RIGHT_ELIGIBILITY.body.fixTask])]
+    .filter((predicate) => ADMISSION_PREDICATES[predicate]?.references);
   return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
-    policy: { predicates: policy.kind?.predicates || [],
-      policy_subjects: Object.fromEntries(Object.keys(policy.row?.policySubjects || {}).map((subject) =>
-        [subject, findingPolicy({ ...finding, policy_subject: subject }, false).kind?.predicates || []])),
-      body_fix_task: RIGHT_ELIGIBILITY.body.fixTask },
+    policy: { policy_subjects: validation ? { [validation.policy_subject]: missing } : requirements,
+      ...(!validation && promotion ? { promotion: { predicate: promotion.predicate,
+        confirmed: requiredAssessments(finding, 'ordinary', true) } } : {}),
+      ...(!validation ? { body_fix_task: RIGHT_ELIGIBILITY.body.fixTask } : {}) },
+    predicates: Object.fromEntries(predicates.map((predicate) => [predicate, ADMISSION_PREDICATES[predicate]])),
     claim: Object.fromEntries(DIMENSIONS.flatMap((row) => Object.keys(row.schemaExtra)).map((key) => [key, finding[key]])),
     fix: finding.suggestion || finding.suggested_fix_code };
 }
@@ -2727,7 +2746,7 @@ function validationRejections(finding, validation) {
   if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
   if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
   const assessments = Array.isArray(validation.admission_assessments) ? validation.admission_assessments : [];
-  for (const predicate of requiredAssessments(finding, validation.policy_subject)) {
+  for (const predicate of requiredAssessments(finding, validation.policy_subject, hasPresentDefect(finding, assessments))) {
     const entries = assessments.filter((entry) => entry?.predicate === predicate);
     if (entries.length !== 1
       || !VALIDATION_RETURN_PROPERTIES.admission_assessments.items.properties.status.enum.includes(entries[0].status)
@@ -5374,16 +5393,36 @@ function validateReturnDescriptor() {
     })
     .join(', ');
 }
-function validateSchema(batch) {
+function assessmentRequirement(predicates) {
+  return { ...(predicates.length ? { properties: { admission_assessments: { allOf: predicates.map((predicate) => ({
+    contains: { properties: { predicate: { const: predicate } }, required: ['predicate'] },
+  })) } } } : {}), required: predicates.length ? ['admission_assessments'] : [] };
+}
+function validateSchema(batch, accepted) {
   const base = VALIDATE_SCHEMA.properties.validations.items;
-  const variants = batch.flatMap((finding) => VALIDATION_RETURN_PROPERTIES.policy_subject.enum.map((subject) => {
-    const predicates = requiredAssessments(finding, subject);
-    return { properties: { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] },
-      ...(predicates.length ? { admission_assessments: { allOf: predicates.map((predicate) => ({
-        contains: { properties: { predicate: { const: predicate } }, required: ['predicate'] },
-      })) } } : {}) }, required: predicates.length ? ['admission_assessments'] : [] };
-  }));
-  return { ...VALIDATE_SCHEMA, properties: { validations: { type: 'array', items: { ...base, anyOf: variants } } } };
+  const variants = batch.flatMap((finding) => {
+    const previous = accepted.get(finding.id);
+    if (previous) {
+      const requirements = assessmentRequirement(validationRejections(finding, previous)
+        .map((reason) => reason.slice('missing_assessment:'.length)));
+      return [{ ...requirements, properties: { finding_id: { enum: [finding.id] }, ...requirements.properties } }];
+    }
+    return VALIDATION_RETURN_PROPERTIES.policy_subject.enum.map((subject) => {
+      const { promotion } = admissionPolicy(finding);
+      const requirements = assessmentRequirement(requiredAssessments(finding, subject));
+      const references = Object.keys(admissionRequests(finding)).filter((key) => key === 'primary');
+      const conditional = promotion && references.length > 0;
+      return { properties: { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] },
+        ...(!conditional ? requirements.properties : {}) }, required: [...base.required, ...(!conditional ? requirements.required : [])],
+        ...(conditional ? { if: { properties: { admission_assessments: { contains: {
+          properties: { predicate: { const: promotion.predicate }, status: { const: 'confirmed' },
+            references: { const: references } }, required: ['predicate', 'status', 'references'],
+        } } }, required: ['admission_assessments'] },
+        then: assessmentRequirement(requiredAssessments(finding, subject, true)), else: requirements } : {}),
+      };
+    });
+  });
+  return { ...VALIDATE_SCHEMA, properties: { validations: { type: 'array', items: { ...base, required: ['finding_id'], anyOf: variants } } } };
 }
 function validatorAudit(audit, label, result, rejections) {
   const raw = JSON.stringify(result ?? null);
@@ -5410,8 +5449,8 @@ async function validateStage(ctx, input) {
   const terminalRejections = new Map();
   let completed = 0;
   let dispatched = 0;
-  const dispatch = (batch, label) => () => ctx.agent(validatePrompt(inp, batch), {
-    label, agentType: 'code-gauntlet:validator', model, schema: validateSchema(batch),
+  const dispatch = (batch, label) => () => ctx.agent(validatePrompt(inp, batch, accepted), {
+    label, agentType: 'code-gauntlet:validator', model, schema: validateSchema(batch, accepted),
   });
   const consume = (res, batch, label) => {
     const list = res === null || res === undefined
@@ -5424,9 +5463,16 @@ async function validateStage(ctx, input) {
       const matches = entries.filter((entry) => entry.id === finding.id);
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
-        const reasons = validationRejections(finding, entry);
+        const previous = accepted.get(finding.id);
+        const missing = previous ? validationRejections(finding, previous).map((reason) => reason.slice('missing_assessment:'.length)) : [];
+        const replacements = (Array.isArray(entry.admission_assessments) ? entry.admission_assessments : [])
+          .filter((assessment) => missing.includes(assessment?.predicate));
+        const merged = previous && label.startsWith('validate-retry-') ? { ...previous,
+          admission_assessments: [...(Array.isArray(previous.admission_assessments) ? previous.admission_assessments : []).filter((assessment) =>
+            !replacements.some((replacement) => replacement?.predicate === assessment?.predicate)), ...replacements] } : entry;
+        const reasons = validationRejections(finding, merged);
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
-        if (reasons.every((reason) => reason.startsWith('missing_assessment:'))) accepted.set(finding.id, entry);
+        if (reasons.every((reason) => reason.startsWith('missing_assessment:'))) accepted.set(finding.id, merged);
       }
     }
     validatorAudit(audit, label, res, rejections);
@@ -5476,11 +5522,8 @@ async function validateStage(ctx, input) {
     },
   };
 }
-function validatePrompt(inp, batch) {
+function validatePrompt(inp, batch, accepted) {
   const ctxLine = inp.contextLine || '';
-  const promotionRows = DIMENSIONS.filter((row) => row.admission?.promotion);
-  const promotionHeader = [...new Set(promotionRows.map((row) => row.admission.promotion.predicate))].map((predicate) =>
-    `For ${promotionRows.filter((row) => row.admission.promotion.predicate === predicate).map((row) => row.dimension).join(', ')} findings also assess ${predicate}.`).join(' ');
   const block = batch.map((f) => {
     const range = !locationAllows(f, 'sourceLink') ? 'location unconfirmed' : f.line_end != null && f.line_end !== f.line_start
       ? `${f.line_start}-${f.line_end}`
@@ -5488,9 +5531,10 @@ function validatePrompt(inp, batch) {
     const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
     const sites = (f.resolved_sites || []).filter((site) => locationAllows(site, 'sourceLink'));
     const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
-    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f))}`;
+    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f, accepted.get(f.id)))}`;
   }).join('\n');
-  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Admission predicates: ${JSON.stringify(ADMISSION_PREDICATES)}\n${promotionHeader}\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
+  if (batch.every((finding) => accepted.has(finding.id))) return `${ctxLine}Supply only the missing admission assessments listed in each finding's admission_context. Correctness, reachability and policy_subject are fixed. Use confirmed, rejected or unresolved with the exact request names inspected in references.\nFindings:\n${block}\nReturn { validations: [{ finding_id, admission_assessments }] } (one entry per finding).`;
+  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. First judge the correctness of each claim and return confidence, justification and reachability from the code. Complete that judgment before admission; missing admission evidence or posting value must not lower confidence or change reachability. Then classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess only the predicates for the selected policy_subject in that finding's admission_context, using confirmed, rejected or unresolved and the exact request names inspected in references. If its promotion predicate is confirmed, use only the promotion's confirmed requirements. Resolution and confidence are not semantic confirmation. Assess body_fix_task predicates separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. On an admission-only retry, return finding_id and only missing admission_assessments listed in that context; the accepted correctness and reachability judgments are fixed.\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
 }
 function filterStage(input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
