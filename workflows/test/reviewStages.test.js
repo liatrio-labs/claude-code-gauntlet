@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { validateStage, filterStage, challengeStage, blindChallengeFields, selectDelivery } from '../src/reviewStages.js';
 import { finding } from './helpers/findings.js';
 import { stageCtx as rawStageCtx } from './helpers/stageFixtures.js';
-import { VALIDATION_RETURN_PROPERTIES, ADMISSION_PREDICATES, RIGHT_ELIGIBILITY } from '../src/registry.js';
+import { ADMISSION_PREDICATES, RIGHT_ELIGIBILITY } from '../src/registry.js';
 import { evaluateAdmission } from '../src/admission.js';
 
 import { skepticalReturn } from './helpers/verdicts.js';
@@ -44,26 +44,28 @@ test('validator classification omissions skip core findings and duplicate scores
   assert.equal(evaluateAdmission(out.findings[0]).admission.status, 'admitted');
 });
 
-test('validator prompt shares predicate definitions across finding contexts', async () => {
+test('validator asks correctness first and shares predicate definitions across conditional claims', async () => {
   const ctx = stageCtx({ reply: [] });
   await validateStage(ctx, { findings: [finding(),
     finding({ id: 'f2', dimension: 'simplification', quality_basis: 'simpler_equivalent' }),
     finding({ id: 'f3', dimension: 'type_design', quality_basis: 'other' }),
     finding({ id: 'f4', dimension: 'test_coverage', test_kind: 'additional_case' })] });
   const prompt = ctx.calls[0].prompt;
+  assert.ok(prompt.indexOf('First judge the correctness') < prompt.indexOf('Then classify policy_subject'));
+  assert.ok(prompt.includes('missing admission evidence or posting value must not lower confidence or change reachability'));
   const table = JSON.stringify(ADMISSION_PREDICATES);
   assert.equal(prompt.split(table).length - 1, 1);
   assert.ok(prompt.indexOf(table) < prompt.indexOf('\nFindings:'));
   const contexts = prompt.split('\n').filter((line) => line.startsWith('- ')).map((line) => JSON.parse(line.split(' | admission_context: ')[1]));
-  const promotionHeader = 'For test_coverage, type_design, simplification findings also assess present_defect.';
-  assert.equal(prompt.split(promotionHeader).length - 1, 1);
-  assert.ok(prompt.indexOf(promotionHeader) < prompt.indexOf('\nFindings:'));
   assert.equal(prompt.split('Use real, refuted or needs_evidence').length - 1, 1);
-  assert.deepEqual(contexts.map((context) => context.policy.predicates), [[], ['concrete_equivalent', 'behavior_preserved'], [], []]);
+  assert.deepEqual(contexts.map((context) => context.policy.policy_subjects.ordinary),
+    [[], ['present_defect', 'concrete_equivalent', 'behavior_preserved'], ['present_defect'], ['present_defect']]);
+  assert.deepEqual(contexts.slice(1).map((context) => context.policy.promotion),
+    Array(3).fill({ predicate: 'present_defect', confirmed: ['present_defect'] }));
+  assert.deepEqual(contexts.map((context) => context.policy.policy_subjects.test_defect),
+    [['confirmed_test_defect'], ['present_defect', 'confirmed_test_defect'], ['present_defect'], ['present_defect']]);
   for (const context of contexts) {
     assert.equal(context.predicates, undefined);
-    assert.equal(Object.hasOwn(context.policy, 'promotion'), false);
-    assert.deepEqual(context.policy.policy_subjects.test_defect, ['pr_owned_test', 'confirmed_test_defect', 'test_diff_site_for_inline']);
     assert.deepEqual(context.policy.body_fix_task, RIGHT_ELIGIBILITY.body.fixTask);
   }
 });
