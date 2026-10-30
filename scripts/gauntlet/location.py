@@ -447,11 +447,8 @@ class SourceAdapter:
                                 + entry.name
                                 + ("/" if entry.is_dir(follow_symlinks=False) else "")
                                 for entry in entries
-                                if not entry.is_symlink()
-                                and (
-                                    entry.is_file(follow_symlinks=False)
-                                    or entry.is_dir(follow_symlinks=False)
-                                )
+                                if entry.is_file(follow_symlinks=False)
+                                or entry.is_dir(follow_symlinks=False)
                             )
                         )
                 finally:
