@@ -30,11 +30,11 @@ export function traceDecision(finding, reason_code, reason, related = [], decisi
   return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related,
     detail: { reduction, finding_id: typeof finding.id === 'string' ? finding.id : null,
       issue_id: traceIssueId(finding),
-      original_producer: finding.discovery_agent || finding.agent || 'unknown',
       ...(stage ? { stage } : {}),
       ...(row ? { category: row.category, predicate: row.predicate } : {}),
       source: finding.cite_results?.find((r) => r.request?.stage === stage)?.source || finding.scope_facts || null,
-      request_ids: reduction.request_ids || [], ...detail } };
+      request_ids: reduction.request_ids || [], ...detail,
+      original_producer: finding.discovery_agent || finding.agent || 'unknown' } };
 }
 export function eliminationDecisions(output) {
   const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
@@ -46,9 +46,27 @@ export function eliminationDecisions(output) {
 
 // Disposal owns proof acceptance; measurement consumes its per-stage stamp.
 function verdictObservations(findings) {
-  return findings.filter((f) => f.trace_id).flatMap((f) => (f.reduction_detail || [])
-    .filter((row) => row.proof).map((row) => ({ trace_id: f.trace_id, stage: row.stage, ...row.proof })));
+  return findings.filter((f) => f.trace_id).flatMap((f) => (f.reduction_proofs || [])
+    .map((row) => ({ trace_id: f.trace_id, ...row })));
 }
+
+function verdictFailureReason(observation, finding) {
+  if (observation.operational_gap) {
+    if (observation.stage === 'validator') return 'validation_skipped';
+    return finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed';
+  }
+  if (observation.unavailable) return 'cite_unavailable';
+  return observation.unresolved ? 'held_back' : 'cite_unmatched';
+}
+const traceWorkloads = {
+  cite: (output) => ({ requests: output.cite_ledger?.entries?.length || 0,
+    batches: (output.cite_ledger?.batches || []).map(({ attempts, state, attempt_timestamps }) => ({ attempts, state,
+      ...(attempt_timestamps ? { attempt_timestamps } : {}) })),
+    oversize: output.stats?.cite_oversize || 0, source_capture: output.verify?.sourceCapture || null }),
+  verify: (output) => output.inputProof || null,
+  validate: (output) => output.stats || null,
+  challenge: (output) => output.stats || null,
+};
 
 export function stampDiscovery(trace, finding, spec, dispatch, occurrence) {
   if (!finding || typeof finding !== 'object' || Array.isArray(finding)) return finding;
@@ -87,8 +105,9 @@ export function recordStage(trace, stage, output, details = {}) {
   const verdicts = stage === 'cite' ? verdictObservations(details.verdictFindings || []) : [];
   for (const version of verdicts) {
     if (!version.proved) {
-      const code = version.unavailable ? 'cite_unavailable' : version.unresolved ? 'held_back' : 'cite_unmatched';
-      decisions.push(traceDecision(all.find((finding) => finding.trace_id === version.trace_id), code, code, [], 'kept', { stage: version.stage }));
+      const finding = all.find((finding) => finding.trace_id === version.trace_id);
+      const code = verdictFailureReason(version, finding);
+      decisions.push(traceDecision(finding, code, code, [], 'kept', { stage: version.stage }));
     }
   }
   for (const finding of [...(details.removed || output.eliminated || []), ...(output.unverified || [])]) traceVersion(trace, finding);
@@ -98,11 +117,7 @@ export function recordStage(trace, stage, output, details = {}) {
     coverage: details.coverage || (details.replayed ? 'partial' : 'complete'),
     cap: details.cap ?? null, cap_hit: !!details.cap_hit,
     verdicts: stage === 'cite' ? verdicts : null,
-    workload: stage === 'cite' ? { requests: output.cite_ledger?.entries?.length || 0,
-      batches: (output.cite_ledger?.batches || []).map(({ attempts, state, attempt_timestamps }) => ({ attempts, state,
-        ...(attempt_timestamps ? { attempt_timestamps } : {}) })),
-      oversize: output.stats?.cite_oversize || 0, source_capture: output.verify?.sourceCapture || null } : stage === 'verify' ? output.inputProof || null
-      : ['validate', 'challenge'].includes(stage) ? output.stats || null : null });
+    workload: traceWorkloads[stage]?.(output) || null });
 }
 export function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;

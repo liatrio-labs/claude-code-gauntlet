@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { runWith } from '../src/run.js';
 import { measurementScenario, persistedScenario } from './helpers/measurementScenario.js';
-import { createMeasurementTrace, stampDiscovery, recordStage, appendMeasurement, traceDecision, TRACE_REASONS } from '../src/measurementTrace.js';
+import { createMeasurementTrace, stampDiscovery, recordStage, appendMeasurement, traceDecision, admissionDetail, TRACE_REASONS } from '../src/measurementTrace.js';
 import { validArgs } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { captureDeliveryReplay, appendDeliveryReplay } from '../src/measurementReplay.js';
@@ -145,6 +145,16 @@ test('mid-pipeline failure checkpoints are identical with tracing on and off', a
 test('an unlisted reason code is recorded as unknown', () => {
   assert.equal(traceDecision({ trace_id: 't1' }, 'threshold').reason_code, 'threshold');
   assert.equal(traceDecision({ trace_id: 't1' }, 'not-a-listed-code').reason_code, 'unknown');
+});
+
+test('decision details preserve discovery attribution after an agent rewrite or omission', () => {
+  for (const agent of ['rewritten', undefined]) {
+    const finding = { trace_id: 'n:0:0', discovery_agent: 'test-analyzer', agent };
+    for (const detail of [null, admissionDetail(finding)]) {
+      const decision = traceDecision(finding, 'held_back', 'held_back', [], 'kept', detail);
+      assert.equal(JSON.parse(JSON.stringify(decision)).detail.original_producer, 'test-analyzer');
+    }
+  }
 });
 
 test('measured persistence records native UTF-8 hashes, results and thrown errors', async () => {

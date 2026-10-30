@@ -53,83 +53,24 @@ class AdmissionReason(TypedDict):
     status: AdmissionStatus
 
 
-class SelectionDetail(TypedDict):
+class _DecisionFields(TypedDict, total=False):
+    stage: Literal["early", "post_validation", "validator", "challenger"]
+    category: ExclusionCategory
+    predicate: str
+    status: AdmissionStatus
     kind: TestKind | QualityBasis | Literal["ordinary", "unknown"]
-
-
-class AdmissionContextDetail(SelectionDetail):
     policy_subject: PolicySubject
-    original_producer: str
-
-
-class AdmissionDetail(AdmissionContextDetail, AdmissionReason):
-    pass
-
-
-class ChallengeTerminalDetail(AdmissionContextDetail):
-    predicate: Literal["challenge_terminal"]
-
-
-class DisposalDetail(AdmissionContextDetail):
     predicates: list[AdmissionReason]
     surface: Literal["deliver", "body", "held_back", "report_only"]
 
 
-class _TraceFields(TypedDict, total=False):
-    stage: Literal["early", "post_validation", "validator", "challenger"]
-
-
-class TraceDetail(_TraceFields):
+class DecisionDetail(_DecisionFields):
     original_producer: str
     finding_id: str | None
     reduction: contract.ReductionDetailItem | contract.ReductionProvenance
     issue_id: str
     source: dict[str, Any] | None
     request_ids: list[str]
-
-
-class _ScopeFields(TypedDict):
-    category: ExclusionCategory
-    predicate: str
-
-
-class ScopeTraceDetail(TraceDetail, _ScopeFields):
-    pass
-
-
-class MeasuredSelectionDetail(TraceDetail, SelectionDetail):
-    pass
-
-
-class MeasuredAdmissionDetail(TraceDetail, AdmissionDetail):
-    pass
-
-
-class MeasuredChallengeTerminalDetail(TraceDetail, ChallengeTerminalDetail):
-    pass
-
-
-class MeasuredDisposalDetail(TraceDetail, DisposalDetail):
-    pass
-
-
-class MeasuredScopeDisposalDetail(ScopeTraceDetail, DisposalDetail):
-    pass
-
-
-DecisionDetail = (
-    SelectionDetail
-    | AdmissionDetail
-    | ChallengeTerminalDetail
-    | DisposalDetail
-    | TraceDetail
-    | ScopeTraceDetail
-    | MeasuredSelectionDetail
-    | MeasuredAdmissionDetail
-    | MeasuredChallengeTerminalDetail
-    | MeasuredDisposalDetail
-    | MeasuredScopeDisposalDetail
-)
 
 
 @dataclass(frozen=True, slots=True)

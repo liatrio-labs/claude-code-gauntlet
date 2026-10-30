@@ -11,19 +11,17 @@ import { scopeDecisions } from './scope.js';
 
 function skepticalOutcome(finding) {
   const reasons = [];
+  const proofs = [];
   let proven = null;
   for (const stage of ['validator', 'challenger']) {
     if (stage === 'challenger' && ['validator_terminal', 'admission_terminal', 'scope_terminal'].includes(finding.challenge)) continue;
     const entries = (finding.skeptical_assessments || []).filter((a) => a.stage === stage);
     const operational_gap = stage === 'validator' ? finding.validation === 'skipped' : ['failed', 'capped', 'skipped'].includes(finding.challenge);
-    const proof = { verdict: null, proved: false, unresolved: !operational_gap, unavailable: false,
+    const proof = { stage, verdict: null, proved: false, unresolved: !operational_gap, unavailable: false,
       operational_gap, non_dispatch: stage === 'validator' ? operational_gap : ['capped', 'skipped'].includes(finding.challenge) };
-    reasons.push({ stage, proof });
+    proofs.push(proof);
     if (entries.length !== 1) {
-      if (!(stage === 'challenger' && (finding.challenge === 'validator_terminal'
-        || (finding.challenge === 'admission_terminal' && hasAdmission(finding) && finding.admission.status === 'report_only')))) {
-        reasons.push({ reason: 'held_back', stage, missing_field: 'verdict' });
-      }
+      reasons.push({ reason: 'held_back', stage, missing_field: 'verdict' });
       continue;
     }
     const raw = entries[0].raw ?? entries[0];
@@ -42,7 +40,14 @@ function skepticalOutcome(finding) {
     // A malformed real proof is diagnostic; missing semantic assessments still close delivery.
     if (semanticErrors.length) reasons.push({ reason: 'held_back', stage, missing_fields: semanticErrors });
   }
-  return { proven, reasons, held: reasons.some((r) => r.reason === 'held_back' || r.verdict === 'refuted') };
+  return { proven, reasons, proofs, held: reasons.some((r) => r.reason === 'held_back' || r.verdict === 'refuted') };
+}
+
+function dispositionDecision(finding, reason) {
+  if (reason === 'scope_contradicted') return 'kept';
+  if (finding.disposition === 'eliminate') return 'eliminated';
+  if (['held_back', 'report_only'].includes(finding.disposition)) return finding.disposition;
+  return 'body_routed';
 }
 
 export function disposeFindings(challenged) {
@@ -61,6 +66,7 @@ export function disposeFindings(challenged) {
     const scope = scopeRows.filter((row) => row.applies === true);
     const skeptical = skepticalOutcome(finding);
     finding.reduction_detail = skeptical.reasons;
+    finding.reduction_proofs = skeptical.proofs;
     for (const row of scopeRows.filter((r) => r.reason && r.applies !== true)) {
       skeptical.reasons.push({ reason: row.reason, category: row.category, stage: row.stage });
       if (row.applies === null) skeptical.held = true;
@@ -102,7 +108,7 @@ export function disposeFindings(challenged) {
     let disposition = 'body';
     const admitted = hasAdmission(finding);
     const valueTerminal = admitted && finding.admission.status === 'report_only' && finding.challenge === 'admission_terminal';
-    reasons.push(...skeptical.reasons.filter((r) => r.reason).map((r) => r.reason));
+    reasons.push(...skeptical.reasons.map((r) => r.reason));
     if ((input.unverified || []).includes(finding) && !reasons.length) reasons.push('held_back');
     const hold = skeptical.held;
     if (hold || incompleteVetting(finding).length || (!valueTerminal && (input.unverified || []).includes(finding))) disposition = 'held_back';
@@ -129,11 +135,10 @@ export function disposeFindings(challenged) {
     finding.disposition_reasons = [eliminations[index].reason_code];
   }
   for (const finding of [...findings, ...unverified, ...eliminated].filter((f) => f.trace_id)) {
-    const rows = (finding.reduction_detail || []).filter((row) => row.reason);
+    const rows = [...(finding.reduction_detail || [])];
     rows.push(...finding.disposition_reasons.filter((reason) => !rows.some((row) => row.reason === reason)).map((reason) => ({ reason })));
     for (const row of rows) decisions.push(traceDecision(finding, row.reason, row.reason, [],
-      row.reason === 'scope_contradicted' ? 'kept' : finding.disposition === 'eliminate' ? 'eliminated'
-        : ['held_back', 'report_only'].includes(finding.disposition) ? finding.disposition : 'body_routed',
+      dispositionDecision(finding, row.reason),
       { ...(finding.disposition !== 'eliminate' ? admissionDetail(finding, { predicates: finding.admission?.reasons || [], surface: finding.disposition }) : {}),
         ...(row.stage ? { stage: row.stage } : {}), ...(row.category ? { category: row.category } : {}),
         ...(row.stage ? { reduction: row } : {}) }));

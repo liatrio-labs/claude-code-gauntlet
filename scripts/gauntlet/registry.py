@@ -119,9 +119,7 @@ _ReductionDetailItemReason_Literal = Literal[
     "cite_unmatched",
     "cite_unavailable",
 ]
-_ReductionDetailItemProofVerdict_Literal = Literal[
-    "real", "refuted", "needs_evidence", None
-]
+_ReductionProofsItemVerdict_Literal = Literal["real", "refuted", "needs_evidence", None]
 _ScopeDecisionsItemStage_Literal = Literal[
     "early", "post_validation", "validator", "challenger"
 ]
@@ -2181,15 +2179,6 @@ class CiteResultsItem(TypedDict, total=False):
     added_lines: list[int]
 
 
-class ReductionDetailItemProof(TypedDict):
-    verdict: _ReductionDetailItemProofVerdict_Literal
-    proved: bool
-    unresolved: bool
-    unavailable: bool
-    operational_gap: bool
-    non_dispatch: bool
-
-
 class ReductionDetailItem(TypedDict, total=False):
     reason: _ReductionDetailItemReason_Literal
     stage: SkepticalStage
@@ -2198,7 +2187,16 @@ class ReductionDetailItem(TypedDict, total=False):
     missing_fields: list[str]
     missing_evidence: str
     category: ExclusionCategory
-    proof: ReductionDetailItemProof
+
+
+class ReductionProofsItem(TypedDict):
+    stage: SkepticalStage
+    verdict: _ReductionProofsItemVerdict_Literal
+    proved: bool
+    unresolved: bool
+    unavailable: bool
+    operational_gap: bool
+    non_dispatch: bool
 
 
 class ScopeDecisionsItem(TypedDict, total=False):
@@ -2369,6 +2367,7 @@ class FindingMetadata(FindingFacts, total=False):
     skeptical_assessments: list[SkepticalAssessmentsItem]
     cite_results: list[CiteResultsItem]
     reduction_detail: list[ReductionDetailItem]
+    reduction_proofs: list[ReductionProofsItem]
     scope_decisions: list[ScopeDecisionsItem]
     scope_input_proof: str
     reduction_provenance: ReductionProvenance

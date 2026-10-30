@@ -892,12 +892,13 @@ const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
     missing_field: { type: 'string' }, missing_fields: { type: 'array', items: { type: 'string' } },
     missing_evidence: { type: 'string' },
     category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) },
-    proof: closedDispatchRow({
-      verdict: { type: ['string', 'null'], enum: ['real', 'refuted', 'needs_evidence', null] },
-      proved: { type: 'boolean' }, unresolved: { type: 'boolean' }, unavailable: { type: 'boolean' },
-      operational_gap: { type: 'boolean' }, non_dispatch: { type: 'boolean' },
-    }),
-  }, ['reason', 'stage', 'verdict', 'missing_field', 'missing_fields', 'missing_evidence', 'category', 'proof']) },
+  }, ['stage', 'verdict', 'missing_field', 'missing_fields', 'missing_evidence', 'category']) },
+  reduction_proofs: { type: 'array', items: closedDispatchRow({
+    stage: SKEPTICAL_IDENTITY.stage,
+    verdict: { type: ['string', 'null'], enum: ['real', 'refuted', 'needs_evidence', null] },
+    proved: { type: 'boolean' }, unresolved: { type: 'boolean' }, unavailable: { type: 'boolean' },
+    operational_gap: { type: 'boolean' }, non_dispatch: { type: 'boolean' },
+  }) },
   scope_decisions: { type: 'array', items: { ...closedDispatchRow({
     stage: { type: 'string', enum: ['early', 'post_validation', ...SKEPTICAL_IDENTITY.stage.enum] },
     category: { type: 'string', enum: EXCLUSION_CATEGORIES.filter((row) => row.stage !== 'admission').map((row) => row.category) },
@@ -2030,11 +2031,11 @@ function traceDecision(finding, reason_code, reason, related = [], decision = 'e
   return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related,
     detail: { reduction, finding_id: typeof finding.id === 'string' ? finding.id : null,
       issue_id: traceIssueId(finding),
-      original_producer: finding.discovery_agent || finding.agent || 'unknown',
       ...(stage ? { stage } : {}),
       ...(row ? { category: row.category, predicate: row.predicate } : {}),
       source: finding.cite_results?.find((r) => r.request?.stage === stage)?.source || finding.scope_facts || null,
-      request_ids: reduction.request_ids || [], ...detail } };
+      request_ids: reduction.request_ids || [], ...detail,
+      original_producer: finding.discovery_agent || finding.agent || 'unknown' } };
 }
 function eliminationDecisions(output) {
   const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
@@ -2044,9 +2045,26 @@ function eliminationDecisions(output) {
     .map((f) => traceDecision(f, f.eliminated_by === 'out_of_scope' ? 'out_of_scope' : codes[f.eliminated_by] || 'unknown', f.elimination_reason));
 }
 function verdictObservations(findings) {
-  return findings.filter((f) => f.trace_id).flatMap((f) => (f.reduction_detail || [])
-    .filter((row) => row.proof).map((row) => ({ trace_id: f.trace_id, stage: row.stage, ...row.proof })));
+  return findings.filter((f) => f.trace_id).flatMap((f) => (f.reduction_proofs || [])
+    .map((row) => ({ trace_id: f.trace_id, ...row })));
 }
+function verdictFailureReason(observation, finding) {
+  if (observation.operational_gap) {
+    if (observation.stage === 'validator') return 'validation_skipped';
+    return finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed';
+  }
+  if (observation.unavailable) return 'cite_unavailable';
+  return observation.unresolved ? 'held_back' : 'cite_unmatched';
+}
+const traceWorkloads = {
+  cite: (output) => ({ requests: output.cite_ledger?.entries?.length || 0,
+    batches: (output.cite_ledger?.batches || []).map(({ attempts, state, attempt_timestamps }) => ({ attempts, state,
+      ...(attempt_timestamps ? { attempt_timestamps } : {}) })),
+    oversize: output.stats?.cite_oversize || 0, source_capture: output.verify?.sourceCapture || null }),
+  verify: (output) => output.inputProof || null,
+  validate: (output) => output.stats || null,
+  challenge: (output) => output.stats || null,
+};
 function stampDiscovery(trace, finding, spec, dispatch, occurrence) {
   if (!finding || typeof finding !== 'object' || Array.isArray(finding)) return finding;
   const out = finding;
@@ -2083,8 +2101,9 @@ function recordStage(trace, stage, output, details = {}) {
   const verdicts = stage === 'cite' ? verdictObservations(details.verdictFindings || []) : [];
   for (const version of verdicts) {
     if (!version.proved) {
-      const code = version.unavailable ? 'cite_unavailable' : version.unresolved ? 'held_back' : 'cite_unmatched';
-      decisions.push(traceDecision(all.find((finding) => finding.trace_id === version.trace_id), code, code, [], 'kept', { stage: version.stage }));
+      const finding = all.find((finding) => finding.trace_id === version.trace_id);
+      const code = verdictFailureReason(version, finding);
+      decisions.push(traceDecision(finding, code, code, [], 'kept', { stage: version.stage }));
     }
   }
   for (const finding of [...(details.removed || output.eliminated || []), ...(output.unverified || [])]) traceVersion(trace, finding);
@@ -2094,11 +2113,7 @@ function recordStage(trace, stage, output, details = {}) {
     coverage: details.coverage || (details.replayed ? 'partial' : 'complete'),
     cap: details.cap ?? null, cap_hit: !!details.cap_hit,
     verdicts: stage === 'cite' ? verdicts : null,
-    workload: stage === 'cite' ? { requests: output.cite_ledger?.entries?.length || 0,
-      batches: (output.cite_ledger?.batches || []).map(({ attempts, state, attempt_timestamps }) => ({ attempts, state,
-        ...(attempt_timestamps ? { attempt_timestamps } : {}) })),
-      oversize: output.stats?.cite_oversize || 0, source_capture: output.verify?.sourceCapture || null } : stage === 'verify' ? output.inputProof || null
-      : ['validate', 'challenge'].includes(stage) ? output.stats || null : null });
+    workload: traceWorkloads[stage]?.(output) || null });
 }
 function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;
@@ -3933,19 +3948,17 @@ function scopeDecisions(finding, confirmations = []) {
 // --- dispose.js ---
 function skepticalOutcome(finding) {
   const reasons = [];
+  const proofs = [];
   let proven = null;
   for (const stage of ['validator', 'challenger']) {
     if (stage === 'challenger' && ['validator_terminal', 'admission_terminal', 'scope_terminal'].includes(finding.challenge)) continue;
     const entries = (finding.skeptical_assessments || []).filter((a) => a.stage === stage);
     const operational_gap = stage === 'validator' ? finding.validation === 'skipped' : ['failed', 'capped', 'skipped'].includes(finding.challenge);
-    const proof = { verdict: null, proved: false, unresolved: !operational_gap, unavailable: false,
+    const proof = { stage, verdict: null, proved: false, unresolved: !operational_gap, unavailable: false,
       operational_gap, non_dispatch: stage === 'validator' ? operational_gap : ['capped', 'skipped'].includes(finding.challenge) };
-    reasons.push({ stage, proof });
+    proofs.push(proof);
     if (entries.length !== 1) {
-      if (!(stage === 'challenger' && (finding.challenge === 'validator_terminal'
-        || (finding.challenge === 'admission_terminal' && hasAdmission(finding) && finding.admission.status === 'report_only')))) {
-        reasons.push({ reason: 'held_back', stage, missing_field: 'verdict' });
-      }
+      reasons.push({ reason: 'held_back', stage, missing_field: 'verdict' });
       continue;
     }
     const raw = entries[0].raw ?? entries[0];
@@ -3963,7 +3976,13 @@ function skepticalOutcome(finding) {
       request_ids: requests.map((q) => q.request_id) };
     if (semanticErrors.length) reasons.push({ reason: 'held_back', stage, missing_fields: semanticErrors });
   }
-  return { proven, reasons, held: reasons.some((r) => r.reason === 'held_back' || r.verdict === 'refuted') };
+  return { proven, reasons, proofs, held: reasons.some((r) => r.reason === 'held_back' || r.verdict === 'refuted') };
+}
+function dispositionDecision(finding, reason) {
+  if (reason === 'scope_contradicted') return 'kept';
+  if (finding.disposition === 'eliminate') return 'eliminated';
+  if (['held_back', 'report_only'].includes(finding.disposition)) return finding.disposition;
+  return 'body_routed';
 }
 function disposeFindings(challenged) {
   const input = deepClone(challenged);
@@ -3981,6 +4000,7 @@ function disposeFindings(challenged) {
     const scope = scopeRows.filter((row) => row.applies === true);
     const skeptical = skepticalOutcome(finding);
     finding.reduction_detail = skeptical.reasons;
+    finding.reduction_proofs = skeptical.proofs;
     for (const row of scopeRows.filter((r) => r.reason && r.applies !== true)) {
       skeptical.reasons.push({ reason: row.reason, category: row.category, stage: row.stage });
       if (row.applies === null) skeptical.held = true;
@@ -4022,7 +4042,7 @@ function disposeFindings(challenged) {
     let disposition = 'body';
     const admitted = hasAdmission(finding);
     const valueTerminal = admitted && finding.admission.status === 'report_only' && finding.challenge === 'admission_terminal';
-    reasons.push(...skeptical.reasons.filter((r) => r.reason).map((r) => r.reason));
+    reasons.push(...skeptical.reasons.map((r) => r.reason));
     if ((input.unverified || []).includes(finding) && !reasons.length) reasons.push('held_back');
     const hold = skeptical.held;
     if (hold || incompleteVetting(finding).length || (!valueTerminal && (input.unverified || []).includes(finding))) disposition = 'held_back';
@@ -4049,11 +4069,10 @@ function disposeFindings(challenged) {
     finding.disposition_reasons = [eliminations[index].reason_code];
   }
   for (const finding of [...findings, ...unverified, ...eliminated].filter((f) => f.trace_id)) {
-    const rows = (finding.reduction_detail || []).filter((row) => row.reason);
+    const rows = [...(finding.reduction_detail || [])];
     rows.push(...finding.disposition_reasons.filter((reason) => !rows.some((row) => row.reason === reason)).map((reason) => ({ reason })));
     for (const row of rows) decisions.push(traceDecision(finding, row.reason, row.reason, [],
-      row.reason === 'scope_contradicted' ? 'kept' : finding.disposition === 'eliminate' ? 'eliminated'
-        : ['held_back', 'report_only'].includes(finding.disposition) ? finding.disposition : 'body_routed',
+      dispositionDecision(finding, row.reason),
       { ...(finding.disposition !== 'eliminate' ? admissionDetail(finding, { predicates: finding.admission?.reasons || [], surface: finding.disposition }) : {}),
         ...(row.stage ? { stage: row.stage } : {}), ...(row.category ? { category: row.category } : {}),
         ...(row.stage ? { reduction: row } : {}) }));

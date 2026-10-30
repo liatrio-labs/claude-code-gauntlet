@@ -4,6 +4,7 @@ import math
 import random
 import sys
 from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from statistics import NormalDist
 from typing import Literal, TypedDict, get_args
@@ -593,60 +594,63 @@ def trace_records(trace):
     ]
 
 
-def trace_burden(trace):
-    """Burden and dispatch workload are available before verdict/cite support."""
-    from datetime import datetime
+def _attempt_latency_ms(attempts):
+    durations = []
+    for attempt in attempts:
+        try:
+            start, end = (
+                datetime.fromisoformat(attempt[k].replace("Z", "+00:00"))
+                for k in ("started_at", "completed_at")
+            )
+            duration = (end - start).total_seconds() * 1000
+            if duration >= 0:
+                durations.append(duration)
+        except (KeyError, TypeError, ValueError):
+            pass
+    return sum(durations) if attempts and len(durations) == len(attempts) else None
 
+
+def _cite_workload(raw):
     from gauntlet.registry import STAGE_COSTS
 
+    batches = raw.get("batches", [])
+    capture = raw.get("source_capture")
+    return dict(
+        batches=len(batches),
+        attempts=sum(b["attempts"] for b in batches),
+        retries=sum(max(0, b["attempts"] - 1) for b in batches),
+        exhausted=sum(
+            b["attempts"] >= STAGE_COSTS["cite"]["attempts"]
+            and b.get("state") != "complete"
+            for b in batches
+        ),
+        source_capture={
+            k: capture.get(k) for k in ("copied_files", "copied_bytes", "failure_count")
+        }
+        if capture
+        else None,
+    )
+
+
+def _stage_workload(snapshot):
+    raw = snapshot.workload or {}
+    attempts = raw.get("attempt_timestamps", raw.get("attempts"))
+    if not isinstance(attempts, list):
+        attempts = [
+            a for b in raw.get("batches", []) for a in b.get("attempt_timestamps", [])
+        ]
+    return {
+        **raw,
+        **(_cite_workload(raw) if snapshot.stage == "cite" else {}),
+        "latency_ms": _attempt_latency_ms(attempts),
+        "cost_usd": None,
+    }
+
+
+def trace_burden(trace):
+    """Burden and dispatch workload are available before verdict/cite support."""
     if not trace.complete:
         return None
-
-    def workload(snapshot):
-        raw = snapshot.workload or {}
-        batches = raw.get("batches", [])
-        result = dict(raw)
-        if snapshot.stage == "cite":
-            capture = raw.get("source_capture")
-            result.update(
-                batches=len(batches),
-                attempts=sum(b["attempts"] for b in batches),
-                retries=sum(max(0, b["attempts"] - 1) for b in batches),
-                exhausted=sum(
-                    b["attempts"] >= STAGE_COSTS["cite"]["attempts"]
-                    and b.get("state") != "complete"
-                    for b in batches
-                ),
-                source_capture={
-                    k: capture.get(k)
-                    for k in ("copied_files", "copied_bytes", "failure_count")
-                }
-                if capture
-                else None,
-            )
-        attempts = raw.get("attempt_timestamps", raw.get("attempts"))
-        attempts = (
-            attempts
-            if isinstance(attempts, list)
-            else [a for b in batches for a in b.get("attempt_timestamps", [])]
-        )
-        durations = []
-        for attempt in attempts:
-            try:
-                start, end = (
-                    datetime.fromisoformat(attempt[k].replace("Z", "+00:00"))
-                    for k in ("started_at", "completed_at")
-                )
-                duration = (end - start).total_seconds() * 1000
-                if duration >= 0:
-                    durations.append(duration)
-            except (KeyError, TypeError, ValueError):
-                pass
-        result["latency_ms"] = (
-            sum(durations) if attempts and len(durations) == len(attempts) else None
-        )
-        result["cost_usd"] = None
-        return result
 
     challenge = next((s for s in trace.snapshots if s.stage == "challenge"), None)
     discovery = next((s for s in trace.snapshots if s.stage == "discover"), None)
@@ -663,7 +667,7 @@ def trace_burden(trace):
             for f in latest.values()
         )
     workloads = {
-        s.stage: workload(s)
+        s.stage: _stage_workload(s)
         for s in trace.snapshots
         if s.stage in ("verify", "validate", "challenge", "cite")
     }
@@ -698,11 +702,11 @@ def verdict_diagnostics(trace):
     rows = tuple(
         decode(
             stages.VerdictObservation,
-            {"trace_id": tid, "stage": row["stage"], **row["proof"]},
+            {"trace_id": tid, **row},
         )
         for tid, finding in latest.items()
-        for row in finding.get("reduction_detail", [])
-        if "proof" in row and (tid, row["stage"]) in required
+        for row in finding.get("reduction_proofs", [])
+        if (tid, row["stage"]) in required
     )
 
     def counts(rows):

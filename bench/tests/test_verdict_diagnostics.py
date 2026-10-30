@@ -91,10 +91,11 @@ def test_proof_scope_and_disposition_denominators_include_failures(tmp_path):
         fault = row["fault"]
         aggregate = diagnostic["aggregate"]
         stamps = {
-            (v.trace_id, r["stage"]): r["proof"]
+            (v.trace_id, r["stage"]): {
+                k: value for k, value in r.items() if k != "stage"
+            }
             for v in trace.versions
-            for r in v.finding.get("reduction_detail", [])
-            if "proof" in r
+            for r in v.finding.get("reduction_proofs", [])
         }
         for snapshot in trace.snapshots:
             for assessment in snapshot.verdicts or ():
@@ -260,6 +261,19 @@ def test_proof_scope_and_disposition_denominators_include_failures(tmp_path):
         if fault == "matched":
             assert record["disposition"] == "body"
         if fault in ("no_return", "capped"):
+            expected_code = (
+                "validation_skipped"
+                if row["stage"] == "validator"
+                else ("challenge_cap" if fault == "capped" else "challenge_failed")
+            )
+            assert {
+                d.reason_code
+                for s in trace.snapshots
+                if s.stage == "cite"
+                for d in s.decisions
+                if d.trace_id == record["member_id"]
+                and d.detail["stage"] == row["stage"]
+            } == {expected_code}
             assert aggregate["operational_gaps"] == 1
             assert aggregate["non_dispatch"] == int(
                 row["stage"] == "validator" or fault == "capped"

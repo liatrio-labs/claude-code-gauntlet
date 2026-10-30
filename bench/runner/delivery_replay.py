@@ -574,6 +574,7 @@ def _candidate_artifacts(
                     "site_requests",
                     "resolved_sites",
                     "reduction_detail",
+                    "reduction_proofs",
                     "reduction_provenance",
                     "scope_decisions",
                     "scope_input_proof",

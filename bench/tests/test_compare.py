@@ -1265,6 +1265,28 @@ def test_admission_diagnostics_preserve_issue_and_producer(case, tmp_path):
         if r.surfaces["inline"]["values"]["delivery_records"]
     )
     assert not unknown.record_coalescence["available"]
+    assert [
+        (r.verdicts["available"], r.verdicts["reason"], r.verdicts["evidence_sha256"])
+        for r in (selected, unknown)
+    ] == [
+        (
+            True,
+            None,
+            {
+                p: file_hash(root / p)
+                for p in ("stage_trace_bindings.json", "sources/trace.json")
+            },
+        ),
+        (
+            False,
+            "recorded assessment proof unavailable",
+            {
+                "stage_trace_bindings.json": file_hash(
+                    packets[unknown.score_ref].root / "stage_trace_bindings.json"
+                )
+            },
+        ),
+    ]
     assert unknown.record_coalescence["values"] is None
     assert unknown.surfaces["inline"]["values"]["issues"] is None
     assert unknown.surfaces["inline"]["values"]["producer_leakage"] is None
