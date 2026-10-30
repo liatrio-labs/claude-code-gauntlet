@@ -1,11 +1,48 @@
 """Citation execution at the command and durable resume boundaries."""
 
 import json
+from pathlib import Path
 
 import pytest
 from gauntlet.location import SourceAdapter
 
 from tests.support.citations import QUOTE, citation_cli
+
+
+@pytest.mark.parametrize("cleanup_error", [FileNotFoundError, PermissionError])
+@pytest.mark.parametrize("missing", [False, True])
+def test_cite_reuses_persisted_results_after_lock_cleanup_failure(
+    tmp_path, monkeypatch, invoke, cleanup_error, missing
+):
+    call, q, _, _, output = citation_cli(tmp_path, monkeypatch, invoke)
+    unlink = Path.unlink
+
+    def cleanup(path, *args, **kwargs):
+        if path.name == "lock":
+            raise cleanup_error("lock cleanup unavailable")
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", cleanup)
+    requests = (
+        [q, {**q, "request_id": "missing", "file": "missing"}] if missing else [q]
+    )
+    first = call(requests)[0]
+    assert first["result"]["citations"][0]["status"] == "matched"
+
+    def no_read(self, file, **kwargs):
+        if file == "missing":
+            return None
+        pytest.fail("persisted citation read again")
+
+    monkeypatch.setattr(SourceAdapter, "read_captured_source", no_read)
+    assert call(requests, attempt=2)[0]["result"] == first["result"]
+    resumed = call(requests, nonce="another")[0]["result"]["citations"]
+    assert resumed[0] == first["result"]["citations"][0]
+    assert [r["status"] for r in resumed] == (
+        ["matched", "unavailable"] if missing else ["matched"]
+    )
+    ledger = output / "code-gauntlet-inputs-run/cite-12345678/ledger.json"
+    assert len(json.loads(ledger.read_bytes())["attempts"]) == (2 if missing else 1)
 
 
 def test_citation_quote_checks_are_explicit_and_bounded(tmp_path, monkeypatch, invoke):

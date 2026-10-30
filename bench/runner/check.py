@@ -631,17 +631,17 @@ def workflow_stage_outcomes(pr_dir):
             failures.add("validate execution failed")
         omitted = validation.get("skipped", 0) + validation.get("incomplete", 0)
         if omitted:
-            disclosures.add(f"Incomplete validation: {omitted} findings held back.")
+            disclosures.add(f"Incomplete validation: {omitted} finding(s) held back.")
         challenge = stats.get("challenge") or {}
         failed = challenge.get("dispatched", 0) - challenge.get("completed", 0)
         if failed > 0:
             failures.add("challenge execution failed")
         incomplete = challenge.get("incomplete", 0)
         if incomplete:
-            disclosures.add(f"Incomplete challenge: {incomplete} findings held back.")
+            disclosures.add(f"Incomplete challenge: {incomplete} finding(s) held back.")
         capped = challenge.get("skipped", 0) - max(0, failed) - incomplete
         if capped > 0:
-            disclosures.add(f"Permitted challenge cap: {capped} findings held back.")
+            disclosures.add(f"Permitted challenge cap: {capped} finding(s) held back.")
         if (stats.get("inputProof") or {}).get("retried", 0):
             disclosures.add("Verification repaired by retry.")
     return tuple(sorted(failures)), tuple(sorted(disclosures))

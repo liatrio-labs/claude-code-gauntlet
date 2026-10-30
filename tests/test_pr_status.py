@@ -137,8 +137,11 @@ def test_capture_body_contract(body, monkeypatch, tmp_path, invoke):
 
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
 @pytest.mark.parametrize("stale", [False, True])
+@pytest.mark.parametrize(
+    "transport", ["constructed", "https", "scp", "ssh", "failed-remote"]
+)
 def test_status_capture_fetches_merge_base(
-    platform, stale, monkeypatch, tmp_path, invoke
+    platform, stale, transport, monkeypatch, tmp_path, invoke
 ):
     from gauntlet import proc
     from gauntlet.source_capture import SourceAdapter
@@ -183,12 +186,22 @@ def test_status_capture_fetches_merge_base(
     url = f"{origin}/upstream/project/" + (
         "pull/7" if platform == "github" else "-/merge_requests/7"
     )
-    git(
-        client,
-        "config",
-        f"url.{remote.as_posix()}.insteadOf",
-        f"{origin}/upstream/project.git",
-    )
+    repository = f"{origin}/upstream/project.git"
+    configured = {
+        "https": repository.removesuffix(".git"),
+        "scp": f"git@{origin.removeprefix('https://')}:upstream/project.git",
+        "ssh": f"ssh://git@{origin.removeprefix('https://')}/upstream/project.git",
+        "failed-remote": repository.removesuffix(".git"),
+    }.get(transport)
+    # The fork's branch need not exist in the base repository; its forge ref does.
+    git(client, "remote", "set-url", "origin", f"{origin}/contributor/project.git")
+    if configured:
+        git(client, "remote", "add", "upstream", configured)
+    usable = configured if configured and transport != "failed-remote" else repository
+    git(client, "config", f"url.{remote.as_posix()}.insteadOf", usable)
+    if transport != "constructed":
+        blocked = configured if transport == "failed-remote" else repository
+        git(client, "config", f"url.{tmp_path / 'unavailable'}.insteadOf", blocked)
     view = {
         ("headRefOid" if platform == "github" else "sha"): head,
         ("url" if platform == "github" else "web_url"): url,
@@ -259,3 +272,54 @@ def test_status_capture_fetches_merge_base(
         base=base,
         diff_sha256=source.receipt["diff_sha256"],
     ) == ("return shared_value;",)
+
+
+@pytest.mark.parametrize(
+    "step",
+    ["validate base ref", "fetch head", "head moved", "fetch base", "merge-base"],
+)
+def test_capture_errors_identify_step_without_git_secrets(
+    step, monkeypatch, tmp_path, invoke
+):
+    from gauntlet import proc
+
+    view = dict(
+        json.loads(github_view()[0]), headRefOid="a" * 40, baseRefName="main", body=""
+    )
+    monkeypatch.setattr(proc, "output", lambda *a, **k: (json.dumps(view), "", 0))
+
+    def run(argv, **kwargs):
+        command = argv[1]
+        current = {
+            "check-ref-format": "validate base ref",
+            "fetch": "fetch head" if argv[-1] == "refs/pull/7/head" else "fetch base",
+            "merge-base": "merge-base",
+        }.get(command)
+        failed = command == "config" or current == step
+        sha = "b" * 40 if step == "head moved" and command == "rev-parse" else "a" * 40
+        return proc.CompletedProcess(
+            argv,
+            int(failed),
+            sha.encode(),
+            b"https://user:SECRET@example.invalid/repo.git",
+        )
+
+    monkeypatch.setattr(proc, "run_bytes", run)
+    result = invoke(
+        "pr_status",
+        [
+            "--platform",
+            "github",
+            "--pr",
+            "7",
+            "--snapshot-destination",
+            "description.json",
+        ],
+        tmp_path,
+    )
+    assert result.returncode == 2 and result.stdout == b""
+    assert (
+        result.stderr
+        == f"pr_status: cannot capture validated PR/MR description: {step}\n".encode()
+    )
+    assert not (tmp_path / "description.json").exists()

@@ -267,10 +267,10 @@ def test_removed_losses_share_admission_and_source_anchors(
     values = json.loads(
         run_node(
             "import {evaluateAdmission} from './workflows/src/admission.js';"
-            "import {skepticalReturn} from './workflows/test/helpers/verdicts.js';"
+            "import {skepticalAssessment} from './workflows/test/helpers/verdicts.js';"
             "import {disposeFindings} from './workflows/src/dispose.js';"
             "let data='';for await(const chunk of process.stdin)data+=chunk;"
-            "const claim=JSON.parse(data);claim.skeptical_assessments=[skepticalReturn(claim.id),skepticalReturn(claim.id,'challenger')];const indirect=structuredClone(claim);"
+            "const claim=JSON.parse(data);claim.skeptical_assessments=[skepticalAssessment(claim.id),skepticalAssessment(claim.id,'challenger')];const indirect=structuredClone(claim);"
             "indirect.admission_assessments[2].status='rejected';"
             "const bad=structuredClone(claim);bad.resolved_references.production_element.location_status='unconfirmed';"
             "const rows=[claim,{...claim,criticality:7},indirect,bad].map(evaluateAdmission);"

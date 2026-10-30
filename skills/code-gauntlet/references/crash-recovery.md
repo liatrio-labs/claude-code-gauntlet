@@ -38,7 +38,7 @@ Workflow({ name: "code-gauntlet:code-gauntlet-pipeline", args: <the identical ar
 When resume by id is unavailable, copy the checkpoint object **whole, `checksum` included**
 from `return.checkpoints` on failure or partial persistence, or from the file at
 `artifactPaths.checkpoints` after successful persistence, into `args.checkpoints`.
-The slim disk checkpoint retains challenge output and per-phase counts; upstream phases run again.
+Cite checkpoints retain rendering context and resume without rerunning upstream phases.
 Never edit, summarize, unwrap, rebuild, or re-sign the checkpoint. The producer's checksum covers
 `JSON.stringify` of the whole object except `checksum`, with two-space indentation,
 native key order and UTF-16 hashing. This detects value drift, not authentication or

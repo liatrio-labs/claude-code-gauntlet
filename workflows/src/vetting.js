@@ -1,4 +1,6 @@
 // Shared check identifiers keep holdback and report reasons aligned.
+export const CHALLENGE_REASON_CODES = { capped: 'challenge_cap', incomplete: 'held_back', failed: 'challenge_failed' };
+
 export const UNVERIFIED_REASONS = {
   validation: 'the validator did not score this finding, so it was not skeptically validated',
   verify: 'the verify slice could not be proven against the dispatched document',
