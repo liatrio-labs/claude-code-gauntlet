@@ -43,7 +43,7 @@ The user's input determines the review target. Resolve it before eligibility che
 3. **User said "review" with no number/URL** and a PR/MR exists for the current branch → **PR/MR mode**. Use `gh pr view --json number` and read its `number` field for the current branch.
 4. **No PR/MR found** → **Local changes mode**. Review uncommitted changes or branch diff.
 
-**Validation:** After resolving to PR/MR mode, verify the PR/MR exists by running `gh pr view {pr_number}` (or `glab mr view`). If the command fails, do NOT silently fall back to local mode — ask the user:
+**Validation:** After resolving to PR/MR mode, verify the PR/MR exists by running `{python} "{plugin_root}/scripts/pr_status.py" --platform {platform} --pr {pr_number}` (status only). If the command fails, do NOT silently fall back to local mode — ask the user:
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): call `scripts/resolve_config.py` with no `--target` on this path. The question is never presented in headless mode. Branch on `resolved.pr_not_found_policy`: `error` stops the run, and `local` proceeds with `pr_number` cleared. See `references/headless-mode.md`.
 
@@ -194,35 +194,7 @@ The resolver returns its JSON on stdout. A resolver failure stops the composite 
 
 Skip entirely for local and branch targets (no PR/MR signal to detect). Otherwise use the literal forge sections below in Composite A so fork clones use the base repository and its host.
 
-GitHub:
-
-```bash
-echo "=== status ==="
-PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform github --pr {pr_number}) || exit 1
-TARGET_SHA=${PR_STATUS%%$'\n'*}
-TARGET_SHA=${TARGET_SHA#head_sha=}
-```
-
-```bash
-echo "=== pr_url ==="
-PR_URL=${PR_STATUS#*pr_url=}
-printf '%s\n' "$PR_URL"
-```
-
-GitLab:
-
-```bash
-echo "=== status ==="
-PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform gitlab --pr {pr_number}) || exit 1
-TARGET_SHA=${PR_STATUS%%$'\n'*}
-TARGET_SHA=${TARGET_SHA#head_sha=}
-```
-
-```bash
-echo "=== pr_url ==="
-PR_URL=${PR_STATUS#*pr_url=}
-printf '%s\n' "$PR_URL"
-```
+Use the single capture/status recipe in [Composite A](phase2-preparation.md#phase-2-composite-a--pre-gather-status--checkout--sha--prior-review-gate--stale-truncation). Reuse its validated `PR_STATUS`, `TARGET_SHA` and `PR_URL`; do not fetch a second body.
 
 After checkout and SHA resolution, pass the URL unchanged in the same composite:
 

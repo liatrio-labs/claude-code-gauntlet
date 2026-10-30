@@ -201,67 +201,57 @@ for (const row of RANGE_ROWS) test(`discovery range: ${row.name}`, async () => {
   assert.deepEqual(out.gaps, expected.gaps);
 });
 
-const PROMPT_HEAD = 'This is a code gauntlet built for thoroughness, not speed: investigate using your own methodology '
-  + 'and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff '
-  + '\u2014 not just the changed lines. Your dimension(s): ';
-const PROMPT_TAIL = '. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. '
-  + 'An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. '
-  + 'Every finding MUST cite concrete evidence: the evidence field must be non-empty and reference real lines '
-  + 'you actually inspected (in the diff or in a file you opened) \u2014 a finding you cannot ground in inspected '
-  + 'code is noise, do not emit it. For any absence or "missing" claim (e.g. a test-coverage negative asserting no test '
-  + 'exists), name in evidence the specific file or path you checked; an unproven absence is not a finding. '
-  + 'Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as '
-  + 'a single paragraph of prose, at most 500 characters \u2014 no code blocks or bullet lists; put code references '
-  + 'in evidence and cross_file_refs instead.';
-const TYPO_SWEEP = ' Additionally run an explicit typo and naming sweep: identifier misspellings; typos in user-facing '
-  + 'strings, messages, and log output; case-sensitivity mistakes in string comparisons (comparing mixed-case values '
-  + 'without normalizing case); and copy-paste plural/singular or off-by-one naming mismatches (a field, key, or '
-  + 'variable named for one thing but holding another).';
-const SECURITY_SWEEP = ' Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs '
-  + 'reaching http/request/fetch clients without allowlist validation); frame and embedding policy gaps '
-  + '(missing X-Frame-Options or frame-ancestors, clickjacking exposure); postMessage handlers that do not validate '
-  + 'event.origin or check it with weak substring matching; and string-matching bypass patterns where a security '
-  + 'decision uses containment checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme '
-  + 'instead of exact parsing \u2014 these are bypassable (e.g. a host "evil.com/trusted.com" still contains "trusted.com").';
 const PROMPT_ROWS = [
-  { agent: 'code-gauntlet:bug-detector', dims: 'bug', extra: TYPO_SWEEP },
-  { agent: 'code-gauntlet:security-reviewer', dims: 'security', extra: SECURITY_SWEEP },
+  { agent: 'code-gauntlet:bug-detector', dims: 'bug' },
+  { agent: 'code-gauntlet:security-reviewer', dims: 'security' },
   { agent: 'code-gauntlet:cross-file-impact', dims: 'cross_file_impact' },
   { agent: 'code-gauntlet:test-analyzer', dims: 'test_coverage' },
-  { agent: 'code-gauntlet:conventions-and-intent', dims: 'convention, intent, comment_accuracy', extra: TYPO_SWEEP },
+  { agent: 'code-gauntlet:conventions-and-intent', dims: 'convention, intent, comment_accuracy' },
   { agent: 'code-gauntlet:type-design-analyzer', dims: 'type_design' },
   { agent: 'code-gauntlet:code-simplifier', dims: 'simplification' },
 ];
-for (const row of PROMPT_ROWS) test(`discovery prompt: ${row.agent}`, async () => {
+for (const contextLine of ['CONTEXT_SENTINEL ', '']) test(`discovery transport: context=${Boolean(contextLine)}`, async () => {
+  const inventory = { status: 'available', items: [{ id: 'AUDIT_SENTINEL', path: 'deleted.test' }], omitted: 0 };
   const ctx = stageCtx();
-  await discover(ctx, { contextLine: 'CONTEXT_SENTINEL ' });
-  assert.equal(ctx.calls.find((call) => call.label === row.agent).prompt,
-    'CONTEXT_SENTINEL ' + PROMPT_HEAD + row.dims + PROMPT_TAIL + (row.extra ?? '')
-      + (row.agent === 'code-gauntlet:test-analyzer' ? ' Also return the required dispatch-result fields: removed_test_audit.'
-        + ' Audit every removed test item below from the saved diff. Return exactly one removed_test_audit row per id (or [] when unavailable/empty). Loss locations and prose describe surviving behavior; keep deleted paths only in the item reference. Inventory: {"status":"available","items":[],"omitted":0}' : ''));
-});
-
-test('discovery prompt: absent context has no prefix', async () => {
-  const ctx = stageCtx();
-  await discover(ctx, {});
-  assert.equal(ctx.calls.find((call) => call.label === 'code-gauntlet:bug-detector').prompt,
-    PROMPT_HEAD + 'bug' + PROMPT_TAIL + TYPO_SWEEP);
+  await discover(ctx, { contextLine, removedTests: inventory });
+  assert.deepEqual(ctx.calls.map((call) => call.label), PROMPT_ROWS.map((row) => row.agent));
+  for (const row of PROMPT_ROWS) {
+    const prompt = ctx.calls.find((call) => call.label === row.agent).prompt;
+    assert.ok(prompt.startsWith(contextLine + 'Investigate'));
+    assert.ok(prompt.includes(`Your dimension(s): ${row.dims}.`));
+    assert.ok(prompt.includes('LSP first, Grep fallback'));
+    assert.ok(prompt.includes('full codebase context around the diff'));
+    assert.ok(prompt.includes('no cap and no minimum'));
+    assert.ok(prompt.includes('regardless of importance or confidence'));
+    assert.ok(prompt.includes('metadata as unverified hypotheses'));
+    assert.ok(prompt.includes('including paths it omits'));
+    assert.ok(prompt.includes('evidence field must be non-empty') && prompt.includes('real lines you actually inspected'));
+    assert.ok(prompt.includes('name in evidence the specific file or path you checked'));
+    assert.ok(prompt.includes('Return { findings, complete, total_seen }'));
+    assert.ok(prompt.includes('single paragraph of prose, at most 500 characters'));
+    assert.doesNotMatch(prompt, /Additionally/);
+    if (row.agent === 'code-gauntlet:test-analyzer') {
+      assert.ok(prompt.includes('required dispatch-result fields: removed_test_audit'));
+      assert.ok(prompt.includes('exactly one removed_test_audit row per id'));
+      assert.ok(prompt.endsWith(`Inventory: ${JSON.stringify(inventory)}`));
+    }
+  }
 });
 
 const SUMMARY_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
-const SINGLE_PROMPT = 'Summarize the semantic intent of these changed files for downstream reviewers: a.js, b.js. '
+const SINGLE_PROMPT = 'Summarize the semantic intent of these changed files for report change context: a.js, b.js. '
   + 'Return { summary }.';
 const SUMMARY_GOLDEN = { summary: 's', gaps: [] };
 const SUMMARY_ROWS = [
   { name: 'absent count', labels: ['summarize'], prompts: [SINGLE_PROMPT] },
   { name: 'small PR count and context prefix', changedLines: 10, contextLine: 'SUMMARY_CONTEXT ',
     labels: ['summarize'], prompts: ['SUMMARY_CONTEXT '
-      + 'Summarize the semantic intent of these changed files for downstream reviewers: a.js, b.js. '
+      + 'Summarize the semantic intent of these changed files for report change context: a.js, b.js. '
       + 'The authoritative changed-line count is 10; cite that number verbatim if you mention change size '
       + '\u2014 never re-estimate it from the diff. Return { summary }.'] },
   { name: 'large count with few files stays single', files: ['a.js'], changedLines: 1211, bucketSize: 20,
     labels: ['summarize'], prompts: [
-      'Summarize the semantic intent of these changed files for downstream reviewers: a.js. '
+      'Summarize the semantic intent of these changed files for report change context: a.js. '
       + 'The authoritative changed-line count is 1211; cite that number verbatim if you mention change size '
       + '\u2014 never re-estimate it from the diff. Return { summary }.',
     ] },
@@ -273,10 +263,10 @@ const SUMMARY_ROWS = [
     bucketSize: 2, replies: { 'summarize-bucket-0': { summary: 'p0' }, 'summarize-bucket-1': { summary: 'p1' },
       'summarize-merge': { summary: 'merged' } }, labels: ['summarize-bucket-0', 'summarize-bucket-1', 'summarize-merge'],
     prompts: [
-      'Summarize the semantic intent of these changed files for downstream reviewers: a.js, b.js. '
+      'Summarize the semantic intent of these changed files for report change context: a.js, b.js. '
         + 'The authoritative changed-line count is 600; cite that number verbatim if you mention change size '
         + '\u2014 never re-estimate it from the diff. Return { summary }.',
-      'Summarize the semantic intent of these changed files for downstream reviewers: c.js. '
+      'Summarize the semantic intent of these changed files for report change context: c.js. '
         + 'The authoritative changed-line count is 600; cite that number verbatim if you mention change size '
         + '\u2014 never re-estimate it from the diff. Return { summary }.',
       'Combine these per-bucket change summaries into one concise semantic summary. '
