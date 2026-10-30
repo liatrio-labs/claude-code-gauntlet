@@ -38,6 +38,7 @@ class FindingVersion:
     discovery_agent: str
     discovery_dimension: Dimension
     finding: dict[str, Any]
+    issue_id: str | None = None
 
     def projection(self):
         return dict(self.finding)
@@ -52,21 +53,83 @@ class AdmissionReason(TypedDict):
     status: AdmissionStatus
 
 
-class DecisionDetail(TypedDict, total=False):
+class SelectionDetail(TypedDict):
     kind: TestKind | QualityBasis | Literal["ordinary", "unknown"]
+
+
+class AdmissionContextDetail(SelectionDetail):
     policy_subject: PolicySubject
     original_producer: str
-    predicate: str
-    status: AdmissionStatus
+
+
+class AdmissionDetail(AdmissionContextDetail, AdmissionReason):
+    pass
+
+
+class ChallengeTerminalDetail(AdmissionContextDetail):
+    predicate: Literal["challenge_terminal"]
+
+
+class DisposalDetail(AdmissionContextDetail):
     predicates: list[AdmissionReason]
     surface: Literal["deliver", "body", "held_back", "report_only"]
+
+
+class _TraceFields(TypedDict, total=False):
+    stage: Literal["early", "post_validation", "validator", "challenger"]
+
+
+class TraceDetail(_TraceFields):
+    original_producer: str
     finding_id: str | None
     reduction: contract.ReductionDetailItem | contract.ReductionProvenance
     issue_id: str
-    stage: Literal["early", "post_validation", "validator", "challenger"]
-    category: ExclusionCategory
     source: dict[str, Any] | None
     request_ids: list[str]
+
+
+class _ScopeFields(TypedDict):
+    category: ExclusionCategory
+    predicate: str
+
+
+class ScopeTraceDetail(TraceDetail, _ScopeFields):
+    pass
+
+
+class MeasuredSelectionDetail(TraceDetail, SelectionDetail):
+    pass
+
+
+class MeasuredAdmissionDetail(TraceDetail, AdmissionDetail):
+    pass
+
+
+class MeasuredChallengeTerminalDetail(TraceDetail, ChallengeTerminalDetail):
+    pass
+
+
+class MeasuredDisposalDetail(TraceDetail, DisposalDetail):
+    pass
+
+
+class MeasuredScopeDisposalDetail(ScopeTraceDetail, DisposalDetail):
+    pass
+
+
+DecisionDetail = (
+    SelectionDetail
+    | AdmissionDetail
+    | ChallengeTerminalDetail
+    | DisposalDetail
+    | TraceDetail
+    | ScopeTraceDetail
+    | MeasuredSelectionDetail
+    | MeasuredAdmissionDetail
+    | MeasuredChallengeTerminalDetail
+    | MeasuredDisposalDetail
+    | MeasuredScopeDisposalDetail
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +140,8 @@ class VerdictObservation:
     unresolved: bool
     proved: bool
     unavailable: bool
+    operational_gap: bool = False
+    non_dispatch: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +178,20 @@ class MeasurementTrace:
     complete: bool
 
 
+def trace_issue_ids(trace):
+    issues = {
+        d.trace_id: d.detail["issue_id"]
+        for s in trace.snapshots
+        if s.stage == "dispose"
+        for d in s.decisions
+        if d.detail and "issue_id" in d.detail
+    }
+    issues.update(
+        (v.trace_id, v.issue_id) for v in trace.versions if v.issue_id is not None
+    )
+    return issues
+
+
 @dataclass(frozen=True, slots=True)
 class StageBugObservation:
     score_ref: ScoreRef
@@ -144,24 +223,6 @@ class FunnelReport:
 def _require(condition, reason):
     if not condition:
         raise ValueError("invalid measurement trace: " + reason)
-
-
-def _detail_fields(detail):
-    context = {"kind", "policy_subject", "original_producer"}
-    if "predicates" in detail:
-        _require(
-            "predicate" not in detail or "category" in detail, "decision detail shape"
-        )
-        return context | {"surface"}
-    if "status" in detail or (
-        "kind" in detail and "predicate" in detail and "category" not in detail
-    ):
-        return (
-            context
-            if detail.get("predicate") == "challenge_terminal"
-            else context | {"predicate", "status"}
-        )
-    return set()
 
 
 def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
@@ -206,8 +267,6 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
             len({by_id[v].trace_id for v in ids}) == len(ids), "duplicate occurrence"
         )
         for decision in snapshot.decisions:
-            detail = decision.detail or {}
-            _require(_detail_fields(detail) <= detail.keys(), "decision detail shape")
             _require(
                 decision.trace_id in identities
                 and all(t in identities for t in decision.related_trace_ids),

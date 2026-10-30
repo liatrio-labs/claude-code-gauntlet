@@ -22,7 +22,7 @@ from bench.runner.decode import decode
 from bench.runner.epochs import digest
 from bench.runner.observations import ReasonCode
 from bench.runner.provenance import PLUGIN_PATHS, ROOT, reconstruct_delivery
-from bench.runner.stages import MeasurementTrace, load_trace
+from bench.runner.stages import MeasurementTrace, load_trace, trace_issue_ids
 
 
 class SourceWire(TypedDict):
@@ -367,13 +367,16 @@ try {
       return reply.result;
     } };
   send({ paths: { ...plannedArtifactPaths(args.outputDir, args.headShaShort), plan: persistPlanPath(args.outputDir, args.headShaShort) } });
+  const source = JSON.parse(JSON.stringify(state.phaseOutputs.cite || state.phaseOutputs.challenge));
+  applyChallengeReplayBelt(source);
+  const identities = [...source.findings, ...source.unverified, ...source.eliminated]
+    .map((f, i) => ({ member_id: f.trace_id || `source:${i}`, original_producer: f.discovery_agent || f.agent || null }));
   const out = await deliverFromCheckpoint(ctx, args, state);
   const checkpoint = slimPersistedCheckpoints(state.phaseOutputs, state.completed, state.phaseReached);
   const challenge = JSON.parse(JSON.stringify(state.phaseOutputs.cite || state.phaseOutputs.challenge));
   applyChallengeReplayBelt(challenge);
   const members = [...challenge.findings, ...challenge.unverified, ...challenge.eliminated];
   const baseline = writerPayload({ findings: members }).findings;
-  const identities = members.map((f, i) => ({ member_id: f.trace_id || `source:${i}`, original_producer: f.discovery_agent || f.agent || null }));
   send({ out, checkpoint, baseline, identities, expectedFindings });
 } catch (error) { send({ error: error.message }); }
 reader.close();
@@ -584,6 +587,7 @@ def _candidate_artifacts(
         )
 
     deltas: list[DeliveryDeltaWire] = []
+    issues = trace_issue_ids(inputs.trace) if inputs.trace else {}
     for index, finding in enumerate(disposed):
         position = next(
             (
@@ -602,9 +606,7 @@ def _candidate_artifacts(
                 "member": index,
                 **identity,
                 "id": finding.get("id"),
-                "issue": finding.get("delivery_group", {}).get("issue_key")
-                or finding.get("consolidation_key")
-                or identity["member_id"],
+                "issue": issues.get(identity["member_id"]),
                 "before": old.get("disposition"),
                 "after": finding["disposition"],
                 "reasons": finding["disposition_reasons"],
@@ -754,9 +756,7 @@ def replay_delivery(inputs, *, candidate=False):
         "attribution_scope": "post_challenge_delivery"
         if legacy
         else "post_cite_delivery",
-        "proof_performance": "recorded"
-        if record.get("replay_version", 1) == 2
-        else "unavailable_legacy",
+        "proof_performance": "recorded" if not legacy else "unavailable_legacy",
     }
     return ReplayResult(
         result,

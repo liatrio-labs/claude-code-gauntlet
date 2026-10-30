@@ -119,6 +119,9 @@ _ReductionDetailItemReason_Literal = Literal[
     "cite_unmatched",
     "cite_unavailable",
 ]
+_ReductionDetailItemProofVerdict_Literal = Literal[
+    "real", "refuted", "needs_evidence", None
+]
 _ScopeDecisionsItemStage_Literal = Literal[
     "early", "post_validation", "validator", "challenger"
 ]
@@ -2178,6 +2181,15 @@ class CiteResultsItem(TypedDict, total=False):
     added_lines: list[int]
 
 
+class ReductionDetailItemProof(TypedDict):
+    verdict: _ReductionDetailItemProofVerdict_Literal
+    proved: bool
+    unresolved: bool
+    unavailable: bool
+    operational_gap: bool
+    non_dispatch: bool
+
+
 class ReductionDetailItem(TypedDict, total=False):
     reason: _ReductionDetailItemReason_Literal
     stage: SkepticalStage
@@ -2186,6 +2198,7 @@ class ReductionDetailItem(TypedDict, total=False):
     missing_fields: list[str]
     missing_evidence: str
     category: ExclusionCategory
+    proof: ReductionDetailItemProof
 
 
 class ScopeDecisionsItem(TypedDict, total=False):

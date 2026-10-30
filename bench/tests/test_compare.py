@@ -1024,10 +1024,12 @@ def test_admission_diagnostics_preserve_issue_and_producer(case, tmp_path):
     versions = tuple(
         replace(
             v,
+            discovery_agent="test-analyzer",
             finding={
                 **v.finding,
                 "origin_dimension": "test_coverage",
                 "agent": "test-analyzer",
+                "discovery_agent": "test-analyzer",
                 "admission": {
                     **v.finding.get("admission", {}),
                     "status": "held_back",

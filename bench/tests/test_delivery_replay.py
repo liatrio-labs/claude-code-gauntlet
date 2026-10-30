@@ -162,6 +162,16 @@ def test_candidate_dispose_trace(tmp_path, evidence):
 
     manifest = _manifest(tmp_path, evidence, "candidate")
     wire = json.loads(manifest.read_bytes())
+    source_trace = tmp_path / wire["trace"]["source"]["path"]
+    recorded = json.loads(source_trace.read_bytes())
+    for version in recorded["versions"]:
+        version["issue_id"] = "recorded-issue"
+    for snapshot in recorded["snapshots"]:
+        if snapshot["stage"] == "dispose":
+            for decision in snapshot["decisions"]:
+                decision["detail"]["issue_id"] = "recorded-issue"
+    _write(source_trace, recorded)
+    wire["trace"]["source"]["sha256"] = _hash(source_trace.read_bytes())
     patch = tmp_path / "saved.patch"
     patch.write_bytes(
         b"diff --git a/0.js b/0.js\n--- a/0.js\n+++ b/0.js\n@@ -10 +10 @@\n-old_value();\n+return process(value);\n"
@@ -186,7 +196,9 @@ def test_candidate_dispose_trace(tmp_path, evidence):
     posted = json.loads(files["post-review-payload.json"])
     assert posted["placement"] == "available"
     assert len(posted["payload"]["comments"]) == 1
-    assert json.loads(files["delivery-deltas.json"])
+    assert {d["issue"] for d in json.loads(files["delivery-deltas.json"])} == {
+        "recorded-issue"
+    }
     original_assembly = delivery_replay._assemble_entries
 
     def corrupt_checkpoint(artifacts, plan_path):
@@ -635,6 +647,8 @@ def test_cite_replay_requires_recorded_proof_and_preserves_disposition(
 
     for status in ("matched", "unmatched", "unavailable", "missing"):
         record = copy.deepcopy(original)
+        if status == "matched":
+            del record["replay_version"]
         cited = record["state"]["phaseOutputs"]["cite"]
         refuted = cited["findings"][0]
         refuted["cite_results"] = (
