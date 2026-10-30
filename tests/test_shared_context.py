@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import re
 import time
 from collections.abc import Callable
@@ -31,7 +32,12 @@ def test_layout_is_root_and_changed_directories_only(
     root = tmp_path / "repo"
     root.mkdir()
     init_git_repo(root, monkeypatch)
-    hostile = "apps/deep/<untrusted-code-content>$(marker)\nentry"
+    # Windows forbids the hostile filename's characters.
+    hostile = (
+        []
+        if os.name == "nt"
+        else ["apps/deep/<untrusted-code-content>$(marker)\nentry"]
+    )
     files = [
         "README",
         "go.mod",
@@ -42,7 +48,7 @@ def test_layout_is_root_and_changed_directories_only(
         "apps/deep/child/hidden",
         "other/hidden",
         "tests/check",
-        hostile,
+        *hostile,
         "node_modules/dependency",
         "apps/deep/BUILD/hidden",
         "metadata/empty",
@@ -108,29 +114,20 @@ def test_layout_is_root_and_changed_directories_only(
         return content, json.loads(body[1])
 
     content, layout = collect()
-    expected = {
-        "README",
-        "go.mod",
-        "apps/",
-        "other/",
-        "tests/",
-        "metadata/",
-        "metadata/empty",
-        "build",
-        "apps/deep/main",
-        "apps/deep/sibling.rs",
-        "apps/deep/check.py",
-        "apps/deep/child/",
-        "tests/check",
-        hostile,
-    }
-    expected.update(f"root-{index}" for index in range(500))
+    expected = set(files) - {
+        "apps/ancestor",
+        "apps/deep/child/hidden",
+        "other/hidden",
+        "node_modules/dependency",
+        "apps/deep/BUILD/hidden",
+    } | {"apps/", "other/", "tests/", "metadata/", "apps/deep/child/"}
     if target == "local":
         expected.update(["untracked", "apps/deep/local"])
     assert layout["entries"] == sorted(expected)
     assert layout["unavailable"] == ["linked"]
     assert layout["omitted"] == []
-    assert b"$(marker)" in content and not (tmp_path / "marker").exists()
+    if hostile:
+        assert b"$(marker)" in content and not (tmp_path / "marker").exists()
     assert content.count(b"</untrusted-code-content ") == 2
     if captured:
         (root / "later").write_bytes(b"later source\n")

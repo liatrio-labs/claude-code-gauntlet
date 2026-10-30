@@ -804,7 +804,6 @@ for (const row of EXCLUSION_CATEGORIES) {
   }
 }
 const EXCLUSION_BY_CATEGORY = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row])));
-const EXCLUSION_FACT_DESCRIPTORS = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row.facts])));
 const SKEPTICAL_IDENTITY = {
   finding_id: { type: 'string', minLength: 1 }, stage: { type: 'string', enum: ['validator', 'challenger'] },
 };
@@ -2723,7 +2722,6 @@ function admissionContext(finding) {
     fix: finding.suggestion || finding.suggested_fix_code };
 }
 // --- applyValidations.js ---
-{ REACHABILITY_VALUES };
 function validationRejections(finding, validation) {
   if (!validation) return ['missing_entry'];
   const reasons = [];
