@@ -5,7 +5,7 @@ import { LIMIT_DEFAULTS } from './registry.js';
 import { effectiveBucketSize } from './capacity.js';
 import { deepClone } from './wire.js';
 import { checkRemovedTestAudit } from './removedTests.js';
-import { stampDiscovery, recordStage } from './measurementTrace.js';
+import { stampDiscovery, recordStage, measurementDecisions } from './measurementTrace.js';
 import { validateFindings } from './mergeFindings.js';
 
 // StructuredOutput requires an object wrapper around summary prose.
@@ -238,6 +238,7 @@ export async function discover(ctx, input) {
   const findings = [];
   const intake = [];
   const rejected = [];
+  const decisions = [];
   const trace = inp.measurementTrace;
   const degradedDims = [];
 
@@ -278,7 +279,7 @@ export async function discover(ctx, input) {
         for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics']) delete f[key];
         f.agent = spec.agentType.split(':').pop();
       }
-      const checked = validateFindings([f]);
+      const checked = validateFindings([f], decisions);
       gaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
       rejected.push(...checked.rejected);
       findings.push(...checked.valid);
@@ -330,14 +331,14 @@ export async function discover(ctx, input) {
     gaps.push(`discover: ${droppedNoLineEnd} finding(s) emitted suggested_fix_code without line_end — field dropped (a patch must state its range)`);
   }
 
-  return {
+  return measurementDecisions({
     findings,
     ...(rejected.length ? { rejected } : {}),
     gaps,
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
-  };
+  }, decisions);
 }
 
 // Concrete evidence requirements make absence claims auditable; registry-scoped prompt extras preserve each agent's investigation breadth.

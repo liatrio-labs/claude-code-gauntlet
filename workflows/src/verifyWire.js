@@ -83,6 +83,7 @@ export function encodeSliceInline(content) {
 export const VERIFY_INLINE_CHAR_BUDGET = 50000;
 
 // Generated into Python; this order also governs the delta checksum.
+// Anchor is returned only for removed losses whose quote verification derived.
 export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites', 'anchor', ...Object.keys(VERIFY_FACT_PROPERTIES)];
 
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
@@ -100,7 +101,7 @@ function deltasById(deltas) {
 
 // Walk held findings to preserve untouched fields, membership and order. Call only
 // after trustSlice proves coverage; otherwise a missing delta would drop a finding.
-export function joinVerifyDeltas(slice, deltas) {
+export function joinVerifyDeltas(slice, deltas, matchedProofIds = new Set()) {
   const byId = deltasById(deltas);
   const out = [];
   for (const f of slice) {
@@ -111,7 +112,7 @@ export function joinVerifyDeltas(slice, deltas) {
     delete joined.diff_validation;
     delete joined.sites;
     if (Array.isArray(f.sites)) joined.site_requests = projectVerifySliceFinding(f).sites;
-    const proven = recordProof(projectVerifySliceFinding(f)) !== null;
+    const proven = matchedProofIds.has(f.id);
     for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k) && (proven || !Object.hasOwn(VERIFY_FACT_PROPERTIES, k))) joined[k] = delta[k];
     if (canonicalRange(joined) && (Object.hasOwn(f, 'line') || Object.hasOwn(f, 'end_line'))) {
       joined.line = joined.line_start;

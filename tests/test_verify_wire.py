@@ -303,7 +303,7 @@ def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
             "claimed_line_start": 1,
             "location_status": "unconfirmed",
             "confidence": 80,
-            "path_role": "unknown",
+            "path_role": "source",
             "file_added": False,
             "blame_class": "unknown",
             "blame_source": "unavailable",
@@ -335,7 +335,7 @@ def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
             "confidence": 80,
             "location_status": "unconfirmed",
             "diff_validation": {"in_diff": None},
-            "path_role": "unknown",
+            "path_role": "source",
             "file_added": False,
             "blame_class": "unknown",
             "blame_source": "unavailable",
@@ -768,6 +768,19 @@ def test_delta_anchor_authority(anchor, end, accepted):
     else:
         with pytest.raises(ValueError, match="anchor span"):
             verify.build_deltas([finding], [finding])
+
+
+def test_plain_delta_does_not_echo_input_anchor():
+    finding = {
+        "id": "plain",
+        "anchor": "perform_action(value)",
+        "line_start": 1,
+        "line_end": 1,
+        "location_status": "confirmed",
+    }
+    delta = verify.build_deltas([finding], [finding])[0]
+    assert "anchor" not in delta
+    assert delta["line_start"] == 1
 
 
 def test_presentation_quote_proof_reaches_trusted_js_join():

@@ -8,6 +8,7 @@ import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
 import { mergeStage } from '../src/mergeFindings.js';
 import { slimPersistedCheckpoints } from '../src/checkpoints.js';
+import { createMeasurementTrace, decisionsFor } from '../src/measurementTrace.js';
 
 test('kind contracts apply across providers and gateways', async () => {
   assert.equal(conditionalSchemaActive({}), true);
@@ -24,10 +25,12 @@ test('kind contracts apply across providers and gateways', async () => {
       return { findings: [record, missing, { ...record, id: 'unknown', [field]: 'unknown' },
         { ...record, id: 'type', [field]: [record[field]] }], complete: true, total_seen: 4, removed_test_audit: [] };
     } });
-    const out = await discover(ctx, { policy });
+    const out = await discover(ctx, { policy, measurementTrace: createMeasurementTrace('kinds') });
     assert.equal(out.findings.length, 3);
     assert.equal(out.rejected.length, 9);
     assert.equal(out.gaps.length, 9);
+    assert.deepEqual(decisionsFor(out).map((d) => [d.trace_id, d.reason_code]),
+      out.rejected.map((f) => [f.trace_id, 'invalid_shape']));
     assert.ok(out.gaps.every((gap) => gap.includes('Invalid required field') && gap.startsWith('code-gauntlet:')));
     const merged = mergeStage(out, {});
     assert.equal(merged.findings.length, 3);
@@ -95,11 +98,13 @@ const CANONICAL_PROPS = {
   anchor: { type: 'string', minLength: 1, description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
   suggestion: { type: 'string' }, claude_md_rule: { type: 'string' }, suggested_fix_code: { type: 'string' },
   cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
-  ...Object.fromEntries(['searched_paths', 'candidate_tests', 'production_element', 'duplicate_of', 'precedent']
-    .map((field) => [field, DISCOVERY_FINDING_PROP_TYPES[field]])),
   ...(DISCOVERY_FINDING_PROP_TYPES.sites && { sites: DISCOVERY_FINDING_PROP_TYPES.sites }),
 };
 const REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
+const reference = { type: 'object', $comment: 'source-reference', properties: { file: { type: 'string', $comment: 'repo-path' },
+  line_start: { type: 'integer', minimum: 1 }, line_end: { type: 'integer', minimum: 1 }, anchor: { type: 'string', minLength: 1 } },
+  required: ['file', 'line_start', 'line_end', 'anchor'], additionalProperties: false };
+const qualityReferences = { duplicate_of: reference, precedent: reference };
 const CONDITIONAL = [
   { if: { properties: { dimension: { const: 'convention' } }, required: ['dimension'] }, then: { required: ['claude_md_rule'] } },
   { if: { properties: { dimension: { const: 'intent' } }, required: ['dimension'] }, then: { required: ['spec_text'] } },
@@ -112,16 +117,18 @@ const SCHEMA_ROWS = [
     extra: { affected_consumers: { type: 'array', items: { type: 'string', $comment: 'repo-path' } } }, required: ['affected_consumers'] },
   { agent: 'code-gauntlet:test-analyzer',
     extra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: { type: 'string' },
+      searched_paths: { type: 'array', $comment: 'search-paths', items: { type: 'string', $comment: 'repo-path' } }, production_element: reference,
+      candidate_tests: { type: 'array', items: { ...reference, properties: { ...reference.properties, input: { type: 'string' }, assertion: { type: 'string' } }, required: [...reference.required, 'input', 'assertion'] } },
       test_kind: { type: 'string', enum: ['defective_test', 'critical_gap', 'production_defect', 'additional_case'] } },
     required: ['criticality', 'failure_scenario'], allOf: [{ if: { properties: { dimension: { const: 'test_coverage' } }, required: ['dimension'] }, then: { required: ['test_kind'] } }] },
   { agent: 'code-gauntlet:conventions-and-intent',
     extra: { rule_source: { type: 'string' }, spec_text: { type: 'string' } },
     allOf: CONDITIONAL },
   { agent: 'code-gauntlet:type-design-analyzer',
-    extra: { invalid_state_example: { type: 'string' }, behavior_preserved: { type: 'string' }, quality_basis: { type: 'string', enum: ['current_correctness', 'duplication', 'simpler_equivalent', 'stack_idiom', 'other'] } },
+    extra: { ...qualityReferences, invalid_state_example: { type: 'string' }, behavior_preserved: { type: 'string' }, quality_basis: { type: 'string', enum: ['current_correctness', 'duplication', 'simpler_equivalent', 'stack_idiom', 'other'] } },
     allOf: [{ if: { properties: { dimension: { const: 'type_design' } }, required: ['dimension'] }, then: { required: ['quality_basis'] } }] },
   { agent: 'code-gauntlet:code-simplifier',
-    extra: { behavior_preserved: { type: 'string' }, quality_basis: { type: 'string', enum: ['current_correctness', 'duplication', 'simpler_equivalent', 'stack_idiom', 'other'] } },
+    extra: { ...qualityReferences, behavior_preserved: { type: 'string' }, quality_basis: { type: 'string', enum: ['current_correctness', 'duplication', 'simpler_equivalent', 'stack_idiom', 'other'] } },
     allOf: [{ if: { properties: { dimension: { const: 'simplification' } }, required: ['dimension'] }, then: { required: ['quality_basis'] } }] },
 ];
 test('finding schemas: one dispatch supplies the roster', async (t) => {
@@ -134,13 +141,14 @@ test('finding schemas: one dispatch supplies the roster', async (t) => {
     const schema = ctx.calls.find((call) => call.label === row.agent).schema;
     const item = schema.properties.findings.items;
     if (item.allOf) item.allOf = item.allOf.filter((clause) => Object.keys(clause.if.properties).length === 1);
-    assert.deepEqual(schema, { type: 'object', properties: {
+    const shape = (value) => JSON.parse(JSON.stringify(value, (key, field) => key === 'description' && typeof field === 'string' ? undefined : field));
+    assert.deepEqual(shape(schema), shape({ type: 'object', properties: {
       findings: { type: 'array', items: { type: 'object', properties: { ...CANONICAL_PROPS, ...row.extra },
         required: [...REQUIRED, 'anchor', ...(row.required ?? [])], additionalProperties: false,
         ...(row.allOf ? { allOf: row.allOf } : {}) } },
       complete: { type: 'boolean' }, total_seen: { type: 'number' },
       ...(DISPATCH_RESULTS[row.agent] || {}),
-    }, required: ['findings', 'complete', 'total_seen', ...Object.keys(DISPATCH_RESULTS[row.agent] || {})] });
+    }, required: ['findings', 'complete', 'total_seen', ...Object.keys(DISPATCH_RESULTS[row.agent] || {})] }));
   });
 });
 const POLICY_ROWS = [

@@ -76,6 +76,7 @@ class DiffValidation(TypedDict):
 
 
 class FindingWire(VerifySliceFinding, FindingFacts, total=False):
+    derived_loss_anchor: bool
     resolved_sites: list[ResolvedSitesItem]
     line: object
     end_line: object
@@ -404,6 +405,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
 
     total_symbols = len(symbols_to_check)
     missing_symbols = []
+    unavailable = []
     for symbol in sorted(symbols_to_check):
         if code_at_lines is not None and symbol in code_at_lines:
             continue
@@ -411,6 +413,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
         try:
             source = context.sources()
             if source.target_kind != "local" and source.captured_head is None:
+                unavailable.append(f"{symbol}: captured head unavailable")
                 continue
             stdout, grep_stderr, rc = proc.output(
                 [
@@ -430,6 +433,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
                 cwd=context.repo_root,
             )
         except proc.TimeoutExpired:
+            unavailable.append(f"{symbol}: symbol search timed out")
             warn(
                 f"verify_factual: symbol search timed out for "
                 f"'{symbol}' — skipping (Phase 5 will validate)."
@@ -437,6 +441,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
             continue
         # rc=2: grep I/O error; rc>=128: fatal git error — skip symbol
         if rc not in (0, 1):
+            unavailable.append(f"{symbol}: git grep error (rc={rc})")
             warn(
                 f"verify_factual: git grep error (rc={rc}) for symbol "
                 f"'{symbol}': {grep_stderr.strip()} — skipping."
@@ -463,6 +468,14 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
             "symbols_missing": len(missing_symbols),
         }
         # Validators can still confirm missing symbols, so retain the finding.
+        return True
+
+    if unavailable:
+        finding["factual_verification"] = {
+            "verified": False,
+            "reason": "symbol checks unavailable: " + "; ".join(unavailable),
+            "code_at_lines": code_at_lines,
+        }
         return True
 
     finding["factual_verification"] = {
@@ -554,10 +567,7 @@ def _reference_fact(
         else file in context.facts.new_files,
         "location_status": resolution.status,
         "diff_validation": {"in_diff": None},
-        "diagnostic": "source unavailable" if lines is None else resolution.reason,
     }
-    if isinstance(request.get("anchor"), str):
-        fact["anchor"] = cast(str, request["anchor"])
     if resolution.start is not None:
         assert resolution.end is not None
         fact["line_start"], fact["line_end"] = resolution.start, resolution.end
@@ -626,6 +636,7 @@ def _derive_loss_anchor(finding: FindingWire, lines: tuple[str, ...] | None) -> 
         quote = lines[line - 1 : end]
         if valid_quote(Quote(quote)):
             finding["anchor"] = "\n".join(quote)
+            finding["derived_loss_anchor"] = True
             return
 
 

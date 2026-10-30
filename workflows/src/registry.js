@@ -102,12 +102,6 @@ export const FINDING_PROP_TYPES = deepFreeze({
   // The field alone does not guarantee that a patch will ship.
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
-  searched_paths: { type: 'array', $comment: 'search-paths', description: 'Repository files or directories searched for coverage.', items: { type: 'string', $comment: 'repo-path' } },
-  candidate_tests: { type: 'array', description: 'Inspected tests, including their input and assertion.', items: {
-    ...SOURCE_REFERENCE, properties: { ...SOURCE_REFERENCE.properties, input: { type: 'string' }, assertion: { type: 'string' } },
-    required: [...SOURCE_REFERENCE.required, 'input', 'assertion'],
-  } },
-  production_element: SOURCE_REFERENCE, duplicate_of: SOURCE_REFERENCE, precedent: SOURCE_REFERENCE,
   sites: { discovery: true, type: 'array', description: 'Additional locations of this issue.', items: {
     type: 'object', properties: {
       file: { type: 'string', $comment: 'repo-path' },
@@ -115,31 +109,6 @@ export const FINDING_PROP_TYPES = deepFreeze({
       anchor: { type: 'string' },
     }, required: ['file', 'line_start', 'line_end', 'anchor'], additionalProperties: false,
   } },
-});
-
-export const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(FINDING_PROP_TYPES)
-  .filter(([, schema]) => schema.$comment === 'source-reference' || schema.items?.$comment === 'source-reference' || schema.$comment === 'search-paths')
-  .map(([key, schema]) => [key, { array: schema.type === 'array', search: schema.$comment === 'search-paths', fields: Object.keys(SOURCE_REFERENCE.properties) }])));
-
-const PATH_ROLE_SCHEMA = { type: 'string', enum: ['production', 'test', 'non_source', 'unknown'] };
-const DIFF_FACT_SCHEMA = { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false };
-const RESOLVED_REFERENCE_SCHEMA = { type: 'object', properties: {
-  ...SOURCE_REFERENCE.properties, path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
-  location_status: { type: 'string', enum: LOCATION_STATUSES }, diff_validation: DIFF_FACT_SCHEMA,
-  diagnostic: { type: 'string' },
-}, required: ['file', 'path_role', 'file_added', 'location_status', 'diff_validation', 'diagnostic'], additionalProperties: false };
-const SEARCH_FACT_SCHEMA = { type: 'object', properties: {
-  path: { type: 'string' }, available: { type: 'boolean' }, kind: { type: 'string', enum: ['file', 'directory', 'unknown'] },
-}, required: ['path', 'available', 'kind'], additionalProperties: false };
-
-export const VERIFY_FACT_PROPERTIES = deepFreeze({
-  path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
-  blame_class: { type: 'string', enum: ['new', 'pre_existing', 'surfaced', 'unknown'] },
-  blame_source: { type: 'string', enum: ['git_blame', 'local_diff', 'cross_file_refs', 'off_diff', 'removed_loss', 'unavailable'] },
-  resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, descriptor]) => {
-    const schema = descriptor.search ? SEARCH_FACT_SCHEMA : RESOLVED_REFERENCE_SCHEMA;
-    return [key, descriptor.array ? { type: 'array', items: schema } : schema];
-  })), additionalProperties: false },
 });
 
 // Stage discovery fields independently of the downstream verification and delivery wire.
@@ -199,12 +168,12 @@ const QUALITY_ADMISSION = {
 
 // Shared dispatches must not require fields from irrelevant sibling dimensions.
 export const DIMENSIONS = deepFreeze([
-  { dimension: 'bug', core: true, agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' },
+  { dimension: 'bug', core: true, agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: { type: 'string', description: 'How an error is hidden or silently swallowed.' } },
     requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'security', core: true, agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' },
+  { dimension: 'security', core: true, agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: { type: 'string', description: 'Concrete attack path and its preconditions.' } },
     requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: null },
   { dimension: 'cross_file_impact', core: true, agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
-    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string', $comment: 'repo-path' } } }, requiredExtra: ['affected_consumers'],
+    schemaExtra: { affected_consumers: { type: 'array', description: 'Repository paths of consumers affected by the change.', items: { type: 'string', $comment: 'repo-path' } } }, requiredExtra: ['affected_consumers'],
       requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'test_coverage', agentType: AGENT_TYPE_TEST_ANALYZER, conditionalFlag: DEEP,
     defaultDisposition: 'held_back', defaultTier: 'main', admission: { field: 'test_kind', kinds: {
@@ -214,34 +183,73 @@ export const DIMENSIONS = deepFreeze([
       additional_case: { required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
     } },
     // Bound the impact scale at dispatch; confidence remains unbounded here because runtime validators adjust it.
-    schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
+    schemaExtra: {
+      criticality: { type: 'number', minimum: 1, maximum: 10, description: 'Impact of the untested behavior on a 1 to 10 scale.' },
+      failure_scenario: { type: 'string', description: 'Concrete input or condition and the failure it exposes.' },
+      searched_paths: { type: 'array', $comment: 'search-paths', description: 'Repository files or directories searched for coverage.', items: { type: 'string', $comment: 'repo-path' } },
+      candidate_tests: { type: 'array', description: 'Inspected tests, including their input and assertion.', items: {
+        ...SOURCE_REFERENCE, properties: { ...SOURCE_REFERENCE.properties, input: { type: 'string' }, assertion: { type: 'string' } },
+        required: [...SOURCE_REFERENCE.required, 'input', 'assertion'],
+      } },
+      production_element: { ...SOURCE_REFERENCE, description: 'Source reference to the production behavior whose coverage is assessed.' },
+    },
     requiredExtra: ['criticality', 'failure_scenario'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, functionalRouting: true, agentFallback: true,
-    schemaExtra: { rule_source: 'string' }, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null,
+    schemaExtra: { rule_source: { type: 'string', description: 'Basis for the cited rule: documented_rule, code_comment, repo_precedent, or self_inconsistency.' } }, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null,
     promptExtra: null },
   { dimension: 'intent', core: true, agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
-    schemaExtra: { spec_text: 'string' }, requiredExtra: [], requiredWhenDimension: ['spec_text'], modelOverride: null,
+    schemaExtra: { spec_text: { type: 'string', description: 'Quoted specification or requirement contradicted by the implementation.' } }, requiredExtra: [], requiredWhenDimension: ['spec_text'], modelOverride: null,
       promptExtra: null },
   { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, defaultTier: 'suggestion', aliases: ['comment-accuracy', 'documentation', 'doc-accuracy'], schemaExtra: {},
     requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: DEEP,
     defaultDisposition: 'held_back', defaultTier: 'suggestion', admission: QUALITY_ADMISSION,
-    schemaExtra: { invalid_state_example: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
+    schemaExtra: { invalid_state_example: { type: 'string', description: 'Concrete invalid state permitted by the type design.' } }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
       promptExtra: null },
   { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
     defaultDisposition: 'held_back', defaultTier: 'suggestion', admission: QUALITY_ADMISSION,
-    schemaExtra: { behavior_preserved: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
+    schemaExtra: { behavior_preserved: { type: 'string', description: 'How the proposed simplification preserves observable behavior.' } }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
       promptExtra: null },
 ].map((row) => ({
   core: false,
   defaultDisposition: 'deliver', defaultTier: 'main', aliases: [], admission: null,
   ...row, policySubjects: POLICY_SUBJECTS,
   schemaExtra: { ...row.schemaExtra, ...(row.admission ? {
-    [row.admission.field]: { type: 'string', enum: Object.keys(row.admission.kinds) },
-    ...(row.admission === QUALITY_ADMISSION ? { behavior_preserved: 'string' } : {}),
+    [row.admission.field]: { type: 'string', enum: Object.keys(row.admission.kinds), description: row.admission === QUALITY_ADMISSION
+      ? 'Quality basis used to assess admission.' : 'Test issue kind used to assess admission and production-defect promotion.' },
+    ...(row.admission === QUALITY_ADMISSION ? {
+      duplicate_of: { ...SOURCE_REFERENCE, description: 'Source reference to the existing implementation duplicated here.' },
+      precedent: { ...SOURCE_REFERENCE, description: 'Source reference to an existing repository idiom supporting the change.' },
+      behavior_preserved: { type: 'string', description: 'Why the simpler equivalent preserves observable behavior.' },
+    } : {}),
+    ...row.schemaExtra,
   } : {}) },
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
+
+export const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)))
+  .filter(([, schema]) => schema.$comment === 'source-reference' || schema.items?.$comment === 'source-reference' || schema.$comment === 'search-paths')
+  .map(([key, schema]) => [key, { array: schema.type === 'array', search: schema.$comment === 'search-paths', fields: Object.keys(SOURCE_REFERENCE.properties) }])));
+
+const PATH_ROLE_SCHEMA = { type: 'string', enum: ['source', 'test', 'non_source', 'unknown'] };
+const DIFF_FACT_SCHEMA = { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false };
+const RESOLVED_REFERENCE_SCHEMA = { type: 'object', properties: {
+  ...Object.fromEntries(Object.entries(SOURCE_REFERENCE.properties).filter(([key]) => key !== 'anchor')), path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
+  location_status: { type: 'string', enum: LOCATION_STATUSES }, diff_validation: DIFF_FACT_SCHEMA,
+}, required: ['file', 'path_role', 'file_added', 'location_status', 'diff_validation'], additionalProperties: false };
+const SEARCH_FACT_SCHEMA = { type: 'object', properties: {
+  path: { type: 'string' }, available: { type: 'boolean' }, kind: { type: 'string', enum: ['file', 'directory', 'unknown'] },
+}, required: ['path', 'available', 'kind'], additionalProperties: false };
+
+export const VERIFY_FACT_PROPERTIES = deepFreeze({
+  path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
+  blame_class: { type: 'string', enum: ['new', 'pre_existing', 'surfaced', 'unknown'] },
+  blame_source: { type: 'string', enum: ['git_blame', 'local_diff', 'cross_file_refs', 'off_diff', 'removed_loss', 'unavailable'] },
+  resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, descriptor]) => {
+    const schema = descriptor.search ? SEARCH_FACT_SCHEMA : RESOLVED_REFERENCE_SCHEMA;
+    return [key, descriptor.array ? { type: 'array', items: schema } : schema];
+  })), additionalProperties: false },
+});
 
 export function dimensionRow(dimension) {
   return DIMENSIONS.find((row) => row.dimension === dimension || row.aliases.includes(dimension));
@@ -266,7 +274,8 @@ export const DISPATCH_RESULTS = deepFreeze({
           confidence: { type: 'number', minimum: 0, maximum: 100 },
           ...Object.fromEntries(REMOVED_LOSS_FIELDS.map((key) => {
             const schema = dimensionRow('test_coverage').schemaExtra[key] || FINDING_PROP_TYPES[key];
-            return [key, typeof schema === 'string' ? { type: schema, minLength: 1 } : schema];
+            const typed = typeof schema === 'string' ? { type: schema } : schema;
+            return [key, typed.type === 'string' ? { ...typed, minLength: 1 } : typed];
           })),
           anchor: FINDING_PROP_TYPES.anchor,
         }, ['anchor', ...LOSS_ADMISSION.optional]) },
@@ -285,10 +294,10 @@ export function findingPolicy(finding) {
   const promotion = original?.admission?.kinds[finding[original.admission.field]]?.dimension;
   const producer = DIMENSIONS.filter((candidate) => candidate.agentType.split(':').pop() === finding.agent);
   const typedProducer = producer.length === 1 && producer[0].admission ? producer[0] : null;
-  const row = DIMENSIONS.find((candidate) => typeof finding.dimension === 'string' && candidate.admission?.kinds[finding[candidate.admission.field]]?.dimension === finding.dimension)
+  const row = typedProducer
+    || DIMENSIONS.find((candidate) => typeof finding.dimension === 'string' && candidate.admission?.kinds[finding[candidate.admission.field]]?.dimension === finding.dimension)
     || (original && (original.dimension === finding.dimension || promotion === finding.dimension)
-      && (!typedProducer || original === typedProducer || finding.dimension !== 'bug') ? original : null)
-    || (typedProducer && (!dimensionRow(finding.dimension) || finding.dimension === 'bug') ? typedProducer : null)
+      ? original : null)
     || dimensionRow(finding.dimension) || producer.find((candidate) => candidate.agentFallback) || producer[0];
   const kind = row?.admission?.kinds[finding[row.admission.field]];
   return { row, kind, core: kind?.core ?? row?.core ?? false,
@@ -488,17 +497,6 @@ export function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
   const field = fields.find((entry) => entry.name === name);
   return Boolean(field && field.check(identity[name]));
 }
-
-export const CORE_DIMENSIONS = deepFreeze(DIMENSIONS.filter((row) => row.core).map((row) => row.dimension));
-
-export const SUGGESTION_DIMENSIONS = deepFreeze(DIMENSIONS.filter((row) => row.defaultTier === 'suggestion').flatMap((row) => [row.dimension, ...row.aliases]));
-
-const fallbackRows = DIMENSIONS.filter((row) => row.agentFallback || DIMENSIONS.filter((sibling) => sibling.agentType === row.agentType).length === 1);
-export const MAIN_REPORT_AGENTS = deepFreeze(fallbackRows.filter((row) => row.defaultTier === 'main').map((row) => row.agentType.split(':').pop()));
-
-export const SUGGESTION_AGENTS = deepFreeze(fallbackRows.filter((row) => row.defaultTier === 'suggestion').map((row) => row.agentType.split(':').pop()));
-
-export const COMMENT_ACCURACY_DIMENSIONS = deepFreeze(DIMENSIONS.filter((row) => row.agentType === dimensionRow('convention').agentType && row.defaultTier === 'suggestion').flatMap((row) => [row.dimension, ...row.aliases]));
 
 export const REPORT_PLACED_FIELDS = deepFreeze([
   'sites',

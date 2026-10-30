@@ -1,8 +1,7 @@
 {
-  "checksum": "fnv1a32:0x4866fefa",
+  "checksum": "fnv1a32:0x1f805a5e",
   "deltas": [
     {
-      "anchor": "synthetic_source(0);",
       "confidence": 60,
       "diff_validation": {
         "in_diff": true

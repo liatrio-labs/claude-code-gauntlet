@@ -79,11 +79,6 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `origin` | string | no | Blame classification stamped by `scripts/verify_findings.py` — the one canonical field no agent emits. |
 | `evidence` | string | no | Code snippet or behavior demonstrating the issue. Required by the discovery PROMPT (must be non-empty) though schema-optional. |
 | `anchor` | string | yes | Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters. |
-| `searched_paths` | array | no | Repository files or directories searched for coverage. |
-| `candidate_tests` | array | no | Inspected tests, including their input and assertion. |
-| `production_element` | object | no | {"type":"object","$comment":"source-reference","properties":{"file":{"type":"string","$comment":"repo-path"},"line_start":{"type":"integer","minimum":1},"line_end":{"type":"integer","minimum":1},"anchor":{"type":"string","minLength":1}},"required":["file","line_start","line_end","anchor"],"additionalProperties":false} |
-| `duplicate_of` | object | no | {"type":"object","$comment":"source-reference","properties":{"file":{"type":"string","$comment":"repo-path"},"line_start":{"type":"integer","minimum":1},"line_end":{"type":"integer","minimum":1},"anchor":{"type":"string","minLength":1}},"required":["file","line_start","line_end","anchor"],"additionalProperties":false} |
-| `precedent` | object | no | {"type":"object","$comment":"source-reference","properties":{"file":{"type":"string","$comment":"repo-path"},"line_start":{"type":"integer","minimum":1},"line_end":{"type":"integer","minimum":1},"anchor":{"type":"string","minLength":1}},"required":["file","line_start","line_end","anchor"],"additionalProperties":false} |
 | `sites` | array | no | Additional locations of this issue. |
 | `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
 | `claude_md_rule` | string | conditional | The cited project rule, quoted with its source file; required by contract for convention findings; OMITTED (never null) when no rule applies. |
@@ -96,19 +91,28 @@ For convention findings, `rule_source` selects the heading for `claude_md_rule`:
 
 | Field | Type | Dimension | Required | Description |
 |-------|------|-----------|----------|-------------|
-| `hidden_errors` | string | bug | no | hidden errors |
-| `attack_vector` | string | security | yes | attack vector |
-| `affected_consumers` | array | cross_file_impact | yes | {"type":"array","items":{"type":"string","$comment":"repo-path"}} |
-| `criticality` | number | test_coverage | yes | {"type":"number","minimum":1,"maximum":10} |
-| `failure_scenario` | string | test_coverage | yes | failure scenario |
-| `test_kind` | string | test_coverage | conditional | {"type":"string","enum":["defective_test","critical_gap","production_defect","additional_case"]} |
-| `rule_source` | string | convention | no | rule source |
-| `spec_text` | string | intent | conditional | spec text |
-| `invalid_state_example` | string | type_design | no | invalid state example |
-| `quality_basis` | string | type_design | conditional | {"type":"string","enum":["current_correctness","duplication","simpler_equivalent","stack_idiom","other"]} |
-| `behavior_preserved` | string | type_design | no | behavior preserved |
+| `hidden_errors` | string | bug | no | How an error is hidden or silently swallowed. |
+| `attack_vector` | string | security | yes | Concrete attack path and its preconditions. |
+| `affected_consumers` | array | cross_file_impact | yes | Repository paths of consumers affected by the change. |
+| `criticality` | number | test_coverage | yes | Impact of the untested behavior on a 1 to 10 scale. |
+| `failure_scenario` | string | test_coverage | yes | Concrete input or condition and the failure it exposes. |
+| `searched_paths` | array | test_coverage | no | Repository files or directories searched for coverage. |
+| `candidate_tests` | array | test_coverage | no | Inspected tests, including their input and assertion. |
+| `production_element` | object | test_coverage | no | Source reference to the production behavior whose coverage is assessed. |
+| `test_kind` | string | test_coverage | conditional | Test issue kind used to assess admission and production-defect promotion. |
+| `rule_source` | string | convention | no | Basis for the cited rule: documented_rule, code_comment, repo_precedent, or self_inconsistency. |
+| `spec_text` | string | intent | conditional | Quoted specification or requirement contradicted by the implementation. |
+| `invalid_state_example` | string | type_design | no | Concrete invalid state permitted by the type design. |
+| `quality_basis` | string | type_design | conditional | Quality basis used to assess admission. |
+| `duplicate_of` | object | type_design | no | Source reference to the existing implementation duplicated here. |
+| `precedent` | object | type_design | no | Source reference to an existing repository idiom supporting the change. |
+| `behavior_preserved` | string | type_design | no | Why the simpler equivalent preserves observable behavior. |
+| `behavior_preserved` | string | simplification | no | How the proposed simplification preserves observable behavior. |
+| `quality_basis` | string | simplification | conditional | Quality basis used to assess admission. |
+| `duplicate_of` | object | simplification | no | Source reference to the existing implementation duplicated here. |
+| `precedent` | object | simplification | no | Source reference to an existing repository idiom supporting the change. |
 
-Required is tri-state. A `yes` field is appended to that dimension's dispatch required list (FINDING_REQUIRED plus the row's `requiredExtra`, never the other way around — FINDING_REQUIRED itself never carries a per-dimension field): the platform rejects a finding missing it at the StructuredOutput boundary, and the agent retries. A `conditional` field (`claude_md_rule`, `spec_text` — registry.js's `requiredWhenDimension`) is schema-required only on a dispatch that targets the first-party API directly with no gateway (`resolvedPolicy.conditionalSchema`), and only for a finding whose `dimension` matches the field's owning dimension — a nested `allOf`/`if`/`then` in the conventions-and-intent item schema, the one provider-measured shape that survives dispatch (a top-level conditional construct 400s). A `no` field carries neither promotion. Both `conditional` and `no` fields are contract-enforced by the agent's `.md` prose where its own dimension calls for it, everywhere the schema construct does not ride — third-party providers, gateway sessions, and every sibling dimension of a `conditional` field's own dispatch — and `no` fields are never schema-promoted at all: only a field the owning contract emits unconditionally (no OMIT branch, within its own dimension for `conditional`, within every dimension for `yes`) can be promoted to schema-required. Every per-dimension field is never nullable regardless: a not-applicable value is OMITTED, not emitted as null.
+Required is tri-state. A `yes` field is required in the owning agent's dispatch; a `conditional` field is schema-required for its dimension on first-party direct dispatches. Runtime intake enforces both requirements for the owning row on every provider and gateway, including kind-specific evidence requirements. A `no` field is optional unless its admission kind requires it. Omit inapplicable fields; never emit null.
 
 <!-- generated-from-registry-location: do not edit; scripts/generate_contract_requirements.py -->
 ## Location Status and Rights

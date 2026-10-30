@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 from gauntlet import proc
 from gauntlet.diff import parse_diff
+from gauntlet.location import SourceAdapter
+from gauntlet.paths import path_role
 from gauntlet.registry import VERIFY_SLICE_FIELDS, VerifySliceFinding
 from gauntlet.verify import decide as verify
 from gauntlet.verify import wire
@@ -25,6 +27,58 @@ OLD_THEN_NEW = (
 )
 HEAD = "abcd" + "0" * 36
 DIFF = "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n"
+
+
+@pytest.mark.parametrize("file", ["server.go", "mypkg/core.py", "src/README.md"])
+def test_readable_paths_claim_only_source(tmp_path, file):
+    path = tmp_path / file
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("readable content\n", encoding="utf-8")
+    source = SourceAdapter(tmp_path, "local", None)
+    assert path_role(file, readable=source.read(file) is not None) == "source"
+
+
+def test_unreadable_non_source_path_has_unknown_role():
+    assert path_role("vendor/missing", readable=False) == "unknown"
+
+
+def test_portable_search_directory_uses_lstat(tmp_path, monkeypatch):
+    (tmp_path / "tests").mkdir()
+    monkeypatch.setattr(os, "supports_dir_fd", set())
+    original_open = os.open
+
+    def open_file(path, *args, **kwargs):
+        if Path(path).is_dir():
+            raise PermissionError("platform cannot open directories")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", open_file)
+    source = SourceAdapter(tmp_path, "local", None)
+    assert source.path_kind("tests") == "directory"
+
+
+@pytest.mark.parametrize("target_kind", ["pr", "mr", "branch"])
+def test_symbol_checks_without_captured_head_are_unavailable(
+    tmp_path, monkeypatch, target_kind
+):
+    def unexpected_process(*args, **kwargs):
+        pytest.fail("an uncaptured target must not search a mutable revision")
+
+    monkeypatch.setattr(proc, "output", unexpected_process)
+    finding = {"file": "source", "symbols": "remote_symbol", "confidence": 80}
+    context = verify.VerifyContext(
+        str(tmp_path),
+        "base",
+        target_kind=target_kind,
+        source=SourceAdapter(tmp_path, target_kind, None),
+    )
+    assert verify.verify_factual(finding, context) is True
+    assert finding["confidence"] == 80
+    assert finding["factual_verification"] == {
+        "verified": False,
+        "reason": "symbol checks unavailable: remote_symbol: captured head unavailable",
+        "code_at_lines": None,
+    }
 
 
 def test_admission_facts_keep_blame_provenance(tmp_path, monkeypatch):
@@ -104,11 +158,11 @@ def test_admission_facts_keep_blame_provenance(tmp_path, monkeypatch):
     assert not result["eliminated"]
     by_id = {f["id"]: f for f in result["verified"]}
     for fid, expected in {
-        "old": ("surfaced", "pre_existing", "git_blame", "production", False),
+        "old": ("surfaced", "pre_existing", "git_blame", "source", False),
         "owned-test": ("new", "new", "git_blame", "test", True),
-        "cross": ("surfaced", "surfaced", "cross_file_refs", "production", False),
-        "off": ("surfaced", "surfaced", "off_diff", "production", False),
-        "loss": ("new", "new", "removed_loss", "production", False),
+        "cross": ("surfaced", "surfaced", "cross_file_refs", "source", False),
+        "off": ("surfaced", "surfaced", "off_diff", "source", False),
+        "loss": ("new", "new", "removed_loss", "source", False),
     }.items():
         f = by_id[fid]
         assert (
@@ -125,10 +179,8 @@ def test_admission_facts_keep_blame_provenance(tmp_path, monkeypatch):
             expected_role = (
                 "non_source"
                 if name.startswith("vendor/")
-                else "unknown"
-                if "/" not in name
-                else "production"
-                if name.startswith("bin/")
+                else "source"
+                if "/" not in name or name.startswith("bin/")
                 else "test"
             )
             assert by_id[name]["path_role"] == expected_role
@@ -292,7 +344,10 @@ def test_blame(patch, log, blame, expected, tmp_path, monkeypatch, verify_git, c
             "timeout",
             True,
             80,
-            {"reason": "file content and symbols verified"},
+            {
+                "verified": False,
+                "reason": "symbol checks unavailable: alpha: symbol search timed out",
+            },
             ["alpha"],
             "WARNING: verify_factual: symbol search timed "
             "out for 'alpha' — skipping (Phase 5 will "
@@ -666,7 +721,7 @@ def test_pipe_projection(tmp_path, monkeypatch, verify_git):
                 "confidence": confidence,
                 "location_status": "unconfirmed",
                 "diff_validation": {"in_diff": None},
-                "path_role": "unknown",
+                "path_role": "unknown" if fid == "missing" else "source",
                 **({"file_added": False} if fid != "missing" else {}),
                 "blame_class": "surfaced" if fid == "cross" else "unknown",
                 "blame_source": "cross_file_refs" if fid == "cross" else "unavailable",

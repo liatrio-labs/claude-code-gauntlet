@@ -136,9 +136,6 @@ _REGISTRY_FIELDS = (
     "dispositions: m.DISPOSITIONS",
     "dispatchResults: m.DISPATCH_RESULTS",
     "dimensionRows: m.DIMENSIONS",
-    "routing: {core: m.CORE_DIMENSIONS, suggestion: m.SUGGESTION_DIMENSIONS,"
-    " mainAgents: m.MAIN_REPORT_AGENTS, suggestionAgents: m.SUGGESTION_AGENTS,"
-    " commentAccuracy: m.COMMENT_ACCURACY_DIMENSIONS}",
     # Path-normalization metadata must not change the discovery prompt.
     "discoveryContracts: d.agentSpecs().map(spec => ({"
     " agentType: spec.agentType, schema: JSON.parse(JSON.stringify("
@@ -202,23 +199,13 @@ def load_registry(repo_root: str) -> Mapping[str, Any]:
 def dispatch_required_sentence(fields: Sequence[str]) -> str:
     """Render all required fields so schema growth cannot truncate the sentence."""
     if len(fields) == 1:
-        return (
-            f"`{fields[0]}` is required by the dispatch schema — a finding "
-            f"without it is "
-            "rejected at the StructuredOutput boundary and retried, so it "
-            "must always be present."
-        )
+        return f"`{fields[0]}` is required at intake on every provider and gateway."
     backticked = [f"`{f}`" for f in fields]
     if len(backticked) == 2:
         joined = f"{backticked[0]} and {backticked[1]}"
     else:
         joined = ", ".join(backticked[:-1]) + f", and {backticked[-1]}"
-    return (
-        f"{joined} are required by the dispatch schema — a finding missing "
-        f"any of them is "
-        "rejected at the StructuredOutput boundary and retried, so all must always be "
-        "present."
-    )
+    return f"{joined} are required at intake on every provider and gateway."
 
 
 def _conditional_paragraph(
@@ -237,34 +224,20 @@ def _conditional_paragraph(
     )
     if field == first_field:
         sib = "/".join(siblings)
-        dims = ", ".join(all_dims[:-1]) + f", and {all_dims[-1]}"
         body = (
             ". On a dispatch that targets the first-party API directly (no third-party "
             "provider, no gateway), the schema enforces it specifically "
             "for findings whose "
             f"dimension is {dimension} — sibling {sib} findings correctly "
-            f"omit it — and this "
-            "contract is the enforcement floor on every run, including "
-            "third-party providers "
-            "and gateway sessions where the schema stays flat. This "
-            "agent's dispatch mixes "
-            f"{dims} findings in one schema, so a dimension-blind schema "
-            f"requirement (the flat "
-            "`requiredExtra` mechanism, which only single-dimension agents "
-            "can use) was never "
-            "an option here — omitting the field on the wrong dimension is "
-            "correct while omitting it on this one is a contract violation."
+            f"omit it. Runtime intake enforces claude_md_rule/spec_text "
+            "on every provider and gateway for the owning dimension."
         )
     else:
         body = (
             f", on the same terms as {first_field} above: enforced by the "
             f"schema for findings "
             f"whose dimension is {dimension} only on a first-party-direct "
-            f"dispatch, and by "
-            "this contract as the floor everywhere else — omitting the "
-            "field on the wrong "
-            "dimension is correct while omitting it on this one is a "
-            "contract violation."
+            f"dispatch, and by runtime intake on every provider and gateway."
         )
     return lead + body
 
@@ -281,8 +254,8 @@ def conditional_paragraphs(agent_rows: Sequence[Mapping[str, Any]]) -> list[str]
     for dimension, field in conditional_fields:
         if field not in _CONDITIONAL_NOUNS:
             paragraphs.append(
-                f"For {dimension} findings, `{field}` is required by the dispatch schema. "
-                "Runtime intake enforces its type and vocabulary for every provider and gateway."
+                f"For {dimension} findings, `{field}` is required at intake on every provider "
+                "and gateway, which enforces its type and vocabulary."
             )
             continue
         siblings = [d for d in all_dims if d != dimension]
@@ -412,6 +385,13 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
         and (schema.get("description") or schema.get("type") == "object")
     }
     for line in text.splitlines():
+        canonical = _CANONICAL_ROW.match(line)
+        if (
+            canonical
+            and canonical.group(2) in known
+            and canonical.group(2) not in registry["canonicalFields"]
+        ):
+            continue
         if any(line.startswith(f"| `{field}` |") for field in structural):
             continue
         rewritten = line
@@ -439,18 +419,18 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
     if text.endswith("\n"):
         text_out += "\n"
     if "dimensionRows" in registry:
-        fields: dict[str, tuple[str, Any]] = {}
+        fields: dict[tuple[str, str], Any] = {}
         for row in registry["dimensionRows"]:
             for field, schema in row["schemaExtra"].items():
-                fields.setdefault(field, (row["dimension"], schema))
+                fields[(row["dimension"], field)] = schema
         lines = [
             "| Field | Type | Dimension | Required | Description |",
             "|-------|------|-----------|----------|-------------|",
         ]
-        for field, (dimension, schema) in fields.items():
+        for (dimension, field), schema in fields.items():
             kind = schema if isinstance(schema, str) else schema["type"]
             description = (
-                json.dumps(schema, separators=(",", ":"))
+                schema.get("description", field.replace("_", " "))
                 if isinstance(schema, dict)
                 else field.replace("_", " ")
             )
@@ -750,7 +730,6 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "VERIFY_REFERENCE_DESCRIPTORS": identity["verifyReferenceDescriptors"],
         "DISPATCH_RESULTS": identity.get("dispatchResults", {}),
         "DIMENSION_ROWS": identity["dimensionRows"],
-        "ROUTING": identity["routing"],
         "BRAND_MARK": identity["brand"]["mark"],
         "BRAND_NAME": identity["brand"]["name"],
         "SEVERITY_EMOJI": identity["severityEmoji"],

@@ -226,12 +226,14 @@ function prepareVerifySlice(slice, baseBranch) {
 async function verifySliceWithRetry(c, inp, i, slice, record) {
   const first = await dispatchVerifySlice(c, inp, i, slice, record, `${inp.nonce}.${i}`, `verify-slice-${i}`);
   const accepted = new Map((first.deltas || []).map((d) => [d.id, d]));
+  const matchedProofIds = new Set(first.matchedProofIds);
   const unresolved = slice.filter((f) => !accepted.has(f.id));
   let last = first;
   if (unresolved.length) {
     const retryRecord = { ...prepareVerifySlice(unresolved, record.baseBranch), model: record.model };
     last = await dispatchVerifySlice(c, inp, i, unresolved, retryRecord, `${inp.nonce}.${i}.r1`, `verify-slice-${i}-retry`);
     for (const d of last.deltas || []) accepted.set(d.id, d);
+    for (const id of last.matchedProofIds || []) matchedProofIds.add(id);
   }
   const degraded = slice.length - accepted.size;
   return {
@@ -239,7 +241,7 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
       .map((f) => ({ ...f, eliminated_by: 'verify', elimination_reason: accepted.get(f.id).elimination_reason })),
     // Accepted membership includes trusted eliminations exactly once after retry.
     verified: slice.flatMap((f) => accepted.has(f.id)
-      ? joinVerifyDeltas([f], [accepted.get(f.id)]) : degradedSlice([f])),
+      ? joinVerifyDeltas([f], [accepted.get(f.id)], matchedProofIds) : degradedSlice([f])),
     degraded,
     localised: unresolved.length ? slice.length - unresolved.length : 0,
     retriedFindings: unresolved.length,
@@ -375,6 +377,7 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
   if (wholeSlice && deltas.length !== ids.length) return { ok: false, reason: 'delta does not cover dispatched findings' };
   return {
     ok: true, deltas,
+    matchedProofIds: new Set(deltas.filter((d) => expectedProofs.get(d.id) !== null && proofs.get(d.id) === expectedProofs.get(d.id)).map((d) => d.id)),
     proven: !diagnostic && deltas.length === ids.length,
     reason: diagnostic?.reason || `record proof missing or mismatched for ${ids.length - deltas.length} of ${n} finding(s)`,
     inputFault: deltas.length !== ids.length

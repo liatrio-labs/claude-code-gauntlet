@@ -1,6 +1,5 @@
 [
   {
-    "anchor": "new_panel();",
     "blame_class": "new",
     "blame_source": "git_blame",
     "confidence": 90,
@@ -19,13 +18,12 @@
     "line_start": 1,
     "location_status": "confirmed",
     "origin": "new",
-    "path_role": "production",
+    "path_role": "source",
     "resolved_references": {},
     "severity": "high",
     "verified": true
   },
   {
-    "anchor": "new_panel();",
     "blame_class": "surfaced",
     "blame_source": "cross_file_refs",
     "confidence": 46,
@@ -47,13 +45,12 @@
     "line_start": 1,
     "location_status": "confirmed",
     "origin": "surfaced",
-    "path_role": "production",
+    "path_role": "source",
     "resolved_references": {},
     "severity": "medium",
     "verified": true
   },
   {
-    "anchor": "stable_anchor();",
     "blame_class": "new",
     "blame_source": "removed_loss",
     "confidence": 90,
@@ -72,13 +69,12 @@
     "line_start": 9,
     "location_status": "confirmed",
     "origin": "new",
-    "path_role": "production",
+    "path_role": "source",
     "resolved_references": {},
     "severity": "high",
     "verified": true
   },
   {
-    "anchor": "stable_anchor();",
     "blame_class": "pre_existing",
     "blame_source": "git_blame",
     "confidence": 30,
@@ -100,13 +96,12 @@
     "line_start": 9,
     "location_status": "confirmed",
     "origin": "surfaced",
-    "path_role": "production",
+    "path_role": "source",
     "resolved_references": {},
     "severity": "medium",
     "verified": true
   },
   {
-    "anchor": "new_panel();",
     "blame_class": "new",
     "blame_source": "git_blame",
     "confidence": 30,
@@ -128,13 +123,12 @@
     "line_start": 1,
     "location_status": "confirmed",
     "origin": "new",
-    "path_role": "production",
+    "path_role": "source",
     "resolved_references": {},
     "severity": "high",
     "verified": true
   },
   {
-    "anchor": "new_panel();",
     "blame_class": "new",
     "blame_source": "git_blame",
     "confidence": 90,
@@ -153,7 +147,7 @@
     "line_start": 1,
     "location_status": "confirmed",
     "origin": "new",
-    "path_role": "production",
+    "path_role": "source",
     "resolved_references": {},
     "severity": "high",
     "verified": true

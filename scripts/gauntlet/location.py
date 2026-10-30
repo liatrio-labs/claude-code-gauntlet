@@ -318,6 +318,17 @@ def _decode_source(content: bytes) -> tuple[str, ...] | None:
         return None
 
 
+def _local_mode(root: Path, parts: tuple[str, ...]) -> int:
+    current = root
+    mode = current.lstat().st_mode
+    for part in parts:
+        current /= part
+        mode = current.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            raise OSError("source symlink")
+    return mode
+
+
 def _local_open(root: Path, parts: tuple[str, ...]) -> int:
     if os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW"):
         # Hold each directory open so a renamed parent cannot redirect the read.
@@ -339,15 +350,11 @@ def _local_open(root: Path, parts: tuple[str, ...]) -> int:
         finally:
             os.close(directory)
         return fd
-    current = root
-    for part in parts:
-        current /= part
-        mode = current.lstat().st_mode
-        if stat.S_ISLNK(mode):
-            raise OSError("source symlink")
+    if not stat.S_ISREG(_local_mode(root, parts)):
+        raise OSError("nonregular source")
     # O_NOFOLLOW closes the final-component race where the platform supports it.
     return os.open(
-        current,
+        root.joinpath(*parts),
         os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
     )
 
@@ -422,6 +429,13 @@ class SourceAdapter:
             return "unknown"
         try:
             if self.target_kind == "local":
+                # Some platforms cannot open directories; the checked lstat walk suffices.
+                if os.open not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"):
+                    return (
+                        "directory"
+                        if stat.S_ISDIR(_local_mode(self.root, parts))
+                        else "unknown"
+                    )
                 fd = _local_open(self.root, parts)
                 try:
                     return (

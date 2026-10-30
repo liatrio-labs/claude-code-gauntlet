@@ -6,6 +6,7 @@ import pytest
 from gauntlet.jsjson import fnv1a32, js_stringify_pretty
 from gauntlet.removed_tests import removed_tests
 from gauntlet.verify.decide import VerifyContext, run_verification
+from gauntlet.verify.wire import build_deltas
 
 from tests.support.phase2 import SHA, write_context_inputs
 from tests.support.verify_parity import project_findings
@@ -188,6 +189,10 @@ def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
     assert finding["factual_verification"]["verified"] is True
     assert finding["diff_validation"]["in_diff"] is False
     assert finding["anchor"] == "return surviving_value"
+    assert (
+        build_deltas([finding], result["verified"])[0]["anchor"]
+        == "return surviving_value"
+    )
     assert finding["location_status"] == "confirmed"
     assert (finding["blame_class"], finding["blame_source"]) == ("new", "removed_loss")
     assert not any(argv[1] in ("log", "blame", "grep") for argv, _ in verify_git[0])

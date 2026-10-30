@@ -33,23 +33,6 @@ NON_SOURCE_DIRS = frozenset(
 _TEST_DIRS = frozenset({"test", "tests", "spec", "specs", "__tests__"})
 _BASENAME_RE = re.compile(r"^(?:test_.+|.+_(?:test|spec))$", re.IGNORECASE)
 _SUFFIX_RE = re.compile(r"(?:Tests?|Spec)$")
-_PRODUCTION_DIRS = frozenset(
-    {
-        "src",
-        "source",
-        "sources",
-        "lib",
-        "app",
-        "apps",
-        "bin",
-        "cmd",
-        "internal",
-        "pkg",
-        "packages",
-        "crates",
-        "modules",
-    }
-)
 
 
 def is_test_path(path: str) -> bool:
@@ -67,17 +50,15 @@ def is_test_path(path: str) -> bool:
 
 
 def path_role(path: str, *, readable: bool) -> PathRole:
+    if not readable:
+        return "unknown"
     parts = path.split("/")
     if any(part.lower() in NON_SOURCE_DIRS for part in parts[:-1]):
         return "non_source"
-    if not readable:
-        return "unknown"
     if is_test_path(path):
         return "test"
-    # A readable quote proves a location, but arbitrary repository files need not be production.
-    if any(part.lower() in _PRODUCTION_DIRS for part in parts[:-1]):
-        return "production"
-    return "unknown"
+    # Resolved, validator-confirmed evidence proves a production element; paths cannot.
+    return "source"
 
 
 # Backslash is Windows' path separator; elsewhere it can escape inside double quotes.

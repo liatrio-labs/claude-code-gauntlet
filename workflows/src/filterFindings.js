@@ -45,7 +45,7 @@ export const FILTER_DEFAULTS = deepFreeze({
 
 const CONTESTATION_DROP_THRESHOLD = 25;
 
-export function applyThresholdFilter(findings, config, severityOrder = SEVERITY_ORDER, validationConfidence = new Map()) {
+export function applyThresholdFilter(findings, config, severityOrder = SEVERITY_ORDER) {
   const kept = [];
   const eliminated = [];
   let contestedCount = 0;
@@ -69,7 +69,7 @@ export function applyThresholdFilter(findings, config, severityOrder = SEVERITY_
     let isContested = false;
     const originalConfidence = 'original_confidence' in finding ? finding.original_confidence : undefined;
     if (originalConfidence !== undefined && originalConfidence !== null) {
-      const drop = originalConfidence - (validationConfidence.get(finding) ?? confidence);
+      const drop = originalConfidence - confidence;
       if (drop > CONTESTATION_DROP_THRESHOLD) {
         isContested = true;
         contestedCount += 1;
@@ -414,13 +414,10 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
     (f) => f.suggested_fix_code_removed_by === 'injection',
   ).length;
 
-  // Only eligible findings may corroborate; ranking adjustments must not change the measured validator drop.
-  const validationConfidence = new Map(afterInjection.map((finding) => [finding, asConfidence(finding.confidence)]));
+  // Only eligible findings may corroborate; disagreement adjusts ranking after thresholds.
   const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
   allEliminated.push(...elimSuppressed);
-  const { kept: afterAdjustment, eliminated: elimAdjustment } = applyThresholdFilter(active, config, SEVERITY_ORDER, validationConfidence);
-  allEliminated.push(...elimAdjustment);
-  const { tagged, mainCount, suggestionCount } = tagFindings(afterAdjustment);
+  const { tagged, mainCount, suggestionCount } = tagFindings(active);
 
   const promotedCount = tagged.filter((finding) => {
     const { row, kind } = findingPolicy(finding);

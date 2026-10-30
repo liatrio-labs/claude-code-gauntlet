@@ -420,9 +420,11 @@ const candidate = {id:'FACT',file:'src/engine',line_start:1,line_end:1,anchor:'r
 const normalized={findings:[candidate]};
 normalizePhaseFindings('merge',normalized,false,{repoRoot:work});
 const findings=normalized.findings;
+const wireMeasurements=[];
 const run = async (targetKind, fault) => verifyStage({agent:async prompt=>{
  const c=shellSplit(prompt.split('\n').at(-1));execFileSync(c[0],c.slice(1),{cwd:work,env:process.env});
  const env=JSON.parse(readFileSync(c[c.indexOf('--output')+1],'utf8'));
+ if(!fault)wireMeasurements.push({targetKind,input:c[c.indexOf('--input-inline')+1].length,delta:JSON.stringify(env.result.deltas).length,deltaPretty:JSON.stringify(env.result.deltas,null,2).length});
  if(fault==='content')env.result.deltas[0].resolved_references.precedent.file_added=false;
  if(fault==='nonce')env.receipt.nonce='stale';
  if(fault==='input'){env.receipt.input_checksum='changed';env.receipt.record_proofs[0].checksum='changed';}
@@ -434,7 +436,7 @@ const branch=await run('branch');
 const local=await run('local');
 const failed=[];for(const fault of ['content','nonce','input','foreign'])failed.push(await run('branch',fault));
 const encoded=encodeSliceInline({findings:findings.map(projectVerifySliceFinding),base_branch:base});
-process.stdout.write(JSON.stringify({branch,local,failed,encoded:encoded.length,windows:verifyInlineCost(encoded,'windows'),projected:projectVerifySliceFinding(findings[0])}));
+process.stdout.write(JSON.stringify({branch,local,failed,wireMeasurements,encoded:encoded.length,windows:verifyInlineCost(encoded,'windows'),projected:projectVerifySliceFinding(findings[0])}));
 """
     result = subprocess.run(
         _flow_command(script, tmp_path, sha, base),
@@ -461,6 +463,9 @@ process.stdout.write(JSON.stringify({branch,local,failed,encoded:encoded.length,
         "confirmed",
     ]
     assert refs["candidate_tests"][-1]["path_role"] == "non_source"
+    for field in ("candidate_tests", "production_element", "duplicate_of", "precedent"):
+        facts = refs[field] if isinstance(refs[field], list) else [refs[field]]
+        assert all("anchor" not in fact and "diagnostic" not in fact for fact in facts)
     assert [s["available"] for s in refs["searched_paths"]] == [True, False, False]
     assert refs["searched_paths"][0]["kind"] == "directory"
     assert branch["reference_diagnostics"]
@@ -484,3 +489,9 @@ process.stdout.write(JSON.stringify({branch,local,failed,encoded:encoded.length,
     print(
         f"reference slice encoded={value['encoded']} Windows argv cost={value['windows']}"
     )
+    for measurement in value["wireMeasurements"]:
+        assert measurement["delta"] > 0
+        print(
+            f"reference slice {measurement['targetKind']}: input={measurement['input']} "
+            f"delta compact={measurement['delta']} pretty={measurement['deltaPretty']}"
+        )
