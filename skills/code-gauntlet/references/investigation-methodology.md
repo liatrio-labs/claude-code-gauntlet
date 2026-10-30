@@ -44,8 +44,11 @@ Use each tool for its evidence:
 
 ## Test and quality investigation
 
-Trace a suspected test defect through its actual input, assertion, helpers and
-fixture lifetimes. Search indirect coverage before claiming complete behavioral
-absence; inspect candidate assertions and audit every supplied removed-test item.
+Map changed behavior, invariants, callers and failure modes to exercised test
+inputs and assertions, including integration contracts and indirect coverage.
+Trace test defects through helpers and fixture lifetimes; audit every supplied
+removed-test item. For types, walk construction and mutation paths to states
+observed by callers, checking invariant enforcement and reachable invalid states.
+Report demonstrated production defects as such.
 For quality findings, prove a present defect, duplication, a behavior-preserving
 simpler equivalent or an applicable idiom established in existing repository code.

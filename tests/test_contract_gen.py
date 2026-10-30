@@ -141,6 +141,86 @@ assert.equal(findingPolicy(good).core,true);
     assert runtime.returncode == 0, runtime.stderr
 
 
+@pytest.mark.parametrize(
+    "basis,guidance,required,predicates,any_of,disposition",
+    [
+        (
+            "current_correctness",
+            "demonstrated present production defect",
+            [],
+            ["present_defect"],
+            [],
+            "held_back",
+        ),
+        (
+            "duplication",
+            "show the redundancy and how consolidation preserves behavior",
+            ["duplicate_of"],
+            ["resolved_duplicate", "confirmed_duplication"],
+            [],
+            "held_back",
+        ),
+        (
+            "simpler_equivalent",
+            "evidence of reduced complexity and preserved return values, side effects and error paths",
+            ["behavior_preserved"],
+            ["concrete_equivalent", "behavior_preserved"],
+            ["suggestion", "suggested_fix_code"],
+            "held_back",
+        ),
+        (
+            "stack_idiom",
+            "identify the precedent and the cost it removes",
+            ["precedent"],
+            ["resolved_precedent", "precedent_not_added", "applicable"],
+            [],
+            "held_back",
+        ),
+        (
+            "other",
+            "unsupported preferences stay report_only",
+            [],
+            [],
+            [],
+            "report_only",
+        ),
+    ],
+    ids=["correctness", "duplication", "equivalent", "idiom", "unsupported"],
+)
+def test_quality_basis_contract(
+    basis, guidance, required, predicates, any_of, disposition
+):
+    registry = gen.load_registry(str(ROOT))
+    contracts = gen.discovery_targets(registry)
+    for agent in ("code-simplifier", "type-design-analyzer"):
+        contract = contracts[f"agents/{agent}.md"]
+        schema = json.loads(re.search(r"```json\n(.*?)\n```", contract, re.DOTALL)[1])
+        item = schema["properties"]["findings"]["items"]
+        selection = item["properties"]["quality_basis"]
+        assert basis in selection["enum"]
+        assert (
+            "Behavior-preserving improvements do not require a production defect."
+            in selection["description"]
+        )
+        descriptor = next(
+            line for line in contract.splitlines() if " admission descriptors: " in line
+        )
+        admission = json.loads(
+            descriptor.split(": ", 1)[1].split(". Default disposition:", 1)[0]
+        )
+        rule = admission["kinds"][basis]
+        assert guidance in rule["description"]
+        assert f"{basis}: {rule['description']}" in selection["description"]
+        assert rule["required"] == required
+        assert rule["predicates"] == predicates
+        assert rule.get("anyOf", []) == any_of
+        assert rule.get("defaultDisposition", "held_back") == disposition
+        assert rule["phase"] == ("deterministic" if basis == "other" else "semantic")
+        assert rule["tier"] == (
+            "main" if basis == "current_correctness" else "suggestion"
+        )
+
+
 def test_disposition_row_generates_consumers(registry_tree, invoke):
     source = registry_tree / "workflows/src/registry.js"
     original = source.read_text(encoding="utf-8")
