@@ -2,14 +2,14 @@ import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
-import { modelFor, VALIDATION_RETURN_PROPERTIES, ADMISSION_PREDICATES, DIMENSIONS, requiredAssessments, REACHABILITY_VALUES } from './registry.js';
+import { modelFor, VALIDATION_RETURN_PROPERTIES, admissionPolicy, requiredAssessments, REACHABILITY_VALUES } from './registry.js';
 import { INT_POLICY, coerceInt } from './wire.js';
 import { applyValidations, validationRejections } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
 import { applyChallenges, rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
 import { deliveryGroups } from './dispose.js';
-import { admissionContext, hasAdmission } from './admission.js';
+import { admissionContext, admissionRequests, hasAdmission } from './admission.js';
 
 // The platform rejects array-rooted tool schemas, so validation entries need an object wrapper.
 const VALIDATE_SCHEMA = {
@@ -42,16 +42,37 @@ function validateReturnDescriptor() {
     .join(', ');
 }
 
-function validateSchema(batch) {
+function assessmentRequirement(predicates) {
+  return { ...(predicates.length ? { properties: { admission_assessments: { allOf: predicates.map((predicate) => ({
+    contains: { properties: { predicate: { const: predicate } }, required: ['predicate'] },
+  })) } } } : {}), required: predicates.length ? ['admission_assessments'] : [] };
+}
+
+function validateSchema(batch, accepted) {
   const base = VALIDATE_SCHEMA.properties.validations.items;
-  const variants = batch.flatMap((finding) => VALIDATION_RETURN_PROPERTIES.policy_subject.enum.map((subject) => {
-    const predicates = requiredAssessments(finding, subject);
-    return { properties: { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] },
-      ...(predicates.length ? { admission_assessments: { allOf: predicates.map((predicate) => ({
-        contains: { properties: { predicate: { const: predicate } }, required: ['predicate'] },
-      })) } } : {}) }, required: predicates.length ? ['admission_assessments'] : [] };
-  }));
-  return { ...VALIDATE_SCHEMA, properties: { validations: { type: 'array', items: { ...base, anyOf: variants } } } };
+  const variants = batch.flatMap((finding) => {
+    const previous = accepted.get(finding.id);
+    if (previous) {
+      const requirements = assessmentRequirement(validationRejections(finding, previous)
+        .map((reason) => reason.slice('missing_assessment:'.length)));
+      return [{ ...requirements, properties: { finding_id: { enum: [finding.id] }, ...requirements.properties } }];
+    }
+    return VALIDATION_RETURN_PROPERTIES.policy_subject.enum.map((subject) => {
+      const { promotion } = admissionPolicy(finding);
+      const requirements = assessmentRequirement(requiredAssessments(finding, subject));
+      const references = Object.keys(admissionRequests(finding)).filter((key) => key === 'primary');
+      const conditional = promotion && references.length > 0;
+      return { properties: { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] },
+        ...(!conditional ? requirements.properties : {}) }, required: [...base.required, ...(!conditional ? requirements.required : [])],
+        ...(conditional ? { if: { properties: { admission_assessments: { contains: {
+          properties: { predicate: { const: promotion.predicate }, status: { const: 'confirmed' },
+            references: { const: references } }, required: ['predicate', 'status', 'references'],
+        } } }, required: ['admission_assessments'] },
+        then: assessmentRequirement(requiredAssessments(finding, subject, true)), else: requirements } : {}),
+      };
+    });
+  });
+  return { ...VALIDATE_SCHEMA, properties: { validations: { type: 'array', items: { ...base, required: ['finding_id'], anyOf: variants } } } };
 }
 
 // Keep exact small returns and explicit truncation receipts without consuming the checkpoint budget.
@@ -87,8 +108,8 @@ export async function validateStage(ctx, input) {
   const terminalRejections = new Map();
   let completed = 0;
   let dispatched = 0;
-  const dispatch = (batch, label) => () => ctx.agent(validatePrompt(inp, batch), {
-    label, agentType: 'code-gauntlet:validator', model, schema: validateSchema(batch),
+  const dispatch = (batch, label) => () => ctx.agent(validatePrompt(inp, batch, accepted), {
+    label, agentType: 'code-gauntlet:validator', model, schema: validateSchema(batch, accepted),
   });
   const consume = (res, batch, label) => {
     const list = res === null || res === undefined
@@ -101,10 +122,17 @@ export async function validateStage(ctx, input) {
       const matches = entries.filter((entry) => entry.id === finding.id);
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
-        const reasons = validationRejections(finding, entry);
+        const previous = accepted.get(finding.id);
+        const missing = previous ? validationRejections(finding, previous).map((reason) => reason.slice('missing_assessment:'.length)) : [];
+        const replacements = (Array.isArray(entry.admission_assessments) ? entry.admission_assessments : [])
+          .filter((assessment) => missing.includes(assessment?.predicate));
+        const merged = previous && label.startsWith('validate-retry-') ? { ...previous,
+          admission_assessments: [...(Array.isArray(previous.admission_assessments) ? previous.admission_assessments : []).filter((assessment) =>
+            !replacements.some((replacement) => replacement?.predicate === assessment?.predicate)), ...replacements] } : entry;
+        const reasons = validationRejections(finding, merged);
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
         // Missing admission evidence still warrants a retry, but does not invalidate a score.
-        if (reasons.every((reason) => reason.startsWith('missing_assessment:'))) accepted.set(finding.id, entry);
+        if (reasons.every((reason) => reason.startsWith('missing_assessment:'))) accepted.set(finding.id, merged);
       }
     }
     validatorAudit(audit, label, res, rejections);
@@ -159,11 +187,8 @@ export async function validateStage(ctx, input) {
   };
 }
 
-function validatePrompt(inp, batch) {
+function validatePrompt(inp, batch, accepted) {
   const ctxLine = inp.contextLine || '';
-  const promotionRows = DIMENSIONS.filter((row) => row.admission?.promotion);
-  const promotionHeader = [...new Set(promotionRows.map((row) => row.admission.promotion.predicate))].map((predicate) =>
-    `For ${promotionRows.filter((row) => row.admission.promotion.predicate === predicate).map((row) => row.dimension).join(', ')} findings also assess ${predicate}.`).join(' ');
   // Locations and claims let validators inspect the relevant code instead of scoring identifiers without evidence.
   const block = batch.map((f) => {
     const range = !locationAllows(f, 'sourceLink') ? 'location unconfirmed' : f.line_end != null && f.line_end !== f.line_start
@@ -172,9 +197,10 @@ function validatePrompt(inp, batch) {
     const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
     const sites = (f.resolved_sites || []).filter((site) => locationAllows(site, 'sourceLink'));
     const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
-    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f))}`;
+    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f, accepted.get(f.id)))}`;
   }).join('\n');
-  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Admission predicates: ${JSON.stringify(ADMISSION_PREDICATES)}\n${promotionHeader}\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
+  if (batch.every((finding) => accepted.has(finding.id))) return `${ctxLine}Supply only the missing admission assessments listed in each finding's admission_context. Correctness, reachability and policy_subject are fixed. Use confirmed, rejected or unresolved with the exact request names inspected in references.\nFindings:\n${block}\nReturn { validations: [{ finding_id, admission_assessments }] } (one entry per finding).`;
+  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. First judge the correctness of each claim and return confidence, justification and reachability from the code. Complete that judgment before admission; missing admission evidence or posting value must not lower confidence or change reachability. Then classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess only the predicates for the selected policy_subject in that finding's admission_context, using confirmed, rejected or unresolved and the exact request names inspected in references. If its promotion predicate is confirmed, use only the promotion's confirmed requirements. Resolution and confidence are not semantic confirmation. Assess body_fix_task predicates separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. On an admission-only retry, return finding_id and only missing admission_assessments listed in that context; the accepted correctness and reachability judgments are fixed.\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
 }
 
 // The runtime has no wall clock, so generated_at must come from the supplied arguments.
