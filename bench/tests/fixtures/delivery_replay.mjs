@@ -91,7 +91,10 @@ rows.admission = ['confirmed', 'rejected'].map((status) => finding(0, {
   dimension: 'simplification', origin_dimension: 'simplification', agent: 'code-simplifier',
   quality_basis: 'duplication', duplicate_of: duplicate,
   resolved_references: { duplicate_of: { ...duplicate, location_status: 'confirmed' } },
-  admission_assessments: [{ predicate: 'confirmed_duplication', status, references: ['primary', 'duplicate_of'] }],
+  admission_assessments: [
+    { predicate: 'present_defect', status: 'rejected', references: ['primary'] },
+    { predicate: 'confirmed_duplication', status, references: ['primary', 'duplicate_of'] },
+  ],
 }));
 const legacy = structuredClone(rows.admission[0]);
 for (const key of ['admission', 'body_fix_task_eligible', 'resolved_references', 'admission_assessments', 'sites']) delete legacy[key];
