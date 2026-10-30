@@ -227,8 +227,8 @@ def test_completed_validation_omission_is_valid_with_counted_disclosure(
         "ok": True,
         "stats": {
             "validate": {
-                "batches_dispatched": 1,
-                "batches_completed": 1,
+                "batches_dispatched": 2,
+                "batches_completed": 2,
                 "validated": 1,
                 "skipped": 1,
             },

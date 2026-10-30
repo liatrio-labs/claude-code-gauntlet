@@ -149,7 +149,7 @@ const VALIDATE_ROWS = [
     stats: { ...VALIDATE_STATS, validated: 1, skipped: 0 }, expected: [['F1', 80, 80, undefined, 'future_change_only', 'validated']] },
   { name: 'count batches', batch: 2,
     input: ['F1', 'F2', 'F3', 'F4', 'F5'].map((id) => finding({ id, confidence: 80 })), reply: [],
-    stats: { batches_dispatched: 3, batches_completed: 0, validated: 0, skipped: 5, adjusted: 0 },
+    stats: { batches_dispatched: 3, batches_completed: 3, validated: 0, skipped: 5, adjusted: 0 },
     labels: ['validate-batch-0', 'validate-batch-1', 'validate-batch-2'], gaps: [omittedGap(0, 2), omittedGap(1, 2), omittedGap(2, 1)], expected: [
       ['F1', 80, undefined, undefined, undefined, 'skipped'], ['F2', 80, undefined, undefined, undefined, 'skipped'],
       ['F3', 80, undefined, undefined, undefined, 'skipped'], ['F4', 80, undefined, undefined, undefined, 'skipped'],
@@ -157,7 +157,7 @@ const VALIDATE_ROWS = [
     ] },
   { name: 'null batch retains confidence', batch: 2,
     input: ['F1', 'F2', 'F3', 'F4'].map((id) => finding({ id, confidence: 80 })), reply: [], nulls: ['validate-batch-1'],
-    stats: { batches_dispatched: 2, batches_completed: 0, validated: 0, skipped: 4, adjusted: 0 },
+    stats: { batches_dispatched: 2, batches_completed: 1, validated: 0, skipped: 4, adjusted: 0 },
     labels: ['validate-batch-0', 'validate-batch-1'], gaps: [omittedGap(0, 2),
       'validate-batch-1: validator returned null/malformed \u2014 2 finding(s) unvalidated '
       + '(validation=skipped, held back to the report)',
@@ -174,7 +174,7 @@ const VALIDATE_ROWS = [
   { name: 'fractional batch clamps to one', batch: 0.5,
     input: [finding({ id: 'F1', confidence: 80 }), finding({ id: 'F2', confidence: 80 })], reply: [],
     expected: [['F1', 80, undefined, undefined, undefined, 'skipped'], ['F2', 80, undefined, undefined, undefined, 'skipped']],
-    stats: { batches_dispatched: 2, batches_completed: 0, validated: 0, skipped: 2, adjusted: 0 },
+    stats: { batches_dispatched: 2, batches_completed: 2, validated: 0, skipped: 2, adjusted: 0 },
     labels: ['validate-batch-0', 'validate-batch-1'], gaps: [omittedGap(0, 1), omittedGap(1, 1)] },
   { name: 'empty', input: [], reply: [], expected: [], labels: [],
     stats: { batches_dispatched: 0, batches_completed: 0, validated: 0, skipped: 0, adjusted: 0 } },
@@ -189,6 +189,7 @@ for (const row of VALIDATE_ROWS) test(`validate result: ${row.name}`, async () =
   const pendingCount = row.expected.filter((entry) => entry.at(-1) === 'skipped').length;
   const retryCount = Math.ceil(pendingCount / Math.max(1, Math.ceil((row.batch || 10) / 5)));
   expectedStats.batches_dispatched += retryCount;
+  if (Array.isArray(row.reply) || Array.isArray(row.reply?.validations)) expectedStats.batches_completed += retryCount;
   assert.deepEqual(out.stats, expectedStats);
   assert.deepEqual(out.gaps, row.gaps ?? []);
   assert.deepEqual(ctx.calls.map((call) => call.label), [...(row.labels ?? ['validate-batch-0']),
