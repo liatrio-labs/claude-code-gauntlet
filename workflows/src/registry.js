@@ -366,7 +366,8 @@ for (const row of EXCLUSION_CATEGORIES) {
   }
 }
 export const EXCLUSION_BY_CATEGORY = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row])));
-export const EXCLUSION_FACT_DESCRIPTORS = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row.facts])));
+export const SCOPE_ROWS = deepFreeze(EXCLUSION_CATEGORIES.filter((row) => row.stage !== 'admission'));
+export const SCOPE_STAGES = deepFreeze([...new Set(SCOPE_ROWS.flatMap((row) => row.consumers))]);
 
 const SKEPTICAL_IDENTITY = {
   finding_id: { type: 'string', minLength: 1 }, stage: { type: 'string', enum: ['validator', 'challenger'] },
@@ -408,7 +409,7 @@ function scopeAssessmentSchema(stages) {
   }))) };
 }
 export const SCOPE_ASSESSMENT_SCHEMA = deepFreeze(scopeAssessmentSchema(SKEPTICAL_IDENTITY.stage.enum));
-const SKEPTICAL_SCOPE_LIMIT = EXCLUSION_CATEGORIES.filter((row) => row.stage === 'skeptical').length;
+export const SKEPTICAL_SCOPE_LIMIT = EXCLUSION_CATEGORIES.filter((row) => row.stage === 'skeptical').length;
 export const VERDICT_RETURN_PROPERTIES = deepFreeze({
   ...SKEPTICAL_IDENTITY, verdict: { type: 'string', enum: ['real', 'refuted', 'needs_evidence'] },
   citations: citationRequests(['claim']), missing_evidence: { type: 'string', minLength: 1 },
@@ -440,11 +441,11 @@ export function dispatchReturnSchema(schema) {
 }
 const REDUCTION_REASON_SCHEMA = { type: 'string', enum: ['report_only', 'held_back', 'body_routed', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable'] };
 export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
-  skeptical_assessments: { type: 'array', items: { type: 'object', properties: {
-    ...VERDICT_RETURN_PROPERTIES,
+  skeptical_assessments: { type: 'array', items: closedDispatchRow({
+    ...SKEPTICAL_IDENTITY,
     status: { type: 'string', enum: ['complete', 'incomplete'] }, errors: { type: 'array', items: { type: 'string' } },
-    raw: { type: 'object', additionalProperties: true },
-  }, required: ['finding_id', 'stage'] } },
+    raw: { type: 'object', additionalProperties: true, $comment: 'repo-path-audit' },
+  }) },
   cite_results: { type: 'array', items: CITATION_RESULT_SCHEMA },
   reduction_detail: { type: 'array', items: closedDispatchRow({
     reason: REDUCTION_REASON_SCHEMA, stage: SKEPTICAL_IDENTITY.stage, verdict: VERDICT_RETURN_PROPERTIES.verdict,
@@ -453,11 +454,11 @@ export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
     category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) },
   }, ['stage', 'verdict', 'missing_field', 'missing_fields', 'missing_evidence', 'category']) },
   scope_decisions: { type: 'array', items: { ...closedDispatchRow({
-    stage: { type: 'string', enum: ['early', 'post_validation', ...SKEPTICAL_IDENTITY.stage.enum] },
-    category: { type: 'string', enum: EXCLUSION_CATEGORIES.filter((row) => row.stage !== 'admission').map((row) => row.category) },
+    stage: { type: 'string', enum: SCOPE_STAGES },
+    category: { type: 'string', enum: SCOPE_ROWS.map((row) => row.category) },
     applies: { type: ['boolean', 'null'] }, outcome: { type: 'string', enum: DISPOSITIONS },
     reason: REDUCTION_REASON_SCHEMA, request_ids: { type: 'array', items: { type: 'string' } }, confirmation_id: { type: 'string' },
-  }, ['reason', 'request_ids', 'confirmation_id']), anyOf: EXCLUSION_CATEGORIES.filter((row) => row.stage !== 'admission').flatMap((row) => row.consumers.map((stage) => ({
+  }, ['reason', 'request_ids', 'confirmation_id']), anyOf: SCOPE_ROWS.flatMap((row) => row.consumers.map((stage) => ({
     properties: { stage: { const: stage }, category: { const: row.category }, outcome: { const: row.outcome } },
   }))) } },
   scope_input_proof: { type: 'string' },
@@ -469,7 +470,6 @@ export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
   }, ['category', 'stage', 'request_ids']),
 });
 
-// Provider schema enforcement can fail; retain the raw entry and bind diagnostics to the dispatched identity.
 function dispatchSchemaValidation() {
   const errors = [];
   const check = (value, schema, path) => {
@@ -510,6 +510,7 @@ export function matchesDispatchSchema(value, schema) {
   return dispatchSchemaValidation().matches(value, schema);
 }
 
+// Provider schema enforcement can fail; retain the raw entry and bind diagnostics to the dispatched identity.
 export function acceptSkepticalReturn(entry, findingId, stage) {
   const { errors, check } = dispatchSchemaValidation();
   const schema = SKEPTICAL_RETURN_SCHEMAS[stage];

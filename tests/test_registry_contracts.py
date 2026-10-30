@@ -45,12 +45,34 @@ def test_exclusion_row_edit_updates_both_skeptics_and_reference(tmp_path, invoke
         namespace,
     )
     assert namespace["EXCLUSION_CATEGORIES"] == reg["exclusionCategories"]
-    assert namespace["EXCLUSION_FACT_DESCRIPTORS"] == reg["exclusionFactDescriptors"]
     assert "SKEPTICAL_RETURN_SCHEMAS" not in namespace
     assert namespace["CITATION_REQUEST_SCHEMA"] == reg["citationRequestSchema"]
     assert "snapshot_id" in namespace["CitationRequest"].__annotations__
     from typing import get_args
 
+    for name, values in (
+        ("ExclusionStage", reg["exclusionStages"]),
+        ("ExclusionOutcome", [*reg["dispositions"], "admission"]),
+        ("ExclusionProof", reg["exclusionProofs"]),
+    ):
+        assert list(get_args(namespace[name])) == values
+    annotations = namespace["ExclusionRow"].__annotations__
+    for field in ("stage", "outcome", "proof"):
+        assert annotations[field] is namespace["Exclusion" + field.title()]
+    assert (
+        namespace["CitationRequest"].__annotations__["stage"]
+        is namespace["SkepticalStage"]
+    )
+    assert (
+        namespace["ScopeAssessment"].__annotations__["category"]
+        is namespace["ExclusionCategory"]
+    )
+    aliases = [
+        get_args(value)
+        for name, value in namespace.items()
+        if "_Literal" in name or name in ("SkepticalStage", "ExclusionCategory")
+    ]
+    assert len(aliases) == len(set(aliases))
     categories = [row["category"] for row in reg["exclusionCategories"]]
     assert list(get_args(namespace["ExclusionCategory"])) == categories
     assert "configured_tool" in categories and "lint_catchable" not in categories
@@ -141,40 +163,6 @@ console.log(JSON.stringify(prompts));
     for name in DISCOVERY:
         relative = f"agents/{name}.md"
         assert (tmp_path / relative).read_bytes() == (ROOT / relative).read_bytes()
-
-
-def test_python_skeptical_mirror_uses_shared_vocabularies():
-    from typing import get_args
-
-    reg = gen.load_registry(str(ROOT))
-    source = gen.render_python_registry(reg)
-    namespace = {}
-    exec(source, namespace)
-    assert "SKEPTICAL_RETURN_SCHEMAS" not in namespace
-    assert namespace["CITATION_REQUEST_SCHEMA"] == reg["citationRequestSchema"]
-    for name, values in (
-        ("ExclusionStage", reg["exclusionStages"]),
-        ("ExclusionOutcome", [*reg["dispositions"], "admission"]),
-        ("ExclusionProof", reg["exclusionProofs"]),
-    ):
-        assert list(get_args(namespace[name])) == values
-    annotations = namespace["ExclusionRow"].__annotations__
-    for field in ("stage", "outcome", "proof"):
-        assert annotations[field] is namespace["Exclusion" + field.title()]
-    assert (
-        namespace["CitationRequest"].__annotations__["stage"]
-        is namespace["SkepticalStage"]
-    )
-    assert (
-        namespace["ScopeAssessment"].__annotations__["category"]
-        is namespace["ExclusionCategory"]
-    )
-    aliases = [
-        get_args(value)
-        for name, value in namespace.items()
-        if name.startswith("_") and "_Literal" in name
-    ]
-    assert len(aliases) == len(set(aliases))
 
 
 def test_report_extras_preserve_structured_values():

@@ -1,5 +1,5 @@
 import { deepClone } from './wire.js';
-import { incompleteVetting, UNVERIFIED_REASONS } from './vetting.js';
+import { incompleteVetting, UNVERIFIED_REASONS, CHALLENGE_REASON_CODES } from './vetting.js';
 import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
 import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
@@ -21,7 +21,7 @@ function skepticalOutcome(finding) {
       }
       continue;
     }
-    const raw = entries[0].raw ?? entries[0];
+    const raw = entries[0].raw ?? {};
     const { assessment, requests, proved } = skepticalProof(finding, raw, stage);
     if (raw.verdict === 'needs_evidence') reasons.push({ reason: 'held_back', stage, missing_evidence: raw.missing_evidence });
     if (['real', 'refuted'].includes(raw.verdict) && !proved) {
@@ -92,9 +92,7 @@ export function disposeFindings(challenged) {
       continue;
     }
     const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
-    if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
-      reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : finding.challenge === 'incomplete' ? 'held_back' : 'challenge_failed');
-    }
+    if (Object.hasOwn(CHALLENGE_REASON_CODES, finding.challenge)) reasons.push(CHALLENGE_REASON_CODES[finding.challenge]);
     let disposition = 'body';
     const admitted = hasAdmission(finding);
     const valueTerminal = admitted && finding.admission.status === 'report_only' && finding.challenge === 'admission_terminal';

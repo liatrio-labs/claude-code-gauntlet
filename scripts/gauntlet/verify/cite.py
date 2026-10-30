@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 from collections import Counter
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
@@ -20,6 +21,7 @@ from gauntlet.registry import (
     CitationRequest,
     CitationStatus,
     CiteResultsItem,
+    CiteResultsItemRequest,
     CiteResultsItemSource,
     SkepticalStage,
 )
@@ -62,17 +64,13 @@ class CiteLedger(TypedDict):
 
 
 def citation_source(metadata: dict[str, object]) -> CiteResultsItemSource:
-    return cast(
-        CiteResultsItemSource,
-        {
-            "snapshot_id": metadata.get("manifest_sha256", ""),
-            **{
-                key: metadata.get(key, "")
-                for key in ("target_kind", "head", "base", "diff_sha256")
-            },
-            "verifier_version": CITE_VERIFIER_VERSION,
-        },
+    identity = {"snapshot_id": metadata.get("manifest_sha256", "")}
+    identity.update(
+        (key, metadata.get(key, ""))
+        for key in ("target_kind", "head", "base", "diff_sha256")
     )
+    identity["verifier_version"] = CITE_VERIFIER_VERSION
+    return cast(CiteResultsItemSource, identity)
 
 
 def _request_error(
@@ -98,8 +96,7 @@ def _request_error(
         return "foreign_identity"
     if q["snapshot_id"] != snapshot:
         return "snapshot_mismatch"
-    file = q["file"]
-    if store is not None and not store.admits(source, file):
+    if store is not None and not store.admits(source, q["file"]):
         return "rejected_origin"
     lines = source_lines(q["quote"])
     if (
@@ -110,6 +107,73 @@ def _request_error(
     ):
         return "invalid_quote_or_range"
     return ""
+
+
+def _identity_key(request: dict[str, object]) -> str:
+    return json.dumps([request.get(k) for k in ("finding_id", "stage", "request_id")])
+
+
+def _load_ledger(path: Path, identity: object, count: int) -> CiteLedger:
+    ledger = json.loads(path.read_text(encoding="utf-8"))
+    attempts = ledger["attempts"]
+    if (
+        ledger["identity"] != identity
+        or not isinstance(attempts, list)
+        or len(attempts) > STAGE_COSTS["cite"]["attempts"]
+        or any(
+            not isinstance(a, dict)
+            or set(a) != {"nonce", "results"}
+            or not isinstance(a["nonce"], str)
+            or (
+                a["results"] is not None
+                and (not isinstance(a["results"], list) or len(a["results"]) != count)
+            )
+            for a in attempts
+        )
+    ):
+        raise ValueError("corrupt_attempt_identity")
+    return cast(CiteLedger, ledger)
+
+
+def _classify_record(
+    record: CitationCheck,
+    source: SourceAdapter,
+    store: SourceCapture | None,
+    metadata: dict[str, object],
+    ids: Counter[str],
+    identities: Counter[str],
+    cache: dict[tuple[object, ...], CitationStatus],
+) -> tuple[CitationStatus, str]:
+    error = _request_error(record, source, store, metadata.get("manifest_sha256"))
+    q = record.get("request")
+    if ids[record.get("id")] != 1 or (
+        isinstance(q, dict) and identities[_identity_key(q)] != 1
+    ):
+        error = "duplicate_identity"
+    if error:
+        return "rejected", error
+    if store is None:
+        return "unavailable", "source_capture_unavailable"
+    q = cast(CitationRequest, q)
+    key = tuple(
+        q[k] for k in ("snapshot_id", "file", "side", "line_start", "line_end", "quote")
+    )
+    if key not in cache:
+        lines = source.read_captured_source(
+            q["file"],
+            side=q["side"],
+            start=q["line_start"],
+            end=q["line_end"],
+            base=cast("str | None", metadata["base"]) if q["side"] == "old" else None,
+            diff_sha256=cast("str | None", metadata["diff_sha256"]),
+        )
+        if lines is None:
+            cache[key] = "unavailable"
+        elif lines == source_lines(q["quote"]):
+            cache[key] = "matched"
+        else:
+            cache[key] = "unmatched"
+    return cache[key], "explicit_source_range"
 
 
 def run_citations(
@@ -131,19 +195,23 @@ def run_citations(
     ]
 
     def result(record: CitationCheck, status: CitationStatus, detail: str) -> CiteRow:
-        return cast(
-            CiteRow,
-            {
-                "id": record.get("id", ""),
-                "request": record.get("request"),
-                "status": status,
-                "detail": detail,
-                "source": source_identity,
-            },
-        )
+        return {
+            "id": record.get("id", ""),
+            "request": cast(CiteResultsItemRequest, record.get("request")),
+            "status": status,
+            "detail": detail,
+            "source": source_identity,
+        }
 
-    def unavailable(detail: str) -> CiteResult:
-        return {"citations": [result(r, "unavailable", detail) for r in records]}
+    def unavailable(
+        detail: str, proven: dict[str, CiteRow] | None = None
+    ) -> CiteResult:
+        return {
+            "citations": [
+                (proven or {}).get(r.get("id", "")) or result(r, "unavailable", detail)
+                for r in records
+            ]
+        }
 
     nonce = metadata.get("nonce")
     if (
@@ -178,53 +246,48 @@ def run_citations(
     except (OSError, ValueError):
         return unavailable("uncertain_attempt_identity")
     try:
-        ledger: CiteLedger = json.loads(ledger_path.read_text(encoding="utf-8"))
-        attempts = ledger["attempts"]
-        if (
-            ledger["identity"] != identity
-            or not isinstance(attempts, list)
-            or len(attempts) > STAGE_COSTS["cite"]["attempts"]
-            or any(
-                not isinstance(a, dict)
-                or set(a) != {"nonce", "results"}
-                or not isinstance(a["nonce"], str)
-                for a in attempts
+        try:
+            ledger = _load_ledger(ledger_path, identity, len(records))
+            terminal = {
+                r["id"]: r
+                for a in ledger["attempts"]
+                for r in (a["results"] or [])
+                if r["status"] != "unavailable"
+            }
+            ids = Counter(r.get("id") for r in records)
+            identities = Counter(
+                _identity_key(q)
+                for r in records
+                if isinstance(q := r.get("request"), dict)
             )
-            or any(
-                a["results"] is not None
-                and (
-                    not isinstance(a["results"], list)
-                    or len(a["results"]) != len(records)
-                )
-                for a in attempts
-            )
-        ):
+        except (OSError, ValueError, KeyError, TypeError):
             return unavailable("corrupt_attempt_identity")
+        attempts = ledger["attempts"]
         for prior in attempts:
             if prior["nonce"] != args.nonce:
                 continue
             if prior["results"] is None:
                 return unavailable("uncertain_attempt_identity")
             return {"citations": prior["results"]}
-        # A lock left before reservation still consumes the interrupted command.
-        if (
-            stale_lock
-            and not any(a["results"] is None for a in attempts)
-            and len(attempts) < STAGE_COSTS["cite"]["attempts"]
-        ):
+        if stale_lock and all(r.get("id") in terminal for r in records):
+            return {"citations": [terminal[r["id"]] for r in records]}
+        # Without persisted attempts a leftover lock is the only crash evidence.
+        if stale_lock and not attempts:
             attempts.append({"nonce": "stale_lock", "results": None})
-            write_atomic(ledger_path, json.dumps(ledger, ensure_ascii=True))
         if len(attempts) >= STAGE_COSTS["cite"]["attempts"]:
-            return unavailable("exhausted_attempts")
+            return unavailable("exhausted_attempts", terminal if stale_lock else None)
         attempts.append({"nonce": args.nonce, "results": None})
-        write_atomic(ledger_path, json.dumps(ledger, ensure_ascii=True))
-        source = SourceAdapter(Path(root), "local", None)
+        try:
+            write_atomic(ledger_path, json.dumps(ledger, ensure_ascii=True))
+        except OSError:
+            return unavailable("corrupt_attempt_identity")
+        source = SourceAdapter(Path(root), args.target_kind, None)
         store = None
         facts = None
-        try:
+        with suppress(OSError, ValueError, TypeError):
             diff = Path(args.diff_file).read_bytes()
             store = load_capture(
-                SourceAdapter(Path(root), args.target_kind, None),
+                source,
                 Path(args.capture_output_dir),
                 metadata,
                 diff,
@@ -234,73 +297,18 @@ def run_citations(
             annotate_diff(diff)
             text = diff.decode("utf-8", "surrogateescape")
             facts = parse_diff(text, policy=patch_report_policy(text))
-        except (OSError, ValueError, TypeError):
-            pass
-        ids = Counter(r.get("id") for r in records)
-        identities = Counter(
-            json.dumps([q.get("finding_id"), q.get("stage"), q.get("request_id")])
-            for r in records
-            if isinstance(q := r.get("request"), dict)
-        )
         cache: dict[tuple[object, ...], CitationStatus] = {}
         rows: list[CiteRow] = []
-        terminal = {
-            r["id"]: r
-            for a in attempts
-            for r in (a["results"] or [])
-            if r["status"] != "unavailable"
-        }
         for record in records:
             if record.get("id") in terminal:
                 rows.append(terminal[record["id"]])
                 continue
-            error = _request_error(
-                record, source, store, metadata.get("manifest_sha256")
+            status, detail = _classify_record(
+                record, source, store, metadata, ids, identities, cache
             )
-            q = record.get("request")
-            if ids[record.get("id")] != 1 or (
-                isinstance(q, dict)
-                and identities[
-                    json.dumps(
-                        [q.get("finding_id"), q.get("stage"), q.get("request_id")]
-                    )
-                ]
-                != 1
-            ):
-                error = "duplicate_identity"
-            if error:
-                rows.append(result(record, "rejected", error))
-                continue
-            if store is None:
-                rows.append(result(record, "unavailable", "source_capture_unavailable"))
-                continue
-            q = cast(CitationRequest, q)
-            key = (
-                q["snapshot_id"],
-                q["file"],
-                q["side"],
-                q["line_start"],
-                q["line_end"],
-                q["quote"],
-            )
-            if key not in cache:
-                lines = source.read_captured_source(
-                    q["file"],
-                    side=q["side"],
-                    start=q["line_start"],
-                    end=q["line_end"],
-                    base=metadata["base"] if q["side"] == "old" else None,
-                    diff_sha256=metadata["diff_sha256"],
-                )
-                cache[key] = (
-                    "unavailable"
-                    if lines is None
-                    else "matched"
-                    if lines == source_lines(q["quote"])
-                    else "unmatched"
-                )
-            row = result(record, cache[key], "explicit_source_range")
-            if facts is not None:
+            row = result(record, status, detail)
+            if facts is not None and detail == "explicit_source_range":
+                q = cast(CitationRequest, record["request"])
                 row["added_lines"] = [
                     line
                     for line in range(q["line_start"], q["line_end"] + 1)
@@ -309,9 +317,11 @@ def run_citations(
                 ]
             rows.append(row)
         attempts[-1]["results"] = rows
-        write_atomic(ledger_path, json.dumps(ledger, ensure_ascii=True))
+        try:
+            write_atomic(ledger_path, json.dumps(ledger, ensure_ascii=True))
+        except OSError:
+            return unavailable("corrupt_attempt_identity")
         return {"citations": rows}
-    except (OSError, ValueError, KeyError, TypeError):
-        return unavailable("corrupt_attempt_identity")
     finally:
-        lock.unlink()
+        with suppress(OSError):
+            lock.unlink()

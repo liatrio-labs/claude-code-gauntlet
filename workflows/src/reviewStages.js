@@ -216,12 +216,14 @@ export async function challengeStage(ctx, input) {
   const findings = inp.findings || [];
   const cap = effectiveChallengeCap(inp.limits || {}, findings.length);
   const validatorTerminal = (f) => f.skeptical_assessments?.some((a) => a.stage === 'validator'
-    && ['refuted', 'needs_evidence'].includes((a.raw ?? a).verdict));
+    && ['refuted', 'needs_evidence'].includes(a.raw?.verdict));
   const scopeTerminal = (f) => scopeDecisions(f).some((row) => row.applies === true && ['eliminate', 'report_only'].includes(row.outcome));
   const actionable = (f) => !scopeTerminal(f) && !validatorTerminal(f) && hasAdmission(f)
     && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
-  const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f,
-    challenge: scopeTerminal(f) ? 'scope_terminal' : validatorTerminal(f) ? 'validator_terminal' : 'admission_terminal' }));
+  const terminal = findings.filter((f) => !actionable(f)).map((f) => {
+    if (scopeTerminal(f)) return { ...f, challenge: 'scope_terminal' };
+    return { ...f, challenge: validatorTerminal(f) ? 'validator_terminal' : 'admission_terminal' };
+  });
   const ranked = rankFindings(findings.filter(actionable));
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);

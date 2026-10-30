@@ -217,7 +217,7 @@ def test_archived_named_workflow_disclosure_survives_treatment_bundle_switch(tmp
     )
     failures, disclosures = check.workflow_stage_outcomes(tmp_path)
     assert failures == ()
-    assert disclosures == ("Incomplete validation: 1 findings held back.",)
+    assert disclosures == ("Incomplete validation: 1 finding(s) held back.",)
 
 
 def test_completed_validation_omission_is_valid_with_counted_disclosure(
@@ -244,9 +244,11 @@ def test_completed_validation_omission_is_valid_with_counted_disclosure(
     assert attempt.validity.state == "valid"
     assert smoke["ok"], smoke["failures"]
     assert (
-        "Incomplete validation: 1 findings held back." in attempt.validity.limitations
+        "Incomplete validation: 1 finding(s) held back." in attempt.validity.limitations
     )
-    assert "Incomplete challenge: 1 findings held back." in attempt.validity.limitations
+    assert (
+        "Incomplete challenge: 1 finding(s) held back." in attempt.validity.limitations
+    )
     assert not any("challenge cap" in item for item in attempt.validity.limitations)
     omitted = json.loads(json.dumps(out))
     omitted["stats"]["validate"]["validated"] = 0

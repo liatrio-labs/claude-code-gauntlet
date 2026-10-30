@@ -296,6 +296,49 @@ process.stdout.write(JSON.stringify(results));
             assert final["test_convention"]["disposition"] != "eliminate"
 
 
+def test_documentation_scope_includes_source_origins_and_deletions(
+    tmp_path, monkeypatch
+):
+    from gauntlet.diff import annotate_diff
+    from gauntlet.scope_facts import repository_scope
+    from gauntlet.source_capture import SourceAdapter
+
+    from tests.support.git_diff import git, init_git_repo
+
+    work, output = tmp_path / "repo", tmp_path / "artifacts"
+    work.mkdir()
+    output.mkdir()
+    init_git_repo(work, monkeypatch)
+    (work / ".gitattributes").write_text(
+        "* -linguist-documentation\ndocs/* linguist-documentation\n", encoding="utf-8"
+    )
+    (work / "café source").write_text("return value;\n", encoding="utf-8")
+    git(work, "add", ".")
+    git(work, "commit", "-qm", "base")
+    base = git(work, "rev-parse", "HEAD")
+    (work / "docs").mkdir()
+    for operation in ("rename", "copy", "delete"):
+        (work / "café source").write_text("return value;\n", encoding="utf-8")
+        (work / "docs/target").write_text("return value;\n", encoding="utf-8")
+        if operation != "copy":
+            (work / "café source").unlink()
+        if operation == "delete":
+            (work / "docs/target").unlink()
+        git(work, "add", ".")
+        git(work, "commit", "-qm", operation)
+        head = git(work, "rev-parse", "HEAD")
+        diff = (git(work, "diff", "--find-copies-harder", base, head) + "\n").encode()
+        capture = SourceAdapter.capture(work, "branch", head).capture_sources(
+            output, operation, diff, base
+        )
+        facts = repository_scope(
+            capture.adapter(work), annotate_diff(diff), ["docs/target"]
+        )
+        assert facts["docs/target"]["all_changed_files_documentation"] is False, (
+            operation
+        )
+
+
 def test_cited_refutation_is_absent_from_delivery_and_local_actions(
     tmp_path, monkeypatch, invoke
 ):
@@ -334,12 +377,12 @@ const load=n=>import(pathToFileURL(`${root}/workflows/${n}.js`));
 const {runWith}=await load('src/run');
 const {makeCtx,makeFinding}=await load('test/helpers/pipelineMock');
 const {validArgs}=await load('test/helpers/argsFixtures');
-const {skepticalReturn}=await load('test/helpers/verdicts');
+const {skepticalAssessment}=await load('test/helpers/verdicts');
 const {shellSplit}=await load('test/helpers/shellWords');
 const findings=['validator','challenger'].flatMap(stage=>['bug','security'].map(dimension=>{
  const id=`${stage}-${dimension}`;
- const assessment=skepticalReturn(id,stage,{verdict:'refuted'});
- Object.assign(assessment.citations[0],{snapshot_id:JSON.parse(capture).manifest_sha256,file:'source.txt',line_start:dimension==='security'?2:1,line_end:dimension==='security'?2:1});
+ const assessment=skepticalAssessment(id,stage,{verdict:'refuted'});
+ Object.assign(assessment.raw.citations[0],{snapshot_id:JSON.parse(capture).manifest_sha256,file:'source.txt',line_start:dimension==='security'?2:1,line_end:dimension==='security'?2:1});
  return makeFinding(id,{file:'source.txt',line_start:1,line_end:1,dimension,
   description:`REMOVED_ACTION_${id} describes a purported source defect.`,suggestion:`REMOVED_TASK_${id}`,
   code:`REMOVED_FENCE_${id}`,suggested_fix_code:`REMOVED_PATCH_${id}`,
@@ -719,7 +762,7 @@ const load = (name) => import(pathToFileURL(`${plugin}/workflows/src/${name}.js`
 const { verifyStage } = await load('verifyStage');
 const { writerPayload } = await load('persistPlan');
 const { disposeFindings } = await load('dispose');
-const {skepticalReturn} = await import(pathToFileURL(`${plugin}/workflows/test/helpers/verdicts.js`));
+const {skepticalAssessment} = await import(pathToFileURL(`${plugin}/workflows/test/helpers/verdicts.js`));
 const { evaluateAdmission } = await load('admission');
 const { shellSplit } = await import(pathToFileURL(`${plugin}/workflows/test/helpers/shellWords.js`));
 const prefix = `${work}/code-gauntlet-`;
@@ -741,7 +784,7 @@ const result = await verifyStage(ctx, { findings, pluginRoot: plugin, python: 'p
     inputPathBase: `${work}/slice-in`, outputPathBase: `${work}/slice-out`,
   } });
 if (!result.verified || calls !== 1) throw Error(JSON.stringify(result));
-const disposed = disposeFindings({ findings: result.findings.map(f=>evaluateAdmission({...f,validation:'validated',policy_subject:'ordinary',challenge:'survived',skeptical_assessments:[skepticalReturn(f.id),skepticalReturn(f.id,'challenger')]})) });
+const disposed = disposeFindings({ findings: result.findings.map(f=>evaluateAdmission({...f,validation:'validated',policy_subject:'ordinary',challenge:'survived',skeptical_assessments:[skepticalAssessment(f.id),skepticalAssessment(f.id,'challenger')]})) });
 const payload = writerPayload({ findings: disposed.findings, postReview: disposed.findings,
   prIdentity: { owner: 'o', repo: 'r', pr_number: 5, sha_full: sha, platform: 'github', web_origin: 'https://github.com' },
   reviewBody: 'Summary' });
@@ -960,7 +1003,7 @@ const {mergeStage} = await load('mergeFindings');
 const {normalizePhaseFindings} = await load('checkpoints');
 const {writerPayload} = await load('persistPlan');
 const {disposeFindings} = await load('dispose');
-const {skepticalReturn} = await import(pathToFileURL(`${root}/workflows/test/helpers/verdicts.js`));
+const {skepticalReturn, skepticalAssessment} = await import(pathToFileURL(`${root}/workflows/test/helpers/verdicts.js`));
 const {shellSplit} = await import(pathToFileURL(`${root}/workflows/test/helpers/shellWords.js`));
 const {evaluateAdmission} = await load('admission');
 const request = file => ({file, line_start:90, line_end:90, anchor:'return process(value);', location_status:'confirmed', confirmed:true});
@@ -986,7 +1029,7 @@ const persist = async list => {
   if(packet.length!==4 || packet.some(s=>s.line_start!==7))throw Error('requests are not resolved');
   return {validations:[skepticalReturn('ISSUE','validator',{confidence:90,...(list===null?{}:{site_confirmations:list})}),skepticalReturn('CONSTITUENT','validator',{confidence:85})]};
  }},{findings:structuredClone(verified.findings)});
- const out=disposeFindings({...validated,findings:validated.findings.map(f=>evaluateAdmission({...f,challenge:'survived',skeptical_assessments:[...f.skeptical_assessments,skepticalReturn(f.id,'challenger')]}))});
+ const out=disposeFindings({...validated,findings:validated.findings.map(f=>evaluateAdmission({...f,challenge:'survived',skeptical_assessments:[...f.skeptical_assessments,skepticalAssessment(f.id,'challenger')]}))});
  return writerPayload({findings:out.findings,postReview:selectDelivery(out.findings,1,'all'),checkpoints:{challenge:validated}});
 };
 const all = await persist(confirmations);

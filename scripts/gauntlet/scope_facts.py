@@ -7,17 +7,12 @@ import re
 from typing import cast
 
 from gauntlet import proc
-from gauntlet.diff import AnnotatedDiff
+from gauntlet.diff import AnnotatedDiff, _decode_header_path
 from gauntlet.registry import EXCLUSION_CATEGORIES, SCOPE_FACT_KEYS, ScopeFacts
 from gauntlet.source_capture import SourceAdapter
 
-
-def attribute_name(key: str) -> str:
-    return key.replace("_", "-")
-
-
 ATTRIBUTES = tuple(
-    attribute_name(key) for key in SCOPE_FACT_KEYS if key.startswith("linguist_")
+    key.replace("_", "-") for key in SCOPE_FACT_KEYS if key.startswith("linguist_")
 )
 GENERATED_MARKER = re.compile(
     r"@generated\b|^\s*// Code generated .+ DO NOT EDIT\.\s*$|"
@@ -27,52 +22,52 @@ GENERATED_MARKER = re.compile(
 )
 
 
+def _attributes(
+    source: SourceAdapter, base: str | None, paths: list[str]
+) -> dict[str, dict[str, bool | None]]:
+    attributes: dict[str, dict[str, bool | None]] = {}
+    if not base:
+        return attributes
+    command = ["git", "-c", f"core.attributesFile={os.devnull}", "check-attr"]
+    command.extend([f"--source={base}", "-z", *ATTRIBUTES, "--", *paths])
+    try:
+        result = proc.run_bytes(command, cwd=str(source.root), timeout=10)
+    except (OSError, UnicodeError, proc.TimeoutExpired):
+        return attributes
+    if result.returncode == 0:
+        tokens = result.stdout.decode("utf-8", "surrogateescape").split("\0")
+        for i in range(0, len(tokens) - 3, 3):
+            file, attribute, value = tokens[i : i + 3]
+            attributes.setdefault(file, {})[attribute] = {
+                "set": True,
+                "true": True,
+                "unset": False,
+                "false": False,
+            }.get(value)
+    return attributes
+
+
+def _all_docs(states: set[bool | None]) -> bool | None:
+    if False in states:
+        return False
+    return True if states == {True} else None
+
+
 def repository_scope(
     source: SourceAdapter, indexed: AnnotatedDiff | None, files: list[str]
 ) -> dict[str, ScopeFacts]:
     capture = source.source_capture
     if capture is None or indexed is None:
         return {}
-    paths = sorted(set(files) | set(indexed.files))
+    changed = set(indexed.files)
+    for line in indexed.content.decode("utf-8", "surrogateescape").splitlines():
+        if line.startswith(("rename from ", "copy from ")):
+            changed.add(_decode_header_path(line.split(" from ", 1)[1]))
     base = capture.manifest.get("base")
-    attributes: dict[str, dict[str, bool | None]] = {}
-    try:
-        result = (
-            None
-            if not base
-            else proc.run_bytes(
-                [
-                    "git",
-                    "-c",
-                    f"core.attributesFile={os.devnull}",
-                    "check-attr",
-                    f"--source={base}",
-                    "-z",
-                    *ATTRIBUTES,
-                    "--",
-                    *paths,
-                ],
-                cwd=str(source.root),
-                timeout=10,
-            )
-        )
-        if result is not None and result.returncode == 0:
-            tokens = result.stdout.decode("utf-8", "surrogateescape").split("\0")
-            for i in range(0, len(tokens) - 3, 3):
-                file, attribute, value = tokens[i : i + 3]
-                attributes.setdefault(file, {})[attribute] = {
-                    "set": True,
-                    "true": True,
-                    "unset": False,
-                    "false": False,
-                }.get(value)
-    except (OSError, UnicodeError, proc.TimeoutExpired):
-        pass
-    documentation = [
-        attributes.get(file, {}).get("linguist-documentation") for file in indexed.files
-    ]
-    states = set(documentation)
-    all_docs = False if False in states else True if states == {True} else None
+    attributes = _attributes(source, base, sorted(set(files) | changed))
+    all_docs = _all_docs(
+        {attributes.get(file, {}).get("linguist-documentation") for file in changed}
+    )
     basenames = next(
         row["basenames"] for row in EXCLUSION_CATEGORIES if "basenames" in row
     )
@@ -95,18 +90,12 @@ def repository_scope(
         }
         # A path absent at base was chosen by this PR, so base patterns cannot classify it.
         known = bool(base) and old_lines is not None
-        values = {
-            key: attrs.get(attribute_name(key)) if known else None
-            for key in SCOPE_FACT_KEYS
-            if key.startswith("linguist_")
-        }
-        values.update(
-            {
-                key: derived.get(key) if base else None
-                for key in SCOPE_FACT_KEYS
-                if key not in values
-            }
-        )
+        values = {}
+        for key in SCOPE_FACT_KEYS:
+            if key.startswith("linguist_"):
+                values[key] = attrs.get(key.replace("_", "-")) if known else None
+            else:
+                values[key] = derived.get(key) if base else None
         facts[file] = cast(
             ScopeFacts,
             {"file": file, "snapshot_id": capture.receipt["manifest_sha256"], **values},
