@@ -434,11 +434,11 @@ export function dispatchReturnSchema(schema) {
 }
 const REDUCTION_REASON_SCHEMA = { type: 'string', enum: ['report_only', 'held_back', 'body_routed', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable'] };
 export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
-  skeptical_assessments: { type: 'array', items: { type: 'object', properties: {
-    ...VERDICT_RETURN_PROPERTIES,
+  skeptical_assessments: { type: 'array', items: closedDispatchRow({
+    ...SKEPTICAL_IDENTITY,
     status: { type: 'string', enum: ['complete', 'incomplete'] }, errors: { type: 'array', items: { type: 'string' } },
-    raw: { type: 'object', additionalProperties: true },
-  }, required: ['finding_id', 'stage'] } },
+    raw: { type: 'object', additionalProperties: true, $comment: 'repo-path-audit' },
+  }) },
   cite_results: { type: 'array', items: CITATION_RESULT_SCHEMA },
   reduction_detail: { type: 'array', items: closedDispatchRow({
     reason: REDUCTION_REASON_SCHEMA, stage: SKEPTICAL_IDENTITY.stage, verdict: VERDICT_RETURN_PROPERTIES.verdict,

@@ -2055,47 +2055,9 @@ class ChallengerReturn(TypedDict, total=False):
     scope_assessments: list[ChallengerReturnScopeAssessmentsItem]
 
 
-class SkepticalAssessmentsItemCitationsItem(TypedDict):
+class SkepticalAssessmentsItem(TypedDict):
     finding_id: str
     stage: SkepticalStage
-    request_id: str
-    role: _CitationRequestRole_Literal
-    snapshot_id: str
-    file: str
-    side: _CitationRequestSide_Literal
-    line_start: int
-    line_end: int
-    quote: str
-
-
-class SkepticalAssessmentsItemScopeAssessmentsItemCitationsItem(TypedDict):
-    finding_id: str
-    stage: SkepticalStage
-    request_id: str
-    role: _CitationRequestRole_Literal
-    snapshot_id: str
-    file: str
-    side: _CitationRequestSide_Literal
-    line_start: int
-    line_end: int
-    quote: str
-
-
-class SkepticalAssessmentsItemScopeAssessmentsItem(TypedDict):
-    finding_id: str
-    stage: SkepticalStage
-    category: ExclusionCategory
-    applicability: _ScopeAssessmentApplicability_Literal
-    citations: list[SkepticalAssessmentsItemScopeAssessmentsItemCitationsItem]
-
-
-class SkepticalAssessmentsItem(TypedDict, total=False):
-    finding_id: str
-    stage: SkepticalStage
-    verdict: Verdict
-    citations: list[SkepticalAssessmentsItemCitationsItem]
-    missing_evidence: str
-    scope_assessments: list[SkepticalAssessmentsItemScopeAssessmentsItem]
     status: _SkepticalAssessmentsItemStatus_Literal
     errors: list[str]
     raw: dict[str, object]

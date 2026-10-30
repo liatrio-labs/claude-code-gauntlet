@@ -21,7 +21,7 @@ import { DIMENSIONS as DIMENSION_ROWS } from '../src/registry.js';
 import { normalizeFindingPaths } from '../src/mergeFindings.js';
 import { normalizePhaseFindings } from '../src/checkpoints.js';
 import { evaluateAdmission, hasAdmission } from '../src/admission.js';
-import { skepticalReturn, sourceCapture } from './helpers/verdicts.js';
+import { skepticalAssessment, sourceCapture } from './helpers/verdicts.js';
 import { AGENT_COUNT_GUARD } from '../src/capacity.js';
 import { STAGE_COSTS } from '../src/registry.js';
 
@@ -58,8 +58,8 @@ test('either proven refutation survives reduction through every final artifact',
         suggested_fix_code: 'FORBIDDEN_PATCH', suggestion: 'FORBIDDEN_TASK',
         consolidation_key: 'stale', consolidation_primary: stage === 'validator',
         challenge: stage === 'validator' ? 'validator_terminal' : other === 'capped' ? 'capped' : other === 'failed' ? 'failed' : 'survived',
-        skeptical_assessments: [skepticalReturn('REFUTED', stage, { verdict: 'refuted' }),
-          ...(['real', 'needs_evidence'].includes(other) ? [skepticalReturn('REFUTED', stage === 'validator' ? 'challenger' : 'validator',
+        skeptical_assessments: [skepticalAssessment('REFUTED', stage, { verdict: 'refuted' }),
+          ...(['real', 'needs_evidence'].includes(other) ? [skepticalAssessment('REFUTED', stage === 'validator' ? 'challenger' : 'validator',
             { verdict: other, missing_evidence: 'caller input' })] : [])] });
       const survivor = makeFinding('SURVIVOR', { file: 'shared.txt', agent: 'security-reviewer' });
       const result = await runAndCapture(proofArgs({ limits: { deliveryCap: 1 },
@@ -92,7 +92,7 @@ test('validator terminal verdicts skip challenge and only filter survivors are c
   const findings = ['refuted', 'needs_evidence', 'real', 'threshold'].map((id) => makeFinding(id, {
     confidence: id === 'threshold' ? 1 : 90,
     delivery_group: { issue_key: 'stale', lead_id: 'threshold', finding_ids: ['threshold', 'real'] },
-    skeptical_assessments: [skepticalReturn(id, 'validator', { verdict: id === 'threshold' ? 'refuted' : id,
+    skeptical_assessments: [skepticalAssessment(id, 'validator', { verdict: id === 'threshold' ? 'refuted' : id,
       missing_evidence: 'input value' })],
   }));
   const result = await runAndCapture(proofArgs({ limits: { challengeCap: 1 },
@@ -110,10 +110,10 @@ test('validator terminal verdicts skip challenge and only filter survivors are c
 
 test('proof failures and needs evidence have asymmetric final outcomes', async () => {
   for (const verdict of ['refuted', 'real', 'needs_evidence']) for (const fault of ['unmatched', 'rejected', 'malformed', 'snapshot']) {
-    const assessment = skepticalReturn('F', 'validator', { verdict, missing_evidence: 'input value' });
-    if (fault === 'malformed') assessment.citations[0].quote = '';
-    if (fault === 'snapshot') assessment.citations[0].snapshot_id = 'wrong';
-    const f = makeFinding('F', { skeptical_assessments: [assessment, skepticalReturn('F', 'challenger')] });
+    const assessment = skepticalAssessment('F', 'validator', { verdict, missing_evidence: 'input value' });
+    if (fault === 'malformed') assessment.raw.citations[0].quote = '';
+    if (fault === 'snapshot') assessment.raw.citations[0].snapshot_id = 'wrong';
+    const f = makeFinding('F', { skeptical_assessments: [assessment, skepticalAssessment('F', 'challenger')] });
     const args = proofArgs({ checkpoints: { challenge: challengeOutput({ findings: [f, makeFinding('SIBLING')] }) } });
     let payload;
     const ctx = makeCtx(args, { onPersist: (value) => { payload = value; } });
@@ -134,19 +134,19 @@ test('proof failures and needs evidence have asymmetric final outcomes', async (
   const legacy = await runAndCapture(proofArgs({ checkpoints: { challenge: challengeOutput({ eliminated: [{ ...raw, eliminated_by: 'challenge:removed' }] }) } }));
   assert.equal(legacy.payload.findings[0].disposition, 'held_back');
   assert.deepEqual(legacy.payload.postReview, []);
-  const omitted = skepticalReturn('OMITTED');
-  delete omitted.verdict;
+  const omitted = skepticalAssessment('OMITTED');
+  delete omitted.raw.verdict;
   const omission = await runAndCapture(proofArgs({ checkpoints: { challenge: challengeOutput({ findings: [
-    makeFinding('OMITTED', { skeptical_assessments: [omitted, skepticalReturn('OMITTED', 'challenger')] }), makeFinding('SIBLING'),
+    makeFinding('OMITTED', { skeptical_assessments: [omitted, skepticalAssessment('OMITTED', 'challenger')] }), makeFinding('SIBLING'),
   ] }) } }));
   assert.deepEqual(omission.payload.postReview.map((f) => f.id), ['SIBLING']);
   assert.equal(omission.payload.findings.find((f) => f.id === 'OMITTED').disposition, 'held_back');
   const audit = await runAndCapture(proofArgs({ checkpoints: { challenge: challengeOutput({ findings: [
-    makeFinding('AUDIT', { skeptical_assessments: [skepticalReturn('AUDIT', 'validator', { verdict: 'refuted', trace_id: 'producer-field' })],
+    makeFinding('AUDIT', { skeptical_assessments: [skepticalAssessment('AUDIT', 'validator', { verdict: 'refuted', trace_id: 'producer-field' })],
       challenge: 'validator_terminal' }),
   ] }) } }));
   assert.equal(audit.payload.findings[0].disposition, 'held_back');
-  assert.equal(audit.payload.findings[0].skeptical_assessments[0].trace_id, 'producer-field');
+  assert.equal(audit.payload.findings[0].skeptical_assessments[0].raw.trace_id, 'producer-field');
   const auditedResume = await replayProducedCheckpoint(proofArgs(), audit.payload.checkpoints);
   assert.equal(auditedResume.payload.findings[0].disposition, 'held_back');
 });
@@ -155,7 +155,7 @@ test('cite outage preserves independent real findings and unrelated holdbacks', 
   const findings = [makeFinding('REAL'), makeFinding('BODY', { diff_validation: { in_diff: false } }),
     makeFinding('VERIFY', { origin: 'unknown' }), makeFinding('CHALLENGE', { challenge: 'failed' }),
     makeFinding('ADMISSION', { dimension: 'simplification', quality_basis: 'current_correctness' }),
-    makeFinding('REFUTED', { skeptical_assessments: [skepticalReturn('REFUTED', 'validator', { verdict: 'refuted' })], challenge: 'validator_terminal' })];
+    makeFinding('REFUTED', { skeptical_assessments: [skepticalAssessment('REFUTED', 'validator', { verdict: 'refuted' })], challenge: 'validator_terminal' })];
   const args = proofArgs({ checkpoints: { challenge: challengeOutput({ findings }) } });
   let payload;
   const ctx = makeCtx(args, { onPersist: (value) => { payload = value; } });
@@ -557,7 +557,7 @@ test('whole issue groups reach every artifact', async (t) => {
   assert.ok(uncapped.payload.postReview.findings.some((f) => f.id === 'UNRELATED'));
   });
   await t.test('removed primary leaves an independent issue', async () => {
-  const refutation = skepticalReturn('REMOVED','validator',{verdict:'refuted'});
+  const refutation = skepticalAssessment('REMOVED','validator',{verdict:'refuted'});
   const orphan = {findings:[
     member('REMOVED',{file:'orphan.txt',consolidation_key:'old',consolidation_primary:true,challenge:'validator_terminal',skeptical_assessments:[refutation]}),
     member('ORPHAN',{file:'orphan.txt',agent:'security-reviewer',consolidation_key:'old'}),
@@ -696,6 +696,18 @@ test('body findings rank with inline findings under the delivery cap', async () 
   ] });
   const { payload } = await runAndCapture(validArgs({ limits: { deliveryCap: 1 }, checkpoints: { challenge: raw } }));
   assert.deepEqual(payload.postReview.map((f) => f.id), ['BODY']);
+});
+
+test('cite checkpoint preserves the uninterrupted report, stats and methodology', async () => {
+  const args = proofArgs({ reviewMd: [{ path: 'src/REVIEW.md', text: 'Check source invariants.' }] });
+  const first = await runAndCapture(args);
+  assert.equal(first.out.ok, true);
+  assert.ok(first.ctx.calls.some((call) => call.label.startsWith('cite-')));
+  const resumed = await replayProducedCheckpoint(args, first.payload.checkpoints);
+  assert.deepEqual(resumed.ctx.calls.map((call) => call.label), ['artifact-writer']);
+  assert.equal(resumed.payload.report, first.payload.report);
+  assert.deepEqual(resumed.out.stats, first.out.stats);
+  assert.deepEqual(resumed.out.gaps, first.out.gaps);
 });
 
 test('challenge checkpoint owns upstream eliminations across resume', async () => {

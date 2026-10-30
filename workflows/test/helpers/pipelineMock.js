@@ -4,7 +4,7 @@ import { plannedArtifactPaths } from '../../src/outputPaths.js';
 import { AGENTS } from '../../src/registry.js';
 import { deltaEnvelope, sliceInputRecorder, dispatchedFindings } from './verifyDelta.js';
 import { evaluateAdmission } from '../../src/admission.js';
-import { skepticalReturn, citationEnvelope } from './verdicts.js';
+import { skepticalReturn, skepticalAssessment, citationEnvelope } from './verdicts.js';
 
 const DISCOVERY_AGENT_TYPES = new Set(AGENTS);
 
@@ -72,8 +72,8 @@ export function assertObjectRootSchema(schema) {
 export function makeFinding(id, over = {}) {
   const finding = evaluateAdmission({
     id,
-    skeptical_assessments: [skepticalReturn(Object.hasOwn(over, 'id') ? over.id : id),
-      skepticalReturn(Object.hasOwn(over, 'id') ? over.id : id, 'challenger')],
+    skeptical_assessments: [skepticalAssessment(Object.hasOwn(over, 'id') ? over.id : id),
+      skepticalAssessment(Object.hasOwn(over, 'id') ? over.id : id, 'challenger')],
     path_role: 'source', policy_subject: 'ordinary', validation: 'validated', challenge: 'survived',
     file: `${id}.js`,
     location_status: 'confirmed',

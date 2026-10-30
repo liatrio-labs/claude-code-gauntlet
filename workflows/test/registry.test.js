@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DIMENSIONS } from '../src/registry.js';
 import { WEB_ORIGIN_RE, resolvePolicy, modelFor } from '../src/registry.js';
-import { ANCHOR_LIMITS, SKEPTICAL_RETURN_SCHEMAS, SKEPTICAL_CONTRACTS, CITATION_REQUEST_SCHEMA, EXCLUSION_CATEGORIES, EXCLUSION_NEW_FACTS, PIPELINE_FINDING_FIELDS, SKEPTICAL_FINDING_PROPERTIES, FINDING_PATH_DESCRIPTORS, FINDING_REWRITE_EXEMPT_FIELDS, acceptSkepticalReturn } from '../src/registry.js';
+import { ANCHOR_LIMITS, SKEPTICAL_RETURN_SCHEMAS, SKEPTICAL_CONTRACTS, CITATION_REQUEST_SCHEMA, EXCLUSION_CATEGORIES, EXCLUSION_NEW_FACTS, PIPELINE_FINDING_FIELDS, SKEPTICAL_FINDING_PROPERTIES, FINDING_PATH_DESCRIPTORS, FINDING_REWRITE_EXEMPT_FIELDS, acceptSkepticalReturn, matchesDispatchSchema } from '../src/registry.js';
 import { agentSpecs, findingSchema, discover } from '../src/discover.js';
 import { normalizeFindingPaths } from '../src/mergeFindings.js';
 
@@ -34,6 +34,8 @@ test('skeptical descriptors derive verdict and scope variants', async () => {
       assert.equal(result.status, 'incomplete', JSON.stringify(extra));
       assert.deepEqual(result.raw, { ...entry, ...extra });
       assert.equal(result.finding_id, 'F');
+      assert.equal(matchesDispatchSchema(result, SKEPTICAL_FINDING_PROPERTIES.skeptical_assessments.items), true);
+      assert.equal(matchesDispatchSchema({ ...result, verdict: 'real' }, SKEPTICAL_FINDING_PROPERTIES.skeptical_assessments.items), false);
     }
     for (const extra of [{ file: '../escape' }, { file: '/escape' }, { file: 'C:/escape' }, { file: 'a\\b' },
       { snapshot_id: '' }, { side: 'other' }, { line_start: 0 }, { line_start: 1.5 }, { line_end: Number.MAX_SAFE_INTEGER + 1 },
@@ -73,12 +75,12 @@ test('skeptical descriptors derive verdict and scope variants', async () => {
     }
   }
   for (const name of ['skeptical_assessments', 'cite_results', 'scope_decisions']) assert.ok(FINDING_PATH_DESCRIPTORS[name]);
-  const proof = { finding_id: 'F', stage: 'validator', verdict: 'real', scope_assessments: [], citations: [request('validator')] };
+  const proof = acceptSkepticalReturn({ finding_id: 'F', stage: 'validator', verdict: 'real', scope_assessments: [], citations: [request('validator')] }, 'F', 'validator');
   const normalized = normalizeFindingPaths([{ id: 'F', file: 'src/service', skeptical_assessments: [proof] }], '/repo').valid[0];
   assert.deepEqual(normalized.skeptical_assessments, [proof]);
   const unsafe = normalizeFindingPaths([{ id: 'F', file: 'src/service', skeptical_assessments: [{ ...proof,
-    citations: [request('validator', { file: '../escape' })] }] }], '/repo');
-  assert.equal(unsafe.valid[0].skeptical_assessments[0].citations[0].file, '../escape');
+    raw: { ...proof.raw, citations: [request('validator', { file: '../escape' })] } }] }], '/repo');
+  assert.equal(unsafe.valid[0].skeptical_assessments[0].raw.citations[0].file, '../escape');
   assert.ok(unsafe.warnings.length);
   const forged = Object.fromEntries(owned.map((key) => [key, 'forged']));
   const discovered = await discover({ parallel: async (thunks) => Promise.all(thunks.map((fn) => fn())),

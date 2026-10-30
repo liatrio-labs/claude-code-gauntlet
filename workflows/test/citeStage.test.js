@@ -1,39 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { citeStage } from '../src/citeStage.js';
-import { CITE_ROLES_PER_STAGE, citeChecksum, citeSource, collectCitations, planCiteBatches } from '../src/citeWire.js';
+import { CITE_ROLES_PER_STAGE, citeChecksum, collectCitations, planCiteBatches } from '../src/citeWire.js';
 import { buildResumeCheckpoints, checkpointShapeErrors, normalizePhaseFindings, slimPersistedCheckpoints } from '../src/checkpoints.js';
-import { fnv1a32 } from '../src/wire.js';
+import { skepticalAssessment, sourceCapture, citationEnvelope as citeEnvelope } from './helpers/verdicts.js';
 import { stageCtx } from './helpers/stageFixtures.js';
 
-export function citeInput() {
-  const capture = { version: 1, nonce: 'run', head: 'a'.repeat(40), base: 'b'.repeat(40),
-    diff_sha256: 'c'.repeat(64), manifest_sha256: 'd'.repeat(64), target_kind: 'branch',
-    copied_files: 0, copied_bytes: 0, failures: [] };
-  return { nonce: 'run', headShaShort: 'aaaaaaaa', outputDir: '/out', limits: { validateBatch: 10 },
-    verify: { targetKind: 'branch', sourceCapture: capture, diffPath: '/out/diff', baseBranch: 'main' },
-    findings: ['F', 'G'].map((id) => ({ id, file: 'source', title: 'Defect', description: 'Source evidence',
-      severity: 'high', confidence: 90, skeptical_assessments: [{ finding_id: id, stage: 'validator', verdict: 'refuted',
-        citations: [{ finding_id: id, stage: 'validator', request_id: 'claim', role: 'claim', snapshot_id: capture.manifest_sha256,
-          file: 'source', side: 'head', line_start: 1, line_end: 1, quote: 'return "café 😀 value";' }], scope_assessments: [] }] })) };
-}
+export { citeEnvelope };
 
-export function citeEnvelope(prompt, inp, status = () => 'matched') {
-  const token = prompt.match(/--input-inline '([^']*)'/)[1];
-  const decode = (value) => typeof value === 'string' ? decodeURIComponent(value)
-    : Array.isArray(value) ? value.map(decode) : value && typeof value === 'object'
-      ? Object.fromEntries(Object.entries(value).map(([k, v]) => [decodeURIComponent(k), decode(v)])) : value;
-  const document = decode(JSON.parse(token));
-  const nonce = prompt.match(/--nonce (\S+)/)[1];
-  const batch = prompt.match(/--cite-batch (\S+)/)[1];
-  const attempt = Number(prompt.match(/--cite-attempt (\d+)/)[1]);
-  const rows = document.requests.map((r) => ({ id: r.id, request: r.request, status: status(r),
-    detail: 'explicit_source_range', source: citeSource(inp.verify.sourceCapture) }));
-  return { status: 'ok', receipt: { nonce, sha: inp.headShaShort, base_branch: 'main',
-    diff_source: { path: inp.verify.diffPath, read: true }, batch_id: batch, attempt,
-    n_in: document.requests.length, inline_checksum: fnv1a32(token), input_checksum: citeChecksum(document),
-    deltas_checksum: citeChecksum(rows), record_proofs: document.requests.map((r) => ({ id: r.id, checksum: citeChecksum(r) })) },
-  result: { citations: rows } };
+export function citeInput() {
+  return { nonce: 'run', headShaShort: 'aaaaaaaa', outputDir: '/out', limits: { validateBatch: 10 },
+    verify: { targetKind: 'branch', sourceCapture: { ...sourceCapture }, diffPath: '/out/diff', baseBranch: 'main' },
+    findings: ['F', 'G'].map((id) => ({ id, file: 'source', title: 'Defect', description: 'Source evidence',
+      severity: 'high', confidence: 90, skeptical_assessments: [skepticalAssessment(id, 'validator', { verdict: 'refuted',
+        citations: [{ finding_id: id, stage: 'validator', request_id: 'claim', role: 'claim', snapshot_id: sourceCapture.manifest_sha256,
+          file: 'source', side: 'head', line_start: 1, line_end: 1, quote: 'return "café 😀 value";' }], scope_assessments: [] })] })) };
 }
 
 test('cite uses remaining run budget and leaves excess proof unavailable', async () => {
@@ -77,7 +58,7 @@ test('cite successes persist and infrastructure retries are bounded across resum
   // The reservation captured before a lost response still consumes that attempt.
   assert.equal((await citeStage(fail, reserved)).cite_ledger.batches[0].attempts, 2);
   const changed = JSON.parse(JSON.stringify(first));
-  changed.findings[1].skeptical_assessments[0].citations[0].quote = 'return changed_value;';
+  changed.findings[1].skeptical_assessments[0].raw.citations[0].quote = 'return changed_value;';
   const repairedCtx = stageCtx({ reply: (p) => citeEnvelope(p, changed) });
   const repaired = await citeStage(repairedCtx, changed);
   assert.equal(repairedCtx.calls.length, 1);
@@ -124,7 +105,7 @@ for (const field of ['input_checksum', 'inline_checksum', 'n_in']) test(`cite re
 
 test('cite preserves rejected audit paths, legacy packets and upstream records', async () => {
   const inp = citeInput();
-  inp.findings[0].skeptical_assessments[0].citations[0].file = '../source';
+  inp.findings[0].skeptical_assessments[0].raw.citations[0].file = '../source';
   inp.unverified = [inp.findings.pop()];
   inp.eliminated = [{ ...inp.unverified[0], id: 'threshold', eliminated_by: 'filter' }];
   const ctx = stageCtx({ reply: (p) => citeEnvelope(p, inp) });
@@ -136,7 +117,7 @@ test('cite preserves rejected audit paths, legacy packets and upstream records',
   assert.equal(out.cite_ledger.entries.some((e) => JSON.parse(e.key).record.finding_id === 'threshold'), false);
   const cp = JSON.parse(JSON.stringify(buildResumeCheckpoints({ cite: out, challenge: inp })));
   normalizePhaseFindings('cite', cp.phases.cite, true, { repoRoot: '/repo', verify: inp.verify });
-  assert.equal(cp.phases.cite.findings[0].skeptical_assessments[0].citations[0].file, '../source');
+  assert.equal(cp.phases.cite.findings[0].skeptical_assessments[0].raw.citations[0].file, '../source');
   assert.equal(cp.phases.cite.findings[0].cite_results[0].request.file, '../source');
   cp.phases.cite.unverified[0].cite_results[0].source.head = 'other';
   normalizePhaseFindings('cite', cp.phases.cite, true, { repoRoot: '/repo', verify: inp.verify });
@@ -162,7 +143,7 @@ test('cite terminal requests reuse proof while oversize and changed snapshots ho
   const cached = await citeStage({ agent: () => assert.fail('terminal result retried') }, JSON.parse(JSON.stringify(first)));
   assert.deepEqual(cached.findings.map((f) => f.cite_results[0].status), ['unmatched', 'rejected']);
   const huge = citeInput();
-  huge.findings[0].skeptical_assessments[0].citations[0].file = 'é'.repeat(10000);
+  huge.findings[0].skeptical_assessments[0].raw.citations[0].file = 'é'.repeat(10000);
   const smallCtx = stageCtx({ reply: (p) => citeEnvelope(p, huge) });
   const partial = await citeStage(smallCtx, huge);
   assert.equal(smallCtx.calls.length, 1);
@@ -179,15 +160,15 @@ test('cite terminal requests reuse proof while oversize and changed snapshots ho
 
 test('cite preserves assessment identities and every requested proof role', async () => {
   const inp = citeInput();
-  const validator = inp.findings[0].skeptical_assessments[0];
+  const validator = inp.findings[0].skeptical_assessments[0].raw;
   const claim = validator.citations[0];
   validator.scope_assessments = [{ stage: 'validator', category: 'intentional', citations: [
     { ...claim, request_id: 'rule', role: 'rule' },
     { ...claim, request_id: 'applies', role: 'applicability' },
     { ...claim, request_id: 'exception', role: 'exception' },
   ] }];
-  inp.findings[0].skeptical_assessments.push({ ...validator, stage: 'challenger', scope_assessments: [],
-    citations: [{ ...claim, stage: 'challenger' }] });
+  inp.findings[0].skeptical_assessments.push(skepticalAssessment('F', 'challenger', {
+    citations: [{ ...claim, stage: 'challenger' }] }));
   const ctx = stageCtx({ reply: (p) => citeEnvelope(p, inp, (r) => r.request.role === 'applicability' ? 'unmatched' : 'matched') });
   const out = await citeStage(ctx, inp);
   assert.equal(ctx.calls.length, 1);
@@ -212,8 +193,8 @@ test('cite holds bounded or corrupt resume dependents while retaining successful
     assert.equal(held.findings[1].cite_results[0].detail, 'corrupt_attempt_identity');
   }
   const capped = citeInput();
-  const q = capped.findings[0].skeptical_assessments[0].citations[0];
-  capped.findings[0].skeptical_assessments[0].citations = Array.from({ length: CITE_ROLES_PER_STAGE + 1 }, (_, i) => ({ ...q, request_id: String(i) }));
+  const q = capped.findings[0].skeptical_assessments[0].raw.citations[0];
+  capped.findings[0].skeptical_assessments[0].raw.citations = Array.from({ length: CITE_ROLES_PER_STAGE + 1 }, (_, i) => ({ ...q, request_id: String(i) }));
   const valid = stageCtx({ reply: (p) => citeEnvelope(p, capped) });
   const out = await citeStage(valid, capped);
   assert.equal(valid.calls.length, 1);
@@ -232,7 +213,7 @@ test('cite malformed proof entries hold only their owners', async () => {
   } });
   const out = await citeStage(ctx, inp);
   assert.deepEqual(out.findings.map((f) => f.cite_results[0].status), ['unavailable', 'matched']);
-  out.findings[0].cite_results = [null, { status: 'matched', request: inp.findings[0].skeptical_assessments[0].citations[0] }];
+  out.findings[0].cite_results = [null, { status: 'matched', request: inp.findings[0].skeptical_assessments[0].raw.citations[0] }];
   out.unverified = [null];
   normalizePhaseFindings('cite', out, true, { repoRoot: '/repo', verify: inp.verify });
   assert.equal(out.findings[0].cite_results[0], null);

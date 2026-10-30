@@ -27,7 +27,7 @@ Actively search for reasons the claim is wrong. Look for:
 
 Pull surrounding context via Read, Grep, Glob, and LSP if needed to assess the claim. Prefer LSP `findReferences` to trace call chains from entry points to the finding location, and `goToDefinition` to verify what a symbol resolves to. Fall back to Grep if LSP is unavailable. You have codebase access — use it.
 
-Independently prove the actual claim from code. For a runtime failure, establish a current trigger and path to the location; for a static defect, inspect evidence appropriate to that claim. Do not lower confidence merely because upstream evidence is withheld.
+Independently prove the actual claim from code. For a runtime failure, establish a current trigger and path to the location; for a static defect, inspect evidence appropriate to that claim.
 
 <!-- Canonical source: references/complete-read-contract.md — keep all agent copies in sync -->
 ## Reading a file completely

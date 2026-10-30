@@ -213,7 +213,7 @@ export async function challengeStage(ctx, input) {
   const findings = inp.findings || [];
   const cap = effectiveChallengeCap(inp.limits || {}, findings.length);
   const validatorTerminal = (f) => f.skeptical_assessments?.some((a) => a.stage === 'validator'
-    && ['refuted', 'needs_evidence'].includes((a.raw ?? a).verdict));
+    && ['refuted', 'needs_evidence'].includes(a.raw?.verdict));
   const actionable = (f) => !validatorTerminal(f) && hasAdmission(f)
     && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
   const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f,

@@ -31,7 +31,7 @@ export function collectCitations(findings) {
       }
     };
     for (const assessment of Array.isArray(f.skeptical_assessments) ? f.skeptical_assessments : []) {
-      const entry = assessment?.raw ?? assessment;
+      const entry = assessment?.raw;
       const stage = assessment?.stage;
       add(entry, stage);
       for (const scope of Array.isArray(entry?.scope_assessments) ? entry.scope_assessments : []) add(scope, stage);

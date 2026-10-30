@@ -874,11 +874,11 @@ function dispatchReturnSchema(schema) {
 }
 const REDUCTION_REASON_SCHEMA = { type: 'string', enum: ['report_only', 'held_back', 'body_routed', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable'] };
 const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
-  skeptical_assessments: { type: 'array', items: { type: 'object', properties: {
-    ...VERDICT_RETURN_PROPERTIES,
+  skeptical_assessments: { type: 'array', items: closedDispatchRow({
+    ...SKEPTICAL_IDENTITY,
     status: { type: 'string', enum: ['complete', 'incomplete'] }, errors: { type: 'array', items: { type: 'string' } },
-    raw: { type: 'object', additionalProperties: true },
-  }, required: ['finding_id', 'stage'] } },
+    raw: { type: 'object', additionalProperties: true, $comment: 'repo-path-audit' },
+  }) },
   cite_results: { type: 'array', items: CITATION_RESULT_SCHEMA },
   reduction_detail: { type: 'array', items: closedDispatchRow({
     reason: REDUCTION_REASON_SCHEMA, stage: SKEPTICAL_IDENTITY.stage, verdict: VERDICT_RETURN_PROPERTIES.verdict,
@@ -2054,6 +2054,62 @@ function stripTraceFields(value) {
   for (const key of ['trace_id', 'discovery_agent', 'discovery_dimension']) delete value[key];
   for (const [key, child] of Object.entries(value)) if (!Object.hasOwn(SKEPTICAL_FINDING_PROPERTIES, key)) stripTraceFields(child);
 }
+// --- citeWire.js ---
+const citeChecksum = (value) => fnv1a32(JSON.stringify(value, null, 2) ?? 'undefined');
+const citeSource = (capture = {}) => ({ snapshot_id: capture.manifest_sha256 || '',
+  target_kind: capture.target_kind || '', head: capture.head || '', base: capture.base || '',
+  diff_sha256: capture.diff_sha256 || '', verifier_version: CITE_VERIFIER_VERSION });
+const citeRecordKey = (record, source) => JSON.stringify({ record, source });
+function reusableCiteResult(entry, record, source) {
+  const result = entry?.result;
+  return result && (['matched', 'unmatched', 'rejected'].includes(result.status)
+    || (result.status === 'unavailable' && ['oversize', 'request_cap'].includes(result.detail)))
+    && typeof result.detail === 'string'
+    && citeChecksum(result.request) === citeChecksum(record?.request)
+    && citeChecksum(result.source) === citeChecksum(source)
+    && (result.status !== 'matched' || (matchesDispatchSchema(record?.request, CITATION_REQUEST_SCHEMA)
+      && record.request.snapshot_id === source.snapshot_id));
+}
+const CITE_ROLES_PER_STAGE = CITATION_REQUEST_PROPERTIES.role.enum.length
+  * (1 + EXCLUSION_CATEGORIES.filter((row) => row.stage === 'skeptical').length);
+function collectCitations(findings) {
+  return findings.flatMap((f) => {
+    const checks = [];
+    const add = (entry, stage) => {
+      for (const q of Array.isArray(entry?.citations) ? entry.citations : []) {
+        const record = { finding_id: f.id, stage, request: q };
+        checks.push({ id: citeChecksum(record), ...record });
+      }
+    };
+    for (const assessment of Array.isArray(f.skeptical_assessments) ? f.skeptical_assessments : []) {
+      const entry = assessment?.raw;
+      const stage = assessment?.stage;
+      add(entry, stage);
+      for (const scope of Array.isArray(entry?.scope_assessments) ? entry.scope_assessments : []) add(scope, stage);
+    }
+    for (const scope of Array.isArray(f.scope_decisions) ? f.scope_decisions : []) add(scope, scope?.stage);
+    return checks;
+  });
+}
+const citeDocument = (records, baseBranch) => ({ requests: records, base_branch: baseBranch });
+function planCiteBatches(records, budget, baseBranch, platform) {
+  const batches = [];
+  const oversize = [];
+  const cost = (rows) => {
+    const token = encodeSliceInline(citeDocument(rows, baseBranch));
+    return token.length + (platform === 'windows' ? (token.match(/["\\]/g) || []).length : 0);
+  };
+  let batch = [];
+  for (const record of records) {
+    if (cost([record]) > budget) { oversize.push(record); continue; }
+    if (batch.length && cost([...batch, record]) > budget) {
+      batches.push(batch); batch = [];
+    }
+    batch.push(record);
+  }
+  if (batch.length) batches.push(batch);
+  return { batches, oversize };
+}
 // --- mergeFindings.js ---
 const KNOWN_DIMENSIONS = new Set(DIMENSIONS.map((d) => d.dimension));
 const REQUIRED_FIELDS = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence'];
@@ -2111,11 +2167,7 @@ function normalizeFindingPaths(findings, repoRoot, decisions = []) {
     };
     const confine = (value, schema, field) => {
       if (schema === SKEPTICAL_FINDING_PROPERTIES.skeptical_assessments.items) {
-        const raw = value?.raw ?? value;
-        for (const request of [...(Array.isArray(raw?.citations) ? raw.citations : []),
-          ...(Array.isArray(raw?.scope_assessments) ? raw.scope_assessments.flatMap((scope) => Array.isArray(scope?.citations) ? scope.citations : []) : [])]) {
-          confine(request, CITATION_REQUEST_SCHEMA, field);
-        }
+        for (const { request } of collectCitations([{ skeptical_assessments: [value] }])) confine(request, CITATION_REQUEST_SCHEMA, field);
         return value;
       }
       if (schema === CITATION_REQUEST_SCHEMA || schema === CITATION_RESULT_SCHEMA) {
@@ -2597,6 +2649,7 @@ function discoverPrompt(inp, spec) {
   return `${base}${spec.promptExtra ? ` ${spec.promptExtra}` : ''}${resultContract}${audit}`;
 }
 // --- vetting.js ---
+const CHALLENGE_REASON_CODES = { capped: 'challenge_cap', incomplete: 'held_back', failed: 'challenge_failed' };
 const UNVERIFIED_REASONS = {
   validation: 'the validator did not score this finding, so it was not skeptically validated',
   verify: 'the verify slice could not be proven against the dispatched document',
@@ -3823,62 +3876,6 @@ function rankFindings(findings) {
     return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || ka[3] - kb[3];
   });
 }
-// --- citeWire.js ---
-const citeChecksum = (value) => fnv1a32(JSON.stringify(value, null, 2) ?? 'undefined');
-const citeSource = (capture = {}) => ({ snapshot_id: capture.manifest_sha256 || '',
-  target_kind: capture.target_kind || '', head: capture.head || '', base: capture.base || '',
-  diff_sha256: capture.diff_sha256 || '', verifier_version: CITE_VERIFIER_VERSION });
-const citeRecordKey = (record, source) => JSON.stringify({ record, source });
-function reusableCiteResult(entry, record, source) {
-  const result = entry?.result;
-  return result && (['matched', 'unmatched', 'rejected'].includes(result.status)
-    || (result.status === 'unavailable' && ['oversize', 'request_cap'].includes(result.detail)))
-    && typeof result.detail === 'string'
-    && citeChecksum(result.request) === citeChecksum(record?.request)
-    && citeChecksum(result.source) === citeChecksum(source)
-    && (result.status !== 'matched' || (matchesDispatchSchema(record?.request, CITATION_REQUEST_SCHEMA)
-      && record.request.snapshot_id === source.snapshot_id));
-}
-const CITE_ROLES_PER_STAGE = CITATION_REQUEST_PROPERTIES.role.enum.length
-  * (1 + EXCLUSION_CATEGORIES.filter((row) => row.stage === 'skeptical').length);
-function collectCitations(findings) {
-  return findings.flatMap((f) => {
-    const checks = [];
-    const add = (entry, stage) => {
-      for (const q of Array.isArray(entry?.citations) ? entry.citations : []) {
-        const record = { finding_id: f.id, stage, request: q };
-        checks.push({ id: citeChecksum(record), ...record });
-      }
-    };
-    for (const assessment of Array.isArray(f.skeptical_assessments) ? f.skeptical_assessments : []) {
-      const entry = assessment?.raw ?? assessment;
-      const stage = assessment?.stage;
-      add(entry, stage);
-      for (const scope of Array.isArray(entry?.scope_assessments) ? entry.scope_assessments : []) add(scope, stage);
-    }
-    for (const scope of Array.isArray(f.scope_decisions) ? f.scope_decisions : []) add(scope, scope?.stage);
-    return checks;
-  });
-}
-const citeDocument = (records, baseBranch) => ({ requests: records, base_branch: baseBranch });
-function planCiteBatches(records, budget, baseBranch, platform) {
-  const batches = [];
-  const oversize = [];
-  const cost = (rows) => {
-    const token = encodeSliceInline(citeDocument(rows, baseBranch));
-    return token.length + (platform === 'windows' ? (token.match(/["\\]/g) || []).length : 0);
-  };
-  let batch = [];
-  for (const record of records) {
-    if (cost([record]) > budget) { oversize.push(record); continue; }
-    if (batch.length && cost([...batch, record]) > budget) {
-      batches.push(batch); batch = [];
-    }
-    batch.push(record);
-  }
-  if (batch.length) batches.push(batch);
-  return { batches, oversize };
-}
 // --- dispose.js ---
 function skepticalOutcome(finding) {
   const reasons = [];
@@ -3892,7 +3889,7 @@ function skepticalOutcome(finding) {
       }
       continue;
     }
-    const raw = entries[0].raw ?? entries[0];
+    const raw = entries[0].raw ?? {};
     const assessment = stage === 'validator' ? validatorAssessment(finding, raw) : acceptSkepticalReturn(raw, finding.id, stage);
     if (raw.verdict === 'needs_evidence') reasons.push({ reason: 'held_back', stage, missing_evidence: raw.missing_evidence });
     const requests = Array.isArray(raw.citations) ? raw.citations : [];
@@ -3934,9 +3931,7 @@ function disposeFindings(challenged) {
       continue;
     }
     const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
-    if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
-      reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : finding.challenge === 'incomplete' ? 'held_back' : 'challenge_failed');
-    }
+    if (Object.hasOwn(CHALLENGE_REASON_CODES, finding.challenge)) reasons.push(CHALLENGE_REASON_CODES[finding.challenge]);
     let disposition = 'body';
     const admitted = hasAdmission(finding);
     const valueTerminal = admitted && finding.admission.status === 'report_only' && finding.challenge === 'admission_terminal';
@@ -5602,7 +5597,7 @@ async function challengeStage(ctx, input) {
   const findings = inp.findings || [];
   const cap = effectiveChallengeCap(inp.limits || {}, findings.length);
   const validatorTerminal = (f) => f.skeptical_assessments?.some((a) => a.stage === 'validator'
-    && ['refuted', 'needs_evidence'].includes((a.raw ?? a).verdict));
+    && ['refuted', 'needs_evidence'].includes(a.raw?.verdict));
   const actionable = (f) => !validatorTerminal(f) && hasAdmission(f)
     && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
   const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f,
@@ -8143,6 +8138,10 @@ async function runWith(ctx, rawArgs) {
       python: A.python, repoRoot: A.repoRoot, outputDir: A.outputDir, pluginRoot: A.pluginRoot,
       verify: { ...(A.verify || {}), baseBranch: A.baseBranch, diffPath: A.diffPath },
     });
+    if (replayed && name === 'cite') for (const key of ['cite_planned', 'cite_attempts', 'cite_oversize']) {
+      const prior = checkpoints.cite.stats?.[key] || 0;
+      out.stats[key] = key === 'cite_attempts' ? prior + out.stats[key] : Math.max(prior, out.stats[key]);
+    }
     let verifyRequests;
     if (name === 'verify') {
       verifyRequests = out.findings || [];
@@ -8160,7 +8159,7 @@ async function runWith(ctx, rawArgs) {
         ...(name === 'merge' ? { decisions: [...discoveryDecisions, ...rejected] } : rejected.length ? { decisions: rejected } : {}),
         ...(name === 'filter' || name === 'challenge' ? { decisions: [
           ...rejected, ...eliminationDecisions(out),
-          ...(name === 'challenge' ? (out.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f, f.challenge === 'capped' ? 'challenge_cap' : f.challenge === 'incomplete' ? 'held_back' : 'challenge_failed', f.challenge, [], 'held_back')) : []),
+          ...(name === 'challenge' ? (out.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f, CHALLENGE_REASON_CODES[f.challenge] || 'challenge_failed', f.challenge, [], 'held_back')) : []),
           ...(name === 'challenge' ? (out.findings || []).filter((f) => f.trace_id && f.challenge === 'admission_terminal').map((f) => {
             const status = f.admission?.status === 'report_only' ? 'report_only' : 'held_back';
             return traceDecision(f, status, 'intentional admission-terminal challenge skip', [], status,
