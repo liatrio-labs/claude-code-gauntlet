@@ -39,7 +39,7 @@ test('cite successes persist and infrastructure retries are bounded across resum
     assert.equal(batch.state, 'uncertain');
     assert.equal(batch.attempts, ctx.calls.length);
     reserved = JSON.parse(JSON.stringify(inp));
-    return citeEnvelope(prompt, inp, (r) => r.finding_id === 'F' ? 'matched' : 'unavailable');
+    return citeEnvelope(prompt, inp, (r) => r.finding_id === 'F' && ctx.calls.length === 1 ? 'matched' : 'unavailable');
   } });
   const first = await citeStage(ctx, inp);
   assert.equal(ctx.calls.length, 2);
@@ -47,6 +47,7 @@ test('cite successes persist and infrastructure retries are bounded across resum
   assert.deepEqual(first.findings.map((f) => f.cite_results[0].status), ['matched', 'unavailable']);
   assert.equal(first.stats.cite_planned, 2);
   assert.equal(first.stats.cite_attempts, 2);
+  assert.equal(first.cite_ledger.entries[0].result.status, 'matched');
   const signed = slimPersistedCheckpoints({ challenge: { ...inp, validation_audit: { bounded: true } }, cite: first }, ['challenge', 'cite'], 'cite');
   assert.equal(checkpointShapeErrors(signed.phases).length, 0);
   assert.deepEqual(signed.phases.cite.validation_audit, { bounded: true });

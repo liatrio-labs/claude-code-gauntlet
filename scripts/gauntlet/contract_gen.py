@@ -111,7 +111,6 @@ def _run_node(node_src: str, repo_root: str) -> proc.CompletedProcess[str]:
 _REGISTRY_MODULES = (
     "registry",
     "knobs",
-    "applyValidations",
     "injection",
     "outputPaths",
     "verifyWire",
@@ -145,7 +144,6 @@ _REGISTRY_FIELDS = (
     "exclusionCategories: m.EXCLUSION_CATEGORIES",
     "exclusionStages: m.EXCLUSION_STAGES",
     "exclusionProofs: m.EXCLUSION_PROOFS",
-    "exclusionFactDescriptors: m.EXCLUSION_FACT_DESCRIPTORS",
     "anchorLimits: m.ANCHOR_LIMITS",
     "locationRights: m.LOCATION_RIGHTS",
     "locationStatuses: m.LOCATION_STATUSES",
@@ -166,7 +164,7 @@ _REGISTRY_FIELDS = (
     "brand: {mark: m.BRAND_MARK, name: m.BRAND_NAME}",
     "severityEmoji: m.SEVERITY_EMOJI",
     "severityOrder: m.SEVERITY_ORDER",
-    "reachability: v.REACHABILITY_VALUES",
+    "reachability: m.REACHABILITY_VALUES",
     "deltaKeys: w.DELTA_KEYS",
     "verifySliceFields: w.VERIFY_SLICE_FIELDS",
     "fixMaxLines: f.FIX_MAX_LINES",
@@ -204,7 +202,7 @@ def load_registry(repo_root: str) -> Mapping[str, Any]:
         + ", ".join(
             f"import('./workflows/src/{name}.js')" for name in _REGISTRY_MODULES
         )
-        + "]).then(([m, a, v, f, o, w, d, c]) => console.log(JSON.stringify({"
+        + "]).then(([m, a, f, o, w, d, c]) => console.log(JSON.stringify({"
         + fields
         + "})))"
     )
@@ -836,7 +834,6 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "CITATION_REQUEST_SCHEMA": identity["citationRequestSchema"],
         "CITE_VERIFIER_VERSION": identity["citeVerifierVersion"],
         "EXCLUSION_CATEGORIES": identity["exclusionCategories"],
-        "EXCLUSION_FACT_DESCRIPTORS": identity["exclusionFactDescriptors"],
         "BRAND_MARK": identity["brand"]["mark"],
         "BRAND_NAME": identity["brand"]["name"],
         "SEVERITY_EMOJI": identity["severityEmoji"],
