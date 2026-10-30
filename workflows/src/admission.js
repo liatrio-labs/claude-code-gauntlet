@@ -9,12 +9,12 @@ const hasValue = (value) => typeof value === 'string' && value.trim().length > 0
 export function admissionRequests(finding) {
   const requests = {};
   if (canonicalRange(finding)) requests.primary = { file: finding.file, line_start: finding.line_start, line_end: finding.line_end };
-  for (const [name, descriptor] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
+  for (const [name, kind] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
     const value = finding.resolved_references?.[name];
-    const refs = descriptor.array ? value : [value];
+    const refs = kind !== 'reference' ? value : [value];
     for (const [index, ref] of (Array.isArray(refs) ? refs : []).entries()) {
-      if (descriptor.search ? ref?.available === true : resolvedReference(ref)) {
-        requests[descriptor.array ? `${name}:${index}` : name] = ref;
+      if (kind === 'search_paths' ? ref?.available === true : resolvedReference(ref)) {
+        requests[kind !== 'reference' ? `${name}:${index}` : name] = ref;
       }
     }
   }
@@ -42,8 +42,10 @@ const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension',
   ...DIMENSIONS.flatMap((row) => row.admission ? [row.admission.field,
     ...Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || [])])] : [])])];
 function admissionProof(finding, fields) {
-  return fnv1a32(JSON.stringify([...ADMISSION_INPUT_FIELDS, ...fields].map((key) =>
-    ADMISSION_PRESENCE_FIELDS.has(key) ? hasValue(finding[key]) : finding[key] ?? null)));
+  const verdict = { ...finding.admission };
+  delete verdict.input_proof;
+  return fnv1a32(JSON.stringify({ verdict, inputs: [...ADMISSION_INPUT_FIELDS, ...fields].map((key) =>
+    ADMISSION_PRESENCE_FIELDS.has(key) ? hasValue(finding[key]) : finding[key] ?? null) }));
 }
 
 // Delivery rewrites host paths in prose; only its presence is a policy input.
@@ -70,16 +72,27 @@ export function hasAdmission(finding) {
 function factAssessment(finding, predicate) {
   const ref = finding.resolved_references;
   const facts = {
-    pr_owned_test: () => prOwnedTest(finding) ? null : finding.diff_validation?.in_diff == null ? 'held_back' : 'report_only',
-    criticality: () => typeof finding.criticality !== 'number' ? 'report_only' : finding.criticality >= 8 ? null : 'report_only',
-    searches: () => !Array.isArray(ref?.searched_paths) || ref.searched_paths.length === 0
-      || ref.searched_paths.some((path) => path.available !== true) || !Array.isArray(ref?.candidate_tests)
-      || ref.candidate_tests.some((test) => !resolvedReference(test))
-      || !Array.isArray(finding.candidate_tests) || finding.candidate_tests.some((test) => !hasValue(test?.input) || !hasValue(test?.assertion))
-      || finding.reference_diagnostics?.length ? 'held_back' : null,
+    pr_owned_test: () => {
+      if (prOwnedTest(finding)) return null;
+      return finding.diff_validation?.in_diff == null ? 'held_back' : 'report_only';
+    },
+    criticality: () => typeof finding.criticality === 'number' && finding.criticality >= 8 ? null : 'report_only',
+    searches: () => {
+      const incomplete = !Array.isArray(ref?.searched_paths) || ref.searched_paths.length === 0
+        || ref.searched_paths.some((path) => path.available !== true) || !Array.isArray(ref?.candidate_tests)
+        || ref.candidate_tests.some((test) => !resolvedReference(test))
+        || !Array.isArray(finding.candidate_tests) || finding.candidate_tests.some((test) => !hasValue(test?.input) || !hasValue(test?.assertion))
+        || finding.reference_diagnostics?.length;
+      return incomplete ? 'held_back' : null;
+    },
     duplicate_of: () => referenceResult(finding, 'duplicate_of'),
     precedent: () => referenceResult(finding, 'precedent'),
-    precedent_not_added: () => referenceResult(finding, 'precedent') || (ref?.precedent?.file_added == null ? 'held_back' : ref.precedent.file_added ? 'report_only' : null),
+    precedent_not_added: () => {
+      const result = referenceResult(finding, 'precedent');
+      if (result) return result;
+      if (ref.precedent.file_added == null) return 'held_back';
+      return ref.precedent.file_added ? 'report_only' : null;
+    },
     equivalent: () => hasValue(finding.suggestion) || hasValue(finding.suggested_fix_code) ? null : 'report_only',
     reachability: () => finding.reachability === 'current' ? null : 'held_back',
     location: () => canonicalRange(finding) ? null : 'held_back',
@@ -128,8 +141,9 @@ export function evaluateAdmission(finding) {
   if (!row || (row.admission && !kind)) fail('kind', 'held_back');
   if (kind?.defaultDisposition === 'report_only') fail('value', 'report_only');
   for (const predicate of kind?.predicates || []) fail(predicate, predicateResult(finding, predicate));
-  const status = reasons.some((reason) => reason.status === 'held_back') ? 'held_back'
-    : reasons.length ? 'report_only' : 'admitted';
+  let status = 'admitted';
+  if (reasons.some((reason) => reason.status === 'held_back')) status = 'held_back';
+  else if (reasons.length) status = 'report_only';
   if (subject?.stamp && status === 'admitted') finding[subject.stamp] = subject.kind;
   const selectedKind = (promoted && promotion.kind) || (!terminal && subject?.kind) || (row?.admission ? finding[row.admission.field] : 'ordinary');
   if (promoted && status === 'admitted') {
@@ -139,11 +153,13 @@ export function evaluateAdmission(finding) {
   }
   const inputFields = kind?.anyOf || [];
   const routedTier = finding.report_tag ?? finding.report_destination;
-  const effectiveTier = promoted ? tier : ['main', 'suggestion'].includes(routedTier) ? routedTier : tier || 'main';
-  finding.admission = { version: 1, input_fields: inputFields, input_proof: admissionProof(finding, inputFields), status, reasons,
+  let effectiveTier = tier || 'main';
+  if (!promoted && ['main', 'suggestion'].includes(routedTier)) effectiveTier = routedTier;
+  finding.admission = { version: 1, input_fields: inputFields, status, reasons,
     kind: selectedKind || 'unknown', core, tier: effectiveTier,
     inline_eligible: !kind?.predicates.includes('test_diff_site_for_inline')
       || prOwnedTest(finding) };
+  finding.admission.input_proof = admissionProof(finding, inputFields);
   finding.body_fix_task_eligible = status === 'admitted' && RIGHT_ELIGIBILITY.body.fixTask.every((predicate) => predicateResult(finding, predicate) === null);
   if (status === 'admitted') finding.report_destination = finding.report_tag = finding.admission.tier;
   return finding;

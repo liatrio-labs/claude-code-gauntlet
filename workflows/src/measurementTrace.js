@@ -15,10 +15,14 @@ export function measurementDecisions(output, decisions) {
   if (decisions.length) stageDecisions.set(output, deepClone(decisions));
   return output;
 }
-export function traceDecision(finding, reason_code, reason, related = [], decision = 'eliminated') {
+export function admissionDetail(finding, extra = {}) {
+  return { kind: finding.admission?.kind || 'unknown', policy_subject: finding.policy_subject || 'unresolved',
+    original_producer: finding.agent, ...extra };
+}
+export function traceDecision(finding, reason_code, reason, related = [], decision = 'eliminated', detail = null) {
   // An unlisted code would fail the bench's closed decoder and lose the whole trace; record it as unknown instead.
   const code = TRACE_REASONS.includes(reason_code) ? reason_code : 'unknown';
-  return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related, detail: null };
+  return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related, detail };
 }
 export function eliminationDecisions(output) {
   const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',

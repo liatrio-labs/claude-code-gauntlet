@@ -85,6 +85,7 @@ export async function validateStage(ctx, input) {
   const validations = [];
   const accepted = new Set();
   const audit = { batches: [], omitted_batches: 0 };
+  const terminalRejections = new Map();
   let completed = 0;
   let dispatched = 0;
   const dispatch = (batch, label) => () => ctx.agent(validatePrompt(inp, batch), {
@@ -107,6 +108,7 @@ export async function validateStage(ctx, input) {
       }
     }
     validatorAudit(audit, label, res, rejections);
+    for (const rejection of rejections) terminalRejections.set(rejection.id, rejection.reasons);
     return list;
   };
   const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
@@ -124,7 +126,14 @@ export async function validateStage(ctx, input) {
   }
   batches.forEach((batch, idx) => {
     const unscored = batch.filter((finding) => !accepted.has(finding.id));
-    if (unscored.length) gaps.push(`validate-batch-${idx}: validator ${mainLists[idx] ? 'omitted scores' : 'returned null/malformed'} — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
+    if (unscored.length) {
+      const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))];
+      let problem = mainLists[idx] ? 'omitted scores' : 'returned null/malformed';
+      if (reasons.some((reason) => !['missing_entry', 'malformed_return'].includes(reason))) {
+        problem = `returned invalid/incomplete entries (${reasons.join(', ')})`;
+      }
+      gaps.push(`validate-batch-${idx}: validator ${problem} — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
+    }
   });
 
   const { adjustedCount } = applyValidations(findings, validations);

@@ -57,6 +57,7 @@ DeltaValueField = Literal[
     "blame_source",
     "resolved_references",
 ]
+VerifyReferenceKind = Literal["search_paths", "reference_list", "reference"]
 EffectiveTestKind = Literal["defective_test", "production_defect"]
 TestKind = Literal[
     "defective_test", "critical_gap", "production_defect", "additional_case"
@@ -211,32 +212,12 @@ VERIFY_SLICE_FIELDS: tuple[str, ...] = (
     "symbols",
 )
 
-VERIFY_REFERENCE_DESCRIPTORS = {
-    "searched_paths": {
-        "array": True,
-        "search": True,
-        "fields": ["file", "line_start", "line_end", "anchor"],
-    },
-    "candidate_tests": {
-        "array": True,
-        "search": False,
-        "fields": ["file", "line_start", "line_end", "anchor"],
-    },
-    "production_element": {
-        "array": False,
-        "search": False,
-        "fields": ["file", "line_start", "line_end", "anchor"],
-    },
-    "duplicate_of": {
-        "array": False,
-        "search": False,
-        "fields": ["file", "line_start", "line_end", "anchor"],
-    },
-    "precedent": {
-        "array": False,
-        "search": False,
-        "fields": ["file", "line_start", "line_end", "anchor"],
-    },
+VERIFY_REFERENCE_DESCRIPTORS: Mapping[str, VerifyReferenceKind] = {
+    "searched_paths": "search_paths",
+    "candidate_tests": "reference_list",
+    "production_element": "reference",
+    "duplicate_of": "reference",
+    "precedent": "reference",
 }
 
 DISPATCH_RESULTS = {
@@ -1770,7 +1751,7 @@ class FindingMetadata(FindingFacts, total=False):
     origin_dimension: Dimension
     effective_test_kind: EffectiveTestKind
     reference_diagnostics: list[ReferenceDiagnostic]
-    line_end: float
+    line_end: int
     origin: str
     evidence: str
     anchor: str
@@ -1778,7 +1759,7 @@ class FindingMetadata(FindingFacts, total=False):
     claude_md_rule: str
     suggested_fix_code: str
     cross_file_refs: list[str]
-    sites: list[SitesItem]
+    sites: list[ResolvedSitesItem]
     hidden_errors: str
     attack_vector: str
     affected_consumers: list[str]

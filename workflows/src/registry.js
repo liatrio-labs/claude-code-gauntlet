@@ -229,9 +229,10 @@ export const DIMENSIONS = deepFreeze([
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
 
+export const VERIFY_REFERENCE_FIELDS = deepFreeze(Object.keys(SOURCE_REFERENCE.properties));
 export const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)))
   .filter(([, schema]) => schema.$comment === 'source-reference' || schema.items?.$comment === 'source-reference' || schema.$comment === 'search-paths')
-  .map(([key, schema]) => [key, { array: schema.type === 'array', search: schema.$comment === 'search-paths', fields: Object.keys(SOURCE_REFERENCE.properties) }])));
+  .map(([key, schema]) => [key, schema.$comment === 'search-paths' ? 'search_paths' : schema.type === 'array' ? 'reference_list' : 'reference'])));
 
 const PATH_ROLE_SCHEMA = { type: 'string', enum: ['source', 'test', 'non_source', 'unknown'] };
 const DIFF_FACT_SCHEMA = { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false };
@@ -247,9 +248,9 @@ export const VERIFY_FACT_PROPERTIES = deepFreeze({
   path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
   blame_class: { type: 'string', enum: ['new', 'pre_existing', 'surfaced', 'unknown'] },
   blame_source: { type: 'string', enum: ['git_blame', 'local_diff', 'cross_file_refs', 'off_diff', 'removed_loss', 'unavailable'] },
-  resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, descriptor]) => {
-    const schema = descriptor.search ? SEARCH_FACT_SCHEMA : RESOLVED_REFERENCE_SCHEMA;
-    return [key, descriptor.array ? { type: 'array', items: schema } : schema];
+  resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, kind]) => {
+    const schema = kind === 'search_paths' ? SEARCH_FACT_SCHEMA : RESOLVED_REFERENCE_SCHEMA;
+    return [key, kind !== 'reference' ? { type: 'array', items: schema } : schema];
   })), additionalProperties: false },
 });
 
@@ -297,6 +298,7 @@ export const ADMISSION_STAMP_PROPERTIES = deepFreeze({
   }, required: ['version', 'input_proof', 'input_fields', 'status', 'reasons', 'kind', 'core', 'tier', 'inline_eligible'], additionalProperties: false },
   body_fix_task_eligible: { type: 'boolean' },
 });
+export const VERIFY_FACT_KEYS = deepFreeze(Object.keys(VERIFY_FACT_PROPERTIES));
 
 export function dimensionRow(dimension) {
   return DIMENSIONS.find((row) => row.dimension === dimension || row.aliases.includes(dimension));
@@ -390,7 +392,7 @@ export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_ke
 export const PIPELINE_FINDING_FIELDS = deepFreeze([
   ...Object.keys(ADMISSION_STAMP_PROPERTIES),
   'origin_dimension', 'effective_test_kind', 'reference_diagnostics',
-  ...Object.keys(VERIFY_FACT_PROPERTIES),
+  ...VERIFY_FACT_KEYS,
   'trace_id', 'discovery_agent', 'discovery_dimension',
   'removed_test',
   'location_status', 'claimed_line_start', 'claimed_line_end',

@@ -2,7 +2,7 @@ import { deepClone } from './wire.js';
 import { incompleteVetting, UNVERIFIED_REASONS } from './vetting.js';
 import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
-import { eliminationDecisions, traceDecision } from './measurementTrace.js';
+import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
 import { hasAdmission } from './admission.js';
 
 export function disposeFindings(challenged) {
@@ -37,9 +37,8 @@ export function disposeFindings(challenged) {
     finding.disposition_reasons = [...new Set([...reasons, ...(admitted ? finding.admission.reasons.map((reason) => reason.status) : [])])];
     (disposition === 'held_back' ? unverified : findings).push(finding);
     if (finding.trace_id) for (const reason of finding.disposition_reasons) {
-      decisions.push({ ...traceDecision(finding, reason, reason, [], ['held_back', 'report_only'].includes(disposition) ? disposition : 'body_routed'),
-        detail: { kind: finding.admission?.kind || 'unknown', policy_subject: finding.policy_subject || 'unresolved',
-          predicates: finding.admission?.reasons || [], original_producer: finding.agent, surface: disposition } });
+      decisions.push(traceDecision(finding, reason, reason, [], ['held_back', 'report_only'].includes(disposition) ? disposition : 'body_routed',
+        admissionDetail(finding, { predicates: finding.admission?.reasons || [], surface: disposition })));
     }
   }
   const eliminations = eliminationDecisions({ eliminated: eliminated.map((f) => ({ ...f, trace_id: f.trace_id || 'unused' })) });

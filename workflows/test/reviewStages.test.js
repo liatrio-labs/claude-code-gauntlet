@@ -15,7 +15,7 @@ test('validator classification omissions skip core findings and duplicate scores
       assert.equal(f.validation, subject === 'ordinary' ? 'validated' : 'skipped');
       assert.equal(f.admission.status, subject === 'ordinary' ? 'admitted' : 'held_back');
       assert.deepEqual(f.admission.reasons, subject === 'ordinary' ? [] : [{ predicate: 'validation', status: 'held_back' }]);
-      assert.deepEqual(out.gaps, subject === 'ordinary' ? [] : [omittedGap(0, 1)]);
+      assert.deepEqual(out.gaps, subject === 'ordinary' ? [] : [invalidGap('invalid_policy_subject')]);
     }
   }
   const ctx = stageCtx({ reply: [70, 85].map((confidence) => ({ id: 'f1', confidence, policy_subject: 'ordinary', reachability: 'current' })) });
@@ -43,11 +43,12 @@ test('validator prompt shares predicate definitions across finding contexts', as
 });
 
 const omittedGap = (idx, count) => `validate-batch-${idx}: validator omitted scores — ${count} finding(s) unvalidated (validation=skipped, held back to the report)`;
+const invalidGap = (reasons) => `validate-batch-0: validator returned invalid/incomplete entries (${reasons}) — 1 finding(s) unvalidated (validation=skipped, held back to the report)`;
 const VALIDATE_STATS = { batches_dispatched: 1, batches_completed: 1, validated: 1, skipped: 1, adjusted: 1 };
 const VALIDATE_ROWS = [
   { name: 'id adjustment', input: [finding({ id: 'F1', confidence: 90 }), finding({ id: 'F2', confidence: 80 })],
     reply: [{ id: 'F1', confidence: 50, policy_subject: 'ordinary', justification: 'weak' }, { id: 'F2', confidence: 'invalid' }, null],
-    gaps: [omittedGap(0, 1)],
+    gaps: [invalidGap('invalid_confidence, invalid_policy_subject')],
     expected: [['F1', 50, 90, 'weak', undefined, 'validated'], ['F2', 80, undefined, undefined, undefined, 'skipped']] },
   { name: 'finding_id adjustment', input: [finding({ id: 'F1', confidence: 90 }), finding({ id: 'F2', confidence: 80 })],
     reply: [{ finding_id: 'F1', confidence: 40, policy_subject: 'ordinary', justification: 'reachable only hypothetically' }], gaps: [omittedGap(0, 1)],

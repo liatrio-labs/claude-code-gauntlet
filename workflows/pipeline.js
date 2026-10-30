@@ -329,9 +329,10 @@ const DIMENSIONS = deepFreeze([
   } : {}) },
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
+const VERIFY_REFERENCE_FIELDS = deepFreeze(Object.keys(SOURCE_REFERENCE.properties));
 const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)))
   .filter(([, schema]) => schema.$comment === 'source-reference' || schema.items?.$comment === 'source-reference' || schema.$comment === 'search-paths')
-  .map(([key, schema]) => [key, { array: schema.type === 'array', search: schema.$comment === 'search-paths', fields: Object.keys(SOURCE_REFERENCE.properties) }])));
+  .map(([key, schema]) => [key, schema.$comment === 'search-paths' ? 'search_paths' : schema.type === 'array' ? 'reference_list' : 'reference'])));
 const PATH_ROLE_SCHEMA = { type: 'string', enum: ['source', 'test', 'non_source', 'unknown'] };
 const DIFF_FACT_SCHEMA = { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false };
 const RESOLVED_REFERENCE_SCHEMA = { type: 'object', properties: {
@@ -345,9 +346,9 @@ const VERIFY_FACT_PROPERTIES = deepFreeze({
   path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
   blame_class: { type: 'string', enum: ['new', 'pre_existing', 'surfaced', 'unknown'] },
   blame_source: { type: 'string', enum: ['git_blame', 'local_diff', 'cross_file_refs', 'off_diff', 'removed_loss', 'unavailable'] },
-  resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, descriptor]) => {
-    const schema = descriptor.search ? SEARCH_FACT_SCHEMA : RESOLVED_REFERENCE_SCHEMA;
-    return [key, descriptor.array ? { type: 'array', items: schema } : schema];
+  resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, kind]) => {
+    const schema = kind === 'search_paths' ? SEARCH_FACT_SCHEMA : RESOLVED_REFERENCE_SCHEMA;
+    return [key, kind !== 'reference' ? { type: 'array', items: schema } : schema];
   })), additionalProperties: false },
 });
 const ADMISSION_PREDICATES = deepFreeze({
@@ -394,6 +395,7 @@ const ADMISSION_STAMP_PROPERTIES = deepFreeze({
   }, required: ['version', 'input_proof', 'input_fields', 'status', 'reasons', 'kind', 'core', 'tier', 'inline_eligible'], additionalProperties: false },
   body_fix_task_eligible: { type: 'boolean' },
 });
+const VERIFY_FACT_KEYS = deepFreeze(Object.keys(VERIFY_FACT_PROPERTIES));
 function dimensionRow(dimension) {
   return DIMENSIONS.find((row) => row.dimension === dimension || row.aliases.includes(dimension));
 }
@@ -475,7 +477,7 @@ const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'co
 const PIPELINE_FINDING_FIELDS = deepFreeze([
   ...Object.keys(ADMISSION_STAMP_PROPERTIES),
   'origin_dimension', 'effective_test_kind', 'reference_diagnostics',
-  ...Object.keys(VERIFY_FACT_PROPERTIES),
+  ...VERIFY_FACT_KEYS,
   'trace_id', 'discovery_agent', 'discovery_dimension',
   'removed_test',
   'location_status', 'claimed_line_start', 'claimed_line_end',
@@ -1283,7 +1285,7 @@ function encodeSliceInline(content) {
   return encoded;
 }
 const VERIFY_INLINE_CHAR_BUDGET = 50000;
-const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites', 'anchor', ...Object.keys(VERIFY_FACT_PROPERTIES)];
+const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites', 'anchor', ...VERIFY_FACT_KEYS];
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
 const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
 function deltasById(deltas) {
@@ -1293,19 +1295,22 @@ function deltasById(deltas) {
   }
   return byId;
 }
+function stripVerifyFacts(finding) {
+  for (const key of VERIFY_FACT_KEYS) delete finding[key];
+  return finding;
+}
 function joinVerifyDeltas(slice, deltas, matchedProofIds = new Set()) {
   const byId = deltasById(deltas);
   const out = [];
   for (const f of slice) {
     const delta = byId.get(f.id);
     if (!delta || delta.verified === false) continue;
-    const joined = clearLocation(pinNumericFields(f));
-    for (const key of Object.keys(VERIFY_FACT_PROPERTIES)) delete joined[key];
+    const joined = stripVerifyFacts(clearLocation(pinNumericFields(f)));
     delete joined.diff_validation;
     delete joined.sites;
     if (Array.isArray(f.sites)) joined.site_requests = projectVerifySliceFinding(f).sites;
     const proven = matchedProofIds.has(f.id);
-    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k) && (proven || !Object.hasOwn(VERIFY_FACT_PROPERTIES, k))) joined[k] = delta[k];
+    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k) && (proven || !VERIFY_FACT_KEYS.includes(k))) joined[k] = delta[k];
     if (canonicalRange(joined) && (Object.hasOwn(f, 'line') || Object.hasOwn(f, 'end_line'))) {
       joined.line = joined.line_start;
       joined.end_line = joined.line_end;
@@ -1333,11 +1338,11 @@ function projectFinding(finding) {
   }
   if (Array.isArray(finding.sites)) projected.sites = finding.sites.map((site) => Object.fromEntries(
     ['file', 'line_start', 'line_end', 'anchor'].filter((key) => site?.[key] !== undefined).map((key) => [key, site[key]])));
-  for (const [key, descriptor] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
-    if (finding[key] === undefined || descriptor.search) continue;
+  for (const [key, kind] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
+    if (finding[key] === undefined || kind === 'search_paths') continue;
     const project = (request) => request && typeof request === 'object' ? Object.fromEntries(
-      descriptor.fields.filter((field) => request[field] !== undefined).map((field) => [field, request[field]])) : request;
-    projected[key] = descriptor.array && Array.isArray(finding[key]) ? finding[key].map(project) : project(finding[key]);
+      VERIFY_REFERENCE_FIELDS.filter((field) => request[field] !== undefined).map((field) => [field, request[field]])) : request;
+    projected[key] = kind === 'reference_list' && Array.isArray(finding[key]) ? finding[key].map(project) : project(finding[key]);
   }
   if (Array.isArray(finding.cross_file_refs) && finding.cross_file_refs.length > 0) projected.has_cross_file_refs = true;
   if (hasRemovedTestLocation(finding)) projected.has_removed_test_location = true;
@@ -1754,9 +1759,13 @@ function measurementDecisions(output, decisions) {
   if (decisions.length) stageDecisions.set(output, deepClone(decisions));
   return output;
 }
-function traceDecision(finding, reason_code, reason, related = [], decision = 'eliminated') {
+function admissionDetail(finding, extra = {}) {
+  return { kind: finding.admission?.kind || 'unknown', policy_subject: finding.policy_subject || 'unresolved',
+    original_producer: finding.agent, ...extra };
+}
+function traceDecision(finding, reason_code, reason, related = [], decision = 'eliminated', detail = null) {
   const code = TRACE_REASONS.includes(reason_code) ? reason_code : 'unknown';
-  return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related, detail: null };
+  return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related, detail };
 }
 function eliminationDecisions(output) {
   const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
@@ -2364,12 +2373,12 @@ const hasValue = (value) => typeof value === 'string' && value.trim().length > 0
 function admissionRequests(finding) {
   const requests = {};
   if (canonicalRange(finding)) requests.primary = { file: finding.file, line_start: finding.line_start, line_end: finding.line_end };
-  for (const [name, descriptor] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
+  for (const [name, kind] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
     const value = finding.resolved_references?.[name];
-    const refs = descriptor.array ? value : [value];
+    const refs = kind !== 'reference' ? value : [value];
     for (const [index, ref] of (Array.isArray(refs) ? refs : []).entries()) {
-      if (descriptor.search ? ref?.available === true : resolvedReference(ref)) {
-        requests[descriptor.array ? `${name}:${index}` : name] = ref;
+      if (kind === 'search_paths' ? ref?.available === true : resolvedReference(ref)) {
+        requests[kind !== 'reference' ? `${name}:${index}` : name] = ref;
       }
     }
   }
@@ -2395,8 +2404,10 @@ const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension',
   ...DIMENSIONS.flatMap((row) => row.admission ? [row.admission.field,
     ...Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || [])])] : [])])];
 function admissionProof(finding, fields) {
-  return fnv1a32(JSON.stringify([...ADMISSION_INPUT_FIELDS, ...fields].map((key) =>
-    ADMISSION_PRESENCE_FIELDS.has(key) ? hasValue(finding[key]) : finding[key] ?? null)));
+  const verdict = { ...finding.admission };
+  delete verdict.input_proof;
+  return fnv1a32(JSON.stringify({ verdict, inputs: [...ADMISSION_INPUT_FIELDS, ...fields].map((key) =>
+    ADMISSION_PRESENCE_FIELDS.has(key) ? hasValue(finding[key]) : finding[key] ?? null) }));
 }
 const ADMISSION_PRESENCE_FIELDS = new Set(DIMENSIONS.flatMap((row) => row.admission
   ? Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || []), ...(kind.anyOf || [])])
@@ -2417,16 +2428,27 @@ function hasAdmission(finding) {
 function factAssessment(finding, predicate) {
   const ref = finding.resolved_references;
   const facts = {
-    pr_owned_test: () => prOwnedTest(finding) ? null : finding.diff_validation?.in_diff == null ? 'held_back' : 'report_only',
-    criticality: () => typeof finding.criticality !== 'number' ? 'report_only' : finding.criticality >= 8 ? null : 'report_only',
-    searches: () => !Array.isArray(ref?.searched_paths) || ref.searched_paths.length === 0
-      || ref.searched_paths.some((path) => path.available !== true) || !Array.isArray(ref?.candidate_tests)
-      || ref.candidate_tests.some((test) => !resolvedReference(test))
-      || !Array.isArray(finding.candidate_tests) || finding.candidate_tests.some((test) => !hasValue(test?.input) || !hasValue(test?.assertion))
-      || finding.reference_diagnostics?.length ? 'held_back' : null,
+    pr_owned_test: () => {
+      if (prOwnedTest(finding)) return null;
+      return finding.diff_validation?.in_diff == null ? 'held_back' : 'report_only';
+    },
+    criticality: () => typeof finding.criticality === 'number' && finding.criticality >= 8 ? null : 'report_only',
+    searches: () => {
+      const incomplete = !Array.isArray(ref?.searched_paths) || ref.searched_paths.length === 0
+        || ref.searched_paths.some((path) => path.available !== true) || !Array.isArray(ref?.candidate_tests)
+        || ref.candidate_tests.some((test) => !resolvedReference(test))
+        || !Array.isArray(finding.candidate_tests) || finding.candidate_tests.some((test) => !hasValue(test?.input) || !hasValue(test?.assertion))
+        || finding.reference_diagnostics?.length;
+      return incomplete ? 'held_back' : null;
+    },
     duplicate_of: () => referenceResult(finding, 'duplicate_of'),
     precedent: () => referenceResult(finding, 'precedent'),
-    precedent_not_added: () => referenceResult(finding, 'precedent') || (ref?.precedent?.file_added == null ? 'held_back' : ref.precedent.file_added ? 'report_only' : null),
+    precedent_not_added: () => {
+      const result = referenceResult(finding, 'precedent');
+      if (result) return result;
+      if (ref.precedent.file_added == null) return 'held_back';
+      return ref.precedent.file_added ? 'report_only' : null;
+    },
     equivalent: () => hasValue(finding.suggestion) || hasValue(finding.suggested_fix_code) ? null : 'report_only',
     reachability: () => finding.reachability === 'current' ? null : 'held_back',
     location: () => canonicalRange(finding) ? null : 'held_back',
@@ -2472,8 +2494,9 @@ function evaluateAdmission(finding) {
   if (!row || (row.admission && !kind)) fail('kind', 'held_back');
   if (kind?.defaultDisposition === 'report_only') fail('value', 'report_only');
   for (const predicate of kind?.predicates || []) fail(predicate, predicateResult(finding, predicate));
-  const status = reasons.some((reason) => reason.status === 'held_back') ? 'held_back'
-    : reasons.length ? 'report_only' : 'admitted';
+  let status = 'admitted';
+  if (reasons.some((reason) => reason.status === 'held_back')) status = 'held_back';
+  else if (reasons.length) status = 'report_only';
   if (subject?.stamp && status === 'admitted') finding[subject.stamp] = subject.kind;
   const selectedKind = (promoted && promotion.kind) || (!terminal && subject?.kind) || (row?.admission ? finding[row.admission.field] : 'ordinary');
   if (promoted && status === 'admitted') {
@@ -2483,11 +2506,13 @@ function evaluateAdmission(finding) {
   }
   const inputFields = kind?.anyOf || [];
   const routedTier = finding.report_tag ?? finding.report_destination;
-  const effectiveTier = promoted ? tier : ['main', 'suggestion'].includes(routedTier) ? routedTier : tier || 'main';
-  finding.admission = { version: 1, input_fields: inputFields, input_proof: admissionProof(finding, inputFields), status, reasons,
+  let effectiveTier = tier || 'main';
+  if (!promoted && ['main', 'suggestion'].includes(routedTier)) effectiveTier = routedTier;
+  finding.admission = { version: 1, input_fields: inputFields, status, reasons,
     kind: selectedKind || 'unknown', core, tier: effectiveTier,
     inline_eligible: !kind?.predicates.includes('test_diff_site_for_inline')
       || prOwnedTest(finding) };
+  finding.admission.input_proof = admissionProof(finding, inputFields);
   finding.body_fix_task_eligible = status === 'admitted' && RIGHT_ELIGIBILITY.body.fixTask.every((predicate) => predicateResult(finding, predicate) === null);
   if (status === 'admitted') finding.report_destination = finding.report_tag = finding.admission.tier;
   return finding;
@@ -3659,9 +3684,8 @@ function disposeFindings(challenged) {
     finding.disposition_reasons = [...new Set([...reasons, ...(admitted ? finding.admission.reasons.map((reason) => reason.status) : [])])];
     (disposition === 'held_back' ? unverified : findings).push(finding);
     if (finding.trace_id) for (const reason of finding.disposition_reasons) {
-      decisions.push({ ...traceDecision(finding, reason, reason, [], ['held_back', 'report_only'].includes(disposition) ? disposition : 'body_routed'),
-        detail: { kind: finding.admission?.kind || 'unknown', policy_subject: finding.policy_subject || 'unresolved',
-          predicates: finding.admission?.reasons || [], original_producer: finding.agent, surface: disposition } });
+      decisions.push(traceDecision(finding, reason, reason, [], ['held_back', 'report_only'].includes(disposition) ? disposition : 'body_routed',
+        admissionDetail(finding, { predicates: finding.admission?.reasons || [], surface: disposition })));
     }
   }
   const eliminations = eliminationDecisions({ eliminated: eliminated.map((f) => ({ ...f, trace_id: f.trace_id || 'unused' })) });
@@ -4454,6 +4478,12 @@ function coerceReportFinding(finding, severities) {
       value = reportRiskLevel(raw);
     } else if (FINDING_PATH_ARRAY_FIELDS.includes(key) && Array.isArray(raw)) {
       value = raw.map(reportAsText);
+    } else if (reportExtraFields().includes(key) && raw !== null && typeof raw === 'object') {
+      try {
+        value = JSON.stringify(raw);
+      } catch {
+        value = reportOptionalText(raw);
+      }
     } else {
       value = reportOptionalText(raw);
     }
@@ -5164,6 +5194,7 @@ async function validateStage(ctx, input) {
   const validations = [];
   const accepted = new Set();
   const audit = { batches: [], omitted_batches: 0 };
+  const terminalRejections = new Map();
   let completed = 0;
   let dispatched = 0;
   const dispatch = (batch, label) => () => ctx.agent(validatePrompt(inp, batch), {
@@ -5186,6 +5217,7 @@ async function validateStage(ctx, input) {
       }
     }
     validatorAudit(audit, label, res, rejections);
+    for (const rejection of rejections) terminalRejections.set(rejection.id, rejection.reasons);
     return list;
   };
   const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
@@ -5202,7 +5234,14 @@ async function validateStage(ctx, input) {
   }
   batches.forEach((batch, idx) => {
     const unscored = batch.filter((finding) => !accepted.has(finding.id));
-    if (unscored.length) gaps.push(`validate-batch-${idx}: validator ${mainLists[idx] ? 'omitted scores' : 'returned null/malformed'} — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
+    if (unscored.length) {
+      const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))];
+      let problem = mainLists[idx] ? 'omitted scores' : 'returned null/malformed';
+      if (reasons.some((reason) => !['missing_entry', 'malformed_return'].includes(reason))) {
+        problem = `returned invalid/incomplete entries (${reasons.join(', ')})`;
+      }
+      gaps.push(`validate-batch-${idx}: validator ${problem} — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
+    }
   });
   const { adjustedCount } = applyValidations(findings, validations);
   let skipped = 0;
@@ -5520,9 +5559,7 @@ async function verifyStage(ctx, input) {
 }
 function degradedSlice(slice) {
   return slice.map((f) => {
-    const out = { ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' };
-    for (const key of Object.keys(VERIFY_FACT_PROPERTIES)) delete out[key];
-    return out;
+    return stripVerifyFacts({ ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' });
   });
 }
 const emptyInputProof = () => ({
@@ -5678,13 +5715,14 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
     else if (got !== expected) diagnostic ??= { reason: `slice-input ${name} proof mismatch (receipt ${got}, dispatched ${expected}) — the ${noun} the script decoded is not the ${noun} this stage dispatched`, inputFault: 'mismatch' };
   }
   const wholeSlice = [...expectedProofs.values()].some((proof) => proof === null);
+  const matchesRecordProof = (id) => expectedProofs.get(id) !== null && proofs.get(id) === expectedProofs.get(id);
   if (wholeSlice && diagnostic) return { ok: false, ...diagnostic };
-  const deltas = ids.filter((id) => !malformedLocations.has(id) && byId.has(id) && (wholeSlice || proofs.get(id) === expectedProofs.get(id)))
+  const deltas = ids.filter((id) => !malformedLocations.has(id) && byId.has(id) && (wholeSlice || matchesRecordProof(id)))
     .map((id) => byId.get(id));
   if (wholeSlice && deltas.length !== ids.length) return { ok: false, reason: 'delta does not cover dispatched findings' };
   return {
     ok: true, deltas,
-    matchedProofIds: new Set(deltas.filter((d) => expectedProofs.get(d.id) !== null && proofs.get(d.id) === expectedProofs.get(d.id)).map((d) => d.id)),
+    matchedProofIds: new Set(deltas.filter((d) => matchesRecordProof(d.id)).map((d) => d.id)),
     proven: !diagnostic && deltas.length === ids.length,
     reason: diagnostic?.reason || `record proof missing or mismatched for ${ids.length - deltas.length} of ${n} finding(s)`,
     inputFault: deltas.length !== ids.length
@@ -7457,10 +7495,10 @@ async function deliverFromCheckpoint(c, A, state) {
   const postReview = selected;
   if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
     cap_hit: selectDelivery(eligible, null, deliveryTier).length > postReview.length,
-    decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => ({ ...traceDecision(f,
+    decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,
       f.disposition === 'report_only' ? 'report_only'
         : deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
-      'delivery selection', [], 'not_selected'), ...(f.disposition === 'report_only' ? { detail: { kind: f.admission.kind } } : {}) })),
+      'delivery selection', [], 'not_selected', f.disposition === 'report_only' ? { kind: f.admission.kind } : null)),
   });
   if (measurementTrace) measurementTrace.complete = true;
   stripTraceFields(phaseOutputs);
@@ -7628,10 +7666,11 @@ async function runWith(ctx, rawArgs) {
         ...(name === 'filter' || name === 'challenge' ? { decisions: [
           ...rejected, ...eliminationDecisions(out),
           ...(name === 'challenge' ? (out.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f, f.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed', f.challenge, [], 'held_back')) : []),
-          ...(name === 'challenge' ? (out.findings || []).filter((f) => f.trace_id && f.challenge === 'admission_terminal').map((f) => ({
-            ...traceDecision(f, f.admission?.status === 'report_only' ? 'report_only' : 'held_back', 'intentional admission-terminal challenge skip', [], f.admission?.status === 'report_only' ? 'report_only' : 'held_back'),
-            detail: { kind: f.admission?.kind || 'unknown', policy_subject: f.policy_subject || 'unresolved', predicate: 'challenge_terminal', original_producer: f.agent },
-          })) : []),
+          ...(name === 'challenge' ? (out.findings || []).filter((f) => f.trace_id && f.challenge === 'admission_terminal').map((f) => {
+            const status = f.admission?.status === 'report_only' ? 'report_only' : 'held_back';
+            return traceDecision(f, status, 'intentional admission-terminal challenge skip', [], status,
+              admissionDetail(f, { predicate: 'challenge_terminal' }));
+          }) : []),
         ], cap_hit: (out.unverified || []).some((f) => f.challenge === 'capped') } : {}),
       });
     } else if (name === 'discover' && replayed) recordStage(measurementTrace, name, out, { replayed });
@@ -7709,10 +7748,8 @@ async function runWith(ctx, rawArgs) {
     await runPhase('challenge', async () => {
       const admitted = replay('filter') ? (filterOut.filtered || []).map((finding) => evaluateAdmission(deepClone(finding))) : filterOut.filtered || [];
       if (measurementTrace) recordStage(measurementTrace, 'admission', { findings: admitted }, {
-        decisions: admitted.filter((f) => f.trace_id).flatMap((f) => f.admission.reasons.map((detail) => ({
-          ...traceDecision(f, detail.status, 'admission', [], detail.status),
-          detail: { ...detail, kind: f.admission.kind, policy_subject: f.policy_subject || 'unresolved', original_producer: f.agent },
-        }))),
+        decisions: admitted.filter((f) => f.trace_id).flatMap((f) => f.admission.reasons.map((detail) =>
+          traceDecision(f, detail.status, 'admission', [], detail.status, admissionDetail(f, detail)))),
       });
       const out = await challengeStage(c, {
         findings: admitted, limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,

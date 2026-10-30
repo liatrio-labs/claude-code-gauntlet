@@ -11,7 +11,7 @@ import { runWith } from '../src/run.js';
 const assessment = (predicate, status = 'confirmed', references = ['primary']) => ({ predicate, status, references });
 const score = (id, admission_assessments = []) => ({ finding_id: id, confidence: 80, policy_subject: 'ordinary', admission_assessments });
 
-test('present defects override additional cases, quality other and gaps without gap evidence', async () => {
+test('present defect promotion overrides additional cases, quality other and gaps without gap evidence', async () => {
   for (const [id, dimension, agent, fields, predicates] of [
     ['additional', 'test_coverage', 'test-analyzer', { test_kind: 'additional_case' }, []],
     ['other', 'simplification', 'code-simplifier', { quality_basis: 'other' }, []],

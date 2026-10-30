@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,41 @@ from tests.support.repository import tracked_paths
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_FORMAT = ROOT / "skills/code-gauntlet/references/report-format.md"
+
+
+def test_report_extras_preserve_structured_values():
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import { renderReport } from './workflows/src/renderReport.js';
+import { finding, reportInput } from './workflows/test/helpers/reportFixtures.js';
+const reference = {file:'src/service',line_start:2,line_end:3,anchor:'return value'};
+const extras = {
+  candidate_tests: [{...reference,input:'empty',assertion:'rejects'}, {...reference,input:'valid',assertion:'accepts'}],
+  production_element: reference, duplicate_of: reference, precedent: reference,
+};
+const reports = ['findings', 'unverified'].map(bucket => renderReport(reportInput({
+  [bucket]: [finding('EXTRAS', {...extras, disposition: bucket === 'unverified' ? 'held_back' : 'deliver'})],
+})));
+console.log(JSON.stringify({extras, reports}));
+""",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    rendered = json.loads(result.stdout)
+    for report in rendered["reports"]:
+        for field, value in rendered["extras"].items():
+            label = field.replace("_", " ").capitalize()
+            encoded = json.dumps(value, separators=(",", ":"))
+            assert f"- **{label}:** {encoded}" in report
+
 
 # Fence casing affects Markdown display, so only the marker is case-insensitive.
 _JSON_BLOCK = re.compile("```(?i:json)\\n(.*?)\\n```", re.DOTALL)
