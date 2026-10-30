@@ -1397,7 +1397,7 @@ class FindingMetadata(TypedDict, total=False):
     origin_dimension: Dimension
     effective_test_kind: EffectiveTestKind
     reference_diagnostics: list[str]
-    line_end: float
+    line_end: int
     origin: str
     evidence: str
     anchor: str
@@ -1405,7 +1405,7 @@ class FindingMetadata(TypedDict, total=False):
     claude_md_rule: str
     suggested_fix_code: str
     cross_file_refs: list[str]
-    sites: list[SitesItem]
+    sites: list[ResolvedSitesItem]
     hidden_errors: str
     attack_vector: str
     affected_consumers: list[str]

@@ -210,7 +210,6 @@ def _conditional_paragraph(
     field: str,
     dimension: str,
     siblings: Sequence[str],
-    all_dims: Sequence[str],
     first_field: str | None,
 ) -> str:
     noun, noun2 = _CONDITIONAL_NOUNS.get(field, (field.replace("_", " "),) * 2)
@@ -258,7 +257,7 @@ def conditional_paragraphs(agent_rows: Sequence[Mapping[str, Any]]) -> list[str]
             continue
         siblings = [d for d in all_dims if d != dimension]
         paragraphs.append(
-            _conditional_paragraph(field, dimension, siblings, all_dims, first_field)
+            _conditional_paragraph(field, dimension, siblings, first_field)
         )
     return paragraphs
 
@@ -417,24 +416,22 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
     if text.endswith("\n"):
         text_out += "\n"
     if "dimensionRows" in registry:
-        fields: dict[tuple[str, str], Any] = {}
-        for row in registry["dimensionRows"]:
-            for field, schema in row["schemaExtra"].items():
-                fields[(row["dimension"], field)] = schema
         lines = [
             "| Field | Type | Dimension | Required | Description |",
             "|-------|------|-----------|----------|-------------|",
         ]
-        for (dimension, field), schema in fields.items():
-            kind = schema if isinstance(schema, str) else schema["type"]
-            description = (
-                schema.get("description", field.replace("_", " "))
-                if isinstance(schema, dict)
-                else field.replace("_", " ")
-            )
-            lines.append(
-                f"| `{field}` | {kind} | {dimension} | {field_required_status(field, registry)} | {description} |"
-            )
+        for row in registry["dimensionRows"]:
+            for field, schema in row["schemaExtra"].items():
+                kind = schema if isinstance(schema, str) else schema["type"]
+                fallback = field.replace("_", " ")
+                description = (
+                    schema.get("description", fallback)
+                    if isinstance(schema, dict)
+                    else fallback
+                )
+                lines.append(
+                    f"| `{field}` | {kind} | {row['dimension']} | {field_required_status(field, registry)} | {description} |"
+                )
         text_out = re.sub(
             r"(### Per-dimension fields\n\n)\|.*?(?=\n\n)",
             lambda m: m[1] + "\n".join(lines),
@@ -685,6 +682,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             name = "".join(part.title() for part in field.split("_"))
             lines += [f"{name} = {literal_type(schema['enum'])}", ""]
             wire_types[field] = name
+    # Delivery consumes normalized integer ranges and verification's resolved sites.
+    metadata_types = dict(wire_types)
+    metadata_types.update(line_start="int", line_end="int", sites=resolved_type)
     values = {
         "SEVERITY_ORDER": tuple(identity["severityOrder"]),
         "MODEL_ALIASES": tuple(identity["modelAliases"]),
@@ -770,7 +770,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "    reference_diagnostics: list[str]",
             *(
                 f"    {field}: {kind}"
-                for field, kind in wire_types.items()
+                for field, kind in metadata_types.items()
                 if field not in identity["required"]
             ),
             "",
