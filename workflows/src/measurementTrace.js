@@ -30,7 +30,7 @@ export function eliminationDecisions(output) {
     'suppressed:intentional': 'suppression', 'suppressed:generated': 'suppression',
     refuted: 'refuted' };
   return (output.eliminated || []).filter((f) => f.trace_id)
-    .map((f) => traceDecision(f, codes[f.eliminated_by] || 'unknown', f.elimination_reason));
+    .map((f) => traceDecision(f, f.eliminated_by === 'out_of_scope' ? 'out_of_scope' : codes[f.eliminated_by] || 'unknown', f.elimination_reason));
 }
 export function stampDiscovery(trace, finding, spec, dispatch, occurrence) {
   if (!finding || typeof finding !== 'object' || Array.isArray(finding)) return finding;

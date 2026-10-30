@@ -23,6 +23,169 @@ PATCH = (
 )
 
 
+def test_early_scope_facts_use_captured_attributes_and_claim_exceptions(
+    tmp_path, monkeypatch
+):
+    from gauntlet.source_capture import SourceAdapter
+
+    from tests.support.git_diff import git, init_git_repo
+
+    work, output = tmp_path / "repo", tmp_path / "artifacts"
+    work.mkdir()
+    output.mkdir()
+    init_git_repo(work, monkeypatch)
+    files = [
+        "classified",
+        "vendored",
+        "marker",
+        "source",
+        "note",
+        "unknown",
+        "yarn.lock",
+        "pretend.lock",
+        "existing",
+        "late_marker",
+    ]
+    attributes = (
+        "* linguist-documentation\nclassified linguist-generated\n"
+        "vendored linguist-vendored\nsource -linguist-documentation\n"
+        "unknown !linguist-documentation\n"
+    )
+    (work / ".gitattributes").write_text(attributes, encoding="utf-8", newline="")
+    for file in files:
+        (work / file).write_text("return old_value;\n", encoding="utf-8", newline="")
+    git(work, "add", ".")
+    git(work, "commit", "-qm", "base")
+    base = git(work, "rev-parse", "HEAD")
+    markers = {
+        "marker": "// @generated\n",
+        "late_marker": "\n" * 10 + "// @generated\n",
+    }
+    for file in files:
+        if file == "existing":
+            continue
+        (work / file).write_text(
+            "return process(value);\n" + markers.get(file, ""),
+            encoding="utf-8",
+            newline="",
+        )
+    git(work, "add", ".")
+    git(work, "commit", "-qm", "reviewed")
+    head = git(work, "rev-parse", "HEAD")
+    cases = []
+    for target in ("branch", "local"):
+        for name, changed in [
+            ("docs", ["note"]),
+            ("mixed", ["note", "source"]),
+            ("unknown", ["unknown"]),
+        ]:
+            diff = (git(work, "diff", base, head, "--", *changed) + "\n").encode()
+            nonce = f"{target}-{name}"
+            capture = SourceAdapter.capture(work, target, head).capture_sources(
+                output, nonce, diff, base
+            )
+            patch = output / f"{nonce}.patch"
+            patch.write_bytes(diff)
+            cases.append(
+                dict(
+                    target=target, name=name, capture=capture.receipt, patch=str(patch)
+                )
+            )
+    (work / ".gitattributes").write_text(
+        "* -linguist-generated -linguist-vendored -linguist-documentation\n",
+        encoding="utf-8",
+        newline="",
+    )
+    for file in files:
+        (work / file).write_text("return moved_value;\n", encoding="utf-8", newline="")
+    git(work, "add", ".")
+    git(work, "commit", "-qm", "moved")
+    script = r"""
+import {execFileSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
+import {pathToFileURL} from 'node:url';
+const [root,work,head,base,output,cases,files]=process.argv.slice(1);
+const load=n=>import(pathToFileURL(`${root}/workflows/${n}.js`));
+const {verifyStage}=await load('src/verifyStage');
+const {runWith}=await load('src/run');
+const {makeCtx,makeFinding}=await load('test/helpers/pipelineMock');
+const {validArgs}=await load('test/helpers/argsFixtures');
+const {shellSplit}=await load('test/helpers/shellWords');
+const results=[];
+for(const c of JSON.parse(cases)) {
+ const args=validArgs({repoRoot:work,outputDir:output,pluginRoot:root,python:'python',baseBranch:base,
+  headShaShort:head.slice(0,8),nonce:c.capture.nonce,diffPath:c.patch,
+  verify:{targetKind:c.target,sourceCapture:c.capture,diffPath:c.patch,baseBranch:base},persist:{returnPrimaries:true}});
+ const findings=JSON.parse(files).map(file=>makeFinding(file,{file,line_start:1,line_end:1,
+  anchor:file==='existing'?'return old_value;':'return process(value);',
+  description:'A concrete current correctness defect in the returned value requires a local correction'}));
+ findings.push(...['classified','yarn.lock'].map(file=>makeFinding(`security-${file}`,{file,line_start:1,line_end:1,
+  dimension:'security',security_kind:'dependency_vulnerability',attack_vector:'A dependency has a known vulnerable version.',
+  description:'A dependency vulnerability exposes the current caller to a concrete attack'})));
+ const ctx=makeCtx(args);
+ ctx.agent=async(prompt)=>{
+  const command=shellSplit(prompt.split('\n').at(-1));
+  execFileSync(command[0],command.slice(1),{cwd:work,env:process.env});
+  return JSON.parse(readFileSync(command[command.indexOf('--output')+1],'utf8'));
+ };
+ const verified=await verifyStage(ctx,{...args,findings});
+ if(!verified.verified)throw new Error(JSON.stringify(verified.gaps));
+ const resumed=validArgs({...args,checkpoints:{validate:{findings:verified.findings,stats:{},gaps:[]}}});
+ const run=await runWith(makeCtx(resumed),resumed);
+ if(!run.ok)throw new Error(JSON.stringify(run));
+ const persisted=JSON.parse(run.persistReturn.entries.find(e=>e.path.endsWith(`findings-${head.slice(0,8)}.json`)).text);
+ results.push({name:c.name,target:c.target,verified:verified.findings,findings:persisted});
+}
+process.stdout.write(JSON.stringify(results));
+"""
+    result = subprocess.run(
+        _flow_command(
+            script, work, head, base, str(output), json.dumps(cases), json.dumps(files)
+        ),
+        cwd=work,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    for case in json.loads(result.stdout):
+        verified = {f["id"]: f for f in case["verified"]}
+        final = {f["id"]: f for f in case["findings"]}
+        assert verified["classified"]["scope_facts"]["linguist_generated"] is True
+        assert verified["vendored"]["scope_facts"]["linguist_vendored"] is True
+        assert verified["marker"]["scope_facts"]["generated_marker"] is True
+        assert verified["late_marker"]["scope_facts"]["generated_marker"] is False
+        assert verified["existing"]["blame_class"] == "pre_existing"
+        assert verified["existing"]["blame_source"] == "git_blame"
+        for file in ("classified", "vendored", "marker", "yarn.lock"):
+            assert final[file]["disposition"] == "eliminate", (case["name"], file)
+            assert final[file]["challenge"] == "scope_terminal", (case["name"], file)
+        docs = {"docs": True, "mixed": False, "unknown": None}[case["name"]]
+        assert (
+            verified["source"]["scope_facts"]["all_changed_files_documentation"] is docs
+        )
+        assert verified["source"]["path_role"] == "source"
+        assert final["source"]["disposition"] == (
+            "eliminate" if docs else "deliver" if case["name"] == "mixed" else "body"
+        )
+        assert verified["pretend.lock"]["scope_facts"]["lockfile_basename"] is False
+        assert final["pretend.lock"]["disposition"] == ("eliminate" if docs else "body")
+        if not docs:
+            assert final["existing"]["disposition"] == "report_only"
+            assert final["existing"]["challenge"] == "scope_terminal"
+        for file in ("classified", "yarn.lock"):
+            security = final[f"security-{file}"]
+            assert not any(
+                row["applies"] is True
+                for row in security["scope_decisions"]
+                if row["category"] in ("generated_vendored", "lockfile")
+            )
+            if not docs:
+                assert security["disposition"] == "body"
+                assert security["challenge"] == "survived"
+
+
 def test_cited_refutation_is_absent_from_delivery_and_local_actions(
     tmp_path, monkeypatch, invoke
 ):

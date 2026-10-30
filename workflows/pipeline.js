@@ -623,7 +623,7 @@ const QUALITY_ADMISSION = {
 const DIMENSIONS = deepFreeze([
   { dimension: 'bug', core: true, agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: { type: 'string', description: 'How an error is hidden or silently swallowed.' } },
     requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'security', core: true, agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: { type: 'string', description: 'Concrete attack path and its preconditions.' } },
+  { dimension: 'security', core: true, agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: { type: 'string', description: 'Concrete attack path and its preconditions.' }, security_kind: { type: 'string', enum: ['dependency_vulnerability', 'other'], description: 'Dependency vulnerability claim or another security claim; omit when unknown.' } },
     requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: null },
   { dimension: 'cross_file_impact', core: true, agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
     schemaExtra: { affected_consumers: { type: 'array', description: 'Repository paths of consumers affected by the change.', items: { type: 'string', $comment: 'repo-path' } } }, requiredExtra: ['affected_consumers'],
@@ -693,6 +693,12 @@ const SEARCH_FACT_SCHEMA = { type: 'object', properties: {
 }, required: ['path', 'available', 'kind'], additionalProperties: false };
 const VERIFY_FACT_PROPERTIES = deepFreeze({
   path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
+  scope_facts: { type: 'object', properties: {
+    file: { type: 'string' }, head: { type: 'string' }, snapshot_id: { type: 'string' },
+    ...Object.fromEntries(['linguist_generated', 'linguist_vendored', 'linguist_documentation',
+      'generated_marker', 'all_changed_files_documentation', 'lockfile_basename', 'mechanical_change']
+      .map((key) => [key, { type: ['boolean', 'null'] }])),
+  }, required: ['file', 'head', 'snapshot_id'], additionalProperties: false },
   blame_class: { type: 'string', enum: ['new', 'pre_existing', 'surfaced', 'unknown'] },
   blame_source: { type: 'string', enum: ['git_blame', 'local_diff', 'cross_file_refs', 'off_diff', 'removed_loss', 'unavailable'] },
   resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, kind]) => {
@@ -885,11 +891,13 @@ const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
     missing_field: { type: 'string' }, missing_fields: { type: 'array', items: { type: 'string' } },
     missing_evidence: { type: 'string' },
   }, ['stage', 'verdict', 'missing_field', 'missing_fields', 'missing_evidence']) },
-  scope_facts: { type: 'array', items: closedDispatchRow({
-    category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) }, predicate: { type: 'string' },
-    value: { type: ['boolean', 'null'] }, snapshot_id: CITATION_REQUEST_PROPERTIES.snapshot_id,
-  }) },
-  scope_decisions: { type: 'array', items: SCOPE_ASSESSMENT_SCHEMA },
+  scope_decisions: { type: 'array', items: { ...closedDispatchRow({
+    stage: { type: 'string', enum: ['early', 'post_validation'] },
+    category: { type: 'string', enum: EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage)).map((row) => row.category) },
+    applies: { type: ['boolean', 'null'] }, outcome: { type: 'string', enum: DISPOSITIONS }, input_proof: { type: 'string' },
+  }), anyOf: EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage)).map((row) => ({
+    properties: { stage: { const: row.stage }, category: { const: row.category }, outcome: { const: row.outcome } },
+  })) } },
   reduction_provenance: closedDispatchRow({
     finding_id: SKEPTICAL_IDENTITY.finding_id, disposition: { type: 'string', enum: DISPOSITIONS },
     reason: REDUCTION_REASON_SCHEMA,
@@ -2000,7 +2008,7 @@ function eliminationDecisions(output) {
     'suppressed:intentional': 'suppression', 'suppressed:generated': 'suppression',
     refuted: 'refuted' };
   return (output.eliminated || []).filter((f) => f.trace_id)
-    .map((f) => traceDecision(f, codes[f.eliminated_by] || 'unknown', f.elimination_reason));
+    .map((f) => traceDecision(f, f.eliminated_by === 'out_of_scope' ? 'out_of_scope' : codes[f.eliminated_by] || 'unknown', f.elimination_reason));
 }
 function stampDiscovery(trace, finding, spec, dispatch, occurrence) {
   if (!finding || typeof finding !== 'object' || Array.isArray(finding)) return finding;
@@ -3879,6 +3887,46 @@ function planCiteBatches(records, budget, baseBranch, platform) {
   if (batch.length) batches.push(batch);
   return { batches, oversize };
 }
+// --- scope.js ---
+const scopeRows = EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage));
+const scopeInputFields = ['id', 'file', 'dimension', 'origin_dimension', 'security_kind', 'path_role', 'cross_file_refs',
+  'blame_class', 'blame_source', 'scope_facts', 'diff_validation', 'reachability', 'validation', 'admission'];
+const scopeAnd = (...values) => values.includes(false) ? false : values.every((value) => value === true) ? true : null;
+const scopeOr = (...values) => values.includes(true) ? true : values.every((value) => value === false) ? false : null;
+const capturedScope = (f) => f.scope_facts?.file === f.file && f.scope_facts.head && f.scope_facts.snapshot_id ? f.scope_facts : {};
+const scopePredicates = {
+  blame_pre_existing: (f) => scopeAnd(capturedScope(f).file ? true : null,
+    f.blame_class === 'unknown' || !f.blame_class ? null : f.blame_class === 'pre_existing',
+    f.blame_source === 'git_blame', Array.isArray(f.cross_file_refs) ? f.cross_file_refs.length === 0 : null),
+  off_diff: (f) => f.diff_validation?.in_diff == null ? null : f.diff_validation.in_diff === false,
+  generated_or_vendored: (f) => scopeOr(...['linguist_generated', 'linguist_vendored', 'generated_marker'].map((key) => capturedScope(f)[key])),
+  documentation_only_code_claim: (f) => scopeAnd(capturedScope(f).all_changed_files_documentation,
+    f.path_role === 'unknown' || !f.path_role ? null : f.path_role === 'source'),
+  mechanical_lockfile: (f) => scopeAnd(capturedScope(f).lockfile_basename, capturedScope(f).mechanical_change),
+  future_change_only: (f) => f.validation === 'validated' ? f.reachability === 'future_change_only' : null,
+};
+const scopeExceptions = {
+  cross_file_effect_created_by_pr: (f) => Array.isArray(f.cross_file_refs) ? f.cross_file_refs.length > 0 : null,
+  security_dependency_vulnerability_claim: (f) => f.dimension !== 'security' ? false
+    : f.security_kind === 'dependency_vulnerability' ? true : f.security_kind === 'other' ? false : null,
+  documentation_or_comment_claim: (f) => dimensionRow(f.dimension)?.dimension === 'comment_accuracy',
+  test_applicable_documented_convention: (f) => dimensionRow(f.dimension)?.dimension === 'convention',
+  present_static_defect: (f) => f.reachability === 'current',
+};
+function scopeDecisions(finding) {
+  const identity = JSON.stringify([scopeRows, scopeInputFields.map((key) => finding[key] ?? null)]);
+  const proof = (decisions) => fnv1a32(JSON.stringify([identity, decisions.map(({ input_proof, ...row }) => row)]));
+  const saved = finding.scope_decisions;
+  if (matchesDispatchSchema(saved, SKEPTICAL_FINDING_PROPERTIES.scope_decisions) && saved.length === scopeRows.length
+    && saved.every((row) => row.input_proof === proof(saved))) return saved;
+  const decisions = scopeRows.map((row) => ({ category: row.category, stage: row.stage, outcome: row.outcome,
+    applies: scopeAnd(scopePredicates[row.predicate]?.(finding),
+      !finding.admission?.reasons?.some((reason) => reason.predicate === 'present_defect' && reason.status === 'held_back'),
+      ...row.exceptions.map((name) => { const value = scopeExceptions[name]?.(finding); return value == null ? null : !value; })) }));
+  const inputProof = proof(decisions);
+  finding.scope_decisions = decisions.map((row) => ({ ...row, input_proof: inputProof }));
+  return finding.scope_decisions;
+}
 // --- dispose.js ---
 function skepticalOutcome(finding) {
   const reasons = [];
@@ -3925,12 +3973,29 @@ function disposeFindings(challenged) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
     delete finding.delivery_group;
+    const scope = scopeDecisions(finding).filter((row) => row.applies === true);
     const skeptical = skepticalOutcome(finding);
     if (skeptical.proven) {
       finding.eliminated_by = 'refuted';
       finding.elimination_reason = `${skeptical.proven.stage} refutation with matched proof`;
       finding.reduction_provenance = { finding_id: finding.id, disposition: 'eliminate', ...skeptical.proven };
       eliminated.push(finding);
+      continue;
+    }
+    const terminalScope = scope.find((row) => row.outcome === 'eliminate') || scope.find((row) => row.outcome === 'report_only');
+    if (terminalScope) {
+      finding.disposition = terminalScope.outcome;
+      finding.disposition_reasons = [terminalScope.outcome === 'eliminate' ? 'out_of_scope' : 'report_only'];
+      finding.reduction_provenance = { finding_id: finding.id, disposition: terminalScope.outcome,
+        reason: finding.disposition_reasons[0], category: terminalScope.category };
+      if (terminalScope.outcome === 'eliminate') {
+        finding.eliminated_by = 'out_of_scope';
+        finding.elimination_reason = terminalScope.category;
+        eliminated.push(finding);
+      } else {
+        findings.push(finding);
+        if (finding.trace_id) decisions.push(traceDecision(finding, 'report_only', terminalScope.category, [], 'report_only'));
+      }
       continue;
     }
     const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
@@ -3950,7 +4015,7 @@ function disposeFindings(challenged) {
     } else if (finding.challenge !== 'survived') {
       disposition = 'held_back';
       if (!Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge)) reasons.push('challenge_failed');
-    } else if (finding.admission.inline_eligible && finding.reachability !== 'future_change_only'
+    } else if (!scope.some((row) => row.outcome === 'body') && finding.admission.inline_eligible
       && finding.diff_validation?.in_diff === true && locationAllows(finding, 'inline')) {
       disposition = 'deliver';
     } else reasons.push('body_routed');
@@ -5608,10 +5673,11 @@ async function challengeStage(ctx, input) {
   const cap = effectiveChallengeCap(inp.limits || {}, findings.length);
   const validatorTerminal = (f) => f.skeptical_assessments?.some((a) => a.stage === 'validator'
     && ['refuted', 'needs_evidence'].includes((a.raw ?? a).verdict));
-  const actionable = (f) => !validatorTerminal(f) && hasAdmission(f)
+  const scopeTerminal = (f) => scopeDecisions(f).some((row) => row.applies === true && ['eliminate', 'report_only'].includes(row.outcome));
+  const actionable = (f) => !scopeTerminal(f) && !validatorTerminal(f) && hasAdmission(f)
     && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
   const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f,
-    challenge: validatorTerminal(f) ? 'validator_terminal' : 'admission_terminal' }));
+    challenge: scopeTerminal(f) ? 'scope_terminal' : validatorTerminal(f) ? 'validator_terminal' : 'admission_terminal' }));
   const ranked = rankFindings(findings.filter(actionable));
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);

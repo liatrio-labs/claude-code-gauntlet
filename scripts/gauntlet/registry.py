@@ -58,6 +58,7 @@ DeltaKey = Literal[
     "anchor",
     "path_role",
     "file_added",
+    "scope_facts",
     "blame_class",
     "blame_source",
     "resolved_references",
@@ -75,12 +76,14 @@ DeltaValueField = Literal[
     "anchor",
     "path_role",
     "file_added",
+    "scope_facts",
     "blame_class",
     "blame_source",
     "resolved_references",
 ]
 VerifyReferenceKind = Literal["search_paths", "reference_list", "reference"]
 EffectiveTestKind = Literal["defective_test", "production_defect"]
+SecurityKind = Literal["dependency_vulnerability", "other"]
 TestKind = Literal[
     "defective_test", "critical_gap", "production_defect", "additional_case"
 ]
@@ -117,6 +120,7 @@ _ReductionDetailItemReason_Literal = Literal[
     "cite_unmatched",
     "cite_unavailable",
 ]
+_ScopeDecisionsItemStage_Literal = Literal["early", "post_validation"]
 PathRole = Literal["source", "test", "non_source", "unknown"]
 BlameClass = Literal["new", "pre_existing", "surfaced", "unknown"]
 BlameSource = Literal[
@@ -200,6 +204,7 @@ DELTA_KEYS: tuple[DeltaKey, ...] = (
     "anchor",
     "path_role",
     "file_added",
+    "scope_facts",
     "blame_class",
     "blame_source",
     "resolved_references",
@@ -218,6 +223,7 @@ DELTA_VALUE_FIELDS: tuple[DeltaValueField, ...] = (
     "anchor",
     "path_role",
     "file_added",
+    "scope_facts",
     "blame_class",
     "blame_source",
     "resolved_references",
@@ -493,6 +499,11 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
             "attack_vector": {
                 "type": "string",
                 "description": "Concrete attack path and its preconditions.",
+            },
+            "security_kind": {
+                "type": "string",
+                "enum": ["dependency_vulnerability", "other"],
+                "description": "Dependency vulnerability claim or another security claim; omit when unknown.",
             },
         },
         "requiredExtra": ["attack_vector"],
@@ -1464,7 +1475,7 @@ CODE_OWNED_HEADINGS = [
 
 DETAIL_FIELDS_BY_DIMENSION = {
     "bug": ("hidden_errors",),
-    "security": ("attack_vector",),
+    "security": ("attack_vector", "security_kind"),
     "cross_file_impact": ("affected_consumers",),
     "test_coverage": (
         "criticality",
@@ -2139,32 +2150,12 @@ class ReductionDetailItem(TypedDict, total=False):
     missing_evidence: str
 
 
-class ScopeFactsItem(TypedDict):
-    category: ExclusionCategory
-    predicate: str
-    value: bool | None
-    snapshot_id: str
-
-
-class ScopeDecisionsItemCitationsItem(TypedDict):
-    finding_id: str
-    stage: SkepticalStage
-    request_id: str
-    role: _CitationRequestRole_Literal
-    snapshot_id: str
-    file: str
-    side: _CitationRequestSide_Literal
-    line_start: int
-    line_end: int
-    quote: str
-
-
 class ScopeDecisionsItem(TypedDict):
-    finding_id: str
-    stage: SkepticalStage
+    stage: _ScopeDecisionsItemStage_Literal
     category: ExclusionCategory
-    applicability: _ScopeAssessmentApplicability_Literal
-    citations: list[ScopeDecisionsItemCitationsItem]
+    applies: bool | None
+    outcome: Disposition
+    input_proof: str
 
 
 class ReductionProvenance(TypedDict, total=False):
@@ -2174,6 +2165,19 @@ class ReductionProvenance(TypedDict, total=False):
     category: ExclusionCategory
     stage: SkepticalStage
     request_ids: list[str]
+
+
+class ScopeFacts(TypedDict, total=False):
+    file: str
+    head: str
+    snapshot_id: str
+    linguist_generated: bool | None
+    linguist_vendored: bool | None
+    linguist_documentation: bool | None
+    generated_marker: bool | None
+    all_changed_files_documentation: bool | None
+    lockfile_basename: bool | None
+    mechanical_change: bool | None
 
 
 class ResolvedReferencesSearchedPathsItem(TypedDict):
@@ -2294,6 +2298,7 @@ class VerifyPrecedent(TypedDict):
 class FindingFacts(TypedDict, total=False):
     path_role: PathRole
     file_added: bool | None
+    scope_facts: ScopeFacts
     blame_class: BlameClass
     blame_source: BlameSource
     resolved_references: ResolvedReferences
@@ -2313,7 +2318,6 @@ class FindingMetadata(FindingFacts, total=False):
     skeptical_assessments: list[SkepticalAssessmentsItem]
     cite_results: list[CiteResultsItem]
     reduction_detail: list[ReductionDetailItem]
-    scope_facts: list[ScopeFactsItem]
     scope_decisions: list[ScopeDecisionsItem]
     reduction_provenance: ReductionProvenance
     origin_dimension: Dimension
@@ -2330,6 +2334,7 @@ class FindingMetadata(FindingFacts, total=False):
     sites: list[ResolvedSitesItem]
     hidden_errors: str
     attack_vector: str
+    security_kind: SecurityKind
     affected_consumers: list[str]
     criticality: float
     failure_scenario: str
@@ -2368,6 +2373,7 @@ class Delta(_DeltaRequired, total=False):
     anchor: str
     path_role: PathRole
     file_added: bool | None
+    scope_facts: ScopeFacts
     blame_class: BlameClass
     blame_source: BlameSource
     resolved_references: ResolvedReferences

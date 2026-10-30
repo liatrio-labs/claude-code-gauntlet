@@ -28,6 +28,82 @@ import { STAGE_COSTS } from '../src/registry.js';
 const proofArgs = (over = {}) => validArgs({ nonce: 'run', headShaShort: 'aaaaaaaa',
   verify: { targetKind: 'branch', sourceCapture }, ...over });
 
+test('scope terminal decisions precede challenge without bypassing body vetting', async () => {
+  const facts = { file: 'TERMINAL.js', head: sourceCapture.head, snapshot_id: sourceCapture.manifest_sha256 };
+  const rows = [
+    ['pre_existing', { scope_facts: facts, blame_class: 'pre_existing', blame_source: 'git_blame' }, 'report_only'],
+    ['generated_vendored', { scope_facts: { ...facts, linguist_generated: true } }, 'eliminate'],
+    ['docs_only', { scope_facts: { ...facts, all_changed_files_documentation: true } }, 'eliminate'],
+    ['lockfile', { scope_facts: { ...facts, lockfile_basename: true, mechanical_change: true } }, 'eliminate'],
+  ];
+  for (const [category, over, disposition] of rows) {
+    const findings = [makeFinding('TERMINAL', over), makeFinding('VETTED')];
+    const args = proofArgs({ limits: { challengeCap: 1 }, checkpoints: { validate: { findings, stats: {}, gaps: [] } } });
+    const { out, ctx, payload } = await runAndCapture(args);
+    assert.equal(out.ok, true);
+    assert.equal(out.stats.challenge.dispatched, 1, category);
+    assert.match(ctx.calls.find((call) => call.label === 'challenge-0').prompt, /Finding identity: VETTED/);
+    const terminal = payload.findings.find((f) => f.id === 'TERMINAL');
+    assert.equal(terminal.challenge, 'scope_terminal', category);
+    assert.equal(terminal.disposition, disposition, category);
+    assert.equal(terminal.reduction_provenance.category, category);
+    assert.deepEqual(payload.postReview.map((f) => f.id), ['VETTED']);
+    if (['generated_vendored', 'lockfile'].includes(category)) {
+      const other = makeFinding('TERMINAL', { ...over, dimension: 'security', security_kind: 'other' });
+      const checked = await runAndCapture(proofArgs({ checkpoints: { validate: { findings: [other], gaps: [], stats: {} } } }));
+      assert.equal(checked.out.stats.challenge.dispatched, 0);
+      assert.equal(checked.payload.findings[0].disposition, 'eliminate');
+    }
+    const checkpoint = structuredClone(payload.checkpoints.phases.cite);
+    const saved = checkpoint.findings.find((f) => f.id === 'TERMINAL');
+    assert.ok(saved.scope_decisions.some((row) => row.category === category && row.applies === true));
+    saved.blame_class = 'unknown'; saved.scope_facts = {};
+    const changed = await runAndCapture(proofArgs({ checkpoints: { cite: checkpoint } }));
+    const refreshed = changed.payload.findings.find((f) => f.id === 'TERMINAL');
+    assert.equal(refreshed.disposition, 'held_back', category);
+    assert.notDeepEqual(refreshed.scope_decisions, terminal.scope_decisions);
+    saved.scope_facts = { ...over.scope_facts, file: 'different' };
+    saved.blame_class = over.blame_class;
+    const relocated = await runAndCapture(proofArgs({ checkpoints: { cite: checkpoint } }));
+    assert.equal(relocated.payload.findings.find((f) => f.id === 'TERMINAL').disposition, 'held_back');
+  }
+  for (const over of [{ diff_validation: { in_diff: false } }, { reachability: 'future_change_only' }]) {
+    const findings = ['BODY_A', 'BODY_B'].map((id) => makeFinding(id, over));
+    const result = await runAndCapture(proofArgs({ limits: { challengeCap: 1 },
+      checkpoints: { validate: { findings, gaps: [], stats: {} } } }));
+    assert.equal(result.out.stats.challenge.dispatched, 1);
+    assert.equal(result.out.stats.challenge.capped, 1);
+    assert.deepEqual(result.payload.findings.map((f) => f.disposition).sort(), ['body', 'held_back']);
+  }
+  const unknowns = [
+    { scope_decisions: [null] },
+    { path_role: 'non_source' },
+    { scope_facts: { ...facts, generated_marker: null, all_changed_files_documentation: null, mechanical_change: null } },
+    { scope_facts: facts, blame_class: 'pre_existing', blame_source: 'unavailable' },
+    { scope_facts: facts, blame_class: 'pre_existing', blame_source: 'git_blame', cross_file_refs: ['caller'] },
+    { dimension: 'comment_accuracy', scope_facts: { ...facts, all_changed_files_documentation: true } },
+    ...['generated_vendored', 'lockfile'].flatMap((category) => [undefined, 'dependency_vulnerability'].map((kind) => ({
+      dimension: 'security', security_kind: kind, ...rows.find(([name]) => name === category)[1] }))),
+  ];
+  for (const over of unknowns) {
+    const finding = makeFinding('KEEP', { ...over, ...(over.scope_facts ? { scope_facts: { ...over.scope_facts, file: 'KEEP.js' } } : {}) });
+    const result = await runAndCapture(proofArgs({ checkpoints: { validate: { findings: [finding], stats: {}, gaps: [] } } }));
+    assert.equal(result.out.stats.challenge.dispatched, 1, JSON.stringify(over));
+    assert.equal(result.payload.findings[0].disposition, 'deliver');
+  }
+  for (const [dimension, field, kind] of [['test_coverage', 'test_kind', 'additional_case'], ['simplification', 'quality_basis', 'other']]) {
+    for (const confirmed of [true, false]) {
+      const finding = makeFinding('PROMOTED', { dimension, [field]: kind,
+        ...(!confirmed ? { scope_facts: { ...facts, file: 'PROMOTED.js', linguist_generated: true } } : {}),
+        admission_assessments: confirmed ? [{ predicate: 'present_defect', status: 'confirmed', references: ['primary'] }] : [] });
+      const result = await runAndCapture(proofArgs({ checkpoints: { validate: { findings: [finding], gaps: [], stats: {} } } }));
+      assert.equal(result.out.stats.challenge.dispatched, confirmed ? 1 : 0);
+      assert.equal(result.payload.findings[0].disposition, confirmed ? 'deliver' : 'held_back');
+      if (confirmed) assert.equal(result.payload.findings[0].admission.core, true);
+    }
+  }
+});
+
 test('run-wide agent guard returns per-dispatch degradation and reserves persistence', async () => {
   const args = proofArgs();
   const ctx = makeCtx(args);

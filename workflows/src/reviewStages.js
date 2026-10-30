@@ -9,6 +9,7 @@ import { rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
 import { deliveryGroups } from './dispose.js';
 import { admissionContext, hasAdmission } from './admission.js';
+import { scopeDecisions } from './scope.js';
 
 // The platform rejects array-rooted tool schemas, so validation entries need an object wrapper.
 const VALIDATE_SCHEMA = {
@@ -218,10 +219,11 @@ export async function challengeStage(ctx, input) {
   const cap = effectiveChallengeCap(inp.limits || {}, findings.length);
   const validatorTerminal = (f) => f.skeptical_assessments?.some((a) => a.stage === 'validator'
     && ['refuted', 'needs_evidence'].includes((a.raw ?? a).verdict));
-  const actionable = (f) => !validatorTerminal(f) && hasAdmission(f)
+  const scopeTerminal = (f) => scopeDecisions(f).some((row) => row.applies === true && ['eliminate', 'report_only'].includes(row.outcome));
+  const actionable = (f) => !scopeTerminal(f) && !validatorTerminal(f) && hasAdmission(f)
     && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
   const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f,
-    challenge: validatorTerminal(f) ? 'validator_terminal' : 'admission_terminal' }));
+    challenge: scopeTerminal(f) ? 'scope_terminal' : validatorTerminal(f) ? 'validator_terminal' : 'admission_terminal' }));
   const ranked = rankFindings(findings.filter(actionable));
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);

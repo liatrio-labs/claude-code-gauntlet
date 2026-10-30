@@ -174,7 +174,7 @@ const QUALITY_ADMISSION = {
 export const DIMENSIONS = deepFreeze([
   { dimension: 'bug', core: true, agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: { type: 'string', description: 'How an error is hidden or silently swallowed.' } },
     requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'security', core: true, agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: { type: 'string', description: 'Concrete attack path and its preconditions.' } },
+  { dimension: 'security', core: true, agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: { type: 'string', description: 'Concrete attack path and its preconditions.' }, security_kind: { type: 'string', enum: ['dependency_vulnerability', 'other'], description: 'Dependency vulnerability claim or another security claim; omit when unknown.' } },
     requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: null },
   { dimension: 'cross_file_impact', core: true, agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
     schemaExtra: { affected_consumers: { type: 'array', description: 'Repository paths of consumers affected by the change.', items: { type: 'string', $comment: 'repo-path' } } }, requiredExtra: ['affected_consumers'],
@@ -248,6 +248,12 @@ const SEARCH_FACT_SCHEMA = { type: 'object', properties: {
 
 export const VERIFY_FACT_PROPERTIES = deepFreeze({
   path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
+  scope_facts: { type: 'object', properties: {
+    file: { type: 'string' }, head: { type: 'string' }, snapshot_id: { type: 'string' },
+    ...Object.fromEntries(['linguist_generated', 'linguist_vendored', 'linguist_documentation',
+      'generated_marker', 'all_changed_files_documentation', 'lockfile_basename', 'mechanical_change']
+      .map((key) => [key, { type: ['boolean', 'null'] }])),
+  }, required: ['file', 'head', 'snapshot_id'], additionalProperties: false },
   blame_class: { type: 'string', enum: ['new', 'pre_existing', 'surfaced', 'unknown'] },
   blame_source: { type: 'string', enum: ['git_blame', 'local_diff', 'cross_file_refs', 'off_diff', 'removed_loss', 'unavailable'] },
   resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, kind]) => {
@@ -445,11 +451,13 @@ export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
     missing_field: { type: 'string' }, missing_fields: { type: 'array', items: { type: 'string' } },
     missing_evidence: { type: 'string' },
   }, ['stage', 'verdict', 'missing_field', 'missing_fields', 'missing_evidence']) },
-  scope_facts: { type: 'array', items: closedDispatchRow({
-    category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) }, predicate: { type: 'string' },
-    value: { type: ['boolean', 'null'] }, snapshot_id: CITATION_REQUEST_PROPERTIES.snapshot_id,
-  }) },
-  scope_decisions: { type: 'array', items: SCOPE_ASSESSMENT_SCHEMA },
+  scope_decisions: { type: 'array', items: { ...closedDispatchRow({
+    stage: { type: 'string', enum: ['early', 'post_validation'] },
+    category: { type: 'string', enum: EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage)).map((row) => row.category) },
+    applies: { type: ['boolean', 'null'] }, outcome: { type: 'string', enum: DISPOSITIONS }, input_proof: { type: 'string' },
+  }), anyOf: EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage)).map((row) => ({
+    properties: { stage: { const: row.stage }, category: { const: row.category }, outcome: { const: row.outcome } },
+  })) } },
   reduction_provenance: closedDispatchRow({
     finding_id: SKEPTICAL_IDENTITY.finding_id, disposition: { type: 'string', enum: DISPOSITIONS },
     reason: REDUCTION_REASON_SCHEMA,

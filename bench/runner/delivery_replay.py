@@ -557,6 +557,7 @@ def _candidate_artifacts(
                     "resolved_sites",
                     "reduction_detail",
                     "reduction_provenance",
+                    "scope_decisions",
                     "eliminated_by",
                     "elimination_reason",
                     "admission",
