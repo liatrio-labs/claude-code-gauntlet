@@ -4,6 +4,8 @@ import { rankFindings } from '../src/applyChallenges.js';
 import { finding, consolidationFinding } from './helpers/findings.js';
 
 const RANK_CASES = [
+  { name: 'in-diff outranks off-diff and unknown at equal severity', rows: [['off', 'high', 100, 'off', 9, false],
+    ['unknown', 'high', 100, 'unknown', 1], ['in', 'high', 60, 'in', 1, true]], expected: ['in', 'off', 'unknown'] },
   { name: 'severity order', rows: [['low', 'low', 90], ['critical', 'critical', 70], ['high', 'high', 80], ['medium', 'medium', 85]],
     expected: ['critical', 'high', 'medium', 'low'] },
   { name: 'longer description breaks a tie', rows: [['short', 'high', 80, 'Short.'], ['long', 'high', 80,
@@ -12,7 +14,8 @@ const RANK_CASES = [
     1], ['high-risk-short', 'high', 80, 'Short.', 9]], expected: ['high-risk-short', 'low-risk-long'] },
 ];
 for (const c of RANK_CASES) test(`rank: ${c.name}`, () => {
-  const rows = c.rows.map(([id, severity, confidence, description, risk_level]) => finding({ id, severity, confidence,
+  const rows = c.rows.map(([id, severity, confidence, description, risk_level, in_diff]) => finding({ id, severity, confidence,
+    diff_validation: { in_diff },
     ...(description === undefined ? {} : { description }), ...(risk_level === undefined ? {} : { risk_level }) }));
   assert.deepEqual(rankFindings(rows).map((f) => f.id), c.expected);
 });

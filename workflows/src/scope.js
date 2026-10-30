@@ -1,8 +1,7 @@
-import { AGENT_SECURITY_REVIEWER, EXCLUSION_CATEGORIES, SCOPE_FACT_KEYS, SCOPE_ASSESSMENT_SCHEMA, DISPATCH_RESULTS, acceptSkepticalReturn, assessmentGaps, matchesDispatchSchema, dimensionRow, findingPolicy } from './registry.js';
-import { canonicalRange } from './location.js';
+import { AGENT_SECURITY_REVIEWER, EXCLUSION_CATEGORIES, SCOPE_FACT_KEYS, SCOPE_ASSESSMENT_SCHEMA, DISPATCH_RESULTS, CITE_VERIFIER_VERSION, VALIDATION_RETURN_PROPERTIES, acceptSkepticalReturn, matchesDispatchSchema, dimensionRow, findingPolicy } from './registry.js';
+import { canonicalRange, lineBucket } from './location.js';
 import { fnv1a32 } from './wire.js';
 import { citeChecksum, collectCitations, matchedCitation } from './citeWire.js';
-import { lineBucket } from './filterFindings.js';
 import { validatorAssessment } from './applyValidations.js';
 
 const scopeRows = EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage));
@@ -38,12 +37,19 @@ const scopeExceptions = {
   present_static_defect: (f) => f.reachability === 'current',
   test_coverage_origin: (f) => findingPolicy({ ...f, policy_subject: undefined }, false).row?.dimension === 'test_coverage',
   test_applicable_convention: (f) => dimensionRow(f.dimension)?.dimension === 'convention',
-  genuine_test_defect: (f) => f.policy_subject === 'test_defect',
+  genuine_test_defect: (f) => !VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(f.policy_subject) || f.policy_subject === 'unresolved' ? null : f.policy_subject === 'test_defect',
   proven_incorrect_or_dangerous_behavior_including_security: (f) => {
     const requests = exceptionRequests(f);
     return requests.some((q) => matchedCitation(f, q, q.stage)) ? true : requests.length ? null : false;
   },
 };
+
+function outsideAddedLines(finding, request, start = request.line_start, end = request.line_end) {
+  const result = finding.cite_results?.find((r) => citeChecksum(r.request) === citeChecksum(request));
+  if (!matchedCitation(finding, request, request.stage) || result?.source?.verifier_version !== CITE_VERIFIER_VERSION
+    || !Array.isArray(result?.added_lines) || !result.added_lines.every((line) => Number.isSafeInteger(line) && line > 0)) return null;
+  return !result.added_lines.some((line) => line >= start && line <= end);
+}
 
 function skepticalScope(finding, confirmations) {
   return (finding.skeptical_assessments || []).flatMap((a) => {
@@ -62,7 +68,14 @@ function skepticalScope(finding, confirmations) {
         || scopePredicates[row.predicate]?.(finding) === false
         || (row.predicate === 'confirmed_intent' && !confirmation);
       const citations = Array.isArray(scope.citations) ? scope.citations : [];
-      const proved = !assessmentGaps(accepted).semanticErrors.length
+      const intent = row.predicate !== 'confirmed_intent' ? true : scopeAnd(
+        ...citations.filter((q) => q.role === 'rule').map((q) => q.side === 'old' ? true : outsideAddedLines(finding, q)),
+        confirmation ? scopeOr(...citations.filter((q) => q.file === confirmation.file && q.side === 'head')
+          .map((q) => outsideAddedLines(finding, q, confirmation.line_start, confirmation.line_start))) : false);
+      const proved = accepted.status === 'complete' && ['real', 'refuted'].includes(raw.verdict)
+        && Array.isArray(raw.citations) && raw.citations.some((q) => q.role === 'claim')
+        && raw.citations.every((q) => matchedCitation(finding, q, a.stage))
+        && intent === true
         && !exceptions.includes(null)
         && finding.skeptical_assessments.filter((other) => other?.stage === a.stage).length === 1
         && raw.scope_assessments.filter((other) => other?.category === row.category).length === 1

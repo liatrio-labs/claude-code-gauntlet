@@ -1,5 +1,5 @@
-import { canonicalRange } from './location.js';
-import { INT_POLICY, coerceInt, asText, asConfidence, deepFreeze } from './wire.js';
+import { canonicalRange, lineBucket } from './location.js';
+import { asText, asConfidence, deepFreeze } from './wire.js';
 import { FIELD_RENAMES, SEVERITY_ORDER, INJECTION_STRIPPED_PROSE_FIELDS, AGENT_SECURITY_REVIEWER } from './registry.js';
 import { DIMENSIONS, dimensionRow, findingPolicy } from './registry.js';
 import { cfgGet, configForFile, applyExclusions } from './reviewConfig.js';
@@ -126,20 +126,6 @@ function pyGet(obj, key, dflt) {
   return key in obj ? obj[key] : dflt;
 }
 
-function pyRound(x) {
-  const floor = Math.floor(x);
-  const diff = x - floor;
-  if (diff < 0.5) return floor;
-  if (diff > 0.5) return floor + 1;
-  return floor % 2 === 0 ? floor : floor + 1; // exact .5 -> nearest even
-}
-
-export function lineBucket(line, proximity) {
-  const n = coerceInt(line, INT_POLICY.filter);
-  if (n === null) return 0;
-  return pyRound(n / proximity) * proximity;
-}
-
 const CONSENSUS_BOOST = 10;
 
 const SINGLETON_PENALTY = 15;
@@ -159,9 +145,7 @@ export function detectDisagreement(findings) {
     for (const key of ['consensus_count', 'consensus_boost', 'corroborated_by', 'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note']) delete f[key];
   }
 
-  const active = findings;
-
-  const consensusGroups = groupFilterFindings(active, (finding) => JSON.stringify([
+  const consensusGroups = groupFilterFindings(findings, (finding) => JSON.stringify([
     pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10), pyGet(finding, 'origin', '') === 'unknown',
   ]));
 
@@ -196,7 +180,7 @@ export function detectDisagreement(findings) {
   }
 
   // Contradiction and security escalation require exact locations; nearby bucketed findings are insufficient.
-  const locationGroupsActive = groupFilterFindings(active, (finding) => JSON.stringify([
+  const locationGroupsActive = groupFilterFindings(findings, (finding) => JSON.stringify([
     pyGet(finding, 'file', ''), pyGet(finding, 'line_start', 0),
   ]));
 
@@ -225,7 +209,7 @@ export function detectDisagreement(findings) {
     }
   }
 
-  return { active, boostedCount };
+  return { active: findings, boostedCount };
 }
 
 export function routeByDimension(finding, routes = FILTER_DIMENSION_ROUTES) {
