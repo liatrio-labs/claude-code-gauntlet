@@ -29,15 +29,16 @@ const proofArgs = (over = {}) => validArgs({ nonce: 'run', headShaShort: 'aaaaaa
   verify: { targetKind: 'branch', sourceCapture }, ...over });
 
 test('scope terminal decisions precede challenge without bypassing body vetting', async () => {
-  const facts = { file: 'TERMINAL.js', head: sourceCapture.head, snapshot_id: sourceCapture.manifest_sha256 };
+  const facts = { file: 'TERMINAL.js', snapshot_id: sourceCapture.manifest_sha256 };
   const rows = [
-    ['pre_existing', { scope_facts: facts, blame_class: 'pre_existing', blame_source: 'git_blame' }, 'report_only'],
+    ['pre_existing', { scope_facts: facts, blame_class: 'pre_existing', blame_source: 'git_blame', diff_validation: { in_diff: false } }, 'report_only'],
     ['generated_vendored', { scope_facts: { ...facts, linguist_generated: true } }, 'eliminate'],
-    ['docs_only', { scope_facts: { ...facts, all_changed_files_documentation: true } }, 'eliminate'],
-    ['lockfile', { scope_facts: { ...facts, lockfile_basename: true, mechanical_change: true } }, 'eliminate'],
+    ['docs_only', { scope_facts: { ...facts, all_changed_files_documentation: true, linguist_documentation: false } }, 'eliminate'],
+    ['lockfile', { scope_facts: { ...facts, lockfile_basename: true } }, 'eliminate'],
   ];
   for (const [category, over, disposition] of rows) {
     const findings = [makeFinding('TERMINAL', over), makeFinding('VETTED')];
+    delete findings[0].cross_file_refs;
     const args = proofArgs({ limits: { challengeCap: 1 }, checkpoints: { validate: { findings, stats: {}, gaps: [] } } });
     const { out, ctx, payload } = await runAndCapture(args);
     assert.equal(out.ok, true);
@@ -48,15 +49,17 @@ test('scope terminal decisions precede challenge without bypassing body vetting'
     assert.equal(terminal.disposition, disposition, category);
     assert.equal(terminal.reduction_provenance.category, category);
     assert.deepEqual(payload.postReview.map((f) => f.id), ['VETTED']);
-    if (['generated_vendored', 'lockfile'].includes(category)) {
-      const other = makeFinding('TERMINAL', { ...over, dimension: 'security', security_kind: 'other' });
+    if (['generated_vendored', 'lockfile', 'docs_only'].includes(category)) {
+      const other = makeFinding('TERMINAL', { ...over, dimension: 'security' });
       const checked = await runAndCapture(proofArgs({ checkpoints: { validate: { findings: [other], gaps: [], stats: {} } } }));
-      assert.equal(checked.out.stats.challenge.dispatched, 0);
-      assert.equal(checked.payload.findings[0].disposition, 'eliminate');
+      assert.equal(checked.out.stats.challenge.dispatched, 1, category);
+      assert.equal(checked.payload.findings[0].disposition, 'deliver', category);
     }
     const checkpoint = structuredClone(payload.checkpoints.phases.cite);
     const saved = checkpoint.findings.find((f) => f.id === 'TERMINAL');
     assert.ok(saved.scope_decisions.some((row) => row.category === category && row.applies === true));
+    assert.equal(typeof saved.scope_input_proof, 'string');
+    assert.ok(saved.scope_decisions.every((row) => !Object.hasOwn(row, 'input_proof')));
     saved.blame_class = 'unknown'; saved.scope_facts = {};
     const changed = await runAndCapture(proofArgs({ checkpoints: { cite: checkpoint } }));
     const refreshed = changed.payload.findings.find((f) => f.id === 'TERMINAL');
@@ -78,12 +81,13 @@ test('scope terminal decisions precede challenge without bypassing body vetting'
   const unknowns = [
     { scope_decisions: [null] },
     { path_role: 'non_source' },
-    { scope_facts: { ...facts, generated_marker: null, all_changed_files_documentation: null, mechanical_change: null } },
+    { scope_facts: { ...facts, generated_marker: null, all_changed_files_documentation: null } },
     { scope_facts: facts, blame_class: 'pre_existing', blame_source: 'unavailable' },
-    { scope_facts: facts, blame_class: 'pre_existing', blame_source: 'git_blame', cross_file_refs: ['caller'] },
+    { scope_facts: facts, blame_class: 'pre_existing', blame_source: 'git_blame', diff_validation: { in_diff: true } },
+    { scope_facts: { ...facts, all_changed_files_documentation: true, linguist_documentation: true } },
+    { scope_facts: { ...facts, all_changed_files_documentation: true, linguist_documentation: null } },
+    { scope_facts: { ...facts, generated_marker: true, linguist_generated: false } },
     { dimension: 'comment_accuracy', scope_facts: { ...facts, all_changed_files_documentation: true } },
-    ...['generated_vendored', 'lockfile'].flatMap((category) => [undefined, 'dependency_vulnerability'].map((kind) => ({
-      dimension: 'security', security_kind: kind, ...rows.find(([name]) => name === category)[1] }))),
   ];
   for (const over of unknowns) {
     const finding = makeFinding('KEEP', { ...over, ...(over.scope_facts ? { scope_facts: { ...over.scope_facts, file: 'KEEP.js' } } : {}) });

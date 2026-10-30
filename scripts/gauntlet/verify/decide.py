@@ -311,7 +311,7 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
         return _stamp_blame(finding, ("unknown", "unavailable"), original_severity)
 
     blame_cmd = ["git", "blame", f"-L{line_start},{line_end}"]
-    if context.sources().source_capture is not None:
+    if context.target_kind == "local" and context.sources().source_capture is not None:
         # Local edits have no historical blame; only identical captured spans do.
         captured = context.sources().read(filepath)
         committed = SourceAdapter(
