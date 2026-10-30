@@ -1,0 +1,136 @@
+import { ADMISSION_PREDICATES, RIGHT_ELIGIBILITY, VERIFY_FACT_PROPERTIES, VERIFY_REFERENCE_DESCRIPTORS, DIMENSIONS, findingPolicy } from './registry.js';
+import { canonicalRange } from './location.js';
+import { fnv1a32 } from './wire.js';
+
+const resolvedReference = (ref) => canonicalRange(ref) !== null;
+const hasValue = (value) => typeof value === 'string' && value.trim().length > 0;
+
+// Stable request names bind semantic assessments to the source facts sent for this finding.
+export function admissionRequests(finding) {
+  const requests = {};
+  if (canonicalRange(finding)) requests.primary = { file: finding.file, line_start: finding.line_start, line_end: finding.line_end };
+  for (const [name, descriptor] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
+    const value = finding.resolved_references?.[name];
+    const refs = descriptor.array ? value : [value];
+    for (const [index, ref] of (Array.isArray(refs) ? refs : []).entries()) {
+      if (descriptor.search ? ref?.available === true : resolvedReference(ref)) {
+        requests[descriptor.array ? `${name}:${index}` : name] = ref;
+      }
+    }
+  }
+  return requests;
+}
+
+export function matchAssessments(finding, entries) {
+  const requests = admissionRequests(finding);
+  if (!Array.isArray(entries)) return [];
+  return entries.filter((entry) => {
+    const descriptor = ADMISSION_PREDICATES[entry?.predicate];
+    if (!descriptor?.references || !['confirmed', 'rejected', 'unresolved'].includes(entry.status)
+      || entries.filter((other) => other?.predicate === entry.predicate).length !== 1
+      || !Array.isArray(entry.references) || new Set(entry.references).size !== entry.references.length
+      || entry.references.some((key) => typeof key !== 'string' || !Object.hasOwn(requests, key))) return false;
+    const expected = Object.keys(requests).filter((key) => descriptor.references.some((name) => key === name || key.startsWith(`${name}:`)));
+    return expected.length > 0 && expected.length === entry.references.length && expected.every((key) => entry.references.includes(key));
+  }).map(({ predicate, status, references }) => ({ predicate, status, references: [...references] }));
+}
+
+const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
+  'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
+  'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
+  ...DIMENSIONS.flatMap((row) => row.admission ? [row.admission.field,
+    ...Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || [])])] : [])])];
+function admissionProof(finding, fields) {
+  return fnv1a32(JSON.stringify([...ADMISSION_INPUT_FIELDS, ...fields].map((key) => finding[key] ?? null)));
+}
+
+export function hasAdmission(finding) {
+  const stamp = finding?.admission;
+  return stamp?.version === 1 && ['admitted', 'report_only', 'held_back'].includes(stamp.status)
+    && Array.isArray(stamp.reasons) && Array.isArray(stamp.input_fields)
+    && stamp.input_proof === admissionProof(finding, stamp.input_fields);
+}
+
+function factAssessment(finding, predicate) {
+  const ref = finding.resolved_references;
+  const supplied = (name) => finding[name] !== undefined || finding.reference_diagnostics?.some((message) => message.includes(name));
+  const reference = (name) => !supplied(name) ? 'report_only' : resolvedReference(ref?.[name]) ? null : 'held_back';
+  const facts = {
+    pr_owned_test: () => finding.diff_validation?.in_diff == null ? 'held_back'
+      : finding.diff_validation.in_diff === true ? null : 'report_only',
+    criticality: () => typeof finding.criticality !== 'number' ? 'report_only' : finding.criticality >= 8 ? null : 'report_only',
+    searches: () => !Array.isArray(ref?.searched_paths) || ref.searched_paths.length === 0
+      || ref.searched_paths.some((path) => path.available !== true) || !Array.isArray(ref?.candidate_tests)
+      || ref.candidate_tests.some((test) => !resolvedReference(test))
+      || !Array.isArray(finding.candidate_tests) || finding.candidate_tests.some((test) => !hasValue(test?.input) || !hasValue(test?.assertion))
+      || finding.reference_diagnostics?.length ? 'held_back' : null,
+    duplicate_of: () => reference('duplicate_of'),
+    precedent: () => reference('precedent'),
+    precedent_not_added: () => reference('precedent') || (ref?.precedent?.file_added == null ? 'held_back' : ref.precedent.file_added ? 'report_only' : null),
+    equivalent: () => hasValue(finding.suggestion) || hasValue(finding.suggested_fix_code) ? null : 'report_only',
+    reachability: () => finding.reachability === 'current' ? null : 'held_back',
+    location: () => canonicalRange(finding) ? null : 'held_back',
+  };
+  return Object.hasOwn(facts, predicate) ? facts[predicate]() : 'held_back';
+}
+
+function predicateResult(finding, predicate) {
+  const descriptor = ADMISSION_PREDICATES[predicate];
+  if (!descriptor) return 'held_back';
+  if (descriptor.placement) return null;
+  const fact = descriptor.fact ? factAssessment(finding, descriptor.fact) : null;
+  if (fact) return fact;
+  if (descriptor.references) {
+    for (const name of descriptor.references) {
+      if (name === 'primary' && !canonicalRange(finding)) return 'held_back';
+      if (name === 'production_element' && !resolvedReference(finding.resolved_references?.production_element)) {
+        return finding.production_element === undefined && !finding.reference_diagnostics?.length ? 'report_only' : 'held_back';
+      }
+      if (['duplicate_of', 'precedent'].includes(name) && !resolvedReference(finding.resolved_references?.[name])) {
+        return finding[name] === undefined && !finding.reference_diagnostics?.length ? 'report_only' : 'held_back';
+      }
+    }
+    const assessment = matchAssessments(finding, finding.admission_assessments).find((entry) => entry.predicate === predicate);
+    if (!assessment || assessment.status === 'unresolved') return 'held_back';
+    if (assessment.status === 'rejected') return 'report_only';
+  }
+  return null;
+}
+
+// This is the only policy evaluation. Disposal and sinks consume its persisted result.
+export function evaluateAdmission(finding) {
+  delete finding.effective_test_kind;
+  const original = findingPolicy({ ...finding, policy_subject: undefined });
+  const terminal = original.kind?.defaultDisposition === 'report_only';
+  const { row, kind, core, tier } = terminal ? original : findingPolicy(finding);
+  const subject = row?.policySubjects[finding.policy_subject];
+  const reasons = [];
+  const fail = (predicate, status) => { if (status) reasons.push({ predicate, status }); };
+  if (!['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin) || !['source', 'test'].includes(finding.path_role)) fail('verification', 'held_back');
+  if (finding.validation !== 'validated') fail('validation', 'held_back');
+  if (!terminal && (!subject || finding.policy_subject === 'unresolved')) fail('policy_subject', 'held_back');
+  if (!row || (row.admission && !kind)) fail('kind', 'held_back');
+  if (kind?.defaultDisposition === 'report_only') fail('value', 'report_only');
+  for (const predicate of kind?.predicates || []) fail(predicate, predicateResult(finding, predicate));
+  const status = reasons.some((reason) => reason.status === 'held_back') ? 'held_back'
+    : reasons.length ? 'report_only' : 'admitted';
+  if (subject?.stamp && status === 'admitted') finding[subject.stamp] = subject.kind;
+  const selectedKind = (!terminal && subject?.kind) || (row?.admission ? finding[row.admission.field] : 'ordinary');
+  const inputFields = kind?.anyOf || [];
+  const routedTier = finding.report_tag ?? finding.report_destination;
+  const effectiveTier = ['main', 'suggestion'].includes(routedTier) ? routedTier : tier || 'main';
+  finding.admission = { version: 1, input_fields: inputFields, input_proof: admissionProof(finding, inputFields), status, reasons,
+    kind: selectedKind || 'unknown', core, tier: effectiveTier,
+    inline_eligible: !kind?.predicates.includes('test_diff_site_for_inline')
+      || (finding.path_role === 'test' && finding.diff_validation?.in_diff === true) };
+  finding.body_fix_task_eligible = status === 'admitted' && RIGHT_ELIGIBILITY.body.fixTask.every((predicate) => predicateResult(finding, predicate) === null);
+  if (status === 'admitted') finding.report_destination = finding.report_tag = finding.admission.tier;
+  return finding;
+}
+
+export function admissionContext(finding) {
+  return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
+    policy: findingPolicy(finding).row?.admission, predicates: ADMISSION_PREDICATES,
+    claim: Object.fromEntries(DIMENSIONS.flatMap((row) => Object.keys(row.schemaExtra)).map((key) => [key, finding[key]])),
+    fix: finding.suggestion || finding.suggested_fix_code };
+}

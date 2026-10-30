@@ -62,6 +62,7 @@ def test_summary_and_skipped_location_bytes(
         "line_start": 12,
         "line_end": 12,
         "location_status": status,
+        "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
         "disposition": "deliver",
         "title": "Location",
     }
@@ -100,6 +101,11 @@ def test_permalinked_summary_slice_and_guard_equality() -> None:
                 "line_start": 8,
                 "line_end": 8,
                 "location_status": "confirmed",
+                "admission": {
+                    "version": 1,
+                    "status": "admitted",
+                    "input_proof": "fixture",
+                },
                 "disposition": "deliver",
                 "title": (
                     "Use `foo()` and `<Slot>`; mail dev@example.test; &#\u0666\u0664;"
@@ -112,6 +118,11 @@ def test_permalinked_summary_slice_and_guard_equality() -> None:
                 "line_start": 1,
                 "line_end": 1,
                 "location_status": "confirmed",
+                "admission": {
+                    "version": 1,
+                    "status": "admitted",
+                    "input_proof": "fixture",
+                },
                 "disposition": "deliver",
                 "title": "Path boundary",
             },
@@ -145,6 +156,7 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             "line_start": 1,
             "line_end": 1,
             "location_status": "confirmed",
+            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
             "disposition": "deliver",
             "severity": "high",
             "confidence": 10,
@@ -158,6 +170,7 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             "line_start": 11,
             "line_end": 11,
             "location_status": "confirmed",
+            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
             "disposition": "deliver",
             "severity": "high",
             "confidence": 60,
@@ -171,6 +184,7 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             "line_start": 12,
             "line_end": 12,
             "location_status": "confirmed",
+            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
             "disposition": "deliver",
             "severity": "high",
             "confidence": 95,
@@ -233,8 +247,10 @@ def test_mixed_disposition_group_cross_runtime(
     disposed = json.loads(
         run_node(
             "import { disposeFindings } from './workflows/src/dispose.js';"
+            "import { evaluateAdmission } from './workflows/src/admission.js';"
             + READ_INPUT
-            + "process.stdout.write(JSON.stringify(disposeFindings(JSON.parse(source))));",
+            + "const input=JSON.parse(source);input.findings=input.findings.map(f=>evaluateAdmission({...f,origin:'new',path_role:'source',validation:'validated',policy_subject:'ordinary',challenge:'survived'}));"
+            + "process.stdout.write(JSON.stringify(disposeFindings(input)));",
             {"findings": findings},
         ).stdout
     )
@@ -747,6 +763,7 @@ def test_verify_localises_real_receipt_input_typo(
             "line_start": 1,
             "line_end": 1,
             "location_status": "confirmed",
+            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
             "disposition": "deliver",
             "severity": "high",
             "confidence": 80,

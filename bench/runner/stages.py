@@ -40,6 +40,16 @@ class FindingVersion:
         return dict(self.finding)
 
 
+class DecisionDetail(TypedDict, total=False):
+    kind: str
+    policy_subject: str
+    predicate: str
+    status: str
+    predicates: list[dict[str, str]]
+    original_producer: str
+    surface: str
+
+
 @dataclass(frozen=True, slots=True)
 class StageDecision:
     trace_id: str
@@ -47,6 +57,7 @@ class StageDecision:
     reason_code: ReasonCode
     reason: str | None
     related_trace_ids: tuple[str, ...]
+    detail: DecisionDetail | None = None
 
 
 @dataclass(frozen=True, slots=True)

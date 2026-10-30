@@ -14,6 +14,7 @@ CAPTURE = b"--- x.py\n+++ x.py\n@@ -1 +1 @@\n-old\n+original_source_value()\n"
 
 def patch_finding(**values):
     return {
+        "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
         "file": "x.py",
         "line_start": 1,
         "line_end": 1,
@@ -223,6 +224,11 @@ def test_failure_receipt(case, tmp_path, invoke, monkeypatch):
                     "claimed_line_start": row["line"],
                     "claimed_line_end": row["end_line"],
                     "location_status": "confirmed",
+                    "admission": {
+                        "version": 1,
+                        "status": "admitted",
+                        "input_proof": "fixture",
+                    },
                     "disposition": "deliver",
                     "anchor": QUOTE,
                 }

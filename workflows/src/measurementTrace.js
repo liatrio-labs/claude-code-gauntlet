@@ -1,6 +1,6 @@
 import { deepClone, RETURN_CHAR_BUDGET } from './wire.js';
 
-export const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'cite', 'dispose', 'holdback', 'select', 'deliver'];
+export const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'cite', 'dispose', 'holdback', 'select', 'deliver'];
 export const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
 const traceHistory = new WeakMap();
 const stageDecisions = new WeakMap();
@@ -18,7 +18,7 @@ export function measurementDecisions(output, decisions) {
 export function traceDecision(finding, reason_code, reason, related = [], decision = 'eliminated') {
   // An unlisted code would fail the bench's closed decoder and lose the whole trace; record it as unknown instead.
   const code = TRACE_REASONS.includes(reason_code) ? reason_code : 'unknown';
-  return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related };
+  return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related, detail: null };
 }
 export function eliminationDecisions(output) {
   const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
@@ -56,7 +56,7 @@ export function recordStage(trace, stage, output, details = {}) {
   if (existing >= 0) trace.snapshots = trace.snapshots.slice(0, existing);
   const findings = Array.isArray(output) ? output : output.findings || output.filtered || [];
   const decisions = [...decisionsFor(output), ...(details.decisions || [])];
-  for (const finding of details.removed || output.eliminated || []) traceVersion(trace, finding);
+  for (const finding of [...(details.removed || output.eliminated || []), ...(output.unverified || [])]) traceVersion(trace, finding);
   trace.snapshots.push({ sequence: trace.snapshots.length, stage,
     finding_version_ids: findings.map((f) => traceVersion(trace, f)).filter((id) => id !== null),
     decisions: deepClone(decisions), executed: details.executed !== false, replayed: !!details.replayed,

@@ -159,7 +159,7 @@ const original = ctx.agent;
 const returned = [];
 ctx.agent = async (prompt, dispatch) => {
   if (dispatch.label.startsWith('validate-batch-')) {
-    return { validations: [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => ({ finding_id: m[1], confidence: 90 })) };
+    return { validations: [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => ({ finding_id: m[1], confidence: 90, policy_subject: 'ordinary' })) };
   }
   if (dispatch.agentType === 'code-gauntlet:test-analyzer') {
     if (process.argv[1] === 'null') return null;
@@ -247,7 +247,7 @@ ctx.agent = async (prompt, dispatch) => {
       (stage === 'verify' && label.startsWith('verify-slice-')) ||
       (stage === 'validate' && label.startsWith('validate-batch-')) ||
       (stage === 'challenge' && label.startsWith('challenge-'))) throw new Error('execution failed');
-  if (label.startsWith('validate-batch-')) return { validations: [...prompt.matchAll(/^- (\\S+) \\[/gm)].map((m) => ({ finding_id: m[1], confidence: 90 })) };
+  if (label.startsWith('validate-batch-')) return { validations: [...prompt.matchAll(/^- (\\S+) \\[/gm)].map((m) => ({ finding_id: m[1], confidence: 90, policy_subject: 'ordinary' })) };
   return original(prompt, dispatch);
 };
 const out = await runWith(ctx, args);

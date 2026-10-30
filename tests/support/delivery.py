@@ -4,6 +4,21 @@ import json
 from pathlib import Path
 
 from gauntlet.delivery.compose import SkippedEntry
+from gauntlet.registry import Admission
+
+
+def admitted_stamp() -> Admission:
+    return {
+        "version": 1,
+        "status": "admitted",
+        "input_proof": "fixture",
+        "input_fields": [],
+        "reasons": [],
+        "kind": "ordinary",
+        "core": True,
+        "tier": "main",
+        "inline_eligible": True,
+    }
 
 
 def finding(*, omit: tuple[str, ...] = (), **values: object) -> dict[str, object]:
@@ -19,6 +34,7 @@ def finding(*, omit: tuple[str, ...] = (), **values: object) -> dict[str, object
         "claimed_line_end": end,
         "location_status": "confirmed",
         "disposition": "deliver",
+        "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
         "anchor": "    return 1\n    # tail",
         "severity": "high",
         "title": "T",

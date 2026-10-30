@@ -344,7 +344,7 @@ const SUMMARY_CASE_IDS = new Set([
 const SUMMARY_ROWS = [
   ...corpus('cross_runtime/outbound_line').summary_cases
     .filter((row) => SUMMARY_CASE_IDS.has(row.id)).map((row) => ({ name: row.id, input: { ...row.input,
-      findings: row.input.findings.map((f) => ({ ...f, disposition: 'deliver' })) },
+      findings: row.input.findings.map((f) => ({ ...f, disposition: 'deliver', admission: { version: 1, status: 'admitted', input_proof: 'fixture' } })) },
     expected: row.expected_js })),
   { name: 'two suggestions first line', input: { findings: [finding('A', { report_tag: 'suggestion' }),
     finding('B', { report_tag: 'suggestion' })] }, surface: 'firstLine',

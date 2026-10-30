@@ -9,7 +9,7 @@ import { fnv1a32 } from '../../src/wire.js';
 export function measurementScenario(mode = 'return', overrides = {}, options = {}) {
   const id = { owner: 'synthetic', repo: 'fixture', pr_number: 1, sha_full: 'a'.repeat(40), platform: 'github', web_origin: 'https://github.com' };
   const args = validArgs({ delivery: { tier: 'all', prIdentity: id },
-    limits: { challengeCap: 6, deliveryCap: 1 },
+    limits: { challengeCap: 5, deliveryCap: 1 },
     ...(mode === 'return' ? { persist: { returnPrimaries: true } } : mode === 'derived' ? { persist: {} } : {}),
     ...overrides,
   });
@@ -49,13 +49,13 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
       const index = Number(/verify-slice-(\d+)/.exec(label)[1]);
       return sliceInputRecorder(deltaEnvelope(slice, { sha: args.headShaShort, nonce: `${args.nonce}.${index}`,
         overrides: Object.fromEntries(slice.map((f) => [f.id, f.id === 'VERIFY'
-          ? { verified: false, elimination_reason: 'trusted executor disproved the claim' } : { origin: 'new', diff_validation: { in_diff: true } }])) }), prompt);
+          ? { verified: false, elimination_reason: 'trusted executor disproved the claim' } : { origin: 'new', path_role: 'source', diff_validation: { in_diff: true } }])) }), prompt);
     }
     if (options.failValidation && label.startsWith('validate-batch-')) throw new Error('synthetic validation dispatch failure');
     if (label.startsWith('validate-batch-')) {
       ctx.calls.push({ prompt, ...dispatch });
       const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
-      return { validations: ids.filter((id) => !['SKIP', 'CAP'].includes(id)).map((finding_id) => ({ finding_id,
+      return { validations: ids.filter((id) => id !== 'SKIP').map((finding_id) => ({ finding_id, policy_subject: 'ordinary',
         confidence: finding_id === 'FILTER' ? 45 : seed.find((f) => f.id === finding_id)?.confidence ?? 90 })) };
     }
     if (label.startsWith('challenge-')) {

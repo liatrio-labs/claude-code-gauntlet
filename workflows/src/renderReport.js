@@ -199,7 +199,7 @@ function coerceReportFinding(finding, severities) {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
     } else if (key === 'sites') {
       value = Array.isArray(raw) ? raw : [];
-    } else if (['disposition_reasons', 'delivery_group'].includes(key)) {
+    } else if (['disposition_reasons', 'delivery_group', 'admission', 'admission_assessments', 'body_fix_task_eligible'].includes(key)) {
       value = raw;
     } else if (key === 'consolidation_primary' || key === 'challenge_contested') {
       value = raw;
@@ -421,7 +421,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   const url = locationUrl(finding, permalinks, where);
   if (where) bullets.push(url ? `- **Location:** [${where}](${url})` : `- **Location:** ${where}`);
   for (const site of finding.sites || []) {
-    const located = { ...site, disposition: finding.disposition };
+    const located = { ...site, disposition: finding.disposition, admission: finding.admission };
     const link = locationUrl(located, permalinks);
     if (link) bullets.push(`- **Additional site:** [${location(located)}](${link})`);
   }

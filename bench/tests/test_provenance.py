@@ -149,6 +149,7 @@ def test_group_surfaces_preserve_identity(tmp_path, monkeypatch, capsys, forge_f
             "line_end": 7,
             "location_status": "confirmed",
             "anchor": "return process(value);",
+            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
             "disposition": "deliver",
             "dimension": dimension,
             "title": "Same title",
@@ -365,6 +366,7 @@ def test_independent_producer_payload_preserves_patch_demotion_and_order(platfor
         {
             **f,
             "trace_id": f"fixture:0:{i}",
+            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
             "disposition": "deliver",
             "discovery_agent": "synthetic",
             "discovery_dimension": "bug",

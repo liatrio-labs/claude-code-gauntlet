@@ -67,7 +67,7 @@ for (const row of VALIDATE_ROWS) test(`validate result: ${row.name}`, async () =
   assert.deepEqual(ctx.violations, []);
 });
 const VALIDATE_TAIL = '\nReturn { validations: [{ finding_id, confidence, justification, '
-  + 'reachability (current | future_change_only | uncertain), site_confirmations }] } \u2014 confidence 0-100 '
+  + 'reachability (current | future_change_only | uncertain), site_confirmations, policy_subject (test_defect | coverage | ordinary | unresolved), admission_assessments }] } \u2014 confidence 0-100 '
   + '(one entry per finding).';
 const VALIDATE_PROMPT_ROWS = [
   { name: 'equal range endpoints print once', fields: { file: 'one.js', line_start: 42, line_end: 42 },
@@ -142,7 +142,7 @@ const CHALLENGE_ROWS = [
     labels: ['challenge-0', 'challenge-1'], stats: { ...CHALLENGE_GOLDEN,
       total_input: 2, dispatched: 2, completed: 2, challenge_survived: 2, final_count: 2 }, justifications: ['claim holds',
         'claim holds'] },
-  { name: 'legacy low score removes', input: [finding({ id: 'F1', validation: 'skipped', origin: 'unknown' })], reply: { score: 10, justification: 'does not hold' },
+  { name: 'legacy low score removes', input: [finding({ id: 'F1' })], reply: { score: 10, justification: 'does not hold' },
     kept: [], scores: [], eliminated: ['F1'],
     stats: { ...CHALLENGE_GOLDEN, challenge_removed: 1, challenge_survived: 0, final_count: 0 } },
   { name: 'canonical zero is scored', input: [finding({ id: 'F1' })],
@@ -169,10 +169,8 @@ const CHALLENGE_ROWS = [
     ], stats: { ...CHALLENGE_GOLDEN, total_input: 3, dispatched: 2, completed: 2, skipped: 1,
       challenge_survived: 2, final_count: 2 } },
   { name: 'clean candidates fill cap first', input: [finding({ id: 'DIRTY', severity: 'critical', validation: 'skipped' }),
-    finding({ id: 'CLEAN', severity: 'low' })], reply: { score: 80 }, cap: 1, kept: ['CLEAN'], scores: [80],
-    unverified: [['DIRTY', 'capped']], gaps: [
-      'challenge: 1 finding(s) over challengeCap=1 left unchallenged (challenge=capped, pipeline-degraded)',
-    ], stats: { ...CHALLENGE_GOLDEN, total_input: 2, skipped: 1 } },
+    finding({ id: 'CLEAN', severity: 'low' })], reply: { score: 80 }, cap: 1, kept: ['CLEAN', 'DIRTY'], scores: [80, undefined],
+    unverified: [], gaps: [], stats: { ...CHALLENGE_GOLDEN, total_input: 2, admission_terminal: 1 } },
   { name: 'empty with timestamp', input: [], reply: { score: 80 }, kept: [], scores: [], labels: [],
     generatedAt: '2026-07-18T00:00:00Z',
     stats: { ...CHALLENGE_GOLDEN, total_input: 0, dispatched: 0, completed: 0, challenge_survived: 0, final_count: 0 } },

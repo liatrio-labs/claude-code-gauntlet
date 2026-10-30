@@ -85,6 +85,7 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
         "verify",
         "validate",
         "filter",
+        "admission",
         "challenge",
         "dispose",
         "select",
@@ -208,7 +209,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
             tid, "held_back", "validation_skipped", None, ()
         )
         for snapshot in raw["snapshots"]:
-            if snapshot["stage"] in ("filter", "challenge"):
+            if snapshot["stage"] in ("filter", "admission", "challenge"):
                 snapshot["finding_version_ids"] = raw["snapshots"][3][
                     "finding_version_ids"
                 ]
@@ -345,8 +346,9 @@ def test_trace_reasons_survive_delivery_overlay(tmp_path, extended):
         )
     )
     if extended:
-        snapshots[6:6] = [
-            replace(snapshots[5], stage="cite"),
+        index = next(i for i, s in enumerate(snapshots) if s.stage == "challenge") + 1
+        snapshots[index:index] = [
+            replace(snapshots[index - 1], stage="cite"),
         ]
     snapshots[-1] = replace(snapshots[-1], decisions=decisions)
     trace = replace(

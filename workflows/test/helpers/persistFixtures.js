@@ -60,7 +60,9 @@ export function replaySurvivor() {
 }
 
 export function persistInput(over = {}) {
-  const findings = over.findings || [makeFinding('F1'), makeFinding('F2')].map(({ diff_validation: _diff, ...finding }) => finding);
+  const findings = over.findings || [makeFinding('F1'), makeFinding('F2')].map(({ diff_validation: _diff,
+    path_role: _role, policy_subject: _subject, validation: _validation, challenge: _challenge, admission: _admission,
+    body_fix_task_eligible: _eligible, report_tag: _tag, report_destination: _destination, ...finding }) => finding);
   return {
     findings, postReview: findings, report: '# Code Gauntlet\n\nfindings rendered here',
     checkpoints: persistCheckpoints(findings),

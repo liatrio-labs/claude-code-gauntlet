@@ -22,6 +22,7 @@ import { deliveryAllows } from './location.js';
 import { appendMeasurement, createMeasurementTrace, recordStage, traceDecision, eliminationDecisions, stripTraceFields, decisionsFor } from './measurementTrace.js';
 import { captureDeliveryReplay, appendDeliveryReplay } from './measurementReplay.js';
 import { deepClone } from './wire.js';
+import { evaluateAdmission } from './admission.js';
 
 // The host injects runtime globals, while tests supply context explicitly.
 function defaultCtx() {
@@ -342,6 +343,10 @@ export async function runWith(ctx, rawArgs) {
         ...(name === 'filter' || name === 'challenge' ? { decisions: [
           ...rejected, ...eliminationDecisions(out),
           ...(name === 'challenge' ? (out.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f, f.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed', f.challenge, [], 'held_back')) : []),
+          ...(name === 'challenge' ? (out.findings || []).filter((f) => f.trace_id && f.challenge === 'admission_terminal').map((f) => ({
+            ...traceDecision(f, f.admission?.status === 'report_only' ? 'report_only' : 'held_back', 'intentional admission-terminal challenge skip', [], f.admission?.status === 'report_only' ? 'report_only' : 'held_back'),
+            detail: { kind: f.admission?.kind || 'unknown', policy_subject: f.policy_subject || 'unresolved', predicate: 'challenge_terminal', original_producer: f.agent },
+          })) : []),
         ], cap_hit: (out.unverified || []).some((f) => f.challenge === 'capped') } : {}),
       });
     } else if (name === 'discover' && replayed) recordStage(measurementTrace, name, out, { replayed });
@@ -434,9 +439,16 @@ export async function runWith(ctx, rawArgs) {
     gaps.push(...(filterOut.gaps || []));
 
     await runPhase('challenge', async () => {
+      const admitted = (filterOut.filtered || []).map((finding) => evaluateAdmission(deepClone(finding)));
+      if (measurementTrace) recordStage(measurementTrace, 'admission', { findings: admitted }, {
+        decisions: admitted.filter((f) => f.trace_id).flatMap((f) => f.admission.reasons.map((detail) => ({
+          ...traceDecision(f, detail.status, 'admission', [], detail.status),
+          detail: { ...detail, kind: f.admission.kind, policy_subject: f.policy_subject || 'unresolved', original_producer: f.agent },
+        }))),
+      });
       const out = await challengeStage(c, {
         // Shared context would weaken the challenger's independent check, so its prompt contains only the claim and location.
-        findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
+        findings: admitted, limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
       });
       out.eliminated = [...(verifyOut.eliminated || []), ...(filterOut.eliminated || []), ...(out.eliminated || [])];
       return out;

@@ -2,6 +2,8 @@
 
 import { INT_POLICY, coerceInt } from './wire.js';
 import { canonicalRange } from './location.js';
+import { matchAssessments } from './admission.js';
+import { VALIDATION_RETURN_PROPERTIES } from './registry.js';
 
 export const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
 
@@ -9,6 +11,8 @@ export function applyValidations(findings, validations) {
   const findingById = new Map();
   for (const finding of findings) {
     delete finding.sites;
+    delete finding.reachability;
+    for (const field of ['policy_subject', 'admission_assessments', 'admission', 'body_fix_task_eligible', 'effective_test_kind']) delete finding[field];
     const fid = 'id' in finding ? finding.id : undefined;
     if (fid !== null && fid !== undefined) findingById.set(fid, finding);
   }
@@ -42,11 +46,15 @@ export function applyValidations(findings, validations) {
 
     const justification = 'justification' in validation ? validation.justification : undefined;
     if (justification) finding.validation_justification = justification;
+    if (validations.filter((entry) => entry?.id === vid).length !== 1) { adjustedCount += 1; continue; }
     const reachability = 'reachability' in validation ? validation.reachability : undefined;
     if (REACHABILITY_VALUES.includes(reachability)) finding.reachability = reachability;
+    if (VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) finding.policy_subject = validation.policy_subject;
+    if (Array.isArray(validation.admission_assessments)) finding.admission_assessments = matchAssessments(finding, validation.admission_assessments);
     const key = (site) => JSON.stringify([site.file, site.line_start, site.line_end]);
     const confirmations = new Map((Array.isArray(validation.site_confirmations) ? validation.site_confirmations : [])
-      .filter((site) => site && typeof site === 'object').map((site) => [key(site), site.confirmed === true]));
+      .filter((site) => site && typeof site === 'object').map((site, _, sites) => [key(site),
+        site.confirmed === true && sites.filter((other) => key(other) === key(site)).length === 1]));
     if (finding.resolved_sites) finding.sites = finding.resolved_sites.filter((site) => canonicalRange(site) && confirmations.get(key(site)) === true);
 
     adjustedCount += 1;

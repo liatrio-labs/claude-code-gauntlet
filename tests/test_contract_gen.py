@@ -6,7 +6,7 @@ import shutil
 import sys
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from gauntlet import contract_gen as gen
@@ -177,7 +177,7 @@ def test_disposition_row_generates_consumers(registry_tree, invoke):
             "node",
             "--input-type=module",
             "-e",
-            "import { deliveryAllows } from './workflows/src/location.js'; console.log(JSON.stringify(['body','inline','report','fixTask'].map(r => deliveryAllows({disposition:'review_digest'},r))));",
+            "import { deliveryAllows } from './workflows/src/location.js'; console.log(JSON.stringify(['body','inline','report','fixTask'].map(r => deliveryAllows({disposition:'review_digest',admission:{version:1,status:'admitted',input_proof:'fixture'}},r))));",
         ],
         cwd=str(registry_tree),
         check=True,
@@ -1125,6 +1125,55 @@ def test_identity_fill_order():
 @pytest.fixture(scope="module")
 def live_identity():
     return gen.load_registry(str(ROOT))
+
+
+@pytest.mark.parametrize("depth", [0, 2, 6])
+@pytest.mark.parametrize("object_depth", [0, 4])
+@pytest.mark.parametrize(
+    "values",
+    [
+        ["a_single_enum_value_" * 6],
+        ["first_predicate", "second_predicate", "third_predicate"],
+        [f"long_predicate_value_{i}" for i in range(12)],
+    ],
+)
+def test_python_registry_wraps_nested_field_enums(
+    live_identity, depth, object_depth, values
+):
+    identity = deepcopy(live_identity)
+    schema = {"type": "string", "enum": values}
+    for _ in range(depth):
+        schema = {"type": "array", "items": schema}
+    probe = {
+        "type": "object",
+        "properties": {"predicate": schema},
+        "required": ["predicate"],
+    }
+    for _ in range(object_depth):
+        probe = {
+            "type": "object",
+            "properties": {"nested_predicate": probe},
+            "required": ["nested_predicate"],
+        }
+    identity["findingTypes"]["formatter_probe"] = probe
+    rendered = gen.render_python_registry(identity)
+    owner = "FormatterProbe" + "NestedPredicate" * object_depth
+    alias = "_" + owner + "Predicate" + "Item" * depth + "_Literal"
+    assert (
+        f"{alias} = Literal[\n" in rendered
+        or f"{alias} = (\n    Literal[\n" in rendered
+    )
+    if not object_depth:
+        fields = rendered.split("class FormatterProbe(TypedDict):\n")[1].split("\n\n")[
+            0
+        ]
+        assert all(len(line) <= 88 for line in fields.splitlines())
+    namespace = {}
+    exec(rendered, namespace)
+    annotation = namespace[owner].__annotations__["predicate"]
+    for _ in range(depth):
+        (annotation,) = get_args(annotation)
+    assert get_args(annotation) == tuple(values)
 
 
 def test_registry_diagnostic(registry_tree, live_identity, monkeypatch, invoke):

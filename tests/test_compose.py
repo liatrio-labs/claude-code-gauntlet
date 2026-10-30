@@ -158,6 +158,11 @@ def test_patch_payload(payload, offsets, expected):
                 "suggested_fix_code": payload,
                 "_fence_offsets": (9, 9),
                 "location_status": "confirmed",
+                "admission": {
+                    "version": 1,
+                    "status": "admitted",
+                    "input_proof": "fixture",
+                },
                 "disposition": "deliver",
                 "line_start": 2,
                 "line_end": 3,
@@ -325,6 +330,7 @@ GROUP_SECTIONS_CASES = {
 def test_group_sections(primary, corroborators, expected):
     primary = {
         "location_status": "confirmed",
+        "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
         "disposition": "deliver",
         "line_start": 2,
         "line_end": 3,

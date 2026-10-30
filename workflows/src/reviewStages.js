@@ -9,6 +9,7 @@ import { applyFilterPipeline } from './filterFindings.js';
 import { applyChallenges, rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
 import { deliveryGroups } from './dispose.js';
+import { admissionContext, hasAdmission } from './admission.js';
 
 // The platform rejects array-rooted tool schemas, so validation entries need an object wrapper.
 const VALIDATE_SCHEMA = {
@@ -85,9 +86,11 @@ export async function validateStage(ctx, input) {
     }
     completed += 1;
     const entries = list.filter((e) => e && typeof e === 'object')
-      .map((e) => ({ ...e, id: e.id ?? e.finding_id }));
+      .map((e) => ({ ...e, id: e.id ?? e.finding_id }))
+      .filter((e) => batch.some((f) => f.id === e.id));
     validations.push(...entries);
-    const scored = new Set(entries.filter((e) => coerceInt(e.confidence, INT_POLICY.validation) !== null).map((e) => e.id));
+    const scored = new Set(entries.filter((e) => coerceInt(e.confidence, INT_POLICY.validation) !== null
+      && entries.filter((other) => other.id === e.id).length === 1).map((e) => e.id));
     const unscored = batch.filter((f) => !scored.has(f.id));
     if (unscored.length) {
       gaps.push(`validate-batch-${idx}: validator omitted scores — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
@@ -126,9 +129,9 @@ function validatePrompt(inp, batch) {
     const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
     const sites = (f.resolved_sites || []).filter((site) => locationAllows(site, 'sourceLink'));
     const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
-    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests}`;
+    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f))}`;
   }).join('\n');
-  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Findings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
+  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Findings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
 }
 
 // The runtime has no wall clock, so generated_at must come from the supplied arguments.
@@ -201,10 +204,9 @@ export async function challengeStage(ctx, input) {
   const model = modelFor('code-gauntlet:challenger', policy);
 
   // Reserve scarce challenge capacity for findings that can still be delivered.
-  const ranked = [
-    ...rankFindings(findings.filter((f) => incompleteVetting(f).length === 0)),
-    ...rankFindings(findings.filter((f) => incompleteVetting(f).length > 0)),
-  ];
+  const actionable = (f) => hasAdmission(f) && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
+  const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f, challenge: 'admission_terminal' }));
+  const ranked = rankFindings(findings.filter(actionable));
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);
 
@@ -234,7 +236,7 @@ export async function challengeStage(ctx, input) {
     }
     // Use the known finding id because challenger output cannot be trusted to echo it.
     challenges.push({ id: finding.id, score: rawScore, justification: res.justification });
-    challenged.push(finding);
+    challenged.push({ ...finding, challenge: 'survived' });
   });
 
   for (const f of overflow) skipped.push({ ...f, challenge: 'capped' });
@@ -247,12 +249,13 @@ export async function challengeStage(ctx, input) {
   const unverified = rankFindings(skipped);
 
   return {
-    findings: applied.findings,
+    findings: [...applied.findings, ...terminal],
     unverified,
     eliminated: applied.eliminated,
     gaps,
     stats: {
       total_input: findings.length,
+      ...(terminal.length ? { admission_terminal: terminal.length } : {}),
       dispatched: candidates.length,
       completed: challenged.length,
       skipped: skipped.length,

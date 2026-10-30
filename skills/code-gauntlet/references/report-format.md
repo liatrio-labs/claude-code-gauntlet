@@ -129,12 +129,12 @@ Unconfirmed findings remain in the review body, labelled `location unconfirmed`.
 
 ## Final Disposition and Rights
 
-Missing or unknown disposition is held back. Delivery intersects these rights with location rights.
+Missing or unknown disposition or admission is held back. Delivery intersects admission, disposition and location rights. Body fix tasks additionally require the persisted current-defect eligibility stamp; patches and fences remain denied.
 
 | Disposition | inline | body | report | fixTask | patch | fence | sourceLink |
 |---|---|---|---|---|---|---|---|
 | deliver | yes | yes | finding | yes | yes | yes | yes |
-| body | no | yes | finding | no | no | no | yes |
+| body | no | yes | finding | yes | no | no | yes |
 | held_back | no | no | unverified | no | no | no | no |
 | report_only | no | no | finding | no | no | no | no |
 | eliminate | no | no | eliminated | no | no | no | no |

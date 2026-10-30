@@ -31,6 +31,7 @@ FOOTER = (
 )
 
 CONTEXT = {
+    "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
     "file": "src/edited.py",
     "line": 61,
     "line_start": 61,
@@ -44,6 +45,7 @@ CONTEXT = {
 }
 
 ADDED = {
+    "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
     "disposition": "deliver",
     "file": "src/edited.py",
     "line": 62,
@@ -57,6 +59,7 @@ ADDED = {
 }
 
 NEW = {
+    "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
     "disposition": "deliver",
     "file": "src/app/clients/api/__init__.py",
     "line": 1,

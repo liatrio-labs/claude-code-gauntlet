@@ -73,12 +73,14 @@ export const LOCATION_STATUSES = deepFreeze(Object.keys(LOCATION_RIGHTS));
 
 export const DISPOSITION_RIGHTS = deepFreeze({
   deliver: { inline: true, body: true, report: 'finding', fixTask: true, patch: true, fence: true, sourceLink: true },
-  body: { inline: false, body: true, report: 'finding', fixTask: false, patch: false, fence: false, sourceLink: true },
+  body: { inline: false, body: true, report: 'finding', fixTask: true, patch: false, fence: false, sourceLink: true },
   held_back: { inline: false, body: false, report: 'unverified', fixTask: false, patch: false, fence: false, sourceLink: false },
   report_only: { inline: false, body: false, report: 'finding', fixTask: false, patch: false, fence: false, sourceLink: false },
   eliminate: { inline: false, body: false, report: 'eliminated', fixTask: false, patch: false, fence: false, sourceLink: false },
 });
 export const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
+export const RIGHT_ELIGIBILITY = deepFreeze({ body: { fixTask: ['current_defect', 'current_reachability', 'confirmed_location'] } });
+export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2 }, cite: { attempts: 2 }, writer: { attempts: 2 } });
 
 const SOURCE_REFERENCE = {
   type: 'object', $comment: 'source-reference', properties: {
@@ -120,14 +122,14 @@ export const DISCOVERY_FINDING_PROP_TYPES = deepFreeze(Object.fromEntries(Object
     return [name, wireSchema];
   })));
 
-export const VALIDATION_RETURN_PROPERTIES = deepFreeze({
+const RECURRENCE_RETURN_PROPERTIES = {
   site_confirmations: { type: 'array', items: {
     type: 'object', properties: {
       file: { type: 'string' }, line_start: { type: 'integer', minimum: 1 },
       line_end: { type: 'integer', minimum: 1 }, confirmed: { type: 'boolean' },
     }, required: ['file', 'line_start', 'line_end', 'confirmed'], additionalProperties: false,
   } },
-});
+};
 
 export const RESOLVED_SITE_SCHEMA = deepFreeze({ type: 'array', items: {
   ...FINDING_PROP_TYPES.sites.items,
@@ -251,6 +253,51 @@ export const VERIFY_FACT_PROPERTIES = deepFreeze({
   })), additionalProperties: false },
 });
 
+export const ADMISSION_PREDICATES = deepFreeze({
+  pr_owned_test: { fact: 'pr_owned_test' },
+  confirmed_test_defect: { references: ['primary'], description: 'Actual incorrect assertion, ineffective mock, missing wait, isolation failure or other broken/noisy changed test.' },
+  test_diff_site_for_inline: { placement: true },
+  criticality_at_least_8: { fact: 'criticality' },
+  resolved_production_element: { references: ['production_element'], description: 'The resolved element is production behavior; directory names do not establish this.' },
+  complete_searches: { fact: 'searches', references: ['searched_paths', 'candidate_tests'], description: 'Completed coverage investigation inspecting inputs, assertions, helpers and indirect integration coverage, including searches with no candidates.' },
+  complete_behavioral_absence: { references: ['production_element', 'searched_paths', 'candidate_tests'], description: 'The entire named behavior has no effective coverage; an extra branch/case or indirect surviving coverage rejects absence.' },
+  present_defect: { references: ['primary'], description: 'A present production correctness failure.' },
+  resolved_duplicate: { fact: 'duplicate_of' },
+  confirmed_duplication: { references: ['primary', 'duplicate_of'], description: 'The resolved source duplicates the same behavior.' },
+  concrete_equivalent: { fact: 'equivalent', references: ['primary'], description: 'A concrete equivalent fix exists.' },
+  behavior_preserved: { references: ['primary'], description: 'Equivalent return values, side effects and error paths.' },
+  resolved_precedent: { fact: 'precedent' },
+  precedent_not_added: { fact: 'precedent_not_added' },
+  applicable: { references: ['primary', 'precedent'], description: 'The existing repository precedent applies here.' },
+  current_defect: { references: ['primary'], description: 'A current code defect, independently of coverage absence or quality preference.' },
+  current_reachability: { fact: 'reachability' },
+  confirmed_location: { fact: 'location' },
+});
+const ASSESSMENT = { type: 'object', properties: {
+  predicate: { type: 'string', enum: Object.keys(ADMISSION_PREDICATES).filter((key) => ADMISSION_PREDICATES[key].references) },
+  status: { type: 'string', enum: ['confirmed', 'rejected', 'unresolved'] },
+  references: { type: 'array', items: { type: 'string' } },
+}, required: ['predicate', 'status', 'references'], additionalProperties: false };
+export const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES,
+  policy_subject: { type: 'string', enum: Object.keys(POLICY_SUBJECTS) },
+  admission_assessments: { type: 'array', items: ASSESSMENT },
+});
+export const ADMISSION_STAMP_PROPERTIES = deepFreeze({
+  policy_subject: VALIDATION_RETURN_PROPERTIES.policy_subject,
+  admission_assessments: VALIDATION_RETURN_PROPERTIES.admission_assessments,
+  admission: { type: 'object', properties: {
+    version: { type: 'integer', enum: [1] }, input_proof: { type: 'string' },
+    input_fields: { type: 'array', items: { type: 'string' } },
+    status: { type: 'string', enum: ['admitted', 'report_only', 'held_back'] },
+    reasons: { type: 'array', items: { type: 'object', properties: {
+      predicate: { type: 'string' }, status: { type: 'string', enum: ['report_only', 'held_back'] },
+    }, required: ['predicate', 'status'], additionalProperties: false } },
+    kind: { type: 'string' }, core: { type: 'boolean' }, tier: { type: 'string', enum: ['main', 'suggestion'] },
+    inline_eligible: { type: 'boolean' },
+  }, required: ['version', 'input_proof', 'input_fields', 'status', 'reasons', 'kind', 'core', 'tier', 'inline_eligible'], additionalProperties: false },
+  body_fix_task_eligible: { type: 'boolean' },
+});
+
 export function dimensionRow(dimension) {
   return DIMENSIONS.find((row) => row.dimension === dimension || row.aliases.includes(dimension));
 }
@@ -299,16 +346,18 @@ export function findingPolicy(finding) {
     || (original && (original.dimension === finding.dimension || promotion === finding.dimension)
       ? original : null)
     || dimensionRow(finding.dimension) || producer.find((candidate) => candidate.agentFallback) || producer[0];
-  const kind = row?.admission?.kinds[finding[row.admission.field]];
-  return { row, kind, core: kind?.core ?? row?.core ?? false,
-    tier: kind?.tier ?? row?.defaultTier, defaultDisposition: kind?.defaultDisposition ?? row?.defaultDisposition };
+  const subject = row?.policySubjects[finding.policy_subject];
+  const selected = subject?.dimension ? dimensionRow(subject.dimension) : row;
+  const kind = selected?.admission?.kinds[subject?.kind || finding[selected.admission.field]];
+  return { row: selected, kind, core: kind?.core ?? selected?.core ?? false,
+    tier: kind?.tier ?? selected?.defaultTier, defaultDisposition: kind?.defaultDisposition ?? selected?.defaultDisposition };
 }
 
 export function normalizePipelineStamps(finding) {
-  const { row } = findingPolicy(finding);
+  const { row } = findingPolicy({ ...finding, policy_subject: undefined });
   if (finding.origin_dimension !== row?.dimension) delete finding.origin_dimension;
-  const subjects = Object.values(row?.policySubjects || {});
-  if (!subjects.some((subject) => subject.stamp === 'effective_test_kind' && subject.kind === finding.effective_test_kind)) {
+  const subject = row?.policySubjects[finding.policy_subject];
+  if (subject?.stamp !== 'effective_test_kind' || subject.kind !== finding.effective_test_kind) {
     delete finding.effective_test_kind;
   }
 }
@@ -320,10 +369,11 @@ export const FINDING_PATH_ARRAY_FIELDS = deepFreeze(Object.entries(FINDING_PATH_
   .filter(([, schema]) => schema.type === 'array' && schema.items.$comment === 'repo-path').map(([key]) => key));
 
 // Identifiers must not collide; structural paths and suggestion code retain their own semantics.
-export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'delivery_group', 'file', ...Object.keys(FINDING_PATH_DESCRIPTORS), 'resolved_references', 'site_requests', 'resolved_sites', 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
+export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'delivery_group', 'file', ...Object.keys(FINDING_PATH_DESCRIPTORS), ...Object.keys(ADMISSION_STAMP_PROPERTIES), 'resolved_references', 'site_requests', 'resolved_sites', 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
 
 // Keep pipeline stamp names code-owned so disclosure can use a safe other fallback for unknown fields.
 export const PIPELINE_FINDING_FIELDS = deepFreeze([
+  ...Object.keys(ADMISSION_STAMP_PROPERTIES),
   'origin_dimension', 'effective_test_kind', 'reference_diagnostics',
   ...Object.keys(VERIFY_FACT_PROPERTIES),
   'trace_id', 'discovery_agent', 'discovery_dimension',

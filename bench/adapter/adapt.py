@@ -107,6 +107,8 @@ def payload_to_candidates(
         for candidate, source in zip(candidates, inline, strict=True):
             candidate["source_trace_ids"] = list(source.source_trace_ids)
             candidate["discovery_dimensions"] = list(source.discovery_dimensions)
+            candidate["test_claim"] = source.test_claim
+            candidate["test_site"] = source.test_site
             candidate["provenance_status"] = source.provenance_status
     result = {golden_url: {tool: candidates}}
     stats = {

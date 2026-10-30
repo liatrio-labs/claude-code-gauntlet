@@ -1,5 +1,4 @@
-import { AGENTS, TRUSTED_SCRIPT_BASENAMES } from './registry.js';
-import { LIMIT_DEFAULTS } from './registry.js';
+import { AGENTS, TRUSTED_SCRIPT_BASENAMES, STAGE_COSTS, LIMIT_DEFAULTS } from './registry.js';
 import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding } from './verifyWire.js';
 
 import { pythonArgv, shellWord } from './wire.js';
@@ -105,13 +104,12 @@ export function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPl
 export const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
 
 // The retry and the agent-count guard must agree on dispatches per slice.
-export const VERIFY_ATTEMPTS_PER_SLICE = 2;
+export const VERIFY_ATTEMPTS_PER_SLICE = STAGE_COSTS.verify.attempts;
 
 // Stay strictly under the platform's per-run agent fan-out ceiling; the gap is headroom.
 const AGENT_COUNT_GUARD = 900;
 // Widen the summarize bucket once its term alone exceeds this.
 const SUMMARIZE_TERM_BOUND = 300;
-// Never challenge fewer than this many findings.
 const CHALLENGE_CAP_FLOOR = 5;
 
 const ceilDiv = (n, d) => Math.ceil(Math.max(0, n) / Math.max(1, d));
@@ -137,8 +135,10 @@ function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
 }
 
-// Every verify slice can retry independently, so its term must include retries.
-// The +2 covers up to two artifact-writer attempts; renderReport is code-only.
+function citeCost(L, findings, challenges) {
+  return ceilDiv(challenges, effectiveBatchSize(L, findings)) * STAGE_COSTS.cite.attempts;
+}
+
 export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
@@ -147,7 +147,8 @@ export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'mai
   const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
   const validateCalls = ceilDiv(findings, effectiveBatchSize(L, findings));
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
-  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + 2;
+  const citeCalls = citeCost(L, findings, challengeCalls);
+  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + citeCalls + STAGE_COSTS.writer.attempts;
 }
 
 // Removing terms that cannot shrink guarantees termination when the inline budget binds.
@@ -169,26 +170,29 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
     }
     // Compare each term using its full dispatch cost so retrying verify slices receive the same weight as in the guard.
     const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch, input);
-    const validateTerm = ceilDiv(findings, effectiveBatchSize(L, findings));
-    const challengeTerm = Math.min(findings, effectiveChallengeCap(L, findings));
+    const challengeCount = Math.min(findings, effectiveChallengeCap(L, findings));
+    const citeTerm = citeCost(L, findings, challengeCount);
+    const validateTerm = ceilDiv(findings, effectiveBatchSize(L, findings)) + citeTerm;
+    const challengeTerm = challengeCount + citeTerm;
     const choices = [
       ['validate', validateTerm],
       ['verify', currentVerifyTerm],
       ['challenge', challengeTerm],
-    ].filter(([name]) => candidates.has(name));
+    ].filter(([name, cost]) => candidates.has(name) && cost > 0);
     if (choices.length === 0) break;
     choices.sort((a, b) => b[1] - a[1]);
     const [largest] = choices;
     if (largest[0] === 'validate') {
       L.validateBatch = effectiveBatchSize(L, findings) * 2;
-      if (ceilDiv(findings, effectiveBatchSize(L, findings)) >= validateTerm) candidates.delete('validate');
+      if (ceilDiv(findings, effectiveBatchSize(L, findings)) + citeCost(L, findings, challengeCount) >= validateTerm) candidates.delete('validate');
     } else if (largest[0] === 'verify') {
       L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
       if (verifyTerm(L, nFindings, baseBranch, input) >= currentVerifyTerm) candidates.delete('verify');
     } else {
       // Halving the effective cap ensures progress even when the nominal cap exceeds the finding count.
-      L.challengeCap = Math.max(CHALLENGE_CAP_FLOOR, Math.floor(Math.min(effectiveChallengeCap(L, findings), findings) / 2));
-      if (Math.min(findings, effectiveChallengeCap(L, findings)) >= challengeTerm) candidates.delete('challenge');
+      L.challengeCap = Math.min(challengeCount, Math.max(CHALLENGE_CAP_FLOOR, Math.floor(challengeCount / 2)));
+      const next = Math.min(findings, effectiveChallengeCap(L, findings));
+      if (next + citeCost(L, findings, next) >= challengeTerm) candidates.delete('challenge');
     }
   }
   return L;

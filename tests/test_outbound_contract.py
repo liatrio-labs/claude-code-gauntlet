@@ -385,6 +385,11 @@ def test_summary_containment(title: str, path: str, expected: str) -> None:
                         "line_start": 1,
                         "line_end": 1,
                         "location_status": "confirmed",
+                        "admission": {
+                            "version": 1,
+                            "status": "admitted",
+                            "input_proof": "fixture",
+                        },
                         "disposition": "deliver",
                         "severity": "high",
                     }
