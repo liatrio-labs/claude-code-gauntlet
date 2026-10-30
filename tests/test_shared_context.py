@@ -8,10 +8,12 @@ from typing import TypedDict
 
 import pytest
 from gauntlet.jsjson import fnv1a32, js_stringify_pretty
+from gauntlet.registry import READ_PLAN_MAX_CHARS
 
 from tests.conftest import Invocation
 from tests.support.git_diff import git, init_git_repo
 from tests.support.phase2 import SHA, write_context_inputs
+from tests.support.pipeline import run_node
 
 
 class ContextOverrides(TypedDict, total=False):
@@ -123,12 +125,81 @@ def test_layout_is_root_and_changed_directories_only(
         expected.update(["untracked", "apps/deep/local"])
     assert layout["entries"] == sorted(expected)
     assert layout["unavailable"] == ["linked"]
+    assert layout["omitted"] == []
     assert b"$(marker)" in content and not (tmp_path / "marker").exists()
     assert content.count(b"</untrusted-code-content ") == 2
     assert collect()[1] == layout
     if target == "branch":
         argv[-1] = head[:7] + "f" * 33
-        assert collect()[1] == {"entries": [], "unavailable": ["."]}
+        assert collect()[1] == {"entries": [], "unavailable": ["."], "omitted": []}
+
+
+def test_layout_bounds_names_and_read_chunks(tmp_path, invoke):
+    root = tmp_path / "repo"
+    changed = root / "changed"
+    changed.mkdir(parents=True)
+    names = [f"changed/{index:04}-{'name' * 9}" for index in range(1201)]
+    for name in names:
+        (root / name).write_bytes(b"source\n")
+    assert sum(map(len, names)) > READ_PLAN_MAX_CHARS
+    diff = (
+        f"diff --git a/{names[0]} b/{names[0]}\n"
+        f"--- a/{names[0]}\n+++ b/{names[0]}\n@@ -1 +1 @@\n-old\n+new\n"
+    ).encode()
+    output = tmp_path / "out"
+    write_context_inputs(output, b"rules", diff)
+    result = invoke(
+        "write_shared_context",
+        [
+            "--output-dir",
+            str(output),
+            "--head-sha",
+            SHA,
+            "--repo-root",
+            str(root),
+        ],
+        tmp_path,
+        b"triage",
+    )
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads(result.stdout)
+    content = (output / f"code-gauntlet-context-{SHA}.md").read_text(encoding="utf-8")
+    body = re.search(
+        r'kind="repository-layout"[^>]*>\n(.*?)\n</untrusted-code-content',
+        content,
+        re.S,
+    )
+    assert body is not None
+    layout = json.loads(body[1])
+    listed = [name for name in layout["entries"] if name in names]
+    omitted = len(names) - len(listed)
+    assert 0 < omitted < len(names)
+    assert listed == names[: len(listed)]
+    assert layout["omitted"] == [f"changed: {omitted} entries omitted"]
+    rows = {line.strip().removesuffix(",") for line in body[1].splitlines()}
+    assert all(json.dumps(name) in rows for name in listed)
+    planned = run_node(
+        r"""
+        import { contextReadPlan, READ_PLAN_MAX_CHARS } from './workflows/src/contextPlan.js';
+        import { readFileSync } from 'node:fs';
+        const { receipt, content } = JSON.parse(readFileSync(0, 'utf8'));
+        const lines = content.split('\n');
+        const chunks = contextReadPlan(receipt.contextLines, receipt.contextChars, receipt.contextMaxLineChars);
+        console.log(JSON.stringify({
+          cap: READ_PLAN_MAX_CHARS,
+          sizes: chunks.map(({ offset, limit }) =>
+            lines.slice(offset - 1, offset - 1 + limit).join('\n').length + 1),
+          covered: chunks.reduce((total, chunk) => total + chunk.limit, 0),
+        }));
+        """,
+        {"receipt": receipt, "content": content},
+    )
+    plan = json.loads(planned.stdout)
+    assert plan["cap"] == READ_PLAN_MAX_CHARS
+    assert plan["covered"] == receipt["contextLines"] == content.count("\n")
+    assert receipt["contextChars"] == len(content)
+    assert receipt["contextMaxLineChars"] == max(map(len, content.split("\n"))) + 1
+    assert max(plan["sizes"]) <= READ_PLAN_MAX_CHARS
 
 
 def test_context_neutralizes_block_tags_in_diff(tmp_path, invoke):
@@ -192,6 +263,10 @@ def test_context_neutralizes_block_tags_in_diff(tmp_path, invoke):
     assert json.loads(result.stdout) == {
         "contextLines": context.count(b"\n"),
         "contextChars": len(context.decode("utf-8", errors="replace")),
+        "contextMaxLineChars": max(
+            map(len, context.decode("utf-8", errors="replace").split("\n"))
+        )
+        + 1,
         "removedTests": {
             **unavailable,
             "checksum": fnv1a32(js_stringify_pretty(unavailable)),

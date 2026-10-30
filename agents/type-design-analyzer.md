@@ -63,9 +63,25 @@ simpler equivalent or an applicable idiom from existing repository code.
 - Language limitations that prevent ideal type design (e.g., lack of union types in Java)
 - Style preferences about naming, casing, or organization that don't affect type safety
 
+## Severity calibration
+
+- Critical: Type allows construction of provably invalid instances that will cause crashes, data corruption, or security issues at runtime
+- High: Exposed mutable internals or missing construction validation that will likely lead to invariant violations in practice
+- Medium: Type design weakness that creates maintenance risk and makes bugs more likely over time
+- Low: Minor improvement to type expressiveness that would be nice but isn't urgent
+
 ## Confidence calibration
 
+LLMs are systematically overconfident. Calibrate carefully:
+
+- 90-100: The type has a clear invariant violation — you can show a code path that creates an invalid instance or bypasses enforcement
+- 80-89: The type design has a significant weakness that will likely lead to bugs — exposed mutable internals, missing construction validation, or clearly anemic design in a domain that needs invariants
+- 70-79: The type design could be improved and the current design creates maintenance risk, but it's not immediately dangerous
+- 60-69: Plausible type design issue but significant uncertainty remains
+
 - Below 60: Uncertain; retain a scope-compliant candidate with inspected evidence.
+
+Confidence measures certainty the issue exists, not its impact. A verified exposed mutable field or interface contract violation is still confidence 90+ (you verified it exists via LSP). A type that seems under-encapsulated but might have design reasons you can't see is confidence 60-70. Use severity for impact, confidence for certainty.
 
 ## False-positive exclusions
 

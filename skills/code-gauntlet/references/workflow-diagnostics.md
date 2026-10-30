@@ -40,8 +40,9 @@ Each agent returns structured findings against the canonical schema (`agent()` `
 
 ## Shared-context read plan
 
-Phase 2 stamps `contextLines` and `contextChars`. `contextReadPlan` bounds each chunk by
-750 lines and a 30,000-character estimate using average line length. It enumerates at most ten
+Phase 2 stamps `contextLines`, `contextChars` and `contextMaxLineChars` (including LF).
+`contextReadPlan` bounds each chunk by 750 lines and 30,000 characters using the maximum
+line length, falling back to the average for older receipts. It enumerates at most ten
 calls, then expresses longer plans as an offset rule, with a ceiling of 2,000 chunks.
 Agents make every planned call and continue past the last received line if a call stops early.
 `runWith` builds `sharedContextLine` once and threads `contextLine` to stages so they cannot

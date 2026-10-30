@@ -23,6 +23,7 @@ from gauntlet.framing import frame
 from gauntlet.location import SourceAdapter
 from gauntlet.paths import NON_SOURCE_DIRS
 from gauntlet.pr_status import load_snapshot
+from gauntlet.registry import READ_PLAN_MAX_CHARS
 from gauntlet.removed_tests import removed_tests
 
 DESCRIPTION = (
@@ -48,8 +49,8 @@ inside it rewritten to ``<\\`` and ``<\\/``, then the closing tag and LF. A sing
 large Read can return only part of a file without notice; the workflow has no
 disk and needs the receipt's line count to plan exact Reads. The content always
 ends with LF, so the newline count equals the Read tool's line numbering.
-``contextChars`` counts decoded code points with replacement and is advisory;
-it only narrows the Read chunk size.
+``contextChars`` counts decoded code points with replacement; ``contextMaxLineChars``
+includes LF and bounds Read chunk size even when line lengths vary.
 """
 )
 
@@ -68,6 +69,11 @@ def _read_input(path: str, label: str) -> bytes:
 class LayoutWire(TypedDict):
     entries: list[str]
     unavailable: list[str]
+    omitted: list[str]
+
+
+def _layout_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=True, indent=2).replace("<", "\\u003c")
 
 
 def layout_entries(source: SourceAdapter, changed_files: Iterable[str]) -> LayoutWire:
@@ -82,13 +88,30 @@ def layout_entries(source: SourceAdapter, changed_files: Iterable[str]) -> Layou
     )
     names: set[str] = set()
     unavailable = []
+    omitted = []
     for directory in sorted(directories):
         entries = source.entries(directory)
         if entries is None:
             unavailable.append(directory or ".")
         else:
-            names.update(name for name in entries if included(name))
-    return {"entries": sorted(names), "unavailable": unavailable}
+            candidates = [name for name in entries if included(name)]
+            disclosure = f"{directory or '.'}: {len(candidates)} entries omitted"
+            # Charge escaped names, JSON indentation and the omission disclosure
+            # against the same character budget used by the Read planner.
+            remaining = READ_PLAN_MAX_CHARS - len(f"    {_layout_json(disclosure)},\n")
+            listed = 0
+            for name in candidates:
+                size = len(f"    {_layout_json(name)},\n")
+                if size > remaining:
+                    break
+                names.add(name)
+                remaining -= size
+                listed += 1
+            if listed < len(candidates):
+                omitted.append(
+                    f"{directory or '.'}: {len(candidates) - listed} entries omitted"
+                )
+    return {"entries": sorted(names), "unavailable": unavailable, "omitted": omitted}
 
 
 def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
@@ -185,11 +208,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         source = SourceAdapter.capture(
             Path(args.repo_root).resolve(), args.target_type, args.head_sha_full
         )
-        layout = (
-            json.dumps(layout_entries(source, changed_files), ensure_ascii=True)
-            .replace("<", "\\u003c")
-            .encode("utf-8")
-        )
+        layout = _layout_json(layout_entries(source, changed_files)).encode("utf-8")
         layout = frame(
             "untrusted-code-content", layout + b"\n", {"kind": "repository-layout"}
         )
@@ -235,10 +254,12 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         ) from exc
 
     lines = content.count(b"\n")
-    chars = len(content.decode("utf-8", errors="replace"))
+    decoded = content.decode("utf-8", errors="replace")
+    chars = len(decoded)
     return {
         "contextLines": lines,
         "contextChars": chars,
+        "contextMaxLineChars": max(map(len, decoded.split("\n"))) + 1,
         "removedTests": removed_tests(diff.decode("utf-8", errors="replace")),
     }, 0
 

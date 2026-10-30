@@ -39,9 +39,24 @@ Only simplify recently modified code unless explicitly instructed otherwise. Pre
 - Suggestions that require importing new dependencies
 - Simplifications that only benefit a reader who knows advanced language features most team members wouldn't recognize
 
+## Severity calibration
+
+- High: Complex code that will cause misunderstandings and bugs in future maintenance — deeply nested logic, opaque variable names in critical paths, or duplicate logic that will diverge
+- Medium: Clarity improvement that would meaningfully reduce cognitive load for future readers
+- Low: Minor naming or structure improvement that's a nice-to-have
+
 ## Confidence calibration
 
+LLMs are systematically overconfident. Calibrate carefully:
+
+- 90-100: The simplification clearly improves readability, preserves behavior, and follows project conventions. You can show a concrete before/after that any reviewer would agree is better.
+- 80-89: The simplification is a clear improvement for most readers, but there might be a subjective element (e.g., whether to extract a helper or inline it).
+- 70-79: The simplification would help but is more of a preference — reasonable developers might disagree.
+- 60-69: Marginal improvement with significant subjectivity.
+
 - Below 60: Uncertain; retain a scope-compliant candidate with inspected evidence.
+
+Confidence measures certainty the issue exists, not its impact. A verified redundant null check where the surrounding branch already guarantees non-null is still confidence 90+ (you verified the redundancy). A function that looks overly complex but might have subtle reasons for its structure is confidence 60-70. Use severity for impact, confidence for certainty.
 
 ## False-positive exclusions
 

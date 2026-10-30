@@ -299,8 +299,8 @@ CODE_GAUNTLET_TRIAGE_{nonce}
 
 The quoted delimiter passes the text verbatim. Never pipe it through `echo` or unquote the delimiter.
 The nonce in the delimiter keeps any line of the text from ending it.
-The script writes the context file threaded to the discovery, validate and summarize agents from the collector's `--out` file, stdin text, framed unverified PR/MR claims when applicable, framed repository layout and saved diff, in that order. Use the resolved target checkout for `{repo_root}`.
-Stamp the printed `contextLines`, `contextChars` and `removedTests` into the args waist verbatim, never estimated, carried over or re-derived.
+The script writes the context file threaded to the discovery, validate and summarize agents from the collector's `--out` file, stdin text, framed unverified PR/MR claims when applicable, framed repository layout and saved diff, in that order. Use `configResult.identity.repo_root` for `{repo_root}`.
+Stamp the printed `contextLines`, `contextChars`, `contextMaxLineChars` and `removedTests` into the args waist verbatim, never estimated, carried over or re-derived.
 An exit 2 wrote no usable context; stop and report its one-line error.
 `scripts/gauntlet/shared_context.py`'s docstring holds the content and measurement rules.
 
@@ -345,8 +345,8 @@ Discovery agents return findings through structured output (`agent()`/`parallel(
   changedFiles, changedLines, baseBranch, reviewMd, reviewMdSetChecksum, exclusionsText,
 
   // the shared context file's measured size, from write_shared_context.py's receipt,
-  // verbatim. contextChars may not be stamped without contextLines.
-  contextLines, contextChars,
+  // verbatim. Character measurements require contextLines.
+  contextLines, contextChars, contextMaxLineChars,
 
   // how the run's artifacts reach disk. `returnPrimaries: true` is the default and the
   // only path on which no model transcribes them — see phase2-triage.md, "Args Preparation". Omit `persist`

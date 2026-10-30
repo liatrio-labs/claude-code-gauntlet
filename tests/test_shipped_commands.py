@@ -230,7 +230,17 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
     receipt = json.loads(result.stdout)
     assert receipt["contextLines"] == context.count(b"\n")
     assert receipt["contextChars"] == len(context.decode("utf-8"))
-    assert b'"entries": ["layout-marker"], "unavailable": []' in context
+    layout = re.search(
+        rb'kind="repository-layout"[^>]*>\n(.*?)\n</untrusted-code-content',
+        context,
+        re.S,
+    )
+    assert layout is not None
+    assert json.loads(layout[1]) == {
+        "entries": ["layout-marker"],
+        "unavailable": [],
+        "omitted": [],
+    }
 
 
 @pytest.mark.skipif(

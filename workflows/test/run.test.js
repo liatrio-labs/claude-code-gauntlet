@@ -1307,6 +1307,8 @@ const UNPLANNABLE_GAP = 'context_unplannable: args.contextLines was stamped (150
   + 'Shrink the shared context '
   + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.';
 const CONTEXT_ROWS = [
+  { name: 'maximum line width reaches every reader', input: { contextLines: 2028, contextChars: 94784, contextMaxLineChars: 1000 }, gaps: [],
+    markers: ['exactly 68 Read calls of limit=30', 'stepping by 30 through line 2028'] },
   { name: 'measured readers include final tail and validator', input: { contextLines: 2028, contextChars: 94784 }, gaps: [],
     markers: ['exactly 4 Read calls', 'Read(offset=1924, limit=105)'] },
   { name: 'unmeasured readers get one actionable fallback', input: {}, gaps: [UNMEASURED_GAP],
