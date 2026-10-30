@@ -86,7 +86,8 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
             admission_fields.setdefault(row["admission"]["field"], set()).update(
                 row["admission"]["kinds"]
             )
-        for subject in row["policySubjects"].values():
+        promotion = (row["admission"] or {}).get("promotion", {})
+        for subject in [*row["policySubjects"].values(), promotion]:
             if "stamp" in subject:
                 admission_fields.setdefault(subject["stamp"], set()).add(
                     subject["kind"]

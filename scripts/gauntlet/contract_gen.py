@@ -593,7 +593,8 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     }
     stamp_kinds: dict[str, set[str]] = {}
     for row in identity["dimensionRows"]:
-        for subject in row["policySubjects"].values():
+        promotion = (row["admission"] or {}).get("promotion", {})
+        for subject in [*row["policySubjects"].values(), promotion]:
             if "stamp" in subject:
                 stamp_kinds.setdefault(subject["stamp"], set()).add(subject["kind"])
     for field, kinds in stamp_kinds.items():

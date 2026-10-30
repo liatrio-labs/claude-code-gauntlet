@@ -67,6 +67,7 @@ const load = n => import(pathToFileURL(`${root}/workflows/src/${n}.js`));
 const {verifyStage} = await load('verifyStage');
 const {validateStage, challengeStage} = await load('reviewStages');
 const {evaluateAdmission, admissionRequests, hasAdmission} = await load('admission');
+const {requiredAssessments} = await load('registry');
 const {disposeFindings} = await load('dispose');
 const {deliveryAllows} = await load('location');
 const {shellSplit} = await import(pathToFileURL(`${root}/workflows/test/helpers/shellWords.js`));
@@ -132,6 +133,7 @@ const validated = await validateStage({parallel:async ts=>Promise.all(ts.map(t=>
  const row=rows.find(r=>r[0]===f.id), requests=Object.keys(admissionRequests(f));
  const references={confirmed_test_defect:['primary'],present_defect:['primary'],resolved_production_element:['production_element'],complete_searches:['searched_paths:','candidate_tests:'],complete_behavioral_absence:['production_element','searched_paths:','candidate_tests:'],confirmed_duplication:['primary','duplicate_of'],concrete_equivalent:['primary'],behavior_preserved:['primary'],applicable:['primary','precedent']};
  let entries=row[3].map(predicate=>({predicate,status:predicate===row[6]?(row[7]==='unresolved'?'unresolved':'rejected'):'confirmed',references:requests.filter(key=>references[predicate].some(name=>name.endsWith(':')?key.startsWith(name):key===name))}));
+ for(const predicate of requiredAssessments(f,row[5]||'ordinary'))if(!entries.some(e=>e.predicate===predicate))entries.push({predicate,status:'unresolved',references:requests.filter(key=>references[predicate].some(name=>name.endsWith(':')?key.startsWith(name):key===name))});
  if(row[7]==='foreign')entries[0].references=['foreign'];
  if(row[7]==='duplicate')entries.push(entries[0]);
  return {finding_id:f.id,confidence:99,policy_subject:row[5]||'ordinary',reachability:'current',admission_assessments:entries};

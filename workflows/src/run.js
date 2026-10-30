@@ -434,13 +434,13 @@ export async function runWith(ctx, rawArgs) {
           scopeMatchesFile(scope, finding.file)).length,
       }));
     const filterOut = await runPhase('filter', () => filterStage({
-      findings: validateOut.findings || [], reviewConfig: resolvedReview.reviewConfig,
+      findings: (validateOut.findings || []).map((finding) => evaluateAdmission(deepClone(finding))), reviewConfig: resolvedReview.reviewConfig,
       exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
     }));
     gaps.push(...(filterOut.gaps || []));
 
     await runPhase('challenge', async () => {
-      const admitted = (filterOut.filtered || []).map((finding) => evaluateAdmission(deepClone(finding)));
+      const admitted = replay('filter') ? (filterOut.filtered || []).map((finding) => evaluateAdmission(deepClone(finding))) : filterOut.filtered || [];
       if (measurementTrace) recordStage(measurementTrace, 'admission', { findings: admitted }, {
         decisions: admitted.filter((f) => f.trace_id).flatMap((f) => f.admission.reasons.map((detail) => ({
           ...traceDecision(f, detail.status, 'admission', [], detail.status),

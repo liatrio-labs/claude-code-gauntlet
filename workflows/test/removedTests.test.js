@@ -304,6 +304,7 @@ test('removed coverage shares admission and capped body delivery with real Verif
         const result = await agent(prompt, dispatch);
         for (const validation of result.validations) if (validation.finding_id.startsWith('removed-test:')) {
           validation.admission_assessments = [
+            { predicate: 'present_defect', status: 'rejected', references: ['primary'] },
             { predicate: 'resolved_production_element', status: 'confirmed', references: ['production_element'] },
             { predicate: 'complete_searches', status: 'confirmed', references: ['searched_paths:0'] },
             { predicate: 'complete_behavioral_absence', status: 'confirmed', references: ['production_element', 'searched_paths:0'] },

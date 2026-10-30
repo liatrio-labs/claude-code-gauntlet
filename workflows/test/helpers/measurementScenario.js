@@ -52,12 +52,13 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
         overrides: Object.fromEntries(slice.map((f) => [f.id, f.id === 'VERIFY'
           ? { verified: false, elimination_reason: 'trusted executor disproved the claim' } : { origin: 'new', path_role: 'source', diff_validation: { in_diff: true } }])) }), prompt);
     }
-    if (options.failValidation && label.startsWith('validate-batch-')) throw new Error('synthetic validation dispatch failure');
-    if (label.startsWith('validate-batch-')) {
+    if (options.failValidation && /^validate-(batch|retry)-/.test(label)) throw new Error('synthetic validation dispatch failure');
+    if (/^validate-(batch|retry)-/.test(label)) {
       ctx.calls.push({ prompt, ...dispatch });
       const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
       return { validations: ids.filter((id) => id !== 'SKIP').map((finding_id) => ({ finding_id, policy_subject: 'ordinary',
-        confidence: finding_id === 'FILTER' ? 45 : seed.find((f) => f.id === finding_id)?.confidence ?? 90 })) };
+        confidence: finding_id === 'FILTER' ? 45 : seed.find((f) => f.id === finding_id)?.confidence ?? 90,
+        ...(finding_id === 'REPORT' ? { admission_assessments: [{ predicate: 'present_defect', status: 'rejected', references: ['primary'] }] } : {}) })) };
     }
     if (label.startsWith('challenge-')) {
       ctx.calls.push({ prompt, ...dispatch });

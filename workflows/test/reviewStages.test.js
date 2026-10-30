@@ -94,12 +94,18 @@ const VALIDATE_ROWS = [
 for (const row of VALIDATE_ROWS) test(`validate result: ${row.name}`, async () => {
   const ctx = stageCtx({ reply: row.reply, nulls: row.nulls });
   const out = await validateStage(ctx, { findings: structuredClone(row.input), limits: { validateBatch: row.batch ?? 10 } });
-  assert.deepEqual(Object.keys(out), ['findings', 'gaps', 'stats']);
+  assert.deepEqual(Object.keys(out), row.input.length ? ['findings', 'gaps', 'audit', 'stats'] : ['findings', 'gaps', 'stats']);
   assert.deepEqual(out.findings.map((f) => [f.id, f.confidence, f.original_confidence,
     f.validation_justification, f.reachability, f.validation]), row.expected);
-  assert.deepEqual(out.stats, row.stats ?? VALIDATE_STATS);
+  const expectedStats = { ...(row.stats ?? VALIDATE_STATS) };
+  const pendingCount = row.expected.filter((entry) => entry.at(-1) === 'skipped').length;
+  const retryCount = Math.ceil(pendingCount / Math.max(1, Math.ceil((row.batch || 10) / 5)));
+  expectedStats.batches_dispatched += retryCount;
+  if (Array.isArray(row.reply) || Array.isArray(row.reply.validations)) expectedStats.batches_completed += retryCount;
+  assert.deepEqual(out.stats, expectedStats);
   assert.deepEqual(out.gaps, row.gaps ?? []);
-  assert.deepEqual(ctx.calls.map((call) => call.label), row.labels ?? ['validate-batch-0']);
+  assert.deepEqual(ctx.calls.map((call) => call.label), [...(row.labels ?? ['validate-batch-0']),
+    ...Array.from({ length: retryCount }, (_, idx) => `validate-retry-${idx}`)]);
   for (const call of ctx.calls) assert.equal(call.agentType, 'code-gauntlet:validator');
   assert.deepEqual(ctx.violations, []);
 });
@@ -121,7 +127,9 @@ for (const row of VALIDATE_PROMPT_ROWS) test(`validate prompt: ${row.name}`, asy
   assert.ok(ctx.calls[0].prompt.includes('code-evidence and disproof contract'));
   assert.ok(ctx.calls[0].prompt.includes(row.block));
   assert.ok(ctx.calls[0].prompt.endsWith(VALIDATE_TAIL));
-  assert.deepEqual(ctx.calls[0].schema, { type: 'object', properties: { validations: {
+  const { anyOf, ...base } = ctx.calls[0].schema.properties.validations.items;
+  assert.ok(anyOf.length > 0);
+  assert.deepEqual({ ...ctx.calls[0].schema, properties: { validations: { type: 'array', items: base } } }, { type: 'object', properties: { validations: {
     type: 'array', items: { type: 'object', properties: {
       finding_id: { type: 'string' }, confidence: { type: 'number' }, justification: { type: 'string' },
       reachability: { type: 'string', enum: ['current', 'future_change_only', 'uncertain'] },

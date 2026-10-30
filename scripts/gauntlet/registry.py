@@ -57,7 +57,7 @@ DeltaValueField = Literal[
     "blame_source",
     "resolved_references",
 ]
-EffectiveTestKind = Literal["defective_test"]
+EffectiveTestKind = Literal["defective_test", "production_defect"]
 TestKind = Literal[
     "defective_test", "critical_gap", "production_defect", "additional_case"
 ]
@@ -554,6 +554,11 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "aliases": [],
         "admission": {
             "field": "test_kind",
+            "promotion": {
+                "predicate": "present_defect",
+                "kind": "production_defect",
+                "stamp": "effective_test_kind",
+            },
             "kinds": {
                 "defective_test": {
                     "required": [],
@@ -836,6 +841,10 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "aliases": [],
         "admission": {
             "field": "quality_basis",
+            "promotion": {
+                "predicate": "present_defect",
+                "kind": "current_correctness",
+            },
             "kinds": {
                 "current_correctness": {
                     "required": [],
@@ -979,6 +988,10 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "aliases": [],
         "admission": {
             "field": "quality_basis",
+            "promotion": {
+                "predicate": "present_defect",
+                "kind": "current_correctness",
+            },
             "kinds": {
                 "current_correctness": {
                     "required": [],
@@ -1122,6 +1135,9 @@ RIGHT_ELIGIBILITY = {
 STAGE_COSTS = {
     "verify": {
         "attempts": 2,
+    },
+    "validate": {
+        "retryBatchDivisor": 5,
     },
     "cite": {
         "attempts": 2,

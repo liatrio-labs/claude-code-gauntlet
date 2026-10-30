@@ -121,6 +121,8 @@ export const effectiveChallengeCap = (L, findings) =>
 // Stage defaults must also govern guard arithmetic; undefined sizes can produce NaN and silently disable coarsening.
 export const effectiveBucketSize = (L) => Math.max(1, L.summarizeBucketSize || LIMIT_DEFAULTS.summarizeBucketSize);
 export const effectiveBatchSize = (L, findings) => Math.max(1, L.validateBatch || findings || 1);
+export const effectiveValidationRetrySize = (L, findings) => Math.max(1, Math.ceil(effectiveBatchSize(L, findings) / STAGE_COSTS.validate.retryBatchDivisor));
+const validationCost = (L, findings) => ceilDiv(findings, effectiveBatchSize(L, findings)) + ceilDiv(findings, effectiveValidationRetrySize(L, findings));
 
 function findingCount(findings) {
   return Array.isArray(findings) ? findings.length : Math.max(0, findings || 0);
@@ -145,7 +147,7 @@ export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'mai
   const findings = findingCount(nFindings);
   const summarizeCalls = ceilDiv(files, effectiveBucketSize(L)) + 1;
   const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
-  const validateCalls = ceilDiv(findings, effectiveBatchSize(L, findings));
+  const validateCalls = validationCost(L, findings);
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
   const citeCalls = citeCost(L, findings, challengeCalls);
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + citeCalls + STAGE_COSTS.writer.attempts;
@@ -172,7 +174,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
     const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch, input);
     const challengeCount = Math.min(findings, effectiveChallengeCap(L, findings));
     const citeTerm = citeCost(L, findings, challengeCount);
-    const validateTerm = ceilDiv(findings, effectiveBatchSize(L, findings)) + citeTerm;
+    const validateTerm = validationCost(L, findings) + citeTerm;
     const challengeTerm = challengeCount + citeTerm;
     const choices = [
       ['validate', validateTerm],
@@ -184,7 +186,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
     const [largest] = choices;
     if (largest[0] === 'validate') {
       L.validateBatch = effectiveBatchSize(L, findings) * 2;
-      if (ceilDiv(findings, effectiveBatchSize(L, findings)) + citeCost(L, findings, challengeCount) >= validateTerm) candidates.delete('validate');
+      if (validationCost(L, findings) + citeCost(L, findings, challengeCount) >= validateTerm) candidates.delete('validate');
     } else if (largest[0] === 'verify') {
       L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
       if (verifyTerm(L, nFindings, baseBranch, input) >= currentVerifyTerm) candidates.delete('verify');

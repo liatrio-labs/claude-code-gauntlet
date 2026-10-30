@@ -203,7 +203,7 @@ const DISPOSITION_RIGHTS = deepFreeze({
 });
 const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
 const RIGHT_ELIGIBILITY = deepFreeze({ body: { fixTask: ['current_defect', 'current_reachability', 'confirmed_location'] } });
-const STAGE_COSTS = deepFreeze({ verify: { attempts: 2 }, cite: { attempts: 2 }, writer: { attempts: 2 } });
+const STAGE_COSTS = deepFreeze({ verify: { attempts: 2 }, validate: { retryBatchDivisor: 5 }, cite: { attempts: 2 }, writer: { attempts: 2 } });
 const SOURCE_REFERENCE = {
   type: 'object', $comment: 'source-reference', properties: {
     file: { type: 'string', $comment: 'repo-path' },
@@ -263,7 +263,7 @@ const POLICY_SUBJECTS = {
   ordinary: { original: true }, unresolved: { defaultDisposition: 'held_back' },
 };
 const QUALITY_ADMISSION = {
-  field: 'quality_basis', kinds: {
+  field: 'quality_basis', promotion: { predicate: 'present_defect', kind: 'current_correctness' }, kinds: {
     current_correctness: { required: [], predicates: ['present_defect'], phase: 'semantic', core: true, tier: 'main' },
     duplication: { required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
     simpler_equivalent: { required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
@@ -280,7 +280,7 @@ const DIMENSIONS = deepFreeze([
     schemaExtra: { affected_consumers: { type: 'array', description: 'Repository paths of consumers affected by the change.', items: { type: 'string', $comment: 'repo-path' } } }, requiredExtra: ['affected_consumers'],
       requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'test_coverage', agentType: AGENT_TYPE_TEST_ANALYZER, conditionalFlag: DEEP,
-    defaultDisposition: 'held_back', defaultTier: 'main', admission: { field: 'test_kind', kinds: {
+    defaultDisposition: 'held_back', defaultTier: 'main', admission: { field: 'test_kind', promotion: { predicate: 'present_defect', kind: 'production_defect', stamp: 'effective_test_kind' }, kinds: {
       defective_test: { required: [], predicates: ['pr_owned_test', 'confirmed_test_defect', 'test_diff_site_for_inline'], phase: 'semantic', tier: 'main' },
       critical_gap: { required: ['criticality', 'failure_scenario', 'searched_paths', 'candidate_tests'], optional: ['production_element'], predicates: ['criticality_at_least_8', 'resolved_production_element', 'complete_searches', 'complete_behavioral_absence'], phase: 'semantic', tier: 'main' },
       production_defect: { required: [], predicates: ['present_defect'], phase: 'semantic', dimension: 'bug', core: true, tier: 'main' },
@@ -429,9 +429,10 @@ function producerRow(finding) {
   const rows = DIMENSIONS.filter((row) => row.agentType.split(':').pop() === finding.agent);
   return rows.length === 1 && rows[0].admission ? rows[0] : dimensionRow(finding.dimension);
 }
-function findingPolicy(finding) {
+function findingPolicy(finding, effective = true) {
   const original = dimensionRow(finding.origin_dimension);
-  const promotion = original?.admission?.kinds[finding[original.admission.field]]?.dimension;
+  const promotion = original?.admission?.kinds[finding[original.admission.field]]?.dimension
+    || original?.admission?.kinds[original.admission.promotion?.kind]?.dimension;
   const producer = DIMENSIONS.filter((candidate) => candidate.agentType.split(':').pop() === finding.agent);
   const typedProducer = producer.length === 1 && producer[0].admission ? producer[0] : null;
   const row = typedProducer
@@ -440,16 +441,28 @@ function findingPolicy(finding) {
       ? original : null)
     || dimensionRow(finding.dimension) || producer.find((candidate) => candidate.agentFallback) || producer[0];
   const subject = row?.policySubjects[finding.policy_subject];
-  const selected = subject?.dimension ? dimensionRow(subject.dimension) : row;
-  const kind = selected?.admission?.kinds[subject?.kind || finding[selected.admission.field]];
+  const stampedKind = effective && finding.admission?.status === 'admitted' ? finding.admission.kind : undefined;
+  const selected = stampedKind && stampedKind === row?.admission?.promotion?.kind ? row
+    : subject?.dimension ? dimensionRow(subject.dimension) : row;
+  const kind = selected?.admission?.kinds[stampedKind || subject?.kind || finding[selected.admission.field]];
   return { row: selected, kind, core: kind?.core ?? selected?.core ?? false,
     tier: kind?.tier ?? selected?.defaultTier, defaultDisposition: kind?.defaultDisposition ?? selected?.defaultDisposition };
+}
+function requiredAssessments(finding, policySubject) {
+  const original = findingPolicy({ ...finding, policy_subject: undefined }, false);
+  const selected = findingPolicy({ ...finding, policy_subject: policySubject }, false);
+  return [...new Set([original.row?.admission?.promotion?.predicate,
+    ...(original.kind?.predicates || []), ...(selected.kind?.predicates || [])])]
+    .filter((predicate) => ADMISSION_PREDICATES[predicate]?.references);
 }
 function normalizePipelineStamps(finding) {
   const { row } = findingPolicy({ ...finding, policy_subject: undefined });
   if (finding.origin_dimension !== row?.dimension) delete finding.origin_dimension;
   const subject = row?.policySubjects[finding.policy_subject];
-  if (subject?.stamp !== 'effective_test_kind' || subject.kind !== finding.effective_test_kind) {
+  const promotion = row?.admission?.promotion;
+  if ((subject?.stamp !== 'effective_test_kind' || subject.kind !== finding.effective_test_kind)
+    && !(promotion?.stamp === 'effective_test_kind' && promotion.kind === finding.effective_test_kind
+      && finding.admission?.kind === promotion.kind && finding.admission.status === 'admitted')) {
     delete finding.effective_test_kind;
   }
 }
@@ -1450,6 +1463,8 @@ const effectiveChallengeCap = (L, findings) =>
   Math.max(0, L.challengeCap != null ? L.challengeCap : findings);
 const effectiveBucketSize = (L) => Math.max(1, L.summarizeBucketSize || LIMIT_DEFAULTS.summarizeBucketSize);
 const effectiveBatchSize = (L, findings) => Math.max(1, L.validateBatch || findings || 1);
+const effectiveValidationRetrySize = (L, findings) => Math.max(1, Math.ceil(effectiveBatchSize(L, findings) / STAGE_COSTS.validate.retryBatchDivisor));
+const validationCost = (L, findings) => ceilDiv(findings, effectiveBatchSize(L, findings)) + ceilDiv(findings, effectiveValidationRetrySize(L, findings));
 function findingCount(findings) {
   return Array.isArray(findings) ? findings.length : Math.max(0, findings || 0);
 }
@@ -1470,7 +1485,7 @@ function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', inp
   const findings = findingCount(nFindings);
   const summarizeCalls = ceilDiv(files, effectiveBucketSize(L)) + 1;
   const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
-  const validateCalls = ceilDiv(findings, effectiveBatchSize(L, findings));
+  const validateCalls = validationCost(L, findings);
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
   const citeCalls = citeCost(L, findings, challengeCalls);
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + citeCalls + STAGE_COSTS.writer.attempts;
@@ -1491,7 +1506,7 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {
     const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch, input);
     const challengeCount = Math.min(findings, effectiveChallengeCap(L, findings));
     const citeTerm = citeCost(L, findings, challengeCount);
-    const validateTerm = ceilDiv(findings, effectiveBatchSize(L, findings)) + citeTerm;
+    const validateTerm = validationCost(L, findings) + citeTerm;
     const challengeTerm = challengeCount + citeTerm;
     const choices = [
       ['validate', validateTerm],
@@ -1503,7 +1518,7 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {
     const [largest] = choices;
     if (largest[0] === 'validate') {
       L.validateBatch = effectiveBatchSize(L, findings) * 2;
-      if (ceilDiv(findings, effectiveBatchSize(L, findings)) + citeCost(L, findings, challengeCount) >= validateTerm) candidates.delete('validate');
+      if (validationCost(L, findings) + citeCost(L, findings, challengeCount) >= validateTerm) candidates.delete('validate');
     } else if (largest[0] === 'verify') {
       L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
       if (verifyTerm(L, nFindings, baseBranch, input) >= currentVerifyTerm) candidates.delete('verify');
@@ -2370,7 +2385,8 @@ function matchAssessments(finding, entries) {
       || !Array.isArray(entry.references) || new Set(entry.references).size !== entry.references.length
       || entry.references.some((key) => typeof key !== 'string' || !Object.hasOwn(requests, key))) return false;
     const expected = Object.keys(requests).filter((key) => descriptor.references.some((name) => key === name || key.startsWith(`${name}:`)));
-    return expected.length > 0 && expected.length === entry.references.length && expected.every((key) => entry.references.includes(key));
+    return (expected.length > 0 || entry.status === 'unresolved')
+      && expected.length === entry.references.length && expected.every((key) => entry.references.includes(key));
   }).map(({ predicate, status, references }) => ({ predicate, status, references: [...references] }));
 }
 const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
@@ -2438,26 +2454,36 @@ function predicateResult(finding, predicate) {
   return null;
 }
 function evaluateAdmission(finding) {
+  delete finding.admission;
   delete finding.effective_test_kind;
   const original = findingPolicy({ ...finding, policy_subject: undefined });
-  const terminal = original.kind?.defaultDisposition === 'report_only';
-  const { row, kind, core, tier } = terminal ? original : findingPolicy(finding);
-  const subject = row?.policySubjects[finding.policy_subject];
+  const promotion = original.row?.admission?.promotion;
+  const promoted = promotion && matchAssessments(finding, finding.admission_assessments)
+    .some((entry) => entry.predicate === promotion.predicate && entry.status === 'confirmed');
+  const terminal = !promoted && original.kind?.defaultDisposition === 'report_only';
+  const policyFinding = promoted ? { ...finding, policy_subject: 'ordinary', [original.row.admission.field]: promotion.kind } : finding;
+  const { row, kind, core, tier } = terminal ? original : findingPolicy(policyFinding);
+  const subject = row?.policySubjects[policyFinding.policy_subject];
   const reasons = [];
   const fail = (predicate, status) => { if (status) reasons.push({ predicate, status }); };
   if (!['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin)) fail('verification', 'held_back');
   if (finding.validation !== 'validated') fail('validation', 'held_back');
-  if (!terminal && ((row?.admission && !subject) || finding.policy_subject === 'unresolved')) fail('policy_subject', 'held_back');
+  if (!terminal && ((row?.admission && !subject) || policyFinding.policy_subject === 'unresolved')) fail('policy_subject', 'held_back');
   if (!row || (row.admission && !kind)) fail('kind', 'held_back');
   if (kind?.defaultDisposition === 'report_only') fail('value', 'report_only');
   for (const predicate of kind?.predicates || []) fail(predicate, predicateResult(finding, predicate));
   const status = reasons.some((reason) => reason.status === 'held_back') ? 'held_back'
     : reasons.length ? 'report_only' : 'admitted';
   if (subject?.stamp && status === 'admitted') finding[subject.stamp] = subject.kind;
-  const selectedKind = (!terminal && subject?.kind) || (row?.admission ? finding[row.admission.field] : 'ordinary');
+  const selectedKind = (promoted && promotion.kind) || (!terminal && subject?.kind) || (row?.admission ? finding[row.admission.field] : 'ordinary');
+  if (promoted && status === 'admitted') {
+    finding.origin_dimension ??= original.row.dimension;
+    if (kind.dimension) finding.dimension = kind.dimension;
+    if (promotion.stamp) finding[promotion.stamp] = promotion.kind;
+  }
   const inputFields = kind?.anyOf || [];
   const routedTier = finding.report_tag ?? finding.report_destination;
-  const effectiveTier = ['main', 'suggestion'].includes(routedTier) ? routedTier : tier || 'main';
+  const effectiveTier = promoted ? tier : ['main', 'suggestion'].includes(routedTier) ? routedTier : tier || 'main';
   finding.admission = { version: 1, input_fields: inputFields, input_proof: admissionProof(finding, inputFields), status, reasons,
     kind: selectedKind || 'unknown', core, tier: effectiveTier,
     inline_eligible: !kind?.predicates.includes('test_diff_site_for_inline')
@@ -2467,17 +2493,28 @@ function evaluateAdmission(finding) {
   return finding;
 }
 function admissionContext(finding) {
-  const policy = findingPolicy(finding);
+  const policy = findingPolicy(finding, false);
   return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
-    policy: { predicates: policy.kind?.predicates || [],
+    policy: { predicates: policy.kind?.predicates || [], promotion: policy.row?.admission?.promotion,
       policy_subjects: Object.fromEntries(Object.keys(policy.row?.policySubjects || {}).map((subject) =>
-        [subject, findingPolicy({ ...finding, policy_subject: subject }).kind?.predicates || []])),
+        [subject, findingPolicy({ ...finding, policy_subject: subject }, false).kind?.predicates || []])),
       body_fix_task: RIGHT_ELIGIBILITY.body.fixTask },
     claim: Object.fromEntries(DIMENSIONS.flatMap((row) => Object.keys(row.schemaExtra)).map((key) => [key, finding[key]])),
     fix: finding.suggestion || finding.suggested_fix_code };
 }
 // --- applyValidations.js ---
 const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
+function validationRejections(finding, validation) {
+  if (!validation) return ['missing_entry'];
+  const reasons = [];
+  if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
+  if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
+  const matched = matchAssessments(finding, validation.admission_assessments);
+  for (const predicate of requiredAssessments(finding, validation.policy_subject)) {
+    if (!matched.some((entry) => entry.predicate === predicate)) reasons.push(`missing_assessment:${predicate}`);
+  }
+  return reasons;
+}
 function applyValidations(findings, validations) {
   const findingById = new Map();
   for (const finding of findings) {
@@ -5093,6 +5130,24 @@ function validateReturnDescriptor() {
     })
     .join(', ');
 }
+function validateSchema(batch) {
+  const base = VALIDATE_SCHEMA.properties.validations.items;
+  const variants = batch.flatMap((finding) => VALIDATION_RETURN_PROPERTIES.policy_subject.enum.map((subject) => {
+    const predicates = requiredAssessments(finding, subject);
+    return { properties: { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] },
+      ...(predicates.length ? { admission_assessments: { allOf: predicates.map((predicate) => ({
+        contains: { properties: { predicate: { const: predicate } }, required: ['predicate'] },
+      })) } } : {}) }, required: predicates.length ? ['admission_assessments'] : [] };
+  }));
+  return { ...VALIDATE_SCHEMA, properties: { validations: { type: 'array', items: { ...base, anyOf: variants } } } };
+}
+function validatorAudit(audit, label, result, rejections) {
+  const raw = JSON.stringify(result ?? null);
+  const record = { label, raw: raw.slice(0, 8192), raw_characters: raw.length, truncated: raw.length > 8192,
+    rejections: rejections.slice(0, 100), omitted_rejections: Math.max(0, rejections.length - 100) };
+  if (audit.batches.length < 64 && JSON.stringify(audit).length + JSON.stringify(record).length < 64000) audit.batches.push(record);
+  else audit.omitted_batches += 1;
+}
 async function validateStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
@@ -5105,52 +5160,62 @@ async function validateStage(ctx, input) {
   const model = modelFor('code-gauntlet:validator', policy);
   const batches = [];
   for (let i = 0; i < findings.length; i += batchSize) batches.push(findings.slice(i, i + batchSize));
-  const thunks = batches.map((batch, idx) => () => ctx.agent(validatePrompt(inp, batch), {
-    label: `validate-batch-${idx}`,
-    agentType: 'code-gauntlet:validator',
-    model,
-    schema: VALIDATE_SCHEMA,
-  }));
-  const results = await ctx.parallel(thunks);
   const gaps = [];
   const validations = [];
-  const skippedSet = new Set();
+  const accepted = new Set();
+  const audit = { batches: [], omitted_batches: 0 };
   let completed = 0;
-  results.forEach((res, idx) => {
-    const batch = batches[idx];
+  let dispatched = 0;
+  const dispatch = (batch, label) => () => ctx.agent(validatePrompt(inp, batch), {
+    label, agentType: 'code-gauntlet:validator', model, schema: validateSchema(batch),
+  });
+  const consume = (res, batch, label) => {
     const list = res === null || res === undefined
       ? null
       : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
-    if (list === null) {
-      gaps.push(`validate-batch-${idx}: validator returned null/malformed — ${batch.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
-      for (const f of batch) skippedSet.add(f);
-      return;
+    if (list) completed += 1;
+    const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ ...e, id: e.id ?? e.finding_id }));
+    const rejections = [];
+    for (const finding of batch) {
+      const matches = entries.filter((entry) => entry.id === finding.id);
+      if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
+      for (const entry of matches) {
+        const reasons = validationRejections(finding, entry);
+        if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
+        else { validations.push(entry); accepted.add(finding.id); }
+      }
     }
-    completed += 1;
-    const entries = list.filter((e) => e && typeof e === 'object')
-      .map((e) => ({ ...e, id: e.id ?? e.finding_id }))
-      .filter((e) => batch.some((f) => f.id === e.id));
-    const scoredEntries = entries.filter((e) => coerceInt(e.confidence, INT_POLICY.validation) !== null
-      && VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(e.policy_subject));
-    validations.push(...scoredEntries);
-    const scored = new Set(scoredEntries.map((e) => e.id));
-    const unscored = batch.filter((f) => !scored.has(f.id));
-    if (unscored.length) {
-      gaps.push(`validate-batch-${idx}: validator omitted scores — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
-      for (const f of unscored) skippedSet.add(f);
-    }
+    validatorAudit(audit, label, res, rejections);
+    return list;
+  };
+  const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
+  dispatched += batches.length;
+  const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
+  const pending = findings.filter((finding) => !accepted.has(finding.id));
+  if (pending.length) {
+    const retries = [];
+    const retrySize = effectiveValidationRetrySize(limits, findings.length);
+    for (let i = 0; i < pending.length; i += retrySize) retries.push(pending.slice(i, i + retrySize));
+    const retried = await ctx.parallel(retries.map((batch, idx) => dispatch(batch, `validate-retry-${idx}`)));
+    dispatched += retries.length;
+    retries.forEach((batch, idx) => consume(retried[idx], batch, `validate-retry-${idx}`));
+  }
+  batches.forEach((batch, idx) => {
+    const unscored = batch.filter((finding) => !accepted.has(finding.id));
+    if (unscored.length) gaps.push(`validate-batch-${idx}: validator ${mainLists[idx] ? 'omitted scores' : 'returned null/malformed'} — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
   });
   const { adjustedCount } = applyValidations(findings, validations);
   let skipped = 0;
   for (const f of findings) {
-    if (skippedSet.has(f)) { f.validation = 'skipped'; skipped += 1; }
+    if (!accepted.has(f.id)) { f.validation = 'skipped'; skipped += 1; }
     else f.validation = 'validated';
   }
   return {
     findings,
     gaps,
+    audit,
     stats: {
-      batches_dispatched: batches.length,
+      batches_dispatched: dispatched,
       batches_completed: completed,
       validated: findings.length - skipped,
       skipped,
@@ -7115,6 +7180,8 @@ function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) {
   const counts = {};
   for (const [name, out] of Object.entries(outputs)) counts[name] = phaseFindingCount(out);
   const rejected = outputs.merge?.rejected || outputs.discover?.rejected;
+  const validationAudit = outputs.challenge?.validation_audit || outputs.validate?.audit;
+  if (validationAudit && phases.challenge) phases.challenge = { ...phases.challenge, validation_audit: validationAudit };
   return signCheckpoints({ phases, completed, phaseReached, counts,
     ...(rejected?.length ? { intake_rejected: rejected } : {}) });
 }
@@ -7635,12 +7702,12 @@ async function runWith(ctx, rawArgs) {
           scopeMatchesFile(scope, finding.file)).length,
       }));
     const filterOut = await runPhase('filter', () => filterStage({
-      findings: validateOut.findings || [], reviewConfig: resolvedReview.reviewConfig,
+      findings: (validateOut.findings || []).map((finding) => evaluateAdmission(deepClone(finding))), reviewConfig: resolvedReview.reviewConfig,
       exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
     }));
     gaps.push(...(filterOut.gaps || []));
     await runPhase('challenge', async () => {
-      const admitted = (filterOut.filtered || []).map((finding) => evaluateAdmission(deepClone(finding)));
+      const admitted = replay('filter') ? (filterOut.filtered || []).map((finding) => evaluateAdmission(deepClone(finding))) : filterOut.filtered || [];
       if (measurementTrace) recordStage(measurementTrace, 'admission', { findings: admitted }, {
         decisions: admitted.filter((f) => f.trace_id).flatMap((f) => f.admission.reasons.map((detail) => ({
           ...traceDecision(f, detail.status, 'admission', [], detail.status),
