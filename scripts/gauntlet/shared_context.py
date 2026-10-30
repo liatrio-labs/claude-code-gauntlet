@@ -8,6 +8,7 @@ import sys
 from typing import Literal
 
 from gauntlet.cli import (
+    CliError,
     Command,
     Parser,
     UsageError,
@@ -82,10 +83,14 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
             raise UsageError(
                 "PR/MR context requires --snapshot-file and --head-sha-full", 2
             )
-        require_full_sha(args.head_sha_full, "--head-sha-full")
-        snapshot = load_snapshot(
-            os.path.join(args.output_dir, args.snapshot_file), args.output_dir
-        )
+        # Shared helpers raise receipt errors; this command's refusals are stderr lines.
+        try:
+            require_full_sha(args.head_sha_full, "--head-sha-full")
+            snapshot = load_snapshot(
+                os.path.join(args.output_dir, args.snapshot_file), args.output_dir
+            )
+        except CliError as exc:
+            raise UsageError(str(exc), 2) from None
         expected = "github" if args.target_type == "pr" else "gitlab"
         if (
             snapshot["head_sha_full"] != args.head_sha_full

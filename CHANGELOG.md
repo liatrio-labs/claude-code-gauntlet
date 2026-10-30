@@ -2,6 +2,151 @@
 
 <!-- version list -->
 
+## v3.56.0 (2026-10-30)
+
+### Bug Fixes
+
+- Keep GitLab prior-review detection and main's ranking and reruns
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+- Keep injection-eliminated prose out of persisted artifacts
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+- Keep sites out of discovery until confirmation exists
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+- Normalize Windows drive-letter and mixed-separator paths the same way everywhere
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+- **bench**: Keep surface order and confine surface source copies
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+### Features
+
+- Deliver verified issue groups as one comment
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+- Deliver verified issue groups as one comment (#46)
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+- One final disposition decides every finding's delivery rights
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+- **bench**: Replay stored delivery and capture its inputs on measured runs
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+- **bench**: Report delivery burden and attribution in comparisons
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+- **bench**: Trace disposition reasons and score body findings beside inline
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+### Refactoring
+
+- **bench**: Surface replay child errors and share the measured return budget fallback
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+### Testing
+
+- Pass the plugin root in POSIX form in the site-flow harness
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+- **bench**: Cover multi-producer sole matches and name the coalescence helper
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+- **bench**: Description eval fixture emits the dispose stage and disposition
+  ([#564](https://github.com/liatrio-labs/claude-code-gauntlet/pull/564),
+  [`2a0f772`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2a0f772ad960c1db2b2a79686da4ed618eb46bc1))
+
+
+## v3.55.0 (2026-10-30)
+
+### Bug Fixes
+
+- Keep injection-eliminated prose out of persisted artifacts
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+- **bench**: Keep surface order and confine surface source copies
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+### Features
+
+- One final disposition decides every finding's delivery rights
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+- One final disposition decides every finding's delivery rights (#46)
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+- **bench**: Replay stored delivery and capture its inputs on measured runs
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+- **bench**: Report delivery burden and attribution in comparisons
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+- **bench**: Trace disposition reasons and score body findings beside inline
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+### Refactoring
+
+- **bench**: Surface replay child errors and share the measured return budget fallback
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+### Testing
+
+- **bench**: Cover multi-producer sole matches and name the coalescence helper
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+- **bench**: Description eval fixture emits the dispose stage and disposition
+  ([#563](https://github.com/liatrio-labs/claude-code-gauntlet/pull/563),
+  [`3554f66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3554f662a54a02065e41061eb630ba43da818480))
+
+
+## v3.54.1 (2026-10-30)
+
+### Bug Fixes
+
+- Refuse a bad description snapshot on stderr like other context refusals
+  ([#565](https://github.com/liatrio-labs/claude-code-gauntlet/pull/565),
+  [`5355080`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/53550807a98cb01eca83ac8fdefb9869c46a770f))
+
+- Two follow-ups from the Wave 2 merges (#46)
+  ([#565](https://github.com/liatrio-labs/claude-code-gauntlet/pull/565),
+  [`5355080`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/53550807a98cb01eca83ac8fdefb9869c46a770f))
+
+- **bench**: Read delivery evidence of runs linked in from another checkout
+  ([#565](https://github.com/liatrio-labs/claude-code-gauntlet/pull/565),
+  [`5355080`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/53550807a98cb01eca83ac8fdefb9869c46a770f))
+
+### Testing
+
+- **bench**: Drop an unmeasured frequency claim from a comment
+  ([#565](https://github.com/liatrio-labs/claude-code-gauntlet/pull/565),
+  [`5355080`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/53550807a98cb01eca83ac8fdefb9869c46a770f))
+
+
 ## v3.54.0 (2026-10-30)
 
 ### Bug Fixes
