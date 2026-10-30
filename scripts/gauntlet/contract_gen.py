@@ -124,6 +124,7 @@ _REGISTRY_FIELDS = (
     "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
     "findingTypes: m.FINDING_PROP_TYPES",
     "verifyReferenceDescriptors: m.VERIFY_REFERENCE_DESCRIPTORS",
+    "verifyReferenceFields: m.VERIFY_REFERENCE_FIELDS",
     "verifyFactProperties: m.VERIFY_FACT_PROPERTIES",
     "discoveryFindingTypes: m.DISCOVERY_FINDING_PROP_TYPES",
     "resolvedSiteSchema: m.RESOLVED_SITE_SCHEMA",
@@ -570,6 +571,10 @@ def _detail_fields(identity: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
     }
 
 
+def _pascal(field: str) -> str:
+    return "".join(part.title() for part in field.split("_"))
+
+
 def render_python_registry(identity: Mapping[str, Any]) -> str:
     field_types = dict(identity["findingTypes"])
     for row in identity["dimensionRows"]:
@@ -601,9 +606,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             fields = [
                 (
                     key,
-                    schema_type(
-                        child, name + "".join(s.title() for s in key.split("_"))
-                    ),
+                    schema_type(child, name + _pascal(key)),
                 )
                 for key, child in schema["properties"].items()
             ]
@@ -624,13 +627,13 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         raise CliError(f"unknown finding schema type for {name}: {schema!r}")
 
     wire_types = {
-        field: schema_type(schema, "".join(s.title() for s in field.split("_")))
+        field: schema_type(schema, _pascal(field))
         for field, schema in field_types.items()
     }
     resolved_type = schema_type(identity["resolvedSiteSchema"], "ResolvedSites")
     schema_type(identity["deliveryGroupSchema"], "DeliveryGroup")
     for field, schema in identity["validationReturnProperties"].items():
-        schema_type(schema, "".join(s.title() for s in field.split("_")))
+        schema_type(schema, _pascal(field))
     delta_keys = identity["deltaKeys"]
     delta_value_fields = delta_keys[2:]
     delta_annotations = dict.fromkeys(("confidence", "line_start", "line_end"), "int")
@@ -640,27 +643,27 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         resolved_sites=resolved_type,
     )
     fact_types = {
-        field: schema_type(schema, "".join(s.title() for s in field.split("_")))
+        field: schema_type(schema, _pascal(field))
         for field, schema in identity["verifyFactProperties"].items()
     }
     slice_types = dict(wire_types)
-    for field, descriptor in identity["verifyReferenceDescriptors"].items():
-        if descriptor["search"]:
+    for field, kind in identity["verifyReferenceDescriptors"].items():
+        if kind == "search_paths":
             continue
         schema = field_types[field]
-        item = schema["items"] if descriptor["array"] else schema
+        item = schema["items"] if kind == "reference_list" else schema
         item = {
             **item,
             "properties": {
                 key: value
                 for key, value in item["properties"].items()
-                if key in descriptor["fields"]
+                if key in identity["verifyReferenceFields"]
             },
-            "required": descriptor["fields"],
+            "required": identity["verifyReferenceFields"],
         }
         slice_types[field] = schema_type(
-            {**schema, "items": item} if descriptor["array"] else item,
-            "Verify" + "".join(s.title() for s in field.split("_")),
+            {**schema, "items": item} if kind == "reference_list" else item,
+            "Verify" + _pascal(field),
         )
     delta_annotations.update(fact_types, anchor="str")
     root = "/__gauntlet_registry_root__/"
@@ -696,6 +699,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         f"Dimension = {literal_type([row['dimension'] for row in identity['dimensionRows']])}",
         f"DeltaKey = {literal_type(delta_keys)}",
         f"DeltaValueField = {literal_type(delta_value_fields)}",
+        f"VerifyReferenceKind = {literal_type(list(dict.fromkeys(identity['verifyReferenceDescriptors'].values())))}",
         "",
     ]
     stamp_kinds: dict[str, set[str]] = {}
@@ -704,16 +708,16 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             if "stamp" in subject:
                 stamp_kinds.setdefault(subject["stamp"], set()).add(subject["kind"])
     for field, kinds in stamp_kinds.items():
-        name = "".join(part.title() for part in field.split("_"))
+        name = _pascal(field)
         lines += [f"{name} = {literal_type(sorted(kinds))}", ""]
     for field, schema in field_types.items():
         if isinstance(schema, dict) and "enum" in schema:
-            name = "".join(part.title() for part in field.split("_"))
+            name = _pascal(field)
             lines += [f"{name} = {literal_type(schema['enum'])}", ""]
             wire_types[field] = name
     for field, schema in identity["verifyFactProperties"].items():
         if "enum" in schema:
-            name = "".join(part.title() for part in field.split("_"))
+            name = _pascal(field)
             lines += [f"{name} = {literal_type(schema['enum'])}", ""]
             fact_types[field] = name
             delta_annotations[field] = name
@@ -750,6 +754,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "DELTA_KEYS": "tuple[DeltaKey, ...]",
         "DELTA_VALUE_FIELDS": "tuple[DeltaValueField, ...]",
         "VERIFY_SLICE_FIELDS": "tuple[str, ...]",
+        "VERIFY_REFERENCE_DESCRIPTORS": "Mapping[str, VerifyReferenceKind]",
         "DIMENSION_ROWS": "list[Mapping[str, Any]]",
     }
     for name, value in values.items():
@@ -800,10 +805,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "",
             "class FindingMetadata(FindingFacts, total=False):",
             "    origin_dimension: Dimension",
-            *(
-                f"    {field}: {''.join(part.title() for part in field.split('_'))}"
-                for field in stamp_kinds
-            ),
+            *(f"    {field}: {_pascal(field)}" for field in stamp_kinds),
             "    reference_diagnostics: list[str]",
             *(
                 f"    {field}: {kind}"

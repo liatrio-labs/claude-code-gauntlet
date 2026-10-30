@@ -2,7 +2,7 @@ import { canonicalRange, clearLocation } from './location.js';
 import { hostPlatformForRoots } from './paths.js';
 import { FINDING_PROP_TYPES, LOCATION_STATUSES, RESOLVED_SITE_SCHEMA, VERIFY_FACT_PROPERTIES, modelFor } from './registry.js';
 import { firstUnsafeNumber } from './wire.js';
-import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum } from './verifyWire.js';
+import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum, stripVerifyFacts } from './verifyWire.js';
 import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
 import { measurementDecisions, traceDecision } from './measurementTrace.js';
 
@@ -192,9 +192,7 @@ export async function verifyStage(ctx, input) {
 
 function degradedSlice(slice) {
   return slice.map((f) => {
-    const out = { ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' };
-    for (const key of Object.keys(VERIFY_FACT_PROPERTIES)) delete out[key];
-    return out;
+    return stripVerifyFacts({ ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' });
   });
 }
 
@@ -371,13 +369,14 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
 
   // An unsupported expected value cannot safely be localised by record proof.
   const wholeSlice = [...expectedProofs.values()].some((proof) => proof === null);
+  const matchesRecordProof = (id) => expectedProofs.get(id) !== null && proofs.get(id) === expectedProofs.get(id);
   if (wholeSlice && diagnostic) return { ok: false, ...diagnostic };
-  const deltas = ids.filter((id) => !malformedLocations.has(id) && byId.has(id) && (wholeSlice || proofs.get(id) === expectedProofs.get(id)))
+  const deltas = ids.filter((id) => !malformedLocations.has(id) && byId.has(id) && (wholeSlice || matchesRecordProof(id)))
     .map((id) => byId.get(id));
   if (wholeSlice && deltas.length !== ids.length) return { ok: false, reason: 'delta does not cover dispatched findings' };
   return {
     ok: true, deltas,
-    matchedProofIds: new Set(deltas.filter((d) => expectedProofs.get(d.id) !== null && proofs.get(d.id) === expectedProofs.get(d.id)).map((d) => d.id)),
+    matchedProofIds: new Set(deltas.filter((d) => matchesRecordProof(d.id)).map((d) => d.id)),
     proven: !diagnostic && deltas.length === ids.length,
     reason: diagnostic?.reason || `record proof missing or mismatched for ${ids.length - deltas.length} of ${n} finding(s)`,
     inputFault: deltas.length !== ids.length

@@ -327,9 +327,10 @@ const DIMENSIONS = deepFreeze([
   } : {}) },
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
+const VERIFY_REFERENCE_FIELDS = deepFreeze(Object.keys(SOURCE_REFERENCE.properties));
 const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)))
   .filter(([, schema]) => schema.$comment === 'source-reference' || schema.items?.$comment === 'source-reference' || schema.$comment === 'search-paths')
-  .map(([key, schema]) => [key, { array: schema.type === 'array', search: schema.$comment === 'search-paths', fields: Object.keys(SOURCE_REFERENCE.properties) }])));
+  .map(([key, schema]) => [key, schema.$comment === 'search-paths' ? 'search_paths' : schema.type === 'array' ? 'reference_list' : 'reference'])));
 const PATH_ROLE_SCHEMA = { type: 'string', enum: ['source', 'test', 'non_source', 'unknown'] };
 const DIFF_FACT_SCHEMA = { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false };
 const RESOLVED_REFERENCE_SCHEMA = { type: 'object', properties: {
@@ -343,11 +344,12 @@ const VERIFY_FACT_PROPERTIES = deepFreeze({
   path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
   blame_class: { type: 'string', enum: ['new', 'pre_existing', 'surfaced', 'unknown'] },
   blame_source: { type: 'string', enum: ['git_blame', 'local_diff', 'cross_file_refs', 'off_diff', 'removed_loss', 'unavailable'] },
-  resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, descriptor]) => {
-    const schema = descriptor.search ? SEARCH_FACT_SCHEMA : RESOLVED_REFERENCE_SCHEMA;
-    return [key, descriptor.array ? { type: 'array', items: schema } : schema];
+  resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, kind]) => {
+    const schema = kind === 'search_paths' ? SEARCH_FACT_SCHEMA : RESOLVED_REFERENCE_SCHEMA;
+    return [key, kind !== 'reference' ? { type: 'array', items: schema } : schema];
   })), additionalProperties: false },
 });
+const VERIFY_FACT_KEYS = deepFreeze(Object.keys(VERIFY_FACT_PROPERTIES));
 function dimensionRow(dimension) {
   return DIMENSIONS.find((row) => row.dimension === dimension || row.aliases.includes(dimension));
 }
@@ -413,7 +415,7 @@ const FINDING_PATH_ARRAY_FIELDS = deepFreeze(Object.entries(FINDING_PATH_DESCRIP
 const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'delivery_group', 'file', ...Object.keys(FINDING_PATH_DESCRIPTORS), 'resolved_references', 'site_requests', 'resolved_sites', 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
 const PIPELINE_FINDING_FIELDS = deepFreeze([
   'origin_dimension', 'effective_test_kind', 'reference_diagnostics',
-  ...Object.keys(VERIFY_FACT_PROPERTIES),
+  ...VERIFY_FACT_KEYS,
   'trace_id', 'discovery_agent', 'discovery_dimension',
   'removed_test',
   'location_status', 'claimed_line_start', 'claimed_line_end',
@@ -1219,7 +1221,7 @@ function encodeSliceInline(content) {
   return encoded;
 }
 const VERIFY_INLINE_CHAR_BUDGET = 50000;
-const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites', 'anchor', ...Object.keys(VERIFY_FACT_PROPERTIES)];
+const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites', 'anchor', ...VERIFY_FACT_KEYS];
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
 const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
 function deltasById(deltas) {
@@ -1229,19 +1231,22 @@ function deltasById(deltas) {
   }
   return byId;
 }
+function stripVerifyFacts(finding) {
+  for (const key of VERIFY_FACT_KEYS) delete finding[key];
+  return finding;
+}
 function joinVerifyDeltas(slice, deltas, matchedProofIds = new Set()) {
   const byId = deltasById(deltas);
   const out = [];
   for (const f of slice) {
     const delta = byId.get(f.id);
     if (!delta || delta.verified === false) continue;
-    const joined = clearLocation(pinNumericFields(f));
-    for (const key of Object.keys(VERIFY_FACT_PROPERTIES)) delete joined[key];
+    const joined = stripVerifyFacts(clearLocation(pinNumericFields(f)));
     delete joined.diff_validation;
     delete joined.sites;
     if (Array.isArray(f.sites)) joined.site_requests = projectVerifySliceFinding(f).sites;
     const proven = matchedProofIds.has(f.id);
-    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k) && (proven || !Object.hasOwn(VERIFY_FACT_PROPERTIES, k))) joined[k] = delta[k];
+    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k) && (proven || !VERIFY_FACT_KEYS.includes(k))) joined[k] = delta[k];
     if (canonicalRange(joined) && (Object.hasOwn(f, 'line') || Object.hasOwn(f, 'end_line'))) {
       joined.line = joined.line_start;
       joined.end_line = joined.line_end;
@@ -1269,11 +1274,11 @@ function projectFinding(finding) {
   }
   if (Array.isArray(finding.sites)) projected.sites = finding.sites.map((site) => Object.fromEntries(
     ['file', 'line_start', 'line_end', 'anchor'].filter((key) => site?.[key] !== undefined).map((key) => [key, site[key]])));
-  for (const [key, descriptor] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
-    if (finding[key] === undefined || descriptor.search) continue;
+  for (const [key, kind] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
+    if (finding[key] === undefined || kind === 'search_paths') continue;
     const project = (request) => request && typeof request === 'object' ? Object.fromEntries(
-      descriptor.fields.filter((field) => request[field] !== undefined).map((field) => [field, request[field]])) : request;
-    projected[key] = descriptor.array && Array.isArray(finding[key]) ? finding[key].map(project) : project(finding[key]);
+      VERIFY_REFERENCE_FIELDS.filter((field) => request[field] !== undefined).map((field) => [field, request[field]])) : request;
+    projected[key] = kind === 'reference_list' && Array.isArray(finding[key]) ? finding[key].map(project) : project(finding[key]);
   }
   if (Array.isArray(finding.cross_file_refs) && finding.cross_file_refs.length > 0) projected.has_cross_file_refs = true;
   if (hasRemovedTestLocation(finding)) projected.has_removed_test_location = true;
@@ -5251,9 +5256,7 @@ async function verifyStage(ctx, input) {
 }
 function degradedSlice(slice) {
   return slice.map((f) => {
-    const out = { ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' };
-    for (const key of Object.keys(VERIFY_FACT_PROPERTIES)) delete out[key];
-    return out;
+    return stripVerifyFacts({ ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' });
   });
 }
 const emptyInputProof = () => ({
@@ -5409,13 +5412,14 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
     else if (got !== expected) diagnostic ??= { reason: `slice-input ${name} proof mismatch (receipt ${got}, dispatched ${expected}) — the ${noun} the script decoded is not the ${noun} this stage dispatched`, inputFault: 'mismatch' };
   }
   const wholeSlice = [...expectedProofs.values()].some((proof) => proof === null);
+  const matchesRecordProof = (id) => expectedProofs.get(id) !== null && proofs.get(id) === expectedProofs.get(id);
   if (wholeSlice && diagnostic) return { ok: false, ...diagnostic };
-  const deltas = ids.filter((id) => !malformedLocations.has(id) && byId.has(id) && (wholeSlice || proofs.get(id) === expectedProofs.get(id)))
+  const deltas = ids.filter((id) => !malformedLocations.has(id) && byId.has(id) && (wholeSlice || matchesRecordProof(id)))
     .map((id) => byId.get(id));
   if (wholeSlice && deltas.length !== ids.length) return { ok: false, reason: 'delta does not cover dispatched findings' };
   return {
     ok: true, deltas,
-    matchedProofIds: new Set(deltas.filter((d) => expectedProofs.get(d.id) !== null && proofs.get(d.id) === expectedProofs.get(d.id)).map((d) => d.id)),
+    matchedProofIds: new Set(deltas.filter((d) => matchesRecordProof(d.id)).map((d) => d.id)),
     proven: !diagnostic && deltas.length === ids.length,
     reason: diagnostic?.reason || `record proof missing or mismatched for ${ids.length - deltas.length} of ${n} finding(s)`,
     inputFault: deltas.length !== ids.length

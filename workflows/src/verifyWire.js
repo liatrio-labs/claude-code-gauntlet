@@ -2,7 +2,7 @@ import { canonicalRange, clearLocation, normalizeLocation } from './location.js'
 import { INT_POLICY, coerceInt, firstUnsafeNumber, fnv1a32 } from './wire.js';
 import { hasRemovedTestLocation } from './removedTests.js';
 import { extractSymbols } from './verifySymbols.js';
-import { VERIFY_FACT_PROPERTIES, VERIFY_REFERENCE_DESCRIPTORS } from './registry.js';
+import { VERIFY_FACT_KEYS, VERIFY_REFERENCE_DESCRIPTORS, VERIFY_REFERENCE_FIELDS } from './registry.js';
 
 // A narrower alphabet than shellWord keeps encoded strings free of shell syntax.
 export const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
@@ -84,7 +84,7 @@ export const VERIFY_INLINE_CHAR_BUDGET = 50000;
 
 // Generated into Python; this order also governs the delta checksum.
 // Anchor is returned only for removed losses whose quote verification derived.
-export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites', 'anchor', ...Object.keys(VERIFY_FACT_PROPERTIES)];
+export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites', 'anchor', ...VERIFY_FACT_KEYS];
 
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
 
@@ -99,6 +99,11 @@ function deltasById(deltas) {
   return byId;
 }
 
+export function stripVerifyFacts(finding) {
+  for (const key of VERIFY_FACT_KEYS) delete finding[key];
+  return finding;
+}
+
 // Walk held findings to preserve untouched fields, membership and order. Call only
 // after trustSlice proves coverage; otherwise a missing delta would drop a finding.
 export function joinVerifyDeltas(slice, deltas, matchedProofIds = new Set()) {
@@ -107,13 +112,12 @@ export function joinVerifyDeltas(slice, deltas, matchedProofIds = new Set()) {
   for (const f of slice) {
     const delta = byId.get(f.id);
     if (!delta || delta.verified === false) continue;
-    const joined = clearLocation(pinNumericFields(f));
-    for (const key of Object.keys(VERIFY_FACT_PROPERTIES)) delete joined[key];
+    const joined = stripVerifyFacts(clearLocation(pinNumericFields(f)));
     delete joined.diff_validation;
     delete joined.sites;
     if (Array.isArray(f.sites)) joined.site_requests = projectVerifySliceFinding(f).sites;
     const proven = matchedProofIds.has(f.id);
-    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k) && (proven || !Object.hasOwn(VERIFY_FACT_PROPERTIES, k))) joined[k] = delta[k];
+    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k) && (proven || !VERIFY_FACT_KEYS.includes(k))) joined[k] = delta[k];
     if (canonicalRange(joined) && (Object.hasOwn(f, 'line') || Object.hasOwn(f, 'end_line'))) {
       joined.line = joined.line_start;
       joined.end_line = joined.line_end;
@@ -148,11 +152,11 @@ function projectFinding(finding) {
   }
   if (Array.isArray(finding.sites)) projected.sites = finding.sites.map((site) => Object.fromEntries(
     ['file', 'line_start', 'line_end', 'anchor'].filter((key) => site?.[key] !== undefined).map((key) => [key, site[key]])));
-  for (const [key, descriptor] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
-    if (finding[key] === undefined || descriptor.search) continue;
+  for (const [key, kind] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
+    if (finding[key] === undefined || kind === 'search_paths') continue;
     const project = (request) => request && typeof request === 'object' ? Object.fromEntries(
-      descriptor.fields.filter((field) => request[field] !== undefined).map((field) => [field, request[field]])) : request;
-    projected[key] = descriptor.array && Array.isArray(finding[key]) ? finding[key].map(project) : project(finding[key]);
+      VERIFY_REFERENCE_FIELDS.filter((field) => request[field] !== undefined).map((field) => [field, request[field]])) : request;
+    projected[key] = kind === 'reference_list' && Array.isArray(finding[key]) ? finding[key].map(project) : project(finding[key]);
   }
   if (Array.isArray(finding.cross_file_refs) && finding.cross_file_refs.length > 0) projected.has_cross_file_refs = true;
   if (hasRemovedTestLocation(finding)) projected.has_removed_test_location = true;

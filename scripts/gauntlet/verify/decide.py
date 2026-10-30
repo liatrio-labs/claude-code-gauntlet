@@ -38,17 +38,22 @@ from gauntlet.registry import (
     ANCHOR_LIMITS,
     SEVERITY_ORDER,
     VERIFY_REFERENCE_DESCRIPTORS,
-    BlameClass,
-    BlameSource,
     FindingFacts,
     LocationStatus,
     ResolvedReferences,
     ResolvedReferencesCandidateTestsItem,
+    ResolvedReferencesSearchedPathsItem,
     ResolvedSitesItem,
     VerifySliceFinding,
 )
 
 Origin = Literal["new", "surfaced"]
+BlameProvenance = (
+    tuple[Literal["new"], Literal["git_blame", "local_diff", "removed_loss"]]
+    | tuple[Literal["pre_existing"], Literal["git_blame"]]
+    | tuple[Literal["surfaced"], Literal["cross_file_refs", "off_diff"]]
+    | tuple[Literal["unknown"], Literal["unavailable"]]
+)
 
 
 class BlameMetadata(TypedDict):
@@ -237,16 +242,16 @@ def get_diff(context: VerifyContext, diff_file: str | None = None) -> str | None
 
 def _stamp_blame(
     finding: FindingWire,
-    classification: Origin,
+    provenance: BlameProvenance,
     original_severity: object,
     author: str | None = None,
     date: str | None = None,
-    *,
-    blame_class: BlameClass = "unknown",
-    blame_source: BlameSource = "unavailable",
 ) -> Origin:
-    finding["blame_class"] = blame_class
-    finding["blame_source"] = blame_source
+    blame_class = provenance[0]
+    classification: Origin = (
+        "surfaced" if blame_class in ("pre_existing", "surfaced") else "new"
+    )
+    finding["blame_class"], finding["blame_source"] = provenance
     finding["blame_metadata"] = {
         "classification": classification,
         "author": author,
@@ -260,10 +265,8 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
     if finding.get("has_removed_test_location", False):
         return _stamp_blame(
             finding,
-            "new",
+            ("new", "removed_loss"),
             finding.get("severity", ""),
-            blame_class="new",
-            blame_source="removed_loss",
         )
     base_branch = context.base_branch
 
@@ -275,15 +278,13 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
         _downgrade_severity(finding)
         return _stamp_blame(
             finding,
-            "surfaced",
+            ("surfaced", "cross_file_refs"),
             original_severity,
-            blame_class="surfaced",
-            blame_source="cross_file_refs",
         )
 
     span = canonical_range(finding)
     if span is None:
-        return _stamp_blame(finding, "new", original_severity)
+        return _stamp_blame(finding, ("unknown", "unavailable"), original_severity)
     if (
         context.target_kind == "local"
         and context.facts is not None
@@ -295,10 +296,8 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
     ):
         return _stamp_blame(
             finding,
-            "new",
+            ("new", "local_diff"),
             original_severity,
-            blame_class="new",
-            blame_source="local_diff",
         )
 
     pr_commits = context.commits()
@@ -308,7 +307,7 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
             f"{context.commit_error}"
             " — classifying as 'new' (conservative)."
         )
-        return _stamp_blame(finding, "new", original_severity)
+        return _stamp_blame(finding, ("unknown", "unavailable"), original_severity)
 
     blame_cmd = ["git", "blame", f"-L{line_start},{line_end}"]
     if context.target_kind != "local":
@@ -329,7 +328,7 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
                 f"{blame_stderr.strip()}"
                 " — classifying as 'new' (conservative)."
             )
-        return _stamp_blame(finding, "new", original_severity)
+        return _stamp_blame(finding, ("unknown", "unavailable"), original_severity)
 
     blame_sha_re = re.compile(r"^\^?([0-9a-f]{7,40})\s+\((.+?)\s+(\d{4}-\d{2}-\d{2})")
 
@@ -354,7 +353,7 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
             f"classify_blame: could not parse blame output for '{filepath}' lines "
             f"{line_start}-{line_end} — classifying as 'new' (conservative)."
         )
-        return _stamp_blame(finding, "new", original_severity)
+        return _stamp_blame(finding, ("unknown", "unavailable"), original_severity)
 
     # Git blame abbreviates the full commit hashes returned by git log.
     has_pr_commit = any(
@@ -368,12 +367,10 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
 
     return _stamp_blame(
         finding,
-        classification,
+        ("new", "git_blame") if has_pr_commit else ("pre_existing", "git_blame"),
         original_severity,
         first_author,
         first_date,
-        blame_class="new" if has_pr_commit else "pre_existing",
-        blame_source="git_blame",
     )
 
 
@@ -406,13 +403,16 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
     total_symbols = len(symbols_to_check)
     missing_symbols = []
     unavailable = []
+    source = context.sources()
+    captured_target = source.target_kind != "local"
+    head_unavailable = captured_target and source.captured_head is None
+    revisions = [cast(str, source.captured_head)] if captured_target else []
     for symbol in sorted(symbols_to_check):
         if code_at_lines is not None and symbol in code_at_lines:
             continue
 
         try:
-            source = context.sources()
-            if source.target_kind != "local" and source.captured_head is None:
+            if head_unavailable:
                 unavailable.append(f"{symbol}: captured head unavailable")
                 continue
             stdout, grep_stderr, rc = proc.output(
@@ -422,11 +422,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
                     "-l",
                     "-e",
                     symbol,
-                    *(
-                        [cast(str, source.captured_head)]
-                        if source.target_kind != "local"
-                        else []
-                    ),
+                    *revisions,
                     "--",
                 ],
                 timeout=3,
@@ -517,20 +513,22 @@ def validate_diff_lines(finding: FindingWire, facts: DiffFacts | None) -> bool:
             return True
 
     original_origin = finding.get("origin", "new")
-    if not finding.get("has_removed_test_location", False):
+    is_removed_loss = finding.get("has_removed_test_location", False)
+    if not is_removed_loss:
         finding["origin"] = "surfaced"
         if finding.get("blame_class") == "new":
             finding["blame_class"], finding["blame_source"] = "surfaced", "off_diff"
+    reason_tail = "loss origin retained" if is_removed_loss else "tagged as surfaced"
     finding["diff_validation"] = {
         "in_diff": False,
         "reason": (
             f"lines {line_start}-{line_end} of '{filepath}' not found in diff "
-            f"— {'loss origin retained' if finding.get('has_removed_test_location') else 'tagged as surfaced'} (was: {original_origin})"
+            f"— {reason_tail} (was: {original_origin})"
         ),
     }
     blame_meta = finding.get("blame_metadata")
     # Blame downgrades when it tags surfaced; a second downgrade would drop two levels.
-    if not finding.get("has_removed_test_location", False) and (
+    if not is_removed_loss and (
         not blame_meta or blame_meta.get("classification") != "surfaced"
     ):
         _downgrade_severity(finding)
@@ -582,31 +580,27 @@ def _reference_fact(
     return fact
 
 
+def _search_fact(
+    path: object, context: VerifyContext
+) -> ResolvedReferencesSearchedPathsItem:
+    if not isinstance(path, str):
+        return {"path": "", "available": False, "kind": "unknown"}
+    kind = context.sources().path_kind(path)
+    return {"path": path, "available": kind != "unknown", "kind": kind}
+
+
 def _resolve_references(
     finding: FindingWire, context: VerifyContext, indexed: AnnotatedDiff | None
 ) -> None:
     requests = cast(dict[str, object], finding)
     resolved: dict[str, object] = {}
-    for key, descriptor in VERIFY_REFERENCE_DESCRIPTORS.items():
+    for key, kind in VERIFY_REFERENCE_DESCRIPTORS.items():
         if key not in requests:
             continue
-        values = requests[key] if descriptor["array"] else [requests[key]]
-        if not isinstance(values, list):
-            values = [values]
-        if descriptor["search"]:
-            resolved[key] = [
-                {
-                    "path": path if isinstance(path, str) else "",
-                    "available": kind != "unknown",
-                    "kind": kind,
-                }
-                for path in values
-                for kind in [
-                    context.sources().path_kind(path)
-                    if isinstance(path, str)
-                    else "unknown"
-                ]
-            ]
+        value = requests[key]
+        values = value if kind != "reference" and isinstance(value, list) else [value]
+        if kind == "search_paths":
+            resolved[key] = [_search_fact(path, context) for path in values]
         else:
             facts = [
                 _reference_fact(
@@ -614,7 +608,7 @@ def _resolve_references(
                 )
                 for value in values
             ]
-            resolved[key] = facts if descriptor["array"] else facts[0]
+            resolved[key] = facts[0] if kind == "reference" else facts
     finding["resolved_references"] = cast(ResolvedReferences, resolved)
 
 
@@ -634,7 +628,8 @@ def _derive_loss_anchor(finding: FindingWire, lines: tuple[str, ...] | None) -> 
         return
     for end in range(line, min(len(lines), line + ANCHOR_LIMITS["lines"] - 1) + 1):
         quote = lines[line - 1 : end]
-        if valid_quote(Quote(quote)):
+        # Serialized anchors lose a trailing empty line when parsed again.
+        if quote[-1] != "" and valid_quote(Quote(quote)):
             finding["anchor"] = "\n".join(quote)
             finding["derived_loss_anchor"] = True
             return

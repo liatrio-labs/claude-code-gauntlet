@@ -147,6 +147,24 @@ def test_shared_context_carries_signed_mixed_deletion_inventory(tmp_path, invoke
     assert checksum == fnv1a32(js_stringify_pretty(receipt))
 
 
+def test_removed_loss_anchor_round_trips_past_blank_line(tmp_path, verify_git):
+    quote = "    return None\n\n    return surviving_value"
+    (tmp_path / "source").write_text(quote + "\n", encoding="utf-8")
+    finding = {
+        "id": "loss",
+        "file": "source",
+        "line_start": 1,
+        "has_removed_test_location": True,
+    }
+    result = run_verification(
+        [finding], VerifyContext(str(tmp_path), "base", target_kind="local")
+    )
+    delta = build_deltas([finding], result["verified"])[0]
+    assert delta["location_status"] == "confirmed"
+    assert (delta["line_start"], delta["line_end"]) == (1, 3)
+    assert delta["anchor"] == quote
+
+
 def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
     tmp_path, monkeypatch, verify_git
 ):

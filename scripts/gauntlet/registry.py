@@ -57,6 +57,7 @@ DeltaValueField = Literal[
     "blame_source",
     "resolved_references",
 ]
+VerifyReferenceKind = Literal["search_paths", "reference_list", "reference"]
 
 EffectiveTestKind = Literal["defective_test"]
 
@@ -173,32 +174,12 @@ VERIFY_SLICE_FIELDS: tuple[str, ...] = (
     "symbols",
 )
 
-VERIFY_REFERENCE_DESCRIPTORS = {
-    "searched_paths": {
-        "array": True,
-        "search": True,
-        "fields": ["file", "line_start", "line_end", "anchor"],
-    },
-    "candidate_tests": {
-        "array": True,
-        "search": False,
-        "fields": ["file", "line_start", "line_end", "anchor"],
-    },
-    "production_element": {
-        "array": False,
-        "search": False,
-        "fields": ["file", "line_start", "line_end", "anchor"],
-    },
-    "duplicate_of": {
-        "array": False,
-        "search": False,
-        "fields": ["file", "line_start", "line_end", "anchor"],
-    },
-    "precedent": {
-        "array": False,
-        "search": False,
-        "fields": ["file", "line_start", "line_end", "anchor"],
-    },
+VERIFY_REFERENCE_DESCRIPTORS: Mapping[str, VerifyReferenceKind] = {
+    "searched_paths": "search_paths",
+    "candidate_tests": "reference_list",
+    "production_element": "reference",
+    "duplicate_of": "reference",
+    "precedent": "reference",
 }
 
 DISPATCH_RESULTS = {
