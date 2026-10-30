@@ -22,9 +22,11 @@ class ContextOverrides(TypedDict, total=False):
     triage: bytes
 
 
-@pytest.mark.parametrize("target", ["local", "branch"])
+@pytest.mark.parametrize(
+    "target,captured", [("local", False), ("branch", False), ("branch", True)]
+)
 def test_layout_is_root_and_changed_directories_only(
-    tmp_path, invoke, monkeypatch, target
+    tmp_path, invoke, monkeypatch, target, captured
 ):
     root = tmp_path / "repo"
     root.mkdir()
@@ -90,6 +92,8 @@ def test_layout_is_root_and_changed_directories_only(
         "--head-sha-full",
         head,
     ]
+    if captured:
+        argv += ["--nonce", "layout"]
 
     def collect():
         result = invoke("write_shared_context", argv, tmp_path, b"triage")
@@ -128,8 +132,12 @@ def test_layout_is_root_and_changed_directories_only(
     assert layout["omitted"] == []
     assert b"$(marker)" in content and not (tmp_path / "marker").exists()
     assert content.count(b"</untrusted-code-content ") == 2
+    if captured:
+        (root / "later").write_bytes(b"later source\n")
+        git(root, "add", ".")
+        git(root, "commit", "-qm", "advance")
     assert collect()[1] == layout
-    if target == "branch":
+    if target == "branch" and not captured:
         argv[-1] = head[:7] + "f" * 33
         assert collect()[1] == {"entries": [], "unavailable": ["."], "omitted": []}
 
