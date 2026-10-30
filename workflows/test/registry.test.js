@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { DIMENSIONS } from '../src/registry.js';
 import { WEB_ORIGIN_RE, resolvePolicy, modelFor } from '../src/registry.js';
-import { ANCHOR_LIMITS, SKEPTICAL_RETURN_SCHEMAS, SKEPTICAL_CONTRACTS, CITATION_REQUEST_SCHEMA, EXCLUSION_CATEGORIES, PIPELINE_FINDING_FIELDS, SKEPTICAL_FINDING_PROPERTIES, FINDING_PATH_DESCRIPTORS, FINDING_REWRITE_EXEMPT_FIELDS, acceptSkepticalReturn } from '../src/registry.js';
+import { ANCHOR_LIMITS, SKEPTICAL_RETURN_SCHEMAS, SKEPTICAL_CONTRACTS, CITATION_REQUEST_SCHEMA, EXCLUSION_CATEGORIES, EXCLUSION_NEW_FACTS, PIPELINE_FINDING_FIELDS, SKEPTICAL_FINDING_PROPERTIES, FINDING_PATH_DESCRIPTORS, FINDING_REWRITE_EXEMPT_FIELDS, acceptSkepticalReturn } from '../src/registry.js';
 import { agentSpecs, findingSchema, discover } from '../src/discover.js';
 import { normalizeFindingPaths } from '../src/mergeFindings.js';
 
@@ -46,7 +47,8 @@ test('skeptical descriptors derive verdict and scope variants', async () => {
     for (const row of EXCLUSION_CATEGORIES) {
       const scope = { finding_id: 'F', stage, category: row.category, applicability: 'applicable',
         citations: row.citation_roles.map((role) => request(stage, { request_id: role, role })) };
-      assert.equal(accept({ scope_assessments: [scope] }).status, 'complete', row.category);
+      assert.equal(accept({ scope_assessments: [scope] }).status,
+        row.consumers.includes(stage) ? 'complete' : 'incomplete', `${stage}: ${row.category}`);
       if (row.citation_roles.length) assert.equal(accept({ scope_assessments: [{ ...scope, citations: [] }] }).status, 'incomplete');
     }
     assert.equal(accept({ scope_assessments: [{ category: 'unknown' }] }).status, 'incomplete');
@@ -86,6 +88,42 @@ test('skeptical descriptors derive verdict and scope variants', async () => {
   assert.ok(discovered.findings.length);
   for (const finding of discovered.findings) for (const key of owned) assert.equal(Object.hasOwn(finding, key), false);
 });
+
+test('scope schemas bind category enums and variants to their consumers', () => {
+  const schemas = [...Object.entries(SKEPTICAL_RETURN_SCHEMAS).map(([stage, schema]) =>
+    [[stage], schema.properties.scope_assessments.items]),
+  [['validator', 'challenger'], SKEPTICAL_FINDING_PROPERTIES.scope_decisions.items]];
+  for (const [stages, schema] of schemas) {
+    const rows = EXCLUSION_CATEGORIES.filter((row) => row.consumers.some((stage) => stages.includes(stage)));
+    assert.deepEqual(schema.properties.category.enum, rows.map((row) => row.category));
+    assert.deepEqual(schema.anyOf.map((variant) => [variant.properties.stage.const, variant.properties.category.const]),
+      rows.flatMap((row) => stages.filter((stage) => row.consumers.includes(stage)).map((stage) => [stage, row.category])));
+  }
+});
+
+test('exclusion rows use verified blame facts and defer latent placement until after validation', () => {
+  const row = (category) => EXCLUSION_CATEGORIES.find((item) => item.category === category);
+  assert.equal(row('latent').stage, 'post_validation');
+  assert.deepEqual(row('latent').consumers, ['post_validation']);
+  assert.deepEqual(row('pre_existing').facts, ['blame_class', 'blame_source', 'cross_file_refs']);
+  assert.ok(EXCLUSION_NEW_FACTS.includes('in_diff'));
+});
+
+for (const [name, before, after, error] of [
+  ['fact', "facts: ['in_diff']", "facts: ['in_dif']", 'Unknown exclusion fact: in_dif'],
+  ['outcome', "outcome: 'body'", "outcome: 'bodi'", 'Unknown exclusion outcome: bodi'],
+  ['stage', "stage: 'post_validation'", "stage: 'post_validaton'", 'Unknown exclusion stage: post_validaton'],
+  ['proof', "proof: 'verified_fact'", "proof: 'verified_fat'", 'Unknown exclusion proof: verified_fat'],
+]) {
+  test(`module load rejects an unknown exclusion ${name}`, async () => {
+    const original = readFileSync(new URL('../src/registry.js', import.meta.url), 'utf8');
+    assert.ok(original.includes(before));
+    const source = original.replace(before, after).replace(/from '(\.\/[^']+)'/g,
+      (_, path) => `from '${new URL(path, new URL('../src/registry.js', import.meta.url)).href}'`);
+    assert.notEqual(source, original);
+    await assert.rejects(import(`data:text/javascript,${encodeURIComponent(source)}`), { message: error });
+  });
+}
 
 const POLICY_ROWS = [
   { name: 'third-party alias override', agent: 'code-gauntlet:bug-detector',

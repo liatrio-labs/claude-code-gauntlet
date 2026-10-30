@@ -12,7 +12,7 @@ Origin surfaced, off-diff placement and descriptions do not prove pre-existence.
 
 Exceptions: cross_file_effect_created_by_pr.
 
-Facts: git_blame, affected_cross_file_refs.
+Facts: blame_class, blame_source, cross_file_refs.
 
 ## `untouched_line`
 
@@ -78,7 +78,7 @@ Facts: admission.
 
 ## `latent`
 
-Consumers: early; predicate: `future_change_only`; proof: `verified_fact`; outcome: `body`.
+Consumers: post_validation; predicate: `future_change_only`; proof: `verified_fact`; outcome: `body`.
 
 Existing future-change-only reachability assessment appropriate to the actual claim.
 
