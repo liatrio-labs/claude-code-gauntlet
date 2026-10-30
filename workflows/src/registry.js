@@ -360,11 +360,20 @@ export function findingPolicy(finding, effective = true) {
 }
 
 // Both the return schema and runtime acceptance derive semantic requirements from the same rows.
-export function requiredAssessments(finding, policySubject) {
+export function admissionPolicy(finding, policySubject, promoted = false) {
   const original = findingPolicy({ ...finding, policy_subject: undefined }, false);
-  const selected = findingPolicy({ ...finding, policy_subject: policySubject }, false);
-  return [...new Set([original.row?.admission?.promotion?.predicate,
-    ...(original.kind?.predicates || []), ...(selected.kind?.predicates || [])])]
+  const promotion = original.row?.admission?.promotion;
+  const terminal = !promoted && original.kind?.defaultDisposition === 'report_only';
+  const policyFinding = promoted && promotion
+    ? { ...finding, policy_subject: 'ordinary', [original.row.admission.field]: promotion.kind }
+    : { ...finding, policy_subject: policySubject };
+  return { original, promotion, terminal, policyFinding,
+    ...(terminal ? original : findingPolicy(policyFinding, false)) };
+}
+
+export function requiredAssessments(finding, policySubject, promoted = false) {
+  const { promotion, kind } = admissionPolicy(finding, policySubject, promoted);
+  return [...new Set([promotion?.predicate, ...(kind?.predicates || [])])]
     .filter((predicate) => ADMISSION_PREDICATES[predicate]?.references);
 }
 

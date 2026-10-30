@@ -21,14 +21,16 @@ test('present defect promotion overrides additional cases, quality other and gap
   ]) {
     for (const status of ['confirmed', 'rejected', 'unresolved']) {
       const f = makeFinding(id, { dimension, agent, confidence: 80, ...fields });
-      const entries = [assessment('present_defect', status), ...predicates.map((predicate) => assessment(predicate, 'unresolved', []))];
-      const validated = await validateStage(stageCtx({ reply: { validations: [score(id, entries)] } }), { findings: [f] });
+      const entries = [assessment('present_defect', status)];
+      const ctx = stageCtx({ reply: { validations: [score(id, entries)] } });
+      const validated = await validateStage(ctx, { findings: [f] });
       assert.equal(validated.stats.skipped, 0);
       assert.deepEqual(Object.keys(admissionRequests(validated.findings[0])), ['primary']);
       const result = await runAndCapture(validArgs({ checkpoints: { validate: validated }, delivery: { tier: 'main_only' } }));
       const delivered = result.payload.findings.find((finding) => finding.id === id);
       assert.ok(delivered, id);
       assert.equal(delivered.disposition, status === 'confirmed' ? 'deliver' : id === 'gap' ? 'held_back' : 'report_only');
+      assert.equal(ctx.calls.length, status !== 'confirmed' && predicates.length ? 2 : 1);
       assert.equal(delivered.agent, agent);
       assert.equal(delivered.dimension, status === 'confirmed' && dimension === 'test_coverage' ? 'bug' : dimension);
       assert.equal(delivered.origin_dimension, status === 'confirmed' ? dimension : undefined);
@@ -52,8 +54,7 @@ test('present defect promotion overrides additional cases, quality other and gap
 test('present defect promotion governs ranking even when the validator classified a test claim', async () => {
   for (const policy_subject of ['coverage', 'test_defect', 'unresolved']) {
     const f = makeFinding('quality', { agent: 'code-simplifier', dimension: 'simplification', quality_basis: 'other' });
-    const entries = [assessment('present_defect'), assessment('confirmed_test_defect', 'unresolved'),
-      ...['resolved_production_element', 'complete_searches', 'complete_behavioral_absence'].map((predicate) => assessment(predicate, 'unresolved', []))];
+    const entries = [assessment('present_defect')];
     const validated = await validateStage(stageCtx({ reply: [{ ...score('quality', entries), policy_subject }] }), { findings: [f] });
     assert.equal(validated.stats.skipped, 0);
     const run = await runAndCapture(validArgs({ checkpoints: { validate: validated } }));
@@ -67,7 +68,7 @@ test('present defect promotion governs ranking even when the validator classifie
 });
 
 test('incomplete validation gets one small follow-up round and only score or policy omissions degrade', async () => {
-  for (const arm of ['score', 'policy_subject', 'assessment', 'duplicate_assessment']) {
+  for (const arm of ['score', 'policy_subject', 'assessment', 'duplicate_assessment', 'malformed_assessments']) {
     for (const repaired of [true, false]) {
       const f = makeFinding('pending', { dimension: 'simplification', quality_basis: 'other' });
       const complete = score('pending', [assessment('present_defect', 'rejected')]);
@@ -75,6 +76,7 @@ test('incomplete validation gets one small follow-up round and only score or pol
       if (arm === 'score') delete incomplete.confidence;
       if (arm === 'policy_subject') delete incomplete.policy_subject;
       if (arm === 'assessment') delete incomplete.admission_assessments;
+      if (arm === 'malformed_assessments') incomplete.admission_assessments = {};
       if (arm === 'duplicate_assessment') incomplete.admission_assessments.push(incomplete.admission_assessments[0]);
       const ctx = stageCtx({ reply: { validations: [incomplete, score('sibling')] },
         replies: { 'validate-retry-0': { validations: [repaired ? complete : incomplete] } } });
@@ -144,12 +146,42 @@ test('validator schema requires the semantic assessments for each kind and selec
   const item = ctx.calls[0].schema.properties.validations.items;
   for (const [f, expected] of rows) {
     const variant = item.anyOf.find((branch) => branch.properties.finding_id.enum[0] === f.id && branch.properties.policy_subject.enum[0] === 'ordinary');
-    assert.deepEqual(variant.required, expected.length ? ['admission_assessments'] : []);
-    assert.deepEqual((variant.properties.admission_assessments?.allOf || []).map((clause) => clause.contains.properties.predicate.const), expected);
+    const requirements = variant.else || variant;
+    assert.deepEqual((requirements.properties?.admission_assessments?.allOf || []).map((clause) => clause.contains.properties.predicate.const), expected);
+    if (variant.then) {
+      assert.deepEqual(variant.if.properties.admission_assessments.contains.properties, {
+        predicate: { const: 'present_defect' }, status: { const: 'confirmed' }, references: { const: ['primary'] },
+      });
+      assert.deepEqual(variant.then.properties.admission_assessments.allOf.map((clause) => clause.contains.properties.predicate.const), ['present_defect']);
+    }
   }
   const mapped = item.anyOf.find((branch) => branch.properties.finding_id.enum[0] === 'core' && branch.properties.policy_subject.enum[0] === 'test_defect');
-  assert.deepEqual(mapped.required, ['admission_assessments']);
+  assert.deepEqual(mapped.required, ['finding_id', 'confidence', 'policy_subject', 'admission_assessments']);
   assert.deepEqual(mapped.properties.admission_assessments.allOf.map((clause) => clause.contains.properties.predicate.const), ['confirmed_test_defect']);
+});
+
+test('admission retry requests only missing selected-kind evidence and cannot revise accepted judgments', async () => {
+  const f = makeFinding('mapped', { dimension: 'type_design', quality_basis: 'duplication' });
+  const ctx = stageCtx({ reply: [{ ...score(f.id, [assessment('present_defect', 'rejected')]),
+    policy_subject: 'test_defect', reachability: 'current' }],
+  replies: { 'validate-retry-0': [{ finding_id: f.id, confidence: 0, policy_subject: 'coverage', reachability: 'future_change_only',
+    admission_assessments: [assessment('confirmed_test_defect'), assessment('present_defect')] }] } });
+  const out = await validateStage(ctx, { findings: [f] });
+  assert.equal(ctx.calls.length, 2);
+  assert.ok(ctx.calls[1].prompt.startsWith('Supply only the missing admission assessments'));
+  assert.ok(ctx.calls[1].prompt.endsWith('Return { validations: [{ finding_id, admission_assessments }] } (one entry per finding).'));
+  const context = JSON.parse(ctx.calls[1].prompt.split(' | admission_context: ')[1].split('\n')[0]);
+  assert.deepEqual(context.policy, { policy_subjects: { test_defect: ['confirmed_test_defect'] } });
+  assert.deepEqual(Object.keys(context.predicates), ['confirmed_test_defect']);
+  const branch = ctx.calls[1].schema.properties.validations.items.anyOf[0];
+  assert.deepEqual(branch.required, ['admission_assessments']);
+  assert.deepEqual(branch.properties.admission_assessments.allOf.map((clause) => clause.contains.properties.predicate.const), ['confirmed_test_defect']);
+  assert.equal(out.findings[0].confidence, 80);
+  assert.equal(out.findings[0].reachability, 'current');
+  assert.equal(out.findings[0].policy_subject, 'test_defect');
+  assert.deepEqual(out.findings[0].admission_assessments, [assessment('present_defect', 'rejected'), assessment('confirmed_test_defect')]);
+  assert.deepEqual(out.audit.batches[0].rejections[0].reasons, ['missing_assessment:confirmed_test_defect']);
+  assert.deepEqual(out.audit.batches[1].rejections, []);
 });
 
 test('raw validator returns and rejections survive bounded checkpoint persistence and replay', async () => {
