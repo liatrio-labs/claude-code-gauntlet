@@ -51,7 +51,9 @@ For each significant type (class, interface, struct, record, enum, union type) t
 
 ## Investigation basis
 
-Trace present invariant violations through construction and mutation paths.
+Walk construction and mutation paths from inputs to states observed by callers,
+checking invariant enforcement and reachable invalid or intermediate states.
+Report demonstrated production defects as `current_correctness`.
 Ground other improvements in inspected duplication, a concrete behavior-preserving
 simpler equivalent or an applicable idiom from existing repository code.
 
