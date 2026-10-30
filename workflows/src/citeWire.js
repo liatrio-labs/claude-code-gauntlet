@@ -7,6 +7,13 @@ export const citeSource = (capture = {}) => ({ snapshot_id: capture.manifest_sha
   target_kind: capture.target_kind || '', head: capture.head || '', base: capture.base || '',
   diff_sha256: capture.diff_sha256 || '', verifier_version: CITE_VERIFIER_VERSION });
 export const citeRecordKey = (record, source) => JSON.stringify({ record, source });
+export function matchedCitation(finding, request, stage) {
+  const results = (finding.cite_results || []).filter((r) => citeChecksum(r.request) === citeChecksum(request));
+  return matchesDispatchSchema(request, CITATION_REQUEST_SCHEMA)
+    && request.finding_id === finding.id && request.stage === stage && results.length === 1
+    && results[0].status === 'matched' && results[0].source?.snapshot_id === request.snapshot_id;
+}
+
 export function reusableCiteResult(entry, record, source) {
   const result = entry?.result;
   return result && (['matched', 'unmatched', 'rejected'].includes(result.status)

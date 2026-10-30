@@ -102,6 +102,7 @@ const CHECKPOINT_PHASE_SHAPE_TABLE = {
     gaps: CHECKPOINT_ARRAY_TOLERANT,
     dispatched: CHECKPOINT_ARRAY_TOLERANT,
     degraded: CHECKPOINT_ARRAY_TOLERANT,
+    conventions_confirmations: CHECKPOINT_ARRAY_TOLERANT,
   },
   merge: { ...findingListShape('merge'), gaps: CHECKPOINT_ARRAY_TOLERANT },
   verify: { ...findingListShape('verify'), gaps: CHECKPOINT_ARRAY_TOLERANT },
@@ -110,8 +111,9 @@ const CHECKPOINT_PHASE_SHAPE_TABLE = {
   challenge: {
     ...findingListShape('challenge'),
     gaps: CHECKPOINT_ARRAY_TOLERANT,
+    conventions_confirmations: CHECKPOINT_ARRAY_TOLERANT,
   },
-  cite: { ...findingListShape('cite'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  cite: { ...findingListShape('cite'), gaps: CHECKPOINT_ARRAY_TOLERANT, conventions_confirmations: CHECKPOINT_ARRAY_TOLERANT },
   report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
 };
 

@@ -1,7 +1,6 @@
 import { canonicalRange } from './location.js';
 import { INT_POLICY, coerceInt, asText, asConfidence, deepFreeze } from './wire.js';
-import { FIELD_RENAMES, SEVERITY_ORDER, INJECTION_STRIPPED_PROSE_FIELDS, AGENT_BUG_DETECTOR } from './registry.js';
-import { AGENT_TEST_ANALYZER, AGENT_SECURITY_REVIEWER, AGENT_CONVENTIONS } from './registry.js';
+import { FIELD_RENAMES, SEVERITY_ORDER, INJECTION_STRIPPED_PROSE_FIELDS, AGENT_SECURITY_REVIEWER } from './registry.js';
 import { DIMENSIONS, dimensionRow, findingPolicy } from './registry.js';
 import { cfgGet, configForFile, applyExclusions } from './reviewConfig.js';
 import { applyInjectionFilter } from './injection.js';
@@ -10,13 +9,6 @@ const FUNCTIONAL_VIOLATION_KEYWORDS =
   /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
 
 const FILTER_DIMENSION_ROUTES = deepFreeze({ convention: { patterns: [FUNCTIONAL_VIOLATION_KEYWORDS] } });
-
-const FILTER_SUPPRESSION_RULES = deepFreeze([
-  { agent: AGENT_BUG_DETECTOR, pattern: /\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/,
-    eliminatedBy: 'suppressed:intentional', subject: 'behaviour', conclusion: 'intentional' },
-  { agent: AGENT_TEST_ANALYZER, pattern: /\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b/,
-    eliminatedBy: 'suppressed:generated', subject: 'code', conclusion: 'generated/scaffolding' },
-]);
 
 export function normalizeFieldNames(findings, renames = FIELD_RENAMES) {
   let normalizedCount = 0;
@@ -142,7 +134,7 @@ function pyRound(x) {
   return floor % 2 === 0 ? floor : floor + 1; // exact .5 -> nearest even
 }
 
-function lineBucket(line, proximity) {
+export function lineBucket(line, proximity) {
   const n = coerceInt(line, INT_POLICY.filter);
   if (n === null) return 0;
   return pyRound(n / proximity) * proximity;
@@ -162,46 +154,12 @@ function groupFilterFindings(findings, keyFor) {
   return groups;
 }
 
-export function detectDisagreement(findings, rules = FILTER_SUPPRESSION_RULES) {
+export function detectDisagreement(findings) {
   for (const f of findings) {
     for (const key of ['consensus_count', 'consensus_boost', 'corroborated_by', 'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note']) delete f[key];
   }
-  const locationGroups = groupFilterFindings(findings, (finding) => JSON.stringify([
-    pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10),
-  ]));
 
-  const suppressedIds = new Set();
-  const suppressed = [];
-  const idKey = (f) => (('id' in f) ? f.id : f);
-
-  for (const group of locationGroups.values()) {
-    if (group.length < 2) continue;
-
-    const agentMap = groupFilterFindings(group, (f) => pyGet(f, 'agent', '').toLowerCase());
-
-    for (const row of rules) {
-      if (!agentMap.has(row.agent) || !agentMap.has(AGENT_CONVENTIONS)) continue;
-      for (const convFinding of agentMap.get(AGENT_CONVENTIONS)) {
-        const convText = `${asText(convFinding.description)} ${asText(convFinding.title)}`.toLowerCase();
-        if (!row.pattern.test(convText)) continue;
-        for (const target of agentMap.get(row.agent)) {
-          const fid = idKey(target);
-          if (suppressedIds.has(fid)) continue;
-          suppressedIds.add(fid);
-          suppressed.push({
-            ...target,
-            eliminated_by: row.eliminatedBy,
-            elimination_reason:
-              `conventions-and-intent confirms ${row.subject} at ${pyGet(target, 'file', '?')}:` +
-              `${pyGet(target, 'line_start', '?')} is ${row.conclusion}`,
-          });
-        }
-        break;
-      }
-    }
-  }
-
-  const active = findings.filter((f) => !suppressedIds.has(idKey(f)));
+  const active = findings;
 
   const consensusGroups = groupFilterFindings(active, (finding) => JSON.stringify([
     pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10), pyGet(finding, 'origin', '') === 'unknown',
@@ -267,7 +225,7 @@ export function detectDisagreement(findings, rules = FILTER_SUPPRESSION_RULES) {
     }
   }
 
-  return { active, suppressed, boostedCount };
+  return { active, boostedCount };
 }
 
 export function routeByDimension(finding, routes = FILTER_DIMENSION_ROUTES) {
@@ -415,8 +373,7 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
   ).length;
 
   // Only eligible findings may corroborate; disagreement adjusts ranking after thresholds.
-  const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
-  allEliminated.push(...elimSuppressed);
+  const { active, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
   const { tagged, mainCount, suggestionCount } = tagFindings(active);
 
   const promotedCount = tagged.filter((finding) => {

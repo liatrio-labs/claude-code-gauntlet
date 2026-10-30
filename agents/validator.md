@@ -85,3 +85,5 @@ needs-evidence names the missing evidence. Include the finding identity,
 validator stage and scope-assessment array required by the dispatch schema.
 A finding you leave out is held back as unvalidated. Do not include original
 findings or commentary outside the JSON.
+Scope applicability and exceptions are supplied once per batch. A scope assertion
+needs independent rule and applicability citations; empty scope assessments are valid.

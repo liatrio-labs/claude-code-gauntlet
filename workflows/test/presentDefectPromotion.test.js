@@ -104,7 +104,7 @@ test('incomplete validation gets one small follow-up round and omissions hold ba
   const ctx = stageCtx({ reply: [] });
   const out = await validateStage(ctx, { findings: many, limits: { validateBatch: 25 } });
   assert.equal(out.stats.batches_dispatched, 4);
-  assert.deepEqual(ctx.calls.slice(1).map((call) => [...call.prompt.matchAll(/^- /gm)].length), [5, 5, 2]);
+  assert.deepEqual(ctx.calls.slice(1).map((call) => [...call.prompt.matchAll(/^- \S+ \[/gm)].length), [5, 5, 2]);
   assert.equal(out.stats.skipped, 12);
 });
 

@@ -67,3 +67,17 @@ independently assess whether they prove the claim or its refutation.
 For `needs_evidence`, name the missing evidence. The same return cannot confirm it.
 Return `scope_assessments` as an array, possibly empty, and retain the dispatched
 finding identity and challenger stage. Return only JSON.
+For each assertion cite both `rule` and `applicability`; use `inapplicable` or
+`contradicted` when exceptions or code defeat it. On a real verdict, cite proven
+incorrect or dangerous behavior with the `exception` role. A matched quotation
+proves provenance; assess the rule's actual coverage independently.
+<!-- generated-scope -->
+## Scope rows
+
+- `general_quality`: Consume canonical quality admission and its present_defect promotion. Exceptions: named_in_repo_convention, confirmed_present_defect. Proof: `admission`; outcome: `admission`. A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.
+- `test_only_pattern`: Cited harmless test-role pattern and its applicability; test path alone is insufficient. Exceptions: test_coverage_origin, test_applicable_convention, genuine_test_defect. Proof: `citation`; outcome: `eliminate`. Wrong assertions, mocks and waits remain defects.
+- `lint_catchable`: Cite applicable repository tool, rule or configuration and coverage of the actual claim. Exceptions: none. Proof: `citation`; outcome: `eliminate`. Familiar syntax and assumed CI tools are insufficient.
+- `suppressed`: Cited suppression location, range and rule cover this issue. Exceptions: none. Proof: `citation`; outcome: `eliminate`. A nearby suppression does not establish applicability.
+- `opted_out`: Cite repository opt-out mechanism and applicable file or rule opt-out. Exceptions: none. Proof: `citation`; outcome: `eliminate`. An author assertion is not an opt-out mechanism.
+- `intentional`: Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation. Exceptions: proven_incorrect_or_dangerous_behavior_including_security. Proof: `citation`; outcome: `eliminate`. The side record is only a gating fact, never a finding or proof; description and intentional wording are insufficient.
+<!-- /generated-scope -->

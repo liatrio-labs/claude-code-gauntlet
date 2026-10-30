@@ -54,7 +54,7 @@ test('validator prompt shares predicate definitions across finding contexts', as
   const table = JSON.stringify(ADMISSION_PREDICATES);
   assert.equal(prompt.split(table).length - 1, 1);
   assert.ok(prompt.indexOf(table) < prompt.indexOf('\nFindings:'));
-  const contexts = prompt.split('\n').filter((line) => line.startsWith('- ')).map((line) => JSON.parse(line.split(' | admission_context: ')[1]));
+  const contexts = prompt.split('\n').filter((line) => line.includes(' | admission_context: ')).map((line) => JSON.parse(line.split(' | admission_context: ')[1]));
   const promotionHeader = 'For test_coverage, type_design, simplification findings also assess present_defect.';
   assert.equal(prompt.split(promotionHeader).length - 1, 1);
   assert.ok(prompt.indexOf(promotionHeader) < prompt.indexOf('\nFindings:'));

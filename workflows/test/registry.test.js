@@ -91,7 +91,7 @@ test('skeptical descriptors derive verdict and scope variants', async () => {
 test('scope schemas bind category enums and variants to their consumers', () => {
   const schemas = [...Object.entries(SKEPTICAL_RETURN_SCHEMAS).map(([stage, schema]) =>
     [[stage], schema.properties.scope_assessments.items]),
-  [['early', 'post_validation'], SKEPTICAL_FINDING_PROPERTIES.scope_decisions.items]];
+  [['early', 'post_validation', 'validator', 'challenger'], SKEPTICAL_FINDING_PROPERTIES.scope_decisions.items]];
   for (const [stages, schema] of schemas) {
     const rows = EXCLUSION_CATEGORIES.filter((row) => row.consumers.some((stage) => stages.includes(stage)));
     assert.deepEqual(schema.properties.category.enum, rows.map((row) => row.category));

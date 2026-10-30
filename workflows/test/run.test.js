@@ -21,12 +21,130 @@ import { DIMENSIONS as DIMENSION_ROWS } from '../src/registry.js';
 import { normalizeFindingPaths } from '../src/mergeFindings.js';
 import { normalizePhaseFindings } from '../src/checkpoints.js';
 import { evaluateAdmission, hasAdmission } from '../src/admission.js';
-import { skepticalReturn, sourceCapture } from './helpers/verdicts.js';
+import { skepticalReturn, sourceCapture, citationEnvelope } from './helpers/verdicts.js';
 import { AGENT_COUNT_GUARD } from '../src/capacity.js';
 import { STAGE_COSTS } from '../src/registry.js';
 
 const proofArgs = (over = {}) => validArgs({ nonce: 'run', headShaShort: 'aaaaaaaa',
   verify: { targetKind: 'branch', sourceCapture }, ...over });
+
+function scopeAssessment(id, stage, category, extra = {}) {
+  const request = skepticalReturn(id, stage).citations[0];
+  const ruleFile = { lint_catchable: '.toolrules', suppressed: 'rules/suppressions',
+    opted_out: 'rules/opt-outs', intentional: 'rules/intent' }[category] || request.file;
+  return { finding_id: id, stage, category, applicability: 'applicable',
+    citations: ['rule', 'applicability'].map((role) => ({ ...request, role,
+      file: role === 'rule' ? ruleFile : request.file, request_id: `${category}-${role}` })), ...extra };
+}
+
+test('cited skeptical scope exclusions retain their exact applicability', async () => {
+  for (const stage of ['validator', 'challenger']) for (const category of ['lint_catchable', 'suppressed', 'opted_out', 'intentional', 'test_only_pattern']) {
+    for (const fault of ['matched', 'unmatched', 'unavailable', 'uncited', 'missing_role', 'wrong_snapshot', 'contradicted', 'inapplicable', 'dangerous', 'incorrect',
+      ...(category === 'intentional' ? ['exception_unmatched', 'exception_unavailable', 'exception_malformed', 'nested_exception'] : [])]) {
+      const scope = scopeAssessment('SCOPE', stage, category);
+      if (fault === 'uncited') scope.citations = [];
+      if (fault === 'missing_role') scope.citations.pop();
+      if (fault === 'wrong_snapshot') scope.citations[0].snapshot_id = 'other';
+      if (['contradicted', 'inapplicable'].includes(fault)) scope.applicability = fault;
+      const assessment = skepticalReturn('SCOPE', stage, { scope_assessments: [scope] });
+      if (['dangerous', 'incorrect'].includes(fault) || fault.startsWith('exception_')) assessment.citations.push({ ...assessment.citations[0],
+        ...(fault === 'exception_malformed' ? { quote: '' } : {}), role: 'exception', request_id: 'danger' });
+      if (fault === 'nested_exception') scope.citations.push({ ...assessment.citations[0], role: 'exception', request_id: 'danger' });
+      const scoped = makeFinding('SCOPE', { dimension: fault === 'dangerous' || fault.startsWith('exception_') ? 'security' : 'bug',
+        path_role: category === 'test_only_pattern' ? 'test' : 'source',
+        code: 'SCOPE_FENCE', suggested_fix_code: 'SCOPE_PATCH', suggestion: 'SCOPE_TASK',
+        skeptical_assessments: [assessment, skepticalReturn('SCOPE', stage === 'validator' ? 'challenger' : 'validator')] });
+      const args = proofArgs({ checkpoints: { challenge: challengeOutput({ findings: [scoped, makeFinding('SIBLING')],
+        conventions_confirmations: [{ id: 'rule-confirmation', file: 'SCOPE.js', line_start: 11 }] }) } });
+      let payload;
+      const ctx = makeCtx(args, { onPersist: (p) => { payload = p; } });
+      const agent = ctx.agent;
+      ctx.agent = (prompt, dispatch) => dispatch.label.startsWith('cite-')
+        ? citationEnvelope(prompt, args, (r) => fault.startsWith('exception_') && r.request.role === 'exception'
+          ? fault.slice('exception_'.length) : r.request.role !== 'claim' && ['unmatched', 'unavailable'].includes(fault) ? fault : 'matched')
+        : agent(prompt, dispatch);
+      const out = await runWith(ctx, args);
+      assert.equal(out.ok, true, `${category}/${stage}/${fault}`);
+      const result = payload.findings.find((f) => f.id === 'SCOPE');
+      const disposition = ['contradicted', 'inapplicable'].includes(fault) || (category === 'intentional' && ['dangerous', 'incorrect', 'nested_exception'].includes(fault))
+        ? 'deliver' : ['matched', 'dangerous', 'incorrect'].includes(fault) ? 'eliminate' : 'held_back';
+      assert.equal(result.disposition, disposition, `${category}/${stage}/${fault}`);
+      assert.ok(payload.postReview.some((f) => f.id === 'SIBLING'));
+      if (disposition === 'eliminate') {
+        assert.equal(result.reduction_provenance.category, category);
+        assert.equal(result.reduction_provenance.stage, stage);
+        assert.equal(result.reduction_provenance.request_ids.length, 2);
+        assert.equal(payload.postReview.some((f) => f.id === 'SCOPE'), false);
+        assert.doesNotMatch(payload.report, /SCOPE_FENCE|SCOPE_PATCH|SCOPE_TASK|SCOPE\.js/);
+      } else if (disposition === 'deliver') {
+        assert.ok(result.reduction_detail.some((r) => r.reason === 'scope_contradicted'));
+      } else {
+        assert.ok(result.reduction_detail.some((r) => r.reason === (fault.endsWith('unavailable') ? 'cite_unavailable' : 'cite_unmatched')));
+      }
+    }
+  }
+});
+
+test('intentional side records gate cited scope without becoming findings', async () => {
+  for (const record of [null, { id: 'confirmation', file: 'SCOPE.js', line_start: 11 },
+    { id: 'confirmation', file: 'SCOPE.js', line_start: 20 }, { id: 'confirmation', file: 'elsewhere', line_start: 11 }]) {
+    const args = proofArgs();
+    let payload;
+    const ctx = makeCtx(args, { findings: [makeFinding('SCOPE')], onPersist: (p) => { payload = p; } });
+    const agent = ctx.agent;
+    ctx.agent = (prompt, dispatch) => {
+      if (dispatch.agentType === 'code-gauntlet:conventions-and-intent') return {
+        findings: [], complete: true, total_seen: 0, conventions_confirmations: record ? [record] : [],
+      };
+      if (dispatch.label.startsWith('validate-')) return { validations: [skepticalReturn('SCOPE', 'validator', {
+        scope_assessments: [scopeAssessment('SCOPE', 'validator', 'intentional')],
+      })] };
+      return agent(prompt, dispatch);
+    };
+    const out = await runWith(ctx, args);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    const expected = record?.file === 'SCOPE.js' && record.line_start === 11 ? 'eliminate' : 'deliver';
+    assert.equal(payload.findings.length, 1);
+    assert.equal(payload.findings[0].disposition, expected);
+    assert.equal(out.stats.challenge.dispatched, 1);
+    const cited = payload.checkpoints.phases.cite;
+    assert.deepEqual(cited.conventions_confirmations, record ? [record] : []);
+    assert.deepEqual(cited.delivery_context.phases.discover.conventions_confirmations, record ? [record] : []);
+    assert.equal(payload.findings[0].conventions_confirmations, undefined);
+    assert.equal(payload.postReview.some((f) => f.id === record?.id), false);
+    for (const call of ctx.calls.filter((c) => c.label.startsWith('challenge-'))) {
+      assert.doesNotMatch(call.prompt, /confirmation|scope_assessments.*intentional|rule-confirmation/);
+    }
+    const resumed = await replayProducedCheckpoint(args, payload.checkpoints);
+    assert.deepEqual(resumed.payload.findings, payload.findings);
+    const original = payload;
+    const callCount = ctx.calls.length;
+    const discovered = { ...cited.delivery_context.phases.discover, findings: [makeFinding('SCOPE', { agent: 'bug-detector' })] };
+    const restarted = await runWith(ctx, proofArgs({ checkpoints: { discover: discovered } }));
+    assert.equal(restarted.ok, true);
+    assert.equal(payload.findings[0].disposition, expected);
+    assert.deepEqual(payload.checkpoints.phases.cite.conventions_confirmations, record ? [record] : []);
+    assert.equal(ctx.calls.slice(callCount).some((call) => call.label.startsWith('code-gauntlet:')), false);
+    payload = original;
+    if (expected === 'eliminate') {
+      assert.equal(payload.findings[0].scope_decisions.find((r) => r.category === 'intentional').confirmation_id, record.id);
+      const bare = structuredClone(cited);
+      for (const f of bare.findings) for (const assessment of f.skeptical_assessments) (assessment.raw ?? assessment).scope_assessments = [];
+      const alone = await runAndCapture(proofArgs({ checkpoints: { cite: bare } }));
+      assert.equal(alone.payload.findings[0].disposition, 'deliver');
+      const without = structuredClone(cited);
+      without.conventions_confirmations = [];
+      const ungated = await runAndCapture(proofArgs({ checkpoints: { cite: without } }));
+      assert.equal(ungated.payload.findings[0].disposition, 'deliver');
+    }
+  }
+  const ordinary = [makeFinding('CLAIM', { file: 'same', agent: 'bug-detector' }),
+    makeFinding('CONVENTION', { file: 'same', agent: 'conventions-and-intent',
+      description: 'This behavior is intentional and generated according to the documented local repository policy.' })];
+  const result = await runAndCapture(proofArgs({ checkpoints: { validate: { findings: ordinary, stats: {}, gaps: [] } } }));
+  assert.equal(result.payload.findings.length, 2);
+  assert.ok(result.payload.findings.every((f) => f.disposition === 'deliver'));
+});
 
 test('scope terminal decisions precede challenge without bypassing body vetting', async () => {
   const facts = { file: 'TERMINAL.js', head: sourceCapture.head, snapshot_id: sourceCapture.manifest_sha256 };

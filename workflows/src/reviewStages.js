@@ -2,7 +2,7 @@ import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
-import { modelFor, ADMISSION_PREDICATES, DIMENSIONS, SKEPTICAL_CONTRACTS, ANCHOR_LIMITS, acceptSkepticalReturn, assessmentGaps } from './registry.js';
+import { modelFor, ADMISSION_PREDICATES, DIMENSIONS, EXCLUSION_CATEGORIES, SKEPTICAL_CONTRACTS, ANCHOR_LIMITS, acceptSkepticalReturn, assessmentGaps } from './registry.js';
 import { applyValidations, validationRejections, validatorAssessment } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
 import { rankFindings } from './applyChallenges.js';
@@ -159,6 +159,8 @@ function validatePrompt(inp, batch) {
   const promotionRows = DIMENSIONS.filter((row) => row.admission?.promotion);
   const promotionHeader = [...new Set(promotionRows.map((row) => row.admission.promotion.predicate))].map((predicate) =>
     `For ${promotionRows.filter((row) => row.admission.promotion.predicate === predicate).map((row) => row.dimension).join(', ')} findings also assess ${predicate}.`).join(' ');
+  const scope = EXCLUSION_CATEGORIES.filter((row) => row.consumers.includes('validator') || row.stage === 'admission')
+    .map((row) => `- ${row.category}: ${row.applicability} Exceptions: ${row.exceptions.join(', ') || 'none'}. Proof: ${row.proof}; outcome: ${row.outcome}. ${row.reference}`).join('\n');
   // Locations and claims let validators inspect the relevant code instead of scoring identifiers without evidence.
   const block = batch.map((f) => {
     const range = !locationAllows(f, 'sourceLink') ? 'location unconfirmed' : f.line_end != null && f.line_end !== f.line_start
@@ -169,7 +171,7 @@ function validatePrompt(inp, batch) {
     const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
     return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f))}`;
   }).join('\n');
-  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Admission predicates: ${JSON.stringify(ADMISSION_PREDICATES)}\n${promotionHeader}\n${VERDICT_GUIDANCE}\nTarget identity: ${JSON.stringify(inp.sourceCapture || {})}\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
+  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Admission predicates: ${JSON.stringify(ADMISSION_PREDICATES)}\n${promotionHeader}\n${VERDICT_GUIDANCE}\nScope rows:\n${scope}\nTarget identity: ${JSON.stringify(inp.sourceCapture || {})}\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
 }
 
 // The runtime has no wall clock, so generated_at must come from the supplied arguments.
@@ -202,7 +204,7 @@ export function blindChallengeFields(finding, diffPath) {
   };
 }
 
-const VERDICT_GUIDANCE = `Use real, refuted or needs_evidence with scope_assessments (possibly empty). Real and refuted require claim citations against the supplied snapshot identity, with file, side, line_start, line_end and exact quote (at most ${ANCHOR_LIMITS.lines} lines and ${ANCHOR_LIMITS.chars} characters). Needs_evidence must name the missing evidence and cannot resolve itself. Return finding_id and stage for every assessment.`;
+const VERDICT_GUIDANCE = `Use real, refuted or needs_evidence with scope_assessments (possibly empty). Real and refuted require claim citations against the supplied snapshot identity, with file, side, line_start, line_end and exact quote (at most ${ANCHOR_LIMITS.lines} lines and ${ANCHOR_LIMITS.chars} characters). Needs_evidence must name the missing evidence and cannot resolve itself. For each scope assertion cite both rule and applicability with those roles; use inapplicable or contradicted when exceptions or code defeat it. Cite proven incorrect or dangerous behavior with the exception role on a real verdict. Return finding_id and stage for every assessment.`;
 function challengePrompt(finding, diffPath, sourceCapture) {
   const b = blindChallengeFields(finding, diffPath);
   const removed = b.removed_test ? `Read saved diff ${diffPath}: deleted test ${JSON.stringify(b.removed_test.path)}, old lines ${b.removed_test.old_start}-${b.removed_test.old_end}. Check the deleted assertion and surviving tests.` : '';

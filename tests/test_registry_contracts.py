@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPORT_FORMAT = ROOT / "skills/code-gauntlet/references/report-format.md"
 
 
-def test_skeptical_contracts_follow_registry_rows(tmp_path, invoke):
+def test_exclusion_row_edit_updates_both_skeptics_and_reference(tmp_path, invoke):
     from tests.test_contract_gen import TARGETS
 
     copy_generator_tree(
@@ -26,13 +26,8 @@ def test_skeptical_contracts_follow_registry_rows(tmp_path, invoke):
     )
     source = tmp_path / "workflows/src/registry.js"
     original = source.read_text(encoding="utf-8")
-    changed = (
-        original.replace("category: 'lint_catchable'", "category: 'configured_tool'")
-        .replace(
-            "consumers: row.stage === 'skeptical'",
-            "consumers: row.category === 'configured_tool' ? ['validator'] : row.stage === 'skeptical'",
-        )
-        .replace("snapshot_id", "source_snapshot_id")
+    changed = original.replace(
+        "category: 'lint_catchable'", "category: 'configured_tool'"
     )
     assert changed != original
     source.write_text(changed, encoding="utf-8", newline="")
@@ -53,7 +48,7 @@ def test_skeptical_contracts_follow_registry_rows(tmp_path, invoke):
     assert namespace["EXCLUSION_FACT_DESCRIPTORS"] == reg["exclusionFactDescriptors"]
     assert "SKEPTICAL_RETURN_SCHEMAS" not in namespace
     assert namespace["CITATION_REQUEST_SCHEMA"] == reg["citationRequestSchema"]
-    assert "source_snapshot_id" in namespace["CitationRequest"].__annotations__
+    assert "snapshot_id" in namespace["CitationRequest"].__annotations__
     from typing import get_args
 
     categories = [row["category"] for row in reg["exclusionCategories"]]
@@ -63,7 +58,7 @@ def test_skeptical_contracts_follow_registry_rows(tmp_path, invoke):
         row
         for row in reg["exclusionCategories"]
         if row["category"] == "configured_tool"
-    )["consumers"] == ["validator"]
+    )["consumers"] == ["validator", "challenger"]
     decisions = reg["skepticalFindingProperties"]["scope_decisions"]["items"]
     stages = decisions["properties"]["stage"]["enum"]
     assert [
@@ -93,13 +88,10 @@ def test_skeptical_contracts_follow_registry_rows(tmp_path, invoke):
             variant["properties"]["category"]["const"]
             for variant in schema["properties"]["scope_assessments"]["items"]["anyOf"]
         ] == [row["category"] for row in consumed]
-        assert (
-            "source_snapshot_id"
-            in schema["properties"]["citations"]["items"]["properties"]
-        )
+        assert "snapshot_id" in schema["properties"]["citations"]["items"]["properties"]
         for row in reg["exclusionCategories"]:
             assert (f"`{row['category']}`: {row['applicability']}" in contract) == (
-                row in consumed
+                row in consumed or row["stage"] == "admission"
             )
     reference = (
         tmp_path / "workflows/contracts/scope-exclusion-contract.md"
@@ -107,8 +99,56 @@ def test_skeptical_contracts_follow_registry_rows(tmp_path, invoke):
     for row in reg["exclusionCategories"]:
         assert f"## `{row['category']}`" in reference
         assert row["applicability"] in reference and row["reference"] in reference
-    for name in ("validator", "challenger"):
-        assert not (tmp_path / f"agents/{name}.md").exists()
+    reference = (
+        tmp_path / "skills/code-gauntlet/references/false-positive-exclusions.md"
+    ).read_text(encoding="utf-8")
+    assert "configured_tool" in reference and "lint_catchable" not in reference
+    challenger = (tmp_path / "agents/challenger.md").read_text(encoding="utf-8")
+    assert challenger.count("`configured_tool`:") == 1
+    assert "lint_catchable" not in challenger
+    assert "suppressed" in challenger
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import {validateStage, challengeStage} from './workflows/src/reviewStages.js';
+import {evaluateAdmission} from './workflows/src/admission.js';
+import {scopeDecisions} from './workflows/src/scope.js';
+const prompts=[];
+const ctx={parallel:ts=>Promise.all(ts.map(t=>t())),agent:async(p,d)=>{prompts.push([d.label,p]);return null;}};
+const findings=['a','b'].map(id=>evaluateAdmission({id,file:'source',line_start:10,line_end:10,
+ dimension:'bug',origin:'new',policy_subject:'ordinary',path_role:'source',location_status:'confirmed',
+ diff_validation:{in_diff:true},validation:'validated',confidence:90,verify_status:'verified'}));
+await validateStage(ctx,{findings:structuredClone(findings)});
+await challengeStage(ctx,{findings});
+const f=findings[0];
+const q=role=>({finding_id:'a',stage:'challenger',request_id:role,role,snapshot_id:'snapshot',
+ file:'source',side:'head',line_start:10,line_end:10,quote:'return process(value);'});
+f.skeptical_assessments=[{finding_id:'a',stage:'challenger',verdict:'real',citations:[q('claim')],scope_assessments:[
+ {finding_id:'a',stage:'challenger',category:'configured_tool',applicability:'applicable',citations:[q('rule'),q('applicability')]}]}];
+f.cite_results=['claim','rule','applicability'].map(role=>({request:q(role),status:'matched',source:{snapshot_id:'snapshot'}}));
+console.log(JSON.stringify({prompts,decisions:scopeDecisions(f)}));
+""",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    runtime = json.loads(result.stdout)
+    assert any(
+        row["category"] == "configured_tool" and row["applies"] is True
+        for row in runtime["decisions"]
+    )
+    assert any(label.startswith("validate-") for label, _ in runtime["prompts"])
+    assert any(label.startswith("challenge-") for label, _ in runtime["prompts"])
+    for label, prompt in runtime["prompts"]:
+        assert prompt.count("- configured_tool:") == (
+            1 if label.startswith("validate-") else 0
+        )
     for name in DISCOVERY:
         relative = f"agents/{name}.md"
         assert (tmp_path / relative).read_bytes() == (ROOT / relative).read_bytes()
@@ -601,7 +641,14 @@ def test_agent_emission_contract():
         assert not re.search(r"printf|ndjson|Bash", text, re.IGNORECASE)
         assert "by-value return" in text
         assert "{ findings, complete, total_seen }" in text
-        assert "False-positive exclusions" in text
+        assert "False-positive exclusions" not in text
+        assert "must be excluded" not in text
+        assert "that was added or substantially modified" not in text
+        assert "in recently changed code" not in text
+        assert not re.search(
+            r"(?im)^- .*?(?:pre-existing|author didn.t (?:change|modify|touch)|silenced|compiler would catch)",
+            text,
+        )
     for rel in tracked("AGENTS.md", "*/AGENTS.md"):
         assert not re.search(r"printf|ndjson", read(rel), re.IGNORECASE)
     rules = read("agents/AGENTS.md")
@@ -657,7 +704,11 @@ def test_agent_mirrors(mirror):
         assert sentence in read(
             "skills/code-gauntlet/references/false-positive-exclusions.md"
         )
-        assert sentence in read("agents/conventions-and-intent.md")
+        assert "Do not report a finding without grounding." in read(
+            "agents/conventions-and-intent.md"
+        )
+        assert sentence in read("agents/challenger.md")
+        assert sentence in read("workflows/contracts/validator-return-contract.md")
 
 
 @pytest.mark.parametrize(
@@ -793,4 +844,3 @@ def test_discovery_has_no_emission_floor(name):
     )
     assert "Below 60: Uncertain" in text
     assert "downstream stages decide delivery" in text
-    assert "12. Latent issues" in text

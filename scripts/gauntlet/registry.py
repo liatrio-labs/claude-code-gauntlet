@@ -120,7 +120,9 @@ _ReductionDetailItemReason_Literal = Literal[
     "cite_unmatched",
     "cite_unavailable",
 ]
-_ScopeDecisionsItemStage_Literal = Literal["early", "post_validation"]
+_ScopeDecisionsItemStage_Literal = Literal[
+    "early", "post_validation", "validator", "challenger"
+]
 PathRole = Literal["source", "test", "non_source", "unknown"]
 BlameClass = Literal["new", "pre_existing", "surfaced", "unknown"]
 BlameSource = Literal[
@@ -257,6 +259,32 @@ VERIFY_REFERENCE_DESCRIPTORS: Mapping[str, VerifyReferenceKind] = {
 }
 
 DISPATCH_RESULTS = {
+    "code-gauntlet:conventions-and-intent": {
+        "conventions_confirmations": {
+            "type": "array",
+            "description": "Return an empty array or confirmations of documented intent, each with a stable id, repository file and positive line_start. These gate only the same file and 10-line bucket; they never prove scope or become findings.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                    "file": {
+                        "type": "string",
+                        "$comment": "repo-path",
+                    },
+                    "line_start": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991,
+                    },
+                },
+                "required": ["id", "file", "line_start"],
+                "additionalProperties": False,
+            },
+        },
+    },
     "code-gauntlet:test-analyzer": {
         "removed_test_audit": {
             "type": "array",
@@ -2148,14 +2176,18 @@ class ReductionDetailItem(TypedDict, total=False):
     missing_field: str
     missing_fields: list[str]
     missing_evidence: str
+    category: ExclusionCategory
 
 
-class ScopeDecisionsItem(TypedDict):
+class ScopeDecisionsItem(TypedDict, total=False):
     stage: _ScopeDecisionsItemStage_Literal
     category: ExclusionCategory
     applies: bool | None
     outcome: Disposition
     input_proof: str
+    reason: _ReductionDetailItemReason_Literal
+    request_ids: list[str]
+    confirmation_id: str
 
 
 class ReductionProvenance(TypedDict, total=False):

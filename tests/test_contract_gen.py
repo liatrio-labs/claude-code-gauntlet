@@ -41,6 +41,8 @@ TARGETS = (
     "workflows/contracts/validator-return-contract.md",
     "workflows/contracts/challenger-return-contract.md",
     "workflows/contracts/scope-exclusion-contract.md",
+    "agents/challenger.md",
+    "skills/code-gauntlet/references/false-positive-exclusions.md",
 )
 
 
@@ -395,7 +397,12 @@ def test_dispatch_result_descriptor_generates_agent_contract_and_python_registry
         "schemaExtra: { hidden_errors:",
         "schemaExtra: { extension_field: 'string', hidden_errors:",
     ).replace("requiredExtra: []", "requiredExtra: ['extension_field']", 1)
-    source.write_text(text, encoding="utf-8")
+    if agent == "conventions-and-intent":
+        text = text.replace(
+            "  'code-gauntlet:conventions-and-intent': {\n    conventions_confirmations:",
+            "  'code-gauntlet:conventions-and-intent': {\n    audit_note: { type: 'string' }, conventions_confirmations:",
+        )
+    source.write_text(text, encoding="utf-8", newline="")
     (registry_tree / "agents" / f"{agent}.md").write_text(
         (ROOT / "agents" / f"{agent}.md").read_text(encoding="utf-8"), encoding="utf-8"
     )

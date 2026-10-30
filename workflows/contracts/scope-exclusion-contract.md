@@ -1,6 +1,6 @@
 # Scope exclusion contract
 
-Generated preparatory data; active discovery exclusions remain in force.
+Generated from EXCLUSION_CATEGORIES. Discovery emits candidates; scope is adjudicated downstream.
 
 ## `pre_existing`
 

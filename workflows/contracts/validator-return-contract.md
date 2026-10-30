@@ -1,6 +1,6 @@
 # Validator return contract
 
-Generated preparatory data; activate with the matching runtime.
+Generated from the active dispatch contract.
 
 A real or refuted verdict requests claim proof. needs_evidence names missing evidence; it cannot confirm itself.
 
@@ -973,6 +973,7 @@ scope_assessments is an array, possibly empty. Quotes establish provenance, not 
 
 ## Scope rows
 
+- `general_quality`: Consume canonical quality admission and its present_defect promotion. Exceptions: named_in_repo_convention, confirmed_present_defect. Proof: `admission`; outcome: `admission`. A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.
 - `test_only_pattern`: Cited harmless test-role pattern and its applicability; test path alone is insufficient. Exceptions: test_coverage_origin, test_applicable_convention, genuine_test_defect. Proof: `citation`; outcome: `eliminate`. Wrong assertions, mocks and waits remain defects.
 - `lint_catchable`: Cite applicable repository tool, rule or configuration and coverage of the actual claim. Exceptions: none. Proof: `citation`; outcome: `eliminate`. Familiar syntax and assumed CI tools are insufficient.
 - `suppressed`: Cited suppression location, range and rule cover this issue. Exceptions: none. Proof: `citation`; outcome: `eliminate`. A nearby suppression does not establish applicability.

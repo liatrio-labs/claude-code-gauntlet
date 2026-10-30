@@ -450,14 +450,16 @@ export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
     reason: REDUCTION_REASON_SCHEMA, stage: SKEPTICAL_IDENTITY.stage, verdict: VERDICT_RETURN_PROPERTIES.verdict,
     missing_field: { type: 'string' }, missing_fields: { type: 'array', items: { type: 'string' } },
     missing_evidence: { type: 'string' },
-  }, ['stage', 'verdict', 'missing_field', 'missing_fields', 'missing_evidence']) },
+    category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) },
+  }, ['stage', 'verdict', 'missing_field', 'missing_fields', 'missing_evidence', 'category']) },
   scope_decisions: { type: 'array', items: { ...closedDispatchRow({
-    stage: { type: 'string', enum: ['early', 'post_validation'] },
-    category: { type: 'string', enum: EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage)).map((row) => row.category) },
+    stage: { type: 'string', enum: ['early', 'post_validation', ...SKEPTICAL_IDENTITY.stage.enum] },
+    category: { type: 'string', enum: EXCLUSION_CATEGORIES.filter((row) => row.stage !== 'admission').map((row) => row.category) },
     applies: { type: ['boolean', 'null'] }, outcome: { type: 'string', enum: DISPOSITIONS }, input_proof: { type: 'string' },
-  }), anyOf: EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage)).map((row) => ({
-    properties: { stage: { const: row.stage }, category: { const: row.category }, outcome: { const: row.outcome } },
-  })) } },
+    reason: REDUCTION_REASON_SCHEMA, request_ids: { type: 'array', items: { type: 'string' } }, confirmation_id: { type: 'string' },
+  }, ['reason', 'request_ids', 'confirmation_id']), anyOf: EXCLUSION_CATEGORIES.filter((row) => row.stage !== 'admission').flatMap((row) => row.consumers.map((stage) => ({
+    properties: { stage: { const: stage }, category: { const: row.category }, outcome: { const: row.outcome } },
+  }))) } },
   reduction_provenance: closedDispatchRow({
     finding_id: SKEPTICAL_IDENTITY.finding_id, disposition: { type: 'string', enum: DISPOSITIONS },
     reason: REDUCTION_REASON_SCHEMA,
@@ -553,6 +555,12 @@ export function dimensionRow(dimension) {
 const LOSS_ADMISSION = dimensionRow('test_coverage').admission.kinds.critical_gap;
 export const REMOVED_LOSS_FIELDS = deepFreeze([...LOSS_ADMISSION.required, ...LOSS_ADMISSION.optional]);
 export const DISPATCH_RESULTS = deepFreeze({
+  'code-gauntlet:conventions-and-intent': {
+    conventions_confirmations: { type: 'array', description: 'Return an empty array or confirmations of documented intent, each with a stable id, repository file and positive line_start. These gate only the same file and 10-line bucket; they never prove scope or become findings.', items: closedDispatchRow({
+      id: { type: 'string', minLength: 1 }, file: SOURCE_REFERENCE.properties.file,
+      line_start: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    }) },
+  },
   [AGENT_TYPE_TEST_ANALYZER]: {
     removed_test_audit: {
       type: 'array', items: closedDispatchRow({

@@ -4,8 +4,8 @@ import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
 import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
 import { hasAdmission } from './admission.js';
-import { acceptSkepticalReturn, assessmentGaps, CITATION_REQUEST_SCHEMA, matchesDispatchSchema } from './registry.js';
-import { citeChecksum } from './citeWire.js';
+import { acceptSkepticalReturn, assessmentGaps } from './registry.js';
+import { citeChecksum, matchedCitation } from './citeWire.js';
 import { validatorAssessment } from './applyValidations.js';
 import { scopeDecisions } from './scope.js';
 
@@ -25,11 +25,8 @@ function skepticalOutcome(finding) {
     const assessment = stage === 'validator' ? validatorAssessment(finding, raw) : acceptSkepticalReturn(raw, finding.id, stage);
     if (raw.verdict === 'needs_evidence') reasons.push({ reason: 'held_back', stage, missing_evidence: raw.missing_evidence });
     const requests = Array.isArray(raw.citations) ? raw.citations : [];
-    const proof = requests.length > 0 && requests.some((q) => q.role === 'claim') && requests.every((q) => {
-      const rows = (finding.cite_results || []).filter((r) => citeChecksum(r.request) === citeChecksum(q));
-      return matchesDispatchSchema(q, CITATION_REQUEST_SCHEMA) && q.finding_id === finding.id && q.stage === stage
-        && rows.length === 1 && rows[0].status === 'matched' && rows[0].source?.snapshot_id === q.snapshot_id;
-    });
+    const proof = requests.length > 0 && requests.some((q) => q.role === 'claim')
+      && requests.every((q) => matchedCitation(finding, q, stage));
     if (['real', 'refuted'].includes(raw.verdict) && !proof) {
       const unavailable = requests.some((q) => finding.cite_results?.some((r) =>
         citeChecksum(r.request) === citeChecksum(q) && r.status === 'unavailable'));
@@ -56,8 +53,13 @@ export function disposeFindings(challenged) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
     delete finding.delivery_group;
-    const scope = scopeDecisions(finding).filter((row) => row.applies === true);
+    const scopeRows = scopeDecisions(finding, input.conventions_confirmations || []);
+    const scope = scopeRows.filter((row) => row.applies === true);
     const skeptical = skepticalOutcome(finding);
+    for (const row of scopeRows.filter((r) => r.reason && r.applies !== true)) {
+      skeptical.reasons.push({ reason: row.reason, category: row.category, stage: row.stage });
+      if (row.applies === null) skeptical.held = true;
+    }
     if (skeptical.proven) {
       finding.eliminated_by = 'refuted';
       finding.elimination_reason = `${skeptical.proven.stage} refutation with matched proof`;
@@ -70,7 +72,8 @@ export function disposeFindings(challenged) {
       finding.disposition = terminalScope.outcome;
       finding.disposition_reasons = [terminalScope.outcome === 'eliminate' ? 'out_of_scope' : 'report_only'];
       finding.reduction_provenance = { finding_id: finding.id, disposition: terminalScope.outcome,
-        reason: finding.disposition_reasons[0], category: terminalScope.category };
+        reason: finding.disposition_reasons[0], category: terminalScope.category,
+        ...(terminalScope.request_ids ? { stage: terminalScope.stage, request_ids: terminalScope.request_ids } : {}) };
       if (terminalScope.outcome === 'eliminate') {
         finding.eliminated_by = 'out_of_scope';
         finding.elimination_reason = terminalScope.category;
