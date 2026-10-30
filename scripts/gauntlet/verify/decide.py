@@ -311,11 +311,12 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
         return _stamp_blame(finding, ("unknown", "unavailable"), original_severity)
 
     blame_cmd = ["git", "blame", f"-L{line_start},{line_end}"]
-    if context.target_kind == "local" and context.sources().source_capture is not None:
+    sources = context.sources()
+    if context.target_kind == "local" and sources.source_capture is not None:
         # Local edits have no historical blame; only identical captured spans do.
-        captured = context.sources().read(filepath)
+        captured = sources.read(filepath)
         committed = SourceAdapter(
-            Path(context.repo_root), "branch", context.sources().captured_head
+            Path(context.repo_root), "branch", sources.captured_head
         ).read(filepath)
         if (
             captured is None
@@ -323,9 +324,8 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
             or captured[span[0] - 1 : span[1]] != committed[span[0] - 1 : span[1]]
         ):
             return _stamp_blame(finding, ("unknown", "unavailable"), original_severity)
-        blame_cmd.append(cast(str, context.sources().captured_head))
-    elif context.target_kind != "local":
-        blame_cmd.append(cast(str, context.sources().captured_head))
+    if context.target_kind != "local" or sources.source_capture is not None:
+        blame_cmd.append(cast(str, sources.captured_head))
     blame_cmd.extend(["--", filepath])
     blame_stdout, blame_stderr, blame_rc = proc.output(blame_cmd)
 
@@ -681,8 +681,8 @@ def run_verification(
     sources = context.sources()
     scope = repository_scope(sources, indexed, [f.get("file", "") for f in findings])
     for finding in findings:
-        if finding.get("file", "") in scope:
-            finding["scope_facts"] = scope[finding.get("file", "")]
+        if (file_scope := scope.get(finding.get("file", ""))) is not None:
+            finding["scope_facts"] = file_scope
         _resolve_references(finding, context, indexed)
         if "sites" in finding:
             finding["resolved_sites"] = []

@@ -36,7 +36,6 @@ export function collectCitations(findings) {
       add(entry, stage);
       for (const scope of Array.isArray(entry?.scope_assessments) ? entry.scope_assessments : []) add(scope, stage);
     }
-    for (const scope of Array.isArray(f.scope_decisions) ? f.scope_decisions : []) add(scope, scope?.stage);
     return checks;
   });
 }

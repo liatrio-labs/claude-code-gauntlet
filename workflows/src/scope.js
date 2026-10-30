@@ -1,11 +1,16 @@
-import { AGENT_SECURITY_REVIEWER, EXCLUSION_CATEGORIES, SCOPE_FACT_KEYS, dimensionRow } from './registry.js';
+import { AGENT_SECURITY_REVIEWER, SCOPE_ROWS, SCOPE_FACT_KEYS, dimensionRow } from './registry.js';
 import { fnv1a32 } from './wire.js';
 
-const scopeRows = EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage));
 const scopeInputFields = ['id', 'file', 'agent', 'dimension', 'origin_dimension', 'path_role',
   'blame_class', 'blame_source', 'scope_facts', 'diff_validation', 'reachability', 'validation', 'admission'];
-const scopeAnd = (...values) => values.includes(false) ? false : values.every((value) => value === true) ? true : null;
-const scopeOr = (...values) => values.includes(true) ? true : values.every((value) => value === false) ? false : null;
+const scopeAnd = (...values) => {
+  if (values.includes(false)) return false;
+  return values.every((value) => value === true) ? true : null;
+};
+const scopeOr = (...values) => {
+  if (values.includes(true)) return true;
+  return values.every((value) => value === false) ? false : null;
+};
 const capturedScope = (f) => f.scope_facts?.file === f.file && f.scope_facts.snapshot_id
   ? Object.fromEntries(SCOPE_FACT_KEYS.map((key) => [key, f.scope_facts[key]])) : {};
 const offDiff = (f) => f.diff_validation?.in_diff == null ? null : f.diff_validation.in_diff === false;
@@ -32,8 +37,8 @@ const scopeExceptions = {
 
 // One audit stamp binds the recomputed decisions to their policy and inputs.
 export function scopeDecisions(finding) {
-  const identity = JSON.stringify([scopeRows, scopeInputFields.map((key) => finding[key] ?? null)]);
-  const decisions = scopeRows.map((row) => ({ category: row.category, stage: row.stage, outcome: row.outcome,
+  const identity = JSON.stringify([SCOPE_ROWS, scopeInputFields.map((key) => finding[key] ?? null)]);
+  const decisions = SCOPE_ROWS.map((row) => ({ category: row.category, stage: row.stage, outcome: row.outcome,
     applies: scopeAnd(scopePredicates[row.predicate]?.(finding),
       !finding.admission?.reasons?.some((reason) => reason.predicate === 'present_defect' && reason.status === 'held_back'),
       ...row.exceptions.map((name) => { const value = scopeExceptions[name]?.(finding); return value == null ? null : !value; })) }));

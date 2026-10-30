@@ -810,6 +810,8 @@ for (const row of EXCLUSION_CATEGORIES) {
 }
 const EXCLUSION_BY_CATEGORY = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row])));
 const EXCLUSION_FACT_DESCRIPTORS = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row.facts])));
+const SCOPE_STAGES = deepFreeze(['early', 'post_validation']);
+const SCOPE_ROWS = deepFreeze(EXCLUSION_CATEGORIES.filter((row) => SCOPE_STAGES.includes(row.stage)));
 const SKEPTICAL_IDENTITY = {
   finding_id: { type: 'string', minLength: 1 }, stage: { type: 'string', enum: ['validator', 'challenger'] },
 };
@@ -891,10 +893,10 @@ const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
     missing_evidence: { type: 'string' },
   }, ['stage', 'verdict', 'missing_field', 'missing_fields', 'missing_evidence']) },
   scope_decisions: { type: 'array', items: { ...closedDispatchRow({
-    stage: { type: 'string', enum: ['early', 'post_validation'] },
-    category: { type: 'string', enum: EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage)).map((row) => row.category) },
+    stage: { type: 'string', enum: SCOPE_STAGES },
+    category: { type: 'string', enum: SCOPE_ROWS.map((row) => row.category) },
     applies: { type: ['boolean', 'null'] }, outcome: { type: 'string', enum: DISPOSITIONS },
-  }), anyOf: EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage)).map((row) => ({
+  }), anyOf: SCOPE_ROWS.map((row) => ({
     properties: { stage: { const: row.stage }, category: { const: row.category }, outcome: { const: row.outcome } },
   })) } },
   scope_input_proof: { type: 'string' },
@@ -2006,9 +2008,9 @@ function traceDecision(finding, reason_code, reason, related = [], decision = 'e
 function eliminationDecisions(output) {
   const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
     'suppressed:intentional': 'suppression', 'suppressed:generated': 'suppression',
-    refuted: 'refuted' };
+    refuted: 'refuted', out_of_scope: 'out_of_scope' };
   return (output.eliminated || []).filter((f) => f.trace_id)
-    .map((f) => traceDecision(f, f.eliminated_by === 'out_of_scope' ? 'out_of_scope' : codes[f.eliminated_by] || 'unknown', f.elimination_reason));
+    .map((f) => traceDecision(f, codes[f.eliminated_by] || 'unknown', f.elimination_reason));
 }
 function stampDiscovery(trace, finding, spec, dispatch, occurrence) {
   if (!finding || typeof finding !== 'object' || Array.isArray(finding)) return finding;
@@ -3864,7 +3866,6 @@ function collectCitations(findings) {
       add(entry, stage);
       for (const scope of Array.isArray(entry?.scope_assessments) ? entry.scope_assessments : []) add(scope, stage);
     }
-    for (const scope of Array.isArray(f.scope_decisions) ? f.scope_decisions : []) add(scope, scope?.stage);
     return checks;
   });
 }
@@ -3888,11 +3889,16 @@ function planCiteBatches(records, budget, baseBranch, platform) {
   return { batches, oversize };
 }
 // --- scope.js ---
-const scopeRows = EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage));
 const scopeInputFields = ['id', 'file', 'agent', 'dimension', 'origin_dimension', 'path_role',
   'blame_class', 'blame_source', 'scope_facts', 'diff_validation', 'reachability', 'validation', 'admission'];
-const scopeAnd = (...values) => values.includes(false) ? false : values.every((value) => value === true) ? true : null;
-const scopeOr = (...values) => values.includes(true) ? true : values.every((value) => value === false) ? false : null;
+const scopeAnd = (...values) => {
+  if (values.includes(false)) return false;
+  return values.every((value) => value === true) ? true : null;
+};
+const scopeOr = (...values) => {
+  if (values.includes(true)) return true;
+  return values.every((value) => value === false) ? false : null;
+};
 const capturedScope = (f) => f.scope_facts?.file === f.file && f.scope_facts.snapshot_id
   ? Object.fromEntries(SCOPE_FACT_KEYS.map((key) => [key, f.scope_facts[key]])) : {};
 const offDiff = (f) => f.diff_validation?.in_diff == null ? null : f.diff_validation.in_diff === false;
@@ -3916,8 +3922,8 @@ const scopeExceptions = {
   present_static_defect: (f) => f.reachability === 'current',
 };
 function scopeDecisions(finding) {
-  const identity = JSON.stringify([scopeRows, scopeInputFields.map((key) => finding[key] ?? null)]);
-  const decisions = scopeRows.map((row) => ({ category: row.category, stage: row.stage, outcome: row.outcome,
+  const identity = JSON.stringify([SCOPE_ROWS, scopeInputFields.map((key) => finding[key] ?? null)]);
+  const decisions = SCOPE_ROWS.map((row) => ({ category: row.category, stage: row.stage, outcome: row.outcome,
     applies: scopeAnd(scopePredicates[row.predicate]?.(finding),
       !finding.admission?.reasons?.some((reason) => reason.predicate === 'present_defect' && reason.status === 'held_back'),
       ...row.exceptions.map((name) => { const value = scopeExceptions[name]?.(finding); return value == null ? null : !value; })) }));
@@ -5669,8 +5675,10 @@ async function challengeStage(ctx, input) {
   const scopeTerminal = (f) => scopeDecisions(f).some((row) => row.applies === true && ['eliminate', 'report_only'].includes(row.outcome));
   const actionable = (f) => !scopeTerminal(f) && !validatorTerminal(f) && hasAdmission(f)
     && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
-  const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f,
-    challenge: scopeTerminal(f) ? 'scope_terminal' : validatorTerminal(f) ? 'validator_terminal' : 'admission_terminal' }));
+  const terminal = findings.filter((f) => !actionable(f)).map((f) => {
+    if (scopeTerminal(f)) return { ...f, challenge: 'scope_terminal' };
+    return { ...f, challenge: validatorTerminal(f) ? 'validator_terminal' : 'admission_terminal' };
+  });
   const ranked = rankFindings(findings.filter(actionable));
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);

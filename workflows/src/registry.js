@@ -367,6 +367,8 @@ for (const row of EXCLUSION_CATEGORIES) {
 }
 export const EXCLUSION_BY_CATEGORY = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row])));
 export const EXCLUSION_FACT_DESCRIPTORS = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row.facts])));
+export const SCOPE_STAGES = deepFreeze(['early', 'post_validation']);
+export const SCOPE_ROWS = deepFreeze(EXCLUSION_CATEGORIES.filter((row) => SCOPE_STAGES.includes(row.stage)));
 
 const SKEPTICAL_IDENTITY = {
   finding_id: { type: 'string', minLength: 1 }, stage: { type: 'string', enum: ['validator', 'challenger'] },
@@ -451,10 +453,10 @@ export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
     missing_evidence: { type: 'string' },
   }, ['stage', 'verdict', 'missing_field', 'missing_fields', 'missing_evidence']) },
   scope_decisions: { type: 'array', items: { ...closedDispatchRow({
-    stage: { type: 'string', enum: ['early', 'post_validation'] },
-    category: { type: 'string', enum: EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage)).map((row) => row.category) },
+    stage: { type: 'string', enum: SCOPE_STAGES },
+    category: { type: 'string', enum: SCOPE_ROWS.map((row) => row.category) },
     applies: { type: ['boolean', 'null'] }, outcome: { type: 'string', enum: DISPOSITIONS },
-  }), anyOf: EXCLUSION_CATEGORIES.filter((row) => ['early', 'post_validation'].includes(row.stage)).map((row) => ({
+  }), anyOf: SCOPE_ROWS.map((row) => ({
     properties: { stage: { const: row.stage }, category: { const: row.category }, outcome: { const: row.outcome } },
   })) } },
   scope_input_proof: { type: 'string' },

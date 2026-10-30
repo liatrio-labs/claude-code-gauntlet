@@ -236,6 +236,49 @@ process.stdout.write(JSON.stringify(results));
             assert final["existing"]["challenge"] == "scope_terminal"
 
 
+def test_documentation_scope_includes_source_origins_and_deletions(
+    tmp_path, monkeypatch
+):
+    from gauntlet.diff import annotate_diff
+    from gauntlet.scope_facts import repository_scope
+    from gauntlet.source_capture import SourceAdapter
+
+    from tests.support.git_diff import git, init_git_repo
+
+    work, output = tmp_path / "repo", tmp_path / "artifacts"
+    work.mkdir()
+    output.mkdir()
+    init_git_repo(work, monkeypatch)
+    (work / ".gitattributes").write_text(
+        "* -linguist-documentation\ndocs/* linguist-documentation\n", encoding="utf-8"
+    )
+    (work / "café source").write_text("return value;\n", encoding="utf-8")
+    git(work, "add", ".")
+    git(work, "commit", "-qm", "base")
+    base = git(work, "rev-parse", "HEAD")
+    (work / "docs").mkdir()
+    for operation in ("rename", "copy", "delete"):
+        (work / "café source").write_text("return value;\n", encoding="utf-8")
+        (work / "docs/target").write_text("return value;\n", encoding="utf-8")
+        if operation != "copy":
+            (work / "café source").unlink()
+        if operation == "delete":
+            (work / "docs/target").unlink()
+        git(work, "add", ".")
+        git(work, "commit", "-qm", operation)
+        head = git(work, "rev-parse", "HEAD")
+        diff = (git(work, "diff", "--find-copies-harder", base, head) + "\n").encode()
+        capture = SourceAdapter.capture(work, "branch", head).capture_sources(
+            output, operation, diff, base
+        )
+        facts = repository_scope(
+            capture.adapter(work), annotate_diff(diff), ["docs/target"]
+        )
+        assert facts["docs/target"]["all_changed_files_documentation"] is False, (
+            operation
+        )
+
+
 def test_cited_refutation_is_absent_from_delivery_and_local_actions(
     tmp_path, monkeypatch, invoke
 ):
