@@ -1,13 +1,13 @@
 import { suppressAuditOverlaps } from './removedTests.js';
 // Pipeline sequencing, replay, diagnostics, and return envelopes.
 import { setupContext } from './contextPlan.js';
-import { coarsenLimits } from './capacity.js';
+import { coarsenLimits, AGENT_COUNT_GUARD } from './capacity.js';
 import { summarize, deriveAgentFlags, discover, allActiveDimensionsDegraded } from './discover.js';
 import { validateStage, filterStage, challengeStage, selectDelivery } from './reviewStages.js';
 import { mergeStage } from './mergeFindings.js';
 import { verifyStage } from './verifyStage.js';
 import { citeStage } from './citeStage.js';
-import { FINDING_TEXT_FIELD_NAMES, FINDING_REWRITE_EXEMPT_FIELDS, conditionalSchemaActive } from './registry.js';
+import { FINDING_TEXT_FIELD_NAMES, FINDING_REWRITE_EXEMPT_FIELDS, conditionalSchemaActive, STAGE_COSTS } from './registry.js';
 import { mentionsPreparedHostRoot, prepareHostRootPatterns, rewritePreparedRepoRoot, safeFindingLabel } from './paths.js';
 import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs } from './args.js';
 import { resolveReviewConfig, resolveRemovedTestsArgs } from './args.js';
@@ -23,9 +23,7 @@ import { deliveryAllows } from './location.js';
 import { appendMeasurement, createMeasurementTrace, recordStage, traceDecision, admissionDetail, eliminationDecisions, stripTraceFields, decisionsFor } from './measurementTrace.js';
 import { captureDeliveryReplay, appendDeliveryReplay } from './measurementReplay.js';
 import { deepClone } from './wire.js';
-import { evaluateAdmission } from './admission.js';
-
-export const PREPARED_REVIEW_STAGES = { cite: citeStage };
+import { refreshAdmission } from './admission.js';
 
 // The host injects runtime globals, while tests supply context explicitly.
 function defaultCtx() {
@@ -101,6 +99,16 @@ function resolvedPolicyEnvelope(policy) {
   };
 }
 
+const deliveryFindingCount = (out) => out.findings?.length ?? out.filtered?.length ?? out.finding_count ?? 0;
+function savedDeliveryContext(outputs, reviewMdSubtrees) {
+  const phases = {};
+  for (const name of ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter']) {
+    const { findings: _findings, filtered: _filtered, eliminated: _eliminated, unverified: _unverified, audit: _audit, ...metadata } = outputs[name] || {};
+    phases[name] = { ...metadata, finding_count: deliveryFindingCount(outputs[name] || {}) };
+  }
+  return { phases, reviewMdSubtrees };
+}
+
 // Explicit free-text fields keep the return compact without accidentally truncating future count arrays.
 const METHODOLOGY_COUNT_ONLY_FIELDS = ['truncation_warnings', 'validation_warnings'];
 export function compactMethodology(m) {
@@ -121,13 +129,18 @@ export async function deliverFromCheckpoint(c, A, state) {
   const { summarize: summaryOut, discover: discoverOut, merge: mergeOut,
     verify: verifyOut, validate: validateOut, filter: filterOut } = phaseOutputs;
   const summaryCopy = deepClone(summaryOut);
-  const rawChallenge = phaseOutputs.challenge;
+  const rawChallenge = phaseOutputs.cite;
+  rewriteHostPathText(phaseOutputs.challenge || rawChallenge, summaryCopy, A.repoRoot);
   rewriteHostPathText(rawChallenge, summaryCopy, A.repoRoot);
+  for (const field of ['findings', 'unverified']) for (const finding of phaseOutputs.challenge?.[field] || []) refreshAdmission(finding);
   const challengeCopy = deepClone(rawChallenge);
   gaps.push(...(rawChallenge.gaps || []));
 
   // Keep replay disclosures outside checkpoints so resumes cannot duplicate them.
   const markedCount = applyChallengeReplayBelt(challengeCopy);
+  for (const field of ['findings', 'unverified']) for (const finding of challengeCopy[field] || []) {
+    refreshAdmission(finding);
+  }
   const challengeOut = disposeFindings(challengeCopy);
   if (measurementTrace) recordStage(measurementTrace, 'dispose', challengeOut, { decisions: challengeOut.decisions });
   if (markedCount > 0) {
@@ -139,6 +152,7 @@ export async function deliverFromCheckpoint(c, A, state) {
     summaryCopy,
     [A.repoRoot, A.pluginRoot, A.outputDir],
   ));
+  gaps.splice(0, gaps.length, ...new Set(gaps));
 
   const deliveryTier = A.delivery && A.delivery.tier;
   const eligible = challengeOut.findings.filter((f) => deliveryAllows(f, 'body'));
@@ -175,7 +189,7 @@ export async function deliverFromCheckpoint(c, A, state) {
     eliminated: challengeOut.eliminated,
     stats: {
       pathNormalization,
-      discovered: (discoverOut.findings || []).length,
+      discovered: deliveryFindingCount(discoverOut),
       validate: validateOut.stats,
       filter: filterOut.stats,
       challenge: challengeOut.stats,
@@ -229,8 +243,8 @@ export async function deliverFromCheckpoint(c, A, state) {
     phaseReached: state.phaseReached,
     stats: {
       pathNormalization,
-      discovered: (discoverOut.findings || []).length,
-      merged: (mergeOut.findings || []).length,
+      discovered: deliveryFindingCount(discoverOut),
+      merged: deliveryFindingCount(mergeOut),
       merge: compactMethodology(mergeOut.methodology),
       verified: verifyOut.verified,
       // Per-slice proof counts expose partial verification trust that a single stage boolean cannot express.
@@ -257,7 +271,7 @@ export async function deliverFromCheckpoint(c, A, state) {
     artifactPaths: writeOut.artifactPaths,
     resolvedPolicy: resolvedPolicyEnvelope(policy),
     checkpoints: writeOut.partial ? buildResumeCheckpoints(phaseOutputs) : { completed },
-    gaps,
+    gaps: [...new Set(gaps)],
     // Keep bulk persistence data last so a truncated return still includes status and gaps.
     // scripts/gauntlet/awaiting.py elides persistReturn.entries from the terminal response; materialization reads the original task file.
     ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
@@ -291,6 +305,14 @@ export async function runWith(ctx, rawArgs) {
   }
 
   const c = { ...defaultCtx(), ...(ctx || {}) };
+  let agentCalls = 0;
+  const dispatchAgent = c.agent;
+  c.agent = (...dispatchArgs) => {
+    const persistence = ['artifact-writer', 'assemble-artifacts'].includes(dispatchArgs[1]?.label);
+    if (agentCalls >= AGENT_COUNT_GUARD - 1 - (persistence ? 0 : STAGE_COSTS.writer.attempts)) throw new Error('agent capacity exhausted');
+    agentCalls += 1;
+    return dispatchAgent(...dispatchArgs);
+  };
   // Before merge, only the changed-file count is known; later coarsening must also account for findings.
   const nChangedFiles = (A.changedFiles || []).length;
   let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch, A);
@@ -313,10 +335,12 @@ export async function runWith(ctx, rawArgs) {
   const gaps = [...nullArgGaps, ...contextSizeGap, ...discardGap];
   const completed = [];
   const phaseOutputs = {};
-  const measurementTrace = A.measurementTrace === true ? createMeasurementTrace(A.nonce) : null;
+  const measurementTrace = A.measurementTrace === true && checkpoints.cite === undefined ? createMeasurementTrace(A.nonce) : null;
   const replayArgs = measurementTrace ? deepClone(A) : null;
   let discoveryDecisions = [];
-  const measured = (envelope) => appendMeasurement(envelope, measurementTrace);
+  const measured = (envelope) => A.measurementTrace === true && checkpoints.cite !== undefined
+    ? { ...envelope, measurement: { status: 'unavailable', reason: 'cite_checkpoint' } }
+    : appendMeasurement(envelope, measurementTrace);
   let phaseReached = 'start';
   // Track the attempted phase separately so a failure names the phase that threw.
   let phaseAttempting = null;
@@ -325,10 +349,15 @@ export async function runWith(ctx, rawArgs) {
   const runPhase = async (name, thunk) => {
     phaseAttempting = name;
     const replayed = checkpoints[name] !== undefined;
-    const out = replayed ? checkpoints[name] : await thunk();
+    let out = replayed ? checkpoints[name] : await thunk();
     // Discovery intake covers fresh findings before downstream readers; replayed outputs need the same normalization at every phase.
     const rejected = [];
     if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A, rejected);
+    if (replayed && name === 'cite') out = await citeStage(c, {
+      ...out, policy, nonce: A.nonce, headShaShort: A.headShaShort,
+      python: A.python, repoRoot: A.repoRoot, outputDir: A.outputDir, pluginRoot: A.pluginRoot,
+      verify: { ...(A.verify || {}), baseBranch: A.baseBranch, diffPath: A.diffPath },
+    });
     let verifyRequests;
     if (name === 'verify') {
       verifyRequests = out.findings || [];
@@ -340,13 +369,13 @@ export async function runWith(ctx, rawArgs) {
         .map((f) => traceDecision(f, 'audit_overlap', 'removed-test audit represents this anchor')));
     }
     if (name === 'discover') discoveryDecisions = [...decisionsFor(out), ...rejected];
-    if (measurementTrace && ['merge', 'verify', 'validate', 'filter', 'challenge'].includes(name)) {
+    if (measurementTrace && ['merge', 'verify', 'validate', 'filter', 'challenge', 'cite'].includes(name)) {
       recordStage(measurementTrace, name, out, { replayed,
-        ...(!replayed && ((name === 'verify' && out.verified === false) || (name === 'validate' && out.stats?.skipped > 0) || (name === 'challenge' && out.stats?.skipped > 0)) ? { coverage: 'partial' } : {}),
+        ...(!replayed && ((name === 'verify' && out.verified === false) || (name === 'validate' && (out.stats?.skipped > 0 || out.stats?.incomplete > 0)) || (name === 'challenge' && out.stats?.skipped > 0)) ? { coverage: 'partial' } : {}),
         ...(name === 'merge' ? { decisions: [...discoveryDecisions, ...rejected] } : rejected.length ? { decisions: rejected } : {}),
         ...(name === 'filter' || name === 'challenge' ? { decisions: [
           ...rejected, ...eliminationDecisions(out),
-          ...(name === 'challenge' ? (out.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f, f.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed', f.challenge, [], 'held_back')) : []),
+          ...(name === 'challenge' ? (out.unverified || []).filter((f) => f.trace_id).map((f) => traceDecision(f, f.challenge === 'capped' ? 'challenge_cap' : f.challenge === 'incomplete' ? 'held_back' : 'challenge_failed', f.challenge, [], 'held_back')) : []),
           ...(name === 'challenge' ? (out.findings || []).filter((f) => f.trace_id && f.challenge === 'admission_terminal').map((f) => {
             const status = f.admission?.status === 'report_only' ? 'report_only' : 'held_back';
             return traceDecision(f, status, 'intentional admission-terminal challenge skip', [], status,
@@ -368,6 +397,30 @@ export async function runWith(ctx, rawArgs) {
   const replay = (name) => checkpoints[name] !== undefined;
 
   try {
+    if (replay('cite')) {
+      const saved = checkpoints.cite.delivery_context || {};
+      for (const name of ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter']) {
+        phaseOutputs[name] = deepClone(saved.phases?.[name] || { finding_count: A.checkpoints?.counts?.[name] || 0 });
+        completed.push(name);
+        gaps.push(...(phaseOutputs[name].gaps || []), ...(checkpoints[name]?.gaps || []));
+      }
+      if (checkpoints.challenge) {
+        phaseOutputs.challenge = deepClone(checkpoints.challenge);
+        normalizePhaseFindings('challenge', phaseOutputs.challenge, true, A);
+      }
+      completed.push('challenge');
+      const prior = checkpoints.cite;
+      limits = coarsenLimits(limits, nChangedFiles, [...(prior.findings || []), ...(prior.unverified || [])], A.baseBranch,
+        { ...A, cite_ledger: prior.cite_ledger });
+      await runPhase('cite', () => prior);
+      const resolvedReview = resolveReviewConfig(A);
+      gaps.push(...resolvedReview.gaps);
+      return await deliverFromCheckpoint(c, A, {
+        limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
+        reviewMdSubtrees: saved.reviewMdSubtrees || [], derivedAgentFlags: deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer),
+        runPhase, measured, replayArgs, get phaseReached() { return phaseReached; },
+      });
+    }
     const summarizeSettled = replay('summarize') ? null : settle(summarize(c, {
       changedFiles: A.changedFiles || [], changedLines: A.changedLines || 0, limits, policy, contextLine,
     }));
@@ -423,7 +476,7 @@ export async function runWith(ctx, rawArgs) {
     gaps.push(...(verifyOut.gaps || []));
 
     const validateOut = await runPhase('validate', () => validateStage(c, {
-      findings: verifyOut.findings || [], limits, policy, contextLine,
+      findings: verifyOut.findings || [], limits, policy, contextLine, sourceCapture: A.verify?.sourceCapture,
     }));
     gaps.push(...(validateOut.gaps || []));
 
@@ -438,24 +491,30 @@ export async function runWith(ctx, rawArgs) {
           scopeMatchesFile(scope, finding.file)).length,
       }));
     const filterOut = await runPhase('filter', () => filterStage({
-      findings: (validateOut.findings || []).map((finding) => evaluateAdmission(deepClone(finding))), reviewConfig: resolvedReview.reviewConfig,
+      findings: (validateOut.findings || []).map((finding) => refreshAdmission(deepClone(finding))), reviewConfig: resolvedReview.reviewConfig,
       exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
     }));
     gaps.push(...(filterOut.gaps || []));
 
     await runPhase('challenge', async () => {
-      const admitted = (filterOut.filtered || []).map((finding) => evaluateAdmission(deepClone(finding)));
+      const admitted = (filterOut.filtered || []).map((finding) => refreshAdmission(deepClone(finding)));
       if (measurementTrace) recordStage(measurementTrace, 'admission', { findings: admitted }, {
         decisions: admitted.filter((f) => f.trace_id).flatMap((f) => f.admission.reasons.map((detail) =>
           traceDecision(f, detail.status, 'admission', [], detail.status, admissionDetail(f, detail)))),
       });
       const out = await challengeStage(c, {
         // Shared context would weaken the challenger's independent check, so its prompt contains only the claim and location.
-        findings: admitted, limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
+        findings: admitted, limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath, sourceCapture: A.verify?.sourceCapture,
       });
       out.eliminated = [...(verifyOut.eliminated || []), ...(filterOut.eliminated || []), ...(out.eliminated || [])];
       return out;
     });
+    await runPhase('cite', () => citeStage(c, {
+      ...deepClone(phaseOutputs.challenge), policy, nonce: A.nonce, headShaShort: A.headShaShort,
+      delivery_context: savedDeliveryContext(phaseOutputs, reviewMdSubtrees),
+      python: A.python, repoRoot: A.repoRoot, outputDir: A.outputDir, pluginRoot: A.pluginRoot,
+      verify: { ...(A.verify || {}), baseBranch: A.baseBranch, diffPath: A.diffPath },
+    }));
     return await deliverFromCheckpoint(c, A, {
       limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
       reviewMdSubtrees, derivedAgentFlags, runPhase, measured, replayArgs,

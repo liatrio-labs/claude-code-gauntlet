@@ -1,9 +1,9 @@
-import { AGENTS, TRUSTED_SCRIPT_BASENAMES, STAGE_COSTS, LIMIT_DEFAULTS } from './registry.js';
+import { AGENTS, TRUSTED_SCRIPT_BASENAMES, STAGE_COSTS, LIMIT_DEFAULTS, ANCHOR_LIMITS } from './registry.js';
 import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding } from './verifyWire.js';
 
 import { pythonArgv, shellWord } from './wire.js';
 import { hostPlatformForRoots, trustedScriptPath } from './paths.js';
-import { collectCitations, planCiteBatches } from './citeWire.js';
+import { CITE_ROLES_PER_STAGE, collectCitations, planCiteBatches, citeRecordKey, citeSource, reusableCiteResult } from './citeWire.js';
 
 // Shell quoting preserves each argv word; retry paths stay fixed so outputs
 // overwrite the first attempt.
@@ -113,7 +113,7 @@ export const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize
 export const VERIFY_ATTEMPTS_PER_SLICE = STAGE_COSTS.verify.attempts;
 
 // Stay strictly under the platform's per-run agent fan-out ceiling; the gap is headroom.
-const AGENT_COUNT_GUARD = 900;
+export const AGENT_COUNT_GUARD = 900;
 // Widen the summarize bucket once its term alone exceeds this.
 const SUMMARIZE_TERM_BOUND = 300;
 const CHALLENGE_CAP_FLOOR = 5;
@@ -144,9 +144,34 @@ function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
 }
 
 function citeCost(findings, input, baseBranch) {
-  const records = Array.isArray(findings) ? collectCitations(findings) : [];
-  return planCiteBatches(records, verifyInlineBudget({ ...input, citeMode: true }),
-    baseBranch, hostPlatformForRoots(input)).batches.length * STAGE_COSTS.cite.attempts;
+  const source = citeSource(input.verify?.sourceCapture);
+  const ledger = input.cite_ledger;
+  const known = Array.isArray(findings) ? collectCitations(findings) : [];
+  if (ledger) {
+    const pending = known.filter((r) => !reusableCiteResult(ledger.entries?.find((e) => e.key === citeRecordKey(r, source)), r, source));
+    const batches = ledger.batches || [];
+    const reserved = new Set(batches.flatMap((b) => b.keys || []));
+    return batches.filter((b) => b.keys?.some((key) => pending.some((r) => citeRecordKey(r, source) === key)))
+      .reduce((sum, b) => sum + Math.max(0, STAGE_COSTS.cite.attempts - (b.attempts || 0)), 0)
+      + planCiteBatches(pending.filter((r) => !reserved.has(citeRecordKey(r, source))),
+        verifyInlineBudget({ ...input, citeMode: true }), baseBranch, hostPlatformForRoots(input)).batches.length * STAGE_COSTS.cite.attempts;
+  }
+  const knownAssessments = Array.isArray(findings) && findings.every((f) => f.skeptical_assessments);
+  let records = known;
+  let multiplier = 1;
+  if (!known.length && !knownAssessments) {
+    // Plan one bounded assessment envelope instead of allocating a review-sized synthetic packet.
+    const file = Array.isArray(findings) ? findings.reduce((longest, f) => f.file?.length > longest.length ? f.file : longest, '') : 'source';
+    multiplier = findingCount(findings);
+    records = Array.from({ length: CITE_ROLES_PER_STAGE * 2 }, (_, role) => ({
+      id: 'finding', finding_id: 'finding', stage: role < CITE_ROLES_PER_STAGE ? 'validator' : 'challenger',
+      request: { finding_id: 'finding', stage: 'challenger', request_id: String(role), role: 'applicability',
+        snapshot_id: 'x'.repeat(64), file, side: 'head', line_start: Number.MAX_SAFE_INTEGER,
+        line_end: Number.MAX_SAFE_INTEGER, quote: 'x'.repeat(ANCHOR_LIMITS.chars) },
+    }));
+  }
+  return multiplier * planCiteBatches(records, verifyInlineBudget({ ...input, citeMode: true }), baseBranch,
+    hostPlatformForRoots(input)).batches.length * STAGE_COSTS.cite.attempts;
 }
 
 export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}, includeCite = true) {
@@ -169,7 +194,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
   const findings = findingCount(nFindings);
   const candidates = new Set(['summarize', 'verify', 'validate', 'challenge']);
 
-  while (worstCaseAgentCount(L, files, nFindings, baseBranch, input, false) >= AGENT_COUNT_GUARD && candidates.size > 0) {
+  while (worstCaseAgentCount(L, files, nFindings, baseBranch, input) >= AGENT_COUNT_GUARD && candidates.size > 0) {
     const summarizeTerm = ceilDiv(files, effectiveBucketSize(L)) + 1;
     if (summarizeTerm > SUMMARIZE_TERM_BOUND && candidates.has('summarize')) {
       // Doubling a raw absent size could lower the effective bucket size and increase fan-out.

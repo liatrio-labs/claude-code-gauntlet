@@ -2,9 +2,8 @@ import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
-import { modelFor, VALIDATION_RETURN_PROPERTIES, ADMISSION_PREDICATES, DIMENSIONS, requiredAssessments } from './registry.js';
-import { INT_POLICY, coerceInt } from './wire.js';
-import { applyValidations, REACHABILITY_VALUES, validationRejections } from './applyValidations.js';
+import { modelFor, ADMISSION_PREDICATES, DIMENSIONS, SKEPTICAL_CONTRACTS, ANCHOR_LIMITS, acceptSkepticalReturn } from './registry.js';
+import { applyValidations, validationRejections, validatorAssessment } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
 import { applyChallenges, rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
@@ -14,20 +13,11 @@ import { admissionContext, hasAdmission } from './admission.js';
 // The platform rejects array-rooted tool schemas, so validation entries need an object wrapper.
 const VALIDATE_SCHEMA = {
   type: 'object',
+  additionalProperties: false,
   properties: {
     validations: {
       type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          finding_id: { type: 'string' },
-          confidence: { type: 'number' },
-          justification: { type: 'string' },
-          reachability: { type: 'string', enum: REACHABILITY_VALUES },
-          ...VALIDATION_RETURN_PROPERTIES,
-        },
-        required: ['finding_id', 'confidence', 'policy_subject'],
-      },
+      items: SKEPTICAL_CONTRACTS.validator.dispatchSchema,
     },
   },
   required: ['validations'],
@@ -44,14 +34,9 @@ function validateReturnDescriptor() {
 
 function validateSchema(batch) {
   const base = VALIDATE_SCHEMA.properties.validations.items;
-  const variants = batch.flatMap((finding) => VALIDATION_RETURN_PROPERTIES.policy_subject.enum.map((subject) => {
-    const predicates = requiredAssessments(finding, subject);
-    return { properties: { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] },
-      ...(predicates.length ? { admission_assessments: { allOf: predicates.map((predicate) => ({
-        contains: { properties: { predicate: { const: predicate } }, required: ['predicate'] },
-      })) } } : {}) }, required: predicates.length ? ['admission_assessments'] : [] };
-  }));
-  return { ...VALIDATE_SCHEMA, properties: { validations: { type: 'array', items: { ...base, anyOf: variants } } } };
+  return { ...VALIDATE_SCHEMA, properties: { validations: { type: 'array', items: { ...base,
+    properties: { ...base.properties, finding_id: { type: 'string', enum: batch.map((f) => f.id) } },
+  } } } };
 }
 
 // Keep exact small returns and explicit truncation receipts without consuming the checkpoint budget.
@@ -73,7 +58,7 @@ export async function validateStage(ctx, input) {
   const batchSize = effectiveBatchSize(limits, findings.length);
 
   if (findings.length === 0) {
-    return { findings: [], gaps: [], stats: { batches_dispatched: 0, batches_completed: 0, validated: 0, skipped: 0, adjusted: 0 } };
+    return { findings: [], gaps: [], stats: { batches_dispatched: 0, batches_completed: 0, validated: 0, skipped: 0, incomplete: 0, adjusted: 0 } };
   }
 
   const model = modelFor('code-gauntlet:validator', policy);
@@ -83,6 +68,7 @@ export async function validateStage(ctx, input) {
 
   const gaps = [];
   const accepted = new Map();
+  const assessments = new Map();
   const audit = { batches: [], omitted_batches: 0 };
   const terminalRejections = new Map();
   let completed = 0;
@@ -94,17 +80,18 @@ export async function validateStage(ctx, input) {
     const list = res === null || res === undefined
       ? null
       : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
-    if (list) completed += 1;
+    if (res !== null && res !== undefined) completed += 1;
     const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ ...e, id: e.id ?? e.finding_id }));
     const rejections = [];
     for (const finding of batch) {
       const matches = entries.filter((entry) => entry.id === finding.id);
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
+        assessments.set(finding.id, entry);
         const reasons = validationRejections(finding, entry);
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
         // Missing admission evidence still warrants a retry, but does not invalidate a score.
-        if (reasons.every((reason) => reason.startsWith('missing_assessment:'))) accepted.set(finding.id, entry);
+        if (!validationRejections(finding, entry, false).some((reason) => ['invalid_confidence', 'invalid_policy_subject', 'missing_entry'].includes(reason))) accepted.set(finding.id, entry);
       }
     }
     validatorAudit(audit, label, res, rejections);
@@ -138,11 +125,16 @@ export async function validateStage(ctx, input) {
   });
 
   const { adjustedCount } = applyValidations(findings, [...accepted.values()]);
+  for (const finding of findings) if (!accepted.has(finding.id) && assessments.has(finding.id)) {
+    finding.skeptical_assessments = [validatorAssessment(finding, assessments.get(finding.id))];
+  }
 
   let skipped = 0;
+  let incomplete = 0;
   for (const f of findings) {
     if (!accepted.has(f.id)) { f.validation = 'skipped'; skipped += 1; }
     else f.validation = 'validated';
+    if (accepted.has(f.id) && validationRejections(f, accepted.get(f.id)).length) incomplete += 1;
   }
 
   return {
@@ -154,6 +146,7 @@ export async function validateStage(ctx, input) {
       batches_completed: completed,
       validated: findings.length - skipped,
       skipped,
+      incomplete,
       adjusted: adjustedCount,
     },
   };
@@ -174,7 +167,7 @@ function validatePrompt(inp, batch) {
     const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
     return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f))}`;
   }).join('\n');
-  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Admission predicates: ${JSON.stringify(ADMISSION_PREDICATES)}\n${promotionHeader}\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
+  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess applicable admission predicates independently with confirmed, rejected or unresolved and the exact request names inspected in references. Resolution and confidence are not semantic confirmation. Assess current_defect separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Admission predicates: ${JSON.stringify(ADMISSION_PREDICATES)}\n${promotionHeader}\n${VERDICT_GUIDANCE}\nTarget identity: ${JSON.stringify(inp.sourceCapture || {})}\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
 }
 
 // The runtime has no wall clock, so generated_at must come from the supplied arguments.
@@ -186,14 +179,7 @@ export function filterStage(input) {
   return applyFilterPipeline(findings, config, exclusionPatterns, inp.generatedAt);
 }
 
-const CHALLENGE_SCHEMA = {
-  type: 'object',
-  properties: {
-    confidence_claim_is_correct: { type: 'number' },
-    justification: { type: 'string' },
-  },
-  required: ['confidence_claim_is_correct'],
-};
+const CHALLENGE_SCHEMA = SKEPTICAL_CONTRACTS.challenger.dispatchSchema;
 
 // An explicit allowlist excludes confirming rationale even when new finding fields are added.
 // The location lets the challenger investigate the raw code independently.
@@ -214,103 +200,55 @@ export function blindChallengeFields(finding, diffPath) {
   };
 }
 
-// Conservative scores prevent unverifiable absence claims from becoming high-confidence findings.
-function challengePrompt(finding, diffPath) {
+const VERDICT_GUIDANCE = `Use real, refuted or needs_evidence with scope_assessments (possibly empty). Real and refuted require claim citations against the supplied snapshot identity, with file, side, line_start, line_end and exact quote (at most ${ANCHOR_LIMITS.lines} lines and ${ANCHOR_LIMITS.chars} characters). Needs_evidence must name the missing evidence and cannot resolve itself. Return finding_id and stage for every assessment.`;
+function challengePrompt(finding, diffPath, sourceCapture) {
   const b = blindChallengeFields(finding, diffPath);
-  const range = b.location || (b.line_end !== '' && b.line_end !== b.line_start ? `${b.line_start}-${b.line_end}` : `${b.line_start}`);
-  const removedContext = b.removed_test
-    ? `\nRead saved diff ${b.diffPath}: deleted test ${JSON.stringify(b.removed_test.path)}, old lines ${b.removed_test.old_start}-${b.removed_test.old_end}. Check the removed input and assertion, then search surviving tests at HEAD for the same behavior. This coverage-loss claim is verifiable from the saved diff and surviving tests.` : '';
-  return `Independently check the claim's central facts against raw code at ${b.file}:${range}, opening enough surrounding context with Read/Grep/LSP to prove or disprove the actual claim. Runtime failures require a current trigger; static defects require evidence of the static claim. Do not lower the score merely because upstream evidence is withheld. If the central assertion remains unverifiable from code and context, score it 25 or below (below 25 when nothing in code confirms it). Reserve scores above 25 for positively confirmed claims. A removed-test claim can be verified from its deleted location in the saved diff and surviving assertions at HEAD.${removedContext}\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct 0-100 (higher = the claim holds).`;
+  const removed = b.removed_test ? `Read saved diff ${diffPath}: deleted test ${JSON.stringify(b.removed_test.path)}, old lines ${b.removed_test.old_start}-${b.removed_test.old_end}. Check the deleted assertion and surviving tests.` : '';
+  return `Independently check the claim's central facts against raw code. Runtime failures require a current trigger; static defects require evidence of the static claim. ${removed}\nTarget identity: ${JSON.stringify(sourceCapture || {})}\nFinding identity: ${finding.id}\nClaim/location: ${JSON.stringify(b)}\n${VERDICT_GUIDANCE}`;
 }
 
-// Parallel results retain candidate positions so failures stay attributable to individual findings.
-// Only scored findings enter applyChallenges; its unchallenged pass-through would otherwise admit skipped findings into the high-confidence set.
 export async function challengeStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
-  const limits = inp.limits || {};
-  const policy = inp.policy || {};
-  const cap = effectiveChallengeCap(limits, findings.length);
-
-  if (findings.length === 0) {
-    return {
-      findings: [], unverified: [], eliminated: [], gaps: [],
-      stats: {
-        total_input: 0, dispatched: 0, completed: 0, skipped: 0,
-        challenge_removed: 0, challenge_downgraded: 0, challenge_contested: 0,
-        challenge_survived: 0, unchallenged: 0, final_count: 0,
-      },
-      generated_at: inp.generatedAt,
-    };
-  }
-
-  const model = modelFor('code-gauntlet:challenger', policy);
-
-  // Reserve scarce challenge capacity for findings that can still be delivered.
-  const actionable = (f) => hasAdmission(f) && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
-  const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f, challenge: 'admission_terminal' }));
+  const cap = effectiveChallengeCap(inp.limits || {}, findings.length);
+  const validatorTerminal = (f) => f.skeptical_assessments?.some((a) => a.stage === 'validator'
+    && ['refuted', 'needs_evidence'].includes((a.raw ?? a).verdict));
+  const actionable = (f) => !validatorTerminal(f) && hasAdmission(f)
+    && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
+  const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f,
+    challenge: validatorTerminal(f) ? 'validator_terminal' : 'admission_terminal' }));
   const ranked = rankFindings(findings.filter(actionable));
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);
-
-  const thunks = candidates.map((finding, idx) => () => ctx.agent(challengePrompt(finding, inp.diffPath), {
-    label: `challenge-${idx}`,
-    agentType: 'code-gauntlet:challenger',
-    model,
-    schema: CHALLENGE_SCHEMA,
-  }));
-
-  const results = thunks.length ? await ctx.parallel(thunks) : [];
-
+  const results = candidates.length ? await ctx.parallel(candidates.map((finding, idx) => () => ctx.agent(
+    challengePrompt(finding, inp.diffPath, inp.sourceCapture), {
+      label: `challenge-${idx}`, agentType: 'code-gauntlet:challenger',
+      model: modelFor('code-gauntlet:challenger', inp.policy || {}), schema: CHALLENGE_SCHEMA,
+    }))) : [];
   const gaps = [];
-  const challenged = [];
-  const challenges = [];
-  const skipped = [];
-
-  results.forEach((res, idx) => {
-    const finding = candidates[idx];
-    // The schema field is confidence_claim_is_correct; score is accepted as a legacy alias.
-    // Nullish fallback preserves a legitimate zero score.
-    const rawScore = res && typeof res === 'object' ? (res.confidence_claim_is_correct ?? res.score) : undefined;
-    if (res === null || res === undefined || coerceInt(rawScore, INT_POLICY.validation) === null) {
-      gaps.push(`challenge-${idx}: challenger returned null/unscored — finding ${finding.id} unchallenged (challenge=failed, pipeline-degraded)`);
+  const present = [];
+  const skipped = overflow.map((f) => ({ ...f, challenge: 'capped' }));
+  let completed = 0;
+  let incomplete = 0;
+  candidates.forEach((finding, idx) => {
+    const res = results[idx];
+    if (res === null || res === undefined) {
+      gaps.push(`challenge-${idx}: challenger returned null — finding ${finding.id} unchallenged (challenge=failed, pipeline-degraded)`);
       skipped.push({ ...finding, challenge: 'failed' });
       return;
     }
-    // Use the known finding id because challenger output cannot be trusted to echo it.
-    challenges.push({ id: finding.id, score: rawScore, justification: res.justification });
-    challenged.push({ ...finding, challenge: 'survived' });
+    completed += 1;
+    // The dispatch position owns the finding; an echoed identity cannot redirect an assessment.
+    const assessment = acceptSkepticalReturn({ ...res, finding_id: finding.id }, finding.id, 'challenger');
+    const out = { ...applyChallenges([finding], [{ id: finding.id, assessment }]).findings[0],
+      challenge: assessment.status === 'complete' ? 'survived' : 'incomplete' };
+    if (assessment.status === 'incomplete') { incomplete += 1; skipped.push(out); }
+    else present.push(out);
   });
-
-  for (const f of overflow) skipped.push({ ...f, challenge: 'capped' });
-  if (overflow.length) {
-    gaps.push(`challenge: ${overflow.length} finding(s) over challengeCap=${cap} left unchallenged (challenge=capped, pipeline-degraded)`);
-  }
-
-  const applied = applyChallenges(challenged, challenges);
-
-  const unverified = rankFindings(skipped);
-
-  return {
-    findings: [...applied.findings, ...terminal],
-    unverified,
-    eliminated: applied.eliminated,
-    gaps,
-    stats: {
-      total_input: findings.length,
-      ...(terminal.length ? { admission_terminal: terminal.length } : {}),
-      dispatched: candidates.length,
-      completed: challenged.length,
-      skipped: skipped.length,
-      challenge_removed: applied.stats.challenge_removed,
-      challenge_downgraded: applied.stats.challenge_downgraded,
-      challenge_contested: applied.stats.challenge_contested,
-      challenge_survived: applied.stats.challenge_survived,
-      unchallenged: applied.stats.unchallenged,
-      final_count: applied.stats.final_count,
-    },
-    generated_at: inp.generatedAt,
-  };
+  if (overflow.length) gaps.push(`challenge: ${overflow.length} finding(s) over challengeCap=${cap} left unchallenged (challenge=capped, pipeline-degraded)`);
+  return { findings: rankFindings([...present, ...terminal]), unverified: rankFindings(skipped), eliminated: [], gaps,
+    stats: { total_input: findings.length, dispatched: candidates.length, completed, incomplete,
+      skipped: skipped.length, capped: overflow.length, final_count: present.length + terminal.length }, generated_at: inp.generatedAt };
 }
 
 // Delivery defaults to all survivors to avoid silently narrowing scope.

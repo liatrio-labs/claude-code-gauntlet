@@ -87,10 +87,11 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
         "filter",
         "admission",
         "challenge",
+        "cite",
         "dispose",
         "select",
     )
-    assert set(receipt["payload"]["checkpoints"]["phases"]) == {"challenge"}
+    assert set(receipt["payload"]["checkpoints"]["phases"]) == {"challenge", "cite"}
     assert "snapshots" not in receipt["payload"]["checkpoints"]
     first = next(v for v in trace.versions if v.finding.get("id") == "FILTER")
     assert first.projection()["confidence"] == 65
@@ -240,7 +241,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
             tid, "held_back", "validation_skipped", None, ()
         )
         for snapshot in raw["snapshots"]:
-            if snapshot["stage"] in ("filter", "admission", "challenge"):
+            if snapshot["stage"] in ("filter", "admission", "challenge", "cite"):
                 snapshot["finding_version_ids"] = raw["snapshots"][3][
                     "finding_version_ids"
                 ]
@@ -272,7 +273,8 @@ def test_score_to_dimension_credit_and_loss_funnel(
         monkeypatch.setattr(type(score_case), "scorer", fail_judge)
     packet = score_case.execute(attribution=trace_status != "disabled")
     loaded = observations.load_packet(Path(packet["ledger_row"]["packet_path"]))
-    assert {r.stage for r in stages.read_rows(loaded.root)}.isdisjoint({"cite"})
+    if trace_status in ("readable", "no_eliminations", "audit_overlap"):
+        assert "cite" in {r.stage for r in stages.read_rows(loaded.root)}
     assert packet["profiles"]["all"]["tp"] == 1
     assert len(score_case.calls) == (
         2
@@ -377,6 +379,7 @@ def test_trace_reasons_survive_delivery_overlay(tmp_path, extended, terminal_rea
             (ids[3], "coalesced", "folded", (ids[4],)),
         )
     )
+    snapshots = [s for s in snapshots if s.stage != "cite"]
     if extended:
         index = next(i for i, s in enumerate(snapshots) if s.stage == "challenge") + 1
         snapshots[index:index] = [

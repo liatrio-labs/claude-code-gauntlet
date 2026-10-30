@@ -4,7 +4,8 @@ export const UNVERIFIED_REASONS = {
   verify: 'the verify slice could not be proven against the dispatched document',
   challenge: {
     capped: 'the challenge cap was reached, so this finding was not challenge-verified',
-    failed: 'the challenger failed or returned no score, so this finding was not challenge-verified',
+    failed: 'the challenger returned nothing, so this finding was not challenge-verified',
+    incomplete: 'the challenger returned an incomplete assessment, so this finding was held back',
     skipped: 'this finding was not challenge-verified',
   },
 };

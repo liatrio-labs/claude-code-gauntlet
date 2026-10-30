@@ -3,8 +3,10 @@
   "findings": [
     {
       "agent": "security-reviewer",
-      "challenge_contested": false,
-      "challenge_score": 80,
+      "challenge_audit": {
+        "id": "B",
+        "score": 80
+      },
       "confidence": 80,
       "description": "d2",
       "dimension": "security",
@@ -18,8 +20,10 @@
     },
     {
       "agent": "test-analyzer",
-      "challenge_contested": false,
-      "challenge_score": 80,
+      "challenge_audit": {
+        "id": "C",
+        "score": 80
+      },
       "confidence": 74,
       "description": "d3",
       "dimension": "test_coverage",
@@ -33,8 +37,10 @@
     },
     {
       "agent": "bug-detector",
-      "challenge_contested": false,
-      "challenge_score": 80,
+      "challenge_audit": {
+        "id": "A",
+        "score": 80
+      },
       "confidence": 75,
       "description": "d1",
       "dimension": "bug",
@@ -48,12 +54,7 @@
     }
   ],
   "stats": {
-    "challenge_contested": 0,
-    "challenge_downgraded": 0,
-    "challenge_removed": 0,
-    "challenge_survived": 3,
     "final_count": 3,
-    "total_input": 3,
-    "unchallenged": 0
+    "total_input": 3
   }
 }

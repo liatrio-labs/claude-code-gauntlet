@@ -3,46 +3,27 @@ import assert from 'node:assert/strict';
 import { applyChallenges, rankFindings } from '../src/applyChallenges.js';
 import { finding, consolidationFinding } from './helpers/findings.js';
 
-const CHALLENGE_CASES = [
-  { name: 'score zero downgrades critical security finding', f: { severity: 'critical', dimension: 'security' }, challenge: { id: 'f1',
-    score: 0 }, active: ['f1'], severity: 'high', destination: 'suggestion', stat: 'challenge_downgraded', original: 'critical' },
-  { name: 'score 40 downgrades and routes to suggestion', f: { severity: 'critical' }, challenge: { id: 'f1', score: 40 }, active: ['f1'],
-    severity: 'high', destination: 'suggestion', stat: 'challenge_downgraded', original: 'critical' },
-  { name: 'score 40 downgrades medium to low', f: { severity: 'medium' }, challenge: { id: 'f1', score: 40 }, active: ['f1'],
-    severity: 'low', destination: 'suggestion', stat: 'challenge_downgraded', original: 'medium' },
-  { name: 'score 40 removes low severity', f: { severity: 'low' }, challenge: { id: 'f1', score: 40 }, active: [],
-    eliminated: ['f1'], stat: 'challenge_downgraded' },
-  { name: 'score 40 removes unknown severity', f: { severity: 'info' }, challenge: { id: 'f1', score: 40 }, active: [],
-    eliminated: ['f1'], stat: 'challenge_downgraded' },
-  { name: 'surfaced score 80 retains main route', f: { origin: 'surfaced', report_destination: 'main' }, challenge: { id: 'f1',
-    score: 80 }, active: ['f1'], severity: 'high', destination: 'main', stat: 'challenge_survived' },
-  { name: 'noninteger score is skipped', f: {}, challenge: { id: 'f1', score: 'high' }, active: ['f1'], severity: 'high',
-    stat: 'unchallenged' },
-];
-for (const c of CHALLENGE_CASES) test(`challenge: ${c.name}`, () => {
-  const out = applyChallenges([finding(c.f)], [c.challenge]);
-  assert.deepEqual(out.findings.map((f) => f.id), c.active);
-  assert.deepEqual(out.eliminated.map((f) => f.id), c.eliminated ?? []);
-  if (c.active.length) assert.equal(out.findings[0].severity, c.severity);
-  if (c.destination) assert.equal(out.findings[0].report_destination, c.destination);
-  if (c.stat === 'challenge_downgraded' && c.active.length) {
-    assert.equal(out.findings[0].original_severity, c.original);
-    assert.equal(out.findings[0].severity_downgraded, true);
-    assert.equal(out.findings[0].report_tag, 'suggestion');
-    assert.equal(out.findings[0].challenge_contested, false);
+test('legacy score aliases have no authority over security or ordinary findings', () => {
+  const nativeClone = globalThis.structuredClone;
+  try {
+    delete globalThis.structuredClone;
+  for (const dimension of ['security', 'bug']) for (const origin of ['new','surfaced']) for (const severity of ['critical','low','info'])
+    for (const key of ['score', 'confidence_claim_is_correct']) for (const score of [0,24,25,40,49,50,60,74,75,90,'invalid']) {
+    const input = [finding({ dimension, origin, severity })];
+    const before = JSON.parse(JSON.stringify(input));
+    let out;
+    assert.doesNotThrow(()=>{out=applyChallenges(input,[{id:'f1',[key]:score}]);});
+    assert.equal(out.findings.length,1);
+    assert.equal(out.findings[0].severity,severity);
+    assert.equal(out.findings[0].report_destination,input[0].report_destination);
+    assert.equal(out.findings[0].confidence, 90);
+    for (const field of ['challenge_score', 'challenge_contested', 'severity_downgraded', 'original_severity']) {
+      assert.equal(Object.hasOwn(out.findings[0], field), false);
+    }
+    assert.deepEqual(out.eliminated, []);
+    assert.deepEqual(input, before);
   }
-  assert.equal(out.stats[c.stat], 1);
-  assert.equal(out.stats.final_count, c.active.length);
-});
-
-test('challenge: mixed removed, downgraded, contested, survived and unchallenged scores', () => {
-  const findings = ['f1', 'f2', 'f3', 'f4', 'f5'].map((id) => finding({ id, severity: id === 'f1' ? 'critical' : 'high' }));
-  const scores = [10, 35, 60, 90];
-  const out = applyChallenges(findings, scores.map((score, i) => ({ id: `f${i + 1}`, score })));
-  assert.deepEqual(out.findings.map((f) => f.id), ['f3', 'f4', 'f5', 'f2']);
-  assert.deepEqual(out.eliminated.map((f) => f.id), ['f1']);
-  assert.deepEqual(out.stats, { total_input: 5, challenge_removed: 1, challenge_downgraded: 1, challenge_contested: 1,
-    challenge_survived: 1, unchallenged: 1, final_count: 4 });
+  } finally { globalThis.structuredClone = nativeClone; }
 });
 
 const RANK_CASES = [
@@ -59,22 +40,6 @@ for (const c of RANK_CASES) test(`rank: ${c.name}`, () => {
   assert.deepEqual(rankFindings(rows).map((f) => f.id), c.expected);
 });
 
-
-test('applyChallenges never mutates the caller input, even with structuredClone absent', () => {
-  const saved = globalThis.structuredClone;
-  try {
-    delete globalThis.structuredClone; // the sandbox has no structuredClone
-    const findings = [{ id: 'F1', severity: 'high', dimension: 'bug', confidence: 90, description: 'x' }];
-    const before = JSON.parse(JSON.stringify(findings));
-    // score 80 -> survive; the survivor is deep-cloned before challenge_score is stamped.
-    const out = applyChallenges(findings, [{ id: 'F1', score: 80 }]);
-    assert.deepEqual(findings, before, 'input findings unchanged (deep-cloned before mutation)');
-    assert.equal(out.findings[0].challenge_score, 80, 'the returned (cloned) finding carries the score');
-    assert.ok(!('challenge_score' in findings[0]), 'the caller object never gained the score');
-  } finally {
-    globalThis.structuredClone = saved;
-  }
-});
 
 const ORIGIN_RANK_ROWS = [
   {

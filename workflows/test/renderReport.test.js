@@ -160,7 +160,7 @@ const REPORT_ROWS = [
     '- **Unverified because:** the verify slice could not be proven against the dispatched document',
     '- **Unverified because:** the validator did not score this finding, so it was not skeptically validated; '
       + 'the verify slice could not be proven against the dispatched document; '
-      + 'the challenger failed or returned no score, so this finding was not challenge-verified',
+      + 'the challenger returned nothing, so this finding was not challenge-verified',
   ] },
   { name: 'interactive receipt', surface: 'receipt', expected: 'Resolved config:\n  model_tier=optimized (fixed)\n'
     + '  pr_comment_cap=null (default)\n  delivery_tier=all (default)\n  review_md=absent (discovery)\n'
@@ -368,12 +368,9 @@ for (const row of SUMMARY_ROWS) test(`summary: ${row.name}`, () => {
   assert.deepEqual(surface(actual, row), row.expected);
 });
 
-test('contested finding stamp renders only for true', () => {
-  const contested = rendered({ findings: [finding('CONTESTED', { challenge_contested: true })] });
-  const uncontested = rendered({ findings: [finding('UNCONTESTED', { challenge_contested: false })] });
-  const bullet = '- **Contested:** the challenger could not confirm the cited location';
-  assert.ok(contested.includes(bullet));
-  assert.ok(!uncontested.includes(bullet));
+test('legacy challenge contention is audit data without a rendered badge', () => {
+  const text = rendered({findings:[finding('LEGACY',{challenge_contested:true})]});
+  assert.equal(text.includes('**Contested:**'),false);
 });
 
 test('spec text without a claude.md rule uses the fallback cited rule label', () => {

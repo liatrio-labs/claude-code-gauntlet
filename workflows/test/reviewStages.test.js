@@ -2,9 +2,26 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateStage, filterStage, challengeStage, blindChallengeFields, selectDelivery } from '../src/reviewStages.js';
 import { finding } from './helpers/findings.js';
-import { stageCtx } from './helpers/stageFixtures.js';
+import { stageCtx as rawStageCtx } from './helpers/stageFixtures.js';
 import { VALIDATION_RETURN_PROPERTIES, ADMISSION_PREDICATES, RIGHT_ELIGIBILITY } from '../src/registry.js';
 import { evaluateAdmission } from '../src/admission.js';
+
+import { skepticalReturn } from './helpers/verdicts.js';
+import { SKEPTICAL_CONTRACTS } from '../src/registry.js';
+
+function stageCtx(options = {}) {
+  const upgrade = (value) => {
+    const entry = (e) => e && typeof e === 'object' ? { ...skepticalReturn(e.id ?? e.finding_id), confidence: undefined, policy_subject: undefined, ...e } : e;
+    if (Array.isArray(value)) return value.map(entry);
+    if (Array.isArray(value?.validations)) return { ...value, validations: value.validations.map(entry) };
+    return value;
+  };
+  return rawStageCtx({ ...options, reply: (prompt, opts) => {
+    const raw = Object.hasOwn(options.replies || {}, opts.label) ? options.replies[opts.label] : options.reply;
+    const value = typeof raw === 'function' ? raw(prompt, opts) : raw;
+    return opts.label.startsWith('validate-') ? upgrade(value) : value;
+  }, replies: {} });
+}
 
 test('validator classification omissions skip core findings and duplicate scores retain base behavior', async () => {
   for (const dimension of ['bug', 'security', 'cross_file_impact', 'intent', 'convention', 'comment_accuracy']) {
@@ -40,6 +57,7 @@ test('validator prompt shares predicate definitions across finding contexts', as
   const promotionHeader = 'For test_coverage, type_design, simplification findings also assess present_defect.';
   assert.equal(prompt.split(promotionHeader).length - 1, 1);
   assert.ok(prompt.indexOf(promotionHeader) < prompt.indexOf('\nFindings:'));
+  assert.equal(prompt.split('Use real, refuted or needs_evidence').length - 1, 1);
   assert.deepEqual(contexts.map((context) => context.policy.predicates), [[], ['concrete_equivalent', 'behavior_preserved'], [], []]);
   for (const context of contexts) {
     assert.equal(context.predicates, undefined);
@@ -112,7 +130,7 @@ test('validation completeness requires one well-formed assessment per predicate'
 
 const omittedGap = (idx, count) => `validate-batch-${idx}: validator omitted scores — ${count} finding(s) unvalidated (validation=skipped, held back to the report)`;
 const invalidGap = (reasons) => `validate-batch-0: validator returned invalid/incomplete entries (${reasons}) — 1 finding(s) unvalidated (validation=skipped, held back to the report)`;
-const VALIDATE_STATS = { batches_dispatched: 1, batches_completed: 1, validated: 1, skipped: 1, adjusted: 1 };
+const VALIDATE_STATS = { batches_dispatched: 1, batches_completed: 1, validated: 1, skipped: 1, incomplete: 0, adjusted: 1 };
 const VALIDATE_ROWS = [
   { name: 'id adjustment', input: [finding({ id: 'F1', confidence: 90 }), finding({ id: 'F2', confidence: 80 })],
     reply: [{ id: 'F1', confidence: 50, policy_subject: 'ordinary', justification: 'weak' }, { id: 'F2', confidence: 'invalid' }, null],
@@ -148,7 +166,7 @@ const VALIDATE_ROWS = [
     ] },
   { name: 'malformed object retains confidence', input: [finding({ id: 'F1', confidence: 80 })], reply: {},
     expected: [['F1', 80, undefined, undefined, undefined, 'skipped']],
-    stats: { batches_dispatched: 1, batches_completed: 0, validated: 0, skipped: 1, adjusted: 0 }, gaps: [
+    stats: { batches_dispatched: 1, batches_completed: 1, validated: 0, skipped: 1, adjusted: 0 }, gaps: [
       'validate-batch-0: validator returned null/malformed \u2014 1 finding(s) unvalidated '
       + '(validation=skipped, held back to the report)',
     ] },
@@ -166,11 +184,11 @@ for (const row of VALIDATE_ROWS) test(`validate result: ${row.name}`, async () =
   assert.deepEqual(Object.keys(out), row.input.length ? ['findings', 'gaps', 'audit', 'stats'] : ['findings', 'gaps', 'stats']);
   assert.deepEqual(out.findings.map((f) => [f.id, f.confidence, f.original_confidence,
     f.validation_justification, f.reachability, f.validation]), row.expected);
-  const expectedStats = { ...(row.stats ?? VALIDATE_STATS) };
+  const expectedStats = { incomplete: 0, ...(row.stats ?? VALIDATE_STATS) };
   const pendingCount = row.expected.filter((entry) => entry.at(-1) === 'skipped').length;
   const retryCount = Math.ceil(pendingCount / Math.max(1, Math.ceil((row.batch || 10) / 5)));
   expectedStats.batches_dispatched += retryCount;
-  if (Array.isArray(row.reply) || Array.isArray(row.reply.validations)) expectedStats.batches_completed += retryCount;
+  if (row.reply !== null && row.reply !== undefined) expectedStats.batches_completed += retryCount;
   assert.deepEqual(out.stats, expectedStats);
   assert.deepEqual(out.gaps, row.gaps ?? []);
   assert.deepEqual(ctx.calls.map((call) => call.label), [...(row.labels ?? ['validate-batch-0']),
@@ -178,9 +196,6 @@ for (const row of VALIDATE_ROWS) test(`validate result: ${row.name}`, async () =
   for (const call of ctx.calls) assert.equal(call.agentType, 'code-gauntlet:validator');
   assert.deepEqual(ctx.violations, []);
 });
-const VALIDATE_TAIL = '\nReturn { validations: [{ finding_id, confidence, justification, '
-  + 'reachability (current | future_change_only | uncertain), site_confirmations, policy_subject (test_defect | coverage | ordinary | unresolved), admission_assessments }] } \u2014 confidence 0-100 '
-  + '(one entry per finding).';
 const VALIDATE_PROMPT_ROWS = [
   { name: 'equal range endpoints print once', fields: { file: 'one.js', line_start: 42, line_end: 42 },
     block: '- f1 [bug/high] one.js:42 \u2014 The function returns the wrong result for a real input.' },
@@ -195,16 +210,11 @@ for (const row of VALIDATE_PROMPT_ROWS) test(`validate prompt: ${row.name}`, asy
   assert.ok(ctx.calls[0].prompt.startsWith('VALIDATOR_CONTEXT Independently validate'));
   assert.ok(ctx.calls[0].prompt.includes('code-evidence and disproof contract'));
   assert.ok(ctx.calls[0].prompt.includes(row.block));
-  assert.ok(ctx.calls[0].prompt.endsWith(VALIDATE_TAIL));
-  const { anyOf, ...base } = ctx.calls[0].schema.properties.validations.items;
-  assert.ok(anyOf.length > 0);
-  assert.deepEqual({ ...ctx.calls[0].schema, properties: { validations: { type: 'array', items: base } } }, { type: 'object', properties: { validations: {
-    type: 'array', items: { type: 'object', properties: {
-      finding_id: { type: 'string' }, confidence: { type: 'number' }, justification: { type: 'string' },
-      reachability: { type: 'string', enum: ['current', 'future_change_only', 'uncertain'] },
-      ...VALIDATION_RETURN_PROPERTIES,
-    }, required: ['finding_id', 'confidence', 'policy_subject'] },
-  } }, required: ['validations'] });
+  assert.ok(ctx.calls[0].prompt.includes('verdict (real | refuted | needs_evidence)'));
+  const item = ctx.calls[0].schema.properties.validations.items;
+  assert.deepEqual(item.properties,{...SKEPTICAL_CONTRACTS.validator.dispatchSchema.properties,finding_id:{type:'string',enum:['f1']}});
+  assert.ok(item.required.includes('verdict'));
+  assert.ok(item.required.includes('scope_assessments'));
 });
 
 const FILTER_ROWS = [
@@ -231,85 +241,37 @@ for (const row of FILTER_ROWS) test(`filter forwarding: ${row.name}`, () => {
   assert.deepEqual(out.eliminated.map((f) => f.id), row.eliminated);
 });
 
-const CHALLENGE_GOLDEN = {
-  total_input: 1, dispatched: 1, completed: 1, skipped: 0, challenge_removed: 0, challenge_downgraded: 0,
-  challenge_contested: 0, challenge_survived: 1, unchallenged: 0, final_count: 1,
-};
-const CHALLENGE_ROWS = [
-  { name: 'negative cap clamps to zero', input: [finding({ id: 'F1' }), finding({ id: 'F2', severity: 'critical' })],
-    cap: -1, reply: { score: 80 }, kept: [], scores: [], labels: [], unverified: [['F2', 'capped'], ['F1', 'capped']],
-    gaps: ['challenge: 2 finding(s) over challengeCap=0 left unchallenged (challenge=capped, pipeline-degraded)'],
-    stats: { ...CHALLENGE_GOLDEN, total_input: 2, dispatched: 0, completed: 0, skipped: 2,
-      challenge_survived: 0, final_count: 0 } },
-  { name: 'failed candidates stay ranked in unverified', input: [finding({ id: 'LOW', severity: 'low' }),
-    finding({ id: 'HIGH', severity: 'high' }), finding({ id: 'CRIT', severity: 'critical' })],
-    reply: null, kept: [], scores: [], labels: ['challenge-0', 'challenge-1', 'challenge-2'],
-    unverified: [['CRIT', 'failed'], ['HIGH', 'failed'], ['LOW', 'failed']], gaps: [
-      'challenge-0: challenger returned null/unscored \u2014 finding CRIT unchallenged (challenge=failed, pipeline-degraded)',
-      'challenge-1: challenger returned null/unscored \u2014 finding HIGH unchallenged (challenge=failed, pipeline-degraded)',
-      'challenge-2: challenger returned null/unscored \u2014 finding LOW unchallenged (challenge=failed, pipeline-degraded)',
-    ], stats: { ...CHALLENGE_GOLDEN, total_input: 3, dispatched: 3, completed: 0, skipped: 3,
-      challenge_survived: 0, final_count: 0 } },
-  { name: 'legacy score and stage envelope', input: [finding()], reply: { score: 80 }, kept: ['f1'], scores: [80] },
-  { name: 'canonical scores follow ranked indices', input: [finding({ id: 'F1' }), finding({ id: 'F2', severity: 'critical' })],
-    reply: { confidence_claim_is_correct: 90, justification: 'claim holds' }, kept: ['F2', 'F1'], scores: [90, 90],
-    labels: ['challenge-0', 'challenge-1'], stats: { ...CHALLENGE_GOLDEN,
-      total_input: 2, dispatched: 2, completed: 2, challenge_survived: 2, final_count: 2 }, justifications: ['claim holds',
-        'claim holds'] },
-  { name: 'legacy low score removes', input: [finding({ id: 'F1' })], reply: { score: 10, justification: 'does not hold' },
-    kept: [], scores: [], eliminated: ['F1'],
-    stats: { ...CHALLENGE_GOLDEN, challenge_removed: 1, challenge_survived: 0, final_count: 0 } },
-  { name: 'canonical zero is scored', input: [finding({ id: 'F1' })],
-    reply: { confidence_claim_is_correct: 0, justification: 'disproved' }, kept: [], scores: [], eliminated: ['F1'],
-    stats: { ...CHALLENGE_GOLDEN, challenge_removed: 1, challenge_survived: 0, final_count: 0 } },
-  { name: 'invalid score stays unverified', input: [finding({ id: 'F1' })], reply: { score: 'not-a-number', justification: 'x' },
-    kept: [], scores: [], unverified: [['F1', 'failed']], gaps: [
-      'challenge-0: challenger returned null/unscored \u2014 finding F1 unchallenged (challenge=failed, pipeline-degraded)',
-    ], stats: { ...CHALLENGE_GOLDEN, completed: 0, skipped: 1, challenge_survived: 0, final_count: 0 } },
-  { name: 'null member is positional', input: [finding({ id: 'F1', severity: 'critical' }), finding({ id: 'F2', severity: 'low' })],
-    reply: { score: 80 }, nulls: ['challenge-1'], kept: ['F1'], scores: [80], unverified: [['F2', 'failed']],
-    labels: ['challenge-0', 'challenge-1'], gaps: [
-      'challenge-1: challenger returned null/unscored \u2014 finding F2 unchallenged (challenge=failed, pipeline-degraded)',
-    ], stats: { ...CHALLENGE_GOLDEN, total_input: 2, dispatched: 2, skipped: 1 } },
-  { name: 'rejection does not refill cap', input: [finding({ id: 'FIRST', severity: 'critical' }),
-    finding({ id: 'OVERFLOW', severity: 'low' })], reply: { score: 0 }, cap: 1,
-    kept: [], scores: [], eliminated: ['FIRST'], unverified: [['OVERFLOW', 'capped']],
-    gaps: ['challenge: 1 finding(s) over challengeCap=1 left unchallenged (challenge=capped, pipeline-degraded)'],
-    stats: { ...CHALLENGE_GOLDEN, total_input: 2, skipped: 1, challenge_removed: 1, challenge_survived: 0, final_count: 0 } },
-  { name: 'cap overflow stays unverified', input: [finding({ id: 'F3', severity: 'low' }),
-    finding({ id: 'F2' }), finding({ id: 'F1', severity: 'critical' })], reply: { score: 80 }, cap: 2,
-    kept: ['F1', 'F2'], scores: [80, 80], unverified: [['F3', 'capped']], labels: ['challenge-0', 'challenge-1'], gaps: [
-      'challenge: 1 finding(s) over challengeCap=2 left unchallenged (challenge=capped, pipeline-degraded)',
-    ], stats: { ...CHALLENGE_GOLDEN, total_input: 3, dispatched: 2, completed: 2, skipped: 1,
-      challenge_survived: 2, final_count: 2 } },
-  { name: 'clean candidates fill cap first', input: [finding({ id: 'DIRTY', severity: 'critical', validation: 'skipped' }),
-    finding({ id: 'CLEAN', severity: 'low' })], reply: { score: 80 }, cap: 1, kept: ['CLEAN', 'DIRTY'], scores: [80, undefined],
-    unverified: [], gaps: [], stats: { ...CHALLENGE_GOLDEN, total_input: 2, admission_terminal: 1 } },
-  { name: 'empty with timestamp', input: [], reply: { score: 80 }, kept: [], scores: [], labels: [],
-    generatedAt: '2026-07-18T00:00:00Z',
-    stats: { ...CHALLENGE_GOLDEN, total_input: 0, dispatched: 0, completed: 0, challenge_survived: 0, final_count: 0 } },
-];
-for (const row of CHALLENGE_ROWS) test(`challenge result: ${row.name}`, async () => {
-  const ctx = stageCtx({ reply: row.reply, nulls: row.nulls });
-  const input = structuredClone(row.input);
-  const out = await challengeStage(ctx, { findings: input, limits: { challengeCap: row.cap ?? 40 },
-    generatedAt: row.generatedAt ?? 't' });
-  assert.deepEqual(input, row.input);
-  assert.deepEqual(Object.keys(out), ['findings', 'unverified', 'eliminated', 'gaps', 'stats', 'generated_at']);
-  assert.deepEqual(out.findings.map((f) => f.id), row.kept);
-  assert.deepEqual(out.findings.map((f) => f.challenge_score), row.scores);
-  if (row.justifications) assert.deepEqual(out.findings.map((f) => f.challenge_justification), row.justifications);
-  assert.deepEqual(out.unverified.map((f) => [f.id, f.challenge]), row.unverified ?? []);
-  assert.deepEqual(out.eliminated.map((f) => f.id), row.eliminated ?? []);
-  assert.deepEqual(out.gaps, row.gaps ?? []);
-  assert.deepEqual(out.stats, row.stats ?? CHALLENGE_GOLDEN);
-  assert.equal(out.generated_at, row.generatedAt ?? 't');
-  assert.deepEqual(ctx.calls.map((call) => call.label), row.labels ?? ['challenge-0']);
-  for (const call of ctx.calls) assert.equal(call.agentType, 'code-gauntlet:challenger');
+test('incomplete challenger returns complete dispatch without failing siblings', async () => {
+  const ctx = rawStageCtx({ replies: {
+    'challenge-0': {}, 'challenge-1': { score: 0 }, 'challenge-2': null,
+    'challenge-3': skepticalReturn('real', 'challenger', { finding_id: 'foreign' }),
+  } });
+  const input = ['missing', 'legacy', 'failed', 'real'].map((id) => finding({ id }));
+  const out = await challengeStage(ctx, { findings: input });
+  assert.equal(out.stats.completed, 3);
+  assert.equal(out.stats.dispatched, 4);
+  assert.equal(out.stats.incomplete, 2);
+  assert.deepEqual(out.unverified.map((f) => f.challenge), ['incomplete', 'incomplete', 'failed']);
+  assert.deepEqual(out.findings.map((f) => f.id), ['real']);
+  assert.equal(out.findings[0].skeptical_assessments.at(-1).finding_id, 'real');
+  assert.deepEqual(out.eliminated, []);
   assert.deepEqual(ctx.violations, []);
 });
-const BLIND_TAIL = '\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct '
-  + '0-100 (higher = the claim holds).';
+
+test('challenge ranks capacity candidates without refilling a refutation', async () => {
+  const ctx = rawStageCtx({ reply: (prompt) => skepticalReturn(prompt.match(/Finding identity: (\S+)/)[1], 'challenger', { verdict: 'refuted' }) });
+  const out = await challengeStage(ctx, { findings: [finding({ id: 'low', severity: 'low' }), finding({ id: 'critical', severity: 'critical' }),
+    finding({ id: 'dirty', validation: 'skipped' })], limits: { challengeCap: 1 } });
+  assert.equal(ctx.calls.length, 1);
+  assert.deepEqual(out.findings.map((f) => [f.id, f.challenge]), [['critical', 'survived'], ['dirty', 'admission_terminal']]);
+  assert.deepEqual(out.unverified.map((f) => [f.id, f.challenge]), [['low', 'capped']]);
+  assert.equal(out.stats.capped, 1);
+  const empty = await challengeStage(ctx, { findings: [], generatedAt: 'now' });
+  assert.deepEqual(empty.findings, []);
+  assert.equal(empty.generated_at, 'now');
+  assert.equal((await challengeStage(ctx, { findings: [finding()], limits: { challengeCap: -1 } })).stats.dispatched, 0);
+});
+
 const BLIND_ROWS = [
   { name: 'range', file: 'SENTINEL_FILE.js', start: 12, end: 15, location: 'SENTINEL_FILE.js:12-15' },
   { name: 'single line', file: 'src/one.js', start: 9, end: 9, location: 'src/one.js:9' },
@@ -333,13 +295,12 @@ for (const row of BLIND_ROWS) test(`blind prompt: ${row.name}`, async () => {
   const ctx = stageCtx({ reply: { score: 80 } });
   await challengeStage(ctx, { findings: [f] });
   assert.ok(ctx.calls[0].prompt.startsWith("Independently check the claim's central facts against raw code"));
-  assert.ok(ctx.calls[0].prompt.includes('Claim: SENTINEL_TITLE\nSENTINEL_DESC'));
-  assert.ok(ctx.calls[0].prompt.includes(`Location to inspect: ${row.location}`));
-  assert.ok(ctx.calls[0].prompt.endsWith(BLIND_TAIL));
+  assert.ok(ctx.calls[0].prompt.includes('SENTINEL_TITLE'));
+  assert.ok(ctx.calls[0].prompt.includes('SENTINEL_DESC'));
+  assert.ok(ctx.calls[0].prompt.includes(row.file));
+  assert.ok(ctx.calls[0].prompt.includes('real, refuted or needs_evidence'));
   assert.doesNotMatch(ctx.calls[0].prompt, /SENTINEL_EVIDENCE_LEAK|SENTINEL_REASONING_LEAK|SENTINEL_XREF_LEAK|SENTINEL_RATIONALE_LEAK|96|surfaced/);
-  assert.deepEqual(ctx.calls[0].schema, { type: 'object', properties: {
-    confidence_claim_is_correct: { type: 'number' }, justification: { type: 'string' },
-  }, required: ['confidence_claim_is_correct'] });
+  assert.deepEqual(ctx.calls[0].schema, SKEPTICAL_CONTRACTS.challenger.dispatchSchema);
 });
 
 const MIXED = [

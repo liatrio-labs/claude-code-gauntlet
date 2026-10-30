@@ -159,7 +159,7 @@ test('cite terminal requests reuse proof while oversize and changed snapshots ho
   moved.verify.sourceCapture.manifest_sha256 = 'e'.repeat(64);
   const movedCtx = stageCtx({ reply: (p) => citeEnvelope(p, moved, () => 'rejected') });
   const changed = await citeStage(movedCtx, moved);
-  assert.equal(movedCtx.calls.length, 1);
+  assert.equal(movedCtx.calls.length, 0);
   assert.ok(changed.gaps.some((g) => g.startsWith('cite_identity_changed:')));
   assert.equal(changed.cite_ledger.entries.length, 4);
 });

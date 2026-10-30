@@ -690,6 +690,8 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         if kind == "array":
             return f"list[{schema_type(schema['items'], name + 'Item')}]"
         if kind == "object":
+            if "properties" not in schema:
+                return "dict[str, object]"
             fields = [
                 (
                     key,
@@ -1060,7 +1062,6 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
                 "criticality failure_scenario hidden_errors invalid_state_example",
             ),
             "line_end": 12,
-            "challenge_contested": True,
             "corroborations": [
                 _placeholders(
                     "corroboration", "agent dimension confidence title description"

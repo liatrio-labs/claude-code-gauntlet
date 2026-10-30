@@ -22,6 +22,129 @@ import { DIMENSIONS as DIMENSION_ROWS } from '../src/registry.js';
 import { normalizeFindingPaths } from '../src/mergeFindings.js';
 import { normalizePhaseFindings } from '../src/checkpoints.js';
 import { evaluateAdmission, hasAdmission } from '../src/admission.js';
+import { skepticalReturn, sourceCapture } from './helpers/verdicts.js';
+
+const proofArgs = (over = {}) => validArgs({ nonce: 'run', headShaShort: 'aaaaaaaa',
+  verify: { targetKind: 'branch', sourceCapture }, ...over });
+
+test('either proven refutation survives reduction through every final artifact', async () => {
+  for (const stage of ['validator', 'challenger']) for (const dimension of ['bug', 'security']) {
+    for (const other of ['real', 'missing', 'capped', 'failed', 'needs_evidence']) {
+      const refuted = makeFinding('REFUTED', { dimension, file: 'shared.txt', code: 'FORBIDDEN_FENCE',
+        suggested_fix_code: 'FORBIDDEN_PATCH', suggestion: 'FORBIDDEN_TASK',
+        consolidation_key: 'stale', consolidation_primary: stage === 'validator',
+        challenge: stage === 'validator' ? 'validator_terminal' : other === 'capped' ? 'capped' : other === 'failed' ? 'failed' : 'survived',
+        skeptical_assessments: [skepticalReturn('REFUTED', stage, { verdict: 'refuted' }),
+          ...(['real', 'needs_evidence'].includes(other) ? [skepticalReturn('REFUTED', stage === 'validator' ? 'challenger' : 'validator',
+            { verdict: other, missing_evidence: 'caller input' })] : [])] });
+      const survivor = makeFinding('SURVIVOR', { file: 'shared.txt', agent: 'security-reviewer' });
+      const result = await runAndCapture(proofArgs({ limits: { deliveryCap: 1 },
+        checkpoints: { challenge: challengeOutput({ findings: [refuted, survivor] }) } }));
+      assert.equal(result.out.ok, true);
+      const eliminated = result.payload.findings.find((f) => f.id === 'REFUTED');
+      assert.ok(eliminated, 'the eliminated record retains its audit identity');
+      assert.equal(eliminated.disposition, 'eliminate', `${stage}/${dimension}/${other}`);
+      assert.equal(eliminated.reduction_provenance.stage, stage);
+      assert.equal(eliminated.cite_results[0].status, 'matched');
+      assert.equal(eliminated.delivery_group, undefined);
+      assert.deepEqual(result.payload.postReview.map((f) => f.id), ['SURVIVOR']);
+      assert.deepEqual(result.payload.postReview[0].delivery_group.finding_ids, ['SURVIVOR']);
+      assert.doesNotMatch(result.payload.report, /FORBIDDEN_FENCE|FORBIDDEN_PATCH|FORBIDDEN_TASK|REFUTED\.js/);
+      assert.match(result.payload.report, /Eliminated/);
+      const resumed = await replayProducedCheckpoint(proofArgs(), result.payload.checkpoints);
+      assert.equal(resumed.ctx.calls.some((c) => c.label.startsWith('cite-')), false);
+      assert.deepEqual(resumed.payload.findings, result.payload.findings);
+      assert.deepEqual(resumed.payload.postReview, result.payload.postReview);
+      if (other === 'real') {
+        const citeOnly = await runAndCapture(proofArgs({ checkpoints: { cite: result.payload.checkpoints.phases.cite } }));
+        assert.deepEqual(citeOnly.payload.findings, result.payload.findings);
+        assert.equal(citeOnly.ctx.calls.some((c) => /^(validate-|verify-|challenge-|code-gauntlet:)/.test(c.label)), false);
+      }
+    }
+  }
+});
+
+test('validator terminal verdicts skip challenge and only filter survivors are cited', async () => {
+  const findings = ['refuted', 'needs_evidence', 'real', 'threshold'].map((id) => makeFinding(id, {
+    confidence: id === 'threshold' ? 1 : 90,
+    delivery_group: { issue_key: 'stale', lead_id: 'threshold', finding_ids: ['threshold', 'real'] },
+    skeptical_assessments: [skepticalReturn(id, 'validator', { verdict: id === 'threshold' ? 'refuted' : id,
+      missing_evidence: 'input value' })],
+  }));
+  const result = await runAndCapture(proofArgs({ limits: { challengeCap: 1 },
+    checkpoints: { validate: { findings, stats: {}, gaps: [] } } }));
+  assert.equal(result.ctx.calls.filter((c) => c.label.startsWith('challenge-')).length, 1);
+  const raw = result.payload.checkpoints.phases.challenge.findings;
+  for (const id of ['refuted', 'needs_evidence']) assert.equal(raw.find((f) => f.id === id).challenge, 'validator_terminal');
+  assert.equal(raw.find((f) => f.id === 'real').challenge, 'survived');
+  const cited = result.payload.checkpoints.phases.cite;
+  assert.equal(cited.cite_ledger.entries.some((e) => JSON.parse(e.key).record.finding_id === 'threshold'), false);
+  assert.equal(cited.eliminated.find((f) => f.id === 'threshold').eliminated_by, 'threshold');
+  assert.equal(result.payload.findings.find((f) => f.id === 'threshold').delivery_group, undefined);
+  assert.equal(result.payload.findings.find((f) => f.id === 'needs_evidence').disposition, 'held_back');
+});
+
+test('proof failures and needs evidence have asymmetric final outcomes', async () => {
+  for (const verdict of ['refuted', 'real', 'needs_evidence']) for (const fault of ['unmatched', 'rejected', 'malformed', 'snapshot']) {
+    const assessment = skepticalReturn('F', 'validator', { verdict, missing_evidence: 'input value' });
+    if (fault === 'malformed') assessment.citations[0].quote = '';
+    if (fault === 'snapshot') assessment.citations[0].snapshot_id = 'wrong';
+    const f = makeFinding('F', { skeptical_assessments: [assessment, skepticalReturn('F', 'challenger')] });
+    const args = proofArgs({ checkpoints: { challenge: challengeOutput({ findings: [f, makeFinding('SIBLING')] }) } });
+    let payload;
+    const ctx = makeCtx(args, { onPersist: (value) => { payload = value; } });
+    const agent = ctx.agent;
+    ctx.agent = async (prompt, dispatch) => {
+      const result = await agent(prompt, dispatch);
+      if (dispatch.label.startsWith('cite-') && ['unmatched', 'rejected'].includes(fault)) {
+        for (const row of result.result.citations) if (row.request.finding_id === 'F' && row.request.stage === 'validator') row.status = fault;
+        result.receipt.deltas_checksum = fnv1a32(JSON.stringify(result.result.citations, null, 2));
+      }
+      return result;
+    };
+    assert.equal((await runWith(ctx, args)).ok, true);
+    assert.equal(payload.findings.find((r) => r.id === 'F').disposition, verdict === 'real' ? 'deliver' : 'held_back', `${verdict}/${fault}`);
+    assert.equal(payload.findings.find((r) => r.id === 'SIBLING').disposition, 'deliver');
+  }
+  const raw = makeFinding('LEGACY', { skeptical_assessments: [], challenge_score: 0 });
+  const legacy = await runAndCapture(proofArgs({ checkpoints: { challenge: challengeOutput({ eliminated: [{ ...raw, eliminated_by: 'challenge:removed' }] }) } }));
+  assert.equal(legacy.payload.findings[0].disposition, 'held_back');
+  assert.deepEqual(legacy.payload.postReview, []);
+  const omitted = skepticalReturn('OMITTED');
+  delete omitted.verdict;
+  const omission = await runAndCapture(proofArgs({ checkpoints: { challenge: challengeOutput({ findings: [
+    makeFinding('OMITTED', { skeptical_assessments: [omitted, skepticalReturn('OMITTED', 'challenger')] }), makeFinding('SIBLING'),
+  ] }) } }));
+  assert.deepEqual(omission.payload.postReview.map((f) => f.id), ['SIBLING']);
+  assert.equal(omission.payload.findings.find((f) => f.id === 'OMITTED').disposition, 'held_back');
+  const audit = await runAndCapture(proofArgs({ checkpoints: { challenge: challengeOutput({ findings: [
+    makeFinding('AUDIT', { skeptical_assessments: [skepticalReturn('AUDIT', 'validator', { verdict: 'refuted', trace_id: 'producer-field' })],
+      challenge: 'validator_terminal' }),
+  ] }) } }));
+  assert.equal(audit.payload.findings[0].disposition, 'held_back');
+  assert.equal(audit.payload.findings[0].skeptical_assessments[0].trace_id, 'producer-field');
+  const auditedResume = await replayProducedCheckpoint(proofArgs(), audit.payload.checkpoints);
+  assert.equal(auditedResume.payload.findings[0].disposition, 'held_back');
+});
+
+test('cite outage preserves independent real findings and unrelated holdbacks', async () => {
+  const findings = [makeFinding('REAL'), makeFinding('BODY', { diff_validation: { in_diff: false } }),
+    makeFinding('VERIFY', { origin: 'unknown' }), makeFinding('CHALLENGE', { challenge: 'failed' }),
+    makeFinding('ADMISSION', { dimension: 'simplification', quality_basis: 'current_correctness' }),
+    makeFinding('REFUTED', { skeptical_assessments: [skepticalReturn('REFUTED', 'validator', { verdict: 'refuted' })], challenge: 'validator_terminal' })];
+  const args = proofArgs({ checkpoints: { challenge: challengeOutput({ findings }) } });
+  let payload;
+  const ctx = makeCtx(args, { onPersist: (value) => { payload = value; } });
+  const agent = ctx.agent;
+  ctx.agent = (prompt, dispatch) => dispatch.label.startsWith('cite-') ? null : agent(prompt, dispatch);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(Object.fromEntries(payload.findings.map((f) => [f.id, f.disposition])), {
+    REAL: 'deliver', BODY: 'body', VERIFY: 'held_back', CHALLENGE: 'held_back', ADMISSION: 'held_back', REFUTED: 'held_back' });
+  const resumed = await replayProducedCheckpoint(proofArgs(), payload.checkpoints);
+  assert.deepEqual(resumed.payload.findings, payload.findings);
+  assert.equal(resumed.out.gaps.filter((g) => g === 'cite_unavailable: dependent proof could not be established').length, 1);
+});
 
 test('ordinary findings retain admission across path roles', () => {
   for (const dimension of ['bug', 'security']) for (const path_role of ['non_source', 'unknown']) {
@@ -104,6 +227,17 @@ test('live and replay admission agree after filtering strips an oversized equiva
     assert.equal(result.payload.postReview.length, 1);
   }
   assert.deepEqual(live.payload.findings, replay.payload.findings);
+  const rewritten = makeFinding('rewritten', { dimension: 'simplification', quality_basis: 'simpler_equivalent',
+    suggestion: 'You should run this command to reproduce the failure in a clean environment first.', behavior_preserved: 'Same return value', admission_assessments: [
+      { predicate: 'present_defect', status: 'rejected', references: ['primary'] },
+      ...['concrete_equivalent', 'behavior_preserved'].map((predicate) => ({ predicate, status: 'confirmed', references: ['primary'] })),
+    ] });
+  const outbound = await runAndCapture(validArgs({ checkpoints: { challenge: challengeOutput({ findings: [rewritten] }) } }));
+  assert.equal(outbound.payload.findings[0].suggestion, undefined);
+  assert.equal(outbound.payload.findings[0].disposition, 'report_only');
+  assert.equal(outbound.payload.findings[0].body_fix_task_eligible, false);
+  assert.ok(hasAdmission(outbound.payload.findings[0]));
+  assert.deepEqual(outbound.payload.postReview, []);
 });
 
 test('reference diagnostics distinguish absent evidence from dropped evidence by field', () => {
@@ -337,7 +471,7 @@ test('missing admission stamps cannot deliver any test kind', async (t) => {
   assert.ok(incomplete.unverified[0].disposition_reasons.includes('validation_skipped'));
 });
 
-const PHASES = ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'];
+const PHASES = ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'cite', 'report'];
 const DISCOVERY = [
   'code-gauntlet:bug-detector', 'code-gauntlet:security-reviewer', 'code-gauntlet:cross-file-impact',
   'code-gauntlet:test-analyzer', 'code-gauntlet:conventions-and-intent', 'code-gauntlet:type-design-analyzer',
@@ -399,17 +533,19 @@ test('whole issue groups reach every artifact', async (t) => {
   assert.ok(uncapped.payload.postReview.findings.some((f) => f.id === 'UNRELATED'));
   });
   await t.test('removed primary leaves an independent issue', async () => {
-  const orphan = applyChallenges([
-    member('REMOVED', { file: 'orphan.txt', consolidation_key: 'old', consolidation_primary: true }),
-    member('ORPHAN', { file: 'orphan.txt', agent: 'security-reviewer', consolidation_key: 'old' }),
-  ], [{ id: 'REMOVED', score: 0 }, { id: 'ORPHAN', score: 90 }]);
-  const orphanRun = await runAndCapture(validArgs({ checkpoints: { challenge: challengeOutput(orphan) } }));
+  const refutation = skepticalReturn('REMOVED','validator',{verdict:'refuted'});
+  const orphan = {findings:[
+    member('REMOVED',{file:'orphan.txt',consolidation_key:'old',consolidation_primary:true,challenge:'validator_terminal',skeptical_assessments:[refutation]}),
+    member('ORPHAN',{file:'orphan.txt',agent:'security-reviewer',consolidation_key:'old'}),
+  ]};
+  const orphanRun = await runAndCapture(proofArgs({checkpoints:{challenge:challengeOutput(orphan)}}));
   assert.deepEqual(orphanRun.payload.postReview.map((f) => f.delivery_group.finding_ids), [['ORPHAN']]);
   assert.equal(orphanRun.payload.postReview[0].consolidation_key, undefined);
   });
   const idless = disposeFindings({ findings: [member(undefined, { file: 'idless.txt', confidence: 100 }),
     member('HAS-ID', { file: 'idless.txt', confidence: 50, agent: 'security-reviewer' })] });
-  assert.equal(idless.findings.find((f) => f.id === 'HAS-ID').consolidation_primary, true);
+  assert.equal(idless.unverified[0].disposition,'held_back');
+  assert.equal(idless.findings.find((f) => f.id === 'HAS-ID').disposition,'deliver');
   const freshArgs = validArgs();
   let freshPayload;
   const freshCtx = makeCtx(freshArgs, { findings: [member('FRESH', { sites: [site(1), site(2)] })], onPersist: (value) => { freshPayload = value; } });
@@ -441,7 +577,7 @@ test('final disposition survives replay and persistence', async () => {
   assert.equal(fresh.out.ok, true);
   const byId = new Map(fresh.payload.findings.map((f) => [f.id, f]));
   assert.deepEqual(byId.get('BOTH').disposition_reasons, ['validation_skipped', 'verify_unproven', 'held_back']);
-  assert.deepEqual(byId.get('VERIFY').disposition_reasons, ['verify_unproven', 'held_back']);
+  assert.deepEqual(byId.get('VERIFY').disposition_reasons, ['verify_unproven', 'cite_unmatched', 'held_back']);
   assert.deepEqual(byId.get('VALIDATE').disposition_reasons, ['validation_skipped', 'held_back']);
   assert.equal(byId.get('CLEAN').disposition, 'deliver');
   assert.deepEqual(fresh.payload.postReview.map((f) => f.id), ['CLEAN']);
@@ -449,7 +585,7 @@ test('final disposition survives replay and persistence', async () => {
   const limited = await runAndCapture(validArgs({ measurementTrace: true, limits: { challengeCap: 1 } }), {
     nullAgentLabels: ['challenge-0'],
   });
-  assert.deepEqual(limited.payload.findings.map((f) => f.disposition_reasons), [['challenge_failed'], ['challenge_cap']]);
+  assert.deepEqual([...limited.payload.findings].sort((a,b)=>a.id.localeCompare(b.id)).map((f) => f.disposition_reasons.filter(r=>!r.startsWith('cite_') && r!=='held_back')), [['challenge_failed'], ['challenge_cap']]);
   assert.deepEqual(limited.payload.postReview, []);
   const badArgs = validArgs();
   const badCtx = makeCtx(badArgs);
@@ -465,14 +601,12 @@ test('final disposition survives replay and persistence', async () => {
   const badProof = await runWith(badCtx, badArgs);
   assert.equal(badProof.stats.verified, false);
   assert.equal(badProof.stats.unverified, 2);
-  const scored = applyChallenges([makeFinding('NUMERIC'), makeFinding('SECURITY', { dimension: 'security', risk_level: 4 })],
-    [{ id: 'NUMERIC', score: 0 }, { id: 'SECURITY', score: 0 }]);
-  assert.equal(scored.findings[0].severity, 'medium');
-  const raw = challengeOutput({ findings: [...scored.findings,
-    makeFinding('BODY', { report_tag: 'suggestion', diff_validation: { in_diff: false, reason: 'off diff' } }),
-    makeFinding('UNKNOWN', { origin: 'surfaced', diff_validation: undefined }),
-    makeFinding('FAILED', { challenge: 'failed' }), makeFinding('CAPPED', { challenge: 'capped' })],
-    eliminated: scored.eliminated });
+  const raw = challengeOutput({findings:[
+    makeFinding('SECURITY',{dimension:'security',risk_level:4}),
+    makeFinding('BODY',{report_tag:'suggestion',diff_validation:{in_diff:false,reason:'off diff'}}),
+    makeFinding('UNKNOWN',{origin:'surfaced',diff_validation:undefined}),
+    makeFinding('FAILED',{challenge:'failed'}),makeFinding('CAPPED',{challenge:'capped'}),
+  ]});
   for (const finding of [...raw.findings, ...raw.eliminated]) {
     finding.line = finding.line_start;
     finding.end_line = finding.line_end;
@@ -482,8 +616,8 @@ test('final disposition survives replay and persistence', async () => {
   const disposed = disposeFindings(raw);
   assert.equal(JSON.stringify(raw), before);
   assert.deepEqual(disposeFindings(disposed), disposed);
-  assert.deepEqual(disposed.unverified.map((f) => f.disposition_reasons), [['challenge_failed'], ['challenge_cap']]);
-  const expected = { SECURITY: 'deliver', BODY: 'body', UNKNOWN: 'body', FAILED: 'held_back', CAPPED: 'held_back', NUMERIC: 'eliminate' };
+  assert.deepEqual(disposed.unverified.map((f) => f.disposition_reasons.filter(r=>!r.startsWith('cite_'))), [['challenge_failed'], ['challenge_cap']]);
+  const expected = { SECURITY: 'deliver', BODY: 'body', UNKNOWN: 'body', FAILED: 'held_back', CAPPED: 'held_back' };
   for (const writerFails of [false, true]) {
     const result = await runAndCapture(validArgs({ limits: { deliveryCap: 1 }, checkpoints: { challenge: raw } }),
       writerFails ? { agentThrowLabel: 'artifact-writer' } : {});
@@ -494,9 +628,7 @@ test('final disposition survives replay and persistence', async () => {
     const findings = resumed.payload.findings;
     assert.deepEqual(Object.fromEntries(findings.map((f) => [f.id, f.disposition])), expected);
     assert.equal(findings.find((f) => f.id === 'BODY').report_tag, 'suggestion');
-    assert.equal(findings.find((f) => f.id === 'SECURITY').challenge_score, 0);
     assert.equal(findings.find((f) => f.id === 'SECURITY').risk_level, 4);
-    assert.equal(findings.find((f) => f.id === 'NUMERIC').challenge_score, 0);
     assert.deepEqual(resumed.payload.postReview.map((f) => f.id), ['UNKNOWN']);
     if (!writerFails) assert.deepEqual(findings, result.payload.findings);
   }
@@ -709,7 +841,7 @@ const COARSEN_ROWS = [
   { name: 'entry changed-file pressure', changedFiles: Array.from({ length: 20000 }, (_, index) => `src/f${index}.js`),
     limits: { summarizeBucketSize: 1 }, bucketCount: 625, batchCount: 1 },
   { name: 'post-merge finding pressure', findings: Array.from({ length: 1000 }, (_, index) => makeFinding(`F${index}`)),
-    limits: { validateBatch: 1, verifySliceSize: 2000 }, bucketCount: 0, batchCount: 125 },
+    limits: { validateBatch: 1, verifySliceSize: 2000 }, bucketCount: 0, batchCount: 1 },
 ];
 for (const row of COARSEN_ROWS) test(`coarsening wiring: ${row.name}`, async () => {
   const args = validArgs({ ...(row.changedFiles ? { changedFiles: row.changedFiles, changedLines: 100000 } : {}),
@@ -771,7 +903,7 @@ const REPLAY_PATH_ROWS = [
   { name: 'validate findings', rewrites: 3, phase: 'validate', field: 'findings' },
   { name: 'filter survivors reach sanitized challenger', phase: 'filter', field: 'filtered', rewrites: 3 },
   { name: 'filter eliminations disclose rejected paths', rewrites: 3, failureRewrites: 6, phase: 'filter', field: 'eliminated' },
-  { name: 'challenge survivors with stale paths need reclassification', phase: 'challenge', field: 'findings', rewrites: 3, delivered: [] },
+  { name: 'challenge survivors refresh admission after path normalization', phase: 'challenge', field: 'findings', rewrites: 3, delivered: ['REPLAY_UNDER'] },
   { name: 'challenge unverified', rewrites: 3, phase: 'challenge', field: 'unverified' },
   { name: 'challenge eliminated', rewrites: 3, phase: 'challenge', field: 'eliminated' },
 ];
@@ -868,7 +1000,7 @@ for (const replay of [false, true]) test(`field validation wiring: ${replay ? 'r
     assert.equal(Object.hasOwn(findings[0], 'cross_file_refs'), false);
     assert.deepEqual(findings[0].affected_consumers, []);
   }
-  if (replay) assert.deepEqual(payload.postReview, []);
+  if (replay) assert.equal(payload.postReview[0].id,'BAD_PATH_ARRAY');
   for (const gap of [
     '[BAD_PATH_ARRAY] Invalid cross_file_refs path: expected an array - field dropped',
     '[BAD_PATH_ARRAY] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped',
@@ -911,7 +1043,7 @@ const HOST_ROWS = [
     evidence: 'See [source](src/a.js:10) and https://example.test/repository.',
     attack_vector: 'See private.txt', suggestion_removal_reason: 'See private.txt',
     secret_host_note: { nested: ['custom.json', null, 42] },
-  }, gaps: ['host-path-text: finding #1 of unverified mentions a host path in id - text left unchanged'] },
+  }, gaps: ['host-path-text: finding #1 of findings mentions a host path in cite_results, id, skeptical_assessments - text left unchanged'] },
   { name: 'outside roots, exempt code and object keys', extra: {
     validation_justification: 'See /external/output/private.txt', attack_vector: 'See /plugin/agents/reviewer.md',
     evidence: { '/work/repo/private.txt': ['See /work/repo/src/a.js', '/plugin/private.txt'] },
@@ -969,7 +1101,7 @@ for (const field of ['id', 'consolidation_key', 'consolidation_primary']) test(`
   assert.equal(out.ok, true);
   assert.equal(payload.checkpoints.phases.challenge.eliminated[0][field], identifier);
   assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), field === 'id' ? [
-    `host-path-text: finding ${field === 'id' ? '#1 of eliminated' : 'SAFE_ID'} mentions a host path in ${field} - text left unchanged`,
+    `host-path-text: finding ${field === 'id' ? '#1 of eliminated' : 'SAFE_ID'} mentions a host path in ${field}, skeptical_assessments - text left unchanged`,
   ] : []);
 });
 
@@ -1419,9 +1551,8 @@ const BODY_ROWS = [
   { name: 'headless comments plural cap', mode: 'headless', receipt: 'markdown,pr_comments', identity: true,
     count: 9, cap: 6, delivered: 6, bullets: 6,
     suffix: '3 more findings not listed here (over the delivery cap of 6 findings).' },
-  { name: 'ID-less selection uses selected object', mode: 'headless', receipt: 'markdown,pr_comments', identity: true,
-    idless: true, count: 3, cap: 1, delivered: 1, bullets: 1, title: 'critical choice',
-    suffix: '2 more findings not listed here (over the delivery cap of 1 finding).' },
+  { name: 'unidentified legacy selection is held back', mode: 'headless', receipt: 'markdown,pr_comments', identity: true,
+    idless: true, count: 3, cap: 1, delivered: 0, bullets: 0 },
   { name: 'headless comments singular omitted finding', mode: 'headless', receipt: 'markdown,pr_comments', identity: true,
     count: 2, cap: 1, delivered: 1, bullets: 1,
     suffix: '1 more finding not listed here (over the delivery cap of 1 finding).' },

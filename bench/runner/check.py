@@ -622,15 +622,21 @@ def workflow_stage_outcomes(pr_dir):
         ):
             failures.add("verify execution failed")
         validation = stats.get("validate") or {}
-        if validation.get("skipped", 0) > 0 or validation.get(
-            "batches_completed", 0
-        ) < validation.get("batches_dispatched", 0):
+        if validation.get("batches_completed", 0) < validation.get(
+            "batches_dispatched", 0
+        ):
             failures.add("validate execution failed")
+        omitted = validation.get("skipped", 0) + validation.get("incomplete", 0)
+        if omitted:
+            disclosures.add(f"Incomplete validation: {omitted} findings held back.")
         challenge = stats.get("challenge") or {}
         failed = challenge.get("dispatched", 0) - challenge.get("completed", 0)
         if failed > 0:
             failures.add("challenge execution failed")
-        capped = challenge.get("skipped", 0) - max(0, failed)
+        incomplete = challenge.get("incomplete", 0)
+        if incomplete:
+            disclosures.add(f"Incomplete challenge: {incomplete} findings held back.")
+        capped = challenge.get("skipped", 0) - max(0, failed) - incomplete
         if capped > 0:
             disclosures.add(f"Permitted challenge cap: {capped} findings held back.")
         if (stats.get("inputProof") or {}).get("retried", 0):

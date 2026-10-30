@@ -5,10 +5,12 @@ import { parseWriterPayload } from '../../src/persist.js';
 import { persistCtx } from './persistFixtures.js';
 import { deriveFromPlan } from './deriveFromPlan.js';
 import { fnv1a32 } from '../../src/wire.js';
+import { skepticalReturn, sourceCapture } from './verdicts.js';
 
 export function measurementScenario(mode = 'return', overrides = {}, options = {}) {
   const id = { owner: 'synthetic', repo: 'fixture', pr_number: 1, sha_full: 'a'.repeat(40), platform: 'github', web_origin: 'https://github.com' };
   const args = validArgs({ delivery: { tier: 'all', prIdentity: id },
+    verify: { targetKind: 'branch', sourceCapture: { ...sourceCapture, nonce: 'nonce-xyz', head: `abc1234${'a'.repeat(33)}` } },
     limits: { challengeCap: 5, deliveryCap: 1 },
     ...(mode === 'return' ? { persist: { returnPrimaries: true } } : mode === 'derived' ? { persist: {} } : {}),
     ...overrides,
@@ -56,13 +58,14 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
     if (/^validate-(batch|retry)-/.test(label)) {
       ctx.calls.push({ prompt, ...dispatch });
       const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
-      return { validations: ids.filter((id) => id !== 'SKIP').map((finding_id) => ({ finding_id, policy_subject: 'ordinary',
+      return { validations: ids.filter((id) => id !== 'SKIP').map((finding_id) => skepticalReturn(finding_id, 'validator', { policy_subject: 'ordinary',
         confidence: finding_id === 'FILTER' ? 45 : seed.find((f) => f.id === finding_id)?.confidence ?? 90,
         ...(finding_id === 'REPORT' ? { admission_assessments: [{ predicate: 'present_defect', status: 'rejected', references: ['primary'] }] } : {}) })) };
     }
     if (label.startsWith('challenge-')) {
       ctx.calls.push({ prompt, ...dispatch });
-      return { confidence_claim_is_correct: prompt.includes('finding REMOVE') ? 0 : 90, justification: 'fixed independent check' };
+      const id = prompt.match(/Finding identity: (\S+)/)[1];
+      return skepticalReturn(id, 'challenger', { verdict: id === 'REMOVE' ? 'refuted' : 'real' });
     }
     if (label === 'artifact-writer' || label === 'assemble-artifacts') {
       ctx.calls.push({ prompt, ...dispatch });

@@ -3,11 +3,11 @@
 import { INT_POLICY, coerceInt } from './wire.js';
 import { canonicalRange } from './location.js';
 import { matchAssessments } from './admission.js';
-import { VALIDATION_RETURN_PROPERTIES, requiredAssessments, REACHABILITY_VALUES } from './registry.js';
+import { VALIDATION_RETURN_PROPERTIES, requiredAssessments, REACHABILITY_VALUES, acceptSkepticalReturn } from './registry.js';
 
 export { REACHABILITY_VALUES };
 
-export function validationRejections(finding, validation) {
+export function validationRejections(finding, validation, semantic = true) {
   if (!validation) return ['missing_entry'];
   const reasons = [];
   if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
@@ -21,7 +21,21 @@ export function validationRejections(finding, validation) {
       reasons.push(`missing_assessment:${predicate}`);
     }
   }
+  if (semantic) reasons.push(...validatorAssessment(finding, validation).errors
+    .filter((error) => !['$.confidence', '$.policy_subject'].includes(error)
+      && !(error.startsWith('$.admission_assessments') && reasons.some((reason) => reason.startsWith('missing_assessment:'))))
+    .map((error) => `skeptical:${error}`));
   return reasons;
+}
+
+// Scores use the same coercion as application; verdict acceptance never discards usable validation fields.
+export function validatorAssessment(finding, validation) {
+  const { id: _id, ...raw } = validation || {};
+  const normalized = { ...raw, confidence: coerceInt(raw.confidence, INT_POLICY.validation) };
+  const assessment = acceptSkepticalReturn(normalized, finding.id, 'validator');
+  const independent = Object.keys(VALIDATION_RETURN_PROPERTIES).concat(['confidence', 'reachability', 'justification']);
+  const errors = assessment.errors.filter((error) => !independent.some((field) => error === `$.${field}` || error.startsWith(`$.${field}[`) || error.startsWith(`$.${field}.`)));
+  return { ...assessment, status: errors.length ? 'incomplete' : 'complete', errors, raw };
 }
 
 export function applyValidations(findings, validations) {
@@ -29,7 +43,7 @@ export function applyValidations(findings, validations) {
   for (const finding of findings) {
     delete finding.sites;
     delete finding.reachability;
-    for (const field of ['policy_subject', 'admission_assessments', 'admission', 'body_fix_task_eligible', 'effective_test_kind']) delete finding[field];
+    for (const field of ['policy_subject', 'admission_assessments', 'admission', 'body_fix_task_eligible', 'effective_test_kind', 'skeptical_assessments', 'cite_results']) delete finding[field];
     const fid = 'id' in finding ? finding.id : undefined;
     if (fid !== null && fid !== undefined) findingById.set(fid, finding);
   }
@@ -54,6 +68,8 @@ export function applyValidations(findings, validations) {
       unmatchedIds.push(vid);
       continue;
     }
+
+    finding.skeptical_assessments = [validatorAssessment(finding, validation)];
 
     if (!('original_confidence' in finding)) {
       finding.original_confidence = 'confidence' in finding ? finding.confidence : 0;

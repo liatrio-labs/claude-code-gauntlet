@@ -11,6 +11,7 @@ export async function replayProducedCheckpoint(args, checkpoint) {
   assert.equal(Object.keys(copy).at(-1), 'checksum');
   const resumed = await runAndCapture({ ...args, checkpoints: copy });
   assert.equal(resumed.out.ok, true);
+  if (copy.phases.cite) assert.equal(resumed.ctx.calls.some((call) => /^(code-gauntlet:|validate-|verify-|challenge-)/.test(call.label)), false);
   for (const phase of Object.keys(copy.phases)) {
     const labels = resumed.ctx.calls.map((call) => call.label);
     if (phase === 'summarize') assert.equal(labels.includes('summarize'), false);
@@ -62,7 +63,7 @@ export function replaySurvivor() {
 export function persistInput(over = {}) {
   const findings = over.findings || [makeFinding('F1'), makeFinding('F2')].map(({ diff_validation: _diff,
     path_role: _role, policy_subject: _subject, validation: _validation, challenge: _challenge, admission: _admission,
-    body_fix_task_eligible: _eligible, report_tag: _tag, report_destination: _destination, ...finding }) => finding);
+    body_fix_task_eligible: _eligible, report_tag: _tag, report_destination: _destination, skeptical_assessments: _skeptical, ...finding }) => finding);
   return {
     findings, postReview: findings, report: '# Code Gauntlet\n\nfindings rendered here',
     checkpoints: persistCheckpoints(findings),

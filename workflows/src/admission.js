@@ -171,6 +171,10 @@ export function evaluateAdmission(finding) {
   return finding;
 }
 
+export function refreshAdmission(finding) {
+  return hasAdmission(finding) ? finding : evaluateAdmission(finding);
+}
+
 export function admissionContext(finding) {
   const policy = findingPolicy(finding, false);
   return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),

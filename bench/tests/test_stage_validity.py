@@ -202,7 +202,7 @@ process.stdout.write(JSON.stringify({ out, returned }));
     )
 
 
-def test_archived_named_workflow_failure_survives_treatment_bundle_switch(tmp_path):
+def test_archived_named_workflow_disclosure_survives_treatment_bundle_switch(tmp_path):
     path = tmp_path / "workflows/wf_archived.json"
     path.parent.mkdir()
     path.write_text(
@@ -215,8 +215,48 @@ def test_archived_named_workflow_failure_survives_treatment_bundle_switch(tmp_pa
         ),
         encoding="utf-8",
     )
-    failures, _ = check.workflow_stage_outcomes(tmp_path)
-    assert failures == ("validate execution failed",)
+    failures, disclosures = check.workflow_stage_outcomes(tmp_path)
+    assert failures == ()
+    assert disclosures == ("Incomplete validation: 1 findings held back.",)
+
+
+def test_completed_validation_omission_is_valid_with_counted_disclosure(
+    tmp_path, fingerprint
+):
+    out = {
+        "ok": True,
+        "stats": {
+            "validate": {
+                "batches_dispatched": 1,
+                "batches_completed": 1,
+                "skipped": 1,
+            },
+            "challenge": {
+                "dispatched": 2,
+                "completed": 2,
+                "incomplete": 1,
+                "skipped": 1,
+            },
+        },
+    }
+    attempt, smoke = _collect_discovery_attempt(tmp_path, fingerprint, out)
+    assert attempt.validity.state == "valid"
+    assert smoke["ok"], smoke["failures"]
+    assert (
+        "Incomplete validation: 1 findings held back." in attempt.validity.limitations
+    )
+    assert "Incomplete challenge: 1 findings held back." in attempt.validity.limitations
+    assert not any("challenge cap" in item for item in attempt.validity.limitations)
+    pr = next((tmp_path / "run").glob("pr-*"))
+    record = pr / "workflows/wf_test-0001.json"
+    wire = read_json(record)
+    for stage, field in [("validate", "batches_completed"), ("challenge", "completed")]:
+        changed = json.loads(json.dumps(out))
+        changed["stats"][stage][field] = 0
+        record.write_text(
+            json.dumps({**wire, "result": changed}), encoding="utf-8", newline=""
+        )
+        assert f"{stage} execution failed" in check.workflow_stage_outcomes(pr)[0]
 
 
 @pytest.mark.parametrize(

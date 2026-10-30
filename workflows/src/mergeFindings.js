@@ -1,6 +1,6 @@
 // Finding path normalization, validation, deduplication, and merge envelopes.
 import { repoRelativeFindingPath, safeFindingLabel } from './paths.js';
-import { AGENTS, DIMENSIONS, FINDING_PROP_TYPES, FINDING_PATH_DESCRIPTORS, CITATION_REQUEST_SCHEMA, CITATION_RESULT_SCHEMA, producerRow, findingPolicy } from './registry.js';
+import { AGENTS, DIMENSIONS, FINDING_PROP_TYPES, FINDING_PATH_DESCRIPTORS, CITATION_REQUEST_SCHEMA, CITATION_RESULT_SCHEMA, SKEPTICAL_FINDING_PROPERTIES, producerRow, findingPolicy } from './registry.js';
 import { measurementDecisions, traceDecision } from './measurementTrace.js';
 import { deepClone } from './wire.js';
 
@@ -66,6 +66,14 @@ export function normalizeFindingPaths(findings, repoRoot, decisions = []) {
       return undefined;
     };
     const confine = (value, schema, field) => {
+      if (schema === SKEPTICAL_FINDING_PROPERTIES.skeptical_assessments.items) {
+        const raw = value?.raw ?? value;
+        for (const request of [...(Array.isArray(raw?.citations) ? raw.citations : []),
+          ...(Array.isArray(raw?.scope_assessments) ? raw.scope_assessments.flatMap((scope) => Array.isArray(scope?.citations) ? scope.citations : []) : [])]) {
+          confine(request, CITATION_REQUEST_SCHEMA, field);
+        }
+        return value;
+      }
       if (schema === CITATION_REQUEST_SCHEMA || schema === CITATION_RESULT_SCHEMA) {
         const request = schema === CITATION_RESULT_SCHEMA ? value?.request : value;
         const path = repoRelativeFindingPath('', request?.file);

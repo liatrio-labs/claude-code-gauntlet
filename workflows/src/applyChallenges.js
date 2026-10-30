@@ -1,13 +1,7 @@
-// Apply challenge scores to findings and preserve the consolidation fields.
+// Ranking remains independent of skeptical verdicts and citation proof.
 
 import { SEVERITY_ORDER } from './registry.js';
-import { INT_POLICY, coerceInt, deepClone } from './wire.js';
-
-export function downgradeSeverity(severity) {
-  const idx = typeof severity === 'string' ? SEVERITY_ORDER.indexOf(severity.toLowerCase()) : -1;
-  if (idx < 0 || idx + 1 >= SEVERITY_ORDER.length) return null;
-  return SEVERITY_ORDER[idx + 1];
-}
+import { deepClone } from './wire.js';
 
 export function rankKey(finding) {
   const sev = (finding.severity ?? 'low').toLowerCase();
@@ -30,110 +24,15 @@ export function rankFindings(findings) {
   });
 }
 
+// Numeric legacy returns carry no removal or delivery authority.
 export function applyChallenges(findings, challenges) {
-  const challengeById = new Map();
-  for (const entry of challenges) {
-    const cid = 'id' in entry ? entry.id : undefined;
-    if (cid === undefined || cid === null) continue;
-    const rawScore = 'score' in entry ? entry.score : undefined;
-    if (rawScore === undefined || rawScore === null) continue;
-    if (coerceInt(rawScore, INT_POLICY.validation) === null) continue;
-    challengeById.set(cid, entry);
+  const byId = new Map(challenges.map((entry) => [entry.id, entry]));
+  const out = deepClone(findings);
+  for (const finding of out) {
+    const raw = byId.get(finding.id);
+    if (raw?.assessment) finding.skeptical_assessments = [
+      ...(finding.skeptical_assessments || []).filter((a) => a.stage !== 'challenger'), raw.assessment];
+    else if (raw) finding.challenge_audit = raw;
   }
-
-  const active = [];
-  const eliminated = [];
-  const stats = {
-    challenge_removed: 0,
-    challenge_downgraded: 0,
-    challenge_contested: 0,
-    challenge_survived: 0,
-    unchallenged: 0,
-  };
-
-  for (let finding of findings) {
-    const fid = 'id' in finding ? finding.id : undefined;
-    const entry = challengeById.get(fid);
-
-    if (entry === undefined) {
-      stats.unchallenged += 1;
-      active.push(finding);
-      continue;
-    }
-
-    const rawScore = 'score' in entry ? entry.score : 0;
-    const score = coerceInt(rawScore, INT_POLICY.validation);
-    const justification = 'justification' in entry ? entry.justification : undefined;
-
-    // Deep-clone before mutation -- no aliasing of the caller's finding.
-    finding = deepClone(finding);
-    finding.challenge_score = score;
-    if (justification) finding.challenge_justification = justification;
-
-    const isSurfaced = ('origin' in finding ? finding.origin : '').toLowerCase() === 'surfaced';
-    const isSecurity = ('dimension' in finding ? finding.dimension : '').toLowerCase() === 'security';
-
-    if (score < 25 && !isSecurity) {
-      eliminated.push({
-        ...finding,
-        eliminated_by: 'challenge:removed',
-        elimination_reason: `challenge score ${score} < 25; finding does not survive blind challenge`,
-      });
-      stats.challenge_removed += 1;
-    } else if (score < 50) {
-      const currentSev = ('severity' in finding ? finding.severity : 'low').toLowerCase();
-      const newSev = downgradeSeverity(currentSev);
-      finding.challenge_contested = false;
-      const removed = score < 25 && newSev === null;
-      if (newSev === null) {
-        eliminated.push({
-          ...finding,
-          eliminated_by: removed ? 'challenge:removed' : 'challenge:downgraded',
-          elimination_reason: score < 25
-            ? `challenge score ${score} < 25; security finding severity already ` +
-              `'${currentSev}' (lowest) — finding removed`
-            : `challenge score ${score} in 25-49 range; severity already ` +
-              `'${currentSev}' (lowest) — finding removed`,
-        });
-      } else {
-        finding.severity = newSev;
-        finding.severity_downgraded = true;
-        finding.original_severity = currentSev;
-        finding.report_destination = 'suggestion';
-        finding.report_tag = 'suggestion';
-        active.push(finding);
-      }
-      stats[removed ? 'challenge_removed' : 'challenge_downgraded'] += 1;
-    } else if (score < 75) {
-      finding.challenge_contested = true;
-      if (isSurfaced) {
-        finding.report_destination = 'suggestion';
-        finding.report_tag = 'suggestion';
-      }
-      active.push(finding);
-      stats.challenge_contested += 1;
-    } else {
-      finding.challenge_contested = false;
-      active.push(finding);
-      stats.challenge_survived += 1;
-    }
-  }
-
-  const totalInput = findings.length;
-
-  const ranked = rankFindings(active);
-
-  return {
-    findings: ranked,
-    eliminated,
-    stats: {
-      total_input: totalInput,
-      challenge_removed: stats.challenge_removed,
-      challenge_downgraded: stats.challenge_downgraded,
-      challenge_contested: stats.challenge_contested,
-      challenge_survived: stats.challenge_survived,
-      unchallenged: stats.unchallenged,
-      final_count: ranked.length,
-    },
-  };
+  return { findings: rankFindings(out), eliminated: [], stats: { total_input: out.length, final_count: out.length } };
 }

@@ -7,6 +7,7 @@ import { plannedArtifactPaths } from '../../../workflows/src/outputPaths.js';
 import { normalizeArgs } from '../../../workflows/src/args.js';
 import { parseWriterPayload } from '../../../workflows/src/persist.js';
 import { runWith } from '../../../workflows/src/run.js';
+import { citationEnvelope } from '../../../workflows/test/helpers/verdicts.js';
 
 // Shared IDs must remain distinct occurrences across holdback and elimination.
 const finding = (occurrence, over = {}) => makeFinding(occurrence === 4 ? 'DUP' : `F${occurrence}`, {
@@ -21,7 +22,7 @@ const grouped = finding(1, { file: winner.file, title: 'corroborating defect',
   agent: 'conventions-and-intent', dimension: 'intent',
   discovery_agent: 'conventions-and-intent', discovery_dimension: 'intent' });
 const held = finding(3, { validation: 'skipped' });
-const eliminated = finding(4, { eliminated_by: 'challenge:removed', elimination_reason: 'disproved' });
+const eliminated = finding(4, { eliminated_by: 'verify', elimination_reason: 'disproved' });
 const filtered = finding(5, { confidence: 10, eliminated_by: 'threshold', elimination_reason: 'below threshold' });
 const capped = finding(2, { confidence: 60 });
 const findings = [winner, grouped, held, eliminated, filtered, capped];
@@ -56,6 +57,7 @@ for (const mode of ['return', 'derived', 'legacy', 'writer-failure', 'empty', 'c
   const dispatches = [];
   const persistence = persistCtx();
   const ctx = { pipelineVersion: null, agent: async (prompt, dispatch) => {
+    if (dispatch.label.startsWith('cite-')) return citationEnvelope(prompt, args, () => 'unmatched');
     const row = { label: dispatch.label, agent_type: dispatch.agentType,
       prompt_sha256: createHash('sha256').update(prompt).digest('hex'), result: null, error: null };
     dispatches.push(row);

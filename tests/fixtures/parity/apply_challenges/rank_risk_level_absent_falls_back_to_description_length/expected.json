@@ -34,12 +34,7 @@
     }
   ],
   "stats": {
-    "challenge_contested": 0,
-    "challenge_downgraded": 0,
-    "challenge_removed": 0,
-    "challenge_survived": 0,
     "final_count": 2,
-    "total_input": 2,
-    "unchallenged": 2
+    "total_input": 2
   }
 }

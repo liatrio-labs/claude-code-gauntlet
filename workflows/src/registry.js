@@ -56,7 +56,7 @@ export const CODE_OWNED_HEADINGS = deepFreeze([
   '## Summary',
   '## Change Context',
   '## Findings',
-  '## Findings held back by admission',
+  '## Findings held back',
   '## Unverified / pipeline-degraded findings',
   '## Eliminated findings',
   '## Review Dimensions Summary',
@@ -420,9 +420,31 @@ export const SKEPTICAL_RETURN_SCHEMAS = deepFreeze(Object.fromEntries(SKEPTICAL_
   return [stage, { ...closedDispatchRow(properties,
     ['citations', 'missing_evidence', 'justification', 'reachability', 'admission_assessments', 'site_confirmations']), anyOf: VERDICT_VARIANTS }];
 })));
+
+// Provider grammars omit bounds and conditional array requirements; local acceptance enforces the full contract.
+export function dispatchReturnSchema(schema) {
+  const out = {};
+  for (const key of ['type', 'enum', 'required']) if (schema[key] !== undefined) out[key] = schema[key];
+  if (schema.properties) {
+    out.properties = Object.fromEntries(Object.entries(schema.properties).map(([key, child]) => [key, dispatchReturnSchema(child)]));
+    out.additionalProperties = false;
+  }
+  if (schema.items) out.items = dispatchReturnSchema(schema.items);
+  return out;
+}
+const REDUCTION_REASON_SCHEMA = { type: 'string', enum: ['report_only', 'held_back', 'body_routed', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable'] };
 export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
-  skeptical_assessments: { type: 'array', items: closedDispatchRow(VERDICT_RETURN_PROPERTIES, ['citations', 'missing_evidence']) },
+  skeptical_assessments: { type: 'array', items: { type: 'object', properties: {
+    ...VERDICT_RETURN_PROPERTIES,
+    status: { type: 'string', enum: ['complete', 'incomplete'] }, errors: { type: 'array', items: { type: 'string' } },
+    raw: { type: 'object', additionalProperties: true },
+  }, required: ['finding_id', 'stage'] } },
   cite_results: { type: 'array', items: CITATION_RESULT_SCHEMA },
+  reduction_detail: { type: 'array', items: closedDispatchRow({
+    reason: REDUCTION_REASON_SCHEMA, stage: SKEPTICAL_IDENTITY.stage, verdict: VERDICT_RETURN_PROPERTIES.verdict,
+    missing_field: { type: 'string' }, missing_fields: { type: 'array', items: { type: 'string' } },
+    missing_evidence: { type: 'string' },
+  }, ['stage', 'verdict', 'missing_field', 'missing_fields', 'missing_evidence']) },
   scope_facts: { type: 'array', items: closedDispatchRow({
     category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) }, predicate: { type: 'string' },
     value: { type: ['boolean', 'null'] }, snapshot_id: CITATION_REQUEST_PROPERTIES.snapshot_id,
@@ -430,7 +452,7 @@ export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
   scope_decisions: { type: 'array', items: SCOPE_ASSESSMENT_SCHEMA },
   reduction_provenance: closedDispatchRow({
     finding_id: SKEPTICAL_IDENTITY.finding_id, disposition: { type: 'string', enum: DISPOSITIONS },
-    reason: { type: 'string', enum: ['report_only', 'held_back', 'body_routed', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable'] },
+    reason: REDUCTION_REASON_SCHEMA,
     category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) }, stage: SKEPTICAL_IDENTITY.stage,
     request_ids: { type: 'array', items: { type: 'string' } },
   }, ['category', 'stage', 'request_ids']),
@@ -478,7 +500,7 @@ export function matchesDispatchSchema(value, schema) {
 }
 
 export function acceptSkepticalReturn(entry, findingId, stage) {
-  const { errors, check, matches } = dispatchSchemaValidation();
+  const { errors, check } = dispatchSchemaValidation();
   const schema = SKEPTICAL_RETURN_SCHEMAS[stage];
   if (schema) check(entry, schema, '$');
   else errors.push('stage');
@@ -497,15 +519,12 @@ export function acceptSkepticalReturn(entry, findingId, stage) {
       || request.line_end < request.line_start || request.line_end - request.line_start >= ANCHOR_LIMITS.lines
       || typeof request.quote !== 'string' || request.quote.split(/\r\n|\r|\n/).length > ANCHOR_LIMITS.lines) errors.push('citation_range');
   }
-  return { finding_id: findingId, stage, status: errors.length ? 'incomplete' : 'complete', errors: [...new Set(errors)], raw: entry,
-    accepted: Object.fromEntries(Object.entries(entry || {}).filter(([key, value]) => {
-      const field = schema?.properties[key];
-      return ['confidence', 'policy_subject', 'admission_assessments', 'site_confirmations', 'reachability'].includes(key) && field && matches(value, field);
-    })) };
+  return { finding_id: findingId, stage, status: errors.length ? 'incomplete' : 'complete', errors: [...new Set(errors)], raw: entry };
 }
 
 export const SKEPTICAL_CONTRACTS = deepFreeze(Object.fromEntries(Object.entries(SKEPTICAL_RETURN_SCHEMAS)
-  .map(([stage, schema]) => [stage, { schema, accept: (entry, findingId) => acceptSkepticalReturn(entry, findingId, stage) }])));
+  .map(([stage, schema]) => [stage, { schema, dispatchSchema: dispatchReturnSchema(schema),
+    accept: (entry, findingId) => acceptSkepticalReturn(entry, findingId, stage) }])));
 
 export function dimensionRow(dimension) {
   return DIMENSIONS.find((row) => row.dimension === dimension || row.aliases.includes(dimension));
@@ -606,8 +625,7 @@ export const PIPELINE_FINDING_FIELDS = deepFreeze([
   'location_status', 'claimed_line_start', 'claimed_line_end',
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
-  'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
-  'challenge_contested', 'severity_downgraded', 'original_severity',
+  'original_confidence', 'validator_confidence', 'reachability', 'original_severity',
   'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
   'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
   'consensus_count', 'consensus_boost', 'corroborated_by', 'corroborations',

@@ -110,7 +110,16 @@ class ReplayResult:
     receipt: bytes
 
 
-PHASES = ("summarize", "discover", "merge", "verify", "validate", "filter", "challenge")
+PHASES = (
+    "summarize",
+    "discover",
+    "merge",
+    "verify",
+    "validate",
+    "filter",
+    "challenge",
+    "cite",
+)
 UpstreamStage = Literal["verify", "filter"]
 UPSTREAM_STAGES: tuple[UpstreamStage, ...] = ("verify", "filter")
 IDENTITY = ("trace_id", "discovery_agent", "discovery_dimension")
@@ -242,7 +251,7 @@ def load_replay_inputs(manifest_path):
     if (
         record["args"] != wire["args"]
         or state["completed"] != list(PHASES)
-        or state["phaseReached"] != "challenge"
+        or state["phaseReached"] != "cite"
         or tuple(state["phaseOutputs"]) != PHASES
     ):
         raise ValueError("missing original workflow phase inputs")
@@ -256,6 +265,7 @@ def load_replay_inputs(manifest_path):
             "validate": {"findings", "stats"},
             "filter": {"filtered", "stats"},
             "challenge": {"findings", "unverified", "eliminated", "stats"},
+            "cite": {"findings", "unverified", "eliminated", "stats", "cite_ledger"},
         }[phase]
         if not required <= output.keys():
             raise ValueError("missing rendering inputs for " + phase)
@@ -274,6 +284,7 @@ def load_replay_inputs(manifest_path):
         if trace.run_nonce != wire["args"].get("nonce") or not trace.complete:
             raise ValueError("trace belongs to another or incomplete review")
         rejoin_trace_identity(state["phaseOutputs"]["challenge"], trace)
+        rejoin_trace_identity(state["phaseOutputs"]["cite"], trace)
         for stage in UPSTREAM_STAGES:
             rejoin_trace_identity(
                 {
@@ -310,6 +321,7 @@ const lines = reader[Symbol.asyncIterator]();
 const input = JSON.parse((await lines.next()).value);
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\n');
 const { args, state } = input;
+let expectedFindings = null;
 try {
   if (!validateArgs(args).ok || checkpointChecksumErrors(args.checkpoints).length || checkpointShapeErrors(readCheckpoints(args)).length) throw new Error('invalid original args');
   if (!input.checkpoint?.phases?.challenge || checkpointChecksumErrors(input.checkpoint).length || checkpointShapeErrors(readCheckpoints({ checkpoints: input.checkpoint })).length) throw new Error('invalid source checkpoint');
@@ -332,6 +344,10 @@ try {
       const paths = plannedArtifactPaths(args.outputDir, args.headShaShort);
       const entries = dispatch.label === 'artifact-writer' && payload && !Array.isArray(payload)
         ? Object.entries(paths).map(([key, path]) => ({ path, text: key === 'report' ? payload.report : JSON.stringify(payload[key], null, 2) })) : payload;
+      if (Array.isArray(entries)) {
+        const source = entries.find((entry) => entry.path === paths.findings);
+        if (source) expectedFindings = JSON.parse(source.text);
+      }
       send({ dispatch, prompt_sha256: createHash('sha256').update(prompt).digest('hex'), entries });
       const reply = JSON.parse((await lines.next()).value);
       if (reply.error) throw new Error(reply.error);
@@ -340,10 +356,10 @@ try {
   send({ paths: { ...plannedArtifactPaths(args.outputDir, args.headShaShort), plan: persistPlanPath(args.outputDir, args.headShaShort) } });
   const out = await deliverFromCheckpoint(ctx, args, state);
   const checkpoint = slimPersistedCheckpoints(state.phaseOutputs, state.completed, state.phaseReached);
-  const challenge = JSON.parse(JSON.stringify(state.phaseOutputs.challenge));
+  const challenge = JSON.parse(JSON.stringify(state.phaseOutputs.cite));
   applyChallengeReplayBelt(challenge);
   const baseline = writerPayload({ findings: [...challenge.findings, ...challenge.unverified, ...challenge.eliminated] }).findings;
-  send({ out, checkpoint, baseline });
+  send({ out, checkpoint, baseline, expectedFindings });
 } catch (error) { send({ error: error.message }); }
 reader.close();
 process.stdin.destroy();
@@ -459,7 +475,9 @@ def _answer_dispatch(message, expected, artifacts, paths, *, candidate=False):
     return reply
 
 
-def _candidate_artifacts(inputs, artifacts, paths, before, expected_checkpoint):
+def _candidate_artifacts(
+    inputs, artifacts, paths, before, expected_checkpoint, expected_findings
+):
     raw = json.loads(artifacts[paths["postReview"]])
     surfaces: dict[tuple[object, object], Literal["inline", "body"]] = {}
     if not isinstance(raw, dict):
@@ -515,6 +533,12 @@ def _candidate_artifacts(inputs, artifacts, paths, before, expected_checkpoint):
             )
         artifacts["post-review-payload.json"] = js_stringify_pretty(payload)
     disposed = json.loads(artifacts[paths["findings"]])
+    if expected_findings is not None and disposed != expected_findings:
+        raise ValueError(
+            "member omission"
+            if len(disposed) != len(expected_findings)
+            else "unregistered finding delta"
+        )
     checkpoint = json.loads(artifacts[paths["checkpoints"]])
 
     def projection(finding):
@@ -531,6 +555,12 @@ def _candidate_artifacts(inputs, artifacts, paths, before, expected_checkpoint):
                     "delivery_group",
                     "site_requests",
                     "resolved_sites",
+                    "reduction_detail",
+                    "reduction_provenance",
+                    "eliminated_by",
+                    "elimination_reason",
+                    "admission",
+                    "body_fix_task_eligible",
                 )
             },
             sort_keys=True,
@@ -580,7 +610,7 @@ def replay_delivery(inputs, *, candidate=False):
             else None
         )
         for bucket in ("findings", "unverified"):
-            for f in record["state"]["phaseOutputs"]["challenge"][bucket]:
+            for f in record["state"]["phaseOutputs"]["cite"][bucket]:
                 if "diff_validation" not in f:
                     # Membership replay must not reclassify or downgrade the record.
                     verified = copy.deepcopy(f)
@@ -593,6 +623,7 @@ def replay_delivery(inputs, *, candidate=False):
     envelope = None
     baseline = None
     expected_checkpoint = None
+    expected_findings = None
     request = dict(
         record,
         checkpoint=json.loads(inputs.checkpoint),
@@ -624,6 +655,7 @@ def replay_delivery(inputs, *, candidate=False):
                     envelope = message.get("out")
                     baseline = message.get("baseline")
                     expected_checkpoint = message.get("checkpoint")
+                    expected_findings = message.get("expectedFindings")
                     failure = failure or message.get("error")
                     continue
                 try:
@@ -671,7 +703,9 @@ def replay_delivery(inputs, *, candidate=False):
     if envelope.get("measurement", {}).get("status") == "available":
         artifacts["measurement-trace.json"] = envelope["measurement"]["text"]
     if candidate:
-        _candidate_artifacts(inputs, artifacts, paths, baseline, expected_checkpoint)
+        _candidate_artifacts(
+            inputs, artifacts, paths, baseline, expected_checkpoint, expected_findings
+        )
     result = tuple(
         (Path(p).name, text.encode("utf-8")) for p, text in artifacts.items()
     )

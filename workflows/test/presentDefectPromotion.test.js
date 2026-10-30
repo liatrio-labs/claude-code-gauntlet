@@ -9,7 +9,8 @@ import { runAndCapture, replayProducedCheckpoint } from './helpers/persistFixtur
 import { runWith } from '../src/run.js';
 
 const assessment = (predicate, status = 'confirmed', references = ['primary']) => ({ predicate, status, references });
-const score = (id, admission_assessments = []) => ({ finding_id: id, confidence: 80, policy_subject: 'ordinary', admission_assessments });
+import {skepticalReturn} from './helpers/verdicts.js';
+const score = (id, admission_assessments = []) => skepticalReturn(id,'validator',{confidence:80,admission_assessments});
 
 test('present defect promotion overrides additional cases, quality other and gaps without gap evidence', async () => {
   for (const [id, dimension, agent, fields, predicates] of [
@@ -66,7 +67,7 @@ test('present defect promotion governs ranking even when the validator classifie
   }
 });
 
-test('incomplete validation gets one small follow-up round and only score or policy omissions degrade', async () => {
+test('incomplete validation gets one small follow-up round and omissions hold back only their finding', async () => {
   for (const arm of ['score', 'policy_subject', 'assessment', 'duplicate_assessment']) {
     for (const repaired of [true, false]) {
       const f = makeFinding('pending', { dimension: 'simplification', quality_basis: 'other' });
@@ -121,35 +122,30 @@ test('a score omitted from the main batch is repaired without degrading a fresh 
   };
   const out = await runWith(ctx, args);
   assert.equal(out.ok, true);
-  assert.deepEqual(out.gaps, []);
-  assert.deepEqual(out.stats.validate, { batches_dispatched: 2, batches_completed: 2, validated: 2, skipped: 0, adjusted: 2 });
+  assert.ok(out.gaps.every(g=>g.startsWith('cite_')));
+  assert.deepEqual(out.stats.validate, { batches_dispatched: 2, batches_completed: 2, validated: 2, skipped: 0, incomplete: 0, adjusted: 2 });
   assert.deepEqual(ctx.calls.filter((call) => call.agentType === 'code-gauntlet:validator').map((call) => call.label), ['validate-batch-0', 'validate-retry-0']);
   assert.ok(payload.findings.every((finding) => finding.disposition === 'deliver' && finding.confidence === 80));
   assert.equal(payload.checkpoints.phases.challenge.validation_audit.batches[0].raw, JSON.stringify({ validations: [score('kept')] }));
 });
 
-test('validator schema requires the semantic assessments for each kind and selected policy', async () => {
-  const rows = [
-    [makeFinding('core'), []],
-    [makeFinding('extra', { dimension: 'test_coverage', test_kind: 'additional_case' }), ['present_defect']],
-    [makeFinding('gap', { dimension: 'test_coverage', test_kind: 'critical_gap' }),
-      ['present_defect', 'resolved_production_element', 'complete_searches', 'complete_behavioral_absence']],
-    [makeFinding('quality', { dimension: 'type_design', quality_basis: 'duplication' }), ['present_defect', 'confirmed_duplication']],
-    [makeFinding('equivalent', { dimension: 'simplification', quality_basis: 'simpler_equivalent' }),
-      ['present_defect', 'concrete_equivalent', 'behavior_preserved']],
-    [makeFinding('idiom', { dimension: 'type_design', quality_basis: 'stack_idiom' }), ['present_defect', 'applicable']],
-  ];
-  const ctx = stageCtx({ reply: [] });
-  await validateStage(ctx, { findings: rows.map(([f]) => f) });
-  const item = ctx.calls[0].schema.properties.validations.items;
-  for (const [f, expected] of rows) {
-    const variant = item.anyOf.find((branch) => branch.properties.finding_id.enum[0] === f.id && branch.properties.policy_subject.enum[0] === 'ordinary');
-    assert.deepEqual(variant.required, expected.length ? ['admission_assessments'] : []);
-    assert.deepEqual((variant.properties.admission_assessments?.allOf || []).map((clause) => clause.contains.properties.predicate.const), expected);
-  }
-  const mapped = item.anyOf.find((branch) => branch.properties.finding_id.enum[0] === 'core' && branch.properties.policy_subject.enum[0] === 'test_defect');
-  assert.deepEqual(mapped.required, ['admission_assessments']);
-  assert.deepEqual(mapped.properties.admission_assessments.allOf.map((clause) => clause.contains.properties.predicate.const), ['confirmed_test_defect']);
+test('skeptical dispatch schemas stay within the provider subset as batches grow', async () => {
+  const ctx = stageCtx({reply:(prompt)=>({validations:[...prompt.matchAll(/^- (\S+) \[/gm)].map(m=>score(m[1]))})});
+  const out = await validateStage(ctx,{findings:Array.from({length:250},(_,i)=>makeFinding(`F${i}`)),limits:{validateBatch:250}});
+  assert.equal(out.stats.batches_dispatched,1);
+  assert.equal(out.stats.validated,250);
+  const schema=ctx.calls[0].schema;
+  assert.ok(JSON.stringify(schema).length<8000);
+  assert.doesNotMatch(JSON.stringify(schema),/"(anyOf|allOf|contains|minLength|maxLength|minimum|maximum|maxItems)"/);
+  let optional=0;
+  const inspect=value=>{
+    if(!value || typeof value!=='object')return;
+    if(value.properties)optional+=Object.keys(value.properties).filter(k=>!value.required?.includes(k)).length;
+    Object.values(value).forEach(inspect);
+  };
+  inspect(schema);
+  assert.ok(optional<=24);
+  assert.deepEqual(schema.properties.validations.items.properties.verdict.enum,['real','refuted','needs_evidence']);
 });
 
 test('raw validator returns and rejections survive bounded checkpoint persistence and replay', async () => {
@@ -157,7 +153,8 @@ test('raw validator returns and rejections survive bounded checkpoint persistenc
   const ctx = stageCtx({ reply: raw });
   const validated = await validateStage(ctx, { findings: [makeFinding('f1')] });
   assert.equal(validated.audit.batches[0].raw, JSON.stringify(raw));
-  assert.deepEqual(validated.audit.batches[0].rejections, [{ id: 'f1', reasons: ['invalid_confidence', 'invalid_policy_subject'] }]);
+  assert.ok(validated.audit.batches[0].rejections[0].reasons.includes('invalid_confidence'));
+  assert.ok(validated.audit.batches[0].rejections[0].reasons.includes('invalid_policy_subject'));
   const run = await runAndCapture(validArgs({ checkpoints: { validate: validated } }));
   assert.deepEqual(run.payload.checkpoints.phases.challenge.validation_audit, validated.audit);
   const replayed = await replayProducedCheckpoint(validArgs(), run.payload.checkpoints);

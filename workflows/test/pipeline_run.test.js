@@ -8,7 +8,7 @@ import { validArgs } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { captureRun, withSandboxGlobals } from './helpers/runFixtures.js';
 
-const PHASES = ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'];
+const PHASES = ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'cite', 'report'];
 const PERSIST_WIRING_ROWS = [
   { name: 'Windows runtime waist reaches verify and persist', persist: {},
     over: { python: 'py -3', pluginRoot: 'D:/plugin', verify: { targetKind: 'branch', scriptPath: '/untrusted.py' } },
@@ -127,8 +127,8 @@ for (const row of WRAPPER_ROWS) test(`persisted wrapper bytes: ${row.name}`, asy
     assert.ok(payload.report.includes('| Gaps | 0 |'));
     assert.deepEqual(payload.checkpoints.completed, PHASES);
     assert.deepEqual(payload.checkpoints.counts, { summarize: 0, discover: 2, merge: 2, verify: 2,
-      validate: 2, filter: 2, challenge: 2, report: 0 });
-    assert.deepEqual(Object.keys(payload.checkpoints.phases), ['challenge']);
+      validate: 2, filter: 2, challenge: 2, cite: 2, report: 0 });
+    assert.deepEqual(Object.keys(payload.checkpoints.phases), ['challenge', 'cite']);
     assert.deepEqual(payload.findings.map((finding) => [finding.id, finding.line, finding.end_line, finding.body]), [
       ['F1', 10, 10, 'a genuine correctness problem in F1 that is described in enough words to clear the injection and threshold filters'],
       ['F2', 10, 10, 'a genuine correctness problem in F2 that is described in enough words to clear the injection and threshold filters'],
@@ -161,7 +161,7 @@ test('persisted checkpoint wiring: slim challenge survives empty and degraded fr
   assert.equal(Object.hasOwn(first.payload, 'unverified'), false);
   const checkpoints = first.payload.checkpoints;
   await replayProducedCheckpoint(validArgs(), checkpoints);
-  assert.deepEqual(Object.keys(checkpoints.phases), ['challenge']);
+  assert.deepEqual(Object.keys(checkpoints.phases), ['challenge', 'cite']);
   assert.deepEqual(checkpoints.completed, PHASES);
   assert.deepEqual(Object.keys(checkpoints.counts), PHASES);
   for (const phase of PHASES) assert.equal(typeof checkpoints.counts[phase], 'number');
@@ -182,14 +182,14 @@ test('persisted checkpoint wiring: slim challenge survives empty and degraded fr
     assert.equal(out.ok, true);
     assert.equal(out.phaseReached, 'report');
     assert.equal(ctx.calls.some((call) => call.label.startsWith('challenge-')), false);
-    assert.ok(ctx.calls.some((call) => call.label === 'code-gauntlet:bug-detector'));
+    assert.equal(ctx.calls.some((call) => call.label === 'code-gauntlet:bug-detector'), false);
     assert.ok(ctx.calls.some((call) => call.label === 'artifact-writer'));
     assert.equal(out.artifactPaths.report, PATHS.report);
     assert.equal(out.stats.highConfidence, 2);
     assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('checkpoint-discarded:')), []);
-    assert.deepEqual(out.stats.degraded, row.degraded ?? []);
+    assert.deepEqual(out.stats.degraded, []);
     assert.equal(out.gaps.some((gap) => gap.startsWith('all-degraded:')), false);
-    if (row.nulls) assert.equal(out.gaps.filter((gap) => gap.includes('agent returned null')).length, 7);
+    if (row.nulls) assert.equal(out.gaps.filter((gap) => gap.includes('agent returned null')).length, 0);
     assert.ok(payload.report.startsWith('# \u2694\uFE0F Code Gauntlet:'));
     assert.ok(payload.report.includes('## Summary'));
   });

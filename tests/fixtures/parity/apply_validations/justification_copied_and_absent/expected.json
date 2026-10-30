@@ -5,6 +5,25 @@
       "confidence": 60,
       "id": "F1",
       "original_confidence": 30,
+      "skeptical_assessments": [
+        {
+          "errors": [
+            "$.finding_id",
+            "$.stage",
+            "$.verdict",
+            "$.scope_assessments",
+            "$",
+            "finding_id"
+          ],
+          "finding_id": "F1",
+          "raw": {
+            "confidence": 60,
+            "justification": "Confirmed reachable via public API."
+          },
+          "stage": "validator",
+          "status": "incomplete"
+        }
+      ],
       "validation_justification": "Confirmed reachable via public API.",
       "validator_confidence": 60
     },
@@ -12,6 +31,24 @@
       "confidence": 20,
       "id": "F2",
       "original_confidence": 40,
+      "skeptical_assessments": [
+        {
+          "errors": [
+            "$.finding_id",
+            "$.stage",
+            "$.verdict",
+            "$.scope_assessments",
+            "$",
+            "finding_id"
+          ],
+          "finding_id": "F2",
+          "raw": {
+            "confidence": 20
+          },
+          "stage": "validator",
+          "status": "incomplete"
+        }
+      ],
       "validator_confidence": 20
     }
   ],

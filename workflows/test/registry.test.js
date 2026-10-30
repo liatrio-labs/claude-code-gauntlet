@@ -32,7 +32,6 @@ test('skeptical descriptors derive verdict and scope variants', async () => {
       { finding_id: 'foreign' }, { stage: 'foreign' }, { citations: [] }, { citations: null }]) {
       const result = accept(extra);
       assert.equal(result.status, 'incomplete', JSON.stringify(extra));
-      assert.deepEqual(result.accepted, validation);
       assert.deepEqual(result.raw, { ...entry, ...extra });
       assert.equal(result.finding_id, 'F');
     }
@@ -56,7 +55,7 @@ test('skeptical descriptors derive verdict and scope variants', async () => {
       for (const [key, value] of [['confidence', null], ['policy_subject', 'unknown'], ['admission_assessments', [{}]]]) {
         const result = accept({ [key]: value });
         assert.equal(result.status, 'incomplete');
-        assert.equal(Object.hasOwn(result.accepted, key), false);
+        assert.equal(result.raw[key], value);
       }
     }
   }
