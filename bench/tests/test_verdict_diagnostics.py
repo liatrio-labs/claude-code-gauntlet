@@ -78,6 +78,7 @@ def test_proof_scope_and_disposition_denominators_include_failures(tmp_path):
             cwd=ROOT,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
         ).stdout
     )

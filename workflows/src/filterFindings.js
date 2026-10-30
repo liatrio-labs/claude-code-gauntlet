@@ -1,12 +1,12 @@
 import { canonicalRange, lineBucket } from './location.js';
-import { asText, asConfidence, deepFreeze } from './wire.js';
+import { WIRE_SPACE, asText, asConfidence, deepFreeze } from './wire.js';
 import { FIELD_RENAMES, SEVERITY_ORDER, INJECTION_STRIPPED_PROSE_FIELDS, AGENT_SECURITY_REVIEWER } from './registry.js';
 import { DIMENSIONS, dimensionRow, findingPolicy } from './registry.js';
 import { cfgGet, configForFile, applyExclusions } from './reviewConfig.js';
 import { applyInjectionFilter } from './injection.js';
 
 const FUNCTIONAL_VIOLATION_KEYWORDS =
-  /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
+  new RegExp(String.raw`\bcrash\b|\bdata${WIRE_SPACE}+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime${WIRE_SPACE}+error\b|\bexception\b|\bpanic\b|\bundefined${WIRE_SPACE}+behavio(?:u)?r\b`, 'i');
 
 const FILTER_DIMENSION_ROUTES = deepFreeze({ convention: { patterns: [FUNCTIONAL_VIOLATION_KEYWORDS] } });
 

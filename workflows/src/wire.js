@@ -74,6 +74,7 @@ export function shellWord(tok) {
 
 // Use the union whitespace class so wire trimming accepts both runtime whitespace vocabularies.
 const WIRE_TRIM_CLASS = String.raw`\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff`;
+export const WIRE_SPACE = `[${WIRE_TRIM_CLASS}]`;
 export const WS_TRIM_RE = new RegExp(`^[${WIRE_TRIM_CLASS}]+|[${WIRE_TRIM_CLASS}]+$`, 'g');
 
 // Keep integer policies distinct: filter coercion accepts Python-style integers while verification uses numeric-string grammar.
