@@ -5,8 +5,6 @@ import { canonicalRange } from './location.js';
 import { matchAssessments } from './admission.js';
 import { VALIDATION_RETURN_PROPERTIES, requiredAssessments, REACHABILITY_VALUES } from './registry.js';
 
-export { REACHABILITY_VALUES };
-
 export function validationRejections(finding, validation) {
   if (!validation) return ['missing_entry'];
   const reasons = [];

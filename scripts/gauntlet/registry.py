@@ -1405,29 +1405,6 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
     },
 ]
 
-EXCLUSION_FACT_DESCRIPTORS = {
-    "pre_existing": ["blame_class", "blame_source", "cross_file_refs"],
-    "untouched_line": ["in_diff"],
-    "generated_vendored": [
-        "linguist-generated",
-        "linguist-vendored",
-        "generated_marker",
-    ],
-    "docs_only": [
-        "linguist-documentation",
-        "all_changed_files_documentation",
-        "path_role",
-    ],
-    "lockfile": ["lockfile_basename", "mechanical_change"],
-    "general_quality": ["admission"],
-    "latent": ["reachability"],
-    "test_only_pattern": ["path_role"],
-    "lint_catchable": [],
-    "suppressed": [],
-    "opted_out": [],
-    "intentional": ["conventions_confirmation"],
-}
-
 BRAND_MARK = "⚔️"
 
 BRAND_NAME = "Code Gauntlet"

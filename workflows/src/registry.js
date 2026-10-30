@@ -361,7 +361,6 @@ for (const row of EXCLUSION_CATEGORIES) {
   }
 }
 export const EXCLUSION_BY_CATEGORY = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row])));
-export const EXCLUSION_FACT_DESCRIPTORS = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row.facts])));
 
 const SKEPTICAL_IDENTITY = {
   finding_id: { type: 'string', minLength: 1 }, stage: { type: 'string', enum: ['validator', 'challenger'] },
