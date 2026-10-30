@@ -90,7 +90,7 @@ for (const row of MERGE_ROWS) test(`structured merge: ${row.name}`, () => {
   const snapshot = structuredClone(input);
   const out = merge(input, row.jsonMeta ? JSON.stringify(META) : { ...META, agents });
   const expected = row.expected ?? MERGE_GOLDEN;
-  assert.deepEqual(Object.keys(out), ['findings', 'base_branch', 'head_sha', 'pr_number', 'owner', 'repo', 'methodology']);
+  assert.deepEqual(Object.keys(out).filter((key) => key !== 'rejected'), ['findings', 'base_branch', 'head_sha', 'pr_number', 'owner', 'repo', 'methodology']);
   assert.deepEqual(Object.keys(out.methodology), ['agents_dispatched', 'findings_per_channel', 'duplicates_resolved',
     'dropped_no_id', 'truncation_warnings', 'validation_warnings']);
   assert.deepEqual([out.base_branch, out.head_sha, out.pr_number, out.owner, out.repo], ['main', 'abc123full', 42, 'org', 'myrepo']);
@@ -144,8 +144,7 @@ const STAGE_ROWS = [
   { name: 'zero-finding agent remains in roster', input: { findings: [finding({ id: 'F1', agent: 'bug-detector' })],
     gaps: [], degraded: [], dispatched: ['code-gauntlet:bug-detector', 'code-gauntlet:code-simplifier'] },
     ids: ['F1'], agents: ['bug-detector', 'code-simplifier'] },
-  { name: 'array survives discovery and is rejected at merge', value: [], discovery: true, ids: [], agents: FULL_AGENTS,
-    warnings: ['[bug-detector] finding 1: expected object, got array'] },
+  { name: 'array is rejected at discovery intake', value: [], discovery: true, ids: [], agents: FULL_AGENTS },
 ];
 for (const row of STAGE_ROWS) test(`merge stage: ${row.name}`, async () => {
   let input = row.input;
@@ -153,7 +152,8 @@ for (const row of STAGE_ROWS) test(`merge stage: ${row.name}`, async () => {
     input = await discover(stageCtx({ replies: { 'code-gauntlet:bug-detector': {
       findings: [row.value], complete: true, total_seen: 1,
     } } }), {});
-    assert.equal(input.findings.length, 1);
+    assert.equal(input.findings.length, 0);
+    assert.equal(input.rejected.length, 1);
   }
   const out = mergeStage(input, META);
   assert.deepEqual(out.findings.map((f) => f.id), row.ids);

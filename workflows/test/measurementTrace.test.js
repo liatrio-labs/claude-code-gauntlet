@@ -76,7 +76,7 @@ test('replay coverage is partial and malformed trace flags refuse dispatch', asy
   assert.equal(malformed.ctx.calls.length, 0);
 });
 
-test('malformed discovery keeps the same review failure with tracing on and off', async () => {
+test('malformed discovery preserves sibling review with tracing on and off', async () => {
   const captured = [];
   for (const measurementTrace of [false, true]) {
     const { args, ctx } = measurementScenario('return', { measurementTrace });
@@ -87,7 +87,7 @@ test('malformed discovery keeps the same review failure with tracing on and off'
       return Promise.resolve({ findings: [null], complete: true, total_seen: 1 });
     };
     const out = await runWith(ctx, args);
-    assert.equal(out.ok, false);
+    assert.equal(out.ok, true);
     delete out.measurement;
     captured.push({ out, calls: ctx.calls });
   }

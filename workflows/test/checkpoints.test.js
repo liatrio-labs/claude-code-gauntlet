@@ -128,7 +128,7 @@ const REPLAY_ROWS = [
     unverified: ['capped', 'failed', 'skipped'].map((challenge) => makeFinding(challenge, { challenge })),
     eliminated: [], 'stats.skipped': 999, 'stats.final_count': 999, 'stats.cross_agent_consolidated': 2,
   }, expected: { kept: ['CLEAN'], unverified: ['capped', 'failed', 'skipped', 'DIRTY'], eliminated: [],
-    held: 1, skipped: 3, final: 1, belt: 0 }, repeat: true, regrouped: true },
+    held: 4, skipped: 3, final: 1, belt: 0 }, repeat: true, regrouped: true },
 
   { name: 'findings elimination corrects stale final count', challenge: {}, expected: {},
     reason: /contains shell command pattern/, repeat: true },

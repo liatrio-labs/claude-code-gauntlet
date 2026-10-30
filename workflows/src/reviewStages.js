@@ -34,7 +34,6 @@ const VALIDATE_SCHEMA = {
 
 function validateReturnDescriptor() {
   return Object.entries(VALIDATE_SCHEMA.properties.validations.items.properties)
-    .filter(([name]) => !Object.hasOwn(VALIDATION_RETURN_PROPERTIES, name))
     .map(([name, schema]) => {
       const values = Array.isArray(schema.enum) ? ` (${schema.enum.join(' | ')})` : '';
       return `${name}${values}`;
@@ -125,9 +124,11 @@ function validatePrompt(inp, batch) {
       ? `${f.line_start}-${f.line_end}`
       : `${f.line_start != null ? f.line_start : '?'}`;
     const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
-    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}`;
+    const sites = (f.resolved_sites || []).filter((site) => locationAllows(site, 'sourceLink'));
+    const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
+    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests}`;
   }).join('\n');
-  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. Findings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
+  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Findings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
 }
 
 // The runtime has no wall clock, so generated_at must come from the supplied arguments.

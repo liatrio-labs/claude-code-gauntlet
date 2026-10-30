@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,41 @@ from tests.support.repository import tracked_paths
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_FORMAT = ROOT / "skills/code-gauntlet/references/report-format.md"
+
+
+def test_report_extras_preserve_structured_values():
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import { renderReport } from './workflows/src/renderReport.js';
+import { finding, reportInput } from './workflows/test/helpers/reportFixtures.js';
+const reference = {file:'src/service',line_start:2,line_end:3,anchor:'return value'};
+const extras = {
+  candidate_tests: [{...reference,input:'empty',assertion:'rejects'}, {...reference,input:'valid',assertion:'accepts'}],
+  production_element: reference, duplicate_of: reference, precedent: reference,
+};
+const reports = ['findings', 'unverified'].map(bucket => renderReport(reportInput({
+  [bucket]: [finding('EXTRAS', {...extras, disposition: bucket === 'unverified' ? 'held_back' : 'deliver'})],
+})));
+console.log(JSON.stringify({extras, reports}));
+""",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    rendered = json.loads(result.stdout)
+    for report in rendered["reports"]:
+        for field, value in rendered["extras"].items():
+            label = field.replace("_", " ").capitalize()
+            encoded = json.dumps(value, separators=(",", ":"))
+            assert f"- **{label}:** {encoded}" in report
+
 
 # Fence casing affects Markdown display, so only the marker is case-insensitive.
 _JSON_BLOCK = re.compile("```(?i:json)\\n(.*?)\\n```", re.DOTALL)
@@ -187,12 +223,15 @@ def test_contract_schema(agent_type: str) -> None:
         assert re.findall(r"`([^`]+)`", line) == fields
     assert "Omit inapplicable optional fields; never send null." in body
     if contract["requiredExtra"]:
-        assert "required by the dispatch schema" in body
+        assert "required at intake on every provider" in body
     declared = declared_by_agent()[agent_type]
     for field in optional:
         assert item["properties"][field]["type"] == declared[field]
     for row in rows:
         for field in row["requiredWhenDimension"]:
+            if field in {"test_kind", "quality_basis"}:
+                assert f"`{field}` is required at intake on every provider" in body
+                continue
             assert f"`{field}` is a dimension-conditional dispatch requirement" in body
             assert (
                 f"For {row['dimension']} findings: the `{field}` field must be non-null"
@@ -200,10 +239,14 @@ def test_contract_schema(agent_type: str) -> None:
             )
             siblings = [r["dimension"] for r in rows if r != row]
             assert "/".join(siblings) in body or "on the same terms" in body
-    if contract["conditionalRequired"]:
+    if any(
+        field in {"claude_md_rule", "spec_text"}
+        for row in rows
+        for field in row["requiredWhenDimension"]
+    ):
         assert (
-            "third-party providers" in body
-            and "gateway sessions where the schema stays flat" in body
+            "Runtime intake enforces claude_md_rule/spec_text" in body
+            and "on every provider and gateway" in body
         )
     assert "line_start` through `line_end`" in text
     assert "Include `line_end` with every patch" in text
@@ -246,7 +289,11 @@ def test_handwritten_field_tables():
         )
         assert cells[1].lower() == expected
     for field, cells in per_dimension:
-        row = next(row for row in registry()["dimensions"] if field in row["extras"])
+        row = next(
+            row
+            for row in registry()["dimensions"]
+            if row["dimension"] == cells[1] and field in row["extras"]
+        )
         assert cells[0] == row["extras"][field]
         assert cells[1] == row["dimension"]
         expected = (

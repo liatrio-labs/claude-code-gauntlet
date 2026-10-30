@@ -4,7 +4,9 @@ import copy
 import json
 
 import pytest
+from gauntlet.cli import CliError
 from gauntlet.delivery import compose, fold, post
+from gauntlet.delivery import input as delivery_input
 from gauntlet.delivery.input import validate_review_input
 from gauntlet.forge import JsonFetch, PostResult, parse_remote
 from gauntlet.marker import find_finding_markers, find_marker
@@ -948,6 +950,32 @@ def test_gitlab_version_failure_posts_nothing(refs, posting):
     assert run.code == 1 and not run.requests
 
 
+_INVALID_ADMISSION_METADATA: list[tuple[dict[str, object], str]] = [
+    ({"test_kind": "unknown"}, "test_kind"),
+    ({"test_kind": []}, "test_kind"),
+    ({"quality_basis": "unknown"}, "quality_basis"),
+    ({"origin_dimension": []}, "origin_dimension"),
+    ({"effective_test_kind": "additional_case"}, "effective_test_kind"),
+]
+
+
+def test_policy_subject_stamps_follow_registry_rows(monkeypatch):
+    rows = copy.deepcopy(delivery_input.DIMENSION_ROWS)
+    rows[0]["policySubjects"]["ordinary"] = {
+        "stamp": "effective_quality_basis",
+        "kind": "duplication",
+    }
+    monkeypatch.setattr(delivery_input, "DIMENSION_ROWS", rows)
+    data = review(findings=[located(effective_quality_basis="duplication")])
+    assert (
+        validate_review_input(data)["findings"][0]["effective_quality_basis"]
+        == "duplication"
+    )
+    data["findings"][0]["effective_quality_basis"] = "other"
+    with pytest.raises(CliError, match="effective_quality_basis is invalid"):
+        validate_review_input(data)
+
+
 @pytest.mark.parametrize(
     "data,message",
     [
@@ -956,6 +984,10 @@ def test_gitlab_version_failure_posts_nothing(refs, posting):
         (
             {"owner": "o", "repo": "r", "pr_number": 1, "findings": [None]},
             "must be an object",
+        ),
+        *(
+            (review(findings=[located(**metadata)]), field + " is invalid")
+            for metadata, field in _INVALID_ADMISSION_METADATA
         ),
     ],
 )
@@ -1212,6 +1244,29 @@ def test_review_input_defaults_and_unknown_fields(platform, posting):
     )
     assert "Range bug" in comments[0]["body"]
     assert "Return the current value." in comments[0]["body"]
+    for metadata in [
+        {"dimension": "test_coverage"},
+        {"dimension": "simplification"},
+        {"dimension": "type_design"},
+        {"dimension": "bug", "test_kind": "production_defect"},
+        {"dimension": "unknown", "agent": "test-analyzer"},
+        {
+            "dimension": "bug",
+            "origin_dimension": "test_coverage",
+            "test_kind": "production_defect",
+            "effective_test_kind": "defective_test",
+        },
+    ]:
+        legacy = located(**metadata)
+        del legacy["disposition"]
+        run = posting(review(platform, [legacy]), diff=DIFF)
+        assert (run.code, run.err) == (0, "")
+        comments = (
+            run.payload["payload"]["comments"]
+            if platform == "github"
+            else run.payload["discussions"]
+        )
+        assert comments == []
 
 
 @pytest.mark.parametrize(
