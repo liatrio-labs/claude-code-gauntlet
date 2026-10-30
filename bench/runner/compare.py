@@ -618,7 +618,7 @@ def delivery_diagnostics(packet, population):
         trace_evidence = ("stage_trace_bindings.json",)
         if url in traces:
             path, trace = traces[url]
-            trace_evidence += (path.relative_to(packet.root).as_posix(),)
+            trace_evidence += (path.relative_to(packet.root.resolve()).as_posix(),)
             fold = _record_coalescence(trace)
         rows.append(
             DeliveryDiagnostics(
