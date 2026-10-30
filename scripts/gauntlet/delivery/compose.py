@@ -1,7 +1,7 @@
 """Pure delivery bodies, grouping, and key material."""
 
 import hashlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
 from gauntlet import registry
@@ -16,7 +16,7 @@ from gauntlet.delivery.fold import (
 )
 from gauntlet.delivery.gate import FenceOffsets
 from gauntlet.delivery.input import Finding
-from gauntlet.location import canonical_range, location_allows
+from gauntlet.location import canonical_range, delivery_allows
 from gauntlet.markdown import fence_run
 from gauntlet.marker import LEGACY_PRODUCT, build_footer, build_prose_footer
 from gauntlet.text import (
@@ -43,6 +43,7 @@ __all__ = [
     "compose_inline_body",
     "compose_review_body",
     "consolidate_delivery",
+    "digest_groups",
     "finding_key",
     "key_material_body",
     "render_comment_body",
@@ -189,7 +190,7 @@ def render_finding_sections(
     # The gate removes ineligible patches at each render site so inline and degraded
     # bodies can differ. Patch content stays exact except for credential redaction.
     # Normalize once: a second pass removes another LF and changes the approved patch.
-    if suggested_fix and location_allows(finding, "fence"):
+    if suggested_fix and delivery_allows(finding, "fence"):
         suggested_fix = redact_secrets(suggested_fix)
         open_f, close_f = _suggestion_fence(suggested_fix, offsets=fence_offsets)
         parts += ["", open_f, suggested_fix, close_f]
@@ -260,7 +261,7 @@ def render_group_sections(
 
 
 def _skipped_location(filepath: object, finding: Mapping[str, object]) -> str:
-    if not location_allows(finding, "sourceLink"):
+    if not delivery_allows(finding, "sourceLink"):
         return f"{filepath or '?'} (location unconfirmed)"
     span = canonical_range(finding)
     assert span is not None
@@ -322,6 +323,51 @@ def _skipped_piece(filepath: object, finding: Mapping[str, object]) -> str:
     return neutralize_comment_openers(piece)
 
 
+def _digest_dimension(finding: Mapping[str, object]) -> str | None:
+    if finding.get("disposition") == "body":
+        return prepare_line(finding.get("dimension", "unknown"))
+    return None
+
+
+def _digest_pieces(entries: Sequence[SkippedEntry], dimensions: set[str]) -> str:
+    pieces = []
+    for entry in entries:
+        dimension = _digest_dimension(entry.finding)
+        if dimension is not None and dimension not in dimensions:
+            pieces.append(f"\n\n### {dimension}")
+            dimensions.add(dimension)
+        pieces.append(_skipped_piece(entry.filepath, entry.finding))
+    return "".join(pieces)
+
+
+def _ordered_skipped_groups(
+    groups: Sequence[Sequence[SkippedEntry]],
+) -> tuple[Sequence[SkippedEntry], ...]:
+    return tuple(
+        sorted(
+            groups,
+            key=lambda group: (
+                _digest_dimension(group[0].finding) or "" if group else ""
+            ),
+        )
+    )
+
+
+def digest_groups(
+    groups: Sequence[Sequence[SkippedEntry]], fits: Callable[[str], bool]
+) -> Iterator[tuple[Sequence[SkippedEntry], str | None]]:
+    """Yield ordered groups with accepted fragments, or None for omissions."""
+    dimensions: set[str] = set()
+    for group in _ordered_skipped_groups(groups):
+        proposed = set(dimensions)
+        fragment = _digest_pieces(group, proposed)
+        if fits(fragment):
+            dimensions = proposed
+            yield group, fragment
+        else:
+            yield group, None
+
+
 def _closing_line(m: int, n: int, platform: Platform) -> str:
     limits = body_limit(platform)
     return (
@@ -338,9 +384,7 @@ def build_skipped_section(
     if not skipped:
         return ""
     n = len(skipped)
-    return _skipped_frame(n, n, inline_count) + "".join(
-        _skipped_piece(entry.filepath, entry.finding) for entry in skipped
-    )
+    return _skipped_frame(n, n, inline_count) + _digest_pieces(skipped, set())
 
 
 def compose_inline_body(
@@ -362,9 +406,7 @@ def _bounded_section(
     platform: Platform,
 ) -> str:
     section = _skipped_frame(n, len(shown_entries), inline_count)
-    section += "".join(
-        _skipped_piece(entry.filepath, entry.finding) for entry in shown_entries
-    )
+    section += _digest_pieces(shown_entries, set())
     omitted = n - len(shown_entries)
     if omitted:
         section += f"\n\n{_closing_line(omitted, n, platform)}"
@@ -408,6 +450,7 @@ def compose_review_body(
 ) -> ComposedBody:
     # Standalone prepared summary lines alone drive same-SHA footer deduplication.
     # Reserve the complete envelope; groups are indivisible and prose folds first.
+    skipped_groups = _ordered_skipped_groups(skipped_groups)
     review_body = prepare_prose(review_body)
     limits = body_limit(platform)
     skipped = [entry for group in skipped_groups for entry in group]
@@ -447,12 +490,18 @@ def compose_review_body(
     remaining = allowance - (utf8_len(review_body) if review_body else 0)
     shown_entries: list[SkippedEntry] = []
     omitted_entries: list[SkippedEntry] = []
-    for group in skipped_groups:
-        pieces = [_skipped_piece(entry.filepath, entry.finding) for entry in group]
-        group_size = sum(utf8_len(piece) for piece in pieces)
-        if group_size <= remaining:
+
+    def fits(fragment: str) -> bool:
+        nonlocal remaining
+        group_size = utf8_len(fragment)
+        if group_size > remaining:
+            return False
+        remaining -= group_size
+        return True
+
+    for group, fragment in digest_groups(skipped_groups, fits):
+        if fragment is not None:
             shown_entries.extend(group)
-            remaining -= group_size
         else:
             omitted_entries.extend(group)
     section = _bounded_section(n, shown_entries, inline_count, platform) if n else ""
@@ -503,7 +552,7 @@ def consolidate_delivery(findings: Sequence[Finding]) -> list[Group]:
     key_to_group: dict[str, int] = {}
     for finding in findings:
         key = finding.get("consolidation_key")
-        if not key or not location_allows(finding, "inline"):
+        if not key or not delivery_allows(finding, "body"):
             members_by_group.append([finding])
             continue
         index = key_to_group.get(key)

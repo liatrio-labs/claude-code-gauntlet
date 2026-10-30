@@ -139,7 +139,9 @@ _SUMMARY_BATCH_SCRIPT = """
 import { renderSummaryBody } from './workflows/src/renderReport.js';
 let source = '';
 for await (const chunk of process.stdin) source += chunk;
-process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
+const inputs = JSON.parse(source);
+for (const input of inputs) for (const finding of input.findings || []) finding.disposition = 'deliver';
+process.stdout.write(JSON.stringify(inputs.map(renderSummaryBody)));
 """
 
 

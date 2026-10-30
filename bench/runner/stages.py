@@ -160,6 +160,12 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
                 "fold requires constituent identities and coalescence",
             )
     actual = tuple(s.stage for s in trace.snapshots)
+    reducers = set(actual) & {"dispose", "holdback"}
+    _require(len(reducers) <= 1, "duplicate final reducers")
+    _require(
+        not (trace.complete or "select" in actual) or len(reducers) == 1,
+        "missing final reducer",
+    )
     required = tuple(s for s in actual if s not in OPTIONAL_STAGES)
     _require(required == REQUIRED_STAGES[: len(required)], "physical stage order")
     order = get_args(Stage)
@@ -564,6 +570,10 @@ def dimension_metrics(candidates, bugs, stage_rows, profile, traces):
 
 def bind_delivery_trace(trace, candidates, *, omissions=()):
     """Overlay pure, payload-proven posting omissions on producer selection."""
+    _require(
+        sum(s.stage in ("dispose", "holdback") for s in trace.snapshots) == 1,
+        "final reducer",
+    )
     delivered = {tid for c in candidates for tid in c.source_trace_ids}
     versions = {v.version_id: v for v in trace.versions}
     omitted = {tid: o for o in omissions for tid in o.trace_ids}

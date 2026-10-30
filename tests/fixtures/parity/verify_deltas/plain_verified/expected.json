@@ -1,8 +1,11 @@
 {
-  "checksum": "fnv1a32:0xbef3b6a2",
+  "checksum": "fnv1a32:0x07a203f0",
   "deltas": [
     {
       "confidence": 80,
+      "diff_validation": {
+        "in_diff": true
+      },
       "id": "bug-101",
       "line_end": 14,
       "line_start": 12,
@@ -20,6 +23,9 @@
       "confidence": 80,
       "cross_file_refs": [],
       "description": "The retry loop increments the attempt counter before checking it against the configured maximum, allowing one extra retry beyond the intended limit.",
+      "diff_validation": {
+        "in_diff": true
+      },
       "dimension": "bug",
       "end_line": 14,
       "evidence": "for attempt in range(max_attempts + 1):",

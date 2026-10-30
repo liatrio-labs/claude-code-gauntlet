@@ -114,6 +114,18 @@ Unconfirmed findings remain in the review body, labelled `location unconfirmed`.
 | confirmed | yes | yes | yes | yes | yes | yes |
 | relocated | yes | yes | yes | yes | yes | yes |
 | unconfirmed | yes | no | no | no | no | no |
+
+## Final Disposition and Rights
+
+Missing or unknown disposition is held back. Delivery intersects these rights with location rights.
+
+| Disposition | inline | body | report | fixTask | patch | fence | sourceLink |
+|---|---|---|---|---|---|---|---|
+| deliver | yes | yes | finding | yes | yes | yes | yes |
+| body | no | yes | finding | no | no | no | yes |
+| held_back | no | no | unverified | no | no | no | no |
+| report_only | no | no | finding | no | no | no | no |
+| eliminate | no | no | eliminated | no | no | no | no |
 <!-- /generated-from-registry-location -->
 
 ---

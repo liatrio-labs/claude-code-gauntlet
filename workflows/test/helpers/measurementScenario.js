@@ -48,7 +48,7 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
       const index = Number(/verify-slice-(\d+)/.exec(label)[1]);
       return sliceInputRecorder(deltaEnvelope(slice, { sha: args.headShaShort, nonce: `${args.nonce}.${index}`,
         overrides: Object.fromEntries(slice.map((f) => [f.id, f.id === 'VERIFY'
-          ? { verified: false, elimination_reason: 'trusted executor disproved the claim' } : { origin: 'new' }])) }), prompt);
+          ? { verified: false, elimination_reason: 'trusted executor disproved the claim' } : { origin: 'new', diff_validation: { in_diff: true } }])) }), prompt);
     }
     if (options.failValidation && label.startsWith('validate-batch-')) throw new Error('synthetic validation dispatch failure');
     if (label.startsWith('validate-batch-')) {

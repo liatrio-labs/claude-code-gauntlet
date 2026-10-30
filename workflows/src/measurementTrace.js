@@ -21,7 +21,7 @@ export function traceDecision(finding, reason_code, reason, related = [], decisi
   return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related };
 }
 export function eliminationDecisions(output) {
-  const codes = { threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
+  const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
     'suppressed:intentional': 'suppression', 'suppressed:generated': 'suppression',
     'challenge:removed': 'challenge_removed', 'challenge:downgraded': 'challenge_downgraded_removed' };
   return (output.eliminated || []).filter((f) => f.trace_id)

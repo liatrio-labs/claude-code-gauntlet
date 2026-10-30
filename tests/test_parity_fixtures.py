@@ -31,7 +31,6 @@ def test_verify_deltas_parity(case_dir):
     verify_delta_drop = {
         "blame_metadata",
         "factual_verification",
-        "diff_validation",
     }
     inp, expected = _load(case_dir)
     verified_by_id = {f["id"]: f for f in inp["result"]["verified"]}
@@ -47,6 +46,11 @@ def test_verify_deltas_parity(case_dir):
         for f in inp["dispatched"]
         if f["id"] in verified_by_id
     ]
+    for finding in joined:
+        if "diff_validation" in finding:
+            finding["diff_validation"] = {
+                "in_diff": finding["diff_validation"]["in_diff"]
+            }
     assert {"deltas": deltas, "checksum": checksum, "joined": joined} == expected
 
 

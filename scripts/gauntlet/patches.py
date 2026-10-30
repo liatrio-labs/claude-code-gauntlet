@@ -12,7 +12,7 @@ from gauntlet.delivery import gate
 from gauntlet.delivery.gate import FixReason, fix_code_text
 from gauntlet.diff import parse_diff, patch_report_policy
 from gauntlet.fs import JsonReadError, confined, read_json, write_atomic
-from gauntlet.location import location_allows, normalize_location
+from gauntlet.location import delivery_allows, normalize_location
 from gauntlet.markdown import code_span, fence_run
 from gauntlet.text import neutralize_comment_openers, redact_secrets
 
@@ -243,7 +243,7 @@ def _execute(args: argparse.Namespace) -> tuple[PatchReceipt, int]:
         for finding in candidates:
             verdict = (
                 gate.FixVerdict(False, "location_unconfirmed", None)
-                if not location_allows(finding, "patch")
+                if not delivery_allows(finding, "patch")
                 else gate.evaluate_fix(
                     finding,
                     apply_range=(finding.get("line"), finding.get("end_line")),

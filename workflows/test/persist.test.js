@@ -3,14 +3,43 @@ import assert from 'node:assert/strict';
 import { writeArtifacts, parseWriterPayload } from '../src/persist.js';
 import { writerPayload, persistPrimaries, persistPlan } from '../src/persistPlan.js';
 import { fnv1a32 } from '../src/wire.js';
+import { renderReport } from '../src/renderReport.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 import { shellSplit } from './helpers/shellWords.js';
-import { PATHS, PLAN_PATH, expectedWith, persistInput, persistCtx } from './helpers/persistFixtures.js';
+import { PATHS, PLAN_PATH, expectedWith, persistInput, persistCtx, challengeOutput } from './helpers/persistFixtures.js';
 
 const SCRIPT = '/plugin/scripts/assemble_artifacts.py';
 const NULL_PATHS = { findings: null, report: null, postReview: null, checkpoints: null };
 const labels = (ctx) => ctx.calls.map((call) => call.label);
 const SUCCESS_GOLDEN = { artifactPaths: PATHS, gaps: [], partial: false };
+
+for (const channel of ['legacy', 'derived', 'return']) {
+  test(`injection audit projection at the ${channel} persistence boundary`, async () => {
+    const finding = makeFinding('INJECTION', {
+      disposition: 'eliminate', eliminated_by: 'injection', elimination_reason: 'instruction in evidence',
+      description: 'PRIVATE_DESCRIPTION', evidence: 'PRIVATE_EVIDENCE', suggestion: 'PRIVATE_SUGGESTION',
+      body: 'PRIVATE_BODY', claude_md_rule: 'PRIVATE_RULE',
+    });
+    const input = persistInput({ findings: [finding], postReview: [], report: renderReport({ eliminated: [finding] }),
+      checkpoints: { phases: { challenge: challengeOutput({ eliminated: [finding] }) } },
+      persist: channel === 'legacy' ? undefined : { returnPrimaries: channel === 'return' } });
+    const ctx = persistCtx();
+    const out = await writeArtifacts(ctx, input);
+    assert.equal(out.partial, false);
+    const payload = channel === 'return' ? out.persistReturn.entries
+      : parseWriterPayload(ctx.calls.find((call) => call.label === 'artifact-writer').prompt);
+    const findings = Array.isArray(payload) ? JSON.parse(payload.find((e) => e.path === PATHS.findings).text) : payload.findings;
+    assert.deepEqual(findings, [{ id: finding.id, title: finding.title,
+      eliminated_by: 'injection', elimination_reason: finding.elimination_reason }]);
+    const report = Array.isArray(payload) ? payload.find((e) => e.path === PATHS.report).text : payload.report;
+    for (const field of ['description', 'evidence', 'suggestion', 'body', 'claude_md_rule']) {
+      assert.equal(report.includes(finding[field]), false, field);
+    }
+    const checkpoints = Array.isArray(payload)
+      ? JSON.parse(payload.at(-1).text).checkpoint.skeleton : payload.checkpoints;
+    assert.deepEqual(checkpoints, input.checkpoints);
+  });
+}
 
 const PARTIAL_GOLDEN = { artifactPaths: NULL_PATHS, partial: true };
 const DERIVED_ECHO_REASON = 'writer echo did not cover all three primary artifact paths (no write proof)';
@@ -20,7 +49,7 @@ const REFUSED_RECEIPTS = [
     'assemble script reported failure (first; second)', [PATHS.findings, PATHS.report]],
   ['foreign checksum', (r) => ({ ...r, planChecksum: 'other-plan' }),
     'assemble receipt echoed plan checksum other-plan but the pipeline computed '
-    + 'fnv1a32:0xf382bdca \u2014 the executor did not run this persist plan', []],
+    + 'fnv1a32:0xda6a80c2 \u2014 the executor did not run this persist plan', []],
   ['unverified report', (r) => ({ ...r, verified: r.verified.slice(0, 1) }),
     `assemble receipt did not verify ${PATHS.report} (no content proof)`, [PATHS.findings]],
   ['unwritten checkpoint', (r) => ({ ...r, written: r.written.slice(0, 1) }),
@@ -67,20 +96,15 @@ const ACCEPTED_RECEIPTS = [
   ['findings content differs without retry', (r) => {
     r.verified[0] = { ...r.verified[0], chars: 1185, checksum: 'fnv1a32:0x0000dead', content_proof: 'mismatch' }; return r; }, [
     FINDINGS_MISMATCH_GAP]],
-  ['diverged source explains both derived differences', (r) => {
+  ['diverged source explains projected delivery differences', (r) => {
     r.verified[0] = { ...r.verified[0], chars: 1185, checksum: 'fnv1a32:0x0000dead', content_proof: 'mismatch' };
     r.written[0] = { ...r.written[0], chars: 1189, checksum: 'fnv1a32:0x0000beef' };
-    r.written[1] = { ...r.written[1], chars: 1408, checksum: 'fnv1a32:0x0000beef' };
     return r;
   }, [
     FINDINGS_MISMATCH_GAP,
     `artifact-content-proof: derived document ${PATHS.postReview} does not match the `
     + `pipeline's own derivation (receipt reports 1189 chars/fnv1a32:0x0000beef, the pipeline `
     + `derived 1336/fnv1a32:0xf7c0f7c7) \u2014 expected, since ${PATHS.findings} it was `
-    + `derived from also diverged`,
-    `artifact-content-proof: derived document ${PATHS.checkpoints} does not match the `
-    + `pipeline's own derivation (receipt reports 1408 chars/fnv1a32:0x0000beef, the pipeline `
-    + `derived 1579/fnv1a32:0x07a56615) \u2014 expected, since ${PATHS.findings} it was `
     + `derived from also diverged`,
   ]],
 ];
@@ -278,7 +302,7 @@ for (const [name, input, commandWords = COMMAND_WORDS, expectedPaths = PATHS, ch
 }
 
 const EMPTY_PLAN_TEXT = JSON.stringify({
-  'planVersion': 2,
+  'planVersion': 3,
   'expect': [
     { 'path': PATHS.findings, 'chars': 2, 'checksum': 'fnv1a32:0x741638a5' },
     { 'path': PATHS.report, 'chars': 0, 'checksum': 'fnv1a32:0x811c9dc5' },
@@ -288,8 +312,8 @@ const EMPTY_PLAN_TEXT = JSON.stringify({
     { 'path': PATHS.checkpoints, 'chars': 2, 'checksum': 'fnv1a32:0x5465b825' },
   ],
   'postReview': { 'path': PATHS.postReview, 'source': PATHS.findings, 'ids': [], 'wrapper': null },
-  'checkpoint': { 'path': PATHS.checkpoints, 'source': PATHS.findings, 'challengeFindingIds': [], 'stripAliasFields': ['line', 'end_line', 'body'], 'skeleton': {} },
-  'planChecksum': 'fnv1a32:0xd9b8627a',
+  'checkpoint': { 'path': PATHS.checkpoints, 'mode': 'literal', 'skeleton': {} },
+  'planChecksum': 'fnv1a32:0xb6fb0e64',
 }, null, 2);
 const EMPTY_RETURN_INPUT = { findings: [], postReview: [], report: '', checkpoints: {}, persist: { returnPrimaries: true } };
 const RETURN_GOLDEN = {
@@ -301,7 +325,7 @@ const RETURN_GOLDEN = {
 const RETURN_ROWS = [
   ['empty literal bytes and absent nonce', EMPTY_RETURN_INPUT, null, { literalBytes: true }],
   ['supplied nonce', { persist: { assembleScriptPath: SCRIPT, returnPrimaries: true }, nonce: 'nonce-xyz' }, 'nonce-xyz'],
-  ['exact return budget', { ...EMPTY_RETURN_INPUT, report: 'r'.repeat(998439) }, null, { exactBudget: true }],
+  ['exact return budget', { ...EMPTY_RETURN_INPUT, report: 'r'.repeat(998615) }, null, { exactBudget: true }],
 ];
 for (const [name, patch, nonce, checks = {}] of RETURN_ROWS) {
   test(`return channel: ${name}`, async () => {
@@ -324,7 +348,7 @@ for (const [name, patch, nonce, checks = {}] of RETURN_ROWS) {
           ...out.persistReturn, entries: out.persistReturn.entries.map(({ path, text }) => ({ path, chars: text.length })),
         },
       }, expectedWith(RETURN_GOLDEN, { 'persistReturn.entries': [
-        { path: PATHS.findings, chars: 2 }, { path: PATHS.report, chars: 998439 }, { path: PLAN_PATH, chars: 1194 },
+        { path: PATHS.findings, chars: 2 }, { path: PATHS.report, chars: 998615 }, { path: PLAN_PATH, chars: 1034 },
       ] }));
     } else {
       const writer = persistCtx();
@@ -350,7 +374,7 @@ for (const [name, persist, dispatched, extra] of OVERSIZED_ROWS) {
     assert.deepEqual(labels(ctx), dispatched);
     assert.deepEqual(out.artifactPaths, PATHS);
     assert.deepEqual(out.gaps, [
-      'writeArtifacts: the persisted primaries serialize to 1001562 chars, over the '
+      'writeArtifacts: the persisted primaries serialize to 1001386 chars, over the '
       + '1000000-char return budget \u2014 persisted through the artifact-writer instead, which '
       + 'transcribes the bytes'
     ]);

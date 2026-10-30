@@ -29,6 +29,7 @@ const [plugin, work, sha, claimed] = process.argv.slice(1);
 const load = (name) => import(pathToFileURL(`${plugin}/workflows/src/${name}.js`));
 const { verifyStage } = await load('verifyStage');
 const { writerPayload } = await load('persistPlan');
+const { disposeFindings } = await load('dispose');
 const { shellSplit } = await import(pathToFileURL(`${plugin}/workflows/test/helpers/shellWords.js`));
 const prefix = `${work}/code-gauntlet-`;
 const findings = [{ id: 'F1', file: 'source.txt', line_start: Number(claimed), line_end: Number(claimed) + 3,
@@ -49,7 +50,8 @@ const result = await verifyStage(ctx, { findings, pluginRoot: plugin, python: 'p
     inputPathBase: `${work}/slice-in`, outputPathBase: `${work}/slice-out`,
   } });
 if (!result.verified || calls !== 1) throw Error(JSON.stringify(result));
-const payload = writerPayload({ findings: result.findings, postReview: result.findings,
+const disposed = disposeFindings({ findings: result.findings });
+const payload = writerPayload({ findings: disposed.findings, postReview: disposed.findings,
   prIdentity: { owner: 'o', repo: 'r', pr_number: 5, sha_full: sha, platform: 'github', web_origin: 'https://github.com' },
   reviewBody: 'Summary' });
 process.stdout.write(JSON.stringify(payload));

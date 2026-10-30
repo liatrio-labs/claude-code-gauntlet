@@ -252,7 +252,7 @@ const PIPELINE_ROWS = [
       stats: { total: 2, passed_threshold: 2, contested_count: 0, exclusions_removed: 0, injections_removed: 0,
         suggestions_removed: 0, claude_md_rules_removed: 0, spec_texts_removed: 0, suggested_fix_codes_removed: 0,
         consensus_boosted: 2, singleton_penalized: 0, dimension_routed: 0, reachability_demoted: 0,
-        cross_agent_consolidated: 2, test_analyzer_promoted: 0, tagged_main: 2, tagged_suggestion: 0 },
+        test_analyzer_promoted: 0, tagged_main: 2, tagged_suggestion: 0 },
       generated_at: '2026-07-18T00:00:00Z' },
   },
 
@@ -281,7 +281,7 @@ const PIPELINE_ROWS = [
       stats: { total: 11, passed_threshold: 10, contested_count: 1, exclusions_removed: 1, injections_removed: 1,
         suggestions_removed: 1, claude_md_rules_removed: 1, spec_texts_removed: 1, suggested_fix_codes_removed: 1,
         consensus_boosted: 2, singleton_penalized: 1, dimension_routed: 1, reachability_demoted: 1,
-        cross_agent_consolidated: 2, test_analyzer_promoted: 1, tagged_main: 5, tagged_suggestion: 2 },
+        test_analyzer_promoted: 1, tagged_main: 5, tagged_suggestion: 2 },
       generated_at: '2026-07-18T00:00:00Z',
     },
   },

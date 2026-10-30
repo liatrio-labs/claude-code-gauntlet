@@ -38,7 +38,7 @@ from gauntlet.fs import JsonReadError, read_json
 from gauntlet.location import (
     anchor_matches_span,
     canonical_range,
-    location_allows,
+    delivery_allows,
     normalize_location,
 )
 from gauntlet.marker import (
@@ -309,7 +309,7 @@ def _anchor(
     facts: DiffFacts | None,
     platform: Platform,
 ) -> Anchor | None:
-    if not location_allows(finding, "inline"):
+    if not delivery_allows(finding, "inline"):
         return None
     line, end = cast(tuple[int, int], canonical_range(finding))
     texts = diff.span_texts(facts, path, line, end) if facts is not None else None
@@ -356,6 +356,8 @@ def plan_delivery(
 ) -> DeliveryPlan:
     findings: list[Finding] = []
     for raw in data["findings"]:
+        if not delivery_allows(raw, "body"):
+            continue
         finding = cast(Finding, normalize_location(raw))
         span = canonical_range(finding)
         if span is not None:

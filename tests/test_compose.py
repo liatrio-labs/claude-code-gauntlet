@@ -158,6 +158,7 @@ def test_patch_payload(payload, offsets, expected):
                 "suggested_fix_code": payload,
                 "_fence_offsets": (9, 9),
                 "location_status": "confirmed",
+                "disposition": "deliver",
                 "line_start": 2,
                 "line_end": 3,
             },
@@ -315,6 +316,7 @@ GROUP_SECTIONS_CASES = {
 def test_group_sections(primary, corroborators, expected):
     primary = {
         "location_status": "confirmed",
+        "disposition": "deliver",
         "line_start": 2,
         "line_end": 3,
         **primary,
@@ -785,3 +787,19 @@ def test_summary_admission_reserves_review_bytes() -> None:
         )
     assert (composed.shown, composed.omitted, composed.folded_bytes) == (0, 2, 0)
     assert len(composed.body.encode("utf-8")) <= 1000
+
+
+def test_body_digest_omission_does_not_consume_dimension_heading() -> None:
+    groups = [
+        skipped_group(
+            title="Huge", body="x" * 70000, disposition="body", dimension="bug"
+        ),
+        skipped_group(title="Small", body="b", disposition="body", dimension="bug"),
+        skipped_group(title="Another", body="c", disposition="body", dimension="bug"),
+    ]
+    (_, omitted), (_, first), (_, second) = compose.digest_groups(
+        groups, lambda fragment: len(fragment.encode("utf-8")) <= 65536
+    )
+    assert omitted is None
+    assert first is not None and first.startswith("\n\n### bug\n\n")
+    assert second is not None and "\n\n### bug" not in second

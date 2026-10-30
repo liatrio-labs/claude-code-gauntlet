@@ -55,7 +55,8 @@ for (const row of PERSIST_WIRING_ROWS) test(`persistence dispatch wiring: ${row.
     ]);
     const plan = JSON.parse(entries[2].text);
     assert.deepEqual(plan.postReview.ids, ['F1', 'F2']);
-    assert.deepEqual(plan.checkpoint.challengeFindingIds, ['F1', 'F2']);
+    assert.equal(plan.checkpoint.mode, 'literal');
+    assert.deepEqual(plan.checkpoint.skeleton.phases.challenge.findings.map((f) => f.id), ['F1', 'F2']);
     assert.deepEqual(plan.checkpoint.skeleton.completed, PHASES);
   }
   if (row.returnAppended) {

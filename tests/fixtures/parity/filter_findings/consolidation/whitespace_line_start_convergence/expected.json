@@ -1,29 +1,29 @@
 {
+  "consolidated_count": 0,
   "findings": [
     {
-      "id": "C1",
       "agent": "bug-detector",
+      "confidence": 80,
+      "description": "xxxxxx",
       "dimension": "bug",
       "file": "n.py",
-      "line_start": "﻿12",
+      "id": "C1",
+      "line_start": "\ufeff12",
+      "location_status": "unconfirmed",
       "severity": "high",
-      "confidence": 80,
-      "title": "x",
-      "description": "xxxxxx",
-      "location_status": "unconfirmed"
+      "title": "x"
     },
     {
-      "id": "C2",
       "agent": "security-auditor",
+      "confidence": 70,
+      "description": "yy",
       "dimension": "security",
       "file": "n.py",
-      "line_start": "12",
+      "id": "C2",
+      "line_start": "\u008512",
+      "location_status": "unconfirmed",
       "severity": "high",
-      "confidence": 70,
-      "title": "y",
-      "description": "yy",
-      "location_status": "unconfirmed"
+      "title": "y"
     }
-  ],
-  "consolidated_count": 0
+  ]
 }

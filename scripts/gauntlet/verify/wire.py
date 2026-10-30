@@ -296,6 +296,8 @@ def build_deltas(findings: Sequence[object], verified: Sequence[object]) -> list
             value = finding.get(key)
             if value is None:
                 continue
+            if key == "diff_validation":
+                value = {"in_diff": cast(dict[str, object], value)["in_diff"]}
             if key == "confidence":
                 value = _delta_confidence(value)
                 if value is None:

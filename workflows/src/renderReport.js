@@ -1,6 +1,6 @@
 // Owns local report rendering: multiline prose keeps Markdown, while evidence and receipts keep their fence grammars.
 // Line fields use the outbound line contract, and repository spans preserve copyable normalized text in dynamic delimiters.
-import { canonicalRange, locationAllows } from './location.js';
+import { canonicalRange, locationAllows, deliveryAllows } from './location.js';
 import { incompleteVetting, UNVERIFIED_REASONS } from './vetting.js';
 import { rankFindings } from './applyChallenges.js';
 import { PERMALINK_TEMPLATES, identityCheck, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES } from './registry.js';
@@ -217,6 +217,8 @@ function coerceReportFinding(finding, severities) {
       value = reportAsConfidence(raw);
     } else if (key === 'corroborations') {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
+    } else if (key === 'disposition_reasons') {
+      value = raw;
     } else if (key === 'consolidation_primary' || key === 'challenge_contested') {
       value = raw;
     } else if (key === 'risk_level') {
@@ -405,7 +407,7 @@ function permalinkContext(identity) {
 }
 
 function locationUrl(finding, permalinks, displayedLocation) {
-  if (!locationAllows(finding, 'sourceLink') || !permalinks.blobBase || !isPresent(finding.file)) return null;
+  if (!deliveryAllows(finding, 'sourceLink') || !permalinks.blobBase || !isPresent(finding.file)) return null;
   const rawFile = reportAsText(finding.file);
   // Refuse a link when normalization changes its path so the displayed location cannot disagree with the target.
   if (outboundBase(rawFile) !== rawFile) return null;
@@ -624,10 +626,18 @@ function summaryIndex(rawFindings, findingsView, input) {
   return { indexed, reasons };
 }
 
-function summaryBlock(builder, input) {
+function partitionByDisposition(inp, findingsRight) {
+  const projected = coerceReportFindings(inp.findings);
+  return {
+    projected,
+    rawFindings: projected.filter((f) => deliveryAllows(f, findingsRight)),
+    rawUnverified: [...projected.filter((f) => deliveryAllows(f, 'unverified')), ...coerceReportFindings(inp.unverified)],
+  };
+}
+
+function summaryBlock(builder, input, findingsRight = 'body') {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = coerceReportFindings(inp.findings);
-  const rawUnverified = coerceReportFindings(inp.unverified);
+  const { rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -821,8 +831,7 @@ function renderMethodology(builder, input, rawFindings, knobs) {
 
 export function renderReport(input, knobs = KNOB_REGISTRY) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = coerceReportFindings(inp.findings);
-  const rawUnverified = coerceReportFindings(inp.unverified);
+  const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, 'report');
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -874,7 +883,7 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
   builder.add();
   builder.add('## Summary');
   builder.add();
-  summaryBlock(builder, inp);
+  summaryBlock(builder, inp, 'report');
 
   builder.add();
   builder.add('## Change Context');
@@ -900,6 +909,15 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
     builder.add('These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. '
       + 'They are not confirmed findings.');
     renderSeverityBuckets(builder, unverifiedView, true, permalinks);
+  }
+  const eliminated = [...projected, ...coerceReportFindings(inp.eliminated)].filter((f) => deliveryAllows(f, 'eliminated'));
+  if (eliminated.length) {
+    builder.add();
+    builder.add('## Eliminated findings');
+    for (const finding of eliminated) {
+      builder.add();
+      builder.add(`- ${inline(finding.id)}: ${inline(finding.title)} — ${inline(finding.eliminated_by)}: ${inline(finding.elimination_reason)}`);
+    }
   }
 
   const dimensionsTable = dimensionsSummaryTable({

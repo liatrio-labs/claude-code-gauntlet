@@ -1,4 +1,4 @@
-import { ANCHOR_LIMITS, LOCATION_RIGHTS } from './registry.js';
+import { ANCHOR_LIMITS, LOCATION_RIGHTS, DISPOSITION_RIGHTS } from './registry.js';
 
 export function canonicalRange(finding) {
   if (!['confirmed', 'relocated'].includes(finding?.location_status)) return null;
@@ -11,6 +11,19 @@ export function canonicalRange(finding) {
 export function locationAllows(finding, right) {
   const status = canonicalRange(finding) ? finding.location_status : 'unconfirmed';
   return LOCATION_RIGHTS[status][right] === true;
+}
+
+export function deliveryAllows(finding, right) {
+  let stamp = finding?.disposition;
+  const reasons = finding?.disposition_reasons;
+  if (typeof stamp !== 'string' || !Object.hasOwn(DISPOSITION_RIGHTS, stamp)
+    || (reasons !== undefined && (!Array.isArray(reasons) || !reasons.every((reason) => typeof reason === 'string')))) {
+    stamp = 'held_back';
+  }
+  const rights = DISPOSITION_RIGHTS[stamp];
+  if (right === 'report') return rights.report === 'finding';
+  if (right === 'unverified' || right === 'eliminated') return rights.report === right;
+  return rights[right] === true && locationAllows(finding, right);
 }
 
 // Claims survive clearing so replay and persistence cannot turn hints into rights.

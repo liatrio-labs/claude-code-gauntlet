@@ -9,6 +9,7 @@ ModelAlias = Literal["sonnet", "opus", "haiku"]
 PolicyProvider = Literal["firstParty", "bedrock", "vertex", "foundry"]
 Reachability = Literal["current", "future_change_only", "uncertain"]
 LocationStatus = Literal["confirmed", "relocated", "unconfirmed"]
+Disposition = Literal["deliver", "body", "held_back", "report_only", "eliminate"]
 DeltaKey = Literal[
     "id",
     "verified",
@@ -19,6 +20,7 @@ DeltaKey = Literal[
     "line_start",
     "line_end",
     "location_status",
+    "diff_validation",
 ]
 DeltaValueField = Literal[
     "origin",
@@ -28,6 +30,7 @@ DeltaValueField = Literal[
     "line_start",
     "line_end",
     "location_status",
+    "diff_validation",
 ]
 
 SEVERITY_ORDER: tuple[Severity, ...] = ("critical", "high", "medium", "low")
@@ -53,6 +56,14 @@ LOCATION_STATUSES: tuple[LocationStatus, ...] = (
     "unconfirmed",
 )
 
+DISPOSITIONS: tuple[Disposition, ...] = (
+    "deliver",
+    "body",
+    "held_back",
+    "report_only",
+    "eliminate",
+)
+
 DELTA_KEYS: tuple[DeltaKey, ...] = (
     "id",
     "verified",
@@ -63,6 +74,7 @@ DELTA_KEYS: tuple[DeltaKey, ...] = (
     "line_start",
     "line_end",
     "location_status",
+    "diff_validation",
 )
 
 DELTA_VALUE_FIELDS: tuple[DeltaValueField, ...] = (
@@ -73,6 +85,7 @@ DELTA_VALUE_FIELDS: tuple[DeltaValueField, ...] = (
     "line_start",
     "line_end",
     "location_status",
+    "diff_validation",
 )
 
 VERIFY_SLICE_FIELDS: tuple[str, ...] = (
@@ -223,6 +236,7 @@ CODE_OWNED_HEADINGS = [
     "## Change Context",
     "## Findings",
     "## Unverified / pipeline-degraded findings",
+    "## Eliminated findings",
     "## Review Dimensions Summary",
     "## Review Methodology",
 ]
@@ -533,6 +547,70 @@ LOCATION_RIGHTS: Mapping[LocationStatus, Mapping[str, bool]] = MappingProxyType(
     }
 )
 
+DISPOSITION_RIGHTS: Mapping[Disposition, Mapping[str, bool | str]] = MappingProxyType(
+    {
+        "deliver": MappingProxyType(
+            {
+                "inline": True,
+                "body": True,
+                "report": "finding",
+                "fixTask": True,
+                "patch": True,
+                "fence": True,
+                "sourceLink": True,
+            }
+        ),
+        "body": MappingProxyType(
+            {
+                "inline": False,
+                "body": True,
+                "report": "finding",
+                "fixTask": False,
+                "patch": False,
+                "fence": False,
+                "sourceLink": True,
+            }
+        ),
+        "held_back": MappingProxyType(
+            {
+                "inline": False,
+                "body": False,
+                "report": "unverified",
+                "fixTask": False,
+                "patch": False,
+                "fence": False,
+                "sourceLink": False,
+            }
+        ),
+        "report_only": MappingProxyType(
+            {
+                "inline": False,
+                "body": False,
+                "report": "finding",
+                "fixTask": False,
+                "patch": False,
+                "fence": False,
+                "sourceLink": False,
+            }
+        ),
+        "eliminate": MappingProxyType(
+            {
+                "inline": False,
+                "body": False,
+                "report": "eliminated",
+                "fixTask": False,
+                "patch": False,
+                "fence": False,
+                "sourceLink": False,
+            }
+        ),
+    }
+)
+
+
+class DiffValidation(TypedDict):
+    in_diff: bool | None
+
 
 class _DeltaRequired(TypedDict):
     id: str
@@ -547,6 +625,7 @@ class Delta(_DeltaRequired, total=False):
     line_start: int
     line_end: int
     location_status: LocationStatus
+    diff_validation: DiffValidation
 
 
 class VerifySliceFinding(TypedDict, total=False):

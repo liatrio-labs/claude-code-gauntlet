@@ -126,6 +126,8 @@ _REGISTRY_FIELDS = (
     "anchorLimits: m.ANCHOR_LIMITS",
     "locationRights: m.LOCATION_RIGHTS",
     "locationStatuses: m.LOCATION_STATUSES",
+    "dispositionRights: m.DISPOSITION_RIGHTS",
+    "dispositions: m.DISPOSITIONS",
     "dispatchResults: m.DISPATCH_RESULTS",
     "discoveryContracts: d.agentSpecs().map(spec => ({"
     " agentType: spec.agentType, schema: d.findingSchema(spec, {}),"
@@ -401,9 +403,31 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
     return text_out
 
 
-def location_reference(registry: Mapping[str, Any]) -> str:
-    rights = registry["locationRights"]
+def _rights_cell(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if value:
+        return "yes"
+    return "no"
+
+
+def _rights_table(
+    first_column: str, rights: Mapping[str, Mapping[str, object]]
+) -> list[str]:
     columns = list(next(iter(rights.values())))
+    return [
+        "| " + first_column + " | " + " | ".join(columns) + " |",
+        "|---|" + "---|" * len(columns),
+        *(
+            f"| {status} | "
+            + " | ".join(_rights_cell(row[column]) for column in columns)
+            + " |"
+            for status, row in rights.items()
+        ),
+    ]
+
+
+def location_reference(registry: Mapping[str, Any]) -> str:
     rows = [
         "## Location Status and Rights",
         "",
@@ -411,15 +435,16 @@ def location_reference(registry: Mapping[str, Any]) -> str:
         "`anchor` is required only at discovery dispatch; pipeline-authored and replayed findings may omit it.",
         "Unconfirmed findings remain in the review body, labelled `location unconfirmed`.",
         "",
-        "| Status | " + " | ".join(columns) + " |",
-        "|---|" + "---|" * len(columns),
+        *_rights_table("Status", registry["locationRights"]),
     ]
-    rows.extend(
-        f"| {status} | "
-        + " | ".join("yes" if row[column] else "no" for column in columns)
-        + " |"
-        for status, row in rights.items()
-    )
+    rows += [
+        "",
+        "## Final Disposition and Rights",
+        "",
+        "Missing or unknown disposition is held back. Delivery intersects these rights with location rights.",
+        "",
+        *_rights_table("Disposition", registry["dispositionRights"]),
+    ]
     return "\n".join(rows)
 
 
@@ -509,6 +534,10 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             raise CliError(f"unknown finding schema type for {field}: {schema!r}")
     delta_keys = identity["deltaKeys"]
     delta_value_fields = delta_keys[2:]
+    delta_annotations = dict.fromkeys(("confidence", "line_start", "line_end"), "int")
+    delta_annotations.update(
+        location_status="LocationStatus", diff_validation="DiffValidation"
+    )
     root = "/__gauntlet_registry_root__/"
     sha = "__GAUNTLET_SHA__"
     templates = {
@@ -538,6 +567,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         f"PolicyProvider = {literal_type(identity['policyProviders'])}",
         f"Reachability = {literal_type(identity['reachability'])}",
         f"LocationStatus = {literal_type(identity['locationStatuses'])}",
+        f"Disposition = {literal_type(identity['dispositions'])}",
         f"DeltaKey = {literal_type(delta_keys)}",
         f"DeltaValueField = {literal_type(delta_value_fields)}",
         "",
@@ -548,6 +578,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "POLICY_PROVIDERS": tuple(identity["policyProviders"]),
         "REACHABILITY_VALUES": tuple(identity["reachability"]),
         "LOCATION_STATUSES": tuple(identity["locationStatuses"]),
+        "DISPOSITIONS": tuple(identity["dispositions"]),
         "DELTA_KEYS": tuple(delta_keys),
         "DELTA_VALUE_FIELDS": tuple(delta_value_fields),
         "VERIFY_SLICE_FIELDS": tuple(identity["verifySliceFields"]),
@@ -568,6 +599,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "POLICY_PROVIDERS": "tuple[PolicyProvider, ...]",
         "REACHABILITY_VALUES": "tuple[Reachability, ...]",
         "LOCATION_STATUSES": "tuple[LocationStatus, ...]",
+        "DISPOSITIONS": "tuple[Disposition, ...]",
         "DELTA_KEYS": "tuple[DeltaKey, ...]",
         "DELTA_VALUE_FIELDS": "tuple[DeltaValueField, ...]",
         "VERIFY_SLICE_FIELDS": "tuple[str, ...]",
@@ -589,19 +621,32 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
                 "",
             ]
         )
-    lines.append(
-        "LOCATION_RIGHTS: Mapping[LocationStatus, Mapping[str, bool]] = MappingProxyType("
-    )
-    lines.append("    {")
-    for status, rights in identity["locationRights"].items():
+    for name, vocabulary, value_type, rows in (
+        ("LOCATION_RIGHTS", "LocationStatus", "bool", identity["locationRights"]),
+        (
+            "DISPOSITION_RIGHTS",
+            "Disposition",
+            "bool | str",
+            identity["dispositionRights"],
+        ),
+    ):
         lines.append(
-            f"        {json.dumps(status)}: MappingProxyType(\n            "
-            + _python_literal(rights).replace("\n", "\n            ")
-            + "\n        ),"
+            f"{name}: Mapping[{vocabulary}, Mapping[str, {value_type}]] = MappingProxyType("
         )
-    lines.extend(["    }", ")", ""])
+        lines.append("    {")
+        for status, rights in rows.items():
+            lines.append(
+                f"        {json.dumps(status)}: MappingProxyType(\n            "
+                + _python_literal(rights).replace("\n", "\n            ")
+                + "\n        ),"
+            )
+        lines.extend(["    }", ")", ""])
     lines.extend(
         [
+            "",
+            "class DiffValidation(TypedDict):",
+            "    in_diff: bool | None",
+            "",
             "",
             "class _DeltaRequired(TypedDict):",
             "    id: str",
@@ -610,7 +655,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "",
             "class Delta(_DeltaRequired, total=False):",
             *(
-                f"    {field}: {'int' if field in ('confidence', 'line_start', 'line_end') else 'LocationStatus' if field == 'location_status' else 'object'}"
+                f"    {field}: {delta_annotations.get(field, 'object')}"
                 for field in delta_value_fields
             ),
             "",
@@ -666,6 +711,7 @@ def _placeholders(prefix: str, fields: str) -> dict[str, str]:
 _TEMPLATE_FINDING = {
     **_placeholders("finding", "id file title description confidence dimension"),
     "location_status": "confirmed",
+    "disposition": "deliver",
     "line_start": 10,
     "line_end": 10,
 }
@@ -723,13 +769,14 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
     "unverified": [
         {
             **_TEMPLATE_FINDING,
+            "disposition": "held_back",
             "severity": "medium",
             "origin": "unknown",
             "challenge": "capped",
             "validation": "skipped",
             "evidence": "{finding.evidence}",
         },
-        {**_TEMPLATE_FINDING, "challenge": "failed"},
+        {**_TEMPLATE_FINDING, "disposition": "held_back", "challenge": "failed"},
     ],
     "dimensions": {"dispatched": [], "degraded": []},
     "stats": {
@@ -869,6 +916,7 @@ def pr_identity_fields_body(identity: Mapping[str, Any]) -> list[str]:
 
 _INLINE_SAMPLE_FINDING = {
     "location_status": "confirmed",
+    "disposition": "deliver",
     "line_start": 10,
     "line_end": 10,
     "severity": "severity",

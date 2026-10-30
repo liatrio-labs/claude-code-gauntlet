@@ -56,6 +56,7 @@ export const CODE_OWNED_HEADINGS = deepFreeze([
   '## Change Context',
   '## Findings',
   '## Unverified / pipeline-degraded findings',
+  '## Eliminated findings',
   '## Review Dimensions Summary',
   '## Review Methodology',
 ]);
@@ -69,6 +70,15 @@ export const LOCATION_RIGHTS = deepFreeze({
   unconfirmed: { body: true, sourceLink: false, inline: false, fence: false, patch: false, fixTask: false },
 });
 export const LOCATION_STATUSES = deepFreeze(Object.keys(LOCATION_RIGHTS));
+
+export const DISPOSITION_RIGHTS = deepFreeze({
+  deliver: { inline: true, body: true, report: 'finding', fixTask: true, patch: true, fence: true, sourceLink: true },
+  body: { inline: false, body: true, report: 'finding', fixTask: false, patch: false, fence: false, sourceLink: true },
+  held_back: { inline: false, body: false, report: 'unverified', fixTask: false, patch: false, fence: false, sourceLink: false },
+  report_only: { inline: false, body: false, report: 'finding', fixTask: false, patch: false, fence: false, sourceLink: false },
+  eliminate: { inline: false, body: false, report: 'eliminated', fixTask: false, patch: false, fence: false, sourceLink: false },
+});
+export const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
 
 // Use full schema fragments for arrays because the host requires items; scalar fields can use type shorthand.
 // Verification stamps origin, so discovery does not require it.

@@ -16,10 +16,12 @@ from typing import Any, Literal, TypedDict
 
 from gauntlet.artifacts import assemble, plan_checksum
 from gauntlet.jsjson import js_stringify_pretty
+from gauntlet.registry import Disposition
 
 from bench.runner.decode import decode
 from bench.runner.epochs import digest
-from bench.runner.provenance import PLUGIN_PATHS, ROOT
+from bench.runner.observations import ReasonCode
+from bench.runner.provenance import PLUGIN_PATHS, ROOT, reconstruct_delivery
 from bench.runner.stages import MeasurementTrace, load_trace
 
 
@@ -32,12 +34,16 @@ class TraceBindingWire(TypedDict):
     source: SourceWire | None
 
 
-class ReplayInputWire(TypedDict):
+class _RequiredReplayInputWire(TypedDict):
     schema_version: Literal[1]
     source_plugin_sha256: str
     args: dict[str, Any]
     sources: dict[Literal["workflow", "checkpoint"], SourceWire]
     trace: TraceBindingWire
+
+
+class ReplayInputWire(_RequiredReplayInputWire, total=False):
+    diff: SourceWire
 
 
 class DispatchWire(TypedDict):
@@ -75,6 +81,16 @@ class ReplayReceiptWire(TypedDict):
     trace_availability: Literal["available", "unavailable"]
 
 
+class DeliveryDeltaWire(TypedDict):
+    member: int
+    id: object
+    issue: object
+    before: object
+    after: Disposition
+    reasons: list[ReasonCode]
+    surface: Literal["inline", "body"] | None
+
+
 @dataclass(frozen=True, slots=True)
 class ReplayInputs:
     source_plugin_sha256: str
@@ -83,6 +99,7 @@ class ReplayInputs:
     trace: MeasurementTrace | None
     input_hashes: tuple[tuple[str, str], ...]
     source_paths: tuple[Path, ...]
+    diff: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +109,8 @@ class ReplayResult:
 
 
 PHASES = ("summarize", "discover", "merge", "verify", "validate", "filter", "challenge")
+UpstreamStage = Literal["verify", "filter"]
+UPSTREAM_STAGES: tuple[UpstreamStage, ...] = ("verify", "filter")
 IDENTITY = ("trace_id", "discovery_agent", "discovery_dimension")
 DISPATCHES = {
     "artifact-writer": "code-gauntlet:artifact-writer",
@@ -131,9 +150,9 @@ def _projection(finding):
     return {k: v for k, v in finding.items() if k not in IDENTITY}
 
 
-def rejoin_trace_identity(challenge, trace):
+def rejoin_trace_identity(challenge, trace, stage: UpstreamStage | None = None):
     """Use full projections and holdback references, never a finding-id join."""
-    (holdback,) = [s for s in trace.snapshots if s.stage == "holdback"]
+    (holdback,) = [s for s in trace.snapshots if s.stage in ("holdback", "dispose")]
     versions = {v.version_id: v for v in trace.versions}
     allowed = {versions[v].trace_id for v in holdback.finding_version_ids}
     allowed.update(d.trace_id for d in holdback.decisions)
@@ -143,8 +162,12 @@ def rejoin_trace_identity(challenge, trace):
         if s.stage == "challenge"
         for d in s.decisions
     )
+    if stage is not None:
+        allowed.update(
+            d.trace_id for s in trace.snapshots if s.stage == stage for d in s.decisions
+        )
     candidates = [v.projection() for v in trace.versions if v.trace_id in allowed]
-    used = set()
+    used: set[str] = set()
     for bucket in ("findings", "unverified", "eliminated"):
         for finding in challenge[bucket]:
             # Skipped challenges carry a marker but may have no recorded version.
@@ -154,7 +177,7 @@ def rejoin_trace_identity(challenge, trace):
                 referenced = {
                     d.trace_id
                     for s in trace.snapshots
-                    if s.stage in ("challenge", "holdback")
+                    if s.stage in ("challenge", "holdback", "dispose")
                     for d in s.decisions
                     if d.reason_code == reason
                 }
@@ -193,6 +216,8 @@ def load_replay_inputs(manifest_path):
     binding = wire["trace"]
     if binding["source"] is not None:
         sources["trace"] = binding["source"]
+    if "diff" in wire:
+        sources["diff"] = wire["diff"]
     contents, paths, hashes = {}, [path.resolve()], [("manifest", _hash(raw))]
     for role, source in sources.items():
         candidate = _safe(root / source["path"])
@@ -200,7 +225,7 @@ def load_replay_inputs(manifest_path):
         if (
             candidate.is_symlink()
             or not resolved.is_relative_to(root)
-            or resolved.suffix != ".json"
+            or resolved.suffix != (".patch" if role == "diff" else ".json")
             or resolved in paths
         ):
             raise ValueError("source escapes evidence root or repeats an artifact")
@@ -241,10 +266,22 @@ def load_replay_inputs(manifest_path):
                 output[bucket] = [_projection(f) for f in output[bucket]]
     trace = None
     if "trace" in contents:
-        trace = load_trace(paths[-1], expected_sha256=sources["trace"]["sha256"])
+        trace = load_trace(
+            root / sources["trace"]["path"], expected_sha256=sources["trace"]["sha256"]
+        )
         if trace.run_nonce != wire["args"].get("nonce") or not trace.complete:
             raise ValueError("trace belongs to another or incomplete review")
         rejoin_trace_identity(state["phaseOutputs"]["challenge"], trace)
+        for stage in UPSTREAM_STAGES:
+            rejoin_trace_identity(
+                {
+                    "findings": [],
+                    "unverified": [],
+                    "eliminated": state["phaseOutputs"][stage].get("eliminated", []),
+                },
+                trace,
+                stage,
+            )
     return ReplayInputs(
         wire["source_plugin_sha256"],
         record,
@@ -252,6 +289,7 @@ def load_replay_inputs(manifest_path):
         trace,
         tuple(hashes),
         tuple(paths),
+        contents.get("diff"),
     )
 
 
@@ -262,7 +300,8 @@ import { deliverFromCheckpoint } from './workflows/src/run.js';
 import { parseWriterPayload } from './workflows/src/persist.js';
 import { plannedArtifactPaths, persistPlanPath } from './workflows/src/outputPaths.js';
 import { validateArgs } from './workflows/src/args.js';
-import { checkpointChecksumErrors, checkpointShapeErrors, readCheckpoints } from './workflows/src/checkpoints.js';
+import { checkpointChecksumErrors, checkpointShapeErrors, readCheckpoints, slimPersistedCheckpoints, applyChallengeReplayBelt } from './workflows/src/checkpoints.js';
+import { writerPayload } from './workflows/src/persistPlan.js';
 import { createMeasurementTrace, recordStage, appendMeasurement } from './workflows/src/measurementTrace.js';
 const reader = createInterface({ input: process.stdin });
 const lines = reader[Symbol.asyncIterator]();
@@ -275,7 +314,7 @@ try {
   state.measurementTrace = input.trace ? createMeasurementTrace(args.nonce) : null;
   if (input.trace) {
     for (const version of input.trace.versions) recordStage(state.measurementTrace, 'discover', [version.finding]);
-    state.measurementTrace.snapshots = input.trace.snapshots.filter((s) => !['holdback', 'select', 'deliver'].includes(s.stage));
+    state.measurementTrace.snapshots = input.trace.snapshots.filter((s) => !['dispose', 'holdback', 'select', 'deliver'].includes(s.stage));
   }
   state.measured = (out) => appendMeasurement(out, state.measurementTrace);
   state.runPhase = async (name, thunk) => {
@@ -297,7 +336,12 @@ try {
       return reply.result;
     } };
   send({ paths: { ...plannedArtifactPaths(args.outputDir, args.headShaShort), plan: persistPlanPath(args.outputDir, args.headShaShort) } });
-  send({ out: await deliverFromCheckpoint(ctx, args, state) });
+  const out = await deliverFromCheckpoint(ctx, args, state);
+  const checkpoint = slimPersistedCheckpoints(state.phaseOutputs, state.completed, state.phaseReached);
+  const challenge = JSON.parse(JSON.stringify(state.phaseOutputs.challenge));
+  applyChallengeReplayBelt(challenge);
+  const baseline = writerPayload({ findings: [...challenge.findings, ...challenge.unverified, ...challenge.eliminated] }).findings;
+  send({ out, checkpoint, baseline });
 } catch (error) { send({ error: error.message }); }
 reader.close();
 process.stdin.destroy();
@@ -315,7 +359,8 @@ def _assemble_entries(artifacts, plan_path):
             row["path"] = mapping[row["path"]]
         for key in ("postReview", "checkpoint"):
             for field in ("path", "source"):
-                relocated[key][field] = mapping[relocated[key][field]]
+                if field in relocated[key]:
+                    relocated[key][field] = mapping[relocated[key][field]]
         relocated["planChecksum"] = plan_checksum(relocated)
         for path, text in artifacts.items():
             Path(mapping[path]).write_bytes(text.encode("utf-8"))
@@ -346,7 +391,7 @@ def _target_digest():
     rows = [e.decode("utf-8").split("\t", 1) for e in entries if e]
     paths = [name for _, name in rows]
     for name in paths:
-        path = ROOT / name
+        path = _safe(ROOT / name)
         if path.is_symlink():
             raise ValueError("unsupported plugin symlink")
     hashes = (
@@ -367,8 +412,26 @@ def _target_digest():
     )
 
 
-def _answer_dispatch(message, expected, artifacts, paths):
+def _answer_dispatch(message, expected, artifacts, paths, *, candidate=False):
     dispatch = message["dispatch"]
+    if candidate:
+        if DISPATCHES.get(dispatch["label"]) != dispatch["agentType"]:
+            raise ValueError("unsupported persistence dispatch")
+        if dispatch["label"] == "assemble-artifacts":
+            return {
+                "result": _assemble_entries(artifacts, paths["plan"]),
+                "error": None,
+            }
+        entries = message["entries"]
+        if not isinstance(entries, list) or not entries:
+            raise ValueError("missing local persistence entries")
+        written = []
+        for entry in entries:
+            if entry["path"] not in paths.values():
+                raise ValueError("unplanned artifact path")
+            artifacts[entry["path"]] = entry["text"]
+            written.append(entry["path"])
+        return {"result": {"written": written}, "error": None}
     if expected is None or (
         dispatch["label"],
         dispatch["agentType"],
@@ -394,13 +457,136 @@ def _answer_dispatch(message, expected, artifacts, paths):
     return reply
 
 
-def replay_delivery(inputs):
-    record = inputs.workflow
+def _candidate_artifacts(inputs, artifacts, paths, before, expected_checkpoint):
+    raw = json.loads(artifacts[paths["postReview"]])
+    surfaces: dict[tuple[object, object], Literal["inline", "body"]] = {}
+    if not isinstance(raw, dict):
+        artifacts["post-review-payload.json"] = js_stringify_pretty(
+            {"status": "unavailable", "reason": "missing PR identity"}
+        )
+    else:
+        platform = raw["platform"]
+        available = inputs.diff is not None and platform == "github"
+        reconstructed = reconstruct_delivery(
+            raw["findings"],
+            inputs.diff.decode("utf-8") if available else "",
+            platform=platform,
+            review_body=raw.get("review_body", ""),
+            sha=raw["sha"],
+        )
+        for group in reconstructed.groups:
+            surfaces.update(
+                ((f.get("id"), f.get("file")), group.surface) for f in group.members
+            )
+        comments = [
+            {
+                "path": group.path,
+                "line": group.line,
+                "side": "RIGHT",
+                "body": group.body,
+            }
+            for group in reconstructed.groups
+            if group.surface == "inline"
+        ]
+        payload = (
+            {
+                "platform": platform,
+                "payload": {
+                    "body": reconstructed.summary,
+                    "event": "COMMENT",
+                    "comments": comments,
+                },
+            }
+            if platform == "github"
+            else {
+                "platform": platform,
+                "summary": {"body": reconstructed.summary},
+                "discussions": [],
+            }
+        )
+        payload["placement"] = "available" if available else "unavailable"
+        if not available:
+            payload["placement_reason"] = (
+                "saved diff unavailable"
+                if inputs.diff is None
+                else "saved GitLab base/start SHAs unavailable"
+            )
+        artifacts["post-review-payload.json"] = js_stringify_pretty(payload)
+    disposed = json.loads(artifacts[paths["findings"]])
+    checkpoint = json.loads(artifacts[paths["checkpoints"]])
+
+    def projection(finding):
+        return json.dumps(
+            {
+                k: v
+                for k, v in finding.items()
+                if k
+                not in (
+                    "disposition",
+                    "disposition_reasons",
+                    "consolidation_key",
+                    "consolidation_primary",
+                )
+            },
+            sort_keys=True,
+        )
+
+    deltas: list[DeliveryDeltaWire] = []
+    for index, finding in enumerate(disposed):
+        position = next(
+            (
+                i
+                for i, old in enumerate(before)
+                if projection(old) == projection(finding)
+            ),
+            None,
+        )
+        if position is None:
+            raise ValueError("unregistered finding delta")
+        old = before.pop(position)
+        deltas.append(
+            {
+                "member": index,
+                "id": finding.get("id"),
+                "issue": finding.get("consolidation_key", finding.get("id")),
+                "before": old.get("disposition"),
+                "after": finding["disposition"],
+                "reasons": finding["disposition_reasons"],
+                "surface": surfaces.get((finding.get("id"), finding.get("file"))),
+            }
+        )
+    if before:
+        raise ValueError("unregistered member omission")
+    if checkpoint != expected_checkpoint:
+        raise ValueError("unregistered raw checkpoint delta")
+    artifacts["delivery-deltas.json"] = js_stringify_pretty(deltas)
+
+
+def replay_delivery(inputs, *, candidate=False):
+    record = copy.deepcopy(inputs.workflow)
+    if candidate:
+        from gauntlet.diff import parse_diff
+        from gauntlet.verify.decide import validate_diff_lines
+
+        facts = (
+            parse_diff(inputs.diff.decode("utf-8"), policy="verify-both-spellings")
+            if inputs.diff is not None
+            else None
+        )
+        for bucket in ("findings", "unverified"):
+            for f in record["state"]["phaseOutputs"]["challenge"][bucket]:
+                if "diff_validation" not in f:
+                    # Membership replay must not reclassify or downgrade the record.
+                    verified = copy.deepcopy(f)
+                    validate_diff_lines(verified, facts)
+                    f["diff_validation"] = verified["diff_validation"]
     paths = {}
     artifacts = {}
     dispatches = iter(record["persistence"])
     failure = None
     envelope = None
+    baseline = None
+    expected_checkpoint = None
     request = dict(
         record,
         checkpoint=json.loads(inputs.checkpoint),
@@ -430,11 +616,17 @@ def replay_delivery(inputs):
                     continue
                 if "out" in message or "error" in message:
                     envelope = message.get("out")
+                    baseline = message.get("baseline")
+                    expected_checkpoint = message.get("checkpoint")
                     failure = failure or message.get("error")
                     continue
                 try:
                     reply = _answer_dispatch(
-                        message, next(dispatches, None), artifacts, paths
+                        message,
+                        next(dispatches, None),
+                        artifacts,
+                        paths,
+                        candidate=candidate,
                     )
                 except (ValueError, KeyError, TypeError) as exc:
                     failure = str(exc)
@@ -451,7 +643,7 @@ def replay_delivery(inputs):
         failure
         or child.returncode
         or envelope is None
-        or next(dispatches, None) is not None
+        or (not candidate and next(dispatches, None) is not None)
     ):
         reason = failure or "incomplete replay dispatch capture"
         if stderr_tail and (child.returncode or envelope is None):
@@ -464,13 +656,16 @@ def replay_delivery(inputs):
             artifacts[entry["path"]] = entry["text"]
         _assemble_entries(artifacts, envelope["persistReturn"]["planPath"])
     if (
-        paths["checkpoints"] in artifacts
+        not candidate
+        and paths["checkpoints"] in artifacts
         and artifacts[paths["checkpoints"]].encode("utf-8") != inputs.checkpoint
     ):
         raise ValueError("rendered checkpoint differs from source evidence")
     artifacts["envelope.json"] = js_stringify_pretty(envelope)
     if envelope.get("measurement", {}).get("status") == "available":
         artifacts["measurement-trace.json"] = envelope["measurement"]["text"]
+    if candidate:
+        _candidate_artifacts(inputs, artifacts, paths, baseline, expected_checkpoint)
     result = tuple(
         (Path(p).name, text.encode("utf-8")) for p, text in artifacts.items()
     )
@@ -494,6 +689,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--candidate", action="store_true")
     args = parser.parse_args()
     try:
         inputs = load_replay_inputs(args.manifest)
@@ -501,7 +697,7 @@ def main():
         _safe(out.resolve())
         if out.exists():
             raise ValueError("output must be new and separate from source evidence")
-        result = replay_delivery(inputs)
+        result = replay_delivery(inputs, candidate=args.candidate)
         out.mkdir(parents=True)
         for name, data in (*result.artifacts, ("replay-receipt.json", result.receipt)):
             with (out / name).open("xb") as stream:

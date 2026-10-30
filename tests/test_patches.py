@@ -20,12 +20,38 @@ def patch_finding(**values):
         "claimed_line_start": 80,
         "claimed_line_end": 80,
         "location_status": "relocated",
+        "disposition": "deliver",
         "anchor": QUOTE,
         "line": 99,
         "end_line": 100,
         "suggested_fix_code": "changed",
         **values,
     }
+
+
+def test_delivery_rights_patches(tmp_path, invoke):
+    rows = [
+        patch_finding(disposition=stamp)
+        for stamp in (
+            "deliver",
+            "body",
+            "held_back",
+            "report_only",
+            "eliminate",
+            "unknown",
+            None,
+        )
+    ]
+    rows[-1].pop("disposition")
+    patch_inputs(tmp_path, rows, CAPTURE)
+    result = invoke(
+        "report_patches",
+        ["--output-dir", str(tmp_path), "--head-sha", "abc1234"],
+        tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads(result.stdout)
+    assert (receipt["candidates"], receipt["kept"], receipt["downgraded"]) == (7, 1, 6)
 
 
 def test_filtered_patches_are_counted_and_disclosed(tmp_path, invoke):
@@ -197,6 +223,7 @@ def test_failure_receipt(case, tmp_path, invoke, monkeypatch):
                     "claimed_line_start": row["line"],
                     "claimed_line_end": row["end_line"],
                     "location_status": "confirmed",
+                    "disposition": "deliver",
                     "anchor": QUOTE,
                 }
                 for row in rows

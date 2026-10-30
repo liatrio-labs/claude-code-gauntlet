@@ -18,6 +18,7 @@ def finding(*, omit: tuple[str, ...] = (), **values: object) -> dict[str, object
         "claimed_line_start": values.get("line", 2),
         "claimed_line_end": end,
         "location_status": "confirmed",
+        "disposition": "deliver",
         "anchor": "    return 1\n    # tail",
         "severity": "high",
         "title": "T",

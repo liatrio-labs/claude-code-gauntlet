@@ -41,6 +41,7 @@ def make_finding(**changes):
         "line_end": 10,
         "anchor": "stale_value = read_value()",
         "location_status": "confirmed",
+        "disposition": "deliver",
         "title": "Avoid stale value",
         "description": "The value is stale.",
         "severity": "medium",
@@ -85,6 +86,26 @@ def run_renderer(invoke, fix_root, fix_artifact, tmp_path):
         )
 
     return run
+
+
+def test_delivery_rights_tasks(write_artifact, run_renderer):
+    rows = [
+        make_finding(id=str(stamp), disposition=stamp)
+        for stamp in (
+            "deliver",
+            "body",
+            "held_back",
+            "report_only",
+            "eliminate",
+            "unknown",
+            None,
+        )
+    ]
+    rows[-1].pop("disposition")
+    write_artifact(rows)
+    result = output(run_renderer())
+    assert len(result) == 1
+    assert "deliver" in json.dumps(result)
 
 
 def output(result):

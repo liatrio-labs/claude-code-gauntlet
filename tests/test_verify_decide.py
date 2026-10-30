@@ -536,6 +536,7 @@ def test_pipe_projection(tmp_path, monkeypatch, verify_git):
                 "severity": severity,
                 "confidence": confidence,
                 "location_status": "unconfirmed",
+                "diff_validation": {"in_diff": None},
                 **(
                     {"elimination_reason": "evidence does not match file content"}
                     if not kept
@@ -651,6 +652,7 @@ def foreign_reads(source):
         - {"line", "end_line"}
     )
     document_sites = {
+        "build_deltas": {"in_diff"},
         "validate_input_shape": {"findings"},
         "validate_diff_lines": {"classification"},
         "run_receipt": {"findings", "base_branch", "verified"},

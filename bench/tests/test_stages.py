@@ -86,7 +86,7 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
         "validate",
         "filter",
         "challenge",
-        "holdback",
+        "dispose",
         "select",
     )
     assert set(receipt["payload"]["checkpoints"]["phases"]) == {"challenge"}
@@ -176,7 +176,10 @@ def test_score_to_dimension_credit_and_loss_funnel(
         ids = raw["snapshots"][0]["finding_version_ids"]
         for version in raw["versions"]:
             version["finding"].update(
-                location_status="confirmed", line_start=10, line_end=10
+                location_status="confirmed",
+                line_start=10,
+                line_end=10,
+                disposition="deliver",
             )
         review["findings"] = [
             v["finding"] for v in raw["versions"] if v["version_id"] in ids
@@ -210,7 +213,8 @@ def test_score_to_dimension_credit_and_loss_funnel(
                     "finding_version_ids"
                 ]
                 snapshot["decisions"] = []
-            if snapshot["stage"] == "holdback":
+            if snapshot["stage"] == "dispose":
+                snapshot["stage"] = "holdback"
                 snapshot["decisions"] = [asdict(decision)]
         path.write_text(json.dumps(raw), encoding="utf-8")
     if trace_status not in ("missing", "collection_failed"):
@@ -236,9 +240,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
         monkeypatch.setattr(type(score_case), "scorer", fail_judge)
     packet = score_case.execute(attribution=trace_status != "disabled")
     loaded = observations.load_packet(Path(packet["ledger_row"]["packet_path"]))
-    assert {r.stage for r in stages.read_rows(loaded.root)}.isdisjoint(
-        {"cite", "dispose"}
-    )
+    assert {r.stage for r in stages.read_rows(loaded.root)}.isdisjoint({"cite"})
     assert packet["profiles"]["all"]["tp"] == 1
     assert len(score_case.calls) == (
         2
@@ -345,7 +347,6 @@ def test_trace_reasons_survive_delivery_overlay(tmp_path, extended):
     if extended:
         snapshots[6:6] = [
             replace(snapshots[5], stage="cite"),
-            replace(snapshots[5], stage="dispose"),
         ]
     snapshots[-1] = replace(snapshots[-1], decisions=decisions)
     trace = replace(

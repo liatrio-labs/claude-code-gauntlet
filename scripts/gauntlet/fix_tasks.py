@@ -23,7 +23,7 @@ from gauntlet.location import (
     SourceAdapter,
     anchor_matches_span,
     canonical_range,
-    location_allows,
+    delivery_allows,
     normalize_location,
 )
 from gauntlet.markdown import code_span, fence_run
@@ -403,7 +403,7 @@ def build_tasks(
     eligible = []
     skipped = []
     for finding in findings:
-        if not location_allows(finding, "fixTask"):
+        if not delivery_allows(finding, "fixTask"):
             skipped.append(str(finding.get("id", "?")))
             continue
         if source is None:

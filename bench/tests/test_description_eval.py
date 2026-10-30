@@ -68,7 +68,7 @@ def _description_child():
 
     from gauntlet.pr_status import _fetch
 
-    from bench.runner import provenance, stages
+    from bench.runner import provenance
     from bench.tests.fakes import fake_claude
 
     fake_claude.main()
@@ -98,6 +98,8 @@ def _description_child():
             trace_id=f"fixture:bug:{name}",
             discovery_agent="bug",
             discovery_dimension="bug",
+            disposition="deliver",
+            disposition_reasons=[],
         )
         for name, site in CASES["defects"].items()
         if defective
@@ -139,7 +141,18 @@ def _description_child():
                 cap=None,
                 cap_hit=False,
             )
-            for i, stage in enumerate(stages.get_args(stages.Stage)[:-1])
+            for i, stage in enumerate(
+                (
+                    "discover",
+                    "merge",
+                    "verify",
+                    "validate",
+                    "filter",
+                    "challenge",
+                    "dispose",
+                    "select",
+                )
+            )
         ],
     )
     diff = subprocess.run(

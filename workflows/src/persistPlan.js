@@ -5,6 +5,11 @@ import { deepClone, firstUnsafeNumber, fnv1a32, normalizeForChecksum } from './w
 const PERSIST_ALIASES = [['line', 'line_start'], ['end_line', 'line_end'], ['body', 'description']];
 
 function toV2Aliased(f) {
+  // Rejected injection prose belongs only in the raw forensic checkpoint.
+  if (f.eliminated_by === 'injection') {
+    const { id, title, eliminated_by, elimination_reason } = f;
+    return { id, title, eliminated_by, elimination_reason };
+  }
   const out = normalizeLocation(f);
   for (const [alias, canonical] of PERSIST_ALIASES) {
     if (alias === 'body') {
@@ -54,11 +59,6 @@ function stripPersistAliases(f, fields = PERSIST_ALIAS_FIELDS) {
   return out;
 }
 
-// Held aliases must survive checkpoint derivation; absent aliases are writer additions.
-function checkpointStripAliasFields(findings) {
-  return PERSIST_ALIAS_FIELDS.filter((alias) => findings.every((f) => !Object.hasOwn(f || {}, alias)));
-}
-
 // Returns escape-hardened JSON text, passing non-strings through.
 // The caller passes serializer output so replacement consumes whole escapes without changing values.
 // Unicode escapes avoid adjacent backslashes that a model writer can collapse.
@@ -82,14 +82,6 @@ export function persistPlan(inp, paths) {
   const { findingsJson, reportMd } = persistPrimaries(inp);
   const id = inp.prIdentity;
   const skeleton = deepClone(inp.checkpoints || {});
-  const challenge = (skeleton.phases || {}).challenge;
-  const stripAliasFields = checkpointStripAliasFields(Array.isArray(challenge?.findings) ? challenge.findings : []);
-  let challengeFindingIds = [];
-  if (challenge && Array.isArray(challenge.findings)) {
-    challengeFindingIds = challenge.findings.map((f) => f && f.id);
-    // Emptying rather than deleting preserves the key position for the derived checkpoint proof.
-    challenge.findings = [];
-  }
   const expectOf = (path, text) => {
     const normalized = normalizeForChecksum(text);
     return { path, chars: normalized.length, checksum: fnv1a32(normalized) };
@@ -98,7 +90,7 @@ export function persistPlan(inp, paths) {
   // They stay unhardened: the assembler writes these documents with its own serializer, not through the writer.
   const held = writerPayload(inp);
   const plan = {
-    planVersion: 2,
+    planVersion: 3,
     expect: [expectOf(paths.findings, findingsJson), expectOf(paths.report, reportMd)],
     derive: [
       expectOf(paths.postReview, JSON.stringify(held.postReview, null, 2)),
@@ -112,9 +104,7 @@ export function persistPlan(inp, paths) {
     },
     checkpoint: {
       path: paths.checkpoints,
-      source: paths.findings,
-      challengeFindingIds,
-      stripAliasFields,
+      mode: 'literal',
       skeleton,
     },
   };
@@ -169,16 +159,5 @@ export function persistDerivable(inp) {
     return { ...stripPersistAliases(view), ...(view.body !== undefined ? { body: view.body } : {}) };
   });
   if (postReviewBad) return { ok: false, reason: postReviewBad };
-  const challenge = ((inp.checkpoints || {}).phases || {}).challenge;
-  const challengeFindings = challenge && Array.isArray(challenge.findings) ? challenge.findings : [];
-  const challengeBad = twinCheck(challengeFindings, 'checkpoint challenge', (f) => stripPersistAliases(toV2Aliased(f)));
-  if (challengeBad) return { ok: false, reason: challengeBad };
-  // The assembler strips aliases only; any other normalization needs the by-value writer.
-  const stripFields = checkpointStripAliasFields(challengeFindings);
-  for (const f of challengeFindings) {
-    if (JSON.stringify(stripPersistAliases(toV2Aliased(byId.get(f.id)), stripFields)) !== JSON.stringify(f)) {
-      return { ok: false, reason: `checkpoint challenge entry ${f.id} requires normalization before derivation` };
-    }
-  }
   return { ok: true };
 }

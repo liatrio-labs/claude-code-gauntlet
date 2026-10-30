@@ -47,6 +47,53 @@ def registry_tree(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def test_disposition_row_generates_consumers(registry_tree, invoke):
+    source = registry_tree / "workflows/src/registry.js"
+    original = source.read_text(encoding="utf-8")
+    source.write_text(
+        original.replace(
+            "  held_back: {",
+            "  review_digest: { inline: false, body: true, report: 'finding', fixTask: false, patch: false, fence: false, sourceLink: true },\n  held_back: {",
+        ),
+        encoding="utf-8",
+    )
+    result = invoke(
+        "generate_contract_requirements",
+        ["--repo-root", str(registry_tree)],
+        registry_tree,
+    )
+    assert result.returncode == 0, result.stderr
+    registry = gen.load_registry(str(registry_tree))
+    assert "review_digest" in registry["dispositions"]
+    namespace = {}
+    exec(
+        (registry_tree / "scripts/gauntlet/registry.py").read_text(encoding="utf-8"),
+        namespace,
+    )
+    rights = namespace["DISPOSITION_RIGHTS"]
+    assert (
+        dict(rights["review_digest"]) == registry["dispositionRights"]["review_digest"]
+    )
+    with pytest.raises(TypeError):
+        rights["review_digest"]["inline"] = True
+    assert "review_digest" in namespace["DISPOSITIONS"]
+    assert "review_digest" in str(namespace["Disposition"])
+    assert "| review_digest | no | yes | finding |" in (
+        registry_tree / REPORT
+    ).read_text(encoding="utf-8")
+    dispatched = gen.proc.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            "import { deliveryAllows } from './workflows/src/location.js'; console.log(JSON.stringify(['body','inline','report','fixTask'].map(r => deliveryAllows({disposition:'review_digest'},r))));",
+        ],
+        cwd=str(registry_tree),
+        check=True,
+    )
+    assert json.loads(dispatched.stdout) == [True, False, True, False]
+
+
 def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
     before = gen.load_registry(str(registry_tree))
     description = before["findingTypes"]["anchor"]["description"]

@@ -14,7 +14,13 @@ from typing import Literal, cast
 
 from gauntlet import proc
 from gauntlet.diff import ContextMapEntry, OldSpan
-from gauntlet.registry import ANCHOR_LIMITS, LOCATION_RIGHTS, LocationStatus
+from gauntlet.registry import (
+    ANCHOR_LIMITS,
+    DISPOSITION_RIGHTS,
+    LOCATION_RIGHTS,
+    Disposition,
+    LocationStatus,
+)
 
 TargetKind = Literal["pr", "mr", "branch", "local"]
 ResolutionReason = Literal[
@@ -210,6 +216,24 @@ def normalize_location(finding: Mapping[str, object]) -> dict[str, object]:
     else:
         out["line"], out["end_line"] = span
     return out
+
+
+def delivery_allows(finding: Mapping[str, object], right: str) -> bool:
+    stamp = finding.get("disposition")
+    reasons = finding.get("disposition_reasons", [])
+
+    if (
+        not isinstance(stamp, str)
+        or stamp not in DISPOSITION_RIGHTS
+        or not (isinstance(reasons, list) and all(isinstance(r, str) for r in reasons))
+    ):
+        stamp = "held_back"
+    rights = DISPOSITION_RIGHTS[cast(Disposition, stamp)]
+    if right == "report":
+        return rights["report"] == "finding"
+    if right in ("unverified", "eliminated"):
+        return rights["report"] == right
+    return rights.get(right) is True and location_allows(finding, right)
 
 
 def anchor_matches_span(

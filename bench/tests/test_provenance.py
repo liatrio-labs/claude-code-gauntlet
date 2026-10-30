@@ -135,6 +135,39 @@ def captured_diff(findings):
     )
 
 
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+def test_body_disposition_provenance_uses_composer_dimension_order(
+    tmp_path, monkeypatch, capsys, forge_factory, platform
+):
+    from bench.tests.test_adapter import _GH_SHA, capture
+
+    _, review, diff = surface_review(tmp_path, platform, grouped=False)
+    selected = review["findings"]
+    for finding, dimension in zip(selected[-2:], ("security", "bug"), strict=True):
+        finding.update(disposition="body", dimension=dimension)
+    run = capture(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        forge_factory,
+        platform,
+        [{**f, "body": f["description"]} for f in selected],
+        diff,
+    )
+    mapped = provenance.map_delivery(
+        run.payload,
+        selected,
+        diff,
+        review_body="Automated review summary.",
+        sha=_GH_SHA,
+    )
+    assert [m.source_trace_ids for m in mapped[1:]] == [
+        (selected[-1]["trace_id"],),
+        (selected[-2]["trace_id"],),
+    ]
+    assert "### bug" in mapped[1].text and "### security" in mapped[2].text
+
+
 def payload_for(findings, diff, platform, **body_inputs):
     reconstruction = provenance.reconstruct_delivery(
         findings, diff, platform=platform, **body_inputs
@@ -215,7 +248,10 @@ def test_unanchored_selected_group_is_a_delivery_omission(tmp_path):
         ).omissions,
     )
     assert overlay.snapshots[-1].finding_version_ids == ()
-    assert {d.reason_code for d in overlay.snapshots[-1].decisions} == {"unanchored"}
+    assert {d.reason_code for d in overlay.snapshots[-1].decisions} == {
+        "unanchored",
+        "folded",
+    }
 
 
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
@@ -232,6 +268,7 @@ def test_independent_producer_payload_preserves_patch_demotion_and_order(platfor
         {
             **f,
             "trace_id": f"fixture:0:{i}",
+            "disposition": "deliver",
             "discovery_agent": "synthetic",
             "discovery_dimension": "bug",
         }

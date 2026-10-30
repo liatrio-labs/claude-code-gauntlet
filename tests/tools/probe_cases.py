@@ -28,6 +28,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
             "line_start": 1,
             "line_end": 1,
             "location_status": "confirmed",
+            "disposition": "deliver",
             "end_line": 1,
             "severity": "medium",
             "title": "Probe finding",

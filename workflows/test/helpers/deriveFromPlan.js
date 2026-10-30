@@ -9,6 +9,7 @@ export function deriveFromPlan(plan, findingsJson) {
     : { ...plan.postReview.wrapper, findings: projected };
   const strip = new Set(plan.checkpoint.stripAliasFields);
   const checkpoints = JSON.parse(JSON.stringify(plan.checkpoint.skeleton));
+  if (plan.checkpoint.mode === 'literal') return { postReview, checkpoints };
   const challenge = checkpoints.phases && checkpoints.phases.challenge;
   if (challenge) {
     challenge.findings = plan.checkpoint.challengeFindingIds.map((id) => {

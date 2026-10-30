@@ -72,6 +72,7 @@ export function makeFinding(id, over = {}) {
     id,
     file: `${id}.js`,
     location_status: 'confirmed',
+    diff_validation: { in_diff: true, reason: 'fixture diff membership' },
     anchor: 'return process(value);',
     line_start: 10,
     line_end: 10,
@@ -162,7 +163,7 @@ export function makeCtx(args, opts = {}) {
       const slice = dispatchedFindings(prompt) ?? sliceForIndex(sliceIndex);
       const sliceNonce = isRetry ? `${A.nonce}.${sliceIndex}.r1` : `${A.nonce}.${sliceIndex}`;
       // A deterministic classification keeps routing tests independent of git blame.
-      const originOverrides = Object.fromEntries(slice.map((f) => [f.id, { origin: 'new' }]));
+      const originOverrides = Object.fromEntries(slice.map((f) => [f.id, { origin: 'new', diff_validation: { in_diff: true } }]));
       return sliceInputRecorder(deltaEnvelope(slice, {
         sha: A.headShaShort,
         nonce: sliceNonce,
