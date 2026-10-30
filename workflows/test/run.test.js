@@ -21,7 +21,62 @@ import { filterStage } from '../src/reviewStages.js';
 import { DIMENSIONS as DIMENSION_ROWS } from '../src/registry.js';
 import { normalizeFindingPaths } from '../src/mergeFindings.js';
 import { normalizePhaseFindings } from '../src/checkpoints.js';
-import { evaluateAdmission } from '../src/admission.js';
+import { evaluateAdmission, hasAdmission } from '../src/admission.js';
+
+test('ordinary findings retain admission across path roles', () => {
+  for (const dimension of ['bug', 'security']) for (const path_role of ['non_source', 'unknown']) {
+    const f = evaluateAdmission(makeFinding('core', { dimension, path_role }));
+    assert.equal(f.admission.status, 'admitted');
+    assert.deepEqual(f.admission.reasons, []);
+  }
+});
+
+test('defective tests require test role and known PR ownership', () => {
+  for (const [path_role, in_diff, expected] of [
+    ['test', true, 'admitted'], ['source', true, 'report_only'], ['test', null, 'held_back'], ['test', false, 'report_only'],
+  ]) {
+    const f = evaluateAdmission(makeFinding('test', { dimension: 'test_coverage', test_kind: 'defective_test', path_role,
+      diff_validation: { in_diff }, admission_assessments: [{ predicate: 'confirmed_test_defect', status: 'confirmed', references: ['primary'] }] }));
+    assert.equal(f.admission.status, expected);
+    assert.equal(f.admission.inline_eligible, path_role === 'test' && in_diff === true);
+  }
+});
+
+test('admitted equivalent survives host path rewriting through delivery', async () => {
+  const args = validArgs({ repoRoot: '/home/reviewer/project' });
+  const f = makeFinding('equivalent', { dimension: 'simplification', quality_basis: 'simpler_equivalent',
+    behavior_preserved: `Same return values as ${args.repoRoot}/source:10 helper`, suggestion: 'Return directly',
+    admission_assessments: ['concrete_equivalent', 'behavior_preserved'].map((predicate) => ({ predicate, status: 'confirmed', references: ['primary'] })) });
+  const out = await runAndCapture(validArgs({ repoRoot: args.repoRoot, checkpoints: { filter: { filtered: [f], eliminated: [], gaps: [], stats: {} } } }));
+  const delivered = out.payload.findings[0];
+  assert.equal(delivered.disposition, 'deliver');
+  assert.equal(delivered.behavior_preserved, 'Same return values as source:10 helper');
+  assert.ok(hasAdmission(delivered));
+  assert.equal(out.payload.postReview.length, 1);
+  const tampered = structuredClone(delivered);
+  tampered.resolved_references = { production_element: { file: 'foreign' } };
+  assert.equal(hasAdmission(tampered), false);
+  delivered.behavior_preserved = '';
+  assert.equal(hasAdmission(delivered), false);
+});
+
+test('reference diagnostics distinguish absent evidence from dropped evidence by field', () => {
+  for (const [dimension, extra, field, predicates] of [
+    ['simplification', { quality_basis: 'duplication' }, 'duplicate_of', ['resolved_duplicate', 'confirmed_duplication']],
+    ['type_design', { quality_basis: 'stack_idiom' }, 'precedent', ['resolved_precedent', 'precedent_not_added', 'applicable']],
+    ['bug', { policy_subject: 'coverage', test_kind: 'critical_gap', criticality: 8 }, 'production_element', ['resolved_production_element', 'complete_behavioral_absence']],
+  ]) {
+    const unrelated = { field: 'candidate_tests', reason: `invalid ${field} reference`, action: 'reference dropped' };
+    const missing = evaluateAdmission(makeFinding('missing', { dimension, ...extra, reference_diagnostics: [unrelated] }));
+    for (const predicate of predicates) assert.equal(missing.admission.reasons.find((r) => r.predicate === predicate).status, 'report_only');
+    const raw = makeFinding('dropped', { dimension, ...extra, [field]: { file: '../outside', anchor: 'source', line_start: 1, line_end: 1 } });
+    const { valid } = normalizeFindingPaths([raw], '/repo');
+    assert.equal(valid[0][field], undefined);
+    assert.deepEqual(valid[0].reference_diagnostics.map((d) => d.field), [field]);
+    const dropped = evaluateAdmission(valid[0]);
+    for (const predicate of predicates) assert.equal(dropped.admission.reasons.find((r) => r.predicate === predicate).status, 'held_back');
+  }
+});
 
 test('admission precedes challenge and placement on fresh and resumed runs', async () => {
   const findings = [
@@ -45,7 +100,7 @@ test('admission precedes challenge and placement on fresh and resumed runs', asy
         { predicate: 'complete_searches', status: 'confirmed', references: ['searched_paths:0', 'candidate_tests:0'] },
         { predicate: 'complete_behavioral_absence', status: 'confirmed', references: ['production_element', 'searched_paths:0', 'candidate_tests:0'] },
       ] }),
-    makeFinding('unsafe-precedent', { dimension: 'type_design', quality_basis: 'stack_idiom', reference_diagnostics: ['precedent: unsafe reference'] }),
+    makeFinding('unsafe-precedent', { dimension: 'type_design', quality_basis: 'stack_idiom', reference_diagnostics: [{ field: 'precedent', reason: 'unsafe reference', action: 'reference dropped' }] }),
   ];
   const args = validArgs({ checkpoints: { filter: { filtered: findings, eliminated: [], gaps: [], stats: {} } },
     limits: { challengeCap: 1 } });

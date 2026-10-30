@@ -34,7 +34,7 @@ def finding(*, omit: tuple[str, ...] = (), **values: object) -> dict[str, object
         "claimed_line_end": end,
         "location_status": "confirmed",
         "disposition": "deliver",
-        "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+        "admission": admitted_stamp(),
         "anchor": "    return 1\n    # tail",
         "severity": "high",
         "title": "T",

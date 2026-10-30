@@ -143,9 +143,10 @@ export async function deliverFromCheckpoint(c, A, state) {
   const postReview = selected;
   if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
     cap_hit: selectDelivery(eligible, null, deliveryTier).length > postReview.length,
-    decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,
-      deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
-      'delivery selection', [], 'not_selected')),
+    decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => ({ ...traceDecision(f,
+      f.disposition === 'report_only' ? 'report_only'
+        : deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
+      'delivery selection', [], 'not_selected'), ...(f.disposition === 'report_only' ? { detail: { kind: f.admission.kind } } : {}) })),
   });
   if (measurementTrace) measurementTrace.complete = true;
   stripTraceFields(phaseOutputs);

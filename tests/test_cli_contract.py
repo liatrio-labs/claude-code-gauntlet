@@ -20,6 +20,7 @@ from gauntlet.paths import ENTRY_ROOT
 from tests.conftest import Invocation
 from tests.support import path_text
 from tests.support import posting as posting_cases
+from tests.support.delivery import admitted_stamp
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,11 +76,7 @@ def test_poster_mode_stdout(
                 "line_start": 2,
                 "line_end": 2,
                 "location_status": "confirmed",
-                "admission": {
-                    "version": 1,
-                    "status": "admitted",
-                    "input_proof": "fixture",
-                },
+                "admission": admitted_stamp(),
                 "disposition": "deliver",
                 "anchor": "original_source_value()",
                 "title": "Bug A",
@@ -1310,11 +1307,7 @@ def test_patch_command_boundaries(
                 line_end=row["end_line"],
                 location_status="confirmed",
                 disposition="deliver",
-                admission={
-                    "version": 1,
-                    "status": "admitted",
-                    "input_proof": "fixture",
-                },
+                admission=admitted_stamp(),
                 claimed_line_start=row["line"],
                 claimed_line_end=row["end_line"],
                 anchor="original_source_value()",
@@ -1482,11 +1475,7 @@ def test_patch_stdio(path, line, title, stdout, stderr, tmp_path):
                     "line_start": line,
                     "line_end": line,
                     "location_status": "confirmed",
-                    "admission": {
-                        "version": 1,
-                        "status": "admitted",
-                        "input_proof": "fixture",
-                    },
+                    "admission": admitted_stamp(),
                     "disposition": "deliver",
                     "claimed_line_start": line,
                     "claimed_line_end": line,

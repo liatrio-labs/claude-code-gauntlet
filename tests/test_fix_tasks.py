@@ -9,6 +9,8 @@ import pytest
 from gauntlet import fix_tasks as renderer
 from gauntlet import proc
 
+from tests.support.delivery import admitted_stamp
+
 
 @pytest.fixture
 def fix_root(tmp_path, monkeypatch):
@@ -35,7 +37,7 @@ def fix_artifact(fix_root):
 
 def make_finding(**changes):
     value = {
-        "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+        "admission": admitted_stamp(),
         "id": "bug-1",
         "file": "src/bug.py",
         "line_start": 10,

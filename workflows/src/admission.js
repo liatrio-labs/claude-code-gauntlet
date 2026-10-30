@@ -1,4 +1,4 @@
-import { ADMISSION_PREDICATES, RIGHT_ELIGIBILITY, VERIFY_FACT_PROPERTIES, VERIFY_REFERENCE_DESCRIPTORS, DIMENSIONS, findingPolicy } from './registry.js';
+import { ADMISSION_PREDICATES, RIGHT_ELIGIBILITY, VERIFY_FACT_PROPERTIES, VERIFY_REFERENCE_DESCRIPTORS, FINDING_PROP_TYPES, DIMENSIONS, findingPolicy } from './registry.js';
 import { canonicalRange } from './location.js';
 import { fnv1a32 } from './wire.js';
 
@@ -41,8 +41,23 @@ const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension',
   ...DIMENSIONS.flatMap((row) => row.admission ? [row.admission.field,
     ...Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || [])])] : [])])];
 function admissionProof(finding, fields) {
-  return fnv1a32(JSON.stringify([...ADMISSION_INPUT_FIELDS, ...fields].map((key) => finding[key] ?? null)));
+  return fnv1a32(JSON.stringify([...ADMISSION_INPUT_FIELDS, ...fields].map((key) =>
+    ADMISSION_PRESENCE_FIELDS.has(key) ? hasValue(finding[key]) : finding[key] ?? null)));
 }
+
+// Delivery rewrites host paths in prose; only its presence is a policy input.
+const ADMISSION_PRESENCE_FIELDS = new Set(DIMENSIONS.flatMap((row) => row.admission
+  ? Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || []), ...(kind.anyOf || [])])
+    .filter((key) => { const schema = row.schemaExtra[key] || FINDING_PROP_TYPES[key]; return schema === 'string' || (schema?.type === 'string' && !schema.enum); })
+  : []));
+
+function referenceResult(finding, name) {
+  if (resolvedReference(finding.resolved_references?.[name])) return null;
+  const supplied = finding[name] !== undefined || finding.reference_diagnostics?.some((diagnostic) => diagnostic.field === name);
+  return supplied ? 'held_back' : 'report_only';
+}
+
+const prOwnedTest = (finding) => finding.path_role === 'test' && finding.diff_validation?.in_diff === true;
 
 export function hasAdmission(finding) {
   const stamp = finding?.admission;
@@ -53,20 +68,17 @@ export function hasAdmission(finding) {
 
 function factAssessment(finding, predicate) {
   const ref = finding.resolved_references;
-  const supplied = (name) => finding[name] !== undefined || finding.reference_diagnostics?.some((message) => message.includes(name));
-  const reference = (name) => !supplied(name) ? 'report_only' : resolvedReference(ref?.[name]) ? null : 'held_back';
   const facts = {
-    pr_owned_test: () => finding.diff_validation?.in_diff == null ? 'held_back'
-      : finding.diff_validation.in_diff === true ? null : 'report_only',
+    pr_owned_test: () => prOwnedTest(finding) ? null : finding.diff_validation?.in_diff == null ? 'held_back' : 'report_only',
     criticality: () => typeof finding.criticality !== 'number' ? 'report_only' : finding.criticality >= 8 ? null : 'report_only',
     searches: () => !Array.isArray(ref?.searched_paths) || ref.searched_paths.length === 0
       || ref.searched_paths.some((path) => path.available !== true) || !Array.isArray(ref?.candidate_tests)
       || ref.candidate_tests.some((test) => !resolvedReference(test))
       || !Array.isArray(finding.candidate_tests) || finding.candidate_tests.some((test) => !hasValue(test?.input) || !hasValue(test?.assertion))
       || finding.reference_diagnostics?.length ? 'held_back' : null,
-    duplicate_of: () => reference('duplicate_of'),
-    precedent: () => reference('precedent'),
-    precedent_not_added: () => reference('precedent') || (ref?.precedent?.file_added == null ? 'held_back' : ref.precedent.file_added ? 'report_only' : null),
+    duplicate_of: () => referenceResult(finding, 'duplicate_of'),
+    precedent: () => referenceResult(finding, 'precedent'),
+    precedent_not_added: () => referenceResult(finding, 'precedent') || (ref?.precedent?.file_added == null ? 'held_back' : ref.precedent.file_added ? 'report_only' : null),
     equivalent: () => hasValue(finding.suggestion) || hasValue(finding.suggested_fix_code) ? null : 'report_only',
     reachability: () => finding.reachability === 'current' ? null : 'held_back',
     location: () => canonicalRange(finding) ? null : 'held_back',
@@ -83,11 +95,9 @@ function predicateResult(finding, predicate) {
   if (descriptor.references) {
     for (const name of descriptor.references) {
       if (name === 'primary' && !canonicalRange(finding)) return 'held_back';
-      if (name === 'production_element' && !resolvedReference(finding.resolved_references?.production_element)) {
-        return finding.production_element === undefined && !finding.reference_diagnostics?.length ? 'report_only' : 'held_back';
-      }
-      if (['duplicate_of', 'precedent'].includes(name) && !resolvedReference(finding.resolved_references?.[name])) {
-        return finding[name] === undefined && !finding.reference_diagnostics?.length ? 'report_only' : 'held_back';
+      if (['production_element', 'duplicate_of', 'precedent'].includes(name)) {
+        const result = referenceResult(finding, name);
+        if (result) return result;
       }
     }
     const assessment = matchAssessments(finding, finding.admission_assessments).find((entry) => entry.predicate === predicate);
@@ -106,9 +116,9 @@ export function evaluateAdmission(finding) {
   const subject = row?.policySubjects[finding.policy_subject];
   const reasons = [];
   const fail = (predicate, status) => { if (status) reasons.push({ predicate, status }); };
-  if (!['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin) || !['source', 'test'].includes(finding.path_role)) fail('verification', 'held_back');
+  if (!['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin)) fail('verification', 'held_back');
   if (finding.validation !== 'validated') fail('validation', 'held_back');
-  if (!terminal && (!subject || finding.policy_subject === 'unresolved')) fail('policy_subject', 'held_back');
+  if (!terminal && ((row?.admission && !subject) || finding.policy_subject === 'unresolved')) fail('policy_subject', 'held_back');
   if (!row || (row.admission && !kind)) fail('kind', 'held_back');
   if (kind?.defaultDisposition === 'report_only') fail('value', 'report_only');
   for (const predicate of kind?.predicates || []) fail(predicate, predicateResult(finding, predicate));
@@ -122,15 +132,19 @@ export function evaluateAdmission(finding) {
   finding.admission = { version: 1, input_fields: inputFields, input_proof: admissionProof(finding, inputFields), status, reasons,
     kind: selectedKind || 'unknown', core, tier: effectiveTier,
     inline_eligible: !kind?.predicates.includes('test_diff_site_for_inline')
-      || (finding.path_role === 'test' && finding.diff_validation?.in_diff === true) };
+      || prOwnedTest(finding) };
   finding.body_fix_task_eligible = status === 'admitted' && RIGHT_ELIGIBILITY.body.fixTask.every((predicate) => predicateResult(finding, predicate) === null);
   if (status === 'admitted') finding.report_destination = finding.report_tag = finding.admission.tier;
   return finding;
 }
 
 export function admissionContext(finding) {
+  const policy = findingPolicy(finding);
   return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
-    policy: findingPolicy(finding).row?.admission, predicates: ADMISSION_PREDICATES,
+    policy: { predicates: policy.kind?.predicates || [],
+      policy_subjects: Object.fromEntries(Object.keys(policy.row?.policySubjects || {}).map((subject) =>
+        [subject, findingPolicy({ ...finding, policy_subject: subject }).kind?.predicates || []])),
+      body_fix_task: RIGHT_ELIGIBILITY.body.fixTask },
     claim: Object.fromEntries(DIMENSIONS.flatMap((row) => Object.keys(row.schemaExtra)).map((key) => [key, finding[key]])),
     fix: finding.suggestion || finding.suggested_fix_code };
 }

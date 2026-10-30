@@ -46,7 +46,6 @@ export function applyValidations(findings, validations) {
 
     const justification = 'justification' in validation ? validation.justification : undefined;
     if (justification) finding.validation_justification = justification;
-    if (validations.filter((entry) => entry?.id === vid).length !== 1) { adjustedCount += 1; continue; }
     const reachability = 'reachability' in validation ? validation.reachability : undefined;
     if (REACHABILITY_VALUES.includes(reachability)) finding.reachability = reachability;
     if (VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) finding.policy_subject = validation.policy_subject;

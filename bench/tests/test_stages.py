@@ -100,6 +100,10 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
         if v.trace_id == first.trace_id and v.projection()["confidence"] == 45
     ]
     assert changed
+    report = next(v for v in trace.versions if v.finding.get("id") == "REPORT")
+    selection = next(s for s in trace.snapshots if s.stage == "select")
+    decision = next(d for d in selection.decisions if d.trace_id == report.trace_id)
+    assert decision.reason_code == "report_only"
 
 
 @pytest.mark.parametrize(
@@ -182,6 +186,8 @@ def test_score_to_dimension_credit_and_loss_funnel(
                 line_end=10,
                 disposition="deliver",
             )
+            if version["finding"].get("admission"):
+                version["finding"]["admission"]["status"] = "admitted"
         review["findings"] = [
             v["finding"] for v in raw["versions"] if v["version_id"] in ids
         ]
@@ -328,7 +334,8 @@ def test_trace_vocabularies_match_workflow_source():
 
 
 @pytest.mark.parametrize("extended", [False, True])
-def test_trace_reasons_survive_delivery_overlay(tmp_path, extended):
+@pytest.mark.parametrize("terminal_reason", ["held_back", "report_only"])
+def test_trace_reasons_survive_delivery_overlay(tmp_path, extended, terminal_reason):
     trace, path, _ = emit_trace(tmp_path)
     versions = tuple({v.trace_id: v for v in trace.versions}.values())[:5]
     ids = tuple(v.trace_id for v in versions)
@@ -376,7 +383,9 @@ def test_trace_reasons_survive_delivery_overlay(tmp_path, extended):
     snapshots[-1] = replace(
         snapshots[-1],
         finding_version_ids=(),
-        decisions=(stages.StageDecision(ids[4], "held_back", "held_back", None, ()),),
+        decisions=(
+            stages.StageDecision(ids[4], terminal_reason, terminal_reason, None, ()),
+        ),
     )
     trace = replace(
         trace, snapshots=tuple(replace(s, sequence=i) for i, s in enumerate(snapshots))
@@ -442,7 +451,7 @@ def test_trace_reasons_survive_delivery_overlay(tmp_path, extended):
         {},
     )
     loss = next(r.loss for r in rows if r.stage == "deliver")
-    assert loss.reason_code == "held_back" and loss.stage == "delivery"
+    assert loss.reason_code == terminal_reason and loss.stage == "delivery"
 
 
 def test_collection_hashes_top_level_trace_and_persists_availability(tmp_path):
