@@ -38,6 +38,9 @@ TARGETS = (
     HEADLESS,
     DELIVER_PHASE,
     "scripts/gauntlet/registry.py",
+    "workflows/contracts/validator-return-contract.md",
+    "workflows/contracts/challenger-return-contract.md",
+    "workflows/contracts/scope-exclusion-contract.md",
 )
 
 

@@ -2,6 +2,90 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DIMENSIONS } from '../src/registry.js';
 import { WEB_ORIGIN_RE, resolvePolicy, modelFor } from '../src/registry.js';
+import { ANCHOR_LIMITS, SKEPTICAL_RETURN_SCHEMAS, SKEPTICAL_CONTRACTS, CITATION_REQUEST_SCHEMA, EXCLUSION_CATEGORIES, PIPELINE_FINDING_FIELDS, SKEPTICAL_FINDING_PROPERTIES, FINDING_PATH_DESCRIPTORS, FINDING_REWRITE_EXEMPT_FIELDS, acceptSkepticalReturn } from '../src/registry.js';
+import { agentSpecs, findingSchema, discover } from '../src/discover.js';
+import { normalizeFindingPaths } from '../src/mergeFindings.js';
+
+test('skeptical descriptors derive verdict and scope variants', async () => {
+  const request = (stage, extra = {}) => ({ finding_id: 'F', stage, request_id: 'C', role: 'claim',
+    snapshot_id: 'snapshot', file: 'src/service', side: 'head', line_start: 1, line_end: 1, quote: 'return value', ...extra });
+  for (const stage of ['validator', 'challenger']) {
+    const schema = SKEPTICAL_RETURN_SCHEMAS[stage];
+    assert.deepEqual(schema.properties.verdict.enum, ['real', 'refuted', 'needs_evidence']);
+    const validation = stage === 'validator' ? { confidence: 91, policy_subject: 'ordinary',
+      admission_assessments: [{ predicate: 'present_defect', status: 'confirmed', references: ['primary'] }] } : {};
+    const entry = { finding_id: 'F', stage, verdict: 'real', scope_assessments: [], citations: [request(stage)], ...validation };
+    const accept = (extra) => SKEPTICAL_CONTRACTS[stage].accept({ ...entry, ...extra }, 'F');
+    for (const verdict of ['real', 'refuted']) {
+      assert.equal(accept({ verdict }).status, 'complete');
+      const withoutProof = { ...entry, verdict };
+      delete withoutProof.citations;
+      assert.equal(acceptSkepticalReturn(withoutProof, 'F', stage).status, 'incomplete');
+    }
+    const needs = { ...entry, verdict: 'needs_evidence', missing_evidence: 'Caller input' };
+    delete needs.citations;
+    assert.equal(acceptSkepticalReturn(needs, 'F', stage).status, 'complete');
+    delete needs.missing_evidence;
+    assert.equal(acceptSkepticalReturn(needs, 'F', stage).status, 'incomplete');
+    for (const extra of [{ verdict: null }, { verdict: 'invented' }, { scope_assessments: null }, { scope_assessments: undefined },
+      { finding_id: 'foreign' }, { stage: 'foreign' }, { citations: [] }, { citations: null }]) {
+      const result = accept(extra);
+      assert.equal(result.status, 'incomplete', JSON.stringify(extra));
+      assert.deepEqual(result.accepted, validation);
+      assert.deepEqual(result.raw, { ...entry, ...extra });
+      assert.equal(result.finding_id, 'F');
+    }
+    for (const extra of [{ file: '../escape' }, { file: '/escape' }, { file: 'C:/escape' }, { file: 'a\\b' },
+      { snapshot_id: '' }, { side: 'other' }, { line_start: 0 }, { line_start: 1.5 }, { line_end: Number.MAX_SAFE_INTEGER + 1 },
+      { line_start: 2, line_end: 1 }, { line_end: 9 }, { quote: 'x'.repeat(401) }, { quote: 'x\n'.repeat(8) + 'x' },
+      { role: 'rule' }, { stage: 'foreign' }, { finding_id: 'foreign' }]) {
+      assert.equal(accept({ citations: [request(stage, extra)] }).status, 'incomplete', JSON.stringify(extra));
+    }
+    assert.equal(accept({ citations: [request(stage, { line_end: 8, quote: 'x'.repeat(400) })] }).status, 'complete');
+    assert.equal(accept({ citations: [request(stage), request(stage)] }).status, 'incomplete');
+    for (const row of EXCLUSION_CATEGORIES) {
+      const scope = { finding_id: 'F', stage, category: row.category, applicability: 'applicable',
+        citations: row.citation_roles.map((role) => request(stage, { request_id: role, role })) };
+      assert.equal(accept({ scope_assessments: [scope] }).status, 'complete', row.category);
+      if (row.citation_roles.length) assert.equal(accept({ scope_assessments: [{ ...scope, citations: [] }] }).status, 'incomplete');
+    }
+    assert.equal(accept({ scope_assessments: [{ category: 'unknown' }] }).status, 'incomplete');
+    if (stage === 'validator') {
+      for (const [key, value] of [['confidence', null], ['policy_subject', 'unknown'], ['admission_assessments', [{}]]]) {
+        const result = accept({ [key]: value });
+        assert.equal(result.status, 'incomplete');
+        assert.equal(Object.hasOwn(result.accepted, key), false);
+      }
+    }
+  }
+  for (const value of [null, [], 'invalid', {}]) assert.equal(acceptSkepticalReturn(value, 'F', 'validator').status, 'incomplete');
+  assert.equal(acceptSkepticalReturn({}, 'F', 'unknown').status, 'incomplete');
+  assert.equal(CITATION_REQUEST_SCHEMA.properties.quote.maxLength, ANCHOR_LIMITS.chars);
+  const owned = Object.keys(SKEPTICAL_FINDING_PROPERTIES);
+  for (const name of owned) {
+    assert.ok(PIPELINE_FINDING_FIELDS.includes(name));
+    assert.ok(FINDING_REWRITE_EXEMPT_FIELDS.includes(name));
+    for (const spec of agentSpecs()) {
+      const schema = findingSchema(spec, {}).properties.findings.items;
+      assert.equal(schema.additionalProperties, false);
+      assert.equal(Object.hasOwn(schema.properties, name), false);
+    }
+  }
+  for (const name of ['skeptical_assessments', 'cite_results', 'scope_decisions']) assert.ok(FINDING_PATH_DESCRIPTORS[name]);
+  const proof = { finding_id: 'F', stage: 'validator', verdict: 'real', scope_assessments: [], citations: [request('validator')] };
+  const normalized = normalizeFindingPaths([{ id: 'F', file: 'src/service', skeptical_assessments: [proof] }], '/repo').valid[0];
+  assert.deepEqual(normalized.skeptical_assessments, [proof]);
+  const unsafe = normalizeFindingPaths([{ id: 'F', file: 'src/service', skeptical_assessments: [{ ...proof,
+    citations: [request('validator', { file: '../escape' })] }] }], '/repo');
+  assert.equal(unsafe.valid[0].skeptical_assessments[0].citations.length, 0);
+  assert.ok(unsafe.warnings.length);
+  const forged = Object.fromEntries(owned.map((key) => [key, 'forged']));
+  const discovered = await discover({ parallel: async (thunks) => Promise.all(thunks.map((fn) => fn())),
+    agent: async () => ({ findings: [{ ...forged, id: 'F', file: 'src/service', line_start: 1, title: 'Defect',
+      description: 'A real defect', severity: 'high', confidence: 90, dimension: 'bug', anchor: 'return value' }], complete: true, total_seen: 1 }) }, {});
+  assert.ok(discovered.findings.length);
+  for (const finding of discovered.findings) for (const key of owned) assert.equal(Object.hasOwn(finding, key), false);
+});
 
 const POLICY_ROWS = [
   { name: 'third-party alias override', agent: 'code-gauntlet:bug-detector',

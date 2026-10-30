@@ -3,9 +3,9 @@
 import { INT_POLICY, coerceInt } from './wire.js';
 import { canonicalRange } from './location.js';
 import { matchAssessments } from './admission.js';
-import { VALIDATION_RETURN_PROPERTIES, requiredAssessments } from './registry.js';
+import { VALIDATION_RETURN_PROPERTIES, requiredAssessments, REACHABILITY_VALUES } from './registry.js';
 
-export const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
+export { REACHABILITY_VALUES };
 
 export function validationRejections(finding, validation) {
   if (!validation) return ['missing_entry'];

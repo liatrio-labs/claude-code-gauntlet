@@ -1,5 +1,6 @@
 // Shared contract rows belong here; knob descriptors, injection patterns, and stage orchestration belong in their modules.
 import { deepFreeze } from './wire.js';
+import { repoRelativeFindingPath } from './paths.js';
 // Scope gating is opt-out so absent flags preserve full review; null flags keep core agents ungateable.
 const DEEP = 'deep';
 
@@ -300,6 +301,174 @@ export const ADMISSION_STAMP_PROPERTIES = deepFreeze({
   body_fix_task_eligible: { type: 'boolean' },
 });
 export const VERIFY_FACT_KEYS = deepFreeze(Object.keys(VERIFY_FACT_PROPERTIES));
+export const REACHABILITY_VALUES = deepFreeze(['current', 'future_change_only', 'uncertain']);
+
+export const EXCLUSION_CATEGORIES = deepFreeze([
+  { category: 'pre_existing', stage: 'early', predicate: 'blame_pre_existing', facts: ['git_blame', 'affected_cross_file_refs'],
+    applicability: 'Actual git_blame pre-existence with no affected cross-file references.', exceptions: ['cross_file_effect_created_by_pr'],
+    proof: 'verified_fact', outcome: 'report_only', reference: 'Origin surfaced, off-diff placement and descriptions do not prove pre-existence.' },
+  { category: 'untouched_line', stage: 'early', predicate: 'off_diff', facts: ['in_diff'],
+    applicability: 'Verified in_diff=false; unknown is not false.', exceptions: [],
+    proof: 'verified_fact', outcome: 'body', reference: 'Placement only after admission and vetting; still competes for challenge capacity.' },
+  { category: 'generated_vendored', stage: 'early', predicate: 'generated_or_vendored', facts: ['linguist-generated', 'linguist-vendored', 'generated_marker'],
+    applicability: 'git check-attr at captured head or generated markers in the first source lines.', exceptions: ['security_dependency_vulnerability_claim'],
+    proof: 'verified_fact', outcome: 'eliminate', reference: 'A conventions word is not classification; the security exception requires no confirmed vulnerable version.' },
+  { category: 'docs_only', stage: 'early', predicate: 'documentation_only_code_claim', facts: ['linguist-documentation', 'all_changed_files_documentation', 'path_role'],
+    applicability: 'Finding file has a source role and every changed file is documentation, verified at captured head by git check-attr.',
+    exceptions: ['documentation_or_comment_claim', 'test_applicable_documented_convention'], proof: 'verified_fact', outcome: 'eliminate',
+    reference: 'Extensions and mixed PRs prove neither whole-PR documentation scope nor irrelevance; unknown stays unknown.' },
+  { category: 'lockfile', stage: 'early', predicate: 'mechanical_lockfile', facts: ['lockfile_basename', 'mechanical_change'],
+    basenames: ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'Cargo.lock', 'Gemfile.lock', 'poetry.lock', 'Pipfile.lock', 'uv.lock', 'composer.lock', 'packages.lock.json'],
+    applicability: 'Closed basename list and verified mechanical scope.', exceptions: ['security_dependency_vulnerability_claim'],
+    proof: 'verified_fact', outcome: 'eliminate', reference: 'The security exception is claim-based and needs no prior vulnerable-version confirmation.' },
+  { category: 'general_quality', stage: 'admission', predicate: 'canonical_admission', facts: ['admission'],
+    applicability: 'Consume canonical quality admission and its present_defect promotion.', exceptions: ['named_in_repo_convention', 'confirmed_present_defect'],
+    proof: 'admission', outcome: 'admission', reference: 'A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.' },
+  { category: 'latent', stage: 'early', predicate: 'future_change_only', facts: ['reachability'],
+    applicability: 'Existing future-change-only reachability assessment appropriate to the actual claim.', exceptions: ['present_static_defect'],
+    proof: 'verified_fact', outcome: 'body', reference: 'Placement after admission and vetting; no invented runtime trigger or early challenge exclusion.' },
+  { category: 'test_only_pattern', stage: 'skeptical', predicate: 'harmless_test_pattern', facts: ['path_role'],
+    applicability: 'Cited harmless test-role pattern and its applicability; test path alone is insufficient.', exceptions: ['test_coverage_origin', 'test_applicable_convention', 'genuine_test_defect'],
+    proof: 'citation', outcome: 'eliminate', reference: 'Wrong assertions, mocks and waits remain defects.' },
+  { category: 'lint_catchable', stage: 'skeptical', predicate: 'tool_covers_claim', facts: [],
+    applicability: 'Cite applicable repository tool, rule or configuration and coverage of the actual claim.', exceptions: [],
+    proof: 'citation', outcome: 'eliminate', reference: 'Familiar syntax and assumed CI tools are insufficient.' },
+  { category: 'suppressed', stage: 'skeptical', predicate: 'suppression_covers_claim', facts: [],
+    applicability: 'Cited suppression location, range and rule cover this issue.', exceptions: [],
+    proof: 'citation', outcome: 'eliminate', reference: 'A nearby suppression does not establish applicability.' },
+  { category: 'opted_out', stage: 'skeptical', predicate: 'opt_out_covers_claim', facts: [],
+    applicability: 'Cite repository opt-out mechanism and applicable file or rule opt-out.', exceptions: [],
+    proof: 'citation', outcome: 'eliminate', reference: 'An author assertion is not an opt-out mechanism.' },
+  { category: 'intentional', stage: 'skeptical', predicate: 'confirmed_intent', facts: ['conventions_confirmation'],
+    applicability: 'Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation.',
+    exceptions: ['proven_incorrect_or_dangerous_behavior_including_security'], proof: 'citation', outcome: 'eliminate',
+    reference: 'The side record is only a gating fact, never a finding or proof; description and intentional wording are insufficient.' },
+].map((row) => ({ ...row, consumers: row.stage === 'skeptical' ? ['validator', 'challenger'] : [row.stage],
+  citation_roles: row.proof === 'citation' ? ['rule', 'applicability'] : [] })));
+export const EXCLUSION_BY_CATEGORY = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row])));
+export const EXCLUSION_FACT_DESCRIPTORS = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row.facts])));
+
+const SKEPTICAL_IDENTITY = {
+  finding_id: { type: 'string', minLength: 1 }, stage: { type: 'string', enum: ['validator', 'challenger'] },
+};
+export const CITATION_REQUEST_PROPERTIES = deepFreeze({
+  ...SKEPTICAL_IDENTITY, request_id: { type: 'string', minLength: 1 },
+  role: { type: 'string', enum: ['claim', 'rule', 'applicability', 'exception'] },
+  snapshot_id: { type: 'string', minLength: 1 }, file: { type: 'string', minLength: 1, $comment: 'repo-path' },
+  side: { type: 'string', enum: ['head', 'old'] },
+  line_start: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+  line_end: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+  quote: { type: 'string', minLength: 1, maxLength: ANCHOR_LIMITS.chars },
+});
+export const CITATION_REQUEST_SCHEMA = deepFreeze(closedDispatchRow(CITATION_REQUEST_PROPERTIES));
+const citationRequests = (roles) => ({ type: 'array', minItems: roles.length,
+  maxItems: CITATION_REQUEST_PROPERTIES.role.enum.length, items: CITATION_REQUEST_SCHEMA,
+  allOf: roles.map((role) => ({ contains: { type: 'object', properties: { role: { const: role } }, required: ['role'] } })),
+});
+export const SCOPE_ASSESSMENT_SCHEMA = deepFreeze({ ...closedDispatchRow({
+  ...SKEPTICAL_IDENTITY,
+  category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) },
+  applicability: { type: 'string', enum: ['applicable', 'inapplicable', 'contradicted'] },
+  citations: citationRequests([]),
+}), anyOf: EXCLUSION_CATEGORIES.map((row) => ({
+  properties: { category: { const: row.category }, citations: citationRequests(row.citation_roles) },
+})) });
+export const VERDICT_RETURN_PROPERTIES = deepFreeze({
+  ...SKEPTICAL_IDENTITY, verdict: { type: 'string', enum: ['real', 'refuted', 'needs_evidence'] },
+  citations: citationRequests(['claim']), missing_evidence: { type: 'string', minLength: 1 },
+  scope_assessments: { type: 'array', items: SCOPE_ASSESSMENT_SCHEMA },
+});
+const VERDICT_VARIANTS = VERDICT_RETURN_PROPERTIES.verdict.enum.map((verdict) => ({
+  properties: { verdict: { const: verdict } },
+  required: [verdict === 'needs_evidence' ? 'missing_evidence' : 'citations'],
+}));
+export const SKEPTICAL_RETURN_SCHEMAS = deepFreeze(Object.fromEntries(SKEPTICAL_IDENTITY.stage.enum.map((stage) => {
+  const properties = { ...VERDICT_RETURN_PROPERTIES, stage: { type: 'string', enum: [stage] },
+    ...(stage === 'validator' ? { confidence: { type: 'number' }, justification: { type: 'string' },
+      reachability: { type: 'string', enum: REACHABILITY_VALUES }, ...VALIDATION_RETURN_PROPERTIES } : {}) };
+  return [stage, { ...closedDispatchRow(properties,
+    ['citations', 'missing_evidence', 'justification', 'reachability', 'admission_assessments', 'site_confirmations']), anyOf: VERDICT_VARIANTS }];
+})));
+export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
+  skeptical_assessments: { type: 'array', items: closedDispatchRow(VERDICT_RETURN_PROPERTIES, ['citations', 'missing_evidence']) },
+  cite_results: { type: 'array', items: closedDispatchRow({
+    request: CITATION_REQUEST_SCHEMA, status: { type: 'string', enum: ['matched', 'unmatched', 'rejected', 'unavailable'] },
+    detail: { type: 'string' },
+  }) },
+  scope_facts: { type: 'array', items: closedDispatchRow({
+    category: SCOPE_ASSESSMENT_SCHEMA.properties.category, predicate: { type: 'string' },
+    value: { type: ['boolean', 'null'] }, snapshot_id: CITATION_REQUEST_PROPERTIES.snapshot_id,
+  }) },
+  scope_decisions: { type: 'array', items: SCOPE_ASSESSMENT_SCHEMA },
+  reduction_provenance: closedDispatchRow({
+    finding_id: SKEPTICAL_IDENTITY.finding_id, disposition: { type: 'string', enum: DISPOSITIONS },
+    reason: { type: 'string', enum: ['report_only', 'held_back', 'body_routed', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable'] },
+    category: SCOPE_ASSESSMENT_SCHEMA.properties.category, stage: SKEPTICAL_IDENTITY.stage,
+    request_ids: { type: 'array', items: { type: 'string' } },
+  }, ['category', 'stage', 'request_ids']),
+});
+
+// Provider schema enforcement can fail; retain the raw entry and bind diagnostics to the dispatched identity.
+export function acceptSkepticalReturn(entry, findingId, stage) {
+  const errors = [];
+  const check = (value, schema, path) => {
+    const fail = () => errors.push(path);
+    if (schema.const !== undefined && value !== schema.const) fail();
+    if (schema.enum && !schema.enum.includes(value)) fail();
+    const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+    if (schema.type && !types.includes(kind) && !(types.includes('integer') && Number.isSafeInteger(value))) { fail(); return; }
+    if (kind === 'object') {
+      for (const key of schema.required || []) if (!Object.hasOwn(value, key)) errors.push(`${path}.${key}`);
+      for (const [key, child] of Object.entries(schema.properties || {})) if (Object.hasOwn(value, key)) check(value[key], child, `${path}.${key}`);
+      if (schema.additionalProperties === false) for (const key of Object.keys(value)) if (!Object.hasOwn(schema.properties, key)) errors.push(`${path}.${key}`);
+    }
+    if (kind === 'array') {
+      if (value.length < (schema.minItems || 0) || value.length > (schema.maxItems ?? Infinity)) fail();
+      if (schema.items) value.forEach((item, index) => check(item, schema.items, `${path}[${index}]`));
+      if (schema.contains && !value.some((item) => matches(item, schema.contains))) fail();
+    }
+    if (kind === 'string') {
+      if (value.trim().length < (schema.minLength || 0) || value.length > (schema.maxLength ?? Infinity)) fail();
+      if (schema.$comment === 'repo-path' && (repoRelativeFindingPath('', value).file !== value
+        || /\\|^[A-Za-z]:/.test(value))) fail();
+    }
+    if (kind === 'number' && (!Number.isFinite(value) || value < (schema.minimum ?? -Infinity) || value > (schema.maximum ?? Infinity))) fail();
+    for (const clause of schema.allOf || []) check(value, clause, path);
+    if (schema.anyOf && !schema.anyOf.some((clause) => matches(value, clause))) fail();
+  };
+  const matches = (value, schema) => {
+    const start = errors.length;
+    check(value, schema, '$');
+    return errors.splice(start).length === 0;
+  };
+  const schema = SKEPTICAL_RETURN_SCHEMAS[stage];
+  if (schema) check(entry, schema, '$');
+  else errors.push('stage');
+  if (entry?.finding_id !== findingId) errors.push('finding_id');
+  const requests = [...(Array.isArray(entry?.citations) ? entry.citations : []),
+    ...(Array.isArray(entry?.scope_assessments) ? entry.scope_assessments.flatMap((scope) => {
+      if (scope?.finding_id !== findingId || scope?.stage !== stage) errors.push('scope_identity');
+      return Array.isArray(scope?.citations) ? scope.citations : [];
+    }) : [])];
+  const ids = new Set();
+  for (const request of requests) {
+    if (!request || request.finding_id !== findingId || request.stage !== stage) errors.push('citation_identity');
+    if (ids.has(request?.request_id)) errors.push('request_id');
+    ids.add(request?.request_id);
+    if (!Number.isSafeInteger(request?.line_start) || !Number.isSafeInteger(request?.line_end)
+      || request.line_end < request.line_start || request.line_end - request.line_start >= ANCHOR_LIMITS.lines
+      || typeof request.quote !== 'string' || request.quote.split(/\r\n|\r|\n/).length > ANCHOR_LIMITS.lines) errors.push('citation_range');
+  }
+  return { finding_id: findingId, stage, status: errors.length ? 'incomplete' : 'complete', errors: [...new Set(errors)], raw: entry,
+    accepted: Object.fromEntries(Object.entries(entry || {}).filter(([key, value]) => {
+      const field = schema?.properties[key];
+      return ['confidence', 'policy_subject', 'admission_assessments', 'site_confirmations', 'reachability'].includes(key) && field && matches(value, field);
+    })) };
+}
+
+export const SKEPTICAL_CONTRACTS = deepFreeze(Object.fromEntries(Object.entries(SKEPTICAL_RETURN_SCHEMAS)
+  .map(([stage, schema]) => [stage, { schema, accept: (entry, findingId) => acceptSkepticalReturn(entry, findingId, stage) }])));
 
 export function dimensionRow(dimension) {
   return DIMENSIONS.find((row) => row.dimension === dimension || row.aliases.includes(dimension));
@@ -381,17 +550,18 @@ export function normalizePipelineStamps(finding) {
 }
 
 export const FINDING_PATH_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries({
-  ...FINDING_PROP_TYPES, ...Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)),
+  ...FINDING_PROP_TYPES, ...Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)), ...SKEPTICAL_FINDING_PROPERTIES,
 }).filter(([, schema]) => JSON.stringify(schema).includes('repo-path'))));
 export const FINDING_PATH_ARRAY_FIELDS = deepFreeze(Object.entries(FINDING_PATH_DESCRIPTORS)
   .filter(([, schema]) => schema.type === 'array' && schema.items.$comment === 'repo-path').map(([key]) => key));
 
 // Identifiers must not collide; structural paths and suggestion code retain their own semantics.
-export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'delivery_group', 'file', ...Object.keys(FINDING_PATH_DESCRIPTORS), ...Object.keys(ADMISSION_STAMP_PROPERTIES), 'resolved_references', 'site_requests', 'resolved_sites', 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
+export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'delivery_group', 'file', ...Object.keys(FINDING_PATH_DESCRIPTORS), ...Object.keys(ADMISSION_STAMP_PROPERTIES), ...Object.keys(SKEPTICAL_FINDING_PROPERTIES), 'resolved_references', 'site_requests', 'resolved_sites', 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
 
 // Keep pipeline stamp names code-owned so disclosure can use a safe other fallback for unknown fields.
 export const PIPELINE_FINDING_FIELDS = deepFreeze([
   ...Object.keys(ADMISSION_STAMP_PROPERTIES),
+  ...Object.keys(SKEPTICAL_FINDING_PROPERTIES),
   'origin_dimension', 'effective_test_kind', 'reference_diagnostics',
   ...VERIFY_FACT_KEYS,
   'trace_id', 'discovery_agent', 'discovery_dimension',

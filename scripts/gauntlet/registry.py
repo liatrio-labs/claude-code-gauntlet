@@ -10,6 +10,22 @@ PolicyProvider = Literal["firstParty", "bedrock", "vertex", "foundry"]
 Reachability = Literal["current", "future_change_only", "uncertain"]
 LocationStatus = Literal["confirmed", "relocated", "unconfirmed"]
 Disposition = Literal["deliver", "body", "held_back", "report_only", "eliminate"]
+Verdict = Literal["real", "refuted", "needs_evidence"]
+SkepticalStage = Literal["validator", "challenger"]
+ExclusionCategory = Literal[
+    "pre_existing",
+    "untouched_line",
+    "generated_vendored",
+    "docs_only",
+    "lockfile",
+    "general_quality",
+    "latent",
+    "test_only_pattern",
+    "lint_catchable",
+    "suppressed",
+    "opted_out",
+    "intentional",
+]
 Dimension = Literal[
     "bug",
     "security",
@@ -82,6 +98,226 @@ _AdmissionAssessmentsItemPredicate_Literal = Literal[
     "current_defect",
 ]
 _AdmissionAssessmentsItemStatus_Literal = Literal["confirmed", "rejected", "unresolved"]
+_CitationRequestStage_Literal = Literal["validator", "challenger"]
+_CitationRequestRole_Literal = Literal["claim", "rule", "applicability", "exception"]
+_CitationRequestSide_Literal = Literal["head", "old"]
+_ScopeAssessmentStage_Literal = Literal["validator", "challenger"]
+_ScopeAssessmentCategory_Literal = Literal[
+    "pre_existing",
+    "untouched_line",
+    "generated_vendored",
+    "docs_only",
+    "lockfile",
+    "general_quality",
+    "latent",
+    "test_only_pattern",
+    "lint_catchable",
+    "suppressed",
+    "opted_out",
+    "intentional",
+]
+_ScopeAssessmentApplicability_Literal = Literal[
+    "applicable", "inapplicable", "contradicted"
+]
+_ScopeAssessmentCitationsItemStage_Literal = Literal["validator", "challenger"]
+_ScopeAssessmentCitationsItemRole_Literal = Literal[
+    "claim", "rule", "applicability", "exception"
+]
+_ScopeAssessmentCitationsItemSide_Literal = Literal["head", "old"]
+_ValidatorReturnStage_Literal = Literal["validator"]
+_ValidatorReturnVerdict_Literal = Literal["real", "refuted", "needs_evidence"]
+_ValidatorReturnCitationsItemStage_Literal = Literal["validator", "challenger"]
+_ValidatorReturnCitationsItemRole_Literal = Literal[
+    "claim", "rule", "applicability", "exception"
+]
+_ValidatorReturnCitationsItemSide_Literal = Literal["head", "old"]
+_ValidatorReturnScopeAssessmentsItemStage_Literal = Literal["validator", "challenger"]
+_ValidatorReturnScopeAssessmentsItemCategory_Literal = Literal[
+    "pre_existing",
+    "untouched_line",
+    "generated_vendored",
+    "docs_only",
+    "lockfile",
+    "general_quality",
+    "latent",
+    "test_only_pattern",
+    "lint_catchable",
+    "suppressed",
+    "opted_out",
+    "intentional",
+]
+_ValidatorReturnScopeAssessmentsItemApplicability_Literal = Literal[
+    "applicable", "inapplicable", "contradicted"
+]
+_ValidatorReturnScopeAssessmentsItemCitationsItemStage_Literal = Literal[
+    "validator", "challenger"
+]
+_ValidatorReturnScopeAssessmentsItemCitationsItemRole_Literal = Literal[
+    "claim", "rule", "applicability", "exception"
+]
+_ValidatorReturnScopeAssessmentsItemCitationsItemSide_Literal = Literal["head", "old"]
+_ValidatorReturnReachability_Literal = Literal[
+    "current", "future_change_only", "uncertain"
+]
+_ValidatorReturnPolicySubject_Literal = Literal[
+    "test_defect", "coverage", "ordinary", "unresolved"
+]
+_ValidatorReturnAdmissionAssessmentsItemPredicate_Literal = Literal[
+    "confirmed_test_defect",
+    "resolved_production_element",
+    "complete_searches",
+    "complete_behavioral_absence",
+    "present_defect",
+    "confirmed_duplication",
+    "concrete_equivalent",
+    "behavior_preserved",
+    "applicable",
+    "current_defect",
+]
+_ValidatorReturnAdmissionAssessmentsItemStatus_Literal = Literal[
+    "confirmed", "rejected", "unresolved"
+]
+_ChallengerReturnStage_Literal = Literal["challenger"]
+_ChallengerReturnVerdict_Literal = Literal["real", "refuted", "needs_evidence"]
+_ChallengerReturnCitationsItemStage_Literal = Literal["validator", "challenger"]
+_ChallengerReturnCitationsItemRole_Literal = Literal[
+    "claim", "rule", "applicability", "exception"
+]
+_ChallengerReturnCitationsItemSide_Literal = Literal["head", "old"]
+_ChallengerReturnScopeAssessmentsItemStage_Literal = Literal["validator", "challenger"]
+_ChallengerReturnScopeAssessmentsItemCategory_Literal = Literal[
+    "pre_existing",
+    "untouched_line",
+    "generated_vendored",
+    "docs_only",
+    "lockfile",
+    "general_quality",
+    "latent",
+    "test_only_pattern",
+    "lint_catchable",
+    "suppressed",
+    "opted_out",
+    "intentional",
+]
+_ChallengerReturnScopeAssessmentsItemApplicability_Literal = Literal[
+    "applicable", "inapplicable", "contradicted"
+]
+_ChallengerReturnScopeAssessmentsItemCitationsItemStage_Literal = Literal[
+    "validator", "challenger"
+]
+_ChallengerReturnScopeAssessmentsItemCitationsItemRole_Literal = Literal[
+    "claim", "rule", "applicability", "exception"
+]
+_ChallengerReturnScopeAssessmentsItemCitationsItemSide_Literal = Literal["head", "old"]
+_SkepticalAssessmentsItemStage_Literal = Literal["validator", "challenger"]
+_SkepticalAssessmentsItemVerdict_Literal = Literal["real", "refuted", "needs_evidence"]
+_SkepticalAssessmentsItemCitationsItemStage_Literal = Literal["validator", "challenger"]
+_SkepticalAssessmentsItemCitationsItemRole_Literal = Literal[
+    "claim", "rule", "applicability", "exception"
+]
+_SkepticalAssessmentsItemCitationsItemSide_Literal = Literal["head", "old"]
+_SkepticalAssessmentsItemScopeAssessmentsItemStage_Literal = Literal[
+    "validator", "challenger"
+]
+_SkepticalAssessmentsItemScopeAssessmentsItemCategory_Literal = Literal[
+    "pre_existing",
+    "untouched_line",
+    "generated_vendored",
+    "docs_only",
+    "lockfile",
+    "general_quality",
+    "latent",
+    "test_only_pattern",
+    "lint_catchable",
+    "suppressed",
+    "opted_out",
+    "intentional",
+]
+_SkepticalAssessmentsItemScopeAssessmentsItemApplicability_Literal = Literal[
+    "applicable", "inapplicable", "contradicted"
+]
+_SkepticalAssessmentsItemScopeAssessmentsItemCitationsItemStage_Literal = Literal[
+    "validator", "challenger"
+]
+_SkepticalAssessmentsItemScopeAssessmentsItemCitationsItemRole_Literal = Literal[
+    "claim", "rule", "applicability", "exception"
+]
+_SkepticalAssessmentsItemScopeAssessmentsItemCitationsItemSide_Literal = Literal[
+    "head", "old"
+]
+_CiteResultsItemRequestStage_Literal = Literal["validator", "challenger"]
+_CiteResultsItemRequestRole_Literal = Literal[
+    "claim", "rule", "applicability", "exception"
+]
+_CiteResultsItemRequestSide_Literal = Literal["head", "old"]
+_CiteResultsItemStatus_Literal = Literal[
+    "matched", "unmatched", "rejected", "unavailable"
+]
+_ScopeFactsItemCategory_Literal = Literal[
+    "pre_existing",
+    "untouched_line",
+    "generated_vendored",
+    "docs_only",
+    "lockfile",
+    "general_quality",
+    "latent",
+    "test_only_pattern",
+    "lint_catchable",
+    "suppressed",
+    "opted_out",
+    "intentional",
+]
+_ScopeDecisionsItemStage_Literal = Literal["validator", "challenger"]
+_ScopeDecisionsItemCategory_Literal = Literal[
+    "pre_existing",
+    "untouched_line",
+    "generated_vendored",
+    "docs_only",
+    "lockfile",
+    "general_quality",
+    "latent",
+    "test_only_pattern",
+    "lint_catchable",
+    "suppressed",
+    "opted_out",
+    "intentional",
+]
+_ScopeDecisionsItemApplicability_Literal = Literal[
+    "applicable", "inapplicable", "contradicted"
+]
+_ScopeDecisionsItemCitationsItemStage_Literal = Literal["validator", "challenger"]
+_ScopeDecisionsItemCitationsItemRole_Literal = Literal[
+    "claim", "rule", "applicability", "exception"
+]
+_ScopeDecisionsItemCitationsItemSide_Literal = Literal["head", "old"]
+_ReductionProvenanceDisposition_Literal = Literal[
+    "deliver", "body", "held_back", "report_only", "eliminate"
+]
+_ReductionProvenanceReason_Literal = Literal[
+    "report_only",
+    "held_back",
+    "body_routed",
+    "refuted",
+    "out_of_scope",
+    "scope_contradicted",
+    "cite_unmatched",
+    "cite_unavailable",
+]
+_ReductionProvenanceCategory_Literal = Literal[
+    "pre_existing",
+    "untouched_line",
+    "generated_vendored",
+    "docs_only",
+    "lockfile",
+    "general_quality",
+    "latent",
+    "test_only_pattern",
+    "lint_catchable",
+    "suppressed",
+    "opted_out",
+    "intentional",
+]
+_ReductionProvenanceStage_Literal = Literal["validator", "challenger"]
 PathRole = Literal["source", "test", "non_source", "unknown"]
 BlameClass = Literal["new", "pre_existing", "surfaced", "unknown"]
 BlameSource = Literal[
@@ -1128,6 +1364,3006 @@ STAGE_COSTS = {
     },
 }
 
+CITATION_REQUEST_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "finding_id": {
+            "type": "string",
+            "minLength": 1,
+        },
+        "stage": {
+            "type": "string",
+            "enum": ["validator", "challenger"],
+        },
+        "request_id": {
+            "type": "string",
+            "minLength": 1,
+        },
+        "role": {
+            "type": "string",
+            "enum": ["claim", "rule", "applicability", "exception"],
+        },
+        "snapshot_id": {
+            "type": "string",
+            "minLength": 1,
+        },
+        "file": {
+            "type": "string",
+            "minLength": 1,
+            "$comment": "repo-path",
+        },
+        "side": {
+            "type": "string",
+            "enum": ["head", "old"],
+        },
+        "line_start": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+        },
+        "line_end": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+        },
+        "quote": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400,
+        },
+    },
+    "required": [
+        "finding_id",
+        "stage",
+        "request_id",
+        "role",
+        "snapshot_id",
+        "file",
+        "side",
+        "line_start",
+        "line_end",
+        "quote",
+    ],
+    "additionalProperties": False,
+}
+
+SKEPTICAL_RETURN_SCHEMAS = {
+    "validator": {
+        "type": "object",
+        "properties": {
+            "finding_id": {
+                "type": "string",
+                "minLength": 1,
+            },
+            "stage": {
+                "type": "string",
+                "enum": ["validator"],
+            },
+            "verdict": {
+                "type": "string",
+                "enum": ["real", "refuted", "needs_evidence"],
+            },
+            "citations": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 4,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "finding_id": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
+                        "stage": {
+                            "type": "string",
+                            "enum": ["validator", "challenger"],
+                        },
+                        "request_id": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
+                        "role": {
+                            "type": "string",
+                            "enum": ["claim", "rule", "applicability", "exception"],
+                        },
+                        "snapshot_id": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
+                        "file": {
+                            "type": "string",
+                            "minLength": 1,
+                            "$comment": "repo-path",
+                        },
+                        "side": {
+                            "type": "string",
+                            "enum": ["head", "old"],
+                        },
+                        "line_start": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991,
+                        },
+                        "line_end": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991,
+                        },
+                        "quote": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 400,
+                        },
+                    },
+                    "required": [
+                        "finding_id",
+                        "stage",
+                        "request_id",
+                        "role",
+                        "snapshot_id",
+                        "file",
+                        "side",
+                        "line_start",
+                        "line_end",
+                        "quote",
+                    ],
+                    "additionalProperties": False,
+                },
+                "allOf": [
+                    {
+                        "contains": {
+                            "type": "object",
+                            "properties": {
+                                "role": {
+                                    "const": "claim",
+                                },
+                            },
+                            "required": ["role"],
+                        },
+                    },
+                ],
+            },
+            "missing_evidence": {
+                "type": "string",
+                "minLength": 1,
+            },
+            "scope_assessments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "finding_id": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
+                        "stage": {
+                            "type": "string",
+                            "enum": ["validator", "challenger"],
+                        },
+                        "category": {
+                            "type": "string",
+                            "enum": [
+                                "pre_existing",
+                                "untouched_line",
+                                "generated_vendored",
+                                "docs_only",
+                                "lockfile",
+                                "general_quality",
+                                "latent",
+                                "test_only_pattern",
+                                "lint_catchable",
+                                "suppressed",
+                                "opted_out",
+                                "intentional",
+                            ],
+                        },
+                        "applicability": {
+                            "type": "string",
+                            "enum": ["applicable", "inapplicable", "contradicted"],
+                        },
+                        "citations": {
+                            "type": "array",
+                            "minItems": 0,
+                            "maxItems": 4,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "finding_id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                    },
+                                    "stage": {
+                                        "type": "string",
+                                        "enum": ["validator", "challenger"],
+                                    },
+                                    "request_id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                    },
+                                    "role": {
+                                        "type": "string",
+                                        "enum": [
+                                            "claim",
+                                            "rule",
+                                            "applicability",
+                                            "exception",
+                                        ],
+                                    },
+                                    "snapshot_id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                    },
+                                    "file": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "$comment": "repo-path",
+                                    },
+                                    "side": {
+                                        "type": "string",
+                                        "enum": ["head", "old"],
+                                    },
+                                    "line_start": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 9007199254740991,
+                                    },
+                                    "line_end": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 9007199254740991,
+                                    },
+                                    "quote": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 400,
+                                    },
+                                },
+                                "required": [
+                                    "finding_id",
+                                    "stage",
+                                    "request_id",
+                                    "role",
+                                    "snapshot_id",
+                                    "file",
+                                    "side",
+                                    "line_start",
+                                    "line_end",
+                                    "quote",
+                                ],
+                                "additionalProperties": False,
+                            },
+                            "allOf": [],
+                        },
+                    },
+                    "required": [
+                        "finding_id",
+                        "stage",
+                        "category",
+                        "applicability",
+                        "citations",
+                    ],
+                    "additionalProperties": False,
+                    "anyOf": [
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "pre_existing",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "untouched_line",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "generated_vendored",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "docs_only",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "lockfile",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "general_quality",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "latent",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "test_only_pattern",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "rule",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "applicability",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "lint_catchable",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "rule",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "applicability",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "suppressed",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "rule",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "applicability",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "opted_out",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "rule",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "applicability",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "intentional",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "rule",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "applicability",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                    ],
+                },
+            },
+            "confidence": {
+                "type": "number",
+            },
+            "justification": {
+                "type": "string",
+            },
+            "reachability": {
+                "type": "string",
+                "enum": ["current", "future_change_only", "uncertain"],
+            },
+            "site_confirmations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "file": {
+                            "type": "string",
+                        },
+                        "line_start": {
+                            "type": "integer",
+                            "minimum": 1,
+                        },
+                        "line_end": {
+                            "type": "integer",
+                            "minimum": 1,
+                        },
+                        "confirmed": {
+                            "type": "boolean",
+                        },
+                    },
+                    "required": ["file", "line_start", "line_end", "confirmed"],
+                    "additionalProperties": False,
+                },
+            },
+            "policy_subject": {
+                "type": "string",
+                "enum": ["test_defect", "coverage", "ordinary", "unresolved"],
+            },
+            "admission_assessments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "predicate": {
+                            "type": "string",
+                            "enum": [
+                                "confirmed_test_defect",
+                                "resolved_production_element",
+                                "complete_searches",
+                                "complete_behavioral_absence",
+                                "present_defect",
+                                "confirmed_duplication",
+                                "concrete_equivalent",
+                                "behavior_preserved",
+                                "applicable",
+                                "current_defect",
+                            ],
+                        },
+                        "status": {
+                            "type": "string",
+                            "enum": ["confirmed", "rejected", "unresolved"],
+                        },
+                        "references": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                            },
+                        },
+                    },
+                    "required": ["predicate", "status", "references"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": [
+            "finding_id",
+            "stage",
+            "verdict",
+            "scope_assessments",
+            "confidence",
+            "policy_subject",
+        ],
+        "additionalProperties": False,
+        "anyOf": [
+            {
+                "properties": {
+                    "verdict": {
+                        "const": "real",
+                    },
+                },
+                "required": ["citations"],
+            },
+            {
+                "properties": {
+                    "verdict": {
+                        "const": "refuted",
+                    },
+                },
+                "required": ["citations"],
+            },
+            {
+                "properties": {
+                    "verdict": {
+                        "const": "needs_evidence",
+                    },
+                },
+                "required": ["missing_evidence"],
+            },
+        ],
+    },
+    "challenger": {
+        "type": "object",
+        "properties": {
+            "finding_id": {
+                "type": "string",
+                "minLength": 1,
+            },
+            "stage": {
+                "type": "string",
+                "enum": ["challenger"],
+            },
+            "verdict": {
+                "type": "string",
+                "enum": ["real", "refuted", "needs_evidence"],
+            },
+            "citations": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 4,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "finding_id": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
+                        "stage": {
+                            "type": "string",
+                            "enum": ["validator", "challenger"],
+                        },
+                        "request_id": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
+                        "role": {
+                            "type": "string",
+                            "enum": ["claim", "rule", "applicability", "exception"],
+                        },
+                        "snapshot_id": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
+                        "file": {
+                            "type": "string",
+                            "minLength": 1,
+                            "$comment": "repo-path",
+                        },
+                        "side": {
+                            "type": "string",
+                            "enum": ["head", "old"],
+                        },
+                        "line_start": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991,
+                        },
+                        "line_end": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991,
+                        },
+                        "quote": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 400,
+                        },
+                    },
+                    "required": [
+                        "finding_id",
+                        "stage",
+                        "request_id",
+                        "role",
+                        "snapshot_id",
+                        "file",
+                        "side",
+                        "line_start",
+                        "line_end",
+                        "quote",
+                    ],
+                    "additionalProperties": False,
+                },
+                "allOf": [
+                    {
+                        "contains": {
+                            "type": "object",
+                            "properties": {
+                                "role": {
+                                    "const": "claim",
+                                },
+                            },
+                            "required": ["role"],
+                        },
+                    },
+                ],
+            },
+            "missing_evidence": {
+                "type": "string",
+                "minLength": 1,
+            },
+            "scope_assessments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "finding_id": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
+                        "stage": {
+                            "type": "string",
+                            "enum": ["validator", "challenger"],
+                        },
+                        "category": {
+                            "type": "string",
+                            "enum": [
+                                "pre_existing",
+                                "untouched_line",
+                                "generated_vendored",
+                                "docs_only",
+                                "lockfile",
+                                "general_quality",
+                                "latent",
+                                "test_only_pattern",
+                                "lint_catchable",
+                                "suppressed",
+                                "opted_out",
+                                "intentional",
+                            ],
+                        },
+                        "applicability": {
+                            "type": "string",
+                            "enum": ["applicable", "inapplicable", "contradicted"],
+                        },
+                        "citations": {
+                            "type": "array",
+                            "minItems": 0,
+                            "maxItems": 4,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "finding_id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                    },
+                                    "stage": {
+                                        "type": "string",
+                                        "enum": ["validator", "challenger"],
+                                    },
+                                    "request_id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                    },
+                                    "role": {
+                                        "type": "string",
+                                        "enum": [
+                                            "claim",
+                                            "rule",
+                                            "applicability",
+                                            "exception",
+                                        ],
+                                    },
+                                    "snapshot_id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                    },
+                                    "file": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "$comment": "repo-path",
+                                    },
+                                    "side": {
+                                        "type": "string",
+                                        "enum": ["head", "old"],
+                                    },
+                                    "line_start": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 9007199254740991,
+                                    },
+                                    "line_end": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 9007199254740991,
+                                    },
+                                    "quote": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 400,
+                                    },
+                                },
+                                "required": [
+                                    "finding_id",
+                                    "stage",
+                                    "request_id",
+                                    "role",
+                                    "snapshot_id",
+                                    "file",
+                                    "side",
+                                    "line_start",
+                                    "line_end",
+                                    "quote",
+                                ],
+                                "additionalProperties": False,
+                            },
+                            "allOf": [],
+                        },
+                    },
+                    "required": [
+                        "finding_id",
+                        "stage",
+                        "category",
+                        "applicability",
+                        "citations",
+                    ],
+                    "additionalProperties": False,
+                    "anyOf": [
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "pre_existing",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "untouched_line",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "generated_vendored",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "docs_only",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "lockfile",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "general_quality",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "latent",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 0,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "test_only_pattern",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "rule",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "applicability",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "lint_catchable",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "rule",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "applicability",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "suppressed",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "rule",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "applicability",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "opted_out",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "rule",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "applicability",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        {
+                            "properties": {
+                                "category": {
+                                    "const": "intentional",
+                                },
+                                "citations": {
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "finding_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "stage": {
+                                                "type": "string",
+                                                "enum": ["validator", "challenger"],
+                                            },
+                                            "request_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "claim",
+                                                    "rule",
+                                                    "applicability",
+                                                    "exception",
+                                                ],
+                                            },
+                                            "snapshot_id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "file": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "$comment": "repo-path",
+                                            },
+                                            "side": {
+                                                "type": "string",
+                                                "enum": ["head", "old"],
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 9007199254740991,
+                                            },
+                                            "quote": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                            },
+                                        },
+                                        "required": [
+                                            "finding_id",
+                                            "stage",
+                                            "request_id",
+                                            "role",
+                                            "snapshot_id",
+                                            "file",
+                                            "side",
+                                            "line_start",
+                                            "line_end",
+                                            "quote",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                    "allOf": [
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "rule",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                        {
+                                            "contains": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "role": {
+                                                        "const": "applicability",
+                                                    },
+                                                },
+                                                "required": ["role"],
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                    ],
+                },
+            },
+        },
+        "required": ["finding_id", "stage", "verdict", "scope_assessments"],
+        "additionalProperties": False,
+        "anyOf": [
+            {
+                "properties": {
+                    "verdict": {
+                        "const": "real",
+                    },
+                },
+                "required": ["citations"],
+            },
+            {
+                "properties": {
+                    "verdict": {
+                        "const": "refuted",
+                    },
+                },
+                "required": ["citations"],
+            },
+            {
+                "properties": {
+                    "verdict": {
+                        "const": "needs_evidence",
+                    },
+                },
+                "required": ["missing_evidence"],
+            },
+        ],
+    },
+}
+
+EXCLUSION_CATEGORIES = [
+    {
+        "category": "pre_existing",
+        "stage": "early",
+        "predicate": "blame_pre_existing",
+        "facts": ["git_blame", "affected_cross_file_refs"],
+        "applicability": "Actual git_blame pre-existence with no affected cross-file references.",
+        "exceptions": ["cross_file_effect_created_by_pr"],
+        "proof": "verified_fact",
+        "outcome": "report_only",
+        "reference": "Origin surfaced, off-diff placement and descriptions do not prove pre-existence.",
+        "consumers": ["early"],
+        "citation_roles": [],
+    },
+    {
+        "category": "untouched_line",
+        "stage": "early",
+        "predicate": "off_diff",
+        "facts": ["in_diff"],
+        "applicability": "Verified in_diff=false; unknown is not false.",
+        "exceptions": [],
+        "proof": "verified_fact",
+        "outcome": "body",
+        "reference": "Placement only after admission and vetting; still competes for challenge capacity.",
+        "consumers": ["early"],
+        "citation_roles": [],
+    },
+    {
+        "category": "generated_vendored",
+        "stage": "early",
+        "predicate": "generated_or_vendored",
+        "facts": ["linguist-generated", "linguist-vendored", "generated_marker"],
+        "applicability": "git check-attr at captured head or generated markers in the first source lines.",
+        "exceptions": ["security_dependency_vulnerability_claim"],
+        "proof": "verified_fact",
+        "outcome": "eliminate",
+        "reference": "A conventions word is not classification; the security exception requires no confirmed vulnerable version.",
+        "consumers": ["early"],
+        "citation_roles": [],
+    },
+    {
+        "category": "docs_only",
+        "stage": "early",
+        "predicate": "documentation_only_code_claim",
+        "facts": [
+            "linguist-documentation",
+            "all_changed_files_documentation",
+            "path_role",
+        ],
+        "applicability": "Finding file has a source role and every changed file is documentation, verified at captured head by git check-attr.",
+        "exceptions": [
+            "documentation_or_comment_claim",
+            "test_applicable_documented_convention",
+        ],
+        "proof": "verified_fact",
+        "outcome": "eliminate",
+        "reference": "Extensions and mixed PRs prove neither whole-PR documentation scope nor irrelevance; unknown stays unknown.",
+        "consumers": ["early"],
+        "citation_roles": [],
+    },
+    {
+        "category": "lockfile",
+        "stage": "early",
+        "predicate": "mechanical_lockfile",
+        "facts": ["lockfile_basename", "mechanical_change"],
+        "basenames": [
+            "package-lock.json",
+            "npm-shrinkwrap.json",
+            "yarn.lock",
+            "pnpm-lock.yaml",
+            "Cargo.lock",
+            "Gemfile.lock",
+            "poetry.lock",
+            "Pipfile.lock",
+            "uv.lock",
+            "composer.lock",
+            "packages.lock.json",
+        ],
+        "applicability": "Closed basename list and verified mechanical scope.",
+        "exceptions": ["security_dependency_vulnerability_claim"],
+        "proof": "verified_fact",
+        "outcome": "eliminate",
+        "reference": "The security exception is claim-based and needs no prior vulnerable-version confirmation.",
+        "consumers": ["early"],
+        "citation_roles": [],
+    },
+    {
+        "category": "general_quality",
+        "stage": "admission",
+        "predicate": "canonical_admission",
+        "facts": ["admission"],
+        "applicability": "Consume canonical quality admission and its present_defect promotion.",
+        "exceptions": ["named_in_repo_convention", "confirmed_present_defect"],
+        "proof": "admission",
+        "outcome": "admission",
+        "reference": "A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.",
+        "consumers": ["admission"],
+        "citation_roles": [],
+    },
+    {
+        "category": "latent",
+        "stage": "early",
+        "predicate": "future_change_only",
+        "facts": ["reachability"],
+        "applicability": "Existing future-change-only reachability assessment appropriate to the actual claim.",
+        "exceptions": ["present_static_defect"],
+        "proof": "verified_fact",
+        "outcome": "body",
+        "reference": "Placement after admission and vetting; no invented runtime trigger or early challenge exclusion.",
+        "consumers": ["early"],
+        "citation_roles": [],
+    },
+    {
+        "category": "test_only_pattern",
+        "stage": "skeptical",
+        "predicate": "harmless_test_pattern",
+        "facts": ["path_role"],
+        "applicability": "Cited harmless test-role pattern and its applicability; test path alone is insufficient.",
+        "exceptions": [
+            "test_coverage_origin",
+            "test_applicable_convention",
+            "genuine_test_defect",
+        ],
+        "proof": "citation",
+        "outcome": "eliminate",
+        "reference": "Wrong assertions, mocks and waits remain defects.",
+        "consumers": ["validator", "challenger"],
+        "citation_roles": ["rule", "applicability"],
+    },
+    {
+        "category": "lint_catchable",
+        "stage": "skeptical",
+        "predicate": "tool_covers_claim",
+        "facts": [],
+        "applicability": "Cite applicable repository tool, rule or configuration and coverage of the actual claim.",
+        "exceptions": [],
+        "proof": "citation",
+        "outcome": "eliminate",
+        "reference": "Familiar syntax and assumed CI tools are insufficient.",
+        "consumers": ["validator", "challenger"],
+        "citation_roles": ["rule", "applicability"],
+    },
+    {
+        "category": "suppressed",
+        "stage": "skeptical",
+        "predicate": "suppression_covers_claim",
+        "facts": [],
+        "applicability": "Cited suppression location, range and rule cover this issue.",
+        "exceptions": [],
+        "proof": "citation",
+        "outcome": "eliminate",
+        "reference": "A nearby suppression does not establish applicability.",
+        "consumers": ["validator", "challenger"],
+        "citation_roles": ["rule", "applicability"],
+    },
+    {
+        "category": "opted_out",
+        "stage": "skeptical",
+        "predicate": "opt_out_covers_claim",
+        "facts": [],
+        "applicability": "Cite repository opt-out mechanism and applicable file or rule opt-out.",
+        "exceptions": [],
+        "proof": "citation",
+        "outcome": "eliminate",
+        "reference": "An author assertion is not an opt-out mechanism.",
+        "consumers": ["validator", "challenger"],
+        "citation_roles": ["rule", "applicability"],
+    },
+    {
+        "category": "intentional",
+        "stage": "skeptical",
+        "predicate": "confirmed_intent",
+        "facts": ["conventions_confirmation"],
+        "applicability": "Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation.",
+        "exceptions": ["proven_incorrect_or_dangerous_behavior_including_security"],
+        "proof": "citation",
+        "outcome": "eliminate",
+        "reference": "The side record is only a gating fact, never a finding or proof; description and intentional wording are insufficient.",
+        "consumers": ["validator", "challenger"],
+        "citation_roles": ["rule", "applicability"],
+    },
+]
+
+EXCLUSION_FACT_DESCRIPTORS = {
+    "pre_existing": ["git_blame", "affected_cross_file_refs"],
+    "untouched_line": ["in_diff"],
+    "generated_vendored": [
+        "linguist-generated",
+        "linguist-vendored",
+        "generated_marker",
+    ],
+    "docs_only": [
+        "linguist-documentation",
+        "all_changed_files_documentation",
+        "path_role",
+    ],
+    "lockfile": ["lockfile_basename", "mechanical_change"],
+    "general_quality": ["admission"],
+    "latent": ["reachability"],
+    "test_only_pattern": ["path_role"],
+    "lint_catchable": [],
+    "suppressed": [],
+    "opted_out": [],
+    "intentional": ["conventions_confirmation"],
+}
+
 BRAND_MARK = "⚔️"
 
 BRAND_NAME = "Code Gauntlet"
@@ -1615,6 +4851,244 @@ class AdmissionAssessmentsItem(TypedDict):
     references: list[str]
 
 
+class CitationRequest(TypedDict):
+    finding_id: str
+    stage: _CitationRequestStage_Literal
+    request_id: str
+    role: _CitationRequestRole_Literal
+    snapshot_id: str
+    file: str
+    side: _CitationRequestSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ScopeAssessmentCitationsItem(TypedDict):
+    finding_id: str
+    stage: _ScopeAssessmentCitationsItemStage_Literal
+    request_id: str
+    role: _ScopeAssessmentCitationsItemRole_Literal
+    snapshot_id: str
+    file: str
+    side: _ScopeAssessmentCitationsItemSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ScopeAssessment(TypedDict):
+    finding_id: str
+    stage: _ScopeAssessmentStage_Literal
+    category: _ScopeAssessmentCategory_Literal
+    applicability: _ScopeAssessmentApplicability_Literal
+    citations: list[ScopeAssessmentCitationsItem]
+
+
+class ValidatorReturnCitationsItem(TypedDict):
+    finding_id: str
+    stage: _ValidatorReturnCitationsItemStage_Literal
+    request_id: str
+    role: _ValidatorReturnCitationsItemRole_Literal
+    snapshot_id: str
+    file: str
+    side: _ValidatorReturnCitationsItemSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ValidatorReturnScopeAssessmentsItemCitationsItem(TypedDict):
+    finding_id: str
+    stage: _ValidatorReturnScopeAssessmentsItemCitationsItemStage_Literal
+    request_id: str
+    role: _ValidatorReturnScopeAssessmentsItemCitationsItemRole_Literal
+    snapshot_id: str
+    file: str
+    side: _ValidatorReturnScopeAssessmentsItemCitationsItemSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ValidatorReturnScopeAssessmentsItem(TypedDict):
+    finding_id: str
+    stage: _ValidatorReturnScopeAssessmentsItemStage_Literal
+    category: _ValidatorReturnScopeAssessmentsItemCategory_Literal
+    applicability: _ValidatorReturnScopeAssessmentsItemApplicability_Literal
+    citations: list[ValidatorReturnScopeAssessmentsItemCitationsItem]
+
+
+class ValidatorReturnSiteConfirmationsItem(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    confirmed: bool
+
+
+class ValidatorReturnAdmissionAssessmentsItem(TypedDict):
+    predicate: _ValidatorReturnAdmissionAssessmentsItemPredicate_Literal
+    status: _ValidatorReturnAdmissionAssessmentsItemStatus_Literal
+    references: list[str]
+
+
+class ValidatorReturn(TypedDict, total=False):
+    finding_id: str
+    stage: _ValidatorReturnStage_Literal
+    verdict: _ValidatorReturnVerdict_Literal
+    citations: list[ValidatorReturnCitationsItem]
+    missing_evidence: str
+    scope_assessments: list[ValidatorReturnScopeAssessmentsItem]
+    confidence: float
+    justification: str
+    reachability: _ValidatorReturnReachability_Literal
+    site_confirmations: list[ValidatorReturnSiteConfirmationsItem]
+    policy_subject: _ValidatorReturnPolicySubject_Literal
+    admission_assessments: list[ValidatorReturnAdmissionAssessmentsItem]
+
+
+class ChallengerReturnCitationsItem(TypedDict):
+    finding_id: str
+    stage: _ChallengerReturnCitationsItemStage_Literal
+    request_id: str
+    role: _ChallengerReturnCitationsItemRole_Literal
+    snapshot_id: str
+    file: str
+    side: _ChallengerReturnCitationsItemSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ChallengerReturnScopeAssessmentsItemCitationsItem(TypedDict):
+    finding_id: str
+    stage: _ChallengerReturnScopeAssessmentsItemCitationsItemStage_Literal
+    request_id: str
+    role: _ChallengerReturnScopeAssessmentsItemCitationsItemRole_Literal
+    snapshot_id: str
+    file: str
+    side: _ChallengerReturnScopeAssessmentsItemCitationsItemSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ChallengerReturnScopeAssessmentsItem(TypedDict):
+    finding_id: str
+    stage: _ChallengerReturnScopeAssessmentsItemStage_Literal
+    category: _ChallengerReturnScopeAssessmentsItemCategory_Literal
+    applicability: _ChallengerReturnScopeAssessmentsItemApplicability_Literal
+    citations: list[ChallengerReturnScopeAssessmentsItemCitationsItem]
+
+
+class ChallengerReturn(TypedDict, total=False):
+    finding_id: str
+    stage: _ChallengerReturnStage_Literal
+    verdict: _ChallengerReturnVerdict_Literal
+    citations: list[ChallengerReturnCitationsItem]
+    missing_evidence: str
+    scope_assessments: list[ChallengerReturnScopeAssessmentsItem]
+
+
+class SkepticalAssessmentsItemCitationsItem(TypedDict):
+    finding_id: str
+    stage: _SkepticalAssessmentsItemCitationsItemStage_Literal
+    request_id: str
+    role: _SkepticalAssessmentsItemCitationsItemRole_Literal
+    snapshot_id: str
+    file: str
+    side: _SkepticalAssessmentsItemCitationsItemSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class SkepticalAssessmentsItemScopeAssessmentsItemCitationsItem(TypedDict):
+    finding_id: str
+    stage: _SkepticalAssessmentsItemScopeAssessmentsItemCitationsItemStage_Literal
+    request_id: str
+    role: _SkepticalAssessmentsItemScopeAssessmentsItemCitationsItemRole_Literal
+    snapshot_id: str
+    file: str
+    side: _SkepticalAssessmentsItemScopeAssessmentsItemCitationsItemSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class SkepticalAssessmentsItemScopeAssessmentsItem(TypedDict):
+    finding_id: str
+    stage: _SkepticalAssessmentsItemScopeAssessmentsItemStage_Literal
+    category: _SkepticalAssessmentsItemScopeAssessmentsItemCategory_Literal
+    applicability: _SkepticalAssessmentsItemScopeAssessmentsItemApplicability_Literal
+    citations: list[SkepticalAssessmentsItemScopeAssessmentsItemCitationsItem]
+
+
+class SkepticalAssessmentsItem(TypedDict, total=False):
+    finding_id: str
+    stage: _SkepticalAssessmentsItemStage_Literal
+    verdict: _SkepticalAssessmentsItemVerdict_Literal
+    citations: list[SkepticalAssessmentsItemCitationsItem]
+    missing_evidence: str
+    scope_assessments: list[SkepticalAssessmentsItemScopeAssessmentsItem]
+
+
+class CiteResultsItemRequest(TypedDict):
+    finding_id: str
+    stage: _CiteResultsItemRequestStage_Literal
+    request_id: str
+    role: _CiteResultsItemRequestRole_Literal
+    snapshot_id: str
+    file: str
+    side: _CiteResultsItemRequestSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class CiteResultsItem(TypedDict):
+    request: CiteResultsItemRequest
+    status: _CiteResultsItemStatus_Literal
+    detail: str
+
+
+class ScopeFactsItem(TypedDict):
+    category: _ScopeFactsItemCategory_Literal
+    predicate: str
+    value: bool | None
+    snapshot_id: str
+
+
+class ScopeDecisionsItemCitationsItem(TypedDict):
+    finding_id: str
+    stage: _ScopeDecisionsItemCitationsItemStage_Literal
+    request_id: str
+    role: _ScopeDecisionsItemCitationsItemRole_Literal
+    snapshot_id: str
+    file: str
+    side: _ScopeDecisionsItemCitationsItemSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ScopeDecisionsItem(TypedDict):
+    finding_id: str
+    stage: _ScopeDecisionsItemStage_Literal
+    category: _ScopeDecisionsItemCategory_Literal
+    applicability: _ScopeDecisionsItemApplicability_Literal
+    citations: list[ScopeDecisionsItemCitationsItem]
+
+
+class ReductionProvenance(TypedDict, total=False):
+    finding_id: str
+    disposition: _ReductionProvenanceDisposition_Literal
+    reason: _ReductionProvenanceReason_Literal
+    category: _ReductionProvenanceCategory_Literal
+    stage: _ReductionProvenanceStage_Literal
+    request_ids: list[str]
+
+
 class ResolvedReferencesSearchedPathsItem(TypedDict):
     path: str
     available: bool
@@ -1749,6 +5223,11 @@ class FindingMetadata(FindingFacts, total=False):
     admission_assessments: list[AdmissionAssessmentsItem]
     admission: Admission
     body_fix_task_eligible: bool
+    skeptical_assessments: list[SkepticalAssessmentsItem]
+    cite_results: list[CiteResultsItem]
+    scope_facts: list[ScopeFactsItem]
+    scope_decisions: list[ScopeDecisionsItem]
+    reduction_provenance: ReductionProvenance
     origin_dimension: Dimension
     effective_test_kind: EffectiveTestKind
     reference_diagnostics: list[ReferenceDiagnostic]

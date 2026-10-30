@@ -82,6 +82,7 @@ export function normalizeFindingPaths(findings, repoRoot, decisions = []) {
       } else if (schema.type === 'object' && value && typeof value === 'object' && !Array.isArray(value)) {
         const out = { ...value };
         for (const [key, child] of Object.entries(schema.properties)) {
+          if (!Object.hasOwn(value, key) && !schema.required.includes(key)) continue;
           const normalized = confine(value[key], child, `${field}.${key}`);
           if (normalized === undefined && schema.required.includes(key)) return undefined;
           out[key] = normalized;
