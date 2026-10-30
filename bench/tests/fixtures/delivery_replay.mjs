@@ -42,7 +42,7 @@ for (const mode of ['return', 'derived', 'legacy', 'writer-failure', 'empty', 'c
   const phases = Object.fromEntries(Object.entries(phaseInputs).map(([key, out]) => [key, structuredClone(out)]));
   if (mode === 'proof') {
     const f = phases.challenge.findings[0];
-    f.skeptical_assessments[0].verdict = 'refuted';
+    f.skeptical_assessments[0].raw.verdict = 'refuted';
     f.skeptical_assessments.splice(1);
     f.challenge = 'validator_terminal';
   }

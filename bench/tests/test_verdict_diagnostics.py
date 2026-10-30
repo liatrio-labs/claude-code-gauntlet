@@ -24,7 +24,7 @@ for (const stage of ['validator', 'challenger']) for (const fault of [
     admission_assessments: [{ predicate: 'present_defect', status: 'confirmed', references: ['primary'] }],
     trace_id: 'run:0:0', discovery_agent: 'test-analyzer',
     discovery_dimension: 'test_coverage', diff_validation: { in_diff: fault === 'matched' ? false : true } });
-  const a = f.skeptical_assessments.find((a) => a.stage === stage);
+  const a = f.skeptical_assessments.find((a) => a.stage === stage).raw;
   if (fault.startsWith('refuted')) a.verdict = 'refuted';
   if (['no_return', 'capped'].includes(fault)) {
     f.skeptical_assessments = f.skeptical_assessments.filter((a) => a.stage !== stage);

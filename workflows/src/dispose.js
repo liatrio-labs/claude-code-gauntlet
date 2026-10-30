@@ -14,8 +14,8 @@ function skepticalOutcome(finding) {
   const proofs = [];
   let proven = null;
   for (const stage of ['validator', 'challenger']) {
-    if (stage === 'challenger' && ['validator_terminal', 'admission_terminal', 'scope_terminal'].includes(finding.challenge)) continue;
     const entries = (finding.skeptical_assessments || []).filter((a) => a.stage === stage);
+    if (stage === 'challenger' && !entries.length && ['validator_terminal', 'admission_terminal', 'scope_terminal'].includes(finding.challenge)) continue;
     const operational_gap = stage === 'validator' ? finding.validation === 'skipped' : ['failed', 'capped', 'skipped'].includes(finding.challenge);
     const proof = { stage, verdict: null, proved: false, unresolved: !operational_gap, unavailable: false,
       operational_gap, non_dispatch: stage === 'validator' ? operational_gap : ['capped', 'skipped'].includes(finding.challenge) };
