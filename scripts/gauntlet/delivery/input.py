@@ -79,7 +79,7 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
     findings = data.get("findings", [])
     if not isinstance(findings, list):
         raise CliError("findings must be an array")
-    dimensions = {row["dimension"]: row for row in DIMENSION_ROWS}
+    dimensions = {row["dimension"] for row in DIMENSION_ROWS}
     admission_fields: dict[str, set[str]] = {}
     for row in DIMENSION_ROWS:
         if row["admission"]:

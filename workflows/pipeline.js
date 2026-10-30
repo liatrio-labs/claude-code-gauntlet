@@ -4221,6 +4221,12 @@ function coerceReportFinding(finding, severities) {
       value = reportRiskLevel(raw);
     } else if (FINDING_PATH_ARRAY_FIELDS.includes(key) && Array.isArray(raw)) {
       value = raw.map(reportAsText);
+    } else if (reportExtraFields().includes(key) && raw !== null && typeof raw === 'object') {
+      try {
+        value = JSON.stringify(raw);
+      } catch {
+        value = reportOptionalText(raw);
+      }
     } else {
       value = reportOptionalText(raw);
     }
