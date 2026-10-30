@@ -1,7 +1,8 @@
 {
-  "checksum": "fnv1a32:0x047c7db4",
+  "checksum": "fnv1a32:0x0c688b7c",
   "deltas": [
     {
+      "anchor": "synthetic_source(0);",
       "confidence": 0,
       "elimination_reason": "evidence does not match file content \u2014 caf\u00e9 \ud83d\udd25 \u6587\u5b57 test\u2028tail",
       "id": "bug-601",

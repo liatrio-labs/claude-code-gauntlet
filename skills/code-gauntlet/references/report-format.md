@@ -81,9 +81,9 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `anchor` | string | yes | Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters. |
 | `searched_paths` | array | no | Repository files or directories searched for coverage. |
 | `candidate_tests` | array | no | Inspected tests, including their input and assertion. |
-| `production_element` | object | no | {"type":"object","properties":{"file":{"type":"string","$comment":"repo-path"},"line_start":{"type":"integer","minimum":1},"line_end":{"type":"integer","minimum":1},"anchor":{"type":"string","minLength":1}},"required":["file","line_start","line_end","anchor"],"additionalProperties":false} |
-| `duplicate_of` | object | no | {"type":"object","properties":{"file":{"type":"string","$comment":"repo-path"},"line_start":{"type":"integer","minimum":1},"line_end":{"type":"integer","minimum":1},"anchor":{"type":"string","minLength":1}},"required":["file","line_start","line_end","anchor"],"additionalProperties":false} |
-| `precedent` | object | no | {"type":"object","properties":{"file":{"type":"string","$comment":"repo-path"},"line_start":{"type":"integer","minimum":1},"line_end":{"type":"integer","minimum":1},"anchor":{"type":"string","minLength":1}},"required":["file","line_start","line_end","anchor"],"additionalProperties":false} |
+| `production_element` | object | no | {"type":"object","$comment":"source-reference","properties":{"file":{"type":"string","$comment":"repo-path"},"line_start":{"type":"integer","minimum":1},"line_end":{"type":"integer","minimum":1},"anchor":{"type":"string","minLength":1}},"required":["file","line_start","line_end","anchor"],"additionalProperties":false} |
+| `duplicate_of` | object | no | {"type":"object","$comment":"source-reference","properties":{"file":{"type":"string","$comment":"repo-path"},"line_start":{"type":"integer","minimum":1},"line_end":{"type":"integer","minimum":1},"anchor":{"type":"string","minLength":1}},"required":["file","line_start","line_end","anchor"],"additionalProperties":false} |
+| `precedent` | object | no | {"type":"object","$comment":"source-reference","properties":{"file":{"type":"string","$comment":"repo-path"},"line_start":{"type":"integer","minimum":1},"line_end":{"type":"integer","minimum":1},"anchor":{"type":"string","minLength":1}},"required":["file","line_start","line_end","anchor"],"additionalProperties":false} |
 | `sites` | array | no | Additional locations of this issue. |
 | `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
 | `claude_md_rule` | string | conditional | The cited project rule, quoted with its source file; required by contract for convention findings; OMITTED (never null) when no rule applies. |
@@ -138,7 +138,7 @@ Missing or unknown disposition is held back. Delivery intersects these rights wi
 ### test_coverage admission
 
 - `test_kind: defective_test`: {"phase": "semantic", "predicates": ["pr_owned_test", "confirmed_test_defect", "test_diff_site_for_inline"], "required": [], "tier": "main"}; default disposition `held_back`.
-- `test_kind: critical_gap`: {"phase": "semantic", "predicates": ["criticality_at_least_8", "resolved_production_element", "complete_searches", "complete_behavioral_absence"], "required": ["criticality", "failure_scenario", "searched_paths", "candidate_tests"], "tier": "main"}; default disposition `held_back`.
+- `test_kind: critical_gap`: {"optional": ["production_element"], "phase": "semantic", "predicates": ["criticality_at_least_8", "resolved_production_element", "complete_searches", "complete_behavioral_absence"], "required": ["criticality", "failure_scenario", "searched_paths", "candidate_tests"], "tier": "main"}; default disposition `held_back`.
 - `test_kind: production_defect`: {"core": true, "dimension": "bug", "phase": "semantic", "predicates": ["present_defect"], "required": [], "tier": "main"}; default disposition `held_back`.
 - `test_kind: additional_case`: {"defaultDisposition": "report_only", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
 

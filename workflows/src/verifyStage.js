@@ -1,6 +1,6 @@
 import { canonicalRange, clearLocation } from './location.js';
 import { hostPlatformForRoots } from './paths.js';
-import { LOCATION_STATUSES, RESOLVED_SITE_SCHEMA, modelFor } from './registry.js';
+import { FINDING_PROP_TYPES, LOCATION_STATUSES, RESOLVED_SITE_SCHEMA, VERIFY_FACT_PROPERTIES, modelFor } from './registry.js';
 import { firstUnsafeNumber } from './wire.js';
 import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum } from './verifyWire.js';
 import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
@@ -57,6 +57,8 @@ const VERIFY_SCHEMA = {
               location_status: { type: 'string', enum: LOCATION_STATUSES },
               diff_validation: { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false },
               resolved_sites: RESOLVED_SITE_SCHEMA,
+              anchor: FINDING_PROP_TYPES.anchor,
+              ...VERIFY_FACT_PROPERTIES,
             },
             required: ['id', 'verified', 'location_status'],
           },
@@ -189,7 +191,11 @@ export async function verifyStage(ctx, input) {
 }
 
 function degradedSlice(slice) {
-  return slice.map((f) => ({ ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' }));
+  return slice.map((f) => {
+    const out = { ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' };
+    for (const key of Object.keys(VERIFY_FACT_PROPERTIES)) delete out[key];
+    return out;
+  });
 }
 
 const emptyInputProof = () => ({

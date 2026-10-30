@@ -2,6 +2,7 @@ import { canonicalRange, clearLocation, normalizeLocation } from './location.js'
 import { INT_POLICY, coerceInt, firstUnsafeNumber, fnv1a32 } from './wire.js';
 import { hasRemovedTestLocation } from './removedTests.js';
 import { extractSymbols } from './verifySymbols.js';
+import { VERIFY_FACT_PROPERTIES, VERIFY_REFERENCE_DESCRIPTORS } from './registry.js';
 
 // A narrower alphabet than shellWord keeps encoded strings free of shell syntax.
 export const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
@@ -82,7 +83,7 @@ export function encodeSliceInline(content) {
 export const VERIFY_INLINE_CHAR_BUDGET = 50000;
 
 // Generated into Python; this order also governs the delta checksum.
-export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites'];
+export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites', 'anchor', ...Object.keys(VERIFY_FACT_PROPERTIES)];
 
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
 
@@ -106,10 +107,12 @@ export function joinVerifyDeltas(slice, deltas) {
     const delta = byId.get(f.id);
     if (!delta || delta.verified === false) continue;
     const joined = clearLocation(pinNumericFields(f));
+    for (const key of Object.keys(VERIFY_FACT_PROPERTIES)) delete joined[key];
     delete joined.diff_validation;
     delete joined.sites;
     if (Array.isArray(f.sites)) joined.site_requests = projectVerifySliceFinding(f).sites;
-    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
+    const proven = recordProof(projectVerifySliceFinding(f)) !== null;
+    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k) && (proven || !Object.hasOwn(VERIFY_FACT_PROPERTIES, k))) joined[k] = delta[k];
     if (canonicalRange(joined) && (Object.hasOwn(f, 'line') || Object.hasOwn(f, 'end_line'))) {
       joined.line = joined.line_start;
       joined.end_line = joined.line_end;
@@ -131,7 +134,7 @@ export function pinNumericFields(finding) {
   return out;
 }
 
-const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'severity', 'confidence', 'anchor', 'sites'];
+const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'severity', 'confidence', 'anchor', 'sites', ...Object.keys(VERIFY_REFERENCE_DESCRIPTORS)];
 // Fixed order is shared with the generated Python wire type.
 export const VERIFY_SLICE_FIELDS = [...VERIFY_SLICE_SCALAR_FIELDS, 'has_cross_file_refs', 'has_removed_test_location', 'symbols'];
 const verifyProjectionCache = new WeakMap();
@@ -144,6 +147,12 @@ function projectFinding(finding) {
   }
   if (Array.isArray(finding.sites)) projected.sites = finding.sites.map((site) => Object.fromEntries(
     ['file', 'line_start', 'line_end', 'anchor'].filter((key) => site?.[key] !== undefined).map((key) => [key, site[key]])));
+  for (const [key, descriptor] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
+    if (finding[key] === undefined || descriptor.search) continue;
+    const project = (request) => request && typeof request === 'object' ? Object.fromEntries(
+      descriptor.fields.filter((field) => request[field] !== undefined).map((field) => [field, request[field]])) : request;
+    projected[key] = descriptor.array && Array.isArray(finding[key]) ? finding[key].map(project) : project(finding[key]);
+  }
   if (Array.isArray(finding.cross_file_refs) && finding.cross_file_refs.length > 0) projected.has_cross_file_refs = true;
   if (hasRemovedTestLocation(finding)) projected.has_removed_test_location = true;
   const symbols = [...extractSymbols(finding.description, finding.evidence)].sort().join(' ');

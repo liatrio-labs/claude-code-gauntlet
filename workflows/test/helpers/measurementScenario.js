@@ -36,7 +36,8 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
       const finding = makeFinding('AUDIT', { file: 'audit.js', dimension: 'test_coverage', test_kind: 'defective_test', criticality: 8, failure_scenario: 'Broken assertion' });
       return { findings: [finding], complete: true, total_seen: 1, removed_test_audit: [{ id: removed.items[0].id, status: 'lost', covered_by: [],
         losses: [{ anchor: finding.anchor, file: finding.file, line: finding.line_start, title: finding.title, description: finding.description,
-          severity: 'high', confidence: 90, criticality: 8, failure_scenario: 'Override precedence silently chooses the wrong value.' }] }] };
+          severity: 'high', confidence: 90, criticality: 8, searched_paths: ['tests'], candidate_tests: [],
+          failure_scenario: 'Override precedence silently chooses the wrong value.' }] }] };
     }
     if (dispatch.agentType === 'code-gauntlet:conventions-and-intent') {
       ctx.calls.push({ prompt, ...dispatch });

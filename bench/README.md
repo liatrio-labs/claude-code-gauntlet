@@ -648,7 +648,7 @@ unknown without a successful opt-in `--surface-views` receipt.
 
 Burden includes delivery records, unique explicit issues, source records per issue,
 characters, UTF-8 bytes, test-path issues and producer-dimension memberships. The
-test-path lens reuses `removed_tests.is_test_path` unchanged. Producer leakage counts
+test-path lens reuses `paths.is_test_path` unchanged. Producer leakage counts
 unique test-path issues with complete provenance containing any producer other than
 `test_coverage`; mixed memberships remain visible. Unknown identities, paths and
 producers have separate counts; unavailable totals are null, with known producer

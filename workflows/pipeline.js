@@ -203,7 +203,7 @@ const DISPOSITION_RIGHTS = deepFreeze({
 });
 const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
 const SOURCE_REFERENCE = {
-  type: 'object', properties: {
+  type: 'object', $comment: 'source-reference', properties: {
     file: { type: 'string', $comment: 'repo-path' },
     line_start: { type: 'integer', minimum: 1 }, line_end: { type: 'integer', minimum: 1 },
     anchor: { type: 'string', minLength: 1 },
@@ -217,7 +217,7 @@ const FINDING_PROP_TYPES = deepFreeze({
   suggestion: 'string', claude_md_rule: 'string',
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
-  searched_paths: { type: 'array', description: 'Repository files or directories searched for coverage.', items: { type: 'string', $comment: 'repo-path' } },
+  searched_paths: { type: 'array', $comment: 'search-paths', description: 'Repository files or directories searched for coverage.', items: { type: 'string', $comment: 'repo-path' } },
   candidate_tests: { type: 'array', description: 'Inspected tests, including their input and assertion.', items: {
     ...SOURCE_REFERENCE, properties: { ...SOURCE_REFERENCE.properties, input: { type: 'string' }, assertion: { type: 'string' } },
     required: [...SOURCE_REFERENCE.required, 'input', 'assertion'],
@@ -230,6 +230,28 @@ const FINDING_PROP_TYPES = deepFreeze({
       anchor: { type: 'string' },
     }, required: ['file', 'line_start', 'line_end', 'anchor'], additionalProperties: false,
   } },
+});
+const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(FINDING_PROP_TYPES)
+  .filter(([, schema]) => schema.$comment === 'source-reference' || schema.items?.$comment === 'source-reference' || schema.$comment === 'search-paths')
+  .map(([key, schema]) => [key, { array: schema.type === 'array', search: schema.$comment === 'search-paths', fields: Object.keys(SOURCE_REFERENCE.properties) }])));
+const PATH_ROLE_SCHEMA = { type: 'string', enum: ['production', 'test', 'non_source', 'unknown'] };
+const DIFF_FACT_SCHEMA = { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false };
+const RESOLVED_REFERENCE_SCHEMA = { type: 'object', properties: {
+  ...SOURCE_REFERENCE.properties, path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
+  location_status: { type: 'string', enum: LOCATION_STATUSES }, diff_validation: DIFF_FACT_SCHEMA,
+  diagnostic: { type: 'string' },
+}, required: ['file', 'path_role', 'file_added', 'location_status', 'diff_validation', 'diagnostic'], additionalProperties: false };
+const SEARCH_FACT_SCHEMA = { type: 'object', properties: {
+  path: { type: 'string' }, available: { type: 'boolean' }, kind: { type: 'string', enum: ['file', 'directory', 'unknown'] },
+}, required: ['path', 'available', 'kind'], additionalProperties: false };
+const VERIFY_FACT_PROPERTIES = deepFreeze({
+  path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
+  blame_class: { type: 'string', enum: ['new', 'pre_existing', 'surfaced', 'unknown'] },
+  blame_source: { type: 'string', enum: ['git_blame', 'local_diff', 'cross_file_refs', 'off_diff', 'removed_loss', 'unavailable'] },
+  resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, descriptor]) => {
+    const schema = descriptor.search ? SEARCH_FACT_SCHEMA : RESOLVED_REFERENCE_SCHEMA;
+    return [key, descriptor.array ? { type: 'array', items: schema } : schema];
+  })), additionalProperties: false },
 });
 const DISCOVERY_FINDING_PROP_TYPES = deepFreeze(Object.fromEntries(Object.entries(FINDING_PROP_TYPES)
   .filter(([, schema]) => schema.discovery !== false)
@@ -261,29 +283,6 @@ const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
 const closedDispatchRow = (properties, optional = []) => ({
   type: 'object', properties, required: Object.keys(properties).filter((key) => !optional.includes(key)), additionalProperties: false,
 });
-const DISPATCH_RESULTS = deepFreeze({
-  [AGENT_TYPE_TEST_ANALYZER]: {
-    removed_test_audit: {
-      type: 'array', items: closedDispatchRow({
-        id: { type: 'string', minLength: 1 },
-        status: { type: 'string', minLength: 1, enum: ['removed_with_code', 'covered_elsewhere', 'lost'] },
-        covered_by: { type: 'array', items: closedDispatchRow({
-          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
-          input: { type: 'string', minLength: 1 }, assertion: { type: 'string', minLength: 1 },
-        }) },
-        losses: { type: 'array', items: closedDispatchRow({
-          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
-          title: { type: 'string', minLength: 1 }, description: { type: 'string', minLength: 1 },
-          severity: { type: 'string', minLength: 1, enum: SEVERITY_ORDER },
-          confidence: { type: 'number', minimum: 0, maximum: 100 },
-          criticality: { type: 'number', minimum: 1, maximum: 10 },
-          failure_scenario: { type: 'string', minLength: 1 },
-          anchor: FINDING_PROP_TYPES.anchor,
-        }, ['anchor']) },
-      }),
-    },
-  },
-});
 const POLICY_SUBJECTS = {
   test_defect: { dimension: 'test_coverage', kind: 'defective_test', stamp: 'effective_test_kind' },
   coverage: { dimension: 'test_coverage', kind: 'critical_gap' },
@@ -309,7 +308,7 @@ const DIMENSIONS = deepFreeze([
   { dimension: 'test_coverage', agentType: AGENT_TYPE_TEST_ANALYZER, conditionalFlag: DEEP,
     defaultDisposition: 'held_back', defaultTier: 'main', admission: { field: 'test_kind', kinds: {
       defective_test: { required: [], predicates: ['pr_owned_test', 'confirmed_test_defect', 'test_diff_site_for_inline'], phase: 'semantic', tier: 'main' },
-      critical_gap: { required: ['criticality', 'failure_scenario', 'searched_paths', 'candidate_tests'], predicates: ['criticality_at_least_8', 'resolved_production_element', 'complete_searches', 'complete_behavioral_absence'], phase: 'semantic', tier: 'main' },
+      critical_gap: { required: ['criticality', 'failure_scenario', 'searched_paths', 'candidate_tests'], optional: ['production_element'], predicates: ['criticality_at_least_8', 'resolved_production_element', 'complete_searches', 'complete_behavioral_absence'], phase: 'semantic', tier: 'main' },
       production_defect: { required: [], predicates: ['present_defect'], phase: 'semantic', dimension: 'bug', core: true, tier: 'main' },
       additional_case: { required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
     } },
@@ -344,6 +343,33 @@ const DIMENSIONS = deepFreeze([
 function dimensionRow(dimension) {
   return DIMENSIONS.find((row) => row.dimension === dimension || row.aliases.includes(dimension));
 }
+const LOSS_ADMISSION = dimensionRow('test_coverage').admission.kinds.critical_gap;
+const REMOVED_LOSS_FIELDS = deepFreeze([...LOSS_ADMISSION.required, ...LOSS_ADMISSION.optional]);
+const DISPATCH_RESULTS = deepFreeze({
+  [AGENT_TYPE_TEST_ANALYZER]: {
+    removed_test_audit: {
+      type: 'array', items: closedDispatchRow({
+        id: { type: 'string', minLength: 1 },
+        status: { type: 'string', minLength: 1, enum: ['removed_with_code', 'covered_elsewhere', 'lost'] },
+        covered_by: { type: 'array', items: closedDispatchRow({
+          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
+          input: { type: 'string', minLength: 1 }, assertion: { type: 'string', minLength: 1 },
+        }) },
+        losses: { type: 'array', items: closedDispatchRow({
+          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
+          title: { type: 'string', minLength: 1 }, description: { type: 'string', minLength: 1 },
+          severity: { type: 'string', minLength: 1, enum: SEVERITY_ORDER },
+          confidence: { type: 'number', minimum: 0, maximum: 100 },
+          ...Object.fromEntries(REMOVED_LOSS_FIELDS.map((key) => {
+            const schema = dimensionRow('test_coverage').schemaExtra[key] || FINDING_PROP_TYPES[key];
+            return [key, typeof schema === 'string' ? { type: schema, minLength: 1 } : schema];
+          })),
+          anchor: FINDING_PROP_TYPES.anchor,
+        }, ['anchor', ...LOSS_ADMISSION.optional]) },
+      }),
+    },
+  },
+});
 function producerRow(finding) {
   const rows = DIMENSIONS.filter((row) => row.agentType.split(':').pop() === finding.agent);
   return rows.length === 1 && rows[0].admission ? rows[0] : dimensionRow(finding.dimension);
@@ -375,9 +401,10 @@ const FINDING_PATH_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries({
 }).filter(([, schema]) => JSON.stringify(schema).includes('repo-path'))));
 const FINDING_PATH_ARRAY_FIELDS = deepFreeze(Object.entries(FINDING_PATH_DESCRIPTORS)
   .filter(([, schema]) => schema.type === 'array' && schema.items.$comment === 'repo-path').map(([key]) => key));
-const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'delivery_group', 'file', ...Object.keys(FINDING_PATH_DESCRIPTORS), 'site_requests', 'resolved_sites', 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
+const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'delivery_group', 'file', ...Object.keys(FINDING_PATH_DESCRIPTORS), 'resolved_references', 'site_requests', 'resolved_sites', 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
 const PIPELINE_FINDING_FIELDS = deepFreeze([
   'origin_dimension', 'effective_test_kind', 'reference_diagnostics',
+  ...Object.keys(VERIFY_FACT_PROPERTIES),
   'trace_id', 'discovery_agent', 'discovery_dimension',
   'removed_test',
   'location_status', 'claimed_line_start', 'claimed_line_end',
@@ -1012,10 +1039,12 @@ function checkRemovedTestAudit(inventory, rows, repoRoot) {
       }
       rowFindings.push({
         id: `removed-test:${id}:${index + 1}`, agent: 'test-analyzer', dimension: 'test_coverage',
+        test_kind: 'critical_gap',
         file: normalized.file, line_start: loss.line, location_status: 'unconfirmed',
         ...(Object.hasOwn(loss, 'anchor') ? { anchor: loss.anchor } : {}), title: loss.title, description: loss.description,
-        severity: loss.severity, confidence: loss.confidence, criticality: loss.criticality,
-        failure_scenario: loss.failure_scenario, removed_test: { id, path, old_start, old_end },
+        severity: loss.severity, confidence: loss.confidence,
+        ...Object.fromEntries(REMOVED_LOSS_FIELDS.filter((key) => Object.hasOwn(loss, key)).map((key) => [key, loss[key]])),
+        removed_test: { id, path, old_start, old_end },
       });
     }
     if (rowFindings.length === row.losses.length) findings.push(...rowFindings);
@@ -1187,7 +1216,7 @@ function encodeSliceInline(content) {
   return encoded;
 }
 const VERIFY_INLINE_CHAR_BUDGET = 50000;
-const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites'];
+const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites', 'anchor', ...Object.keys(VERIFY_FACT_PROPERTIES)];
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
 const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
 function deltasById(deltas) {
@@ -1204,10 +1233,12 @@ function joinVerifyDeltas(slice, deltas) {
     const delta = byId.get(f.id);
     if (!delta || delta.verified === false) continue;
     const joined = clearLocation(pinNumericFields(f));
+    for (const key of Object.keys(VERIFY_FACT_PROPERTIES)) delete joined[key];
     delete joined.diff_validation;
     delete joined.sites;
     if (Array.isArray(f.sites)) joined.site_requests = projectVerifySliceFinding(f).sites;
-    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
+    const proven = recordProof(projectVerifySliceFinding(f)) !== null;
+    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k) && (proven || !Object.hasOwn(VERIFY_FACT_PROPERTIES, k))) joined[k] = delta[k];
     if (canonicalRange(joined) && (Object.hasOwn(f, 'line') || Object.hasOwn(f, 'end_line'))) {
       joined.line = joined.line_start;
       joined.end_line = joined.line_end;
@@ -1225,7 +1256,7 @@ function pinNumericFields(finding) {
   }
   return out;
 }
-const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'severity', 'confidence', 'anchor', 'sites'];
+const VERIFY_SLICE_SCALAR_FIELDS = ['id', 'file', 'line_start', 'line_end', 'severity', 'confidence', 'anchor', 'sites', ...Object.keys(VERIFY_REFERENCE_DESCRIPTORS)];
 const VERIFY_SLICE_FIELDS = [...VERIFY_SLICE_SCALAR_FIELDS, 'has_cross_file_refs', 'has_removed_test_location', 'symbols'];
 const verifyProjectionCache = new WeakMap();
 function projectFinding(finding) {
@@ -1235,6 +1266,12 @@ function projectFinding(finding) {
   }
   if (Array.isArray(finding.sites)) projected.sites = finding.sites.map((site) => Object.fromEntries(
     ['file', 'line_start', 'line_end', 'anchor'].filter((key) => site?.[key] !== undefined).map((key) => [key, site[key]])));
+  for (const [key, descriptor] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
+    if (finding[key] === undefined || descriptor.search) continue;
+    const project = (request) => request && typeof request === 'object' ? Object.fromEntries(
+      descriptor.fields.filter((field) => request[field] !== undefined).map((field) => [field, request[field]])) : request;
+    projected[key] = descriptor.array && Array.isArray(finding[key]) ? finding[key].map(project) : project(finding[key]);
+  }
   if (Array.isArray(finding.cross_file_refs) && finding.cross_file_refs.length > 0) projected.has_cross_file_refs = true;
   if (hasRemovedTestLocation(finding)) projected.has_removed_test_location = true;
   const symbols = [...extractSymbols(finding.description, finding.evidence)].sort().join(' ');
@@ -5102,6 +5139,8 @@ const VERIFY_SCHEMA = {
               location_status: { type: 'string', enum: LOCATION_STATUSES },
               diff_validation: { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false },
               resolved_sites: RESOLVED_SITE_SCHEMA,
+              anchor: FINDING_PROP_TYPES.anchor,
+              ...VERIFY_FACT_PROPERTIES,
             },
             required: ['id', 'verified', 'location_status'],
           },
@@ -5212,7 +5251,11 @@ async function verifyStage(ctx, input) {
     eliminated.filter((f) => f.trace_id).map((f) => traceDecision(f, 'verify_eliminated', f.elimination_reason)));
 }
 function degradedSlice(slice) {
-  return slice.map((f) => ({ ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' }));
+  return slice.map((f) => {
+    const out = { ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' };
+    for (const key of Object.keys(VERIFY_FACT_PROPERTIES)) delete out[key];
+    return out;
+  });
 }
 const emptyInputProof = () => ({
   slices: 0, proven: 0, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,

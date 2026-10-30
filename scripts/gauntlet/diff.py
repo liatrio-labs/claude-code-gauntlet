@@ -468,6 +468,8 @@ def parse_diff(diff_text: str, *, policy: DiffPathPolicy) -> DiffFacts:
                         if new_side == "/dev/null"
                         else _verify_both_spellings(new_side)
                     )
+                    if old_side == "/dev/null":
+                        new_files.update(current_paths)
                     continue
                 if policy == "git-prefixed" or git_style:
                     old_side = None if old_side is None else old_side.removeprefix("a/")

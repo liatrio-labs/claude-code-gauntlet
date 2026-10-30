@@ -337,7 +337,9 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
     ]["items"]["properties"]["losses"]["items"]
     assert losses["properties"]["anchor"] == anchor
     assert losses["required"] == [
-        key for key in losses["properties"] if key != "anchor"
+        key
+        for key in losses["properties"]
+        if key not in ("anchor", "production_element")
     ]
     generated_block = re.compile(
         re.escape(gen.MARKER_OPEN) + r"\n(.*?)\n" + re.escape(gen.MARKER_CLOSE),

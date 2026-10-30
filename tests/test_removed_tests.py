@@ -150,7 +150,9 @@ def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
     tmp_path, monkeypatch, verify_git
 ):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "source").write_text("return value\n", encoding="utf-8")
+    (tmp_path / "source").write_text(
+        "return surviving_value\n", encoding="utf-8", newline=""
+    )
     patch = tmp_path / "patch"
     patch.write_text(deletion("tests/old"), encoding="utf-8")
     finding = {
@@ -184,7 +186,10 @@ def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
     assert finding["severity"] == "high"
     assert finding["confidence"] == 90
     assert finding["factual_verification"]["verified"] is True
-    assert finding["diff_validation"]["in_diff"] is True
+    assert finding["diff_validation"]["in_diff"] is False
+    assert finding["anchor"] == "return surviving_value"
+    assert finding["location_status"] == "confirmed"
+    assert (finding["blame_class"], finding["blame_source"]) == ("new", "removed_loss")
     assert not any(argv[1] in ("log", "blame", "grep") for argv, _ in verify_git[0])
     malformed = {
         "id": "loss-malformed",
@@ -214,16 +219,33 @@ def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
         "referenced symbol(s) not found in codebase:"
     )
     assert malformed["diff_validation"]["in_diff"] is None
-    for line in (None, 0, 2):
-        finding["line_start"] = line
+    for line in (None, 0, 2, True):
+        finding = {**finding, "line_start": line}
+        finding.pop("anchor", None)
         assert run_verification(
             [finding],
             VerifyContext(str(tmp_path), "base", target_kind="branch"),
             str(patch),
         )["verified"] == [finding]
+        assert finding["location_status"] == "unconfirmed"
+        assert finding["diff_validation"]["in_diff"] is None
+        assert "anchor" not in finding
     finding.update(file="absent", line_start=1)
     assert run_verification(
         [finding],
         VerifyContext(str(tmp_path), "base", target_kind="branch"),
         str(patch),
     )["verified"] == [finding]
+    assert finding["location_status"] == "unconfirmed"
+    assert "anchor" not in finding
+    for source in (b"\0invalid source", b"short\n", b" \n", b"x" * 401):
+        (tmp_path / "source").write_bytes(source)
+        finding.update(file="source", line_start=1)
+        run_verification(
+            [finding],
+            VerifyContext(str(tmp_path), "base", target_kind="branch"),
+            str(patch),
+        )
+        assert finding["location_status"] == "unconfirmed"
+        assert "anchor" not in finding
+        assert finding["diff_validation"]["in_diff"] is None

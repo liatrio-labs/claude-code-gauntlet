@@ -81,7 +81,7 @@ export const DISPOSITION_RIGHTS = deepFreeze({
 export const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
 
 const SOURCE_REFERENCE = {
-  type: 'object', properties: {
+  type: 'object', $comment: 'source-reference', properties: {
     file: { type: 'string', $comment: 'repo-path' },
     line_start: { type: 'integer', minimum: 1 }, line_end: { type: 'integer', minimum: 1 },
     anchor: { type: 'string', minLength: 1 },
@@ -102,7 +102,7 @@ export const FINDING_PROP_TYPES = deepFreeze({
   // The field alone does not guarantee that a patch will ship.
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
-  searched_paths: { type: 'array', description: 'Repository files or directories searched for coverage.', items: { type: 'string', $comment: 'repo-path' } },
+  searched_paths: { type: 'array', $comment: 'search-paths', description: 'Repository files or directories searched for coverage.', items: { type: 'string', $comment: 'repo-path' } },
   candidate_tests: { type: 'array', description: 'Inspected tests, including their input and assertion.', items: {
     ...SOURCE_REFERENCE, properties: { ...SOURCE_REFERENCE.properties, input: { type: 'string' }, assertion: { type: 'string' } },
     required: [...SOURCE_REFERENCE.required, 'input', 'assertion'],
@@ -115,6 +115,31 @@ export const FINDING_PROP_TYPES = deepFreeze({
       anchor: { type: 'string' },
     }, required: ['file', 'line_start', 'line_end', 'anchor'], additionalProperties: false,
   } },
+});
+
+export const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(FINDING_PROP_TYPES)
+  .filter(([, schema]) => schema.$comment === 'source-reference' || schema.items?.$comment === 'source-reference' || schema.$comment === 'search-paths')
+  .map(([key, schema]) => [key, { array: schema.type === 'array', search: schema.$comment === 'search-paths', fields: Object.keys(SOURCE_REFERENCE.properties) }])));
+
+const PATH_ROLE_SCHEMA = { type: 'string', enum: ['production', 'test', 'non_source', 'unknown'] };
+const DIFF_FACT_SCHEMA = { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false };
+const RESOLVED_REFERENCE_SCHEMA = { type: 'object', properties: {
+  ...SOURCE_REFERENCE.properties, path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
+  location_status: { type: 'string', enum: LOCATION_STATUSES }, diff_validation: DIFF_FACT_SCHEMA,
+  diagnostic: { type: 'string' },
+}, required: ['file', 'path_role', 'file_added', 'location_status', 'diff_validation', 'diagnostic'], additionalProperties: false };
+const SEARCH_FACT_SCHEMA = { type: 'object', properties: {
+  path: { type: 'string' }, available: { type: 'boolean' }, kind: { type: 'string', enum: ['file', 'directory', 'unknown'] },
+}, required: ['path', 'available', 'kind'], additionalProperties: false };
+
+export const VERIFY_FACT_PROPERTIES = deepFreeze({
+  path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
+  blame_class: { type: 'string', enum: ['new', 'pre_existing', 'surfaced', 'unknown'] },
+  blame_source: { type: 'string', enum: ['git_blame', 'local_diff', 'cross_file_refs', 'off_diff', 'removed_loss', 'unavailable'] },
+  resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, descriptor]) => {
+    const schema = descriptor.search ? SEARCH_FACT_SCHEMA : RESOLVED_REFERENCE_SCHEMA;
+    return [key, descriptor.array ? { type: 'array', items: schema } : schema];
+  })), additionalProperties: false },
 });
 
 // Stage discovery fields independently of the downstream verification and delivery wire.
@@ -156,30 +181,6 @@ const closedDispatchRow = (properties, optional = []) => ({
   type: 'object', properties, required: Object.keys(properties).filter((key) => !optional.includes(key)), additionalProperties: false,
 });
 
-export const DISPATCH_RESULTS = deepFreeze({
-  [AGENT_TYPE_TEST_ANALYZER]: {
-    removed_test_audit: {
-      type: 'array', items: closedDispatchRow({
-        id: { type: 'string', minLength: 1 },
-        status: { type: 'string', minLength: 1, enum: ['removed_with_code', 'covered_elsewhere', 'lost'] },
-        covered_by: { type: 'array', items: closedDispatchRow({
-          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
-          input: { type: 'string', minLength: 1 }, assertion: { type: 'string', minLength: 1 },
-        }) },
-        losses: { type: 'array', items: closedDispatchRow({
-          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
-          title: { type: 'string', minLength: 1 }, description: { type: 'string', minLength: 1 },
-          severity: { type: 'string', minLength: 1, enum: SEVERITY_ORDER },
-          confidence: { type: 'number', minimum: 0, maximum: 100 },
-          criticality: { type: 'number', minimum: 1, maximum: 10 },
-          failure_scenario: { type: 'string', minLength: 1 },
-          anchor: FINDING_PROP_TYPES.anchor,
-        }, ['anchor']) },
-      }),
-    },
-  },
-});
-
 const POLICY_SUBJECTS = {
   test_defect: { dimension: 'test_coverage', kind: 'defective_test', stamp: 'effective_test_kind' },
   coverage: { dimension: 'test_coverage', kind: 'critical_gap' },
@@ -208,7 +209,7 @@ export const DIMENSIONS = deepFreeze([
   { dimension: 'test_coverage', agentType: AGENT_TYPE_TEST_ANALYZER, conditionalFlag: DEEP,
     defaultDisposition: 'held_back', defaultTier: 'main', admission: { field: 'test_kind', kinds: {
       defective_test: { required: [], predicates: ['pr_owned_test', 'confirmed_test_defect', 'test_diff_site_for_inline'], phase: 'semantic', tier: 'main' },
-      critical_gap: { required: ['criticality', 'failure_scenario', 'searched_paths', 'candidate_tests'], predicates: ['criticality_at_least_8', 'resolved_production_element', 'complete_searches', 'complete_behavioral_absence'], phase: 'semantic', tier: 'main' },
+      critical_gap: { required: ['criticality', 'failure_scenario', 'searched_paths', 'candidate_tests'], optional: ['production_element'], predicates: ['criticality_at_least_8', 'resolved_production_element', 'complete_searches', 'complete_behavioral_absence'], phase: 'semantic', tier: 'main' },
       production_defect: { required: [], predicates: ['present_defect'], phase: 'semantic', dimension: 'bug', core: true, tier: 'main' },
       additional_case: { required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
     } },
@@ -246,6 +247,34 @@ export function dimensionRow(dimension) {
   return DIMENSIONS.find((row) => row.dimension === dimension || row.aliases.includes(dimension));
 }
 
+const LOSS_ADMISSION = dimensionRow('test_coverage').admission.kinds.critical_gap;
+export const REMOVED_LOSS_FIELDS = deepFreeze([...LOSS_ADMISSION.required, ...LOSS_ADMISSION.optional]);
+export const DISPATCH_RESULTS = deepFreeze({
+  [AGENT_TYPE_TEST_ANALYZER]: {
+    removed_test_audit: {
+      type: 'array', items: closedDispatchRow({
+        id: { type: 'string', minLength: 1 },
+        status: { type: 'string', minLength: 1, enum: ['removed_with_code', 'covered_elsewhere', 'lost'] },
+        covered_by: { type: 'array', items: closedDispatchRow({
+          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
+          input: { type: 'string', minLength: 1 }, assertion: { type: 'string', minLength: 1 },
+        }) },
+        losses: { type: 'array', items: closedDispatchRow({
+          file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
+          title: { type: 'string', minLength: 1 }, description: { type: 'string', minLength: 1 },
+          severity: { type: 'string', minLength: 1, enum: SEVERITY_ORDER },
+          confidence: { type: 'number', minimum: 0, maximum: 100 },
+          ...Object.fromEntries(REMOVED_LOSS_FIELDS.map((key) => {
+            const schema = dimensionRow('test_coverage').schemaExtra[key] || FINDING_PROP_TYPES[key];
+            return [key, typeof schema === 'string' ? { type: schema, minLength: 1 } : schema];
+          })),
+          anchor: FINDING_PROP_TYPES.anchor,
+        }, ['anchor', ...LOSS_ADMISSION.optional]) },
+      }),
+    },
+  },
+});
+
 export function producerRow(finding) {
   const rows = DIMENSIONS.filter((row) => row.agentType.split(':').pop() === finding.agent);
   return rows.length === 1 && rows[0].admission ? rows[0] : dimensionRow(finding.dimension);
@@ -282,11 +311,12 @@ export const FINDING_PATH_ARRAY_FIELDS = deepFreeze(Object.entries(FINDING_PATH_
   .filter(([, schema]) => schema.type === 'array' && schema.items.$comment === 'repo-path').map(([key]) => key));
 
 // Identifiers must not collide; structural paths and suggestion code retain their own semantics.
-export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'delivery_group', 'file', ...Object.keys(FINDING_PATH_DESCRIPTORS), 'site_requests', 'resolved_sites', 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
+export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'delivery_group', 'file', ...Object.keys(FINDING_PATH_DESCRIPTORS), 'resolved_references', 'site_requests', 'resolved_sites', 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
 
 // Keep pipeline stamp names code-owned so disclosure can use a safe other fallback for unknown fields.
 export const PIPELINE_FINDING_FIELDS = deepFreeze([
   'origin_dimension', 'effective_test_kind', 'reference_diagnostics',
+  ...Object.keys(VERIFY_FACT_PROPERTIES),
   'trace_id', 'discovery_agent', 'discovery_dimension',
   'removed_test',
   'location_status', 'claimed_line_start', 'claimed_line_end',

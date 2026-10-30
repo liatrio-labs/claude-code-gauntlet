@@ -278,11 +278,13 @@ def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
     result = receipt(invoke, tmp_path, token)
     assert result.returncode == 0
     env = json.loads(result.stdout)
+    assert env["receipt"].pop("deltas_checksum") == verify.checksum_or_none(
+        env["result"]["deltas"]
+    )
     assert env["receipt"] == {
         "sha": "abcd",
         "n_in": 1,
         "nonce": "cli",
-        "deltas_checksum": "fnv1a32:0xdbf6aa5e",
         "inline_checksum": "fnv1a32:0x17c759ec",
         "base_branch": "main",
         "diff_source": {"path": None, "read": True},
@@ -301,6 +303,11 @@ def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
             "claimed_line_start": 1,
             "location_status": "unconfirmed",
             "confidence": 80,
+            "path_role": "unknown",
+            "file_added": False,
+            "blame_class": "unknown",
+            "blame_source": "unavailable",
+            "resolved_references": {},
             "blame_metadata": {
                 "classification": "new",
                 "author": None,
@@ -328,6 +335,11 @@ def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
             "confidence": 80,
             "location_status": "unconfirmed",
             "diff_validation": {"in_diff": None},
+            "path_role": "unknown",
+            "file_added": False,
+            "blame_class": "unknown",
+            "blame_source": "unavailable",
+            "resolved_references": {},
         }
     ]
     assert env["result"]["stats"] == {
@@ -388,14 +400,20 @@ def test_receipt_surrogate_ascii(invoke, tmp_path, verify_git):
             "origin": "new",
             "location_status": "unconfirmed",
             "diff_validation": {"in_diff": None},
+            "path_role": "unknown",
+            "blame_class": "unknown",
+            "blame_source": "unavailable",
+            "resolved_references": {},
         }
     ]
     assert env["result"]["verified"][0]["description"] == "\ud800"
+    assert env["receipt"].pop("deltas_checksum") == verify.checksum_or_none(
+        env["result"]["deltas"]
+    )
     assert env["receipt"] == {
         "sha": "abcd",
         "n_in": 1,
         "nonce": "cli",
-        "deltas_checksum": "fnv1a32:0x34fd001f",
         "inline_checksum": "fnv1a32:0xc771c3d9",
         "base_branch": "main",
         "diff_source": {"path": None, "read": True},

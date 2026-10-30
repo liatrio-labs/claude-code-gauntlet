@@ -355,3 +355,132 @@ process.stdout.write(JSON.stringify({all,some,missing,tampered,gaps:raw.gaps,res
     assert len(comments) == 1
     for n in range(4):
         assert f"site-{n}.txt:7" in comments[0]["body"]
+
+
+def test_admission_references_are_snapshot_bound(
+    tmp_path, monkeypatch, symlink_or_skip
+):
+    from tests.support.git_diff import git, init_git_repo
+
+    init_git_repo(tmp_path, monkeypatch)
+    files = {
+        "src/engine": "return original_value;\n",
+        "tests/nested/check": "assert original_value == expected_value;\n",
+        "lib/precedent": "return existing_idiom;\n",
+        "vendor/tests/generated": "assert generated_value == expected_value;\n",
+    }
+    for name, content in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8", newline="")
+    (tmp_path / "binary").write_bytes(b"\0unreadable")
+    outside = tmp_path.parent / "outside-source"
+    outside.write_text("return escaped_value;\n", encoding="utf-8", newline="")
+    (tmp_path / "escape").symlink_to(outside)
+    (tmp_path / "escape-dir").symlink_to(tmp_path.parent, target_is_directory=True)
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "base")
+    base = git(tmp_path, "rev-parse", "HEAD")
+    (tmp_path / "src/engine").write_text(
+        "return changed_value;\n", encoding="utf-8", newline=""
+    )
+    (tmp_path / "lib/added").write_text(
+        "return new_idiom;\n", encoding="utf-8", newline=""
+    )
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "target")
+    sha = git(tmp_path, "rev-parse", "HEAD")
+    (tmp_path / "saved.patch").write_text(
+        git(tmp_path, "diff", base, sha) + "\n", encoding="utf-8", newline=""
+    )
+    (tmp_path / "lib/precedent").write_text(
+        "return local_idiom;\n", encoding="utf-8", newline=""
+    )
+    script = r"""
+import {execFileSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
+import {pathToFileURL} from 'node:url';
+const [root, work, sha, base] = process.argv.slice(1);
+const load = n => import(pathToFileURL(`${root}/workflows/src/${n}.js`));
+const {verifyStage} = await load('verifyStage');
+const {normalizePhaseFindings} = await load('checkpoints');
+const {encodeSliceInline, projectVerifySliceFinding, deltaContentProof} = await load('verifyWire');
+const {verifyInlineCost} = await load('capacity');
+const {shellSplit} = await import(pathToFileURL(`${root}/workflows/test/helpers/shellWords.js`));
+const ref = (file, anchor) => ({file,line_start:1,line_end:1,anchor});
+const candidate = {id:'FACT',file:'src/engine',line_start:1,line_end:1,anchor:'return changed_value;',severity:'high',confidence:90,
+ description:'Unused prose '.repeat(1000), searched_paths:['tests','missing','escape-dir','../outside-source'],
+ candidate_tests:[ref(`${work}/tests/nested/check`,'assert original_value == expected_value;'),
+ ref('escape','return escaped_value;'),ref('escape-dir/outside-source','return escaped_value;'),
+ ref('missing','return absent_value;'),ref('binary','return absent_value;'),
+ ref('tests/nested/check','assert wrong_value == expected_value;'),
+ ref('vendor/tests/generated','assert generated_value == expected_value;')].map(r=>({...r,input:'input '.repeat(1000),assertion:'assertion '.repeat(1000)})),
+ production_element:ref('src/engine','return changed_value;'),duplicate_of:ref('lib/precedent','return existing_idiom;'),precedent:ref('lib/added','return new_idiom;'),
+ sites:[ref('tests/nested/check','assert original_value == expected_value;')]};
+const normalized={findings:[candidate]};
+normalizePhaseFindings('merge',normalized,false,{repoRoot:work});
+const findings=normalized.findings;
+const run = async (targetKind, fault) => verifyStage({agent:async prompt=>{
+ const c=shellSplit(prompt.split('\n').at(-1));execFileSync(c[0],c.slice(1),{cwd:work,env:process.env});
+ const env=JSON.parse(readFileSync(c[c.indexOf('--output')+1],'utf8'));
+ if(fault==='content')env.result.deltas[0].resolved_references.precedent.file_added=false;
+ if(fault==='nonce')env.receipt.nonce='stale';
+ if(fault==='input'){env.receipt.input_checksum='changed';env.receipt.record_proofs[0].checksum='changed';}
+ if(fault==='foreign'){env.result.deltas[0].id='FOREIGN';env.receipt.record_proofs[0].id='FOREIGN';env.receipt.deltas_checksum=deltaContentProof(['FOREIGN'],env.result.deltas);}
+ return env;
+}},{findings,pluginRoot:root,python:'python',headShaShort:sha,nonce:'facts',limits:{},policy:{},
+ verify:{targetKind,baseBranch:base,diffPath:`${work}/saved.patch`,inputPathBase:`${work}/in`,outputPathBase:`${work}/out`}});
+const branch=await run('branch');
+const local=await run('local');
+const failed=[];for(const fault of ['content','nonce','input','foreign'])failed.push(await run('branch',fault));
+const encoded=encodeSliceInline({findings:findings.map(projectVerifySliceFinding),base_branch:base});
+process.stdout.write(JSON.stringify({branch,local,failed,encoded:encoded.length,windows:verifyInlineCost(encoded,'windows'),projected:projectVerifySliceFinding(findings[0])}));
+"""
+    result = subprocess.run(
+        _flow_command(script, tmp_path, sha, base),
+        cwd=tmp_path,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    )
+    value = json.loads(result.stdout)
+    assert value["branch"]["verified"] and value["local"]["verified"]
+    branch = value["branch"]["findings"][0]
+    refs = branch["resolved_references"]
+    assert refs["production_element"]["location_status"] == "confirmed"
+    assert refs["production_element"]["diff_validation"] == {"in_diff": True}
+    assert refs["duplicate_of"]["location_status"] == "confirmed"
+    assert refs["precedent"]["file_added"] is True
+    assert refs["duplicate_of"]["file_added"] is False
+    assert refs["candidate_tests"][0]["path_role"] == "test"
+    assert refs["candidate_tests"][0]["file"] == "tests/nested/check"
+    assert [r["location_status"] for r in refs["candidate_tests"]] == [
+        "confirmed",
+        *(["unconfirmed"] * 5),
+        "confirmed",
+    ]
+    assert refs["candidate_tests"][-1]["path_role"] == "non_source"
+    assert [s["available"] for s in refs["searched_paths"]] == [True, False, False]
+    assert refs["searched_paths"][0]["kind"] == "directory"
+    assert branch["reference_diagnostics"]
+    assert branch["resolved_sites"][0]["diff_validation"] == {"in_diff": False}
+    assert "sites" not in branch and len(branch["site_requests"]) == 1
+    local = value["local"]["findings"][0]["resolved_references"]
+    assert local["duplicate_of"]["location_status"] == "unconfirmed"
+    assert [r["location_status"] for r in local["candidate_tests"]] == [
+        "confirmed",
+        *(["unconfirmed"] * 5),
+        "confirmed",
+    ]
+    for failed in value["failed"]:
+        assert not failed["verified"]
+        assert "resolved_references" not in failed["findings"][0]
+        assert failed["findings"][0]["origin"] == "unknown"
+    assert "description" not in value["projected"]
+    assert "input" not in value["projected"]["candidate_tests"][0]
+    assert len(branch["candidate_tests"][0]["input"]) == 6000
+    assert 0 < value["encoded"] < value["windows"] < 10000
+    print(
+        f"reference slice encoded={value['encoded']} Windows argv cost={value['windows']}"
+    )

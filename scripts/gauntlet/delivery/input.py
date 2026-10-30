@@ -14,6 +14,7 @@ from gauntlet.registry import (
     Disposition,
     DuplicateOf,
     EffectiveTestKind,
+    FindingFacts,
     LocationStatus,
     Precedent,
     ProductionElement,
@@ -23,7 +24,7 @@ from gauntlet.registry import (
 )
 
 
-class Finding(TypedDict, total=False):
+class Finding(FindingFacts, total=False):
     origin_dimension: Dimension
     effective_test_kind: EffectiveTestKind
     test_kind: TestKind

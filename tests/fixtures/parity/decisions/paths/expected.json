@@ -1,5 +1,8 @@
 [
   {
+    "anchor": "new_panel();",
+    "blame_class": "new",
+    "blame_source": "git_blame",
     "confidence": 90,
     "diff_validation": {
       "in_diff": true,
@@ -10,15 +13,21 @@
       "reason": "file content and symbols verified",
       "verified": true
     },
+    "file_added": false,
     "id": "refs-empty",
     "line_end": 1,
     "line_start": 1,
     "location_status": "confirmed",
     "origin": "new",
+    "path_role": "production",
+    "resolved_references": {},
     "severity": "high",
     "verified": true
   },
   {
+    "anchor": "new_panel();",
+    "blame_class": "surfaced",
+    "blame_source": "cross_file_refs",
     "confidence": 46,
     "diff_validation": {
       "in_diff": true,
@@ -32,34 +41,46 @@
       "symbols_missing": 5,
       "verified": false
     },
+    "file_added": false,
     "id": "three-cross-file-paths",
     "line_end": 1,
     "line_start": 1,
     "location_status": "confirmed",
     "origin": "surfaced",
+    "path_role": "production",
+    "resolved_references": {},
     "severity": "medium",
     "verified": true
   },
   {
+    "anchor": "stable_anchor();",
+    "blame_class": "new",
+    "blame_source": "removed_loss",
     "confidence": 90,
     "diff_validation": {
-      "in_diff": true,
-      "reason": "removed test inventory anchors a new coverage loss"
+      "in_diff": false,
+      "reason": "lines 9-9 of 'lib/panel-run.js' not found in diff \u2014 loss origin retained (was: new)"
     },
     "factual_verification": {
       "code_at_lines": "stable_anchor();",
       "reason": "no extractable symbols - verification skipped",
       "verified": true
     },
+    "file_added": false,
     "id": "removed-valid",
     "line_end": 9,
     "line_start": 9,
     "location_status": "confirmed",
     "origin": "new",
+    "path_role": "production",
+    "resolved_references": {},
     "severity": "high",
     "verified": true
   },
   {
+    "anchor": "stable_anchor();",
+    "blame_class": "pre_existing",
+    "blame_source": "git_blame",
     "confidence": 30,
     "diff_validation": {
       "in_diff": false,
@@ -73,15 +94,21 @@
       "symbols_missing": 2,
       "verified": false
     },
+    "file_added": false,
     "id": "removed-invalid-empty-id",
     "line_end": 9,
     "line_start": 9,
     "location_status": "confirmed",
     "origin": "surfaced",
+    "path_role": "production",
+    "resolved_references": {},
     "severity": "medium",
     "verified": true
   },
   {
+    "anchor": "new_panel();",
+    "blame_class": "new",
+    "blame_source": "git_blame",
     "confidence": 30,
     "diff_validation": {
       "in_diff": true,
@@ -95,15 +122,21 @@
       "symbols_missing": 1,
       "verified": false
     },
+    "file_added": false,
     "id": "missing-inline",
     "line_end": 1,
     "line_start": 1,
     "location_status": "confirmed",
     "origin": "new",
+    "path_role": "production",
+    "resolved_references": {},
     "severity": "high",
     "verified": true
   },
   {
+    "anchor": "new_panel();",
+    "blame_class": "new",
+    "blame_source": "git_blame",
     "confidence": 90,
     "diff_validation": {
       "in_diff": true,
@@ -114,11 +147,14 @@
       "reason": "no extractable symbols - verification skipped",
       "verified": true
     },
+    "file_added": false,
     "id": "camelcase-prose",
     "line_end": 1,
     "line_start": 1,
     "location_status": "confirmed",
     "origin": "new",
+    "path_role": "production",
+    "resolved_references": {},
     "severity": "high",
     "verified": true
   }

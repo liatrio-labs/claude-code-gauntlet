@@ -123,6 +123,8 @@ _REGISTRY_FIELDS = (
     "waistRequired: m.REQUIRED",
     "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
     "findingTypes: m.FINDING_PROP_TYPES",
+    "verifyReferenceDescriptors: m.VERIFY_REFERENCE_DESCRIPTORS",
+    "verifyFactProperties: m.VERIFY_FACT_PROPERTIES",
     "discoveryFindingTypes: m.DISCOVERY_FINDING_PROP_TYPES",
     "resolvedSiteSchema: m.RESOLVED_SITE_SCHEMA",
     "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
@@ -657,6 +659,30 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         diff_validation="DiffValidation",
         resolved_sites=resolved_type,
     )
+    fact_types = {
+        field: schema_type(schema, "".join(s.title() for s in field.split("_")))
+        for field, schema in identity["verifyFactProperties"].items()
+    }
+    slice_types = dict(wire_types)
+    for field, descriptor in identity["verifyReferenceDescriptors"].items():
+        if descriptor["search"]:
+            continue
+        schema = field_types[field]
+        item = schema["items"] if descriptor["array"] else schema
+        item = {
+            **item,
+            "properties": {
+                key: value
+                for key, value in item["properties"].items()
+                if key in descriptor["fields"]
+            },
+            "required": descriptor["fields"],
+        }
+        slice_types[field] = schema_type(
+            {**schema, "items": item} if descriptor["array"] else item,
+            "Verify" + "".join(s.title() for s in field.split("_")),
+        )
+    delta_annotations.update(fact_types, anchor="str")
     root = "/__gauntlet_registry_root__/"
     sha = "__GAUNTLET_SHA__"
     templates = {
@@ -705,6 +731,12 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             name = "".join(part.title() for part in field.split("_"))
             lines += [f"{name} = {literal_type(schema['enum'])}", ""]
             wire_types[field] = name
+    for field, schema in identity["verifyFactProperties"].items():
+        if "enum" in schema:
+            name = "".join(part.title() for part in field.split("_"))
+            lines += [f"{name} = {literal_type(schema['enum'])}", ""]
+            fact_types[field] = name
+            delta_annotations[field] = name
     values = {
         "SEVERITY_ORDER": tuple(identity["severityOrder"]),
         "MODEL_ALIASES": tuple(identity["modelAliases"]),
@@ -715,6 +747,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "DELTA_KEYS": tuple(delta_keys),
         "DELTA_VALUE_FIELDS": tuple(delta_value_fields),
         "VERIFY_SLICE_FIELDS": tuple(identity["verifySliceFields"]),
+        "VERIFY_REFERENCE_DESCRIPTORS": identity["verifyReferenceDescriptors"],
         "DISPATCH_RESULTS": identity.get("dispatchResults", {}),
         "DIMENSION_ROWS": identity["dimensionRows"],
         "ROUTING": identity["routing"],
@@ -782,7 +815,11 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             *nested[1:],
             "",
             "",
-            "class FindingMetadata(TypedDict, total=False):",
+            "class FindingFacts(TypedDict, total=False):",
+            *(f"    {field}: {kind}" for field, kind in fact_types.items()),
+            "",
+            "",
+            "class FindingMetadata(FindingFacts, total=False):",
             "    origin_dimension: Dimension",
             *(
                 f"    {field}: {''.join(part.title() for part in field.split('_'))}"
@@ -814,7 +851,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "",
             "class VerifySliceFinding(TypedDict, total=False):",
             *(
-                f"    {field}: {wire_types[field] if field in wire_types and isinstance(field_types[field], dict) else 'Any'}"
+                f"    {field}: {slice_types[field] if field in slice_types and isinstance(field_types[field], dict) else 'Any'}"
                 for field in identity["verifySliceFields"]
             ),
             "",

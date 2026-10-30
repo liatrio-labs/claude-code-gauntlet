@@ -14,6 +14,7 @@ from gauntlet.registry import VERIFY_SLICE_FIELDS, VerifySliceFinding
 from gauntlet.verify import decide as verify
 from gauntlet.verify import wire
 
+from tests.support.git_diff import git, init_git_repo
 from tests.support.verify_parity import project_findings
 from tests.test_verify_wire import receipt
 
@@ -24,6 +25,131 @@ OLD_THEN_NEW = (
 )
 HEAD = "abcd" + "0" * 36
 DIFF = "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n"
+
+
+def test_admission_facts_keep_blame_provenance(tmp_path, monkeypatch):
+    init_git_repo(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    files = {
+        "src/old": "return old_behavior;\n",
+        "README": "repository description\n",
+        "root-script": "return root_behavior;\n",
+        "vendor/tests/old": "assert vendored_value;\n",
+        "src/old_test.go": "assert go_behavior;\n",
+        "spec/extensionless": "assert spec_behavior;\n",
+        "src/ValueTests.cs": "assert csharp_behavior;\n",
+        "lib/component.test.ts": "assert js_behavior;\n",
+        "tests/test_python.py": "assert python_behavior;\n",
+        "bin/extensionless": "return tool_behavior;\n",
+    }
+    for name, content in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8", newline="")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "base")
+    base = git(tmp_path, "rev-parse", "HEAD")
+    for name, content in {
+        "src/new": "return pr_behavior;\nreturn off_diff_behavior;\n",
+        "tests/new": "assert pr_behavior;\n",
+    }.items():
+        (tmp_path / name).write_text(content, encoding="utf-8", newline="")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "target")
+    patch = tmp_path / "saved.patch"
+    patch.write_text(
+        "diff --git a/src/new b/src/new\n--- /dev/null\n+++ b/src/new\n@@ -0,0 +1 @@\n+return pr_behavior;\n"
+        + "diff --git a/tests/new b/tests/new\n--- /dev/null\n+++ b/tests/new\n@@ -0,0 +1 @@\n+assert pr_behavior;\n",
+        encoding="utf-8",
+        newline="",
+    )
+
+    def finding(fid, file, line=1, **fields):
+        return {
+            "id": fid,
+            "file": file,
+            "line_start": line,
+            "line_end": line,
+            "anchor": (tmp_path / file)
+            .read_text(encoding="utf-8")
+            .splitlines()[line - 1],
+            "severity": "high",
+            "confidence": 90,
+            **fields,
+        }
+
+    findings = [
+        finding("old", "src/old"),
+        finding("owned-test", "tests/new"),
+        finding("cross", "src/old", cross_file_refs=["src/new"]),
+        finding("off", "src/new", 2),
+        finding(
+            "loss",
+            "src/old",
+            removed_test={
+                "id": "loss",
+                "path": "tests/deleted",
+                "old_start": 1,
+                "old_end": 1,
+            },
+        ),
+        *(finding(name, name) for name in files if name != "src/old"),
+    ]
+    inputs = project_findings(findings)
+    result = verify.run_verification(
+        inputs,
+        verify.VerifyContext(str(tmp_path), base, target_kind="branch"),
+        str(patch),
+    )
+    assert not result["eliminated"]
+    by_id = {f["id"]: f for f in result["verified"]}
+    for fid, expected in {
+        "old": ("surfaced", "pre_existing", "git_blame", "production", False),
+        "owned-test": ("new", "new", "git_blame", "test", True),
+        "cross": ("surfaced", "surfaced", "cross_file_refs", "production", False),
+        "off": ("surfaced", "surfaced", "off_diff", "production", False),
+        "loss": ("new", "new", "removed_loss", "production", False),
+    }.items():
+        f = by_id[fid]
+        assert (
+            f["origin"],
+            f["blame_class"],
+            f["blame_source"],
+            f["path_role"],
+            f["diff_validation"]["in_diff"],
+        ) == expected
+    assert by_id["owned-test"]["file_added"] is True
+    assert by_id["old"]["file_added"] is False
+    for name in files:
+        if name != "src/old":
+            expected_role = (
+                "non_source"
+                if name.startswith("vendor/")
+                else "unknown"
+                if "/" not in name
+                else "production"
+                if name.startswith("bin/")
+                else "test"
+            )
+            assert by_id[name]["path_role"] == expected_role
+    original = proc.output
+
+    def unavailable(argv, **kwargs):
+        return (
+            ("", "git unavailable", 1) if argv[1] == "log" else original(argv, **kwargs)
+        )
+
+    monkeypatch.setattr(proc, "output", unavailable)
+    unknown = project_findings([finding("unknown", "src/new")])
+    verify.run_verification(
+        unknown,
+        verify.VerifyContext(str(tmp_path), base, target_kind="branch"),
+        str(patch),
+    )
+    assert (unknown[0]["blame_class"], unknown[0]["blame_source"]) == (
+        "unknown",
+        "unavailable",
+    )
 
 
 @pytest.mark.parametrize(
@@ -217,7 +343,10 @@ def test_fact(
     assert finding["confidence"] == confidence
     assert finding["factual_verification"] == metadata
     assert [(cmd, kw) for cmd, kw in calls if cmd[1] == "grep"] == [
-        (["git", "grep", "-l", "-e", symbol], {"timeout": 3, "cwd": str(tmp_path)})
+        (
+            ["git", "grep", "-l", "-e", symbol, HEAD, "--"],
+            {"timeout": 3, "cwd": str(tmp_path)},
+        )
         for symbol in attempted
     ]
     assert capsys.readouterr().err == warnings
@@ -537,6 +666,11 @@ def test_pipe_projection(tmp_path, monkeypatch, verify_git):
                 "confidence": confidence,
                 "location_status": "unconfirmed",
                 "diff_validation": {"in_diff": None},
+                "path_role": "unknown",
+                **({"file_added": False} if fid != "missing" else {}),
+                "blame_class": "surfaced" if fid == "cross" else "unknown",
+                "blame_source": "cross_file_refs" if fid == "cross" else "unavailable",
+                "resolved_references": {},
                 **(
                     {"elimination_reason": "evidence does not match file content"}
                     if not kept
@@ -652,6 +786,8 @@ def foreign_reads(source):
         - {"line", "end_line"}
     )
     document_sites = {
+        "_resolve_references": {"array", "search"},
+        "_derive_loss_anchor": {"chars", "lines"},
         "build_deltas": {"in_diff"},
         "validate_input_shape": {"findings"},
         "validate_diff_lines": {"classification"},

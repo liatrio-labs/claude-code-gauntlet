@@ -1,7 +1,8 @@
 {
-  "checksum": "fnv1a32:0x48123c02",
+  "checksum": "fnv1a32:0x8c57c6e0",
   "deltas": [
     {
+      "anchor": "synthetic_source(0);\nsynthetic_source(1);\nsynthetic_source(2);",
       "confidence": 80,
       "diff_validation": {
         "in_diff": true
@@ -15,6 +16,7 @@
       "verified": true
     },
     {
+      "anchor": "synthetic_source(0);\nsynthetic_source(1);\nsynthetic_source(2);",
       "confidence": 0,
       "elimination_reason": "evidence does not match file content",
       "id": " ws-1 ",
