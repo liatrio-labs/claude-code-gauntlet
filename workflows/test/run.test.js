@@ -39,29 +39,30 @@ function scopeAssessment(id, stage, category, extra = {}) {
 
 test('cited skeptical scope exclusions retain their exact applicability', async () => {
   for (const stage of ['validator', 'challenger']) for (const category of ['lint_catchable', 'suppressed', 'opted_out', 'intentional', 'test_only_pattern']) {
-    for (const fault of ['matched', 'unmatched', 'unavailable', 'uncited', 'missing_role', 'wrong_snapshot', 'contradicted', 'inapplicable', 'dangerous', 'incorrect',
+    for (const fault of ['matched', 'unmatched', 'unavailable', 'uncited', 'missing_role', 'wrong_snapshot', 'contradicted', 'incorrect',
       'security_dimension', 'security_agent', 'needs_evidence', 'incomplete_assessment', 'claim_unmatched', 'other_contradicted', 'capped', 'failed', 'other_needs_evidence',
       ...(category === 'test_only_pattern' ? ['unresolved_subject', 'missing_subject'] : []),
-      ...(category === 'lint_catchable' ? ['current_defect'] : []),
+      ...(category === 'lint_catchable' ? ['current_defect', 'uncertain_reachability', 'missing_reachability'] : []),
       ...(category === 'intentional' ? ['exception_unmatched', 'exception_unavailable', 'exception_malformed', 'nested_exception', 'added_rule', 'added_confirmation', 'unknown_diff'] : [])]) {
       const scope = scopeAssessment('SCOPE', stage, category);
       if (fault === 'uncited') scope.citations = [];
       if (fault === 'missing_role') scope.citations.pop();
       if (fault === 'wrong_snapshot') scope.citations[0].snapshot_id = 'other';
-      if (['contradicted', 'inapplicable'].includes(fault)) scope.applicability = fault;
+      if (fault === 'contradicted') scope.applicability = fault;
       const assessment = skepticalReturn('SCOPE', stage, { scope_assessments: [scope] });
       if (fault === 'needs_evidence') Object.assign(assessment, { verdict: 'needs_evidence', missing_evidence: 'Missing source', citations: [] });
       if (fault === 'incomplete_assessment') assessment.scope_assessments.push(scopeAssessment('SCOPE', stage, 'general_quality'));
-      if (['dangerous', 'incorrect'].includes(fault) || fault.startsWith('exception_')) assessment.citations.push({ ...assessment.citations[0],
+      if (fault === 'incorrect' || fault.startsWith('exception_')) assessment.citations.push({ ...assessment.citations[0],
         ...(fault === 'exception_malformed' ? { quote: '' } : {}), role: 'exception', request_id: 'danger' });
       if (fault === 'nested_exception') scope.citations.push({ ...assessment.citations[0], role: 'exception', request_id: 'danger' });
       const otherStage = stage === 'validator' ? 'challenger' : 'validator';
       const other = skepticalReturn('SCOPE', otherStage, fault === 'other_contradicted'
         ? { scope_assessments: [scopeAssessment('SCOPE', otherStage, category, { applicability: 'contradicted' })] }
         : fault === 'other_needs_evidence' ? { verdict: 'needs_evidence', missing_evidence: 'Missing source', citations: [] } : {});
-      const scoped = makeFinding('SCOPE', { dimension: ['dangerous', 'security_dimension'].includes(fault) ? 'security' : 'bug',
+      const scoped = makeFinding('SCOPE', { dimension: fault === 'security_dimension' ? 'security' : 'bug',
         ...(fault === 'security_agent' ? { dimension: 'injection', agent: 'security-reviewer' } : {}),
-        ...(fault === 'current_defect' ? { reachability: 'current' } : {}),
+        ...(category === 'lint_catchable' ? { reachability: fault === 'current_defect' ? 'current'
+          : fault === 'uncertain_reachability' ? 'uncertain' : fault === 'missing_reachability' ? undefined : 'future_change_only' } : {}),
         ...(['capped', 'failed'].includes(fault) ? { challenge: fault } : {}),
         ...(['unresolved_subject', 'missing_subject'].includes(fault) ? { policy_subject: fault === 'missing_subject' ? undefined : 'unresolved' } : {}),
         path_role: category === 'test_only_pattern' ? 'test' : 'source',
@@ -74,27 +75,22 @@ test('cited skeptical scope exclusions retain their exact applicability', async 
       const agent = ctx.agent;
       ctx.agent = (prompt, dispatch) => {
         if (!dispatch.label.startsWith('cite-')) return agent(prompt, dispatch);
-        const env = citationEnvelope(prompt, args, (r) => fault.startsWith('exception_') && r.request.role === 'exception'
+        return citationEnvelope(prompt, args, (r) => fault.startsWith('exception_') && r.request.role === 'exception'
           ? fault.slice('exception_'.length) : fault === 'claim_unmatched' && r.request.role === 'claim' && r.request.stage === stage
-            ? 'unmatched' : r.request.role !== 'claim' && ['unmatched', 'unavailable'].includes(fault) ? fault : 'matched');
-        for (const r of env.result.citations) {
-          if (fault === 'unknown_diff') delete r.added_lines;
-          if (fault === 'added_rule' && r.request.role === 'rule') r.added_lines = [10];
-          if (fault === 'added_confirmation' && r.request.file === 'SCOPE.js') r.added_lines = [11];
-        }
-        env.receipt.deltas_checksum = JSON.stringify(env.result.citations, null, 2);
-        env.receipt.deltas_checksum = fnv1a32(env.receipt.deltas_checksum);
-        return env;
+            ? 'unmatched' : r.request.role !== 'claim' && ['unmatched', 'unavailable'].includes(fault) ? fault : 'matched',
+        (r) => fault === 'unknown_diff' ? undefined : fault === 'added_rule' && r.request.role === 'rule' ? [10]
+          : fault === 'added_confirmation' && r.request.file === 'SCOPE.js' ? [11] : []);
       };
       const out = await runWith(ctx, args);
       assert.equal(out.ok, true, `${category}/${stage}/${fault}`);
       const result = payload.findings.find((f) => f.id === 'SCOPE');
-      if (['needs_evidence', 'incomplete_assessment', 'claim_unmatched', 'unresolved_subject', 'missing_subject', 'added_rule', 'added_confirmation', 'unknown_diff'].includes(fault)) {
+      if (['needs_evidence', 'incomplete_assessment', 'claim_unmatched', 'unresolved_subject', 'missing_subject', 'added_rule', 'added_confirmation', 'unknown_diff', 'uncertain_reachability', 'missing_reachability'].includes(fault)) {
         assert.equal(result.scope_decisions.find((r) => r.category === category && r.stage === stage).applies, null, `${category}/${stage}/${fault} proof`);
       }
-      const disposition = ['contradicted', 'inapplicable', 'dangerous', 'security_dimension', 'security_agent', 'current_defect'].includes(fault)
+      const disposition = ['contradicted', 'security_dimension', 'security_agent', 'current_defect'].includes(fault)
         || (category === 'intentional' && ['incorrect', 'nested_exception'].includes(fault))
-        ? 'deliver' : ['matched', 'incorrect'].includes(fault) ? 'eliminate' : 'held_back';
+        ? category === 'lint_catchable' && fault !== 'current_defect' ? 'body' : 'deliver'
+          : ['matched', 'incorrect'].includes(fault) ? 'eliminate' : 'held_back';
       assert.equal(result.disposition, disposition, `${category}/${stage}/${fault}`);
       assert.ok(payload.postReview.some((f) => f.id === 'SIBLING'));
       if (disposition === 'eliminate') {
@@ -103,17 +99,19 @@ test('cited skeptical scope exclusions retain their exact applicability', async 
         assert.equal(result.reduction_provenance.request_ids.length, 2);
         assert.equal(payload.postReview.some((f) => f.id === 'SCOPE'), false);
         assert.doesNotMatch(payload.report, /SCOPE_FENCE|SCOPE_PATCH|SCOPE_TASK|SCOPE\.js/);
-      } else if (disposition === 'deliver') {
+      } else if (['deliver', 'body'].includes(disposition)) {
         assert.ok(result.reduction_detail.some((r) => r.reason === 'scope_contradicted'));
       } else {
         assert.ok(result.reduction_detail.some((r) => ['held_back', fault.endsWith('unavailable') ? 'cite_unavailable' : 'cite_unmatched'].includes(r.reason)));
+        if (['added_rule', 'added_confirmation', 'unknown_diff'].includes(fault)) {
+          assert.equal(result.scope_decisions.find((r) => r.category === category && r.stage === stage).reason, 'held_back');
+        }
       }
     }
   }
 });
 
 test('intentional side records gate cited scope without becoming findings', async () => {
-  for (const provenance of ['unchanged', 'added_rule', 'added_confirmation', 'unknown'])
   for (const record of [null, { id: 'confirmation', file: 'SCOPE.js', line_start: 11 },
     { id: 'confirmation', file: 'SCOPE.js', line_start: 20 }, { id: 'confirmation', file: 'elsewhere', line_start: 11 }]) {
     const args = proofArgs();
@@ -122,16 +120,7 @@ test('intentional side records gate cited scope without becoming findings', asyn
     const ctx = makeCtx(args, { findings: [makeFinding('SCOPE')], onPersist: (p) => { payload = p; } });
     const agent = ctx.agent;
     ctx.agent = (prompt, dispatch) => {
-      if (dispatch.label.startsWith('cite-')) {
-        const env = citationEnvelope(prompt, args);
-        for (const row of env.result.citations) {
-          if (provenance === 'unknown') delete row.added_lines;
-          if (provenance === 'added_rule' && row.request.role === 'rule') row.added_lines = [10];
-          if (provenance === 'added_confirmation' && row.request.file === 'SCOPE.js') row.added_lines = [11];
-        }
-        env.receipt.deltas_checksum = fnv1a32(JSON.stringify(env.result.citations, null, 2));
-        return env;
-      }
+      if (dispatch.label.startsWith('cite-')) return citationEnvelope(prompt, args);
       if (dispatch.agentType === 'code-gauntlet:conventions-and-intent') return {
         findings: [], complete: true, total_seen: 0, conventions_confirmations: record ? [record] : [],
       };
@@ -145,8 +134,7 @@ test('intentional side records gate cited scope without becoming findings', asyn
     };
     const out = await runWith(ctx, args);
     assert.equal(out.ok, true, JSON.stringify(out));
-    const expected = record?.file === 'SCOPE.js' && record.line_start === 11
-      ? provenance === 'unchanged' ? 'eliminate' : 'held_back' : 'deliver';
+    const expected = record?.file === 'SCOPE.js' && record.line_start === 11 ? 'eliminate' : 'deliver';
     assert.equal(payload.findings.length, 1);
     assert.equal(payload.findings[0].disposition, expected);
     assert.equal(out.stats.challenge.dispatched, 1);

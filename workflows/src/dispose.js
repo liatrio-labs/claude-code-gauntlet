@@ -4,9 +4,9 @@ import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
 import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
 import { hasAdmission } from './admission.js';
-import { acceptSkepticalReturn, assessmentGaps } from './registry.js';
-import { citeChecksum, matchedCitation } from './citeWire.js';
-import { validatorAssessment } from './applyValidations.js';
+import { assessmentGaps } from './registry.js';
+import { citeResult } from './citeWire.js';
+import { skepticalProof } from './skepticalProof.js';
 import { scopeDecisions } from './scope.js';
 
 function skepticalOutcome(finding) {
@@ -22,17 +22,13 @@ function skepticalOutcome(finding) {
       continue;
     }
     const raw = entries[0].raw ?? entries[0];
-    const assessment = stage === 'validator' ? validatorAssessment(finding, raw) : acceptSkepticalReturn(raw, finding.id, stage);
+    const { assessment, requests, proved } = skepticalProof(finding, raw, stage);
     if (raw.verdict === 'needs_evidence') reasons.push({ reason: 'held_back', stage, missing_evidence: raw.missing_evidence });
-    const requests = Array.isArray(raw.citations) ? raw.citations : [];
-    const proof = requests.length > 0 && requests.some((q) => q.role === 'claim')
-      && requests.every((q) => matchedCitation(finding, q, stage));
-    if (['real', 'refuted'].includes(raw.verdict) && !proof) {
-      const unavailable = requests.some((q) => finding.cite_results?.some((r) =>
-        citeChecksum(r.request) === citeChecksum(q) && r.status === 'unavailable'));
+    if (['real', 'refuted'].includes(raw.verdict) && !proved) {
+      const unavailable = requests.some((q) => citeResult(finding, q)?.status === 'unavailable');
       reasons.push({ reason: unavailable ? 'cite_unavailable' : 'cite_unmatched', stage, verdict: raw.verdict });
     }
-    if (raw.verdict === 'refuted' && proof && assessment.status === 'complete') proven = { reason: 'refuted', stage,
+    if (raw.verdict === 'refuted' && proved) proven = { reason: 'refuted', stage,
       request_ids: requests.map((q) => q.request_id) };
     // A malformed real proof is diagnostic; missing semantic assessments still close delivery.
     const { semanticErrors } = assessmentGaps(assessment);

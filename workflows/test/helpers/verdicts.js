@@ -13,13 +13,17 @@ export function skepticalReturn(id, stage = 'validator', extra = {}) {
       line_start: 10, line_end: 10, quote: 'return process(value);' }], ...extra };
 }
 
-export function citationEnvelope(prompt, args, status = () => 'matched') {
+export function citationEnvelope(prompt, args, status = () => 'matched', addedLines = () => []) {
   const token = prompt.match(/--input-inline '([^']*)'/)[1];
   const decode = (v) => typeof v === 'string' ? decodeURIComponent(v) : Array.isArray(v) ? v.map(decode)
     : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, value]) => [decodeURIComponent(k), decode(value)])) : v;
   const document = decode(JSON.parse(token));
-  const rows = document.requests.map((r) => ({ id: r.id, request: r.request, status: status(r),
-    detail: 'explicit_source_range', source: citeSource(args.verify?.sourceCapture), added_lines: [] }));
+  const rows = document.requests.map((r) => {
+    const added_lines = addedLines(r);
+    return { id: r.id, request: r.request, status: status(r),
+      detail: 'explicit_source_range', source: citeSource(args.verify?.sourceCapture),
+      ...(added_lines === undefined ? {} : { added_lines }) };
+  });
   return { status: 'ok', receipt: { nonce: prompt.match(/--nonce (\S+)/)[1], sha: args.headShaShort,
     base_branch: args.baseBranch || 'main', diff_source: { path: args.diffPath || args.verify?.diffPath || null, read: true },
     batch_id: prompt.match(/--cite-batch (\S+)/)[1], attempt: Number(prompt.match(/--cite-attempt (\d+)/)[1]),
