@@ -22,12 +22,14 @@ from gauntlet.jsjson import (
     checksum_or_none as checksum_or_none,
 )
 from gauntlet.location import (
+    SourceAdapter,
     TargetKind,
     anchor_candidates,
     canonical_range,
     valid_quote,
 )
 from gauntlet.registry import DELTA_VALUE_FIELDS, Delta
+from gauntlet.source_capture import load_capture
 from gauntlet.verify import decide
 from gauntlet.verify.decide import FindingWire, VerificationResult
 
@@ -338,6 +340,16 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
             context_map=args.context_map,
             context_file=args.context_file,
         )
+        if args.source_capture is not None:
+            metadata = json.loads(args.source_capture)
+            store = load_capture(
+                SourceAdapter(Path(repo_root), context.target_kind, None),
+                Path(args.capture_output_dir),
+                metadata,
+                Path(args.diff_file).read_bytes(),
+                requested_sha=sha,
+            )
+            context.source = store.adapter(Path(repo_root))
         result = decide.run_verification(findings, context, args.diff_file)
         deltas = build_deltas(findings, result["verified"])
         receipt: Receipt = {
@@ -434,6 +446,12 @@ def _parser() -> Parser:
     )
     parser.add_argument(
         "--context-map", metavar="PATH", help="Code-owned context line map."
+    )
+    parser.add_argument(
+        "--source-capture", help="Complete preparation command receipt as JSON."
+    )
+    parser.add_argument(
+        "--capture-output-dir", help="Run output area containing the source capture."
     )
     parser.add_argument(
         "--context-file",

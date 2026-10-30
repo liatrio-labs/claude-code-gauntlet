@@ -23,6 +23,183 @@ PATCH = (
 )
 
 
+@pytest.mark.parametrize("target", ["local", "branch"])
+def test_citation_sources_keep_review_snapshot_identity(
+    tmp_path, monkeypatch, invoke, target
+):
+    from gauntlet.location import SourceAdapter
+    from gauntlet.source_capture import load_capture
+
+    from tests.support.git_diff import git, init_git_repo
+    from tests.support.phase2 import write_context_inputs
+
+    root, output = tmp_path / "repo", tmp_path / "artifacts"
+    root.mkdir()
+    init_git_repo(root, monkeypatch)
+    files = {
+        "clean": b"return clean_value;\n",
+        "dirty": b"return original_value;\n",
+        "staged": b"return staged_base;\n",
+        "tests/gone": b"assert removed_behavior;\n",
+    }
+    for name, content in files.items():
+        path = root / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(content)
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    base = git(root, "rev-parse", "HEAD")
+    (root / "tests/gone").unlink()
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "target")
+    head = git(root, "rev-parse", "HEAD")
+    (root / "dirty").write_bytes(b"return reviewed_value;\n")
+    (root / "staged").write_bytes(b"return staged_value;\n")
+    git(root, "add", "staged")
+    (root / "tests/added").write_bytes(b"assert added_behavior;\n")
+    (root / "RULES.md").write_bytes(b"Use repository conventions.\n")
+    diff = (git(root, "diff", base, head) + "\n").encode()
+    write_context_inputs(output, b"project rules", diff, sha=head[:8])
+    argv = [
+        "--output-dir",
+        str(output),
+        "--head-sha",
+        head[:8],
+        "--head-sha-full",
+        head,
+        "--repo-root",
+        str(root),
+        "--target-type",
+        target,
+        "--nonce",
+        "capture",
+        "--base-sha",
+        base,
+    ]
+
+    def prepare():
+        result = invoke("write_shared_context", argv, root, b"triage")
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)["sourceCapture"]
+
+    receipt = prepare()
+    directory = output / "code-gauntlet-inputs-capture/source-capture"
+    manifest = json.loads((directory / "manifest.json").read_bytes())
+    copied = (
+        {"dirty", "staged", "tests/added", "RULES.md"} if target == "local" else set()
+    )
+    assert set(manifest["copies"]) == copied
+    assert receipt["copied_files"] == len(copied) and receipt["failures"] == []
+    assert receipt["copied_bytes"] == sum(
+        len((root / name).read_bytes()) for name in copied
+    )
+    assert {p.name for p in directory.iterdir()} == {
+        "diff",
+        "manifest.json",
+        *manifest["copies"].values(),
+    }
+    (root / "clean").write_bytes(b"return moved_value;\n")
+    (root / "dirty").write_bytes(b"return later_value;\n")
+    (root / "tests/added").write_bytes(b"assert later_behavior;\n")
+    (root / "tests/gone").write_bytes(b"assert unrelated_head;\n")
+    (root / "uncaptured").write_bytes(b"return uncaptured_value;\n")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "move")
+    assert prepare() == receipt
+    source = load_capture(
+        SourceAdapter(root, target, None), output, receipt, diff
+    ).adapter(root)
+    assert source.read("clean") == ("return clean_value;",)
+    assert source.read("dirty") == (
+        ("return reviewed_value;",)
+        if target == "local"
+        else ("return original_value;",)
+    )
+    assert source.read("staged") == (
+        ("return staged_value;",) if target == "local" else ("return staged_base;",)
+    )
+    assert source.read("tests/added") == (
+        ("assert added_behavior;",) if target == "local" else None
+    )
+    assert source.read("uncaptured") is None and source.read("tests/gone") is None
+    assert source.read_captured_source(
+        "tests/gone",
+        side="old",
+        start=1,
+        end=1,
+        base=base,
+        diff_sha256=receipt["diff_sha256"],
+    ) == ("assert removed_behavior;",)
+    for overrides in [
+        {"base": head},
+        {"diff_sha256": "0" * 64},
+        {"start": 2, "end": 2},
+        {"side": "head"},
+    ]:
+        request = {
+            "side": "old",
+            "start": 1,
+            "end": 1,
+            "base": base,
+            "diff_sha256": receipt["diff_sha256"],
+            **overrides,
+        }
+        assert source.read_captured_source("tests/gone", **request) is None
+
+    script = r"""
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
+import {pathToFileURL} from 'node:url';
+const [plugin,work,sha,output,receipt,expected]=process.argv.slice(1);
+const {verifyStage}=await import(pathToFileURL(`${plugin}/workflows/src/verifyStage.js`));
+const {shellSplit}=await import(pathToFileURL(`${plugin}/workflows/test/helpers/shellWords.js`));
+const metadata=JSON.parse(receipt);
+const result=await verifyStage({agent:async prompt=>{
+ const c=shellSplit(prompt.split('\n').at(-1));
+ assert.deepEqual(JSON.parse(c[c.indexOf('--source-capture')+1]),metadata);
+ execFileSync(c[0],c.slice(1),{cwd:work,env:process.env});
+ return JSON.parse(readFileSync(c[c.indexOf('--output')+1],'utf8'));
+}}, {findings:[{id:'F',file:'clean',anchor:'return clean_value;',line_start:1,line_end:1,
+ production_element:{file:'dirty',anchor:metadata.target_kind==='local'?'return reviewed_value;':'return original_value;',line_start:1,line_end:1}}],
+ pluginRoot:plugin,python:'python',headShaShort:sha,outputDir:output,nonce:'capture',limits:{},
+ verify:{targetKind:metadata.target_kind,sourceCapture:metadata,baseBranch:metadata.base,
+ diffPath:`${output}/code-gauntlet-diff-${sha}.patch`,inputPathBase:`${output}/in`,outputPathBase:`${output}/out`}});
+assert.equal(result.verified,expected==='available');
+if(expected==='available') {
+ assert.equal(result.findings[0].location_status,'confirmed');
+ assert.equal(result.findings[0].resolved_references.production_element.location_status,'confirmed');
+} else assert.notEqual(result.findings[0].location_status,'confirmed');
+"""
+    command = [
+        "node",
+        "--input-type=module",
+        "-e",
+        script,
+        str(ROOT),
+        str(root),
+        head[:8],
+        str(output),
+        json.dumps(receipt),
+    ]
+    result = subprocess.run(
+        [*command, "available"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stderr
+    import shutil
+
+    shutil.rmtree(directory)
+    result = subprocess.run(
+        [*command, "unavailable"], capture_output=True, text=True, encoding="utf-8"
+    )
+    assert result.returncode == 0, result.stderr
+    result = invoke("write_shared_context", argv, root, b"triage")
+    assert result.returncode == 2 and b"source capture unavailable" in result.stderr
+
+
 def test_test_and_quality_admission_boundaries(tmp_path, monkeypatch):
     from tests.support.git_diff import git, init_git_repo
 
@@ -537,6 +714,19 @@ def test_admission_references_are_snapshot_bound(
     (tmp_path / "lib/precedent").write_text(
         "return local_idiom;\n", encoding="utf-8", newline=""
     )
+    from gauntlet.location import SourceAdapter
+
+    output = tmp_path / "code-gauntlet-capture-artifacts"
+    output.mkdir()
+    diff = (tmp_path / "saved.patch").read_bytes()
+    for target in ("branch", "local"):
+        store = SourceAdapter.capture(tmp_path, target, sha).capture_sources(
+            output, target, diff, base
+        )
+        (output / f"{target}.json").write_text(
+            json.dumps(store.receipt), encoding="utf-8", newline=""
+        )
+    (tmp_path / "lib/precedent").write_bytes(b"return existing_idiom;\n")
     script = r"""
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
@@ -572,7 +762,9 @@ const run = async (targetKind, fault) => verifyStage({agent:async prompt=>{
  if(fault==='foreign'){env.result.deltas[0].id='FOREIGN';env.receipt.record_proofs[0].id='FOREIGN';env.receipt.deltas_checksum=deltaContentProof(['FOREIGN'],env.result.deltas);}
  return env;
 }},{findings,pluginRoot:root,python:'python',headShaShort:sha,nonce:'facts',limits:{},policy:{},
- verify:{targetKind,baseBranch:base,diffPath:`${work}/saved.patch`,inputPathBase:`${work}/in`,outputPathBase:`${work}/out`}});
+ outputDir:`${work}/code-gauntlet-capture-artifacts`,
+ verify:{targetKind,sourceCapture:JSON.parse(readFileSync(`${work}/code-gauntlet-capture-artifacts/${targetKind}.json`,'utf8')),
+ baseBranch:base,diffPath:`${work}/saved.patch`,inputPathBase:`${work}/in`,outputPathBase:`${work}/out`}});
 const branch=await run('branch');
 const local=await run('local');
 const failed=[];for(const fault of ['content','nonce','input','foreign'])failed.push(await run('branch',fault));
@@ -589,6 +781,8 @@ process.stdout.write(JSON.stringify({branch,local,failed,wireMeasurements,encode
     )
     value = json.loads(result.stdout)
     assert value["branch"]["verified"] and value["local"]["verified"]
+    local = value["local"]["findings"][0]["resolved_references"]
+    assert local["duplicate_of"]["location_status"] == "unconfirmed"
     branch = value["branch"]["findings"][0]
     refs = branch["resolved_references"]
     assert refs["production_element"]["location_status"] == "confirmed"
@@ -600,10 +794,9 @@ process.stdout.write(JSON.stringify({branch,local,failed,wireMeasurements,encode
     assert refs["candidate_tests"][0]["file"] == "tests/nested/check"
     assert [r["location_status"] for r in refs["candidate_tests"]] == [
         "confirmed",
-        *(["unconfirmed"] * 5),
-        "confirmed",
+        *(["unconfirmed"] * 6),
     ]
-    assert refs["candidate_tests"][-1]["path_role"] == "non_source"
+    assert refs["candidate_tests"][-1]["path_role"] == "unknown"
     for field in ("candidate_tests", "production_element", "duplicate_of", "precedent"):
         facts = refs[field] if isinstance(refs[field], list) else [refs[field]]
         assert all("anchor" not in fact and "diagnostic" not in fact for fact in facts)
@@ -612,12 +805,9 @@ process.stdout.write(JSON.stringify({branch,local,failed,wireMeasurements,encode
     assert branch["reference_diagnostics"]
     assert branch["resolved_sites"][0]["diff_validation"] == {"in_diff": False}
     assert "sites" not in branch and len(branch["site_requests"]) == 1
-    local = value["local"]["findings"][0]["resolved_references"]
-    assert local["duplicate_of"]["location_status"] == "unconfirmed"
     assert [r["location_status"] for r in local["candidate_tests"]] == [
         "confirmed",
-        *(["unconfirmed"] * 5),
-        "confirmed",
+        *(["unconfirmed"] * 6),
     ]
     for failed in value["failed"]:
         assert not failed["verified"]

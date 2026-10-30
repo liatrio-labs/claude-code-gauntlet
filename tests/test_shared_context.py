@@ -488,8 +488,14 @@ def test_description_delivery(tmp_path, invoke, mode):
 @pytest.mark.parametrize("prefix_lines", [0, 600])
 @pytest.mark.parametrize("crlf", [False, True])
 def test_context_map_matches_read_numbering(
-    tmp_path, invoke, prefix_lines, crlf, variant
+    tmp_path, invoke, monkeypatch, prefix_lines, crlf, variant
 ):
+    init_git_repo(tmp_path, monkeypatch)
+    (tmp_path / "source").write_bytes(b"return captured_value;\n")
+    git(tmp_path, "add", "source")
+    git(tmp_path, "commit", "-qm", "source")
+    head = git(tmp_path, "rev-parse", "HEAD")
+    sha = head[:8]
     diff = (
         b"diff --git a/old b/new\nrename from old\nrename to new\n"
         b"--- a/old\n+++ b/new\n@@ -7,3 +7,3 @@\n"
@@ -511,14 +517,16 @@ def test_context_map_matches_read_numbering(
     if crlf:
         rules += b"\r\n"
     output_dir = tmp_path / "out"
-    write_context_inputs(output_dir, rules, diff)
+    write_context_inputs(output_dir, rules, diff, sha=sha)
     result = invoke(
         "write_shared_context",
         [
             "--output-dir",
             str(output_dir),
             "--head-sha",
-            SHA,
+            sha,
+            "--nonce",
+            "numbering",
             "--repo-root",
             str(tmp_path),
         ],
@@ -527,12 +535,15 @@ def test_context_map_matches_read_numbering(
     )
     assert result.returncode == 0, result.stderr
     assert bool(result.stderr) == (variant is not None and variant[1] is None)
-    context = (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
+    context = (output_dir / f"code-gauntlet-context-{sha}.md").read_bytes()
     assert context.startswith(rules + (b"" if crlf else b"\n") + b"\n## Risk")
     assert b'kind="repository-layout"' in context
     sidecar = json.loads(
-        (output_dir / f"code-gauntlet-context-map-{SHA}.json").read_bytes()
+        (output_dir / f"code-gauntlet-context-map-{sha}.json").read_bytes()
     )
+    receipt = json.loads(result.stdout)["sourceCapture"]
+    assert receipt["head"] == head and receipt["copied_files"] == 0
+    assert receipt["diff_sha256"] == sidecar["diff_sha256"]
     if variant is not None:
         if variant[1] is None:
             assert diff in context
@@ -565,13 +576,13 @@ def test_context_map_matches_read_numbering(
             assert rows[int(key) - 1] == body + (b"\r" if crlf else b"")
         assert sidecar == {
             "version": 1,
-            "sha": SHA,
+            "sha": sha,
             "status": "available",
             "context_sha256": hashlib.sha256(context).hexdigest(),
             "diff_sha256": hashlib.sha256(diff).hexdigest(),
             "entries": sidecar["entries"],
         }
-    assert (output_dir / f"code-gauntlet-diff-{SHA}.patch").read_bytes() == diff
+    assert (output_dir / f"code-gauntlet-diff-{sha}.patch").read_bytes() == diff
     receipt = json.loads(result.stdout)
     assert receipt["contextLines"] == context.count(b"\n")
     assert receipt["contextChars"] == len(context.decode("utf-8", "replace"))

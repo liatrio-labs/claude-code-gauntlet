@@ -292,7 +292,7 @@ pre-parsed form for the same axis (single authority).
 Run this after 2d, 2e and 2k. Set `{target_type}` to `pr`, `mr`, `branch` or `local`. For PR/MR, replace `{snapshot_args}` with `--snapshot-file "code-gauntlet-inputs-{nonce}/pr-description.json"`; otherwise omit it. Branch/local calls need no snapshot and never fetch descriptions:
 
 ```bash
-{python} "{plugin_root}/scripts/write_shared_context.py" --output-dir "{output_dir}" --head-sha {head_sha_short} --target-type {target_type} --head-sha-full {head_sha_full} --repo-root "{repo_root}" {snapshot_args} <<'CODE_GAUNTLET_TRIAGE_{nonce}'
+{python} "{plugin_root}/scripts/write_shared_context.py" --output-dir "{output_dir}" --head-sha {head_sha_short} --target-type {target_type} --head-sha-full {head_sha_full} --repo-root "{repo_root}" --nonce "{nonce}" --base-sha {base_sha} {snapshot_args} <<'CODE_GAUNTLET_TRIAGE_{nonce}'
 {risk classification (2e) and AI-generated-code status (2k)}
 CODE_GAUNTLET_TRIAGE_{nonce}
 ```
@@ -301,6 +301,7 @@ The quoted delimiter passes the text verbatim. Never pipe it through `echo` or u
 The nonce in the delimiter keeps any line of the text from ending it.
 The script writes the context file threaded to the discovery, validate and summarize agents from the collector's `--out` file, stdin text, framed unverified PR/MR claims when applicable, framed repository layout and saved diff, in that order. Use `configResult.identity.repo_root` for `{repo_root}`.
 Stamp the printed `contextLines`, `contextChars`, `contextMaxLineChars` and `removedTests` into the args waist verbatim, never estimated, carried over or re-derived.
+Stamp `sourceCapture` verbatim into `verify.sourceCapture`. Use the full comparison base commit for `{base_sha}` (captured HEAD for local). The command reserves `code-gauntlet-inputs-{nonce}/source-capture/` before copying eligible dirty/untracked source; clean files bind to captured HEAD blobs. Reuse the original nonce and store on retry/resume. Missing or corrupt captures stop preparation; source capture bytes and failures are disclosed in the receipt. Capture artifacts and shared-context/author prose cannot establish source provenance.
 An exit 2 wrote no usable context; stop and report its one-line error.
 `scripts/gauntlet/shared_context.py`'s docstring holds the content and measurement rules.
 
@@ -357,6 +358,7 @@ Discovery agents return findings through structured output (`agent()`/`parallel(
 
   // verify handoff (sha-scoped) for the executor's pinned command:
   verify: {
+    sourceCapture: contextReceipt.sourceCapture,
     targetKind: "{target_kind}", // pr, mr, branch, or local, selected during preparation
     inputPathBase: "{output_dir}/code-gauntlet-phase4-input-{head_sha_short}",
     outputPathBase: "{output_dir}/code-gauntlet-phase4-output-{head_sha_short}"

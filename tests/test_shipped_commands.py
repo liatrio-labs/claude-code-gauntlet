@@ -173,7 +173,9 @@ def _context_block() -> str:
     return section[fence_start : section.index("```", fence_start)].strip("\n")
 
 
-def test_shipped_context_paths(tmp_path: Path) -> None:
+def test_shipped_context_paths(tmp_path: Path, monkeypatch) -> None:
+    from tests.support.git_diff import git, init_git_repo
+
     skill = skill_text(REPO / "skills/code-gauntlet/references/phase2-preparation.md")
     collector = re.search(r'collect_project_rules\.py"[^\n]*--out "([^"]+)"', skill)
     assert collector is not None
@@ -194,25 +196,32 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
     checkout = tmp_path / "review checkout"
     checkout.mkdir()
     (checkout / "layout-marker").write_bytes(b"source")
+    init_git_repo(checkout, monkeypatch)
+    git(checkout, "add", ".")
+    git(checkout, "commit", "-qm", "source")
+    head = git(checkout, "rev-parse", "HEAD")
+    sha = head[:8]
     collector_path = collector.group(1)
     diff_path = diff_redirect.group(1)
     for placeholder, value in {
         "{output_dir}": output_dir.as_posix(),
-        "{head_sha_short}": SHA,
+        "{head_sha_short}": sha,
     }.items():
         collector_path = collector_path.replace(placeholder, value)
         diff_path = diff_path.replace(placeholder, value)
-    assert Path(collector_path) == output_dir / f"code-gauntlet-project-rules-{SHA}.md"
-    assert Path(diff_path) == output_dir / f"code-gauntlet-diff-{SHA}.patch"
+    assert Path(collector_path) == output_dir / f"code-gauntlet-project-rules-{sha}.md"
+    assert Path(diff_path) == output_dir / f"code-gauntlet-diff-{sha}.patch"
     Path(collector_path).write_bytes(b"rules\n")
     Path(diff_path).write_bytes(b"diff\n")
     command = (
         command.replace("{plugin_root}", REPO.as_posix())
         .replace("{output_dir}", output_dir.as_posix())
         .replace("{repo_root}", checkout.as_posix())
-        .replace("{head_sha_short}", SHA)
+        .replace("{head_sha_short}", sha)
         .replace("{target_type}", "local")
-        .replace("{head_sha_full}", SHA.ljust(40, "0"))
+        .replace("{head_sha_full}", head)
+        .replace("{base_sha}", head)
+        .replace("{nonce}", NONCE)
         .replace("{snapshot_args}", "")
     )
     parts = shlex.split(command, posix=True)
@@ -226,7 +235,7 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert result.stderr == b""
-    context = (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
+    context = (output_dir / f"code-gauntlet-context-{sha}.md").read_bytes()
     receipt = json.loads(result.stdout)
     assert receipt["contextLines"] == context.count(b"\n")
     assert receipt["contextChars"] == len(context.decode("utf-8"))
@@ -247,10 +256,13 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
     shutil.which(bash_executable()) is None,
     reason="bash is required for the heredoc injection regression",
 )
-def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) -> None:
+def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from tests.support.git_diff import git, init_git_repo
+
     block = _context_block()
     output_dir = tmp_path / "o'brien out[1]"
-    write_context_inputs(output_dir, b"rules\n", b"diff\n")
     output_path = output_dir.as_posix()
     for character in ("'", "[", "]", " "):
         assert character in output_path
@@ -258,6 +270,11 @@ def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) ->
         assert character not in output_path
     cwd = tmp_path / "cwd"
     cwd.mkdir()
+    init_git_repo(cwd, monkeypatch)
+    git(cwd, "commit", "--allow-empty", "-qm", "source")
+    head = git(cwd, "rev-parse", "HEAD")
+    sha = head[:8]
+    write_context_inputs(output_dir, b"rules\n", b"diff\n", sha=sha)
     triage = (
         "Risk: low\n"
         "CODE_GAUNTLET_TRIAGE\n"
@@ -268,10 +285,11 @@ def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) ->
         "{plugin_root}": REPO.as_posix(),
         "{output_dir}": output_dir.as_posix(),
         "{repo_root}": cwd.as_posix(),
-        "{head_sha_short}": SHA,
+        "{head_sha_short}": sha,
         "{nonce}": NONCE,
         "{target_type}": "local",
-        "{head_sha_full}": SHA.ljust(40, "0"),
+        "{head_sha_full}": head,
+        "{base_sha}": head,
         "{snapshot_args}": "",
         "{risk classification (2e) and AI-generated-code status (2k)}": triage,
     }
@@ -286,7 +304,7 @@ def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) ->
     assert not (cwd / "injected-marker").exists()
     assert result.returncode == 0, result.stderr
     assert result.stderr == b""
-    context = (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
+    context = (output_dir / f"code-gauntlet-context-{sha}.md").read_bytes()
     assert (
         b"\n## Risk classification and AI-generated-code status\n\n"
         + triage.encode("utf-8")

@@ -10,7 +10,10 @@ import stat
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
+
+if TYPE_CHECKING:
+    from gauntlet.source_capture import SourceCapture
 
 from gauntlet import proc
 from gauntlet.diff import ContextMapEntry, OldSpan
@@ -335,6 +338,8 @@ def _decode_source(content: bytes) -> tuple[str, ...] | None:
 def _local_mode(root: Path, parts: tuple[str, ...]) -> int:
     current = root
     mode = current.lstat().st_mode
+    if stat.S_ISLNK(mode):
+        raise OSError("source symlink")
     for part in parts:
         current /= part
         mode = current.lstat().st_mode
@@ -346,7 +351,7 @@ def _local_mode(root: Path, parts: tuple[str, ...]) -> int:
 def _local_open(root: Path, parts: tuple[str, ...]) -> int:
     if os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW"):
         # Hold each directory open so a renamed parent cannot redirect the read.
-        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             for part in parts[:-1]:
                 child = os.open(
@@ -385,6 +390,7 @@ class SourceAdapter:
     root: Path
     target_kind: TargetKind
     captured_head: str | None
+    source_capture: SourceCapture | None = field(default=None, repr=False)
     _cache: dict[tuple[TargetKind, str | None, str], tuple[str, ...] | None] = field(
         default_factory=dict, compare=False, repr=False
     )
@@ -416,13 +422,38 @@ class SourceAdapter:
         return cls(root, target_kind, head)
 
     def read(self, file: str) -> tuple[str, ...] | None:
+        if self.source_capture is not None:
+            return self.read_captured_source(file)
         key = (self.target_kind, self.captured_head, file)
         if key not in self._cache:
             self._cache[key] = self._read(file)
         return self._cache[key]
 
+    def capture_sources(
+        self, output: Path, nonce: str, diff: bytes, base: str | None = None
+    ) -> SourceCapture:
+        from gauntlet.source_capture import capture_sources
+
+        return capture_sources(self, output, nonce, diff, base)
+
+    def read_captured_source(
+        self,
+        file: str,
+        *,
+        side: Literal["head", "old"] = "head",
+        start: int | None = None,
+        end: int | None = None,
+        base: str | None = None,
+        diff_sha256: str | None = None,
+    ) -> tuple[str, ...] | None:
+        if self.source_capture is None:
+            return None
+        return self.source_capture.read(self, file, side, start, end, base, diff_sha256)
+
     def entries(self, directory: str = "") -> tuple[str, ...] | None:
         """List immediate names from the same source identity used by reads."""
+        if self.source_capture is not None:
+            return self.source_capture.entries(self, directory)
         parts = self._parts(directory) if directory else ()
         if parts is None or (
             self.target_kind != "local" and self.captured_head is None
@@ -491,6 +522,7 @@ class SourceAdapter:
             or os.path.isabs(file)
             or os.path.splitdrive(file)[0]
             or "\\" in file
+            or re.match(r"^[A-Za-z]:", file)
         ):
             return None
         return parts
@@ -501,6 +533,8 @@ class SourceAdapter:
         parts = self._parts(file)
         if parts is None:
             return "unknown"
+        if self.source_capture is not None:
+            return "directory" if self.entries(file) is not None else "unknown"
         try:
             if self.target_kind == "local":
                 # Some platforms cannot open directories; the checked lstat walk suffices.
