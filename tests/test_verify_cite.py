@@ -11,6 +11,7 @@ def test_citation_quote_checks_are_explicit_and_bounded(tmp_path, monkeypatch, i
     call, q, capture, root, output = citation_cli(tmp_path, monkeypatch, invoke)
     cases = [
         ({}, "matched"),
+        ({"file": "vendor/generated"}, "matched"),
         ({"quote": "return a_different_value;"}, "unmatched"),
         ({"line_start": 2, "line_end": 2}, "unmatched"),
         ({"side": "old"}, "unavailable"),

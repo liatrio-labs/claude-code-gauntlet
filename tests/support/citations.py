@@ -18,7 +18,10 @@ def citation_cli(tmp_path, monkeypatch, invoke):
     root.mkdir()
     output.mkdir()
     init_git_repo(root, monkeypatch)
-    (root / "source").write_bytes((QUOTE + "\nsecond_source_line();\n").encode())
+    for file in ("source", "vendor/generated"):
+        path = root / file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes((QUOTE + "\nsecond_source_line();\n").encode())
     (root / "gone").write_bytes(b"assert removed_behavior;\n")
     (root / "pr-description.json").write_bytes((QUOTE + "\n").encode())
     git(root, "add", ".")

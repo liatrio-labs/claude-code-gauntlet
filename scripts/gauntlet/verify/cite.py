@@ -11,13 +11,7 @@ from pathlib import Path
 from typing import Any, TypedDict, cast
 
 from gauntlet.fs import write_atomic
-from gauntlet.location import (
-    Quote,
-    SourceAdapter,
-    _local_bytes,
-    source_lines,
-    valid_quote,
-)
+from gauntlet.location import Quote, valid_quote
 from gauntlet.registry import (
     ANCHOR_LIMITS,
     CITATION_REQUEST_SCHEMA,
@@ -29,7 +23,13 @@ from gauntlet.registry import (
     CiteResultsItemSource,
     SkepticalStage,
 )
-from gauntlet.source_capture import _eligible, load_capture
+from gauntlet.source_capture import (
+    SourceAdapter,
+    _local_bytes,
+    _readable,
+    load_capture,
+    source_lines,
+)
 
 
 class CitationCheck(TypedDict):
@@ -97,7 +97,7 @@ def _request_error(
     if q["snapshot_id"] != snapshot:
         return "snapshot_mismatch"
     file = q["file"]
-    if source._parts(file) is None or "\\" in file or not _eligible(source, file, None):
+    if source._parts(file) is None or "\\" in file or not _readable(source, file, None):
         return "rejected_origin"
     lines = source_lines(q["quote"])
     if (
