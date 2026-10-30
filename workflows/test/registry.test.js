@@ -114,7 +114,7 @@ for (const [name, before, after, error] of [
   ['fact', "facts: ['in_diff']", "facts: ['in_dif']", 'Unknown exclusion fact: in_dif'],
   ['outcome', "outcome: 'body'", "outcome: 'bodi'", 'Unknown exclusion outcome: bodi'],
   ['stage', "stage: 'post_validation'", "stage: 'post_validaton'", 'Unknown exclusion stage: post_validaton'],
-  ['proof', "proof: 'verified_fact'", "proof: 'verified_fat'", 'Unknown exclusion proof: verified_fat'],
+  ['proof', "'citation' : 'verified_fact'", "'citation' : 'verified_fat'", 'Unknown exclusion proof: verified_fat'],
 ]) {
   test(`module load rejects an unknown exclusion ${name}`, async () => {
     const original = readFileSync(new URL('../src/registry.js', import.meta.url), 'utf8');
