@@ -87,7 +87,7 @@ test('validation completeness accepts unlocated assessments without promoting em
   }
 });
 
-test('validation completeness accepts partial search references but admission holds the finding back', async () => {
+test('validation retries partial search references once and admission holds the finding back', async () => {
   const ctx = stageCtx({ reply: [{ finding_id: 'f1', confidence: 80, policy_subject: 'ordinary',
     admission_assessments: [
       { predicate: 'present_defect', status: 'confirmed', references: ['searched_paths:0'] },
@@ -102,7 +102,7 @@ test('validation completeness accepts partial search references but admission ho
       candidate_tests: [],
     } })] });
   assert.equal(out.stats.skipped, 0);
-  assert.equal(out.stats.batches_dispatched, 1);
+  assert.equal(out.stats.batches_dispatched, 2);
   assert.deepEqual(out.gaps, []);
   const f = evaluateAdmission(out.findings[0]);
   assert.equal(f.admission.kind, 'critical_gap');
@@ -115,6 +115,30 @@ test('validation completeness accepts partial search references but admission ho
   assert.deepEqual(f.admission_assessments, [
     { predicate: 'resolved_production_element', status: 'confirmed', references: ['production_element'] },
   ]);
+});
+
+for (const omitted of [true, false]) test(`validation repairs wrong reference names with coverage assessments ${omitted ? 'omitted' : 'present'}`, async () => {
+  const coverage = ['resolved_production_element', 'complete_searches', 'complete_behavioral_absence']
+    .map((predicate) => ({ predicate, status: 'confirmed', references: [] }));
+  const presentDefect = { predicate: 'present_defect', status: 'confirmed', references: ['primary'] };
+  const missing = ['present_defect', ...(omitted ? coverage.map((entry) => entry.predicate) : [])];
+  const ctx = stageCtx({ reply: [{ finding_id: 'f1', confidence: 80, policy_subject: 'ordinary', reachability: 'current',
+    admission_assessments: [{ ...presentDefect, references: ['a.js:3'] }, ...(omitted ? [] : coverage)] }],
+  replies: { 'validate-retry-0': [{ finding_id: 'f1', admission_assessments: [presentDefect, ...coverage] }] } });
+  const out = await validateStage(ctx, { findings: [finding({ dimension: 'test_coverage', test_kind: 'critical_gap',
+    file: 'a.js', line_start: 3 })] });
+  assert.deepEqual(ctx.calls.map((call) => call.label), ['validate-batch-0', 'validate-retry-0']);
+  const f = evaluateAdmission(out.findings[0]);
+  assert.equal(f.admission.kind, 'production_defect');
+  assert.equal(f.admission.status, 'admitted');
+  assert.equal(f.confidence, 80);
+  assert.equal(f.reachability, 'current');
+  assert.deepEqual(out.audit.batches[0].rejections[0].reasons, missing.map((predicate) => `missing_assessment:${predicate}`));
+  const context = JSON.parse(ctx.calls[1].prompt.split(' | admission_context: ')[1].split('\n')[0]);
+  assert.deepEqual(context.policy.policy_subjects.ordinary, missing);
+  assert.deepEqual(ctx.calls[1].schema.properties.validations.items.required, ['finding_id', 'admission_assessments']);
+  assert.deepEqual(out.gaps, []);
+  assert.deepEqual(ctx.violations, []);
 });
 
 test('validation completeness requires one well-formed assessment per predicate', async () => {
