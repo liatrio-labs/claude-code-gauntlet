@@ -2,29 +2,8 @@
 
 import { INT_POLICY, coerceInt } from './wire.js';
 import { canonicalRange } from './location.js';
-import { matchAssessments, hasPresentDefect } from './admission.js';
-import { VALIDATION_RETURN_PROPERTIES, requiredAssessments, REACHABILITY_VALUES, acceptSkepticalReturn, assessmentGaps } from './registry.js';
-
-export function validationRejections(finding, validation, semantic = true) {
-  if (!validation) return ['missing_entry'];
-  const reasons = [];
-  if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
-  if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
-  const assessments = Array.isArray(validation.admission_assessments) ? validation.admission_assessments : [];
-  for (const predicate of requiredAssessments(finding, validation.policy_subject, hasPresentDefect(finding, assessments))) {
-    const entries = assessments.filter((entry) => entry?.predicate === predicate);
-    if (entries.length !== 1
-      || !VALIDATION_RETURN_PROPERTIES.admission_assessments.items.properties.status.enum.includes(entries[0].status)
-      || !Array.isArray(entries[0].references) || entries[0].references.some((key) => typeof key !== 'string')) {
-      reasons.push(`missing_assessment:${predicate}`);
-    }
-  }
-  if (semantic) reasons.push(...assessmentGaps(validatorAssessment(finding, validation)).semanticErrors
-    .filter((error) => !['$.confidence', '$.policy_subject'].includes(error)
-      && !(error.startsWith('$.admission_assessments') && reasons.some((reason) => reason.startsWith('missing_assessment:'))))
-    .map((error) => `skeptical:${error}`));
-  return reasons;
-}
+import { matchAssessments } from './admission.js';
+import { VALIDATION_RETURN_PROPERTIES, REACHABILITY_VALUES, acceptSkepticalReturn } from './registry.js';
 
 // Scores use the same coercion as application; verdict acceptance never discards usable validation fields.
 export function validatorAssessment(finding, validation) {

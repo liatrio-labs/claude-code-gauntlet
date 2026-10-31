@@ -3,12 +3,12 @@ import { locationAllows } from './location.js';
 import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
 import { modelFor, ADMISSION_PREDICATES, SKEPTICAL_CONTRACTS, ANCHOR_LIMITS, acceptSkepticalReturn, assessmentGaps } from './registry.js';
-import { applyValidations, validationRejections, validatorAssessment } from './applyValidations.js';
+import { applyValidations, validatorAssessment } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
 import { rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
 import { deliveryGroups } from './dispose.js';
-import { admissionContext, hasAdmission } from './admission.js';
+import { admissionContext, hasAdmission, validationRejections } from './admission.js';
 
 // The platform rejects array-rooted tool schemas, so validation entries need an object wrapper.
 const VALIDATE_SCHEMA = {
@@ -32,9 +32,16 @@ function validateReturnDescriptor() {
     .join(', ');
 }
 
+function validatorRejections(finding, validation) {
+  const reasons = validationRejections(finding, validation);
+  if (validation) reasons.push(...assessmentGaps(validatorAssessment(finding, validation)).semanticErrors
+    .map((error) => `skeptical:${error}`));
+  return reasons;
+}
+
 function admissionOnlyRetry(batch, accepted) {
   return batch.every((finding) => accepted.has(finding.id)
-    && validationRejections(finding, accepted.get(finding.id)).every((reason) => reason.startsWith('missing_assessment:')));
+    && validatorRejections(finding, accepted.get(finding.id)).every((reason) => reason.startsWith('missing_assessment:')));
 }
 
 function validateSchema(batch, accepted) {
@@ -100,7 +107,7 @@ export async function validateStage(ctx, input) {
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
         const previous = accepted.get(finding.id);
-        const missing = previous ? validationRejections(finding, previous, false)
+        const missing = previous ? validationRejections(finding, previous)
           .filter((reason) => reason.startsWith('missing_assessment:')).map((reason) => reason.slice('missing_assessment:'.length)) : [];
         const replacements = (Array.isArray(entry.admission_assessments) ? entry.admission_assessments : [])
           .filter((assessment) => missing.includes(assessment?.predicate));
@@ -112,7 +119,7 @@ export async function validateStage(ctx, input) {
           admission_assessments: [...(Array.isArray(previous.admission_assessments) ? previous.admission_assessments : []).filter((assessment) =>
             !replacements.some((replacement) => replacement?.predicate === assessment?.predicate)), ...replacements] } : entry;
         assessments.set(finding.id, merged);
-        const reasons = validationRejections(finding, merged);
+        const reasons = validatorRejections(finding, merged);
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
         // Missing admission evidence still warrants a retry, but does not invalidate a score.
         if (!reasons.some((reason) => ['invalid_confidence', 'invalid_policy_subject', 'missing_entry'].includes(reason))) accepted.set(finding.id, merged);
@@ -125,7 +132,7 @@ export async function validateStage(ctx, input) {
   const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
   dispatched += batches.length;
   const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
-  const pending = findings.filter((finding) => validationRejections(finding, accepted.get(finding.id)).length);
+  const pending = findings.filter((finding) => validatorRejections(finding, accepted.get(finding.id)).length);
   if (pending.length) {
     // One follow-up round only; small batches isolate incomplete records from successful siblings.
     const retries = [];
@@ -158,7 +165,7 @@ export async function validateStage(ctx, input) {
   for (const f of findings) {
     if (!accepted.has(f.id)) { f.validation = 'skipped'; skipped += 1; }
     else f.validation = 'validated';
-    if (accepted.has(f.id) && validationRejections(f, accepted.get(f.id)).length) incomplete += 1;
+    if (accepted.has(f.id) && validatorRejections(f, accepted.get(f.id)).length) incomplete += 1;
   }
 
   return {
