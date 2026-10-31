@@ -491,6 +491,9 @@ class SourceCapture:
     _source: SourceAdapter = field(repr=False, compare=False)
     _old_spans: dict[str, tuple[OldSpan, ...]] = field(repr=False, compare=False)
 
+    def admits(self, source: SourceAdapter, file: str) -> bool:
+        return _readable(source, file, self.manifest["excluded"])
+
     def adapter(self, root: Path) -> SourceAdapter:
         return SourceAdapter(
             root,
@@ -500,7 +503,7 @@ class SourceCapture:
         )
 
     def entries(self, source: SourceAdapter, directory: str) -> tuple[str, ...] | None:
-        if directory and not _readable(source, directory, self.manifest["excluded"]):
+        if directory and not self.admits(source, directory):
             return None
         original = self._source.entries(directory)
         names = set(original or ())
@@ -527,7 +530,7 @@ class SourceCapture:
         diff_sha256: str | None,
     ) -> tuple[str, ...] | None:
         m = self.manifest
-        if not _readable(source, file, m["excluded"]):
+        if not self.admits(source, file):
             return None
         try:
             if side == "old":

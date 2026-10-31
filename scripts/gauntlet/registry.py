@@ -12,6 +12,7 @@ LocationStatus = Literal["confirmed", "relocated", "unconfirmed"]
 Disposition = Literal["deliver", "body", "held_back", "report_only", "eliminate"]
 Verdict = Literal["real", "refuted", "needs_evidence"]
 SkepticalStage = Literal["validator", "challenger"]
+CitationStatus = Literal["matched", "unmatched", "rejected", "unavailable"]
 ExclusionCategory = Literal[
     "pre_existing",
     "untouched_line",
@@ -104,9 +105,6 @@ _CitationRequestRole_Literal = Literal["claim", "rule", "applicability", "except
 _CitationRequestSide_Literal = Literal["head", "old"]
 _ScopeAssessmentApplicability_Literal = Literal[
     "applicable", "inapplicable", "contradicted"
-]
-_CiteResultsItemStatus_Literal = Literal[
-    "matched", "unmatched", "rejected", "unavailable"
 ]
 _ReductionProvenanceReason_Literal = Literal[
     "report_only",
@@ -1232,6 +1230,8 @@ CITATION_REQUEST_SCHEMA = {
     "additionalProperties": False,
 }
 
+CITE_VERIFIER_VERSION = "cite-1"
+
 EXCLUSION_CATEGORIES: list[ExclusionRow] = [
     {
         "category": "pre_existing",
@@ -2097,10 +2097,20 @@ class CiteResultsItemRequest(TypedDict):
     quote: str
 
 
+class CiteResultsItemSource(TypedDict):
+    snapshot_id: str
+    target_kind: str
+    head: str
+    base: str
+    diff_sha256: str
+    verifier_version: str
+
+
 class CiteResultsItem(TypedDict):
     request: CiteResultsItemRequest
-    status: _CiteResultsItemStatus_Literal
+    status: CitationStatus
     detail: str
+    source: CiteResultsItemSource
 
 
 class ScopeFactsItem(TypedDict):

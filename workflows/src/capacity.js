@@ -3,13 +3,15 @@ import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding
 
 import { pythonArgv, shellWord } from './wire.js';
 import { hostPlatformForRoots, trustedScriptPath } from './paths.js';
+import { collectCitations, planCiteBatches } from './citeWire.js';
 
 // Shell quoting preserves each argv word; retry paths stay fixed so outputs
 // overwrite the first attempt.
 export function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   const v = inp.verify || {};
-  const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;
-  const outPath = `${v.outputPathBase || 'phase4-output'}.slice${i}.json`;
+  const stem = inp.citeMode ? 'cite' : 'slice';
+  const inPath = `${v.inputPathBase || 'phase4-input'}.${stem}${i}.json`;
+  const outPath = `${v.outputPathBase || 'phase4-output'}.${stem}${i}.json`;
   const parts = [
     ...pythonArgv(inp.python), inp.pluginRoot ? trustedScriptPath(inp.pluginRoot, TRUSTED_SCRIPT_BASENAMES.verify) : 'scripts/verify_findings.py',
     '--input', inPath,
@@ -19,6 +21,7 @@ export function verifyCommand(inp, i, sliceNonce, inlinePayload) {
     '--head-sha', inp.headShaShort,
     '--base-branch', effectiveVerifyBaseBranch(v.baseBranch),
   ];
+  if (inp.citeMode) parts.push('--mode', 'cite', '--cite-batch', i, '--cite-attempt', inp.citeAttempt ?? STAGE_COSTS.cite.attempts);
   if (v.diffPath) parts.push('--diff-file', v.diffPath);
   if (v.sourceCapture) parts.push('--source-capture', JSON.stringify(v.sourceCapture), '--capture-output-dir', inp.outputDir);
   for (const [key, flag] of [['contextMap', '--context-map'], ['contextFile', '--context-file'], ['targetKind', '--target-kind']]) {
@@ -32,7 +35,9 @@ export function verifyInlineBudget(input = {}) {
   if (hostPlatformForRoots(input) !== 'windows') return VERIFY_INLINE_CHAR_BUDGET;
   const prepared = { ...input, verify: { ...(input.verify || {}),
     baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
-  const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
+  const index = input.citeMode ? 'ffffffff' : 999999999;
+  const nonce = input.citeMode ? `${input.nonce || ''}.cite.${index}.${STAGE_COSTS.cite.attempts}` : `${input.nonce || ''}.${index}.r1`;
+  const overhead = verifyCommand(prepared, index, nonce, '').length;
   return Math.max(0, 32767 - overhead - 2048);
 }
 
@@ -138,11 +143,13 @@ function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
 }
 
-function citeCost(L, findings, challenges) {
-  return ceilDiv(challenges, effectiveBatchSize(L, findings)) * STAGE_COSTS.cite.attempts;
+function citeCost(findings, input, baseBranch) {
+  const records = Array.isArray(findings) ? collectCitations(findings) : [];
+  return planCiteBatches(records, verifyInlineBudget({ ...input, citeMode: true }),
+    baseBranch, hostPlatformForRoots(input)).batches.length * STAGE_COSTS.cite.attempts;
 }
 
-export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
+export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}, includeCite = true) {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
   const findings = findingCount(nFindings);
@@ -150,7 +157,7 @@ export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'mai
   const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
   const validateCalls = validationCost(L, findings);
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
-  const citeCalls = citeCost(L, findings, challengeCalls);
+  const citeCalls = includeCite ? citeCost(nFindings, input, baseBranch) : 0;
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + citeCalls + STAGE_COSTS.writer.attempts;
 }
 
@@ -162,7 +169,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
   const findings = findingCount(nFindings);
   const candidates = new Set(['summarize', 'verify', 'validate', 'challenge']);
 
-  while (worstCaseAgentCount(L, files, nFindings, baseBranch, input) >= AGENT_COUNT_GUARD && candidates.size > 0) {
+  while (worstCaseAgentCount(L, files, nFindings, baseBranch, input, false) >= AGENT_COUNT_GUARD && candidates.size > 0) {
     const summarizeTerm = ceilDiv(files, effectiveBucketSize(L)) + 1;
     if (summarizeTerm > SUMMARIZE_TERM_BOUND && candidates.has('summarize')) {
       // Doubling a raw absent size could lower the effective bucket size and increase fan-out.
@@ -174,9 +181,8 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
     // Compare each term using its full dispatch cost so retrying verify slices receive the same weight as in the guard.
     const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch, input);
     const challengeCount = Math.min(findings, effectiveChallengeCap(L, findings));
-    const citeTerm = citeCost(L, findings, challengeCount);
-    const validateTerm = validationCost(L, findings) + citeTerm;
-    const challengeTerm = challengeCount + citeTerm;
+    const validateTerm = validationCost(L, findings);
+    const challengeTerm = challengeCount;
     const choices = [
       ['validate', validateTerm],
       ['verify', currentVerifyTerm],
@@ -187,7 +193,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
     const [largest] = choices;
     if (largest[0] === 'validate') {
       L.validateBatch = effectiveBatchSize(L, findings) * 2;
-      if (validationCost(L, findings) + citeCost(L, findings, challengeCount) >= validateTerm) candidates.delete('validate');
+      if (validationCost(L, findings) >= validateTerm) candidates.delete('validate');
     } else if (largest[0] === 'verify') {
       L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
       if (verifyTerm(L, nFindings, baseBranch, input) >= currentVerifyTerm) candidates.delete('verify');
@@ -195,7 +201,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
       // Halving the effective cap ensures progress even when the nominal cap exceeds the finding count.
       L.challengeCap = Math.min(challengeCount, Math.max(CHALLENGE_CAP_FLOOR, Math.floor(challengeCount / 2)));
       const next = Math.min(findings, effectiveChallengeCap(L, findings));
-      if (next + citeCost(L, findings, next) >= challengeTerm) candidates.delete('challenge');
+      if (next >= challengeTerm) candidates.delete('challenge');
     }
   }
   return L;

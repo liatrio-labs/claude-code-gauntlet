@@ -10,6 +10,116 @@ import pytest
 from gauntlet import fs, jsjson
 from gauntlet.verify import wire as verify
 
+from tests.support.citations import citation_cli
+
+
+def test_cite_mode_receipts_bind_requests_and_source(tmp_path, monkeypatch, invoke):
+    call, q, capture, root, output = citation_cli(tmp_path, monkeypatch, invoke)
+    requests = [
+        q,
+        {**q, "request_id": "other", "finding_id": "foreign"},
+        {**q, "request_id": "repeat"},
+        {**q, "request_id": "repeat"},
+    ]
+    env, data, token = call(requests, real=True)
+    r = env["receipt"]
+    assert r == {
+        "sha": capture["head"][:8],
+        "n_in": 4,
+        "nonce": "run.12345678.1",
+        "base_branch": "main",
+        "diff_source": {"path": str(output / "diff.patch"), "read": True},
+        "batch_id": "12345678",
+        "attempt": 1,
+        "inline_checksum": jsjson.fnv1a32(token),
+        "input_checksum": jsjson.checksum_or_none(data),
+        "deltas_checksum": jsjson.checksum_or_none(env["result"]["citations"]),
+        "record_proofs": [
+            {"id": row["id"], "checksum": jsjson.checksum_or_none(row)}
+            for row in data["requests"]
+        ],
+    }
+    rows = env["result"]["citations"]
+    assert [row["status"] for row in rows] == [
+        "matched",
+        "rejected",
+        "rejected",
+        "rejected",
+    ]
+    assert rows[0]["request"] == q
+    assert rows[0]["source"] == {
+        "snapshot_id": capture["manifest_sha256"],
+        "target_kind": "branch",
+        "head": capture["head"],
+        "base": capture["base"],
+        "diff_sha256": capture["diff_sha256"],
+        "verifier_version": "cite-1",
+    }
+    changed, changed_data, changed_token = call(
+        [{**q, "quote": "return another_value;"}], batch="87654321", real=True
+    )
+    assert changed["receipt"]["input_checksum"] != r["input_checksum"]
+    assert changed["receipt"]["record_proofs"][0] != r["record_proofs"][0]
+    assert changed["result"]["citations"][0]["status"] == "unmatched"
+    for index, extra in enumerate(
+        [
+            ["--target-kind", "local"],
+            ["--head-sha", "ffff"],
+            ["--source-capture", json.dumps({**capture, "base": "a" * 40})],
+        ]
+    ):
+        bad, _, _ = call([q], batch=f"aaaaaaa{index}", extra=extra, real=True)
+        assert bad["result"]["citations"][0]["status"] == "unavailable"
+    project = Path(__file__).resolve().parents[1]
+    packet = {
+        "nonce": "run",
+        "headShaShort": capture["head"][:8],
+        "repoRoot": root.as_posix(),
+        "pluginRoot": project.as_posix(),
+        "outputDir": output.as_posix(),
+        "python": "python",
+        "verify": {
+            "sourceCapture": capture,
+            "targetKind": "branch",
+            "baseBranch": "main",
+            "diffPath": (output / "diff.patch").as_posix(),
+            "inputPathBase": (output / "in").as_posix(),
+            "outputPathBase": (output / "out").as_posix(),
+        },
+        "findings": [
+            {
+                "id": "F",
+                "skeptical_assessments": [{"stage": "validator", "citations": [q]}],
+            }
+        ],
+    }
+    program = (
+        f"import {{citeStage}} from {json.dumps((project / 'workflows/src/citeStage.js').as_uri())};"
+        f"import {{shellSplit}} from {json.dumps((project / 'workflows/test/helpers/shellWords.js').as_uri())};"
+        "import {execFileSync} from 'node:child_process'; import fs from 'node:fs';"
+        "let s=''; for await (const c of process.stdin) s+=c; const inp=JSON.parse(s); let calls=0;"
+        "const ctx={agent:async (prompt,opts)=>{calls++; if(calls===1)throw new Error('dispatch never launched');"
+        "const [exe,...argv]=shellSplit(prompt.split('\\n').at(-1)); execFileSync(exe,argv,{cwd:inp.repoRoot});"
+        "return JSON.parse(fs.readFileSync(inp.verify.outputPathBase+'.cite'+opts.label.split('-')[1]+'.json','utf8'));}};"
+        "const first=await citeStage(ctx,inp); const resumed=await citeStage(ctx,JSON.parse(JSON.stringify(first)));"
+        "process.stdout.write(JSON.stringify({calls,resumed}));"
+    )
+    integrated = json.loads(
+        subprocess.run(
+            ["node", "--input-type=module", "-e", program],
+            input=json.dumps(packet),
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout
+    )
+    assert integrated["calls"] == 2
+    assert (
+        integrated["resumed"]["findings"][0]["cite_results"][0]["status"] == "matched"
+    )
+
+
 VECTORS = Path(__file__).parent / "fixtures/parity/slice_inline"
 EMPTY = '{"findings":[],"base_branch":"main"}'
 EMPTY_BYTES = b"""{

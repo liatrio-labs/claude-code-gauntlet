@@ -5,31 +5,10 @@ import { firstUnsafeNumber } from './wire.js';
 import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum, stripVerifyFacts } from './verifyWire.js';
 import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
 import { measurementDecisions, traceDecision } from './measurementTrace.js';
+import { VERIFY_RECEIPT_FIELDS, receiptIdentityError, receiptInputFault } from './receiptTrust.js';
 
 // Allow honest failures in the schema to avoid fabricated successes under retry
 // pressure. Deltas avoid retranscribing finding fields.
-const VERIFY_RECEIPT_FIELDS = {
-  sha: { type: 'string' },
-  n_in: { type: 'number' },
-  nonce: { type: 'string' },
-  deltas_checksum: { type: 'string' },
-  input_checksum: { type: 'string' },
-  inline_checksum: { type: 'string' },
-  base_branch: { type: 'string' },
-  diff_source: {
-    type: 'object',
-    properties: { path: { type: ['string', 'null'] }, read: { type: 'boolean' } },
-    required: ['path', 'read'],
-  },
-  record_proofs: {
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: { id: { type: 'string' }, checksum: { type: ['string', 'null'] } },
-      required: ['id', 'checksum'],
-    },
-  },
-};
 const VERIFY_SCHEMA = {
   type: 'object',
   properties: {
@@ -281,15 +260,9 @@ function dispatchableIds(slice) {
 // Trust model: a stale or confused executor. Nonces are argv-visible and proofs
 // travel with data, so these checks cannot authenticate a malicious executor.
 function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBranch, diffPath, expectedInputChecksum, expectedInlineChecksum }) {
-  if (!env || typeof env !== 'object') return { ok: false, reason: 'executor returned no envelope' };
-  if (env.status !== 'ok') return { ok: false, reason: `status=${env.status == null ? 'missing' : env.status}${env.stderr ? ` (${env.stderr})` : ''}` };
+  const identityError = receiptIdentityError(env, { nonce, headShaShort, baseBranch, diffPath });
+  if (identityError) return { ok: false, reason: identityError };
   const r = env.receipt || {};
-  if (r.nonce !== nonce) return { ok: false, reason: `receipt nonce mismatch (got ${r.nonce == null ? 'missing' : r.nonce}, expected ${nonce})` };
-  if (r.sha !== headShaShort) return { ok: false, reason: `receipt sha mismatch (got ${r.sha == null ? 'missing' : r.sha})` };
-  if (r.base_branch !== baseBranch) return { ok: false, reason: 'receipt base_branch mismatch' };
-  if (r.diff_source?.path !== diffPath || r.diff_source?.read !== true) {
-    return { ok: false, reason: 'receipt diff_source mismatch or unreadable' };
-  }
   if (!Array.isArray(r.record_proofs)) return {
     ok: false, reason: 'receipt missing or malformed record_proofs',
     inputFault: r.record_proofs == null ? 'missing' : 'mismatch',
@@ -354,18 +327,7 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
     return { ok: false, reason: `delta content proof mismatch (receipt ${proof}, recomputed ${recomputed}) — the echoed values are not the ones the script wrote` };
   }
 
-  let diagnostic = r.n_in === n ? null : {
-    reason: `receipt n_in mismatch (got ${r.n_in == null ? 'missing' : r.n_in}, expected ${n})`, inputFault: 'mismatch',
-  };
-  for (const [field, expected, missingReason, name, noun] of [
-    ['inline_checksum', expectedInlineChecksum, 'inline token proof missing from receipt', 'token', 'token'],
-    ['input_checksum', expectedInputChecksum, 'input content proof missing from receipt', 'content', 'document'],
-  ]) {
-    if (expected == null) continue;
-    const got = typeof r[field] === 'string' ? r[field].trim() : '';
-    if (!got) diagnostic ??= { reason: missingReason, inputFault: 'missing' };
-    else if (got !== expected) diagnostic ??= { reason: `slice-input ${name} proof mismatch (receipt ${got}, dispatched ${expected}) — the ${noun} the script decoded is not the ${noun} this stage dispatched`, inputFault: 'mismatch' };
-  }
+  const diagnostic = receiptInputFault(r, n, expectedInlineChecksum, expectedInputChecksum);
 
   // An unsupported expected value cannot safely be localised by record proof.
   const wholeSlice = [...expectedProofs.values()].some((proof) => proof === null);

@@ -4,6 +4,7 @@ import { fnv1a32, isPlainObject, RETURN_CHAR_BUDGET } from './wire.js';
 import { applyInjectedProseStrip, applyReplayInjectionScan } from './injection.js';
 import { normalizeFieldNames } from './filterFindings.js';
 import { normalizePipelineStamps } from './registry.js';
+import { sameCiteValue, citeSource } from './citeWire.js';
 
 // Arrays are unusable phase maps: indexing a phase name can otherwise replay an Array prototype method.
 function unwrapCheckpointMap(cp) {
@@ -55,8 +56,8 @@ export function checkpointDiscardGap(topLevelCheckpoints) {
         + 'than a checkpoint artifact -- it carries no phase outputs to resume from; re-run without the '
         + 'checkpoints argument to start the review fresh.'];
     }
-    return ['checkpoint-discarded: the supplied checkpoints value contains none of the eight recognized '
-      + 'phase names (summarize, discover, merge, verify, validate, filter, challenge, report) -- '
+    return ['checkpoint-discarded: the supplied checkpoints value contains none of the recognized '
+      + `phase names (${recognizedPhaseNames.join(', ')}) -- `
       + 'nothing was resumed, exactly as if no checkpoints had been supplied.'];
   }
 
@@ -87,6 +88,9 @@ export const CHECKPOINT_FINDING_LISTS = [
   ['challenge', 'findings', CHECKPOINT_ARRAY_STRICT, false],
   ['challenge', 'unverified', CHECKPOINT_ARRAY_TOLERANT, false],
   ['challenge', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
+  ['cite', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['cite', 'unverified', CHECKPOINT_ARRAY_TOLERANT, false],
+  ['cite', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
 ];
 export const checkpointFindingListsForPhase = (phase) => CHECKPOINT_FINDING_LISTS.filter(([name]) => name === phase);
 const findingListShape = (phase) => Object.fromEntries(checkpointFindingListsForPhase(phase)
@@ -107,6 +111,7 @@ const CHECKPOINT_PHASE_SHAPE_TABLE = {
     ...findingListShape('challenge'),
     gaps: CHECKPOINT_ARRAY_TOLERANT,
   },
+  cite: { ...findingListShape('cite'), gaps: CHECKPOINT_ARRAY_TOLERANT },
   report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
 };
 
@@ -197,6 +202,10 @@ export function checkpointShapeErrors(resolvedCheckpoints) {
       continue; // container failed -- no field inside it can be checked
     }
     const requiredField = CHECKPOINT_REQUIRED_CONTENT_FIELD[phase];
+    if (phase === 'cite' && value.cite_ledger != null && (!isPlainObject(value.cite_ledger)
+      || !Array.isArray(value.cite_ledger.entries) || !Array.isArray(value.cite_ledger.batches))) {
+      violations.push('checkpoint-shape: phases.cite.cite_ledger must contain entries and batches arrays');
+    }
     if (requiredField && value[requiredField] === undefined) {
       violations.push(`checkpoint-shape: phases.${phase} is missing required field ${requiredField}`);
     }
@@ -265,8 +274,8 @@ export function buildResumeCheckpoints(phaseOutputs) {
   return { completed, truncated: true };
 }
 
-// Challenge preserves the delivered findings for resume; other finding arrays need not be duplicated.
-const PERSISTED_RESUME_PHASES = ['challenge'];
+// Challenge findings and the cite attempt ledger preserve completed work without renewing dispatch allowances.
+const PERSISTED_RESUME_PHASES = ['challenge', 'cite'];
 
 function phaseFindingCount(out) {
   if (!out || typeof out !== 'object') return 0;
@@ -288,6 +297,9 @@ export function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) 
   // The validate phase is slimmed away; its bounded evidence must survive successful-run replay.
   const validationAudit = outputs.challenge?.validation_audit || outputs.validate?.audit;
   if (validationAudit && phases.challenge) phases.challenge = { ...phases.challenge, validation_audit: validationAudit };
+  if (phases.cite) phases.cite = { ...phases.cite,
+    ...(validationAudit ? { validation_audit: validationAudit } : {}),
+    eliminated: phases.cite.eliminated || phases.challenge?.eliminated || [] };
   return signCheckpoints({ phases, completed, phaseReached, counts,
     ...(rejected?.length ? { intake_rejected: rejected } : {}) });
 }
@@ -330,6 +342,22 @@ export function normalizePhaseFindings(name, out, replayed, args, decisions = []
   const warnings = [];
   let rejected = 0;
   let pathRewrites = 0;
+  if (name === 'cite') {
+    if (!Object.hasOwn(out, 'cite_ledger')) out.cite_ledger = null;
+    const source = citeSource(args.verify?.sourceCapture);
+    for (const field of ['findings', 'unverified', 'eliminated']) for (const f of out[field] || []) {
+      if (!f || !Array.isArray(f.cite_results)) continue;
+      for (const result of f.cite_results) {
+        if (!result || typeof result !== 'object') continue;
+        if (result.status !== 'matched' || (result.request?.snapshot_id === source.snapshot_id
+          && sameCiteValue(result.source, source))) continue;
+        out.cite_audit = [...(out.cite_audit || []), { finding_id: f.id, result: { ...result } }];
+        result.status = 'unavailable';
+        result.detail = 'snapshot_mismatch';
+        warnings.push('cite_unavailable: replay proof source mismatch');
+      }
+    }
+  }
   for (const [, field] of checkpointFindingListsForPhase(name)) {
     if (!Array.isArray(out[field])) continue;
     for (const finding of out[field]) if (finding && typeof finding === 'object') {

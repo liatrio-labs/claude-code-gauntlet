@@ -127,6 +127,7 @@ scope_assessments is an array, possibly empty. Quotes establish provenance, not 
     },
     "scope_assessments": {
       "type": "array",
+      "maxItems": 5,
       "items": {
         "type": "object",
         "properties": {

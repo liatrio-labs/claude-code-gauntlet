@@ -5,6 +5,7 @@ import {
   verifyInlineBudget, effectiveVerifyBaseBranch, effectiveSliceSize, effectiveChallengeCap, effectiveBucketSize, effectiveBatchSize,
 } from '../src/capacity.js';
 import { STAGE_COSTS } from '../src/registry.js';
+import { collectCitations, planCiteBatches } from '../src/citeWire.js';
 import { encodeSliceInline, projectVerifySliceFinding } from '../src/verifyWire.js';
 import { summarize } from '../src/discover.js';
 import { randomFindings, stageCtx } from './helpers/stageFixtures.js';
@@ -83,9 +84,7 @@ const COUNT_ROWS = [
 ];
 for (const row of COUNT_ROWS) test(`agent count: ${row.name}`, () => {
   const count = Array.isArray(row.findings) ? row.findings.length : row.findings;
-  const cap = Math.min(count, row.limits.challengeCap ?? count);
-  assert.equal(worstCaseAgentCount(row.limits, row.files, row.findings), row.count + Math.ceil(cap / (row.limits.validateBatch || count || 1)) * 2
-    + Math.ceil(count / Math.max(1, Math.ceil((row.limits.validateBatch || count || 1) / 5))));
+  assert.equal(worstCaseAgentCount(row.limits, row.files, row.findings), row.count + Math.ceil(count / Math.max(1, Math.ceil((row.limits.validateBatch || count || 1) / 5))));
 });
 const COARSEN_ROWS = [
   { name: 'huge findings', limits: { summarizeBucketSize: 20, validateBatch: 2, challengeCap: 900, verifySliceSize: 5 },
@@ -126,11 +125,11 @@ for (const row of BRANCH_ROWS) test(`array guard branch: ${row.name}`, () => {
   assert.ok(worstCaseAgentCount(coarse, 0, findings, row.branch, row.input) <= row.count);
 });
 
-test('capacity reserves cite batches and bounded retries', () => {
+test('inactive cite leaves live capacity unchanged', () => {
   assert.equal(STAGE_COSTS.cite.attempts, 2);
   const limits = { summarizeBucketSize: 20, verifySliceSize: 10, validateBatch: 2, challengeCap: 5 };
   assert.equal(worstCaseAgentCount(limits, 0, 0), 10);
-  assert.equal(worstCaseAgentCount(limits, 0, 5), 31);
+  assert.equal(worstCaseAgentCount(limits, 0, 5), 25);
   assert.equal(worstCaseAgentCount({ ...limits, challengeCap: 0 }, 0, 5), 20);
   assert.deepEqual(coarsenLimits({ validateBatch: 1, challengeCap: 400, verifySliceSize: 1 }, 0, 300),
     { validateBatch: 8, challengeCap: 400, verifySliceSize: 2 });
@@ -142,6 +141,25 @@ test('capacity reserves cite batches and bounded retries', () => {
   const large = coarsenLimits({ ...limits, challengeCap: 10000 }, 20000, 10000);
   assert.ok(worstCaseAgentCount(large, 20000, 10000) < 900);
   assert.deepEqual(coarsenLimits(large, 20000, 10000), large);
+});
+
+test('cite reserve includes both skeptical stages and byte bounded retries', () => {
+  const limits = { verifySliceSize: 10, validateBatch: 1, challengeCap: 0 };
+  const request = { finding_id: 'F', stage: 'validator', request_id: 'claim', role: 'claim',
+    snapshot_id: 'snapshot', file: 'source', side: 'head', line_start: 1, line_end: 1, quote: 'return source_value;' };
+  const finding = { id: 'F', skeptical_assessments: [{ stage: 'validator', verdict: 'refuted', citations: [request] }] };
+  const empty = [{ ...finding, skeptical_assessments: [] }];
+  const base = worstCaseAgentCount(limits, 0, empty);
+  assert.equal(worstCaseAgentCount(limits, 0, [finding]) - base, 2);
+  finding.skeptical_assessments.push({ stage: 'challenger', citations: [{ ...request, stage: 'challenger' }] });
+  assert.equal(worstCaseAgentCount(limits, 0, [finding]) - base, 2);
+  assert.equal(worstCaseAgentCount({ ...limits, validateBatch: 2 }, 0, [finding])
+    - worstCaseAgentCount({ ...limits, validateBatch: 2 }, 0, empty), 2);
+  const records = collectCitations([finding]);
+  const budget = Math.max(...records.map((r) => encodeSliceInline({ requests: [r], base_branch: 'main' }).length));
+  assert.equal(planCiteBatches(records, budget, 'main').batches.length, 2);
+  const huge = { ...records[0], request: { ...request, file: 'é'.repeat(10000) } };
+  assert.deepEqual(planCiteBatches([huge, records[1]], 50000, 'main').oversize, [huge]);
 });
 const EMPTY_BRANCH_ROWS = [undefined, null, '', 'main'];
 for (const [index, branch] of EMPTY_BRANCH_ROWS.entries()) test(`empty branch normalization: ${index}`, () => {

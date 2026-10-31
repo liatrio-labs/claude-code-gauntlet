@@ -79,7 +79,7 @@ test('skeptical descriptors derive verdict and scope variants', async () => {
   assert.deepEqual(normalized.skeptical_assessments, [proof]);
   const unsafe = normalizeFindingPaths([{ id: 'F', file: 'src/service', skeptical_assessments: [{ ...proof,
     citations: [request('validator', { file: '../escape' })] }] }], '/repo');
-  assert.equal(unsafe.valid[0].skeptical_assessments[0].citations.length, 0);
+  assert.equal(unsafe.valid[0].skeptical_assessments[0].citations[0].file, '../escape');
   assert.ok(unsafe.warnings.length);
   const forged = Object.fromEntries(owned.map((key) => [key, 'forged']));
   const discovered = await discover({ parallel: async (thunks) => Promise.all(thunks.map((fn) => fn())),
