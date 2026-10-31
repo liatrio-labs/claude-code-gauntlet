@@ -2414,6 +2414,18 @@ function hasPresentDefect(finding, entries) {
   return !!promotion && matchAssessments(finding, entries)
     .some((entry) => entry.predicate === promotion.predicate && entry.status === 'confirmed');
 }
+function validationRejections(finding, validation) {
+  if (!validation) return ['missing_entry'];
+  const reasons = [];
+  if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
+  if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
+  const assessments = matchAssessments(finding, validation.admission_assessments);
+  const assessed = new Set(assessments.map((entry) => entry.predicate));
+  for (const predicate of requiredAssessments(finding, validation.policy_subject, hasPresentDefect(finding, assessments))) {
+    if (!assessed.has(predicate)) reasons.push(`missing_assessment:${predicate}`);
+  }
+  return reasons;
+}
 const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
   'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
   'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
@@ -2540,8 +2552,8 @@ function admissionContext(finding, validation) {
   const subjects = validation ? [validation.policy_subject] : Object.keys(original.row?.policySubjects || {});
   const requirements = Object.fromEntries(subjects.map((subject) =>
     [subject, requiredAssessments(finding, subject, promoted)]));
-  const missing = validation ? requiredAssessments(finding, validation.policy_subject, promoted).filter((predicate) =>
-    !matchAssessments(finding, validation.admission_assessments).some((entry) => entry.predicate === predicate)) : null;
+  const missing = validation ? validationRejections(finding, validation)
+    .filter((reason) => reason.startsWith('missing_assessment:')).map((reason) => reason.slice('missing_assessment:'.length)) : null;
   const predicates = [...new Set(missing || [...Object.values(requirements).flat(), ...RIGHT_ELIGIBILITY.body.fixTask])]
     .filter((predicate) => ADMISSION_PREDICATES[predicate]?.references);
   return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
@@ -2555,22 +2567,6 @@ function admissionContext(finding, validation) {
 }
 // --- applyValidations.js ---
 const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
-function validationRejections(finding, validation) {
-  if (!validation) return ['missing_entry'];
-  const reasons = [];
-  if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
-  if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
-  const assessments = Array.isArray(validation.admission_assessments) ? validation.admission_assessments : [];
-  for (const predicate of requiredAssessments(finding, validation.policy_subject, hasPresentDefect(finding, assessments))) {
-    const entries = assessments.filter((entry) => entry?.predicate === predicate);
-    if (entries.length !== 1
-      || !VALIDATION_RETURN_PROPERTIES.admission_assessments.items.properties.status.enum.includes(entries[0].status)
-      || !Array.isArray(entries[0].references) || entries[0].references.some((key) => typeof key !== 'string')) {
-      reasons.push(`missing_assessment:${predicate}`);
-    }
-  }
-  return reasons;
-}
 function applyValidations(findings, validations) {
   const findingById = new Map();
   for (const finding of findings) {
