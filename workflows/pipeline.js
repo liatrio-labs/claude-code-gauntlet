@@ -2812,6 +2812,18 @@ function hasPresentDefect(finding, entries) {
   return !!promotion && matchAssessments(finding, entries)
     .some((entry) => entry.predicate === promotion.predicate && entry.status === 'confirmed');
 }
+function validationRejections(finding, validation) {
+  if (!validation) return ['missing_entry'];
+  const reasons = [];
+  if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
+  if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
+  const assessments = matchAssessments(finding, validation.admission_assessments);
+  const assessed = new Set(assessments.map((entry) => entry.predicate));
+  for (const predicate of requiredAssessments(finding, validation.policy_subject, hasPresentDefect(finding, assessments))) {
+    if (!assessed.has(predicate)) reasons.push(`missing_assessment:${predicate}`);
+  }
+  return reasons;
+}
 const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
   'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
   'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
@@ -2952,26 +2964,6 @@ function admissionContext(f, score) {
     fix: f.suggestion || f.suggested_fix_code };
 }
 // --- applyValidations.js ---
-function validationRejections(finding, validation, semantic = true) {
-  if (!validation) return ['missing_entry'];
-  const reasons = [];
-  if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
-  if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
-  const assessments = Array.isArray(validation.admission_assessments) ? validation.admission_assessments : [];
-  for (const predicate of requiredAssessments(finding, validation.policy_subject, hasPresentDefect(finding, assessments))) {
-    const entries = assessments.filter((entry) => entry?.predicate === predicate);
-    if (entries.length !== 1
-      || !VALIDATION_RETURN_PROPERTIES.admission_assessments.items.properties.status.enum.includes(entries[0].status)
-      || !Array.isArray(entries[0].references) || entries[0].references.some((key) => typeof key !== 'string')) {
-      reasons.push(`missing_assessment:${predicate}`);
-    }
-  }
-  if (semantic) reasons.push(...assessmentGaps(validatorAssessment(finding, validation)).semanticErrors
-    .filter((error) => !['$.confidence', '$.policy_subject'].includes(error)
-      && !(error.startsWith('$.admission_assessments') && reasons.some((reason) => reason.startsWith('missing_assessment:'))))
-    .map((error) => `skeptical:${error}`));
-  return reasons;
-}
 function validatorAssessment(finding, validation) {
   const { id: _id, ...raw } = validation || {};
   const normalized = { ...raw, confidence: coerceInt(raw.confidence, INT_POLICY.validation) };
@@ -5562,9 +5554,15 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
 const VALIDATE_ITEM = SKEPTICAL_CONTRACTS.validator.dispatchSchema;
 const VALIDATE_RETURN = Object.entries(VALIDATE_ITEM.properties)
   .map(([name, { enum: values }]) => name + (values ? ` (${values.join(' | ')})` : '')).join(', ');
+function validatorRejections(finding, validation) {
+  const reasons = validationRejections(finding, validation);
+  if (validation) reasons.push(...assessmentGaps(validatorAssessment(finding, validation)).semanticErrors
+    .map((error) => `skeptical:${error}`));
+  return reasons;
+}
 function admissionOnlyRetry(batch, accepted) {
   return batch.every((f) => accepted.has(f.id)
-    && validationRejections(f, accepted.get(f.id)).every((reason) => reason.startsWith('missing_assessment:')));
+    && validatorRejections(f, accepted.get(f.id)).every((reason) => reason.startsWith('missing_assessment:')));
 }
 function validateSchema(batch, accepted) {
   const onlyAdmission = admissionOnlyRetry(batch, accepted);
@@ -5613,21 +5611,20 @@ async function validateStage(ctx, input) {
       const matches = entries.filter((entry) => entry.id === f.id);
       if (!matches.length) rejections.push({ id: String(f.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
-        const prior = accepted.get(f.id);
-        let merged = entry;
-        if (prior && label.startsWith('validate-retry-')) {
-          const missing = validationRejections(f, prior, false);
-          const field = 'admission_assessments';
-          const updates = (Array.isArray(entry[field]) ? entry[field] : [])
-            .filter((a) => missing.includes(`missing_assessment:${a?.predicate}`));
-          merged = { ...prior, [field]: [...(Array.isArray(prior[field]) ? prior[field] : [])
-            .filter((a) => !updates.some((u) => u?.predicate === a?.predicate)), ...updates] };
-          if (assessmentGaps(validatorAssessment(f, prior)).semanticErrors.length)
-            for (const key of ['stage', 'verdict', 'citations', 'missing_evidence', 'scope_assessments'])
-              if (Object.hasOwn(entry, key)) merged[key] = entry[key];
-        }
+        const previous = accepted.get(f.id);
+        const missing = previous ? validationRejections(f, previous)
+          .filter((reason) => reason.startsWith('missing_assessment:')).map((reason) => reason.slice('missing_assessment:'.length)) : [];
+        const replacements = (Array.isArray(entry.admission_assessments) ? entry.admission_assessments : [])
+          .filter((assessment) => missing.includes(assessment?.predicate));
+        const semantic = previous && assessmentGaps(validatorAssessment(f, previous)).semanticErrors.length
+          ? Object.fromEntries(['stage', 'verdict', 'citations', 'missing_evidence', 'scope_assessments']
+            .filter((key) => Object.hasOwn(entry, key)).map((key) => [key, entry[key]])) : {};
+        const merged = previous && label.startsWith('validate-retry-') ? { ...previous,
+          ...semantic,
+          admission_assessments: [...(Array.isArray(previous.admission_assessments) ? previous.admission_assessments : []).filter((assessment) =>
+            !replacements.some((replacement) => replacement?.predicate === assessment?.predicate)), ...replacements] } : entry;
         assessments.set(f.id, merged);
-        const reasons = validationRejections(f, merged);
+        const reasons = validatorRejections(f, merged);
         if (reasons.length) rejections.push({ id: String(f.id).slice(0, 128), reasons });
         if (!reasons.some((reason) => ['invalid_confidence', 'invalid_policy_subject', 'missing_entry'].includes(reason))) accepted.set(f.id, merged);
       }
@@ -5638,7 +5635,7 @@ async function validateStage(ctx, input) {
   };
   const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
   const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
-  const pending = findings.filter((f) => validationRejections(f, accepted.get(f.id)).length);
+  const pending = findings.filter((f) => validatorRejections(f, accepted.get(f.id)).length);
   if (pending.length) {
     const retries = [];
     const retrySize = effectiveValidationRetrySize(limits, findings.length);
@@ -5665,7 +5662,7 @@ async function validateStage(ctx, input) {
   for (const f of findings) {
     const score = accepted.get(f.id);
     f.validation = score ? 'validated' : 'skipped';
-    if (score) incomplete += Number(validationRejections(f, score).length > 0);
+    if (score) incomplete += Number(validatorRejections(f, score).length > 0);
     else {
       skipped += 1;
       if (assessments.has(f.id)) f.skeptical_assessments = [validatorAssessment(f, assessments.get(f.id))];
