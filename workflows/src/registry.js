@@ -55,6 +55,7 @@ export const CODE_OWNED_HEADINGS = deepFreeze([
   '## Summary',
   '## Change Context',
   '## Findings',
+  '## Findings held back by admission',
   '## Unverified / pipeline-degraded findings',
   '## Eliminated findings',
   '## Review Dimensions Summary',
@@ -73,12 +74,14 @@ export const LOCATION_STATUSES = deepFreeze(Object.keys(LOCATION_RIGHTS));
 
 export const DISPOSITION_RIGHTS = deepFreeze({
   deliver: { inline: true, body: true, report: 'finding', fixTask: true, patch: true, fence: true, sourceLink: true },
-  body: { inline: false, body: true, report: 'finding', fixTask: false, patch: false, fence: false, sourceLink: true },
+  body: { inline: false, body: true, report: 'finding', fixTask: true, patch: false, fence: false, sourceLink: true },
   held_back: { inline: false, body: false, report: 'unverified', fixTask: false, patch: false, fence: false, sourceLink: false },
   report_only: { inline: false, body: false, report: 'finding', fixTask: false, patch: false, fence: false, sourceLink: false },
   eliminate: { inline: false, body: false, report: 'eliminated', fixTask: false, patch: false, fence: false, sourceLink: false },
 });
 export const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
+export const RIGHT_ELIGIBILITY = deepFreeze({ body: { fixTask: ['current_defect', 'current_reachability', 'confirmed_location'] } });
+export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2 }, validate: { retryBatchDivisor: 5 }, cite: { attempts: 2 }, writer: { attempts: 2 } });
 
 const SOURCE_REFERENCE = {
   type: 'object', $comment: 'source-reference', properties: {
@@ -120,14 +123,14 @@ export const DISCOVERY_FINDING_PROP_TYPES = deepFreeze(Object.fromEntries(Object
     return [name, wireSchema];
   })));
 
-export const VALIDATION_RETURN_PROPERTIES = deepFreeze({
+const RECURRENCE_RETURN_PROPERTIES = {
   site_confirmations: { type: 'array', items: {
     type: 'object', properties: {
       file: { type: 'string' }, line_start: { type: 'integer', minimum: 1 },
       line_end: { type: 'integer', minimum: 1 }, confirmed: { type: 'boolean' },
     }, required: ['file', 'line_start', 'line_end', 'confirmed'], additionalProperties: false,
   } },
-});
+};
 
 export const RESOLVED_SITE_SCHEMA = deepFreeze({ type: 'array', items: {
   ...FINDING_PROP_TYPES.sites.items,
@@ -157,7 +160,7 @@ const POLICY_SUBJECTS = {
 };
 
 const QUALITY_ADMISSION = {
-  field: 'quality_basis', kinds: {
+  field: 'quality_basis', promotion: { predicate: 'present_defect', kind: 'current_correctness' }, kinds: {
     current_correctness: { description: 'A demonstrated present production defect.', required: [], predicates: ['present_defect'], phase: 'semantic', core: true, tier: 'main' },
     duplication: { description: 'Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior.', required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
     simpler_equivalent: { description: 'A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths.', required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
@@ -176,7 +179,7 @@ export const DIMENSIONS = deepFreeze([
     schemaExtra: { affected_consumers: { type: 'array', description: 'Repository paths of consumers affected by the change.', items: { type: 'string', $comment: 'repo-path' } } }, requiredExtra: ['affected_consumers'],
       requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'test_coverage', agentType: AGENT_TYPE_TEST_ANALYZER, conditionalFlag: DEEP,
-    defaultDisposition: 'held_back', defaultTier: 'main', admission: { field: 'test_kind', kinds: {
+    defaultDisposition: 'held_back', defaultTier: 'main', admission: { field: 'test_kind', promotion: { predicate: 'present_defect', kind: 'production_defect', stamp: 'effective_test_kind' }, kinds: {
       defective_test: { required: [], predicates: ['pr_owned_test', 'confirmed_test_defect', 'test_diff_site_for_inline'], phase: 'semantic', tier: 'main' },
       critical_gap: { required: ['criticality', 'failure_scenario', 'searched_paths', 'candidate_tests'], optional: ['production_element'], predicates: ['criticality_at_least_8', 'resolved_production_element', 'complete_searches', 'complete_behavioral_absence'], phase: 'semantic', tier: 'main' },
       production_defect: { required: [], predicates: ['present_defect'], phase: 'semantic', dimension: 'bug', core: true, tier: 'main' },
@@ -254,6 +257,50 @@ export const VERIFY_FACT_PROPERTIES = deepFreeze({
   })), additionalProperties: false },
 });
 
+export const ADMISSION_PREDICATES = deepFreeze({
+  pr_owned_test: { fact: 'pr_owned_test' },
+  confirmed_test_defect: { references: ['primary'], description: 'Actual incorrect assertion, ineffective mock, missing wait, isolation failure or other broken/noisy changed test.' },
+  test_diff_site_for_inline: { placement: true },
+  criticality_at_least_8: { fact: 'criticality' },
+  resolved_production_element: { references: ['production_element'], description: 'The resolved element is production behavior; directory names do not establish this.' },
+  complete_searches: { fact: 'searches', references: ['searched_paths', 'candidate_tests'], description: 'Completed coverage investigation inspecting inputs, assertions, helpers and indirect integration coverage, including searches with no candidates.' },
+  complete_behavioral_absence: { references: ['production_element', 'searched_paths', 'candidate_tests'], description: 'The entire named behavior has no effective coverage; an extra branch/case or indirect surviving coverage rejects absence.' },
+  present_defect: { references: ['primary'], description: 'A present production correctness failure.' },
+  resolved_duplicate: { fact: 'duplicate_of' },
+  confirmed_duplication: { references: ['primary', 'duplicate_of'], description: 'The resolved source duplicates the same behavior.' },
+  concrete_equivalent: { fact: 'equivalent', references: ['primary'], description: 'A concrete equivalent fix exists.' },
+  behavior_preserved: { references: ['primary'], description: 'Equivalent return values, side effects and error paths.' },
+  resolved_precedent: { fact: 'precedent' },
+  precedent_not_added: { fact: 'precedent_not_added' },
+  applicable: { references: ['primary', 'precedent'], description: 'The existing repository precedent applies here.' },
+  current_defect: { references: ['primary'], description: 'A current code defect, independently of coverage absence or quality preference.' },
+  current_reachability: { fact: 'reachability' },
+  confirmed_location: { fact: 'location' },
+});
+const ASSESSMENT = { type: 'object', properties: {
+  predicate: { type: 'string', enum: Object.keys(ADMISSION_PREDICATES).filter((key) => ADMISSION_PREDICATES[key].references) },
+  status: { type: 'string', enum: ['confirmed', 'rejected', 'unresolved'] },
+  references: { type: 'array', items: { type: 'string' } },
+}, required: ['predicate', 'status', 'references'], additionalProperties: false };
+export const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES,
+  policy_subject: { type: 'string', enum: Object.keys(POLICY_SUBJECTS) },
+  admission_assessments: { type: 'array', items: ASSESSMENT },
+});
+export const ADMISSION_STAMP_PROPERTIES = deepFreeze({
+  policy_subject: VALIDATION_RETURN_PROPERTIES.policy_subject,
+  admission_assessments: VALIDATION_RETURN_PROPERTIES.admission_assessments,
+  admission: { type: 'object', properties: {
+    version: { type: 'integer', enum: [1] }, input_proof: { type: 'string' },
+    input_fields: { type: 'array', items: { type: 'string' } },
+    status: { type: 'string', enum: ['admitted', 'report_only', 'held_back'] },
+    reasons: { type: 'array', items: { type: 'object', properties: {
+      predicate: { type: 'string' }, status: { type: 'string', enum: ['report_only', 'held_back'] },
+    }, required: ['predicate', 'status'], additionalProperties: false } },
+    kind: { type: 'string' }, core: { type: 'boolean' }, tier: { type: 'string', enum: ['main', 'suggestion'] },
+    inline_eligible: { type: 'boolean' },
+  }, required: ['version', 'input_proof', 'input_fields', 'status', 'reasons', 'kind', 'core', 'tier', 'inline_eligible'], additionalProperties: false },
+  body_fix_task_eligible: { type: 'boolean' },
+});
 export const VERIFY_FACT_KEYS = deepFreeze(Object.keys(VERIFY_FACT_PROPERTIES));
 
 export function dimensionRow(dimension) {
@@ -294,9 +341,10 @@ export function producerRow(finding) {
   return rows.length === 1 && rows[0].admission ? rows[0] : dimensionRow(finding.dimension);
 }
 
-export function findingPolicy(finding) {
+export function findingPolicy(finding, effective = true) {
   const original = dimensionRow(finding.origin_dimension);
-  const promotion = original?.admission?.kinds[finding[original.admission.field]]?.dimension;
+  const promotion = original?.admission?.kinds[finding[original.admission.field]]?.dimension
+    || original?.admission?.kinds[original.admission.promotion?.kind]?.dimension;
   const producer = DIMENSIONS.filter((candidate) => candidate.agentType.split(':').pop() === finding.agent);
   const typedProducer = producer.length === 1 && producer[0].admission ? producer[0] : null;
   const row = typedProducer
@@ -304,16 +352,41 @@ export function findingPolicy(finding) {
     || (original && (original.dimension === finding.dimension || promotion === finding.dimension)
       ? original : null)
     || dimensionRow(finding.dimension) || producer.find((candidate) => candidate.agentFallback) || producer[0];
-  const kind = row?.admission?.kinds[finding[row.admission.field]];
-  return { row, kind, core: kind?.core ?? row?.core ?? false,
-    tier: kind?.tier ?? row?.defaultTier, defaultDisposition: kind?.defaultDisposition ?? row?.defaultDisposition };
+  const subject = row?.policySubjects[finding.policy_subject];
+  const stampedKind = effective && finding.admission?.status === 'admitted' ? finding.admission.kind : undefined;
+  const selected = stampedKind && stampedKind === row?.admission?.promotion?.kind ? row
+    : subject?.dimension ? dimensionRow(subject.dimension) : row;
+  const kind = selected?.admission?.kinds[stampedKind || subject?.kind || finding[selected.admission.field]];
+  return { row: selected, kind, core: kind?.core ?? selected?.core ?? false,
+    tier: kind?.tier ?? selected?.defaultTier, defaultDisposition: kind?.defaultDisposition ?? selected?.defaultDisposition };
+}
+
+// Both the return schema and runtime acceptance derive semantic requirements from the same rows.
+export function admissionPolicy(finding, policySubject, promoted = false) {
+  const original = findingPolicy({ ...finding, policy_subject: undefined }, false);
+  const promotion = original.row?.admission?.promotion;
+  const terminal = !promoted && original.kind?.defaultDisposition === 'report_only';
+  const policyFinding = promoted && promotion
+    ? { ...finding, policy_subject: 'ordinary', [original.row.admission.field]: promotion.kind }
+    : { ...finding, policy_subject: policySubject };
+  return { original, promotion, terminal, policyFinding,
+    ...(terminal ? original : findingPolicy(policyFinding, false)) };
+}
+
+export function requiredAssessments(finding, policySubject, promoted = false) {
+  const { promotion, kind } = admissionPolicy(finding, policySubject, promoted);
+  return [...new Set([promotion?.predicate, ...(kind?.predicates || [])])]
+    .filter((predicate) => ADMISSION_PREDICATES[predicate]?.references);
 }
 
 export function normalizePipelineStamps(finding) {
-  const { row } = findingPolicy(finding);
+  const { row } = findingPolicy({ ...finding, policy_subject: undefined });
   if (finding.origin_dimension !== row?.dimension) delete finding.origin_dimension;
-  const subjects = Object.values(row?.policySubjects || {});
-  if (!subjects.some((subject) => subject.stamp === 'effective_test_kind' && subject.kind === finding.effective_test_kind)) {
+  const subject = row?.policySubjects[finding.policy_subject];
+  const promotion = row?.admission?.promotion;
+  if ((subject?.stamp !== 'effective_test_kind' || subject.kind !== finding.effective_test_kind)
+    && !(promotion?.stamp === 'effective_test_kind' && promotion.kind === finding.effective_test_kind
+      && finding.admission?.kind === promotion.kind && finding.admission.status === 'admitted')) {
     delete finding.effective_test_kind;
   }
 }
@@ -325,10 +398,11 @@ export const FINDING_PATH_ARRAY_FIELDS = deepFreeze(Object.entries(FINDING_PATH_
   .filter(([, schema]) => schema.type === 'array' && schema.items.$comment === 'repo-path').map(([key]) => key));
 
 // Identifiers must not collide; structural paths and suggestion code retain their own semantics.
-export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'delivery_group', 'file', ...Object.keys(FINDING_PATH_DESCRIPTORS), 'resolved_references', 'site_requests', 'resolved_sites', 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
+export const FINDING_REWRITE_EXEMPT_FIELDS = deepFreeze(['id', 'consolidation_key', 'consolidation_primary', 'delivery_group', 'file', ...Object.keys(FINDING_PATH_DESCRIPTORS), ...Object.keys(ADMISSION_STAMP_PROPERTIES), 'resolved_references', 'site_requests', 'resolved_sites', 'suggested_fix_code', 'removed_test', 'anchor', 'claimed_line_start', 'claimed_line_end']);
 
 // Keep pipeline stamp names code-owned so disclosure can use a safe other fallback for unknown fields.
 export const PIPELINE_FINDING_FIELDS = deepFreeze([
+  ...Object.keys(ADMISSION_STAMP_PROPERTIES),
   'origin_dimension', 'effective_test_kind', 'reference_diagnostics',
   ...VERIFY_FACT_KEYS,
   'trace_id', 'discovery_agent', 'discovery_dimension',

@@ -285,6 +285,9 @@ export function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) 
   const counts = {};
   for (const [name, out] of Object.entries(outputs)) counts[name] = phaseFindingCount(out);
   const rejected = outputs.merge?.rejected || outputs.discover?.rejected;
+  // The validate phase is slimmed away; its bounded evidence must survive successful-run replay.
+  const validationAudit = outputs.challenge?.validation_audit || outputs.validate?.audit;
+  if (validationAudit && phases.challenge) phases.challenge = { ...phases.challenge, validation_audit: validationAudit };
   return signCheckpoints({ phases, completed, phaseReached, counts,
     ...(rejected?.length ? { intake_rejected: rejected } : {}) });
 }

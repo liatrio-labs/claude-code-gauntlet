@@ -21,6 +21,145 @@ PATCH = (
     "@@ -6,4 +6,5 @@\n source_6\n+    first_value = compute_value()\n"
     "-removed_value()\n+    return first_value\n source_9\n source_10\n"
 )
+
+
+def test_test_and_quality_admission_boundaries(tmp_path, monkeypatch):
+    from tests.support.git_diff import git, init_git_repo
+
+    init_git_repo(tmp_path, monkeypatch)
+    for name, text in {
+        "engine": "return old_value;\n",
+        "tests/check": "assert old_value;\n",
+        "tests/old-check": "assert untouched_value;\n",
+        "tests/assertion": "assert compute_value() == expected_value;\n",
+        "tests/mock": "mock_dependency.return_value = fixture_value;\nassert worker_result() == fixture_value;\n",
+        "tests/wait": "await finish_operation();\nassert completed_state;\n",
+        "precedent": "return existing_value;\n",
+    }.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "base")
+    base = git(tmp_path, "rev-parse", "HEAD")
+    for name, text in {
+        "engine": "return current_value;\n",
+        "tests/check": "assert current_value;\n",
+        "tests/assertion": "assert compute_value() == wrong_value;\n",
+        "tests/mock": "unused_mock.return_value = fixture_value;\nassert worker_result() == fixture_value;\n",
+        "tests/wait": "finish_operation();\nassert completed_state;\n",
+        "peer": "return new_value;\n",
+    }.items():
+        (tmp_path / name).write_text(text, encoding="utf-8", newline="")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "head")
+    sha = git(tmp_path, "rev-parse", "HEAD")
+    (tmp_path / "saved.patch").write_text(
+        git(tmp_path, "diff", base, sha), encoding="utf-8", newline=""
+    )
+    script = r"""
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
+import {pathToFileURL} from 'node:url';
+const [root, work, sha, base] = process.argv.slice(1);
+const load = n => import(pathToFileURL(`${root}/workflows/src/${n}.js`));
+const {verifyStage} = await load('verifyStage');
+const {validateStage, challengeStage} = await load('reviewStages');
+const {evaluateAdmission, admissionRequests, hasAdmission} = await load('admission');
+const {requiredAssessments} = await load('registry');
+const {disposeFindings} = await load('dispose');
+const {deliveryAllows} = await load('location');
+const {shellSplit} = await import(pathToFileURL(`${root}/workflows/test/helpers/shellWords.js`));
+const ref = (file,anchor) => ({file,anchor,line_start:1,line_end:1});
+const primary = ref('engine','return current_value;');
+const test = ref('tests/check','assert current_value;');
+const precedent = ref('precedent','return existing_value;');
+const gap = {test_kind:'critical_gap',criticality:8,failure_scenario:'Complete behavior failure',
+ searched_paths:['tests'],candidate_tests:[{...test,input:'current_value',assertion:'current_value'}],production_element:primary};
+const rows = [
+ ['assertion','test_coverage',{...ref('tests/assertion','assert compute_value() == wrong_value;'),test_kind:'defective_test'},['confirmed_test_defect'],'admitted'],
+ ['mock','test_coverage',{...ref('tests/mock','unused_mock.return_value = fixture_value;'),test_kind:'defective_test'},['confirmed_test_defect'],'admitted'],
+ ['wait','test_coverage',{...ref('tests/wait','finish_operation();'),test_kind:'defective_test'},['confirmed_test_defect'],'admitted'],
+ ['sound-test','test_coverage',{...test,test_kind:'defective_test'},['confirmed_test_defect'],'report_only','ordinary','confirmed_test_defect'],
+ ['source-test','test_coverage',{test_kind:'defective_test'},['confirmed_test_defect'],'report_only'],
+ ['gap','test_coverage',gap,['resolved_production_element','complete_searches','complete_behavioral_absence'],'admitted'],
+ ['production','test_coverage',{test_kind:'production_defect'},['present_defect'],'admitted'],
+ ['additional','test_coverage',{test_kind:'additional_case'},[],'report_only'],
+ ['terminal-coverage','test_coverage',{...gap,test_kind:'additional_case'},['resolved_production_element','complete_searches','complete_behavioral_absence'],'report_only','coverage'],
+ ['correctness','type_design',{quality_basis:'current_correctness'},['present_defect'],'admitted'],
+ ['duplication','simplification',{quality_basis:'duplication',duplicate_of:precedent},['confirmed_duplication'],'admitted'],
+ ['equivalent','type_design',{quality_basis:'simpler_equivalent',behavior_preserved:'Same behavior',suggestion:'Return the same value directly'},['concrete_equivalent','behavior_preserved'],'admitted'],
+ ['idiom','simplification',{quality_basis:'stack_idiom',precedent},['applicable'],'admitted'],
+ ['other','type_design',{quality_basis:'other'},[],'report_only'],
+ ['terminal-test','type_design',{...test,quality_basis:'other'},['confirmed_test_defect'],'report_only','test_defect'],
+ ['classification','bug',{},[],'held_back','unresolved'],
+ ['cross-test','bug',{...test,effective_test_kind:'production_defect'},['confirmed_test_defect'],'admitted','test_defect'],
+ ['cross-gap','bug',gap,['resolved_production_element','complete_searches','complete_behavioral_absence'],'admitted','coverage'],
+ ['convention','convention',{...test,claude_md_rule:'Applicable rule'},[],'admitted'],
+ ['seven','test_coverage',{...gap,criticality:7},['resolved_production_element','complete_searches','complete_behavioral_absence'],'report_only'],
+ ['partial','test_coverage',gap,['resolved_production_element','complete_searches','complete_behavioral_absence'],'report_only','ordinary','complete_behavioral_absence'],
+ ['non-production','test_coverage',gap,['resolved_production_element','complete_searches','complete_behavioral_absence'],'report_only','ordinary','resolved_production_element'],
+ ['incomplete-search','test_coverage',gap,['resolved_production_element','complete_searches','complete_behavioral_absence'],'report_only','ordinary','complete_searches'],
+ ['indirect','test_coverage',gap,['resolved_production_element','complete_searches','complete_behavioral_absence'],'report_only','ordinary','complete_behavioral_absence'],
+ ['new-idiom','type_design',{quality_basis:'stack_idiom',precedent:ref('peer','return new_value;')},['applicable'],'report_only'],
+ ['missing-idiom','type_design',{quality_basis:'stack_idiom'},['applicable'],'report_only'],
+ ['bad-idiom','type_design',{quality_basis:'stack_idiom',precedent:ref('absent','unknown')},['applicable'],'held_back'],
+ ['missing-duplicate','simplification',{quality_basis:'duplication'},['confirmed_duplication'],'report_only'],
+ ['distinct-source','simplification',{quality_basis:'duplication',duplicate_of:precedent},['confirmed_duplication'],'report_only','ordinary','confirmed_duplication'],
+ ['inapplicable','type_design',{quality_basis:'stack_idiom',precedent},['applicable'],'report_only','ordinary','applicable'],
+ ['bad-duplicate','simplification',{quality_basis:'duplication',duplicate_of:ref('absent','unknown')},['confirmed_duplication'],'held_back'],
+ ['no-fix','simplification',{quality_basis:'simpler_equivalent',behavior_preserved:'same'},['concrete_equivalent','behavior_preserved'],'report_only'],
+ ['changed-behavior','simplification',{quality_basis:'simpler_equivalent',suggestion:'Return directly',behavior_preserved:'same'},['concrete_equivalent','behavior_preserved'],'report_only','ordinary','behavior_preserved'],
+ ['not-equivalent','simplification',{quality_basis:'simpler_equivalent',suggestion:'Return directly',behavior_preserved:'same'},['concrete_equivalent','behavior_preserved'],'report_only','ordinary','concrete_equivalent'],
+ ['no-production','bug',{...gap,production_element:undefined},['complete_searches'],'report_only','coverage'],
+ ['bad-production','bug',{...gap,production_element:ref('absent','unknown')},['resolved_production_element','complete_searches','complete_behavioral_absence'],'held_back','coverage'],
+ ['unfinished-search','test_coverage',{...gap,searched_paths:[]},['resolved_production_element','complete_searches','complete_behavioral_absence'],'held_back'],
+ ['unread-search','test_coverage',{...gap,searched_paths:['absent']},['resolved_production_element','complete_searches','complete_behavioral_absence'],'held_back'],
+ ['bad-candidate','test_coverage',{...gap,candidate_tests:[{...test,anchor:'wrong',input:'input',assertion:'assertion'}]},['resolved_production_element','complete_searches','complete_behavioral_absence'],'held_back'],
+ ['missing-assessment','test_coverage',{test_kind:'production_defect'},[],'held_back'],
+ ['rejected','type_design',{quality_basis:'current_correctness'},['present_defect'],'report_only','ordinary','present_defect'],
+ ['unresolved','type_design',{quality_basis:'current_correctness'},['present_defect'],'held_back','ordinary','present_defect','unresolved'],
+ ['foreign','type_design',{quality_basis:'current_correctness'},['present_defect'],'held_back','ordinary',null,'foreign'],
+ ['duplicate','type_design',{quality_basis:'current_correctness'},['present_defect'],'held_back','ordinary',null,'duplicate'],
+ ['kindless','test_coverage',{},[],'held_back'],
+ ['untouched-test','test_coverage',{...ref('tests/old-check','assert untouched_value;'),test_kind:'defective_test'},['confirmed_test_defect'],'report_only'],
+];
+const findings = rows.map(([id,dimension,extra])=>({id,dimension,...primary,title:id,description:'A retained source claim.',severity:'high',confidence:95,origin:'new',...extra}));
+const verified = await verifyStage({agent:async prompt=>{const c=shellSplit(prompt.split('\n').at(-1));execFileSync(c[0],c.slice(1),{cwd:work,env:process.env});return JSON.parse(readFileSync(c[c.indexOf('--output')+1],'utf8'));}},
+ {findings,pluginRoot:root,python:'python',headShaShort:sha,nonce:'admission',limits:{},verify:{targetKind:'branch',baseBranch:base,diffPath:`${work}/saved.patch`,inputPathBase:`${work}/in`,outputPathBase:`${work}/out`}});
+assert.equal(verified.verified,true);
+const validated = await validateStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async()=>({validations: verified.findings.map(f=>{
+ const row=rows.find(r=>r[0]===f.id), requests=Object.keys(admissionRequests(f));
+ const references={confirmed_test_defect:['primary'],present_defect:['primary'],resolved_production_element:['production_element'],complete_searches:['searched_paths:','candidate_tests:'],complete_behavioral_absence:['production_element','searched_paths:','candidate_tests:'],confirmed_duplication:['primary','duplicate_of'],concrete_equivalent:['primary'],behavior_preserved:['primary'],applicable:['primary','precedent']};
+ let entries=row[3].map(predicate=>({predicate,status:predicate===row[6]?(row[7]==='unresolved'?'unresolved':'rejected'):'confirmed',references:requests.filter(key=>references[predicate].some(name=>name.endsWith(':')?key.startsWith(name):key===name))}));
+ for(const predicate of requiredAssessments(f,row[5]||'ordinary'))if(!entries.some(e=>e.predicate===predicate))entries.push({predicate,status:'unresolved',references:requests.filter(key=>references[predicate].some(name=>name.endsWith(':')?key.startsWith(name):key===name))});
+ if(row[7]==='foreign')entries[0].references=['foreign'];
+ if(row[7]==='duplicate')entries.push(entries[0]);
+ return {finding_id:f.id,confidence:99,policy_subject:row[5]||'ordinary',reachability:'current',admission_assessments:entries};
+})})},{findings:verified.findings});
+for(const f of validated.findings){evaluateAdmission(f);assert.equal(f.admission.status,rows.find(r=>r[0]===f.id)[4],f.id);assert.ok(hasAdmission(f));}
+const mapped=validated.findings.find(f=>f.id==='cross-test');
+assert.equal(mapped.effective_test_kind,'defective_test');assert.equal(mapped.test_kind,undefined);
+const challenged=await challengeStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async()=>({score:90})},{findings:validated.findings});
+const out=disposeFindings(challenged);
+for(const f of [...out.findings,...out.unverified])assert.equal(deliveryAllows(f,'body'),f.admission.status==='admitted',f.id);
+assert.equal(out.findings.find(f=>f.id==='source-test').disposition,'report_only');
+const first=out.findings.find(f=>f.id==='gap');first.criticality=7;
+assert.equal(disposeFindings({findings:[first]}).unverified[0].disposition,'held_back');
+process.stdout.write(JSON.stringify({rows:rows.length,findings:out.findings.length}));
+"""
+    result = subprocess.run(
+        _flow_command(script, tmp_path, sha, base),
+        cwd=tmp_path,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["rows"] == 46
+
+
 FLOW = r"""
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -30,6 +169,7 @@ const load = (name) => import(pathToFileURL(`${plugin}/workflows/src/${name}.js`
 const { verifyStage } = await load('verifyStage');
 const { writerPayload } = await load('persistPlan');
 const { disposeFindings } = await load('dispose');
+const { evaluateAdmission } = await load('admission');
 const { shellSplit } = await import(pathToFileURL(`${plugin}/workflows/test/helpers/shellWords.js`));
 const prefix = `${work}/code-gauntlet-`;
 const findings = [{ id: 'F1', file: 'source.txt', line_start: Number(claimed), line_end: Number(claimed) + 3,
@@ -50,7 +190,7 @@ const result = await verifyStage(ctx, { findings, pluginRoot: plugin, python: 'p
     inputPathBase: `${work}/slice-in`, outputPathBase: `${work}/slice-out`,
   } });
 if (!result.verified || calls !== 1) throw Error(JSON.stringify(result));
-const disposed = disposeFindings({ findings: result.findings });
+const disposed = disposeFindings({ findings: result.findings.map(f=>evaluateAdmission({...f,validation:'validated',policy_subject:'ordinary',challenge:'survived'})) });
 const payload = writerPayload({ findings: disposed.findings, postReview: disposed.findings,
   prIdentity: { owner: 'o', repo: 'r', pr_number: 5, sha_full: sha, platform: 'github', web_origin: 'https://github.com' },
   reviewBody: 'Summary' });
@@ -270,6 +410,7 @@ const {normalizePhaseFindings} = await load('checkpoints');
 const {writerPayload} = await load('persistPlan');
 const {disposeFindings} = await load('dispose');
 const {shellSplit} = await import(pathToFileURL(`${root}/workflows/test/helpers/shellWords.js`));
+const {evaluateAdmission} = await load('admission');
 const request = file => ({file, line_start:90, line_end:90, anchor:'return process(value);', location_status:'confirmed', confirmed:true});
 const candidate = {id:'ISSUE',file:'primary.txt',line_start:7,line_end:7,anchor:'return process(value);',title:'Stale value',description:'A code claim.',severity:'high',confidence:90,dimension:'bug',origin:'new',
  sites:[...Array.from({length:4},(_,n)=>request(`${work}/site-${n}.txt`)), request('../escape'), {...request('site-0.txt'),anchor:'missing quote'}]};
@@ -289,11 +430,11 @@ const persist = async list => {
  const validated = await validateStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async(prompt,o)=>{
   if(!o.schema.properties.validations.items.properties.site_confirmations)throw Error('missing return metadata');
   if(!prompt.split('\nReturn ')[1]?.includes('site_confirmations') || !prompt.includes('same defect requiring the same correction'))throw Error('missing semantic contract');
-  const packet=JSON.parse(prompt.split(' | site_requests: ')[1].split('\n')[0]);
+  const packet=JSON.parse(prompt.split(' | site_requests: ')[1].split(' | admission_context: ')[0]);
   if(packet.length!==4 || packet.some(s=>s.line_start!==7))throw Error('requests are not resolved');
-  return {validations:[{finding_id:'ISSUE',confidence:90,...(list===null?{}:{site_confirmations:list})},{finding_id:'CONSTITUENT',confidence:85}]};
+  return {validations:[{finding_id:'ISSUE',confidence:90,policy_subject:'ordinary',...(list===null?{}:{site_confirmations:list})},{finding_id:'CONSTITUENT',confidence:85,policy_subject:'ordinary'}]};
  }},{findings:structuredClone(verified.findings)});
- const out=disposeFindings(validated);
+ const out=disposeFindings({...validated,findings:validated.findings.map(f=>evaluateAdmission({...f,challenge:'survived'}))});
  return writerPayload({findings:out.findings,postReview:selectDelivery(out.findings,1,'all'),checkpoints:{challenge:validated}});
 };
 const all = await persist(confirmations);
@@ -324,7 +465,7 @@ process.stdout.write(JSON.stringify({all,some,missing,tampered,gaps:raw.gaps,res
     )
     assert [s["file"] for s in value["some"]["findings"][0]["sites"]] == ["site-0.txt"]
     assert value["missing"]["findings"][0]["sites"] == []
-    assert "site_requests" not in value["all"]["findings"][0]
+    assert len(value["all"]["findings"][0]["site_requests"]) == 5
     assert (
         len(value["all"]["checkpoints"]["challenge"]["findings"][0]["site_requests"])
         == 5

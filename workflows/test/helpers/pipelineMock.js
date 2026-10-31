@@ -3,6 +3,7 @@ import { parseWriterPayload } from '../../src/persist.js';
 import { plannedArtifactPaths } from '../../src/outputPaths.js';
 import { AGENTS } from '../../src/registry.js';
 import { deltaEnvelope, sliceInputRecorder, dispatchedFindings } from './verifyDelta.js';
+import { evaluateAdmission } from '../../src/admission.js';
 
 const DISCOVERY_AGENT_TYPES = new Set(AGENTS);
 
@@ -68,8 +69,9 @@ export function assertObjectRootSchema(schema) {
 // these) plus the fields downstream filter/challenge read. Fresh per call so stage
 // mutation never leaks across dispatches or tests.
 export function makeFinding(id, over = {}) {
-  return {
+  const finding = evaluateAdmission({
     id,
+    path_role: 'source', policy_subject: 'ordinary', validation: 'validated', challenge: 'survived',
     file: `${id}.js`,
     location_status: 'confirmed',
     diff_validation: { in_diff: true, reason: 'fixture diff membership' },
@@ -86,7 +88,9 @@ export function makeFinding(id, over = {}) {
     cross_file_refs: [],
     code: `const ${id} = broken();`,
     ...over,
-  };
+  });
+  for (const key of ['report_tag', 'report_destination']) if (Object.hasOwn(over, key)) finding[key] = over[key];
+  return finding;
 }
 
 export function makeFindings() {
@@ -163,7 +167,7 @@ export function makeCtx(args, opts = {}) {
       const slice = dispatchedFindings(prompt) ?? sliceForIndex(sliceIndex);
       const sliceNonce = isRetry ? `${A.nonce}.${sliceIndex}.r1` : `${A.nonce}.${sliceIndex}`;
       // A deterministic classification keeps routing tests independent of git blame.
-      const originOverrides = Object.fromEntries(slice.map((f) => [f.id, { origin: 'new', diff_validation: { in_diff: true } }]));
+      const originOverrides = Object.fromEntries(slice.map((f) => [f.id, { origin: 'new', path_role: 'source', diff_validation: { in_diff: true } }]));
       return sliceInputRecorder(deltaEnvelope(slice, {
         sha: A.headShaShort,
         nonce: sliceNonce,
@@ -173,7 +177,7 @@ export function makeCtx(args, opts = {}) {
     }
     if (label.startsWith('validate-batch-')) {
       const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
-      return { validations: ids.map((finding_id) => ({ finding_id, confidence: seedFindings().find((f) => f.id === finding_id)?.confidence ?? 90 })) };
+      return { validations: ids.map((finding_id) => ({ finding_id, policy_subject: 'ordinary', confidence: seedFindings().find((f) => f.id === finding_id)?.confidence ?? 90 })) };
     }
     if (label.startsWith('challenge-')) return { confidence_claim_is_correct: 80, justification: 'claim holds' };
     if (label === 'artifact-writer') {

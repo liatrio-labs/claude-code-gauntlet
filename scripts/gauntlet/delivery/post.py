@@ -794,7 +794,12 @@ def post_gitlab(
                 site_key(site, owner)
                 for site in finding.get("sites", [])
                 if delivery_allows(
-                    {**site, "disposition": finding.get("disposition")}, "sourceLink"
+                    {
+                        **site,
+                        "disposition": finding.get("disposition"),
+                        "admission": finding.get("admission"),
+                    },
+                    "sourceLink",
                 )
             ),
         )
@@ -845,7 +850,12 @@ def post_gitlab(
                     for site in member.get("sites", [])
                     if site_key(site, owner) not in prior.site_keys
                     and delivery_allows(
-                        {**site, "disposition": member.get("disposition")}, "sourceLink"
+                        {
+                            **site,
+                            "disposition": member.get("disposition"),
+                            "admission": member.get("admission"),
+                        },
+                        "sourceLink",
                     )
                 ]
                 if not new_sites:

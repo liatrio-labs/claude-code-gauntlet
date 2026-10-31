@@ -233,6 +233,20 @@ def delivery_allows(finding: Mapping[str, object], right: str) -> bool:
         return rights["report"] == "finding"
     if right in ("unverified", "eliminated"):
         return rights["report"] == right
+    admission = finding.get("admission")
+    if not (
+        isinstance(admission, dict)
+        and admission.get("version") == 1
+        and admission.get("status") == "admitted"
+        and isinstance(admission.get("input_proof"), str)
+    ):
+        return False
+    if (
+        stamp == "body"
+        and right == "fixTask"
+        and finding.get("body_fix_task_eligible") is not True
+    ):
+        return False
     return rights.get(right) is True and location_allows(finding, right)
 
 

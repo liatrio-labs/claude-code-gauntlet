@@ -21,6 +21,7 @@ from gauntlet.forge import JsonFetch, Platform, PostRequest, PostResult, ReviewT
 from gauntlet.marker import FindingMarkerWire
 from gauntlet.prior_review import PriorDelivery
 
+from tests.support.delivery import admitted_stamp
 from tests.support.delivery import finding as delivery_finding
 from tests.support.diff import diff_facts
 from tests.support.forge import FakeForge, FakeForgeFactory, FakeGitLab, ForgeCall
@@ -60,6 +61,7 @@ def test_direct_sessions_interleave_live_and_dry_delivery(
         "line_start": 2,
         "line_end": 2,
         "location_status": "confirmed",
+        "admission": admitted_stamp(),
         "disposition": "deliver",
         "anchor": "current_source_value()",
         "claimed_line_start": 2,
@@ -167,6 +169,7 @@ def test_corroborator_cross_field_wikilink(
         "line_start": 2,
         "line_end": 2,
         "location_status": "confirmed",
+        "admission": admitted_stamp(),
         "disposition": "deliver",
         "anchor": "current_source_value()",
         "severity": "high",
@@ -480,6 +483,7 @@ def test_markup_rekeys_once() -> None:
         "line_start": 2,
         "line_end": 2,
         "location_status": "confirmed",
+        "admission": admitted_stamp(),
         "disposition": "deliver",
         "anchor": "current_source_value()",
         "severity": "high",
@@ -529,6 +533,7 @@ def _poisoned_outbound_sinks_finding(*, primary: bool = False) -> dict[str, obje
         line_end=2,
         location_status="confirmed",
         disposition="deliver",
+        admission=admitted_stamp(),
         anchor="current_source_value()",
         claimed_line_start=2,
         claimed_line_end=2,
@@ -565,6 +570,7 @@ def test_prose_active_fences_preserve_owned_patch(
         "line_start": 2,
         "line_end": end_line,
         "location_status": "confirmed",
+        "admission": admitted_stamp(),
         "disposition": "deliver",
         "claimed_line_start": 2,
         "claimed_line_end": end_line,

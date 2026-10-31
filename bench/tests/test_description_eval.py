@@ -70,6 +70,7 @@ def _description_child():
 
     from bench.runner import provenance
     from bench.tests.fakes import fake_claude
+    from tests.support.delivery import admitted_stamp
 
     fake_claude.main()
     if "--version" in sys.argv:
@@ -99,6 +100,7 @@ def _description_child():
             discovery_agent="bug",
             discovery_dimension="bug",
             disposition="deliver",
+            admission=admitted_stamp(),
             disposition_reasons=[],
         )
         for name, site in CASES["defects"].items()

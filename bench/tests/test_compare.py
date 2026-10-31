@@ -994,7 +994,7 @@ def test_precision_pools_stored_core_counts_and_filters_bug_ids(case, tmp_path):
     assert (report.interval.lower, report.interval.upper) == pytest.approx((-2 / 15, 0))
 
 
-def test_comparison_diagnostics_keep_full_denominators(case, tmp_path):
+def test_admission_diagnostics_preserve_issue_and_producer(case, tmp_path):
     from bench.runner import stages
     from bench.runner.epochs import file_hash
     from bench.tests.test_stages import emit_trace
@@ -1020,6 +1020,28 @@ def test_comparison_diagnostics_keep_full_denominators(case, tmp_path):
         for v, d in zip(
             versions, ("bug", "test_coverage", "test_coverage", "security"), strict=True
         )
+    )
+    versions = tuple(
+        replace(
+            v,
+            finding={
+                **v.finding,
+                "origin_dimension": "test_coverage",
+                "agent": "test-analyzer",
+                "admission": {
+                    **v.finding.get("admission", {}),
+                    "status": "held_back",
+                    "reasons": [
+                        {"predicate": "complete_searches", "status": "held_back"}
+                    ],
+                },
+                "disposition": "held_back",
+                "disposition_reasons": ["held_back"],
+            },
+        )
+        if index == 3
+        else v
+        for index, v in enumerate(versions)
     )
     tids = tuple(v.trace_id for v in versions)
     vids = tuple(v.version_id for v in versions)
@@ -1071,6 +1093,8 @@ def test_comparison_diagnostics_keep_full_denominators(case, tmp_path):
         discovery_dimensions=("bug", "test_coverage"),
         provenance_status="complete",
         issue_id="repeat",
+        test_claim=True,
+        test_site=True,
     )
     body = replace(
         inline,
@@ -1081,6 +1105,8 @@ def test_comparison_diagnostics_keep_full_denominators(case, tmp_path):
         source_trace_ids=(tids[2],),
         discovery_dimensions=("test_coverage",),
         issue_id="body",
+        path="src/engine",
+        test_site=False,
     )
     canonical_bugs = tuple(
         replace(
@@ -1168,6 +1194,17 @@ def test_comparison_diagnostics_keep_full_denominators(case, tmp_path):
     }
     assert set(rows) == set(packet.manifest.selected_attempts)
     selected = rows[url]
+    held_record = next(
+        r
+        for r in selected.admission["values"]["records"]
+        if r["disposition"] == "held_back"
+    )
+    assert held_record["original_producer"] == "test-analyzer"
+    assert held_record["origin_dimension"] == "test_coverage"
+    assert held_record["reasons"] == ["held_back"]
+    assert held_record["admission"]["reasons"] == [
+        {"predicate": "complete_searches", "status": "held_back"}
+    ]
     assert selected.record_coalescence["values"] == dict(
         coalesced_source_occurrences=1,
         eligible_source_occurrences=4,
@@ -1184,7 +1221,10 @@ def test_comparison_diagnostics_keep_full_denominators(case, tmp_path):
         metrics["test_path_issues"],
         metrics["mixed_producer_issues"],
         metrics["producer_leakage"],
-    ) == (2, 1, 1)
+    ) == (1, 1, 1)
+    assert metrics["canonical_test_claim_issues"] == 2
+    assert metrics["original_test_producer_issues"] == 2
+    assert metrics["canonical_test_leakage"] == 1
     assert metrics["producer_dimensions"]["test_coverage"] == 2
     assert metrics["producer_dimensions"]["bug"] == 1
     assert metrics["unknown_producer_issues"] == 0

@@ -11,7 +11,8 @@ const rendered = (input) => report.renderReport(reportInput(input));
 test('every report section is registered and cannot be forged by finding prose', () => {
   const text = rendered({
     findings: [finding('F', { description: CODE_OWNED_HEADINGS.join('\n') })],
-    unverified: [finding('U')],
+    unverified: [finding('U'), finding('H', { dimension: 'test_coverage', test_kind: 'additional_case',
+      disposition: 'held_back', challenge: 'admission_terminal' })],
     eliminated: [finding('E', { disposition: 'eliminate', eliminated_by: 'injection',
       title: 'Rejected\n## Eliminated findings', elimination_reason: 'Reason\n## Eliminated findings' })],
   });
@@ -344,7 +345,7 @@ const SUMMARY_CASE_IDS = new Set([
 const SUMMARY_ROWS = [
   ...corpus('cross_runtime/outbound_line').summary_cases
     .filter((row) => SUMMARY_CASE_IDS.has(row.id)).map((row) => ({ name: row.id, input: { ...row.input,
-      findings: row.input.findings.map((f) => ({ ...f, disposition: 'deliver' })) },
+      findings: row.input.findings.map((f) => ({ ...f, disposition: 'deliver', admission: { version: 1, status: 'admitted', input_proof: 'fixture' } })) },
     expected: row.expected_js })),
   { name: 'two suggestions first line', input: { findings: [finding('A', { report_tag: 'suggestion' }),
     finding('B', { report_tag: 'suggestion' })] }, surface: 'firstLine',

@@ -10,7 +10,7 @@ from gauntlet.delivery import compose
 from gauntlet.delivery.fold import PLATFORM_BODY_LIMITS
 from gauntlet.markdown import open_fence
 
-from tests.support.delivery import finding, skipped_group
+from tests.support.delivery import admitted_stamp, finding, skipped_group
 
 TRAILER = "\n\n\u2694\ufe0f *Code Gauntlet*"
 SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -158,6 +158,7 @@ def test_patch_payload(payload, offsets, expected):
                 "suggested_fix_code": payload,
                 "_fence_offsets": (9, 9),
                 "location_status": "confirmed",
+                "admission": admitted_stamp(),
                 "disposition": "deliver",
                 "line_start": 2,
                 "line_end": 3,
@@ -325,6 +326,7 @@ GROUP_SECTIONS_CASES = {
 def test_group_sections(primary, corroborators, expected):
     primary = {
         "location_status": "confirmed",
+        "admission": admitted_stamp(),
         "disposition": "deliver",
         "line_start": 2,
         "line_end": 3,

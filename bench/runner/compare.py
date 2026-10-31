@@ -312,6 +312,7 @@ class DeliveryDiagnostics:
     pr_url: str
     surfaces: dict[str, DeliveryDiagnosticsWire]
     record_coalescence: DeliveryDiagnosticsWire
+    admission: DeliveryDiagnosticsWire
 
 
 @dataclass(frozen=True, slots=True)
@@ -423,6 +424,8 @@ def _delivery_burden(candidates):
             issues.setdefault(identity, []).append(c)
     dimensions = dict.fromkeys(get_args(observations.Dimension), 0)
     test_paths = mixed = leakage = unknown_paths = unknown_producers = 0
+    test_claims = test_producers = claim_leakage = 0
+    unknown_claims = unknown_sites = False
     sources = set()
     for members in issues.values():
         sources.update(t for c in members for t in c.source_trace_ids)
@@ -430,6 +433,16 @@ def _delivery_burden(candidates):
         unknown_paths += not test and any(c.path is None for c in members)
         test_paths += test
         dims = {d for c in members for d in c.discovery_dimensions}
+        claim = any(c.test_claim for c in members)
+        unknown_claims |= not claim and any(c.test_claim is None for c in members)
+        unknown_sites |= not any(c.test_site for c in members) and any(
+            c.test_site is None for c in members
+        )
+        test_claims += claim
+        test_producers += "test_coverage" in dims
+        claim_leakage += (claim or any(c.test_site for c in members)) and bool(
+            dims - {"test_coverage", "unknown"}
+        )
         known = all(c.provenance_status == "complete" for c in members)
         if not known or not dims or "unknown" in dims:
             unknown_producers += 1
@@ -453,6 +466,15 @@ def _delivery_burden(candidates):
         characters=sum(len(c.text) for c in candidates),
         utf8_bytes=sum(len(c.text.encode("utf-8")) for c in candidates),
         test_path_issues=test_paths if not (unknown or unknown_paths) else None,
+        canonical_test_claim_issues=test_claims
+        if not (unknown or unknown_claims)
+        else None,
+        original_test_producer_issues=test_producers
+        if not (unknown or unknown_producers)
+        else None,
+        canonical_test_leakage=claim_leakage
+        if not (unknown or unknown_producers or unknown_claims or unknown_sites)
+        else None,
         unknown_path_issues=unknown_paths,
         producer_dimensions={
             d: n if not (unknown or unknown_producers) else None
@@ -614,12 +636,34 @@ def delivery_diagnostics(packet, population):
                 ),
                 reason or "surface scoring unavailable",
             )
-        fold = None
+        fold = admission = None
         trace_evidence = ("stage_trace_bindings.json",)
         if url in traces:
             path, trace = traces[url]
             trace_evidence += (path.relative_to(packet.root.resolve()).as_posix(),)
             fold = _record_coalescence(trace)
+            final = next((s for s in trace.snapshots if s.stage == "dispose"), None)
+            if final is not None:
+                versions = {v.version_id: v for v in trace.versions}
+                latest = {v.trace_id: v.finding for v in trace.versions}
+                identities = {
+                    versions[v].trace_id for v in final.finding_version_ids
+                } | {d.trace_id for d in final.decisions}
+                admission = {
+                    "records": [
+                        {
+                            "trace_id": tid,
+                            "origin_dimension": f.get("origin_dimension"),
+                            "original_producer": f.get("agent"),
+                            "policy_subject": f.get("policy_subject"),
+                            "admission": f.get("admission"),
+                            "disposition": f.get("disposition"),
+                            "reasons": f.get("disposition_reasons", []),
+                        }
+                        for tid in sorted(identities)
+                        for f in [latest[tid]]
+                    ]
+                }
         rows.append(
             DeliveryDiagnostics(
                 packet.score_ref,
@@ -630,6 +674,7 @@ def delivery_diagnostics(packet, population):
                     trace_evidence,
                     "complete trace unavailable",
                 ),
+                metric(admission, trace_evidence, "admission trace unavailable"),
             )
         )
     return tuple(rows)

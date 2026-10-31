@@ -58,25 +58,32 @@ DeltaValueField = Literal[
     "resolved_references",
 ]
 VerifyReferenceKind = Literal["search_paths", "reference_list", "reference"]
-
-EffectiveTestKind = Literal["defective_test"]
-
+EffectiveTestKind = Literal["defective_test", "production_defect"]
 TestKind = Literal[
     "defective_test", "critical_gap", "production_defect", "additional_case"
 ]
-
 QualityBasis = Literal[
-    "current_correctness",
-    "duplication",
-    "simpler_equivalent",
-    "stack_idiom",
-    "other",
+    "current_correctness", "duplication", "simpler_equivalent", "stack_idiom", "other"
 ]
-
+_ResolvedSitesItemLocationStatus_Literal = Literal[
+    "confirmed", "relocated", "unconfirmed"
+]
+_PolicySubject_Literal = Literal["test_defect", "coverage", "ordinary", "unresolved"]
+_AdmissionAssessmentsItemPredicate_Literal = Literal[
+    "confirmed_test_defect",
+    "resolved_production_element",
+    "complete_searches",
+    "complete_behavioral_absence",
+    "present_defect",
+    "confirmed_duplication",
+    "concrete_equivalent",
+    "behavior_preserved",
+    "applicable",
+    "current_defect",
+]
+_AdmissionAssessmentsItemStatus_Literal = Literal["confirmed", "rejected", "unresolved"]
 PathRole = Literal["source", "test", "non_source", "unknown"]
-
 BlameClass = Literal["new", "pre_existing", "surfaced", "unknown"]
-
 BlameSource = Literal[
     "git_blame",
     "local_diff",
@@ -85,6 +92,37 @@ BlameSource = Literal[
     "removed_loss",
     "unavailable",
 ]
+_ResolvedReferencesSearchedPathsItemKind_Literal = Literal[
+    "file", "directory", "unknown"
+]
+_ResolvedReferencesCandidateTestsItemPathRole_Literal = Literal[
+    "source", "test", "non_source", "unknown"
+]
+_ResolvedReferencesCandidateTestsItemLocationStatus_Literal = Literal[
+    "confirmed", "relocated", "unconfirmed"
+]
+_ResolvedReferencesProductionElementPathRole_Literal = Literal[
+    "source", "test", "non_source", "unknown"
+]
+_ResolvedReferencesProductionElementLocationStatus_Literal = Literal[
+    "confirmed", "relocated", "unconfirmed"
+]
+_ResolvedReferencesDuplicateOfPathRole_Literal = Literal[
+    "source", "test", "non_source", "unknown"
+]
+_ResolvedReferencesDuplicateOfLocationStatus_Literal = Literal[
+    "confirmed", "relocated", "unconfirmed"
+]
+_ResolvedReferencesPrecedentPathRole_Literal = Literal[
+    "source", "test", "non_source", "unknown"
+]
+_ResolvedReferencesPrecedentLocationStatus_Literal = Literal[
+    "confirmed", "relocated", "unconfirmed"
+]
+_AdmissionVersion_Literal = Literal[1]
+_AdmissionStatus_Literal = Literal["admitted", "report_only", "held_back"]
+_AdmissionReasonsItemStatus_Literal = Literal["report_only", "held_back"]
+_AdmissionTier_Literal = Literal["main", "suggestion"]
 
 SEVERITY_ORDER: tuple[Severity, ...] = ("critical", "high", "medium", "low")
 
@@ -497,6 +535,11 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "aliases": [],
         "admission": {
             "field": "test_kind",
+            "promotion": {
+                "predicate": "present_defect",
+                "kind": "production_defect",
+                "stamp": "effective_test_kind",
+            },
             "kinds": {
                 "defective_test": {
                     "required": [],
@@ -779,6 +822,10 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "aliases": [],
         "admission": {
             "field": "quality_basis",
+            "promotion": {
+                "predicate": "present_defect",
+                "kind": "current_correctness",
+            },
             "kinds": {
                 "current_correctness": {
                     "description": "A demonstrated present production defect.",
@@ -927,6 +974,10 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "aliases": [],
         "admission": {
             "field": "quality_basis",
+            "promotion": {
+                "predicate": "present_defect",
+                "kind": "current_correctness",
+            },
             "kinds": {
                 "current_correctness": {
                     "description": "A demonstrated present production defect.",
@@ -1066,6 +1117,27 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
     },
 ]
 
+RIGHT_ELIGIBILITY = {
+    "body": {
+        "fixTask": ["current_defect", "current_reachability", "confirmed_location"],
+    },
+}
+
+STAGE_COSTS = {
+    "verify": {
+        "attempts": 2,
+    },
+    "validate": {
+        "retryBatchDivisor": 5,
+    },
+    "cite": {
+        "attempts": 2,
+    },
+    "writer": {
+        "attempts": 2,
+    },
+}
+
 BRAND_MARK = "⚔️"
 
 BRAND_NAME = "Code Gauntlet"
@@ -1092,6 +1164,7 @@ CODE_OWNED_HEADINGS = [
     "## Summary",
     "## Change Context",
     "## Findings",
+    "## Findings held back by admission",
     "## Unverified / pipeline-degraded findings",
     "## Eliminated findings",
     "## Review Dimensions Summary",
@@ -1440,7 +1513,7 @@ DISPOSITION_RIGHTS: Mapping[Disposition, Mapping[str, bool | str]] = MappingProx
                 "inline": False,
                 "body": True,
                 "report": "finding",
-                "fixTask": False,
+                "fixTask": True,
                 "patch": False,
                 "fence": False,
                 "sourceLink": True,
@@ -1529,7 +1602,7 @@ class ResolvedSitesItem(TypedDict):
     line_start: int
     line_end: int
     anchor: str
-    location_status: Literal["confirmed", "relocated", "unconfirmed"]
+    location_status: _ResolvedSitesItemLocationStatus_Literal
     diff_validation: ResolvedSitesItemDiffValidation
 
 
@@ -1546,10 +1619,16 @@ class SiteConfirmationsItem(TypedDict):
     confirmed: bool
 
 
+class AdmissionAssessmentsItem(TypedDict):
+    predicate: _AdmissionAssessmentsItemPredicate_Literal
+    status: _AdmissionAssessmentsItemStatus_Literal
+    references: list[str]
+
+
 class ResolvedReferencesSearchedPathsItem(TypedDict):
     path: str
     available: bool
-    kind: Literal["file", "directory", "unknown"]
+    kind: _ResolvedReferencesSearchedPathsItemKind_Literal
 
 
 class ResolvedReferencesCandidateTestsItemDiffValidation(TypedDict):
@@ -1560,9 +1639,9 @@ class ResolvedReferencesCandidateTestsItem(TypedDict, total=False):
     file: str
     line_start: int
     line_end: int
-    path_role: Literal["source", "test", "non_source", "unknown"]
+    path_role: _ResolvedReferencesCandidateTestsItemPathRole_Literal
     file_added: bool | None
-    location_status: Literal["confirmed", "relocated", "unconfirmed"]
+    location_status: _ResolvedReferencesCandidateTestsItemLocationStatus_Literal
     diff_validation: ResolvedReferencesCandidateTestsItemDiffValidation
 
 
@@ -1574,9 +1653,9 @@ class ResolvedReferencesProductionElement(TypedDict, total=False):
     file: str
     line_start: int
     line_end: int
-    path_role: Literal["source", "test", "non_source", "unknown"]
+    path_role: _ResolvedReferencesProductionElementPathRole_Literal
     file_added: bool | None
-    location_status: Literal["confirmed", "relocated", "unconfirmed"]
+    location_status: _ResolvedReferencesProductionElementLocationStatus_Literal
     diff_validation: ResolvedReferencesProductionElementDiffValidation
 
 
@@ -1588,9 +1667,9 @@ class ResolvedReferencesDuplicateOf(TypedDict, total=False):
     file: str
     line_start: int
     line_end: int
-    path_role: Literal["source", "test", "non_source", "unknown"]
+    path_role: _ResolvedReferencesDuplicateOfPathRole_Literal
     file_added: bool | None
-    location_status: Literal["confirmed", "relocated", "unconfirmed"]
+    location_status: _ResolvedReferencesDuplicateOfLocationStatus_Literal
     diff_validation: ResolvedReferencesDuplicateOfDiffValidation
 
 
@@ -1602,9 +1681,9 @@ class ResolvedReferencesPrecedent(TypedDict, total=False):
     file: str
     line_start: int
     line_end: int
-    path_role: Literal["source", "test", "non_source", "unknown"]
+    path_role: _ResolvedReferencesPrecedentPathRole_Literal
     file_added: bool | None
-    location_status: Literal["confirmed", "relocated", "unconfirmed"]
+    location_status: _ResolvedReferencesPrecedentLocationStatus_Literal
     diff_validation: ResolvedReferencesPrecedentDiffValidation
 
 
@@ -1614,6 +1693,23 @@ class ResolvedReferences(TypedDict, total=False):
     production_element: ResolvedReferencesProductionElement
     duplicate_of: ResolvedReferencesDuplicateOf
     precedent: ResolvedReferencesPrecedent
+
+
+class AdmissionReasonsItem(TypedDict):
+    predicate: str
+    status: _AdmissionReasonsItemStatus_Literal
+
+
+class Admission(TypedDict):
+    version: _AdmissionVersion_Literal
+    input_proof: str
+    input_fields: list[str]
+    status: _AdmissionStatus_Literal
+    reasons: list[AdmissionReasonsItem]
+    kind: str
+    core: bool
+    tier: _AdmissionTier_Literal
+    inline_eligible: bool
 
 
 class VerifyCandidateTestsItem(TypedDict):
@@ -1652,10 +1748,20 @@ class FindingFacts(TypedDict, total=False):
     resolved_references: ResolvedReferences
 
 
+class ReferenceDiagnostic(TypedDict):
+    field: str
+    reason: str
+    action: str
+
+
 class FindingMetadata(FindingFacts, total=False):
+    policy_subject: _PolicySubject_Literal
+    admission_assessments: list[AdmissionAssessmentsItem]
+    admission: Admission
+    body_fix_task_eligible: bool
     origin_dimension: Dimension
     effective_test_kind: EffectiveTestKind
-    reference_diagnostics: list[str]
+    reference_diagnostics: list[ReferenceDiagnostic]
     line_end: int
     origin: str
     evidence: str

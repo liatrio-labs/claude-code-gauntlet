@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypedDict, get_args
 
+from gauntlet.registry import QualityBasis, TestKind
+
 from bench.runner.contracts import ScoreRef, artifact_allowed, exclusive_json
 from bench.runner.decode import decode
 from bench.runner.epochs import confined, file_hash, in_profile, read_json
@@ -40,6 +42,42 @@ class FindingVersion:
         return dict(self.finding)
 
 
+AdmissionStatus = Literal["report_only", "held_back"]
+PolicySubject = Literal["test_defect", "coverage", "ordinary", "unresolved"]
+
+
+class SelectionDetail(TypedDict):
+    kind: TestKind | QualityBasis | Literal["ordinary", "unknown"]
+
+
+class AdmissionReason(TypedDict):
+    predicate: str
+    status: AdmissionStatus
+
+
+class AdmissionContextDetail(SelectionDetail):
+    policy_subject: PolicySubject
+    original_producer: str
+
+
+class AdmissionDetail(AdmissionContextDetail, AdmissionReason):
+    pass
+
+
+class ChallengeTerminalDetail(AdmissionContextDetail):
+    predicate: Literal["challenge_terminal"]
+
+
+class DisposalDetail(AdmissionContextDetail):
+    predicates: list[AdmissionReason]
+    surface: Literal["deliver", "body", "held_back", "report_only"]
+
+
+DecisionDetail = (
+    SelectionDetail | AdmissionDetail | ChallengeTerminalDetail | DisposalDetail
+)
+
+
 @dataclass(frozen=True, slots=True)
 class StageDecision:
     trace_id: str
@@ -47,6 +85,7 @@ class StageDecision:
     reason_code: ReasonCode
     reason: str | None
     related_trace_ids: tuple[str, ...]
+    detail: DecisionDetail | None = None
 
 
 @dataclass(frozen=True, slots=True)

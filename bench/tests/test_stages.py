@@ -85,6 +85,7 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
         "verify",
         "validate",
         "filter",
+        "admission",
         "challenge",
         "dispose",
         "select",
@@ -99,6 +100,10 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
         if v.trace_id == first.trace_id and v.projection()["confidence"] == 45
     ]
     assert changed
+    report = next(v for v in trace.versions if v.finding.get("id") == "REPORT")
+    selection = next(s for s in trace.snapshots if s.stage == "select")
+    decision = next(d for d in selection.decisions if d.trace_id == report.trace_id)
+    assert decision.reason_code == "report_only"
 
 
 @pytest.mark.parametrize(
@@ -114,6 +119,12 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
         "duplicate_occurrence",
         "reason",
         "folded_elimination",
+        "detail_missing_field",
+        "detail_surface",
+        "detail_status",
+        "detail_kind",
+        "detail_policy_subject",
+        "detail_shape",
     ],
 )
 def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
@@ -135,6 +146,25 @@ def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
             snapshot["stage"] = "deliver"
         elif mutation == "reason":
             raw["snapshots"][1]["decisions"][0]["reason_code"] = None
+        elif mutation.startswith("detail_"):
+            detail = next(
+                decision["detail"]
+                for snap in raw["snapshots"]
+                for decision in snap["decisions"]
+                if (decision.get("detail") or {}).get("predicates")
+            )
+            if mutation == "detail_missing_field":
+                del detail["original_producer"]
+            elif mutation == "detail_surface":
+                detail["surface"] = "invalid"
+            elif mutation == "detail_status":
+                detail["predicates"][0]["status"] = "invalid"
+            elif mutation == "detail_kind":
+                detail["kind"] = "invalid"
+            elif mutation == "detail_policy_subject":
+                detail["policy_subject"] = "invalid"
+            else:
+                detail["predicate"] = "challenge_terminal"
         elif mutation == "folded_elimination":
             raw["snapshots"][1]["decisions"][0]["reason_code"] = "folded"
         elif mutation == "flag":
@@ -181,6 +211,8 @@ def test_score_to_dimension_credit_and_loss_funnel(
                 line_end=10,
                 disposition="deliver",
             )
+            if version["finding"].get("admission"):
+                version["finding"]["admission"]["status"] = "admitted"
         review["findings"] = [
             v["finding"] for v in raw["versions"] if v["version_id"] in ids
         ]
@@ -208,7 +240,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
             tid, "held_back", "validation_skipped", None, ()
         )
         for snapshot in raw["snapshots"]:
-            if snapshot["stage"] in ("filter", "challenge"):
+            if snapshot["stage"] in ("filter", "admission", "challenge"):
                 snapshot["finding_version_ids"] = raw["snapshots"][3][
                     "finding_version_ids"
                 ]
@@ -327,7 +359,8 @@ def test_trace_vocabularies_match_workflow_source():
 
 
 @pytest.mark.parametrize("extended", [False, True])
-def test_trace_reasons_survive_delivery_overlay(tmp_path, extended):
+@pytest.mark.parametrize("terminal_reason", ["held_back", "report_only"])
+def test_trace_reasons_survive_delivery_overlay(tmp_path, extended, terminal_reason):
     trace, path, _ = emit_trace(tmp_path)
     versions = tuple({v.trace_id: v for v in trace.versions}.values())[:5]
     ids = tuple(v.trace_id for v in versions)
@@ -345,8 +378,9 @@ def test_trace_reasons_survive_delivery_overlay(tmp_path, extended):
         )
     )
     if extended:
-        snapshots[6:6] = [
-            replace(snapshots[5], stage="cite"),
+        index = next(i for i, s in enumerate(snapshots) if s.stage == "challenge") + 1
+        snapshots[index:index] = [
+            replace(snapshots[index - 1], stage="cite"),
         ]
     snapshots[-1] = replace(snapshots[-1], decisions=decisions)
     trace = replace(
@@ -374,7 +408,9 @@ def test_trace_reasons_survive_delivery_overlay(tmp_path, extended):
     snapshots[-1] = replace(
         snapshots[-1],
         finding_version_ids=(),
-        decisions=(stages.StageDecision(ids[4], "held_back", "held_back", None, ()),),
+        decisions=(
+            stages.StageDecision(ids[4], terminal_reason, terminal_reason, None, ()),
+        ),
     )
     trace = replace(
         trace, snapshots=tuple(replace(s, sequence=i) for i, s in enumerate(snapshots))
@@ -440,7 +476,7 @@ def test_trace_reasons_survive_delivery_overlay(tmp_path, extended):
         {},
     )
     loss = next(r.loss for r in rows if r.stage == "deliver")
-    assert loss.reason_code == "held_back" and loss.stage == "delivery"
+    assert loss.reason_code == terminal_reason and loss.stage == "delivery"
 
 
 def test_collection_hashes_top_level_trace_and_persists_availability(tmp_path):

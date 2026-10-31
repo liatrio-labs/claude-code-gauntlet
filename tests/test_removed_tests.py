@@ -165,12 +165,16 @@ def test_removed_loss_anchor_round_trips_past_blank_line(tmp_path, verify_git):
     assert delta["anchor"] == quote
 
 
-def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
+def test_removed_losses_share_admission_and_source_anchors(
     tmp_path, monkeypatch, verify_git
 ):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "source").write_text(
         "return surviving_value\n", encoding="utf-8", newline=""
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/surviving").write_text(
+        "assert unrelated_value\n", encoding="utf-8", newline=""
     )
     patch = tmp_path / "patch"
     patch.write_text(deletion("tests/old"), encoding="utf-8")
@@ -181,6 +185,14 @@ def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
         "severity": "high",
         "confidence": 90,
         "description": "Deleted `test_override` and `INVALID_TABLE` assertions leave surviving behavior untested.",
+        "searched_paths": ["tests/surviving"],
+        "candidate_tests": [],
+        "production_element": {
+            "file": "source",
+            "line_start": 1,
+            "line_end": 1,
+            "anchor": "return surviving_value",
+        },
         "removed_test": {
             "id": "0123456789abcdef",
             "path": "tests/old",
@@ -194,7 +206,14 @@ def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
         0,
     )
     verify_git[1]["grep"] = ("", "", 1)
-    finding = project_findings([finding])[0]
+    inventory = removed_tests(patch.read_text(encoding="utf-8"))
+    assert inventory["status"] == "available"
+    request = dict(finding)
+    request["removed_test"] = {
+        **finding["removed_test"],
+        "id": inventory["items"][0]["id"],
+    }
+    finding = project_findings([request])[0]
     result = run_verification(
         [finding],
         VerifyContext(str(tmp_path), "base", target_kind="branch"),
@@ -214,6 +233,56 @@ def test_removed_test_verify_preserves_new_loss_on_unchanged_production(
     assert finding["location_status"] == "confirmed"
     assert (finding["blame_class"], finding["blame_source"]) == ("new", "removed_loss")
     assert not any(argv[1] in ("log", "blame", "grep") for argv, _ in verify_git[0])
+    from tests.support.pipeline import run_node
+
+    claim = {
+        **request,
+        **finding,
+        "dimension": "test_coverage",
+        "test_kind": "critical_gap",
+        "criticality": 8,
+        "failure_scenario": "Entire behavior loses effective coverage",
+        "validation": "validated",
+        "policy_subject": "coverage",
+        "challenge": "survived",
+        "admission_assessments": [
+            {"predicate": predicate, "status": "confirmed", "references": refs}
+            for predicate, refs in (
+                ("resolved_production_element", ["production_element"]),
+                ("complete_searches", ["searched_paths:0"]),
+                (
+                    "complete_behavioral_absence",
+                    ["production_element", "searched_paths:0"],
+                ),
+            )
+        ],
+    }
+    claim["admission_assessments"].append(
+        {
+            "predicate": "present_defect",
+            "status": "rejected",
+            "references": ["primary"],
+        }
+    )
+    values = json.loads(
+        run_node(
+            "import {evaluateAdmission} from './workflows/src/admission.js';"
+            "import {disposeFindings} from './workflows/src/dispose.js';"
+            "let data='';for await(const chunk of process.stdin)data+=chunk;"
+            "const claim=JSON.parse(data);const indirect=structuredClone(claim);"
+            "indirect.admission_assessments[2].status='rejected';"
+            "const bad=structuredClone(claim);bad.resolved_references.production_element.location_status='unconfirmed';"
+            "const rows=[claim,{...claim,criticality:7},indirect,bad].map(evaluateAdmission);"
+            "process.stdout.write(JSON.stringify(rows.map(f=>{const out=disposeFindings({findings:[f]});return [...out.findings,...out.unverified][0]})));",
+            claim,
+        ).stdout
+    )
+    assert [(row["admission"]["status"], row["disposition"]) for row in values] == [
+        ("admitted", "body"),
+        ("report_only", "report_only"),
+        ("report_only", "report_only"),
+        ("held_back", "held_back"),
+    ], [row["admission"] for row in values]
     malformed = {
         "id": "loss-malformed",
         "file": "source",
