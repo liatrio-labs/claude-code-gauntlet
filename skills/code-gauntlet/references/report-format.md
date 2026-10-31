@@ -202,7 +202,6 @@ This summary describes the change context for the report.
 - **Location:** `{finding.file}:10-12`
 - **Dimension:** {finding.dimension}
 - **Origin:** surfaced — pre-existing, surfaced by this change
-- **Contested:** the challenger could not confirm the cited location
 
 {finding.description}
 
@@ -288,7 +287,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 
 - **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
-- **Unverified because:** the challenger failed or returned no score, so this finding was not challenge-verified
+- **Unverified because:** the challenger returned nothing, so this finding was not challenge-verified
 
 {finding.description}
 

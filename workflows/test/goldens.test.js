@@ -6,7 +6,6 @@ import { applyValidations } from '../src/applyValidations.js';
 import { normalizeFieldNames, applyFilterPipeline, applyThresholdFilter, applyReachabilityDemotion, detectDisagreement, routeByDimension, consolidateCrossAgent, tagFindings } from '../src/filterFindings.js';
 import { parseReviewMd, buildReviewConfig, configForFile, loadExclusions, applyExclusions } from '../src/reviewConfig.js';
 import { applyInjectionFilter, applyReplayInjectionScan } from '../src/injection.js';
-import { applyChallenges } from '../src/applyChallenges.js';
 import { loadCases, writeGolden } from './helpers/goldenCases.js';
 
 const UPDATE_GOLDENS = process.env.UPDATE_GOLDENS === '1';
@@ -27,6 +26,7 @@ function runMergeFindings(input) {
 function runApplyValidations(input) {
   const findings = structuredClone(input.findings);
   const { adjustedCount, unmatchedIds } = applyValidations(findings, input.validations);
+  for (const finding of findings) delete finding.skeptical_assessments;
   return { findings, adjusted_count: adjustedCount, unmatched_ids: unmatchedIds };
 }
 
@@ -75,10 +75,6 @@ function runFilterFindings(input) {
   return FILTER_HANDLERS[input.fn](input);
 }
 
-function runApplyChallenges(input) {
-  return applyChallenges(input.findings, input.challenges);
-}
-
 function assertOrWrite(testCase, result) {
   if (UPDATE_GOLDENS) writeGolden(testCase, result);
   else if (testCase.expected === undefined) assert.fail(`missing golden: ${testCase.expectedPath}`);
@@ -106,16 +102,5 @@ for (const c of loadCases('apply_validations')) {
 for (const c of loadCases('filter_findings')) {
   test(`filter_findings golden: ${c.name} (${c.input.fn})`, () => {
     assertOrWrite(c, runFilterFindings(c.input));
-  });
-}
-
-for (const c of loadCases('apply_challenges')) {
-  test(`apply_challenges golden: ${c.name}`, () => {
-    const snapshot = c.name === 'deep_copy_no_mutation_of_input'
-      ? structuredClone(c.input.findings)
-      : null;
-    const result = runApplyChallenges(c.input);
-    if (snapshot) assert.deepEqual(c.input.findings, snapshot);
-    assertOrWrite(c, result);
   });
 }

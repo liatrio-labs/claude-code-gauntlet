@@ -281,7 +281,7 @@ function phaseFindingCount(out) {
   if (!out || typeof out !== 'object') return 0;
   if (Array.isArray(out.findings)) return out.findings.length;
   if (Array.isArray(out.filtered)) return out.filtered.length;
-  return 0;
+  return Number.isSafeInteger(out.finding_count) && out.finding_count >= 0 ? out.finding_count : 0;
 }
 
 // Failure-path checkpoints stay full so crash recovery can skip all completed work.

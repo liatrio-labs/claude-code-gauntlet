@@ -298,6 +298,7 @@ test('late legacy replay with no admission remains held back', async () => {
   for (const location_status of [undefined, 'unknown', 'confirmed']) {
     const finding = makeFinding('legacy', { location_status, line_start: 900, line_end: 999, line: 1, end_line: 2 });
     delete finding.admission;
+    delete finding.skeptical_assessments;
     const args = validArgs({ checkpoints: { challenge: challengeOutput({ findings: [finding] }) } });
     const { out, ctx, payload } = await runAndCapture(args);
     assert.equal(out.ok, true);

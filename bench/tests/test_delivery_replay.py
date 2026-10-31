@@ -307,7 +307,7 @@ def test_candidate_uses_verify_diff_facts(tmp_path, evidence, changes, expected)
     wire["diff"] = {"path": patch.name, "sha256": _hash(patch.read_bytes())}
     workflow_path = tmp_path / "workflow.json"
     record = json.loads(workflow_path.read_bytes())
-    finding = record["state"]["phaseOutputs"]["challenge"]["findings"][0]
+    finding = record["state"]["phaseOutputs"]["cite"]["findings"][0]
     finding.pop("diff_validation")
     finding.update(changes)
     original = copy.deepcopy(finding)
@@ -322,7 +322,9 @@ def test_candidate_uses_verify_diff_facts(tmp_path, evidence, changes, expected)
     assert actual["diff_validation"] == expected
     assert actual["origin"] == original["origin"]
     assert actual["severity"] == original["severity"]
-    assert actual["disposition"] == "held_back"
+    assert actual["disposition"] == (
+        "deliver" if expected["in_diff"] is True else "body"
+    )
 
 
 def test_admission_replay_requires_enriched_evidence(tmp_path, evidence, monkeypatch):
@@ -334,7 +336,7 @@ def test_admission_replay_requires_enriched_evidence(tmp_path, evidence, monkeyp
     for finding, expected in zip(
         evidence["admission"], ["deliver", "report_only", "held_back"], strict=True
     ):
-        record["state"]["phaseOutputs"]["challenge"]["findings"] = [finding]
+        record["state"]["phaseOutputs"]["cite"]["findings"] = [finding]
         _write(workflow, record)
         wire = json.loads(manifest.read_bytes())
         wire["sources"]["workflow"]["sha256"] = _hash(workflow.read_bytes())
@@ -349,7 +351,6 @@ def test_admission_replay_requires_enriched_evidence(tmp_path, evidence, monkeyp
         actual = next(f for f in disposed if f["id"] == finding["id"])
         assert actual["disposition"] == expected
         for key in (
-            "admission",
             "admission_assessments",
             "resolved_references",
             "sites",
@@ -360,7 +361,7 @@ def test_admission_replay_requires_enriched_evidence(tmp_path, evidence, monkeyp
             for d in json.loads(artifacts["delivery-deltas.json"])
             if d["id"] == finding["id"]
         )
-        assert delta["admission"] == finding.get("admission")
+        assert delta["admission"] == actual["admission"]
         assert (
             delta["before"] == finding.get("disposition") and delta["after"] == expected
         )
@@ -428,7 +429,7 @@ def test_replay_preserves_bytes_and_occurrence_identity(tmp_path, mode, evidence
     assert any(d["decision"] == "held_back" for d in holdback["decisions"])
     assert any(d["reason_code"] == "delivery_cap" for d in select["decisions"])
     assert any(
-        d["reason_code"] == "challenge_removed"
+        d["reason_code"] == "verify_eliminated"
         for s in trace["snapshots"]
         for d in s["decisions"]
     )

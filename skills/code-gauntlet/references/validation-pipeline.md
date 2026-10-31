@@ -6,20 +6,21 @@
 - [Validate stage (`validateStage`)](#validate-stage-validatestage)
 - [Filter stage (`filterStage`)](#filter-stage-filterstage)
 - [Challenge stage (`challengeStage`)](#challenge-stage-challengestage)
+- [Cite and final disposition](#cite-and-final-disposition)
 - [Report stage (`renderReport`)](#report-stage-renderreport)
 - [Operational Recovery](#operational-recovery)
 
 The validation pipeline runs inside `workflows/pipeline.js`. Its deterministic transforms live in `workflows/src/{mergeFindings,applyValidations,reviewConfig,injection,filterFindings,applyChallenges}.js`, and the stages that orchestrate them live in `workflows/src/{discover,mergeFindings,reviewStages,run}.js`, with the verify stage in `workflows/src/{verifyWire,capacity,verifyStage}.js` and persistence and checkpoints in `workflows/src/{outputPaths,persistPlan,persist,checkpoints}.js`. The retained `verify_findings.py` executor handles the verify boundary. This reference documents what each stage does for interpreting gaps and persisted artifacts.
 
-**Pipeline order inside the workflow:** Merge → **Verify** → **Validate** → **Filter** → **Challenge** → Report.
+**Pipeline order inside the workflow:** Merge → **Verify** → **Validate** → **Filter** → **Challenge** → **Cite** → **Dispose** → Group/select → Report.
 
-The five transform golden families under `tests/fixtures/parity/` are JavaScript-owned.
+The four transform golden families under `tests/fixtures/parity/` are JavaScript-owned.
 
 ---
 
 ## Verify stage (`verifyStage`)
 
-Classifies each finding as `new` (introduced by this change) or `surfaced` (pre-existing code exposed by the change), fact-checks evidence against file content, and validates line references against the diff. It is the one stage that still shells out to Python — the workflow has no shell, so it dispatches an **executor** agent per finding-slice.
+Classifies each finding as `new` (introduced by this change) or `surfaced` (pre-existing code exposed by the change), fact-checks evidence against file content, and validates line references against the diff. Like Cite, it shells out to Python — the workflow has no shell, so it dispatches an **executor** agent per finding-slice.
 
 **The executor pattern.** The stage plans slices under `VERIFY_INLINE_CHAR_BUDGET` and `limits.verifySliceSize`, then dispatches executors sequentially. `VERIFY_SLICE_FIELDS` generates the Python wire type: `id`, `file`, `line_start`, `line_end`, `severity`, `confidence`, optional verbatim `anchor`, `sites`, and registry-defined reference requests (`searched_paths`, `candidate_tests`, `production_element`, `duplicate_of`, `precedent`). Sites and source references carry only `file`, `line_start`, `line_end`, and `anchor`; searched paths remain strings. True-only `has_cross_file_refs` and `has_removed_test_location`, plus sorted, space-joined `symbols` when nonempty, complete the slice. JS extracts symbols once per finding. Prose, removed-test records and `origin` stay on held findings. Each executor runs:
 
@@ -76,7 +77,14 @@ These proofs check consistency against transcription errors; an executor that re
 
 Independent re-scoring by fresh agents, defaulting to Sonnet subject to the resolved override; each validator tries to disprove the finding against the code within that dispatch.
 
-The stage batches findings into `limits.validateBatch` chunks and dispatches one `validator` per batch through `parallel()`. Each validator attempts to **disprove** each finding and returns `[{ id, confidence, justification, reachability }]` (confidence 0–100). Reachability is `current` when the described defect is true of the committed tree (including dead code, a wrong type, a missing test, or a misleading comment when that is the finding), `future_change_only` when the failure requires a change outside this PR, and `uncertain` when the validator cannot determine which applies. `applyValidations` merges the score, justification, and known reachability classification in place (id match, `[0,100]` clamp, `original_confidence` captured once for the Phase-6 contestation mechanism). The validator's shipped output uses `finding_id`; the stage accepts both `finding_id` and `id`.
+The stage batches findings into `limits.validateBatch` chunks and dispatches one
+validator per batch through `parallel()`. The registry-derived return contract
+keeps confidence, policy classification, admission assessments, reachability and
+site confirmations independent of the three-way verdict and citation requests.
+`applyValidations` retains usable scores with the existing `[0,100]` clamp and
+captures `original_confidence` once for threshold contestation. Reachability stays
+`current`, `future_change_only` or `uncertain`. The shipped identity is
+`finding_id`; validator intake also accepts the existing `id` alias.
 
 **Confidence rubric** (validator agent definition holds the authoritative copy):
 
@@ -88,7 +96,12 @@ The stage batches findings into `limits.validateBatch` chunks and dispatches one
 100  = definitely real
 ```
 
-**Degradation.** A null/malformed batch or a missing matched score marks the affected findings `validation='skipped'`, with confidence untouched and one gap per batch naming the count. They still face challenge, then survivors enter the unverified bucket and appear only in the report. Degraded verify slices (`origin='unknown'`) follow the same route. How often validators omit scores is unmeasured.
+**Incomplete validation.** One small follow-up round retries missing scores,
+classification, admission assessments or skeptical fields. A missing usable score
+or policy subject then marks only that finding `validation='skipped'`, without
+changing its confidence. Semantic omissions retain accepted scores and hold back
+the affected finding. Completed batches disclose omissions; only failed batch
+dispatches are execution failures. Unverified findings consume no challenge slot.
 
 ---
 
@@ -110,16 +123,37 @@ Pure, deterministic JS — no agents. It applies dimension-specific confidence/s
 
 Blind, independent scrutiny — the only stage where findings face agents that have never seen the original reasoning. Fresh challengers see **only** `blindChallengeFields`: `title`, `description`, `file`, `line_start`, and `line_end` (an allowlist, not a delete-list — no evidence, origin, cross_file_refs, or reasoning can ever leak). Defaults to Sonnet, subject to the resolved override.
 
-The stage ranks clean findings first, then incomplete findings, and blind-challenges the top `min(n, limits.challengeCap)` through `parallel()`, and applies the score thresholds. Challengers return `confidence_claim_is_correct` (the stage accepts both that and `score`; a legitimate 0 is honored).
+The stage ranks admitted, fully validated candidates and challenges up to
+`limits.challengeCap`. Admitted off-diff and future-only findings compete for the
+same capacity. Validator `refuted` and `needs_evidence` findings skip challenge with
+`challenge='validator_terminal'` and proceed to citation checking. Value-terminal
+findings skip challenge without fabricating a completed assessment.
 
-**Thresholds** (`applyChallenges`):
+Both skeptical stages return `real`, `refuted` or `needs_evidence`. Real and refuted
+assessments require bounded snapshot citations; needs-evidence names what is missing.
+Validator confidence still controls thresholds and ranking. Numeric challenge scores
+in legacy artifacts have no elimination or placement authority.
 
-- **< 25** → remove (non-security) / downgrade one level (security)
-- **25–49** → downgrade one level; surfaced re-routed to `"suggestion"`
-- **50–74** → `challenge_contested: true`; surfaced re-routed to `"suggestion"`
-- **≥ 75** → survives unchanged
+## Cite and final disposition
 
-After thresholds it ranks survivors and retains upstream eliminations in the challenge checkpoint. Challenge cap overflow is stamped `challenge='capped'`; null/unscored results are stamped `challenge='failed'`. After the replay belt, `disposeFindings` assigns delivery dispositions once: incomplete verification, validation, or challenge becomes `held_back`; clean findings become `deliver` when location and diff facts allow inline placement, or `body` otherwise. Legacy records without diff facts retain location-based placement, and `challenge='skipped'` remains unchallenged. Eliminations become `eliminate`. The reducer clears stale consolidation and regroups clean survivors. All records enter findings.json and their corresponding report sections; only `deliver` and `body` records share the ranked delivery cap.
+Cite checks only filter survivors, using its own byte-budget batches and a persisted
+attempt ledger. Successful checks are reused; infrastructure failures have one retry
+across resumes. A present incomplete challenger return completes dispatch and holds
+back only that finding; null returns remain execution failures. Cap overflow is
+recorded separately.
+
+`disposeFindings` reduces once before grouping and selection. Either stage's matched
+refutation eliminates the finding, including security, despite a missing or opposing
+assessment. Unproved refutations and unresolved needs-evidence hold back. Failed real
+proof is disclosed without changing validator confidence or admission. Citation outage
+permits independently supported real findings through ordinary admission and placement,
+while preserving unrelated holdbacks. Legacy score-only findings require reassessment
+or remain held back. Eliminated records retain proof in the report audit and findings
+artifact, with no actionable delivery, tasks, patches, fences or source links.
+
+Admission is refreshed when rewritten inputs invalidate its stamp. The final replay
+injection scan precedes all delivery consumers. Only actionable survivors are regrouped
+and share the configured delivery cap.
 
 ---
 
@@ -132,6 +166,8 @@ Renders `report.md` in code — `renderReport()` in `workflows/src/renderReport.
 ## Operational Recovery
 
 The workflow reports gaps and returns signed checkpoints on failure or partial persistence.
+Cite-complete checkpoints retain rendering context and resume without rediscovery
+or revalidation, reusing the recorded citation attempts.
 Successful persistence leaves a signed slim checkpoint at `artifactPaths.checkpoints`;
 the success return contains only completed phase names.
 Follow [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable)

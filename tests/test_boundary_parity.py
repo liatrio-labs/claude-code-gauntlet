@@ -239,10 +239,11 @@ def test_mixed_disposition_group_cross_runtime(
     ]
     disposed = json.loads(
         run_node(
+            "import {skepticalAssessment} from './workflows/test/helpers/verdicts.js';"
             "import { disposeFindings } from './workflows/src/dispose.js';"
             "import { evaluateAdmission } from './workflows/src/admission.js';"
             + READ_INPUT
-            + "const input=JSON.parse(source);input.findings=input.findings.map(f=>evaluateAdmission({...f,origin:'new',path_role:'source',validation:'validated',policy_subject:'ordinary',challenge:'survived'}));"
+            + "const input=JSON.parse(source);input.findings=input.findings.map(f=>evaluateAdmission({...f,origin:'new',path_role:'source',validation:'validated',policy_subject:'ordinary',challenge:'survived',skeptical_assessments:[skepticalAssessment(f.id),skepticalAssessment(f.id,'challenger')]}));"
             + "process.stdout.write(JSON.stringify(disposeFindings(input)));",
             {"findings": findings},
         ).stdout

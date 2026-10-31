@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
         "present_defect",
         "confidence",
         "policy_subject",
+        "verdict",
+        "scope_assessments",
     ],
 )
 def test_validator_retry_separates_admission_evidence_from_scoring(missing):
@@ -25,6 +27,7 @@ import assert from 'node:assert/strict';
 import { runWith } from './workflows/src/run.js';
 import { makeFinding, makeCtx } from './workflows/test/helpers/pipelineMock.js';
 import { validArgs } from './workflows/test/helpers/argsFixtures.js';
+import { skepticalReturn } from './workflows/test/helpers/verdicts.js';
 const missing = JSON.parse(process.argv[1]);
 const ref = { file: 'engine', anchor: 'return value;', line_start: 10, line_end: 10, location_status: 'confirmed' };
 const finding = makeFinding('gap', { dimension: 'test_coverage', agent: 'test-analyzer',
@@ -37,9 +40,9 @@ const entries = [
   {predicate:'complete_searches', status:'confirmed', references:['searched_paths:0']},
   {predicate:'complete_behavioral_absence', status:'confirmed', references:['production_element','searched_paths:0']},
 ];
-const score = { finding_id:'gap', confidence:80, policy_subject:'ordinary', admission_assessments:entries };
+const score = skepticalReturn('gap','validator',{confidence:'80',policy_subject:'ordinary',admission_assessments:entries});
 const validationSkipped = ['confidence','policy_subject'].includes(missing);
-if (validationSkipped) delete score[missing];
+if (validationSkipped || ['verdict','scope_assessments'].includes(missing)) delete score[missing];
 else score.admission_assessments = entries.filter(e=>e.predicate !== missing);
 const args = validArgs({contextLines:20, contextChars:400, checkpoints:{verify:{findings:[finding], gaps:[]}}});
 let payload;
@@ -70,12 +73,17 @@ if (validationSkipped) {
   assert.doesNotMatch(out.gaps[0],/missing_assessment/);
   assert.match(payload.report,/validator did not score/);
 } else {
-  assert.deepEqual(out.gaps,[]);
+  assert.ok(out.gaps.every(g=>g.startsWith('cite_')));
   assert.equal(held.validator_confidence,80);
-  assert.equal(held.admission.status,'held_back');
-  assert.deepEqual(held.admission.reasons,[{predicate:missing,status:'held_back'}]);
-  assert.match(payload.report,/held back by admission/);
+  const semantic = ['verdict','scope_assessments'].includes(missing);
+  assert.equal(held.admission.status,semantic?'admitted':'held_back');
+  assert.deepEqual(held.admission.reasons,semantic?[]:[{predicate:missing,status:'held_back'}]);
+  if (semantic) {
+    assert.equal(held.skeptical_assessments[0].status,'incomplete');
+  } else {
+  assert.match(payload.report,/held back for incomplete evidence/);
   assert.ok(payload.report.includes(`admission predicates not established: ${missing}`));
+  }
   assert.doesNotMatch(payload.report,/pipeline-degraded|stage was skipped or failed|not skeptically validated|validation=skipped/);
 }
 """

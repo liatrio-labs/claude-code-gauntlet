@@ -193,8 +193,8 @@ stay off so a later re-evaluation need not re-derive them:
 
 ### Parity fixtures
 
-The five transform families (`merge_findings`, `finding_dedup`, `filter_findings`,
-`apply_validations`, `apply_challenges`) are JavaScript-owned. Their golden fixtures live at
+The four transform families (`merge_findings`, `finding_dedup`, `filter_findings`,
+`apply_validations`) are JavaScript-owned. Their golden fixtures live at
 `tests/fixtures/parity/<family>/[<group>/]<case>/{input,expected}.json`.
 When intended behavior changes, update the JavaScript transform and regenerate its goldens with
 `UPDATE_GOLDENS=1` in a reviewed diff. Do not hand-edit expected files to make a test pass.

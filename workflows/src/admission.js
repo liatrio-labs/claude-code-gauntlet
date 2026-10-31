@@ -1,4 +1,4 @@
-import { ADMISSION_PREDICATES, RIGHT_ELIGIBILITY, VERIFY_FACT_PROPERTIES, VERIFY_REFERENCE_DESCRIPTORS, FINDING_PROP_TYPES, DIMENSIONS, findingPolicy, admissionPolicy, requiredAssessments, VALIDATION_RETURN_PROPERTIES } from './registry.js';
+import { ADMISSION_PREDICATES, RIGHT_ELIGIBILITY, VERIFY_FACT_PROPERTIES, VERIFY_REFERENCE_DESCRIPTORS, FINDING_PROP_TYPES, DIMENSIONS, admissionPolicy, requiredAssessments, VALIDATION_RETURN_PROPERTIES } from './registry.js';
 import { canonicalRange } from './location.js';
 import { fnv1a32, INT_POLICY, coerceInt } from './wire.js';
 
@@ -185,6 +185,10 @@ export function evaluateAdmission(finding) {
   return finding;
 }
 
+export function refreshAdmission(finding) {
+  return hasAdmission(finding) ? finding : evaluateAdmission(finding);
+}
+
 export function admissionContext(finding, validation) {
   const { promotion, original } = admissionPolicy(finding);
   const promoted = hasPresentDefect(finding, validation?.admission_assessments);
@@ -193,14 +197,11 @@ export function admissionContext(finding, validation) {
     [subject, requiredAssessments(finding, subject, promoted)]));
   const missing = validation ? validationRejections(finding, validation)
     .filter((reason) => reason.startsWith('missing_assessment:')).map((reason) => reason.slice('missing_assessment:'.length)) : null;
-  const predicates = [...new Set(missing || [...Object.values(requirements).flat(), ...RIGHT_ELIGIBILITY.body.fixTask])]
-    .filter((predicate) => ADMISSION_PREDICATES[predicate]?.references);
   return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
     policy: { policy_subjects: validation ? { [validation.policy_subject]: missing } : requirements,
       ...(!validation && promotion ? { promotion: { predicate: promotion.predicate,
         confirmed: requiredAssessments(finding, 'ordinary', true) } } : {}),
       ...(!validation ? { body_fix_task: RIGHT_ELIGIBILITY.body.fixTask } : {}) },
-    predicates: Object.fromEntries(predicates.map((predicate) => [predicate, ADMISSION_PREDICATES[predicate]])),
     claim: Object.fromEntries(DIMENSIONS.flatMap((row) => Object.keys(row.schemaExtra)).map((key) => [key, finding[key]])),
     fix: finding.suggestion || finding.suggested_fix_code };
 }

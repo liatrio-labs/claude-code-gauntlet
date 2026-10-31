@@ -86,18 +86,16 @@ def test_cite_mode_receipts_bind_requests_and_source(tmp_path, monkeypatch, invo
             "inputPathBase": (output / "in").as_posix(),
             "outputPathBase": (output / "out").as_posix(),
         },
-        "findings": [
-            {
-                "id": "F",
-                "skeptical_assessments": [{"stage": "validator", "citations": [q]}],
-            }
-        ],
+        "findings": [{"id": "F"}],
+        "citation_request": q,
     }
     program = (
         f"import {{citeStage}} from {json.dumps((project / 'workflows/src/citeStage.js').as_uri())};"
+        f"import {{skepticalAssessment}} from {json.dumps((project / 'workflows/test/helpers/verdicts.js').as_uri())};"
         f"import {{shellSplit}} from {json.dumps((project / 'workflows/test/helpers/shellWords.js').as_uri())};"
         "import {execFileSync} from 'node:child_process'; import fs from 'node:fs';"
         "let s=''; for await (const c of process.stdin) s+=c; const inp=JSON.parse(s); let calls=0;"
+        "inp.findings[0].skeptical_assessments=[skepticalAssessment('F','validator',{citations:[inp.citation_request]})];"
         "const ctx={agent:async (prompt,opts)=>{calls++; if(calls===1)throw new Error('dispatch never launched');"
         "const [exe,...argv]=shellSplit(prompt.split('\\n').at(-1)); execFileSync(exe,argv,{cwd:inp.repoRoot});"
         "return JSON.parse(fs.readFileSync(inp.verify.outputPathBase+'.cite'+opts.label.split('-')[1]+'.json','utf8'));}};"

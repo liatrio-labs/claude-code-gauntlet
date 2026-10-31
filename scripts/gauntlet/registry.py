@@ -106,7 +106,8 @@ _CitationRequestSide_Literal = Literal["head", "old"]
 _ScopeAssessmentApplicability_Literal = Literal[
     "applicable", "inapplicable", "contradicted"
 ]
-_ReductionProvenanceReason_Literal = Literal[
+_SkepticalAssessmentsItemStatus_Literal = Literal["complete", "incomplete"]
+_ReductionDetailItemReason_Literal = Literal[
     "report_only",
     "held_back",
     "body_routed",
@@ -1441,7 +1442,7 @@ CODE_OWNED_HEADINGS = [
     "## Summary",
     "## Change Context",
     "## Findings",
-    "## Findings held back by admission",
+    "## Findings held back",
     "## Unverified / pipeline-degraded findings",
     "## Eliminated findings",
     "## Review Dimensions Summary",
@@ -2041,47 +2042,12 @@ class ChallengerReturn(TypedDict, total=False):
     scope_assessments: list[ChallengerReturnScopeAssessmentsItem]
 
 
-class SkepticalAssessmentsItemCitationsItem(TypedDict):
+class SkepticalAssessmentsItem(TypedDict):
     finding_id: str
     stage: SkepticalStage
-    request_id: str
-    role: _CitationRequestRole_Literal
-    snapshot_id: str
-    file: str
-    side: _CitationRequestSide_Literal
-    line_start: int
-    line_end: int
-    quote: str
-
-
-class SkepticalAssessmentsItemScopeAssessmentsItemCitationsItem(TypedDict):
-    finding_id: str
-    stage: SkepticalStage
-    request_id: str
-    role: _CitationRequestRole_Literal
-    snapshot_id: str
-    file: str
-    side: _CitationRequestSide_Literal
-    line_start: int
-    line_end: int
-    quote: str
-
-
-class SkepticalAssessmentsItemScopeAssessmentsItem(TypedDict):
-    finding_id: str
-    stage: SkepticalStage
-    category: ExclusionCategory
-    applicability: _ScopeAssessmentApplicability_Literal
-    citations: list[SkepticalAssessmentsItemScopeAssessmentsItemCitationsItem]
-
-
-class SkepticalAssessmentsItem(TypedDict, total=False):
-    finding_id: str
-    stage: SkepticalStage
-    verdict: Verdict
-    citations: list[SkepticalAssessmentsItemCitationsItem]
-    missing_evidence: str
-    scope_assessments: list[SkepticalAssessmentsItemScopeAssessmentsItem]
+    status: _SkepticalAssessmentsItemStatus_Literal
+    errors: list[str]
+    raw: dict[str, object]
 
 
 class CiteResultsItemRequest(TypedDict):
@@ -2111,6 +2077,15 @@ class CiteResultsItem(TypedDict):
     status: CitationStatus
     detail: str
     source: CiteResultsItemSource
+
+
+class ReductionDetailItem(TypedDict, total=False):
+    reason: _ReductionDetailItemReason_Literal
+    stage: SkepticalStage
+    verdict: Verdict
+    missing_field: str
+    missing_fields: list[str]
+    missing_evidence: str
 
 
 class ScopeFactsItem(TypedDict):
@@ -2144,7 +2119,7 @@ class ScopeDecisionsItem(TypedDict):
 class ReductionProvenance(TypedDict, total=False):
     finding_id: str
     disposition: Disposition
-    reason: _ReductionProvenanceReason_Literal
+    reason: _ReductionDetailItemReason_Literal
     category: ExclusionCategory
     stage: SkepticalStage
     request_ids: list[str]
@@ -2286,6 +2261,7 @@ class FindingMetadata(FindingFacts, total=False):
     body_fix_task_eligible: bool
     skeptical_assessments: list[SkepticalAssessmentsItem]
     cite_results: list[CiteResultsItem]
+    reduction_detail: list[ReductionDetailItem]
     scope_facts: list[ScopeFactsItem]
     scope_decisions: list[ScopeDecisionsItem]
     reduction_provenance: ReductionProvenance

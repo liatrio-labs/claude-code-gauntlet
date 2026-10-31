@@ -84,7 +84,7 @@ After new commits, the plugin offers to review only what changed since the last 
 ## What it posts
 
 The plugin saves a markdown report locally. For an open PR or MR, it then asks whether to post the selected findings as inline comments in one review.
-Here is one such comment, rendered from a [repository fixture](tests/fixtures/parity/apply_challenges/issue47_extra_fields_pass_through/input.json) finding and trimmed:
+Here is one such comment, rendered from a [repository fixture](tests/fixtures/parity/apply_validations/issue47_extra_fields_pass_through/input.json) finding and trimmed:
 
 > **🟠 [HIGH] Missing test for the payment failure rollback path**
 >
