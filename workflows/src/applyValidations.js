@@ -2,27 +2,10 @@
 
 import { INT_POLICY, coerceInt } from './wire.js';
 import { canonicalRange } from './location.js';
-import { matchAssessments, hasPresentDefect } from './admission.js';
-import { VALIDATION_RETURN_PROPERTIES, requiredAssessments } from './registry.js';
+import { matchAssessments } from './admission.js';
+import { VALIDATION_RETURN_PROPERTIES } from './registry.js';
 
 export const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
-
-export function validationRejections(finding, validation) {
-  if (!validation) return ['missing_entry'];
-  const reasons = [];
-  if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
-  if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
-  const assessments = Array.isArray(validation.admission_assessments) ? validation.admission_assessments : [];
-  for (const predicate of requiredAssessments(finding, validation.policy_subject, hasPresentDefect(finding, assessments))) {
-    const entries = assessments.filter((entry) => entry?.predicate === predicate);
-    if (entries.length !== 1
-      || !VALIDATION_RETURN_PROPERTIES.admission_assessments.items.properties.status.enum.includes(entries[0].status)
-      || !Array.isArray(entries[0].references) || entries[0].references.some((key) => typeof key !== 'string')) {
-      reasons.push(`missing_assessment:${predicate}`);
-    }
-  }
-  return reasons;
-}
 
 export function applyValidations(findings, validations) {
   const findingById = new Map();
