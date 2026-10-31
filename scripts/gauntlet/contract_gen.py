@@ -116,9 +116,11 @@ _REGISTRY_MODULES = (
     "outputPaths",
     "verifyWire",
     "discover",
+    "contextPlan",
 )
 # Field order is the JSON key order the generated registry is checked against.
 _REGISTRY_FIELDS = (
+    "readPlanMaxChars: c.READ_PLAN_MAX_CHARS",
     "required: m.FINDING_REQUIRED",
     "waistRequired: m.REQUIRED",
     "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
@@ -191,7 +193,7 @@ def load_registry(repo_root: str) -> Mapping[str, Any]:
         + ", ".join(
             f"import('./workflows/src/{name}.js')" for name in _REGISTRY_MODULES
         )
-        + "]).then(([m, a, v, f, o, w, d]) => console.log(JSON.stringify({"
+        + "]).then(([m, a, v, f, o, w, d, c]) => console.log(JSON.stringify({"
         + fields
         + "})))"
     )
@@ -912,6 +914,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "ARTIFACT_BASENAMES = tuple(ARTIFACT_PATH_TEMPLATES.values())",
             f"FIX_MAX_LINES = {identity['fixMaxLines']}",
             f"FIX_MAX_CHARS = {identity['fixMaxChars']}",
+            f"READ_PLAN_MAX_CHARS = {identity['readPlanMaxChars']}",
             "JS_TRIM_CHARS = (\n"
             + "\n".join(
                 "    "

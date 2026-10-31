@@ -316,7 +316,7 @@ The **change summary** is no longer written into the context file — the workfl
 
 ### Measure it
 
-Stamp the script receipt verbatim. Both waist fields are optional only so a skipped step degrades to a disclosed `context_unmeasured` gap, never a licence to skip; `contextChars` without `contextLines` is refused at the waist. `contextReadPlan` and `sharedContextLine` (`workflows/src/contextPlan.js`) turn the pair into the Read calls.
+Stamp the script receipt verbatim. Size fields are optional only so a skipped step degrades to a disclosed `context_unmeasured` gap, never a licence to skip; `contextChars` or `contextMaxLineChars` without `contextLines` is refused at the waist. `contextReadPlan` and `sharedContextLine` (`workflows/src/contextPlan.js`) turn the measurements into the Read calls.
 
 ---
 
@@ -403,7 +403,7 @@ Model dispatch, including user mappings and gateway naming, follows [model-polic
 **Other inputs (optional unless noted):**
 
 - `scopeAnswer` — `"light"` or `"full"`, the 2e trivial-scope gate's answer, stamped ONLY when that gate actually asked (every changed file low-risk and `changedLines < 50`; see 2e). Omit otherwise — the workflow refuses a `scopeAnswer` incoherent with `riskTable`/`changedLines` (any present `scopeAnswer` when the riskTable is not light-eligible, or a light-eligible riskTable with no `scopeAnswer` at all).
-- `contextLines` / `contextChars` — the shared context file's measured size from `write_shared_context.py`'s receipt. **Not provenance — consumed.** `contextReadPlan` turns them into the exact `Read` calls the Summarize/Discover/Validate prompts enumerate, so the agent is told which calls to make instead of having to notice an unannounced truncation. Both optional (absent ⇒ count-free read-to-end wording); `contextChars` requires `contextLines`; both must be positive integers.
+- `contextLines` / `contextChars` / `contextMaxLineChars` — the shared context file's measured size and maximum line length (including LF) from `write_shared_context.py`'s receipt. **Not provenance — consumed.** `contextReadPlan` turns them into the exact `Read` calls the Summarize/Discover/Validate prompts enumerate, so the agent is told which calls to make instead of having to notice an unannounced truncation. Optional (absent ⇒ count-free read-to-end wording); character measurements require `contextLines`; all must be positive integers.
 - `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).
 - `reviewMd` / `reviewMdSetChecksum` - `[{ path, text, checksum }, ...]` plus `receipt.review_md_checksum` in collector receipt order (2d step 3), the raw text of every REVIEW.md listed by the receipt. Never hand-parse it here: the workflow's `resolveReviewConfig` (`workflows/src/args.js`) builds root and subtree layers before the Filter stage selects settings by finding file. An empty array is a legal, authoritative "discovered nothing."

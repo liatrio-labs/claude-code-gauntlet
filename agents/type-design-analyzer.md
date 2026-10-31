@@ -49,45 +49,13 @@ For each significant type (class, interface, struct, record, enum, union type) t
 - Is it impossible to create an instance in an invalid state?
 - Are partial construction and intermediate invalid states prevented?
 
-## Anti-patterns to flag
+## Investigation basis
 
-Anemic domain models
-
-- Types that are just bags of public fields with no behavior
-- Business logic scattered across service classes instead of living on the types it operates on
-- Types that can be put into any state because they have no constraints
-
-Exposed mutable internals
-
-- Public mutable collections that allow external code to bypass invariant checks
-- Mutable fields that should be readonly/final
-- Getter methods that return mutable references to internal state
-
-Invariants enforced only by documentation
-
-- Comments saying "this field must be positive" without validation
-- README/docstring constraints that aren't checked in code
-- Naming conventions used as the sole enforcement mechanism (e.g., `unsafeX` prefix)
-
-Types with too many responsibilities
-
-- God objects that accumulate unrelated fields and methods
-- Types that serve multiple bounded contexts with different invariants
-- Types where half the fields are optional because they only apply in certain modes
-
-Missing validation at construction boundaries
-
-- Constructors that accept raw primitives without validation
-- Factory methods that don't check preconditions
-- Deserialization that creates instances without invariant checks
-- Builder patterns that allow build() to be called in incomplete states
-
-## Key design principles
-
-- Prefer compile-time guarantees over runtime checks. A type that can't represent an invalid state is better than a type that validates at runtime.
-- Make illegal states unrepresentable. Use the type system to exclude impossible combinations rather than checking for them.
-- Immutability simplifies invariant maintenance. If a type is immutable and valid at construction, it stays valid forever.
-- Parse, don't validate. Convert unstructured data into structured types at the boundary, then work with the structured types internally.
+Walk construction and mutation paths from inputs to states observed by callers,
+checking invariant enforcement and reachable invalid or intermediate states.
+Report demonstrated production defects as `current_correctness`.
+Ground other improvements in inspected duplication, a concrete behavior-preserving
+simpler equivalent or an applicable idiom from existing repository code.
 
 ## What you do NOT report
 

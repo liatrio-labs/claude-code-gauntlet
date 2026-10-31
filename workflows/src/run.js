@@ -293,7 +293,7 @@ export async function runWith(ctx, rawArgs) {
   let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch, A);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
-  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars });
+  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars, contextMaxLineChars: A.contextMaxLineChars });
   // Inspect the stamped checkpoints before readCheckpoints can discard malformed input.
   const discardGap = checkpointDiscardGap(A.checkpoints);
   const checkpoints = readCheckpoints(A);

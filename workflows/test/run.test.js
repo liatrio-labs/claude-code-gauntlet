@@ -1356,6 +1356,8 @@ const UNPLANNABLE_GAP = 'context_unplannable: args.contextLines was stamped (150
   + 'Shrink the shared context '
   + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.';
 const CONTEXT_ROWS = [
+  { name: 'maximum line width reaches every reader', input: { contextLines: 2028, contextChars: 94784, contextMaxLineChars: 1000 }, gaps: [],
+    markers: ['exactly 68 Read calls of limit=30', 'stepping by 30 through line 2028'] },
   { name: 'measured readers include final tail and validator', input: { contextLines: 2028, contextChars: 94784 }, gaps: [],
     markers: ['exactly 4 Read calls', 'Read(offset=1924, limit=105)'] },
   { name: 'unmeasured readers get one actionable fallback', input: {}, gaps: [UNMEASURED_GAP],
@@ -1607,7 +1609,7 @@ test('producer-measured description context reaches every discovery agent', asyn
       target: { platform: 'github', web_origin: 'https://github.com', owner: 'synthetic', repo: 'fixture', pr_number: 1, sha_full: sha } }));
     const result = spawnSync(process.env.PYTHON || 'python3', [resolve('scripts/write_shared_context.py'),
       '--output-dir', output, '--head-sha', 'abc1234', '--target-type', 'pr', '--head-sha-full', sha,
-      '--snapshot-file', snapshot], { input: 'triage', encoding: 'utf8' });
+      '--repo-root', output, '--snapshot-file', snapshot], { input: 'triage', encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     const measured = JSON.parse(result.stdout);
     const { ctx, out } = await runAndCapture(validArgs({ outputDir: output, ...measured }));
