@@ -11,18 +11,25 @@ import { outsideAddedLines, scopeDecisions } from './scope.js';
 
 function skepticalOutcome(finding) {
   const reasons = [];
+  const proofs = [];
   let proven = null;
   for (const stage of ['validator', 'challenger']) {
     const entries = (finding.skeptical_assessments || []).filter((a) => a.stage === stage);
+    if (stage === 'challenger' && !entries.length && ['validator_terminal', 'admission_terminal', 'scope_terminal'].includes(finding.challenge)) continue;
+    const operational_gap = stage === 'validator' ? finding.validation === 'skipped' : ['failed', 'capped', 'skipped'].includes(finding.challenge);
+    const proof = { stage, verdict: null, proved: false, unresolved: !operational_gap, unavailable: false,
+      operational_gap, non_dispatch: stage === 'validator' ? operational_gap : ['capped', 'skipped'].includes(finding.challenge) };
+    proofs.push(proof);
     if (entries.length !== 1) {
-      if (!(stage === 'challenger' && (finding.challenge === 'validator_terminal'
-        || (finding.challenge === 'admission_terminal' && hasAdmission(finding) && finding.admission.status === 'report_only')))) {
-        reasons.push({ reason: 'held_back', stage, missing_field: 'verdict' });
-      }
+      reasons.push({ reason: 'held_back', stage, missing_field: 'verdict' });
       continue;
     }
     const raw = entries[0].raw ?? {};
     const { assessment, requests, proved } = skepticalProof(finding, raw, stage);
+    const { semanticErrors } = assessmentGaps(assessment);
+    Object.assign(proof, { verdict: ['real', 'refuted', 'needs_evidence'].includes(raw.verdict) ? raw.verdict : null,
+      proved, unresolved: !operational_gap && (!['real', 'refuted'].includes(raw.verdict) || semanticErrors.length > 0),
+      unavailable: (finding.cite_results || []).some((r) => r.request?.stage === stage && r.status === 'unavailable') });
     if (raw.verdict === 'needs_evidence') reasons.push({ reason: 'held_back', stage, missing_evidence: raw.missing_evidence });
     if (['real', 'refuted'].includes(raw.verdict) && !proved) {
       const unavailable = requests.some((q) => citeResult(finding, q)?.status === 'unavailable');
@@ -35,10 +42,16 @@ function skepticalOutcome(finding) {
       else reasons.push({ reason: 'held_back', stage, verdict: raw.verdict });
     }
     // A malformed real proof is diagnostic; missing semantic assessments still close delivery.
-    const { semanticErrors } = assessmentGaps(assessment);
     if (semanticErrors.length) reasons.push({ reason: 'held_back', stage, missing_fields: semanticErrors });
   }
-  return { proven, reasons, held: reasons.some((r) => r.reason === 'held_back' || r.verdict === 'refuted') };
+  return { proven, reasons, proofs, held: reasons.some((r) => r.reason === 'held_back' || r.verdict === 'refuted') };
+}
+
+function dispositionDecision(finding, reason) {
+  if (reason === 'scope_contradicted') return 'kept';
+  if (finding.disposition === 'eliminate') return 'eliminated';
+  if (['held_back', 'report_only'].includes(finding.disposition)) return finding.disposition;
+  return 'body_routed';
 }
 
 export function disposeFindings(challenged) {
@@ -56,6 +69,8 @@ export function disposeFindings(challenged) {
     const scopeRows = scopeDecisions(finding, input.conventions_confirmations || []);
     const scope = scopeRows.filter((row) => row.applies === true);
     const skeptical = skepticalOutcome(finding);
+    finding.reduction_detail = skeptical.reasons;
+    finding.reduction_proofs = skeptical.proofs;
     for (const row of scopeRows.filter((r) => r.reason && r.applies !== true)) {
       skeptical.reasons.push({ reason: row.reason, category: row.category, stage: row.stage });
       if (row.applies === null) skeptical.held = true;
@@ -87,7 +102,6 @@ export function disposeFindings(challenged) {
         eliminated.push(finding);
       } else {
         findings.push(finding);
-        if (finding.trace_id) decisions.push(traceDecision(finding, 'report_only', terminalScope.category, [], 'report_only'));
       }
       continue;
     }
@@ -111,13 +125,8 @@ export function disposeFindings(challenged) {
       disposition = 'deliver';
     } else reasons.push('body_routed');
     finding.disposition = disposition;
-    finding.reduction_detail = skeptical.reasons;
     finding.disposition_reasons = [...new Set([...reasons, ...(admitted ? finding.admission.reasons.map((reason) => reason.status) : [])])];
     (disposition === 'held_back' ? unverified : findings).push(finding);
-    if (finding.trace_id) for (const reason of finding.disposition_reasons) {
-      decisions.push(traceDecision(finding, reason, reason, [], ['held_back', 'report_only'].includes(disposition) ? disposition : 'body_routed',
-        admissionDetail(finding, { predicates: finding.admission?.reasons || [], surface: disposition })));
-    }
   }
   const eliminations = eliminationDecisions({ eliminated: eliminated.map((f) => ({ ...f, trace_id: f.trace_id || 'unused' })) });
   for (const [index, finding] of eliminated.entries()) {
@@ -127,7 +136,15 @@ export function disposeFindings(challenged) {
     finding.disposition = 'eliminate';
     finding.disposition_reasons = [eliminations[index].reason_code];
   }
-  decisions.push(...eliminations.filter((_, index) => eliminated[index].trace_id));
+  for (const finding of [...findings, ...unverified, ...eliminated].filter((f) => f.trace_id)) {
+    const rows = [...(finding.reduction_detail || [])];
+    rows.push(...finding.disposition_reasons.filter((reason) => !rows.some((row) => row.reason === reason)).map((reason) => ({ reason })));
+    for (const row of rows) decisions.push(traceDecision(finding, row.reason, row.reason, [],
+      dispositionDecision(finding, row.reason),
+      { ...(finding.disposition !== 'eliminate' ? admissionDetail(finding, { predicates: finding.admission?.reasons || [], surface: finding.disposition }) : {}),
+        ...(row.stage ? { stage: row.stage } : {}), ...(row.category ? { category: row.category } : {}),
+        ...(row.stage ? { reduction: row } : {}) }));
+  }
   const actionable = findings.filter((f) => deliveryAllows(f, 'body'));
   const { consolidatedCount } = consolidateCrossAgent(actionable, (f) => deliveryAllows(f, 'inline'));
   const groups = deliveryGroups(actionable).map(({ primary, corroborators }, index) => {

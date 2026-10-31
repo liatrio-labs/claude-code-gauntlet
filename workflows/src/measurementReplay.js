@@ -3,15 +3,9 @@ import { stripTraceFields, appendBudgetedMeasurement } from './measurementTrace.
 
 // The workflow sandbox has neither crypto nor a byte encoder; prompts are hashed as UTF-8.
 function promptSha256(text) {
-  const bytes = [];
-  for (const char of text) {
-    let code = char.codePointAt(0);
-    if (code >= 0xd800 && code <= 0xdfff) code = 0xfffd;
-    if (code < 0x80) bytes.push(code);
-    else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 63));
-    else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
-    else bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 63), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
-  }
+  const bytes = (encodeURIComponent(text.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g,
+    (c) => c.length === 1 ? '\ufffd' : c)).match(/%[0-9A-F]{2}|[^%]/g) || [])
+    .map((c) => c[0] === '%' ? parseInt(c.slice(1), 16) : c.charCodeAt(0));
   const bits = bytes.length * 8;
   bytes.push(0x80);
   while (bytes.length % 64 !== 56) bytes.push(0);
@@ -48,7 +42,7 @@ export function captureDeliveryReplay(c, args, state) {
   const { limits, gaps, completed, phaseOutputs, resolvedReview, reviewMdSubtrees, derivedAgentFlags, phaseReached } = state;
   const saved = deepClone({ limits, gaps, completed, phaseOutputs, resolvedReview, reviewMdSubtrees, derivedAgentFlags, phaseReached });
   stripTraceFields(saved);
-  const record = { args: deepClone(state.replayArgs || args), pipelineVersion: c.pipelineVersion, state: saved, persistence: [] };
+  const record = { replay_version: 2, args: deepClone(state.replayArgs || args), pipelineVersion: c.pipelineVersion, state: saved, persistence: [] };
   const dispatch = c.agent;
   return { record, ctx: { ...c, agent: async (prompt, options) => {
     const row = { label: options.label, agent_type: options.agentType, prompt_sha256: promptSha256(prompt), result: null, error: null };

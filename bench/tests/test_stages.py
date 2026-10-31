@@ -126,6 +126,9 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
         "detail_kind",
         "detail_policy_subject",
         "detail_shape",
+        "verdict_seam",
+        "duplicate_assessment",
+        "assessment_reference",
     ],
 )
 def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
@@ -147,6 +150,18 @@ def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
             snapshot["stage"] = "deliver"
         elif mutation == "reason":
             raw["snapshots"][1]["decisions"][0]["reason_code"] = None
+        elif mutation in (
+            "verdict_seam",
+            "duplicate_assessment",
+            "assessment_reference",
+        ):
+            cite = next(s for s in raw["snapshots"] if s["stage"] == "cite")
+            if mutation == "verdict_seam":
+                snapshot["verdicts"], cite["verdicts"] = cite["verdicts"], None
+            elif mutation == "duplicate_assessment":
+                cite["verdicts"].append(dict(cite["verdicts"][0]))
+            else:
+                cite["verdicts"][0]["trace_id"] = "absent"
         elif mutation.startswith("detail_"):
             detail = next(
                 decision["detail"]
@@ -165,7 +180,7 @@ def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
             elif mutation == "detail_policy_subject":
                 detail["policy_subject"] = "invalid"
             else:
-                detail["predicate"] = "challenge_terminal"
+                detail["unknown_field"] = "invalid"
         elif mutation == "folded_elimination":
             raw["snapshots"][1]["decisions"][0]["reason_code"] = "folded"
         elif mutation == "flag":

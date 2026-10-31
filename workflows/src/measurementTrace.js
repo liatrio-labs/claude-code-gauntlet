@@ -1,11 +1,12 @@
 import { deepClone, RETURN_CHAR_BUDGET } from './wire.js';
-import { SKEPTICAL_FINDING_PROPERTIES } from './registry.js';
+import { SKEPTICAL_FINDING_PROPERTIES, EXCLUSION_CATEGORIES } from './registry.js';
 
 export const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'cite', 'dispose', 'holdback', 'select', 'deliver'];
 export const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
 const traceHistory = new WeakMap();
 const stageDecisions = new WeakMap();
 export const decisionsFor = (output) => stageDecisions.get(output) || [];
+const traceIssueId = (finding) => finding.delivery_group?.issue_key || finding.consolidation_key || finding.trace_id;
 export function createMeasurementTrace(nonce) {
   const trace = { schema_version: 1, run_nonce: nonce,
     versions: [], snapshots: [], complete: false };
@@ -23,7 +24,17 @@ export function admissionDetail(finding, extra = {}) {
 export function traceDecision(finding, reason_code, reason, related = [], decision = 'eliminated', detail = null) {
   // An unlisted code would fail the bench's closed decoder and lose the whole trace; record it as unknown instead.
   const code = TRACE_REASONS.includes(reason_code) ? reason_code : 'unknown';
-  return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related, detail };
+  const reduction = finding.reduction_detail?.find((r) => r.reason === code && (!detail?.stage || r.stage === detail.stage)) || finding.reduction_provenance || {};
+  const row = EXCLUSION_CATEGORIES.find((r) => r.category === (detail?.category || reduction.category));
+  const stage = detail?.stage || reduction.stage || row?.stage;
+  return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related,
+    detail: { reduction, finding_id: typeof finding.id === 'string' ? finding.id : null,
+      issue_id: traceIssueId(finding),
+      ...(stage ? { stage } : {}),
+      ...(row ? { category: row.category, predicate: row.predicate } : {}),
+      source: finding.cite_results?.find((r) => r.request?.stage === stage)?.source || finding.scope_facts || null,
+      request_ids: reduction.request_ids || [], ...detail,
+      original_producer: finding.discovery_agent || finding.agent || 'unknown' } };
 }
 export function eliminationDecisions(output) {
   const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
@@ -31,6 +42,31 @@ export function eliminationDecisions(output) {
   return (output.eliminated || []).filter((f) => f.trace_id)
     .map((f) => traceDecision(f, codes[f.eliminated_by] || 'unknown', f.elimination_reason));
 }
+
+// Disposal owns proof acceptance; measurement consumes its per-stage stamp.
+function verdictObservations(findings) {
+  return findings.filter((f) => f.trace_id).flatMap((f) => (f.reduction_proofs || [])
+    .map((row) => ({ trace_id: f.trace_id, ...row })));
+}
+
+function verdictFailureReason(observation, finding) {
+  if (observation.operational_gap) {
+    if (observation.stage === 'validator') return 'validation_skipped';
+    return finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed';
+  }
+  if (observation.unavailable) return 'cite_unavailable';
+  return observation.unresolved ? 'held_back' : 'cite_unmatched';
+}
+const traceWorkloads = {
+  cite: (output) => ({ requests: output.cite_ledger?.entries?.length || 0,
+    batches: (output.cite_ledger?.batches || []).map(({ attempts, state, attempt_timestamps }) => ({ attempts, state,
+      ...(attempt_timestamps ? { attempt_timestamps } : {}) })),
+    oversize: output.stats?.cite_oversize || 0, source_capture: output.verify?.sourceCapture || null }),
+  verify: (output) => output.inputProof || null,
+  validate: (output) => output.stats || null,
+  challenge: (output) => output.stats || null,
+};
+
 export function stampDiscovery(trace, finding, spec, dispatch, occurrence) {
   if (!finding || typeof finding !== 'object' || Array.isArray(finding)) return finding;
   const out = finding;
@@ -42,13 +78,14 @@ export function stampDiscovery(trace, finding, spec, dispatch, occurrence) {
 
 function traceVersion(trace, finding) {
   if (!finding || typeof finding.trace_id !== 'string') return null;
-  const copy = deepClone(finding);
-  const fingerprint = JSON.stringify(copy);
+  const version = deepClone(finding);
+  const fingerprint = JSON.stringify(version);
   const repeated = traceHistory.get(trace).get(fingerprint);
   if (repeated) return repeated;
   const version_id = `v${trace.versions.length}`;
-  trace.versions.push({ version_id, trace_id: copy.trace_id,
-    discovery_agent: copy.discovery_agent || 'unknown', discovery_dimension: copy.discovery_dimension || 'unknown', finding: copy });
+  trace.versions.push({ version_id, trace_id: version.trace_id,
+    issue_id: traceIssueId(version),
+    discovery_agent: version.discovery_agent || 'unknown', discovery_dimension: version.discovery_dimension || 'unknown', finding: version });
   traceHistory.get(trace).set(fingerprint, version_id);
   return version_id;
 }
@@ -59,13 +96,27 @@ export function recordStage(trace, stage, output, details = {}) {
   if (existing >= 0 && details.replayed) { trace.snapshots[existing].replayed = true; return; }
   if (existing >= 0) trace.snapshots = trace.snapshots.slice(0, existing);
   const findings = Array.isArray(output) ? output : output.findings || output.filtered || [];
+  const all = [...findings, ...(output.unverified || []), ...(output.eliminated || [])];
   const decisions = [...decisionsFor(output), ...(details.decisions || [])];
+  if (stage === 'dispose') for (const decision of decisions) if (decision.detail) {
+    decision.detail.issue_id = findings.find((finding) => finding.trace_id === decision.trace_id)?.delivery_group?.issue_key || decision.detail.issue_id;
+  }
+  const verdicts = stage === 'cite' ? verdictObservations(details.verdictFindings || []) : [];
+  for (const version of verdicts) {
+    if (!version.proved) {
+      const finding = all.find((finding) => finding.trace_id === version.trace_id);
+      const code = verdictFailureReason(version, finding);
+      decisions.push(traceDecision(finding, code, code, [], 'kept', { stage: version.stage }));
+    }
+  }
   for (const finding of [...(details.removed || output.eliminated || []), ...(output.unverified || [])]) traceVersion(trace, finding);
   trace.snapshots.push({ sequence: trace.snapshots.length, stage,
-    finding_version_ids: findings.map((f) => traceVersion(trace, f)).filter((id) => id !== null),
+    finding_version_ids: findings.map((finding) => traceVersion(trace, finding)).filter((id) => id !== null),
     decisions: deepClone(decisions), executed: details.executed !== false, replayed: !!details.replayed,
     coverage: details.coverage || (details.replayed ? 'partial' : 'complete'),
-    cap: details.cap ?? null, cap_hit: !!details.cap_hit });
+    cap: details.cap ?? null, cap_hit: !!details.cap_hit,
+    verdicts: stage === 'cite' ? verdicts : null,
+    workload: traceWorkloads[stage]?.(output) || null });
 }
 export function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;

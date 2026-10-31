@@ -1024,10 +1024,12 @@ def test_admission_diagnostics_preserve_issue_and_producer(case, tmp_path):
     versions = tuple(
         replace(
             v,
+            discovery_agent="test-analyzer",
             finding={
                 **v.finding,
                 "origin_dimension": "test_coverage",
                 "agent": "test-analyzer",
+                "discovery_agent": "test-analyzer",
                 "admission": {
                     **v.finding.get("admission", {}),
                     "status": "held_back",
@@ -1053,6 +1055,7 @@ def test_admission_diagnostics_preserve_issue_and_producer(case, tmp_path):
             replace(
                 s,
                 coverage="complete",
+                verdicts=None,
                 finding_version_ids=vids if i == 0 else vids[1:],
                 decisions=(coalesced,) if s.stage in ("merge", "select") else (),
             )
@@ -1262,6 +1265,28 @@ def test_admission_diagnostics_preserve_issue_and_producer(case, tmp_path):
         if r.surfaces["inline"]["values"]["delivery_records"]
     )
     assert not unknown.record_coalescence["available"]
+    assert [
+        (r.verdicts["available"], r.verdicts["reason"], r.verdicts["evidence_sha256"])
+        for r in (selected, unknown)
+    ] == [
+        (
+            True,
+            None,
+            {
+                p: file_hash(root / p)
+                for p in ("stage_trace_bindings.json", "sources/trace.json")
+            },
+        ),
+        (
+            False,
+            "recorded assessment proof unavailable",
+            {
+                "stage_trace_bindings.json": file_hash(
+                    packets[unknown.score_ref].root / "stage_trace_bindings.json"
+                )
+            },
+        ),
+    ]
     assert unknown.record_coalescence["values"] is None
     assert unknown.surfaces["inline"]["values"]["issues"] is None
     assert unknown.surfaces["inline"]["values"]["producer_leakage"] is None

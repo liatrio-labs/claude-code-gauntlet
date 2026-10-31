@@ -181,7 +181,11 @@ def test_scoring_preserves_inline_and_all_surface_receipts(
     )
     trace["versions"] = []
     for snapshot in trace["snapshots"]:
-        snapshot.update(finding_version_ids=[], decisions=[])
+        snapshot.update(
+            finding_version_ids=[],
+            decisions=[],
+            verdicts=[] if snapshot["stage"] == "cite" else None,
+        )
     score._write_json(pr / "code-gauntlet-measurement-empty.json", trace)
     empty_review = dict(findings=[], review_body="No issues.", sha="b" * 40)
     score._write_json(pr / "code-gauntlet-post-review-empty.json", empty_review)

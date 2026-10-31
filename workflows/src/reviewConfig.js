@@ -1,4 +1,4 @@
-import { WS_TRIM_RE, escapeRegExp, asText, deepFreeze } from './wire.js';
+import { WIRE_SPACE, WS_TRIM_RE, escapeRegExp, asText, deepFreeze } from './wire.js';
 import { REVIEW_SETTING_KEYS } from './registry.js';
 
 export function cfgGet(config, key, fallback) {
@@ -22,32 +22,32 @@ export function splitReviewLines(text) {
 }
 
 const REVIEW_BLOCK_PATTERNS = deepFreeze([
-  /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet(?:[^\n]*)?\n([^\x00]*?)```/i,
-  /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
-  /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review(?:[^\n]*)?\n([^\x00]*?)```/i,
-  /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
+  new RegExp("```(?:yaml|)" + WIRE_SPACE + "*#?" + WIRE_SPACE + "*code-gauntlet(?:[^\\n]*)?\\n([^\\x00]*?)```", 'i'),
+  new RegExp(String.raw`<!--${WIRE_SPACE}*code-gauntlet-config${WIRE_SPACE}*\n([^\x00]*?)-->`, 'i'),
+  new RegExp("```(?:yaml|)" + WIRE_SPACE + "*#?" + WIRE_SPACE + "*deep-review(?:[^\\n]*)?\\n([^\\x00]*?)```", 'i'),
+  new RegExp(String.raw`<!--${WIRE_SPACE}*deep-review-config${WIRE_SPACE}*\n([^\x00]*?)-->`, 'i'),
 ]);
 
 const REVIEW_CONFIDENCE_RE =
-  /(?:^|\n)[ \t]*confidence_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})(?![0-9])/i;
+  new RegExp(String.raw`(?:^|\n)[ \t]*confidence_threshold${WIRE_SPACE}*[:=]${WIRE_SPACE}*([0-9]{1,3})(?![0-9])`, 'i');
 
 const REVIEW_SECURITY_RE =
-  /(?:^|\n)[ \t]*security_min_confidence[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})(?![0-9])/i;
+  new RegExp(String.raw`(?:^|\n)[ \t]*security_min_confidence${WIRE_SPACE}*[:=]${WIRE_SPACE}*([0-9]{1,3})(?![0-9])`, 'i');
 
 const REVIEW_SEVERITY_RE =
-  /(?:^|\n)[ \t]*severity_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(critical|high|medium|low)/i;
+  new RegExp(String.raw`(?:^|\n)[ \t]*severity_threshold${WIRE_SPACE}*[:=]${WIRE_SPACE}*(critical|high|medium|low)`, 'i');
 
 const REVIEW_IGNORE_RE =
-  /(?:^|\n)[ \t]*ignore[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n((?:[ \t]*-[^\n]*\n?)+)/i;
+  new RegExp(String.raw`(?:^|\n)[ \t]*ignore${WIRE_SPACE}*:${WIRE_SPACE}*\n((?:[ \t]*-[^\n]*\n?)+)`, 'i');
 
 const REVIEW_IGNORE_ITEM_RE =
-  /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*-[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*/;
+  new RegExp(String.raw`^${WIRE_SPACE}*-${WIRE_SPACE}*`);
 
 const REVIEW_EXCL_BLOCK_RE =
   /```[^\n]*\n([^\x00]*?)```/;
 
 const REVIEW_EXCL_BULLET_RE =
-  /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[-*][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+([^\n]+)$/;
+  new RegExp(String.raw`^${WIRE_SPACE}*[-*]${WIRE_SPACE}+([^\n]+)$`);
 
 export const REVIEW_CONFIG_RULES = deepFreeze([
   ...REVIEW_BLOCK_PATTERNS.map((pattern) => ({ kind: 'block', pattern })),

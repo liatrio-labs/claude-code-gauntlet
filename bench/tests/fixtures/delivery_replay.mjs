@@ -7,7 +7,7 @@ import { plannedArtifactPaths } from '../../../workflows/src/outputPaths.js';
 import { normalizeArgs } from '../../../workflows/src/args.js';
 import { parseWriterPayload } from '../../../workflows/src/persist.js';
 import { runWith } from '../../../workflows/src/run.js';
-import { citationEnvelope } from '../../../workflows/test/helpers/verdicts.js';
+import { citationEnvelope, sourceCapture } from '../../../workflows/test/helpers/verdicts.js';
 
 // Shared IDs must remain distinct occurrences across holdback and elimination.
 const finding = (occurrence, over = {}) => makeFinding(occurrence === 4 ? 'DUP' : `F${occurrence}`, {
@@ -37,9 +37,15 @@ const phaseInputs = {
     eliminated: [filtered, eliminated], stats: {} },
 };
 const rows = {};
-for (const mode of ['return', 'derived', 'legacy', 'writer-failure', 'empty', 'candidate']) {
+for (const mode of ['return', 'derived', 'legacy', 'writer-failure', 'empty', 'candidate', 'proof']) {
   // Clone each phase independently: real phase outputs do not share finding objects.
   const phases = Object.fromEntries(Object.entries(phaseInputs).map(([key, out]) => [key, structuredClone(out)]));
+  if (mode === 'proof') {
+    const f = phases.challenge.findings[0];
+    f.skeptical_assessments[0].raw.verdict = 'refuted';
+    f.skeptical_assessments.splice(1);
+    f.challenge = 'validator_terminal';
+  }
   if (mode === 'candidate') for (const output of Object.values(phases)) {
     for (const bucket of ['findings', 'unverified', 'eliminated', 'filtered']) {
       for (const finding of output[bucket] || []) if (finding.file === '4.js') finding.id = 'ELIM';
@@ -49,6 +55,8 @@ for (const mode of ['return', 'derived', 'legacy', 'writer-failure', 'empty', 'c
     for (const bucket of ['findings', 'unverified', 'eliminated', 'filtered']) if (Array.isArray(output[bucket])) output[bucket] = [];
   }
   const args = normalizeArgs(validArgs({ contextLines: 1, contextChars: 1, measurementTrace: true,
+    ...(mode === 'proof' ? { verify: { targetKind: 'branch', sourceCapture: {
+      ...sourceCapture, nonce: 'nonce-xyz', head: `abc1234${'a'.repeat(33)}` } } } : {}),
     limits: { deliveryCap: 1 }, delivery: { tier: 'all', prIdentity: {
       owner: 'synthetic', repo: 'fixture', pr_number: 1, sha_full: 'a'.repeat(40), platform: 'github', web_origin: 'https://github.com',
     } }, checkpoints: phases,
@@ -57,7 +65,7 @@ for (const mode of ['return', 'derived', 'legacy', 'writer-failure', 'empty', 'c
   const dispatches = [];
   const persistence = persistCtx();
   const ctx = { pipelineVersion: null, agent: async (prompt, dispatch) => {
-    if (dispatch.label.startsWith('cite-')) return citationEnvelope(prompt, args, () => 'unmatched');
+    if (dispatch.label.startsWith('cite-')) return citationEnvelope(prompt, args, () => mode === 'proof' ? 'matched' : 'unmatched');
     const row = { label: dispatch.label, agent_type: dispatch.agentType,
       prompt_sha256: createHash('sha256').update(prompt).digest('hex'), result: null, error: null };
     dispatches.push(row);
