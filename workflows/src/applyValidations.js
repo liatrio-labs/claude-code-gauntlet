@@ -3,9 +3,7 @@
 import { INT_POLICY, coerceInt } from './wire.js';
 import { canonicalRange } from './location.js';
 import { matchAssessments } from './admission.js';
-import { VALIDATION_RETURN_PROPERTIES } from './registry.js';
-
-export const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
+import { VALIDATION_RETURN_PROPERTIES, REACHABILITY_VALUES } from './registry.js';
 
 export function applyValidations(findings, validations) {
   const findingById = new Map();

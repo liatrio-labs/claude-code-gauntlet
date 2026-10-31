@@ -1,5 +1,5 @@
 // Summary and discovery stages, finding schemas, and scope flags.
-import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISPATCH_RESULTS, modelFor, DISCOVERY_FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
+import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISPATCH_RESULTS, modelFor, DISCOVERY_FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive, SKEPTICAL_FINDING_PROPERTIES } from './registry.js';
 import { computeLightEligible } from './knobs.js';
 import { LIMIT_DEFAULTS } from './registry.js';
 import { effectiveBucketSize } from './capacity.js';
@@ -276,7 +276,7 @@ export async function discover(ctx, input) {
       const f = trace ? stampDiscovery(trace, raw, spec, i, occurrence) : deepClone(raw);
       if (trace) intake.push(f);
       if (f && typeof f === 'object' && !Array.isArray(f)) {
-        for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics']) delete f[key];
+        for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics', ...Object.keys(SKEPTICAL_FINDING_PROPERTIES)]) delete f[key];
         f.agent = spec.agentType.split(':').pop();
       }
       const checked = validateFindings([f], decisions);
