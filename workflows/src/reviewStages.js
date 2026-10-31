@@ -3,12 +3,12 @@ import { locationAllows } from './location.js';
 import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
 import { modelFor, ADMISSION_PREDICATES, EXCLUSION_CATEGORIES, SKEPTICAL_CONTRACTS, ANCHOR_LIMITS, acceptSkepticalReturn, assessmentGaps } from './registry.js';
-import { applyValidations, validationRejections, validatorAssessment } from './applyValidations.js';
+import { applyValidations, validatorAssessment } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
 import { rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
 import { deliveryGroups } from './dispose.js';
-import { admissionContext, hasAdmission } from './admission.js';
+import { admissionContext, hasAdmission, validationRejections } from './admission.js';
 import { scopeDecisions } from './scope.js';
 
 // The platform rejects array-rooted tool schemas, so validation entries need an object wrapper.
@@ -17,9 +17,16 @@ const VALIDATE_ITEM = SKEPTICAL_CONTRACTS.validator.dispatchSchema;
 const VALIDATE_RETURN = Object.entries(VALIDATE_ITEM.properties)
   .map(([name, { enum: values }]) => name + (values ? ` (${values.join(' | ')})` : '')).join(', ');
 
+function validatorRejections(finding, validation) {
+  const reasons = validationRejections(finding, validation);
+  if (validation) reasons.push(...assessmentGaps(validatorAssessment(finding, validation)).semanticErrors
+    .map((error) => `skeptical:${error}`));
+  return reasons;
+}
+
 function admissionOnlyRetry(batch, accepted) {
   return batch.every((f) => accepted.has(f.id)
-    && validationRejections(f, accepted.get(f.id)).every((reason) => reason.startsWith('missing_assessment:')));
+    && validatorRejections(f, accepted.get(f.id)).every((reason) => reason.startsWith('missing_assessment:')));
 }
 
 function validateSchema(batch, accepted) {
@@ -78,21 +85,20 @@ export async function validateStage(ctx, input) {
       const matches = entries.filter((entry) => entry.id === f.id);
       if (!matches.length) rejections.push({ id: String(f.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
-        const prior = accepted.get(f.id);
-        let merged = entry;
-        if (prior && label.startsWith('validate-retry-')) {
-          const missing = validationRejections(f, prior, false);
-          const field = 'admission_assessments';
-          const updates = (Array.isArray(entry[field]) ? entry[field] : [])
-            .filter((a) => missing.includes(`missing_assessment:${a?.predicate}`));
-          merged = { ...prior, [field]: [...(Array.isArray(prior[field]) ? prior[field] : [])
-            .filter((a) => !updates.some((u) => u?.predicate === a?.predicate)), ...updates] };
-          if (assessmentGaps(validatorAssessment(f, prior)).semanticErrors.length)
-            for (const key of ['stage', 'verdict', 'citations', 'missing_evidence', 'scope_assessments'])
-              if (Object.hasOwn(entry, key)) merged[key] = entry[key];
-        }
+        const previous = accepted.get(f.id);
+        const missing = previous ? validationRejections(f, previous)
+          .filter((reason) => reason.startsWith('missing_assessment:')).map((reason) => reason.slice('missing_assessment:'.length)) : [];
+        const replacements = (Array.isArray(entry.admission_assessments) ? entry.admission_assessments : [])
+          .filter((assessment) => missing.includes(assessment?.predicate));
+        const semantic = previous && assessmentGaps(validatorAssessment(f, previous)).semanticErrors.length
+          ? Object.fromEntries(['stage', 'verdict', 'citations', 'missing_evidence', 'scope_assessments']
+            .filter((key) => Object.hasOwn(entry, key)).map((key) => [key, entry[key]])) : {};
+        const merged = previous && label.startsWith('validate-retry-') ? { ...previous,
+          ...semantic,
+          admission_assessments: [...(Array.isArray(previous.admission_assessments) ? previous.admission_assessments : []).filter((assessment) =>
+            !replacements.some((replacement) => replacement?.predicate === assessment?.predicate)), ...replacements] } : entry;
         assessments.set(f.id, merged);
-        const reasons = validationRejections(f, merged);
+        const reasons = validatorRejections(f, merged);
         if (reasons.length) rejections.push({ id: String(f.id).slice(0, 128), reasons });
         // Missing admission evidence still warrants a retry, but does not invalidate a score.
         if (!reasons.some((reason) => ['invalid_confidence', 'invalid_policy_subject', 'missing_entry'].includes(reason))) accepted.set(f.id, merged);
@@ -104,7 +110,7 @@ export async function validateStage(ctx, input) {
   };
   const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
   const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
-  const pending = findings.filter((f) => validationRejections(f, accepted.get(f.id)).length);
+  const pending = findings.filter((f) => validatorRejections(f, accepted.get(f.id)).length);
   if (pending.length) {
     // One follow-up round only; small batches isolate incomplete records from successful siblings.
     const retries = [];
@@ -133,7 +139,7 @@ export async function validateStage(ctx, input) {
   for (const f of findings) {
     const score = accepted.get(f.id);
     f.validation = score ? 'validated' : 'skipped';
-    if (score) incomplete += Number(validationRejections(f, score).length > 0);
+    if (score) incomplete += Number(validatorRejections(f, score).length > 0);
     else {
       skipped += 1;
       if (assessments.has(f.id)) f.skeptical_assessments = [validatorAssessment(f, assessments.get(f.id))];
