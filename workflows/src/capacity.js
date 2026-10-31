@@ -20,6 +20,7 @@ export function verifyCommand(inp, i, sliceNonce, inlinePayload) {
     '--base-branch', effectiveVerifyBaseBranch(v.baseBranch),
   ];
   if (v.diffPath) parts.push('--diff-file', v.diffPath);
+  if (v.sourceCapture) parts.push('--source-capture', JSON.stringify(v.sourceCapture), '--capture-output-dir', inp.outputDir);
   for (const [key, flag] of [['contextMap', '--context-map'], ['contextFile', '--context-file'], ['targetKind', '--target-kind']]) {
     if (v[key]) parts.push(flag, v[key]);
   }

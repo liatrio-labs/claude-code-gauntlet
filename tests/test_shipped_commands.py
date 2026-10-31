@@ -173,7 +173,9 @@ def _context_block() -> str:
     return section[fence_start : section.index("```", fence_start)].strip("\n")
 
 
-def test_shipped_context_paths(tmp_path: Path) -> None:
+def test_shipped_context_paths(tmp_path: Path, monkeypatch) -> None:
+    from tests.support.git_diff import git, init_git_repo
+
     skill = skill_text(REPO / "skills/code-gauntlet/references/phase2-preparation.md")
     collector = re.search(r'collect_project_rules\.py"[^\n]*--out "([^"]+)"', skill)
     assert collector is not None
@@ -194,25 +196,32 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
     checkout = tmp_path / "review checkout"
     checkout.mkdir()
     (checkout / "layout-marker").write_bytes(b"source")
+    init_git_repo(checkout, monkeypatch)
+    git(checkout, "add", ".")
+    git(checkout, "commit", "-qm", "source")
+    head = git(checkout, "rev-parse", "HEAD")
+    sha = head[:8]
     collector_path = collector.group(1)
     diff_path = diff_redirect.group(1)
     for placeholder, value in {
         "{output_dir}": output_dir.as_posix(),
-        "{head_sha_short}": SHA,
+        "{head_sha_short}": sha,
     }.items():
         collector_path = collector_path.replace(placeholder, value)
         diff_path = diff_path.replace(placeholder, value)
-    assert Path(collector_path) == output_dir / f"code-gauntlet-project-rules-{SHA}.md"
-    assert Path(diff_path) == output_dir / f"code-gauntlet-diff-{SHA}.patch"
+    assert Path(collector_path) == output_dir / f"code-gauntlet-project-rules-{sha}.md"
+    assert Path(diff_path) == output_dir / f"code-gauntlet-diff-{sha}.patch"
     Path(collector_path).write_bytes(b"rules\n")
     Path(diff_path).write_bytes(b"diff\n")
     command = (
         command.replace("{plugin_root}", REPO.as_posix())
         .replace("{output_dir}", output_dir.as_posix())
         .replace("{repo_root}", checkout.as_posix())
-        .replace("{head_sha_short}", SHA)
+        .replace("{head_sha_short}", sha)
         .replace("{target_type}", "local")
-        .replace("{head_sha_full}", SHA.ljust(40, "0"))
+        .replace("{head_sha_full}", head)
+        .replace("{base_sha}", head)
+        .replace("{nonce}", NONCE)
         .replace("{snapshot_args}", "")
     )
     parts = shlex.split(command, posix=True)
@@ -226,7 +235,7 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert result.stderr == b""
-    context = (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
+    context = (output_dir / f"code-gauntlet-context-{sha}.md").read_bytes()
     receipt = json.loads(result.stdout)
     assert receipt["contextLines"] == context.count(b"\n")
     assert receipt["contextChars"] == len(context.decode("utf-8"))
@@ -247,10 +256,13 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
     shutil.which(bash_executable()) is None,
     reason="bash is required for the heredoc injection regression",
 )
-def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) -> None:
+def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from tests.support.git_diff import git, init_git_repo
+
     block = _context_block()
     output_dir = tmp_path / "o'brien out[1]"
-    write_context_inputs(output_dir, b"rules\n", b"diff\n")
     output_path = output_dir.as_posix()
     for character in ("'", "[", "]", " "):
         assert character in output_path
@@ -258,6 +270,11 @@ def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) ->
         assert character not in output_path
     cwd = tmp_path / "cwd"
     cwd.mkdir()
+    init_git_repo(cwd, monkeypatch)
+    git(cwd, "commit", "--allow-empty", "-qm", "source")
+    head = git(cwd, "rev-parse", "HEAD")
+    sha = head[:8]
+    write_context_inputs(output_dir, b"rules\n", b"diff\n", sha=sha)
     triage = (
         "Risk: low\n"
         "CODE_GAUNTLET_TRIAGE\n"
@@ -268,10 +285,11 @@ def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) ->
         "{plugin_root}": REPO.as_posix(),
         "{output_dir}": output_dir.as_posix(),
         "{repo_root}": cwd.as_posix(),
-        "{head_sha_short}": SHA,
+        "{head_sha_short}": sha,
         "{nonce}": NONCE,
         "{target_type}": "local",
-        "{head_sha_full}": SHA.ljust(40, "0"),
+        "{head_sha_full}": head,
+        "{base_sha}": head,
         "{snapshot_args}": "",
         "{risk classification (2e) and AI-generated-code status (2k)}": triage,
     }
@@ -286,7 +304,7 @@ def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) ->
     assert not (cwd / "injected-marker").exists()
     assert result.returncode == 0, result.stderr
     assert result.stderr == b""
-    context = (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
+    context = (output_dir / f"code-gauntlet-context-{sha}.md").read_bytes()
     assert (
         b"\n## Risk classification and AI-generated-code status\n\n"
         + triage.encode("utf-8")
@@ -1030,7 +1048,7 @@ def test_shipped_forge_status_and_url(platform, outcome, tmp_path, monkeypatch):
         assert "single capture/status recipe" in skill_text(
             REPO / "skills/code-gauntlet/references" / rel
         )
-    from tests.support.git_diff import patch_repo
+    from tests.support.git_diff import git, patch_repo
     from tests.support.pr_files import gitlab_view
 
     _, sha = patch_repo(tmp_path, monkeypatch)
@@ -1064,13 +1082,27 @@ def test_shipped_forge_status_and_url(platform, outcome, tmp_path, monkeypatch):
             sha=sha,
             web_url="https://gitlab.com/group/sub/r/-/merge_requests/7",
             description="synthetic",
+            target_branch="main",
         )
         if platform == "gitlab"
         else {
             "headRefOid": sha,
             "url": "https://github.com/upstream/project/pull/7",
             "body": "synthetic",
+            "baseRefName": "main",
         }
+    )
+    repository = (
+        "https://github.com/upstream/project.git"
+        if platform == "github"
+        else "https://gitlab.com/group/sub/r.git"
+    )
+    git(tmp_path, "config", f"url.{tmp_path.as_posix()}.insteadOf", repository)
+    git(
+        tmp_path,
+        "update-ref",
+        ("refs/pull/7/head" if platform == "github" else "refs/merge-requests/7/head"),
+        sha,
     )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -1108,7 +1140,7 @@ def test_shipped_forge_status_and_url(platform, outcome, tmp_path, monkeypatch):
         timeout=10,
     )
     assert json.loads(capture.read_text(encoding="utf-8")) == (
-        ["pr", "view", "7", "--json", "state,isDraft,url,headRefOid,body"]
+        ["pr", "view", "7", "--json", "state,isDraft,url,headRefOid,baseRefName,body"]
         if platform == "github"
         else ["mr", "view", "7", "--output", "json"]
     )
@@ -1220,6 +1252,7 @@ def test_shipped_branch_composite(outcome, tmp_path, monkeypatch):
             .replace("<base name exactly as chosen>", base)
             .replace("<branch name exactly as the user gave it>", branch)
             .replace("{target_sha}", target)
+            .replace("{base_ref_sha}", base)
             .replace("{output_dir}", output.as_posix())
         )
         return subprocess.run(

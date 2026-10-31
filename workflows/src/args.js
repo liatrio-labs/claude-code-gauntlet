@@ -312,6 +312,16 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
   }
+  const capture = args.verify?.sourceCapture;
+  if (capture !== undefined && (!isPlainObject(capture) || capture.version !== 1
+    || capture.nonce !== args.nonce || capture.target_kind !== args.verify.targetKind
+    || !/^[0-9a-f]{40}$/.test(capture.head) || !capture.head.startsWith(args.headShaShort)
+    || !/^[0-9a-f]{40}$/.test(capture.base)
+    || !['diff_sha256', 'manifest_sha256'].every(key => /^[0-9a-f]{64}$/.test(capture[key]))
+    || !['copied_bytes', 'copied_files', 'failure_count'].every(key => Number.isSafeInteger(capture[key]) && capture[key] >= 0)
+    || !Array.isArray(capture.failure_sample) || !capture.failure_sample.every(file => typeof file === 'string'))) {
+    errors.push('verify.sourceCapture must be the complete preparation receipt bound to this nonce, target and head');
+  }
   // The workflow has no cwd for resolving relative roots.
   for (const field of ARGS_SHAPES.pathFields) {
     const v = args[field];

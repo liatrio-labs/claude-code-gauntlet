@@ -9,6 +9,93 @@ TEXT = "perform_action(value)"
 REQUEST = {"file": "src/item", "line_start": 1, "line_end": 99, "anchor": TEXT}
 
 
+def test_source_capture_rejects_untrusted_proof_origins(
+    tmp_path, monkeypatch, symlink_or_skip
+):
+    import json
+
+    from gauntlet.source_capture import load_capture
+
+    from tests.support.git_diff import git, init_git_repo
+
+    root, output = tmp_path / "repo", tmp_path / "repo/artifacts"
+    root.mkdir()
+    output.mkdir()
+    init_git_repo(root, monkeypatch)
+    (root / "source").write_bytes(b"return trusted_value;\n")
+    git(root, "add", "source")
+    git(root, "commit", "-qm", "source")
+    artifacts = [
+        "code-gauntlet-context-head.md",
+        "code-gauntlet-report-head.md",
+        "code-gauntlet-checkpoint-head.json",
+        "code-gauntlet-inputs-other/manifest.json",
+        "pr-description.json",
+        "artifacts/author.md",
+        "source-capture.json",
+    ]
+    for name in [*artifacts, "binary", "invalid", "dirty"]:
+        file = root / name
+        file.parent.mkdir(exist_ok=True)
+        file.write_bytes(b"return trusted_value;\n")
+    (root / "binary").write_bytes(b"\0binary")
+    (root / "invalid").write_bytes(b"\xff")
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"return trusted_value;\n")
+    (root / "link").symlink_to(outside)
+    (root / "linked").symlink_to(tmp_path, target_is_directory=True)
+    original = SourceAdapter.capture(root, "local", None)
+    capture = original.capture_sources(output, "origins", b"diff")
+    assert capture.receipt["failure_count"] == 4
+    assert capture.receipt["failure_sample"] == ["binary", "invalid", "link", "linked"]
+    source = capture.adapter(root)
+    assert source.read("source") == ("return trusted_value;",)
+    for name in [
+        *artifacts,
+        "binary",
+        "invalid",
+        "link",
+        "linked/outside",
+        "../outside",
+        str(outside),
+        "C:/outside",
+        "C:outside",
+        "a\\b",
+        "missing",
+        "source/child",
+        "source\0",
+    ]:
+        assert source.read_captured_source(name) is None, name
+    assert source.read_captured_source("source", start=0, end=1) is None
+    for overrides in [
+        {"manifest_sha256": "0" * 64},
+        {"head": "0" * 40},
+        {"target_kind": "branch"},
+        {"diff_sha256": "0" * 64},
+    ]:
+        with pytest.raises(ValueError):
+            load_capture(
+                SourceAdapter(root, "local", None),
+                output,
+                {**capture.receipt, **overrides},
+                b"diff",
+            )
+    with pytest.raises(ValueError):
+        load_capture(original, output, capture.receipt, b"other diff")
+    digest = capture.manifest["copies"]["dirty"]
+    (capture.directory / digest).write_bytes(b"return forged_value;\n")
+    assert source.read("dirty") is None
+    (capture.directory / digest).unlink()
+    (capture.directory / digest).symlink_to(outside)
+    assert source.read("dirty") is None
+    raw = (capture.directory / "manifest.json").read_bytes()
+    (capture.directory / "manifest.json").write_bytes(b"{}")
+    with pytest.raises(ValueError):
+        load_capture(original, output, capture.receipt, b"diff")
+    (capture.directory / "manifest.json").write_bytes(raw)
+    assert json.loads(raw)["copies"]["dirty"] == digest
+
+
 @pytest.mark.parametrize("operation", ["rev-parse", "ls-tree", "cat-file"])
 def test_source_git_timeout_leaves_source_unavailable(tmp_path, monkeypatch, operation):
     def run(argv, *, cwd, timeout=None):
