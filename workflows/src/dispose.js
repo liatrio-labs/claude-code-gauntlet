@@ -7,6 +7,7 @@ import { hasAdmission } from './admission.js';
 import { acceptSkepticalReturn, assessmentGaps, CITATION_REQUEST_SCHEMA, matchesDispatchSchema } from './registry.js';
 import { citeChecksum } from './citeWire.js';
 import { validatorAssessment } from './applyValidations.js';
+import { scopeDecisions } from './scope.js';
 
 function skepticalOutcome(finding) {
   const reasons = [];
@@ -55,12 +56,29 @@ export function disposeFindings(challenged) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
     delete finding.delivery_group;
+    const scope = scopeDecisions(finding).filter((row) => row.applies === true);
     const skeptical = skepticalOutcome(finding);
     if (skeptical.proven) {
       finding.eliminated_by = 'refuted';
       finding.elimination_reason = `${skeptical.proven.stage} refutation with matched proof`;
       finding.reduction_provenance = { finding_id: finding.id, disposition: 'eliminate', ...skeptical.proven };
       eliminated.push(finding);
+      continue;
+    }
+    const terminalScope = scope.find((row) => row.outcome === 'eliminate') || scope.find((row) => row.outcome === 'report_only');
+    if (terminalScope) {
+      finding.disposition = terminalScope.outcome;
+      finding.disposition_reasons = [terminalScope.outcome === 'eliminate' ? 'out_of_scope' : 'report_only'];
+      finding.reduction_provenance = { finding_id: finding.id, disposition: terminalScope.outcome,
+        reason: finding.disposition_reasons[0], category: terminalScope.category };
+      if (terminalScope.outcome === 'eliminate') {
+        finding.eliminated_by = 'out_of_scope';
+        finding.elimination_reason = terminalScope.category;
+        eliminated.push(finding);
+      } else {
+        findings.push(finding);
+        if (finding.trace_id) decisions.push(traceDecision(finding, 'report_only', terminalScope.category, [], 'report_only'));
+      }
       continue;
     }
     const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
@@ -78,7 +96,7 @@ export function disposeFindings(challenged) {
     } else if (finding.challenge !== 'survived') {
       disposition = 'held_back';
       if (!Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge)) reasons.push('challenge_failed');
-    } else if (finding.admission.inline_eligible && finding.reachability !== 'future_change_only'
+    } else if (!scope.some((row) => row.outcome === 'body') && finding.admission.inline_eligible
       && finding.diff_validation?.in_diff === true && locationAllows(finding, 'inline')) {
       disposition = 'deliver';
     } else reasons.push('body_routed');

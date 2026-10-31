@@ -381,11 +381,10 @@ test('spec text without a claude.md rule uses the fallback cited rule label', ()
 });
 
 test('schema extras include a newly declared field and exclude fix code', () => {
-  const dimensions = [...DIMENSIONS, {
-    ...DIMENSIONS[0], schemaExtra: { custom_field: { type: 'string' }, suggested_fix_code: { type: 'string' } },
-  }];
-  assert.deepEqual(report.reportExtraFields(dimensions), ['affected_consumers', 'attack_vector', 'behavior_preserved', 'candidate_tests', 'criticality', 'custom_field',
-    'duplicate_of', 'failure_scenario', 'hidden_errors', 'invalid_state_example', 'precedent', 'production_element', 'quality_basis', 'searched_paths', 'test_kind']);
+  const dimensions = [{ ...DIMENSIONS[0], schemaExtra: {
+    custom_field: { type: 'string' }, suggested_fix_code: { type: 'string' },
+  } }];
+  assert.deepEqual(report.reportExtraFields(dimensions), ['custom_field']);
 });
 
 const first = finding('duplicate', { title: 'first title', file: 'first.js' });

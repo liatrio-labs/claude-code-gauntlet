@@ -693,8 +693,14 @@ const RESOLVED_REFERENCE_SCHEMA = { type: 'object', properties: {
 const SEARCH_FACT_SCHEMA = { type: 'object', properties: {
   path: { type: 'string' }, available: { type: 'boolean' }, kind: { type: 'string', enum: ['file', 'directory', 'unknown'] },
 }, required: ['path', 'available', 'kind'], additionalProperties: false };
+const SCOPE_FACT_KEYS = deepFreeze(['linguist_generated', 'linguist_vendored', 'linguist_documentation',
+  'generated_marker', 'all_changed_files_documentation', 'lockfile_basename']);
 const VERIFY_FACT_PROPERTIES = deepFreeze({
   path_role: PATH_ROLE_SCHEMA, file_added: { type: ['boolean', 'null'] },
+  scope_facts: { type: 'object', properties: {
+    file: { type: 'string' }, snapshot_id: { type: 'string' },
+    ...Object.fromEntries(SCOPE_FACT_KEYS.map((key) => [key, { type: ['boolean', 'null'] }])),
+  }, required: ['file', 'snapshot_id'], additionalProperties: false },
   blame_class: { type: 'string', enum: ['new', 'pre_existing', 'surfaced', 'unknown'] },
   blame_source: { type: 'string', enum: ['git_blame', 'local_diff', 'cross_file_refs', 'off_diff', 'removed_loss', 'unavailable'] },
   resolved_references: { type: 'object', properties: Object.fromEntries(Object.entries(VERIFY_REFERENCE_DESCRIPTORS).map(([key, kind]) => {
@@ -751,28 +757,27 @@ const REACHABILITY_VALUES = deepFreeze(['current', 'future_change_only', 'uncert
 const EXCLUSION_STAGES = deepFreeze(['early', 'admission', 'post_validation', 'skeptical']);
 const EXCLUSION_PROOFS = deepFreeze(['verified_fact', 'admission', 'citation']);
 const EXCLUSION_NEW_FACTS = deepFreeze([
-  'cross_file_refs', 'in_diff', 'linguist-generated', 'linguist-vendored', 'generated_marker',
-  'linguist-documentation', 'all_changed_files_documentation', 'lockfile_basename', 'mechanical_change',
+  'in_diff', ...SCOPE_FACT_KEYS,
   'admission', 'reachability', 'conventions_confirmation',
 ]);
 const EXCLUSION_CATEGORIES = deepFreeze([
-  { category: 'pre_existing', stage: 'early', predicate: 'blame_pre_existing', facts: ['blame_class', 'blame_source', 'cross_file_refs'],
-    applicability: 'Actual git_blame pre-existence with no affected cross-file references.', exceptions: ['cross_file_effect_created_by_pr'],
+  { category: 'pre_existing', stage: 'early', predicate: 'blame_pre_existing', facts: ['blame_class', 'blame_source', 'in_diff'],
+    applicability: 'Actual git_blame pre-existence and verified in_diff=false; git_blame provenance excludes cross-file effects.', exceptions: [],
     proof: 'verified_fact', outcome: 'report_only', reference: 'Origin surfaced, off-diff placement and descriptions do not prove pre-existence.' },
   { category: 'untouched_line', stage: 'early', predicate: 'off_diff', facts: ['in_diff'],
     applicability: 'Verified in_diff=false; unknown is not false.', exceptions: [],
     proof: 'verified_fact', outcome: 'body', reference: 'Placement only after admission and vetting; still competes for challenge capacity.' },
-  { category: 'generated_vendored', stage: 'early', predicate: 'generated_or_vendored', facts: ['linguist-generated', 'linguist-vendored', 'generated_marker'],
-    applicability: 'git check-attr at captured head or generated markers in the first source lines.', exceptions: ['security_dependency_vulnerability_claim'],
-    proof: 'verified_fact', outcome: 'eliminate', reference: 'A conventions word is not classification; the security exception requires no confirmed vulnerable version.' },
-  { category: 'docs_only', stage: 'early', predicate: 'documentation_only_code_claim', facts: ['linguist-documentation', 'all_changed_files_documentation', 'path_role'],
-    applicability: 'Finding file has a source role and every changed file is documentation, verified at captured head by git check-attr.',
-    exceptions: ['documentation_or_comment_claim', 'test_applicable_documented_convention'], proof: 'verified_fact', outcome: 'eliminate',
+  { category: 'generated_vendored', stage: 'early', predicate: 'generated_or_vendored', facts: ['linguist_generated', 'linguist_vendored', 'generated_marker'],
+    applicability: 'git check-attr at captured merge base or the same canonical header in the first source lines at head and base; explicit -linguist-generated overrides markers.', exceptions: ['security_dimension'],
+    proof: 'verified_fact', outcome: 'eliminate', reference: 'PR-controlled classification cannot exclude its own changes; security findings survive.' },
+  { category: 'docs_only', stage: 'early', predicate: 'documentation_only_code_claim', facts: ['linguist_documentation', 'all_changed_files_documentation', 'path_role'],
+    applicability: 'Finding file has a source role, is proven non-documentation at base, and every changed file is documentation at base.',
+    exceptions: ['security_dimension', 'documentation_or_comment_claim', 'test_applicable_documented_convention'], proof: 'verified_fact', outcome: 'eliminate',
     reference: 'Extensions and mixed PRs prove neither whole-PR documentation scope nor irrelevance; unknown stays unknown.' },
-  { category: 'lockfile', stage: 'early', predicate: 'mechanical_lockfile', facts: ['lockfile_basename', 'mechanical_change'],
+  { category: 'lockfile', stage: 'early', predicate: 'lockfile', facts: ['lockfile_basename'],
     basenames: ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'Cargo.lock', 'Gemfile.lock', 'poetry.lock', 'Pipfile.lock', 'uv.lock', 'composer.lock', 'packages.lock.json'],
-    applicability: 'Closed basename list and verified mechanical scope.', exceptions: ['security_dependency_vulnerability_claim'],
-    proof: 'verified_fact', outcome: 'eliminate', reference: 'The security exception is claim-based and needs no prior vulnerable-version confirmation.' },
+    applicability: 'Lockfile scope is basename-only membership in this closed list.', exceptions: ['security_dimension'],
+    proof: 'verified_fact', outcome: 'eliminate', reference: 'Security findings survive regardless of the lockfile basename.' },
   { category: 'general_quality', stage: 'admission', predicate: 'canonical_admission', facts: ['admission'],
     applicability: 'Consume canonical quality admission and its present_defect promotion.', exceptions: ['named_in_repo_convention', 'confirmed_present_defect'],
     proof: 'admission', outcome: 'admission', reference: 'A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.' },
@@ -806,6 +811,8 @@ for (const row of EXCLUSION_CATEGORIES) {
   }
 }
 const EXCLUSION_BY_CATEGORY = deepFreeze(Object.fromEntries(EXCLUSION_CATEGORIES.map((row) => [row.category, row])));
+const SCOPE_STAGES = deepFreeze(['early', 'post_validation']);
+const SCOPE_ROWS = deepFreeze(EXCLUSION_CATEGORIES.filter((row) => SCOPE_STAGES.includes(row.stage)));
 const SKEPTICAL_IDENTITY = {
   finding_id: { type: 'string', minLength: 1 }, stage: { type: 'string', enum: ['validator', 'challenger'] },
 };
@@ -886,11 +893,14 @@ const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
     missing_field: { type: 'string' }, missing_fields: { type: 'array', items: { type: 'string' } },
     missing_evidence: { type: 'string' },
   }, ['stage', 'verdict', 'missing_field', 'missing_fields', 'missing_evidence']) },
-  scope_facts: { type: 'array', items: closedDispatchRow({
-    category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) }, predicate: { type: 'string' },
-    value: { type: ['boolean', 'null'] }, snapshot_id: CITATION_REQUEST_PROPERTIES.snapshot_id,
-  }) },
-  scope_decisions: { type: 'array', items: SCOPE_ASSESSMENT_SCHEMA },
+  scope_decisions: { type: 'array', items: { ...closedDispatchRow({
+    stage: { type: 'string', enum: SCOPE_STAGES },
+    category: { type: 'string', enum: SCOPE_ROWS.map((row) => row.category) },
+    applies: { type: ['boolean', 'null'] }, outcome: { type: 'string', enum: DISPOSITIONS },
+  }), anyOf: SCOPE_ROWS.map((row) => ({
+    properties: { stage: { const: row.stage }, category: { const: row.category }, outcome: { const: row.outcome } },
+  })) } },
+  scope_input_proof: { type: 'string' },
   reduction_provenance: closedDispatchRow({
     finding_id: SKEPTICAL_IDENTITY.finding_id, disposition: { type: 'string', enum: DISPOSITIONS },
     reason: REDUCTION_REASON_SCHEMA,
@@ -2007,7 +2017,7 @@ function traceDecision(finding, reason_code, reason, related = [], decision = 'e
 function eliminationDecisions(output) {
   const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
     'suppressed:intentional': 'suppression', 'suppressed:generated': 'suppression',
-    refuted: 'refuted' };
+    refuted: 'refuted', out_of_scope: 'out_of_scope' };
   return (output.eliminated || []).filter((f) => f.trace_id)
     .map((f) => traceDecision(f, codes[f.eliminated_by] || 'unknown', f.elimination_reason));
 }
@@ -2097,7 +2107,6 @@ function collectCitations(findings) {
       add(entry, stage);
       for (const scope of Array.isArray(entry?.scope_assessments) ? entry.scope_assessments : []) add(scope, stage);
     }
-    for (const scope of Array.isArray(f.scope_decisions) ? f.scope_decisions : []) add(scope, scope?.stage);
     return checks;
   });
 }
@@ -3883,6 +3892,49 @@ function rankFindings(findings) {
     return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || ka[3] - kb[3];
   });
 }
+// --- scope.js ---
+const scopeInputFields = ['id', 'file', 'agent', 'dimension', 'origin_dimension', 'path_role',
+  'blame_class', 'blame_source', 'scope_facts', 'diff_validation', 'reachability', 'validation', 'admission'];
+const scopeAnd = (...values) => {
+  if (values.includes(false)) return false;
+  return values.every((value) => value === true) ? true : null;
+};
+const scopeOr = (...values) => {
+  if (values.includes(true)) return true;
+  return values.every((value) => value === false) ? false : null;
+};
+const capturedScope = (f) => f.scope_facts?.file === f.file && f.scope_facts.snapshot_id
+  ? Object.fromEntries(SCOPE_FACT_KEYS.map((key) => [key, f.scope_facts[key]])) : {};
+const offDiff = (f) => f.diff_validation?.in_diff == null ? null : f.diff_validation.in_diff === false;
+const scopePredicates = {
+  blame_pre_existing: (f) => scopeAnd(Object.keys(capturedScope(f)).length > 0,
+    f.blame_class === 'unknown' || !f.blame_class ? null : f.blame_class === 'pre_existing',
+    f.blame_source === 'git_blame', offDiff(f)),
+  off_diff: offDiff,
+  generated_or_vendored: (f) => { const facts = capturedScope(f); return scopeOr(facts.linguist_generated, facts.linguist_vendored,
+    facts.linguist_generated === false ? false : facts.generated_marker); },
+  documentation_only_code_claim: (f) => { const facts = capturedScope(f); return scopeAnd(facts.all_changed_files_documentation,
+    facts.linguist_documentation == null ? null : facts.linguist_documentation === false,
+    f.path_role === 'unknown' || !f.path_role ? null : f.path_role === 'source'); },
+  lockfile: (f) => capturedScope(f).lockfile_basename,
+  future_change_only: (f) => f.validation === 'validated' ? f.reachability === 'future_change_only' : null,
+};
+const scopeExceptions = {
+  security_dimension: (f) => f.dimension === 'security' || f.agent === AGENT_SECURITY_REVIEWER,
+  documentation_or_comment_claim: (f) => dimensionRow(f.dimension)?.dimension === 'comment_accuracy',
+  test_applicable_documented_convention: (f) => dimensionRow(f.dimension)?.dimension === 'convention',
+  present_static_defect: (f) => f.reachability === 'current',
+};
+function scopeDecisions(finding) {
+  const identity = JSON.stringify([SCOPE_ROWS, scopeInputFields.map((key) => finding[key] ?? null)]);
+  const decisions = SCOPE_ROWS.map((row) => ({ category: row.category, stage: row.stage, outcome: row.outcome,
+    applies: scopeAnd(scopePredicates[row.predicate]?.(finding),
+      !finding.admission?.reasons?.some((reason) => reason.predicate === 'present_defect' && reason.status === 'held_back'),
+      ...row.exceptions.map((name) => { const value = scopeExceptions[name]?.(finding); return value == null ? null : !value; })) }));
+  finding.scope_input_proof = fnv1a32(JSON.stringify([identity, decisions]));
+  finding.scope_decisions = decisions;
+  return finding.scope_decisions;
+}
 // --- dispose.js ---
 function skepticalOutcome(finding) {
   const reasons = [];
@@ -3929,12 +3981,29 @@ function disposeFindings(challenged) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
     delete finding.delivery_group;
+    const scope = scopeDecisions(finding).filter((row) => row.applies === true);
     const skeptical = skepticalOutcome(finding);
     if (skeptical.proven) {
       finding.eliminated_by = 'refuted';
       finding.elimination_reason = `${skeptical.proven.stage} refutation with matched proof`;
       finding.reduction_provenance = { finding_id: finding.id, disposition: 'eliminate', ...skeptical.proven };
       eliminated.push(finding);
+      continue;
+    }
+    const terminalScope = scope.find((row) => row.outcome === 'eliminate') || scope.find((row) => row.outcome === 'report_only');
+    if (terminalScope) {
+      finding.disposition = terminalScope.outcome;
+      finding.disposition_reasons = [terminalScope.outcome === 'eliminate' ? 'out_of_scope' : 'report_only'];
+      finding.reduction_provenance = { finding_id: finding.id, disposition: terminalScope.outcome,
+        reason: finding.disposition_reasons[0], category: terminalScope.category };
+      if (terminalScope.outcome === 'eliminate') {
+        finding.eliminated_by = 'out_of_scope';
+        finding.elimination_reason = terminalScope.category;
+        eliminated.push(finding);
+      } else {
+        findings.push(finding);
+        if (finding.trace_id) decisions.push(traceDecision(finding, 'report_only', terminalScope.category, [], 'report_only'));
+      }
       continue;
     }
     const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
@@ -3952,7 +4021,7 @@ function disposeFindings(challenged) {
     } else if (finding.challenge !== 'survived') {
       disposition = 'held_back';
       if (!Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge)) reasons.push('challenge_failed');
-    } else if (finding.admission.inline_eligible && finding.reachability !== 'future_change_only'
+    } else if (!scope.some((row) => row.outcome === 'body') && finding.admission.inline_eligible
       && finding.diff_validation?.in_diff === true && locationAllows(finding, 'inline')) {
       disposition = 'deliver';
     } else reasons.push('body_routed');
@@ -5631,10 +5700,13 @@ async function challengeStage(ctx, input) {
   const cap = effectiveChallengeCap(inp.limits || {}, findings.length);
   const validatorTerminal = (f) => f.skeptical_assessments?.some((a) => a.stage === 'validator'
     && ['refuted', 'needs_evidence'].includes(a.raw?.verdict));
-  const actionable = (f) => !validatorTerminal(f) && hasAdmission(f)
+  const scopeTerminal = (f) => scopeDecisions(f).some((row) => row.applies === true && ['eliminate', 'report_only'].includes(row.outcome));
+  const actionable = (f) => !scopeTerminal(f) && !validatorTerminal(f) && hasAdmission(f)
     && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
-  const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f,
-    challenge: validatorTerminal(f) ? 'validator_terminal' : 'admission_terminal' }));
+  const terminal = findings.filter((f) => !actionable(f)).map((f) => {
+    if (scopeTerminal(f)) return { ...f, challenge: 'scope_terminal' };
+    return { ...f, challenge: validatorTerminal(f) ? 'validator_terminal' : 'admission_terminal' };
+  });
   const ranked = rankFindings(findings.filter(actionable));
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);

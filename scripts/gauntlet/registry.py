@@ -58,6 +58,7 @@ DeltaKey = Literal[
     "anchor",
     "path_role",
     "file_added",
+    "scope_facts",
     "blame_class",
     "blame_source",
     "resolved_references",
@@ -75,6 +76,7 @@ DeltaValueField = Literal[
     "anchor",
     "path_role",
     "file_added",
+    "scope_facts",
     "blame_class",
     "blame_source",
     "resolved_references",
@@ -117,6 +119,7 @@ _ReductionDetailItemReason_Literal = Literal[
     "cite_unmatched",
     "cite_unavailable",
 ]
+_ScopeDecisionsItemStage_Literal = Literal["early", "post_validation"]
 PathRole = Literal["source", "test", "non_source", "unknown"]
 BlameClass = Literal["new", "pre_existing", "surfaced", "unknown"]
 BlameSource = Literal[
@@ -200,6 +203,7 @@ DELTA_KEYS: tuple[DeltaKey, ...] = (
     "anchor",
     "path_role",
     "file_added",
+    "scope_facts",
     "blame_class",
     "blame_source",
     "resolved_references",
@@ -218,6 +222,7 @@ DELTA_VALUE_FIELDS: tuple[DeltaValueField, ...] = (
     "anchor",
     "path_role",
     "file_added",
+    "scope_facts",
     "blame_class",
     "blame_source",
     "resolved_references",
@@ -249,6 +254,15 @@ VERIFY_REFERENCE_DESCRIPTORS: Mapping[str, VerifyReferenceKind] = {
     "duplicate_of": "reference",
     "precedent": "reference",
 }
+
+SCOPE_FACT_KEYS = (
+    "linguist_generated",
+    "linguist_vendored",
+    "linguist_documentation",
+    "generated_marker",
+    "all_changed_files_documentation",
+    "lockfile_basename",
+)
 
 DISPATCH_RESULTS = {
     "code-gauntlet:test-analyzer": {
@@ -1238,9 +1252,9 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
         "category": "pre_existing",
         "stage": "early",
         "predicate": "blame_pre_existing",
-        "facts": ["blame_class", "blame_source", "cross_file_refs"],
-        "applicability": "Actual git_blame pre-existence with no affected cross-file references.",
-        "exceptions": ["cross_file_effect_created_by_pr"],
+        "facts": ["blame_class", "blame_source", "in_diff"],
+        "applicability": "Actual git_blame pre-existence and verified in_diff=false; git_blame provenance excludes cross-file effects.",
+        "exceptions": [],
         "proof": "verified_fact",
         "outcome": "report_only",
         "reference": "Origin surfaced, off-diff placement and descriptions do not prove pre-existence.",
@@ -1264,12 +1278,12 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
         "category": "generated_vendored",
         "stage": "early",
         "predicate": "generated_or_vendored",
-        "facts": ["linguist-generated", "linguist-vendored", "generated_marker"],
-        "applicability": "git check-attr at captured head or generated markers in the first source lines.",
-        "exceptions": ["security_dependency_vulnerability_claim"],
+        "facts": ["linguist_generated", "linguist_vendored", "generated_marker"],
+        "applicability": "git check-attr at captured merge base or the same canonical header in the first source lines at head and base; explicit -linguist-generated overrides markers.",
+        "exceptions": ["security_dimension"],
         "proof": "verified_fact",
         "outcome": "eliminate",
-        "reference": "A conventions word is not classification; the security exception requires no confirmed vulnerable version.",
+        "reference": "PR-controlled classification cannot exclude its own changes; security findings survive.",
         "consumers": ["early"],
         "citation_roles": [],
     },
@@ -1278,12 +1292,13 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
         "stage": "early",
         "predicate": "documentation_only_code_claim",
         "facts": [
-            "linguist-documentation",
+            "linguist_documentation",
             "all_changed_files_documentation",
             "path_role",
         ],
-        "applicability": "Finding file has a source role and every changed file is documentation, verified at captured head by git check-attr.",
+        "applicability": "Finding file has a source role, is proven non-documentation at base, and every changed file is documentation at base.",
         "exceptions": [
+            "security_dimension",
             "documentation_or_comment_claim",
             "test_applicable_documented_convention",
         ],
@@ -1296,8 +1311,8 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
     {
         "category": "lockfile",
         "stage": "early",
-        "predicate": "mechanical_lockfile",
-        "facts": ["lockfile_basename", "mechanical_change"],
+        "predicate": "lockfile",
+        "facts": ["lockfile_basename"],
         "basenames": [
             "package-lock.json",
             "npm-shrinkwrap.json",
@@ -1311,11 +1326,11 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
             "composer.lock",
             "packages.lock.json",
         ],
-        "applicability": "Closed basename list and verified mechanical scope.",
-        "exceptions": ["security_dependency_vulnerability_claim"],
+        "applicability": "Lockfile scope is basename-only membership in this closed list.",
+        "exceptions": ["security_dimension"],
         "proof": "verified_fact",
         "outcome": "eliminate",
-        "reference": "The security exception is claim-based and needs no prior vulnerable-version confirmation.",
+        "reference": "Security findings survive regardless of the lockfile basename.",
         "consumers": ["early"],
         "citation_roles": [],
     },
@@ -2088,32 +2103,11 @@ class ReductionDetailItem(TypedDict, total=False):
     missing_evidence: str
 
 
-class ScopeFactsItem(TypedDict):
-    category: ExclusionCategory
-    predicate: str
-    value: bool | None
-    snapshot_id: str
-
-
-class ScopeDecisionsItemCitationsItem(TypedDict):
-    finding_id: str
-    stage: SkepticalStage
-    request_id: str
-    role: _CitationRequestRole_Literal
-    snapshot_id: str
-    file: str
-    side: _CitationRequestSide_Literal
-    line_start: int
-    line_end: int
-    quote: str
-
-
 class ScopeDecisionsItem(TypedDict):
-    finding_id: str
-    stage: SkepticalStage
+    stage: _ScopeDecisionsItemStage_Literal
     category: ExclusionCategory
-    applicability: _ScopeAssessmentApplicability_Literal
-    citations: list[ScopeDecisionsItemCitationsItem]
+    applies: bool | None
+    outcome: Disposition
 
 
 class ReductionProvenance(TypedDict, total=False):
@@ -2123,6 +2117,17 @@ class ReductionProvenance(TypedDict, total=False):
     category: ExclusionCategory
     stage: SkepticalStage
     request_ids: list[str]
+
+
+class ScopeFacts(TypedDict, total=False):
+    file: str
+    snapshot_id: str
+    linguist_generated: bool | None
+    linguist_vendored: bool | None
+    linguist_documentation: bool | None
+    generated_marker: bool | None
+    all_changed_files_documentation: bool | None
+    lockfile_basename: bool | None
 
 
 class ResolvedReferencesSearchedPathsItem(TypedDict):
@@ -2243,6 +2248,7 @@ class VerifyPrecedent(TypedDict):
 class FindingFacts(TypedDict, total=False):
     path_role: PathRole
     file_added: bool | None
+    scope_facts: ScopeFacts
     blame_class: BlameClass
     blame_source: BlameSource
     resolved_references: ResolvedReferences
@@ -2262,8 +2268,8 @@ class FindingMetadata(FindingFacts, total=False):
     skeptical_assessments: list[SkepticalAssessmentsItem]
     cite_results: list[CiteResultsItem]
     reduction_detail: list[ReductionDetailItem]
-    scope_facts: list[ScopeFactsItem]
     scope_decisions: list[ScopeDecisionsItem]
+    scope_input_proof: str
     reduction_provenance: ReductionProvenance
     origin_dimension: Dimension
     effective_test_kind: EffectiveTestKind
@@ -2317,6 +2323,7 @@ class Delta(_DeltaRequired, total=False):
     anchor: str
     path_role: PathRole
     file_added: bool | None
+    scope_facts: ScopeFacts
     blame_class: BlameClass
     blame_source: BlameSource
     resolved_references: ResolvedReferences
