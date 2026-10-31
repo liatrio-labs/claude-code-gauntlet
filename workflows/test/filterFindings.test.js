@@ -120,29 +120,15 @@ for (const row of BUCKET_ROWS) test('bucket callers: ' + row.name, () => {
 });
 
 const DISAGREEMENT_ROWS = [
-  { name: "present null ids collide during suppression", input: [ { id: null, agent: "bug-detector" }, { id: null, agent: "test-analyzer" },
-             { id: "convention", agent: "conventions-and-intent", description: "intentional generated" } ], fields: ["id"], expected: {
-                active: [["convention"]], suppressed: [ [ null,
-                                "suppressed:intentional",
-                                "conventions-and-intent confirms behaviour at src/x.py:10 is intentional" ] ], boosted: 0 } },
-
-  { name: "generated suppression pattern", input: [ { id: "test", agent: "test-analyzer" },
-             { id: "convention", agent: "conventions-and-intent", description: "generated scaffolding" } ], fields: ["id"], expected: {
-                active: [["convention"]], suppressed: [ [
-                                "test",
-                                "suppressed:generated",
-                                "conventions-and-intent confirms code at src/x.py:10 is generated/scaffolding" ] ], boosted: 0 } },
-
   { name: "numeric-string singleton penalty floors zero", input: [{ dimension: "convention", confidence: "50" }],
-    fields: ["confidence", "singleton_penalty", "consensus_count"], expected: { active: [[0, true, 1]], suppressed: [], boosted: 0 } },
+    fields: ["confidence", "singleton_penalty", "consensus_count"], expected: { active: [[0, true, 1]], boosted: 0 } },
 
   { name: "convention singleton loses fifteen", input: [{ dimension: "convention", confidence: 85 }],
-    fields: ["confidence", "singleton_penalty", "consensus_count"], expected: { active: [[70, true, 1]], suppressed: [], boosted: 0 } }
+    fields: ["confidence", "singleton_penalty", "consensus_count"], expected: { active: [[70, true, 1]], boosted: 0 } }
 ];
 for (const row of DISAGREEMENT_ROWS) test(`disagreement: ${row.name}`, () => {
-  const out = detectDisagreement(row.input.map(finding), row.rules);
+  const out = detectDisagreement(row.input.map(finding));
   assert.deepEqual({ active: out.active.map((item) => row.fields.map((field) => item[field])),
-    suppressed: out.suppressed.map((item) => [item.id, item.eliminated_by, item.elimination_reason]),
     boosted: out.boostedCount }, row.expected);
 });
 
@@ -168,11 +154,11 @@ const PIPELINE_ROWS = [
     ],
     config: { confidence_threshold: 50, security_min_confidence: 50, severity_threshold: 'low', ignore: ['banned phrase'] },
     expected: {
-      filtered: ['P1', 'P2', 'P4', 'P7', 'P8', 'P9', 'P11'], eliminated: ['P3', 'P6', 'P5', 'P10'],
+      filtered: ['P1', 'P2', 'P4', 'P7', 'P8', 'P9', 'P10', 'P11'], eliminated: ['P3', 'P6', 'P5'],
       stats: { total: 11, passed_threshold: 10, contested_count: 1, exclusions_removed: 1, injections_removed: 1,
         suggestions_removed: 1, claude_md_rules_removed: 1, spec_texts_removed: 1, suggested_fix_codes_removed: 1,
-        consensus_boosted: 2, singleton_penalized: 1, dimension_routed: 1, reachability_demoted: 1,
-        test_analyzer_promoted: 1, tagged_main: 5, tagged_suggestion: 2 },
+        consensus_boosted: 4, singleton_penalized: 1, dimension_routed: 1, reachability_demoted: 1,
+        test_analyzer_promoted: 1, tagged_main: 6, tagged_suggestion: 2 },
       generated_at: '2026-07-18T00:00:00Z',
     },
   },

@@ -23,9 +23,7 @@ PATCH = (
 )
 
 
-def test_early_scope_facts_use_captured_attributes_and_claim_exceptions(
-    tmp_path, monkeypatch
-):
+def test_scope_applicability_and_exceptions_reach_final_delivery(tmp_path, monkeypatch):
     from dataclasses import replace
 
     from gauntlet.diff import annotate_diff
@@ -48,6 +46,7 @@ def test_early_scope_facts_use_captured_attributes_and_claim_exceptions(
         "yarn.lock",
         "pretend.lock",
         "existing",
+        "tests/check",
         "marker_added",
         "marker_new",
         "pr_attribute",
@@ -119,7 +118,7 @@ def test_early_scope_facts_use_captured_attributes_and_claim_exceptions(
     for target in ("branch", "local"):
         for name, changed in [
             ("docs", ["note"]),
-            ("mixed", ["note", "source"]),
+            ("mixed", ["note", "source", "tests/check"]),
             ("unknown", ["unknown"]),
         ]:
             diff = (git(work, "diff", base, head, "--", *changed) + "\n").encode()
@@ -157,14 +156,28 @@ const {runWith}=await load('src/run');
 const {makeCtx,makeFinding}=await load('test/helpers/pipelineMock');
 const {validArgs}=await load('test/helpers/argsFixtures');
 const {shellSplit}=await load('test/helpers/shellWords');
+const {skepticalReturn}=await load('test/helpers/verdicts');
+const {requiredAssessments,ADMISSION_PREDICATES}=await load('src/registry');
+const {admissionRequests}=await load('src/admission');
 const results=[];
 for(const c of JSON.parse(cases)) {
  const args=validArgs({repoRoot:work,outputDir:output,pluginRoot:root,python:'python',baseBranch:base,
   headShaShort:head.slice(0,8),nonce:c.capture.nonce,diffPath:c.patch,
-  verify:{targetKind:c.target,sourceCapture:c.capture,diffPath:c.patch,baseBranch:base},persist:{returnPrimaries:true}});
+  verify:{targetKind:c.target,sourceCapture:c.capture,diffPath:c.patch,baseBranch:base}});
  const findings=JSON.parse(files).map(file=>makeFinding(file,{file,line_start:1,line_end:1,
   anchor:file==='existing'?'return old_value;':'return process(value);',
   description:'A concrete current correctness defect in the returned value requires a local correction'}));
+ findings.push(...['classified','yarn.lock'].map(file=>makeFinding(`security-${file}`,{file,line_start:1,line_end:1,
+  dimension:'security',attack_vector:'A dependency has a known vulnerable version.',
+  description:'A dependency vulnerability exposes the current caller to a concrete attack'})));
+ const source=(id,file,extra={})=>makeFinding(id,{file,line_start:1,line_end:1,anchor:file==='existing'?'return old_value;':'return process(value);',...extra});
+ findings.push(source('affected','existing',{cross_file_refs:['source:1']}),
+  source('comment','source',{dimension:'comment_accuracy'}),
+  source('source_convention','source',{dimension:'convention',rule_source:'code_comment',claude_md_rule:'source:1 documents the invariant'}),
+  source('future','source'),
+  ...['harmless','wrong_assertion','test_convention','test_origin'].map(id=>source(id,'tests/check',
+   id==='test_convention'?{dimension:'convention',rule_source:'code_comment',claude_md_rule:'source:1 documents the invariant'}:
+   id==='test_origin'?{dimension:'test_coverage',test_kind:'additional_case',criticality:8,failure_scenario:'current behavior'}:{})));
  const ctx=makeCtx(args);
  ctx.agent=async(prompt)=>{
   const command=shellSplit(prompt.split('\n').at(-1));
@@ -173,17 +186,40 @@ for(const c of JSON.parse(cases)) {
  };
  const verified=await verifyStage(ctx,{...args,findings});
  if(!verified.verified)throw new Error(JSON.stringify(verified.gaps));
- const resumed=validArgs({...args,checkpoints:{validate:{findings:verified.findings,stats:{},gaps:[]}}});
- const run=await runWith(makeCtx(resumed),resumed);
+ const resumed=validArgs({...args,checkpoints:{verify:verified}});
+ const request=(f,stage,role)=>({finding_id:f.id,stage,request_id:role,role,
+  file:f.file,side:'head',line_start:1,line_end:1,quote:f.anchor,snapshot_id:c.capture.manifest_sha256});
+ const assess=(f,stage)=>skepticalReturn(f.id,stage,{citations:[request(f,stage,'claim')],
+  ...(stage==='validator'?{policy_subject:f.id==='wrong_assertion'?'test_defect':'ordinary',reachability:f.id==='future'?'future_change_only':'current',
+  admission_assessments:requiredAssessments(f,f.id==='wrong_assertion'?'test_defect':'ordinary').map(predicate=>({predicate,
+   status:predicate==='present_defect'?'rejected':'confirmed',
+   references:Object.keys(admissionRequests(f)).filter(key=>ADMISSION_PREDICATES[predicate].references.some(name=>key===name||key.startsWith(`${name}:`)))}))}:{}),
+  scope_assessments:['harmless','wrong_assertion','test_convention','test_origin'].includes(f.id)?[
+   {finding_id:f.id,stage,category:'test_only_pattern',applicability:'applicable',
+    citations:['rule','applicability'].map(role=>request(f,stage,role))}]:[]});
+ let payload;
+ const runCtx=makeCtx(resumed,{onPersist:p=>{payload=p;}});const runAgent=runCtx.agent;
+ runCtx.agent=async(prompt,dispatch)=>{
+  if(dispatch.label.startsWith('validate-'))return {validations:[...prompt.matchAll(/^- (\S+) \[/gm)].map(m=>assess(verified.findings.find(f=>f.id===m[1]),'validator'))};
+  if(dispatch.label.startsWith('challenge-'))return assess(verified.findings.find(f=>f.id===prompt.match(/Finding identity: (\S+)/)[1]),'challenger');
+  if(dispatch.label.startsWith('cite-'))return ctx.agent(prompt);
+  return runAgent(prompt,dispatch);
+ };
+ const run=await runWith(runCtx,resumed);
  if(!run.ok)throw new Error(JSON.stringify(run));
- const persisted=JSON.parse(run.persistReturn.entries.find(e=>e.path.endsWith(`findings-${head.slice(0,8)}.json`)).text);
- results.push({name:c.name,target:c.target,verified:verified.findings,findings:persisted});
+ results.push({name:c.name,target:c.target,verified:verified.findings,findings:payload.findings});
 }
 process.stdout.write(JSON.stringify(results));
 """
     result = subprocess.run(
         _flow_command(
-            script, work, head, base, str(output), json.dumps(cases), json.dumps(files)
+            script,
+            work,
+            head,
+            base,
+            output.as_posix(),
+            json.dumps(cases),
+            json.dumps(files),
         ),
         cwd=work,
         capture_output=True,
@@ -234,6 +270,30 @@ process.stdout.write(JSON.stringify(results));
             assert final["marker_disabled"]["disposition"] == "body"
             assert final["existing"]["disposition"] == "report_only"
             assert final["existing"]["challenge"] == "scope_terminal"
+        for file in ("classified", "yarn.lock"):
+            security = final[f"security-{file}"]
+            assert not any(
+                row["applies"] is True
+                for row in security["scope_decisions"]
+                if row["category"] in ("generated_vendored", "lockfile")
+            )
+            if not docs:
+                assert security["disposition"] == "body"
+                assert security["challenge"] == "survived"
+        if case["name"] == "mixed":
+            assert final["affected"]["disposition"] == "body"
+            assert final["affected"]["challenge"] == "survived"
+            assert final["harmless"]["disposition"] == "eliminate"
+            for name in ("wrong_assertion", "test_convention", "test_origin"):
+                assert final[name]["disposition"] != "eliminate", (name, final[name])
+            assert final["wrong_assertion"]["disposition"] == "deliver"
+            assert final["future"]["disposition"] == "body"
+            assert final["future"]["challenge"] == "survived"
+        if docs:
+            assert final["comment"]["disposition"] == "body"
+            for name in ("source_convention", "wrong_assertion", "test_origin"):
+                assert final[name]["disposition"] != "eliminate", name
+            assert final["test_convention"]["disposition"] != "eliminate"
 
 
 def test_documentation_scope_includes_source_origins_and_deletions(
@@ -291,11 +351,11 @@ def test_cited_refutation_is_absent_from_delivery_and_local_actions(
     work.mkdir()
     init_git_repo(work, monkeypatch)
     source = work / "source.txt"
-    source.write_text("return old_value;\n", encoding="utf-8", newline="")
+    source.write_bytes(b"return old_value;\nreturn process(value);\n")
     git(work, "add", ".")
     git(work, "commit", "-qm", "base")
     base = git(work, "rev-parse", "HEAD")
-    source.write_text("return process(value);\n", encoding="utf-8", newline="")
+    source.write_bytes(b"return process(value);\nreturn process(value);\n")
     git(work, "add", ".")
     git(work, "commit", "-qm", "head")
     head = git(work, "rev-parse", "HEAD")
@@ -322,7 +382,7 @@ const {shellSplit}=await load('test/helpers/shellWords');
 const findings=['validator','challenger'].flatMap(stage=>['bug','security'].map(dimension=>{
  const id=`${stage}-${dimension}`;
  const assessment=skepticalAssessment(id,stage,{verdict:'refuted'});
- Object.assign(assessment.raw.citations[0],{snapshot_id:JSON.parse(capture).manifest_sha256,file:'source.txt',line_start:1,line_end:1});
+ Object.assign(assessment.raw.citations[0],{snapshot_id:JSON.parse(capture).manifest_sha256,file:'source.txt',line_start:dimension==='security'?2:1,line_end:dimension==='security'?2:1});
  return makeFinding(id,{file:'source.txt',line_start:1,line_end:1,dimension,
   description:`REMOVED_ACTION_${id} describes a purported source defect.`,suggestion:`REMOVED_TASK_${id}`,
   code:`REMOVED_FENCE_${id}`,suggested_fix_code:`REMOVED_PATCH_${id}`,

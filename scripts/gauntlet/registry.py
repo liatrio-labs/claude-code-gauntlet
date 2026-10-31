@@ -119,7 +119,9 @@ _ReductionDetailItemReason_Literal = Literal[
     "cite_unmatched",
     "cite_unavailable",
 ]
-_ScopeDecisionsItemStage_Literal = Literal["early", "post_validation"]
+_ScopeDecisionsItemStage_Literal = Literal[
+    "early", "post_validation", "validator", "challenger"
+]
 PathRole = Literal["source", "test", "non_source", "unknown"]
 BlameClass = Literal["new", "pre_existing", "surfaced", "unknown"]
 BlameSource = Literal[
@@ -265,6 +267,32 @@ SCOPE_FACT_KEYS = (
 )
 
 DISPATCH_RESULTS = {
+    "code-gauntlet:conventions-and-intent": {
+        "conventions_confirmations": {
+            "type": "array",
+            "description": "Return an empty array or confirmations of documented intent, each with a stable id, repository file and positive line_start. These gate only the same file and 10-line bucket; they never prove scope or become findings.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                    "file": {
+                        "type": "string",
+                        "$comment": "repo-path",
+                    },
+                    "line_start": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991,
+                    },
+                },
+                "required": ["id", "file", "line_start"],
+                "additionalProperties": False,
+            },
+        },
+    },
     "code-gauntlet:test-analyzer": {
         "removed_test_audit": {
             "type": "array",
@@ -1245,74 +1273,77 @@ CITATION_REQUEST_SCHEMA = {
     "additionalProperties": False,
 }
 
-CITE_VERIFIER_VERSION = "cite-1"
+CITE_VERIFIER_VERSION = "cite-2"
 
 EXCLUSION_CATEGORIES: list[ExclusionRow] = [
     {
+        "facts": ["blame_class", "blame_source", "in_diff"],
+        "exceptions": [],
+        "outcome": "report_only",
+        "proof": "verified_fact",
         "category": "pre_existing",
         "stage": "early",
         "predicate": "blame_pre_existing",
-        "facts": ["blame_class", "blame_source", "in_diff"],
         "applicability": "Actual git_blame pre-existence and verified in_diff=false; git_blame provenance excludes cross-file effects.",
-        "exceptions": [],
-        "proof": "verified_fact",
-        "outcome": "report_only",
         "reference": "Origin surfaced, off-diff placement and descriptions do not prove pre-existence.",
         "consumers": ["early"],
         "citation_roles": [],
     },
     {
+        "facts": ["in_diff"],
+        "exceptions": [],
+        "outcome": "body",
+        "proof": "verified_fact",
         "category": "untouched_line",
         "stage": "early",
         "predicate": "off_diff",
-        "facts": ["in_diff"],
         "applicability": "Verified in_diff=false; unknown is not false.",
-        "exceptions": [],
-        "proof": "verified_fact",
-        "outcome": "body",
         "reference": "Placement only after admission and vetting; still competes for challenge capacity.",
         "consumers": ["early"],
         "citation_roles": [],
     },
     {
+        "facts": ["linguist_generated", "linguist_vendored", "generated_marker"],
+        "exceptions": ["security_dimension"],
+        "outcome": "eliminate",
+        "proof": "verified_fact",
         "category": "generated_vendored",
         "stage": "early",
         "predicate": "generated_or_vendored",
-        "facts": ["linguist_generated", "linguist_vendored", "generated_marker"],
         "applicability": "git check-attr at captured merge base or the same canonical header in the first source lines at head and base; explicit -linguist-generated overrides markers.",
-        "exceptions": ["security_dimension"],
-        "proof": "verified_fact",
-        "outcome": "eliminate",
         "reference": "PR-controlled classification cannot exclude its own changes; security findings survive.",
         "consumers": ["early"],
         "citation_roles": [],
     },
     {
-        "category": "docs_only",
-        "stage": "early",
-        "predicate": "documentation_only_code_claim",
         "facts": [
             "linguist_documentation",
             "all_changed_files_documentation",
             "path_role",
         ],
-        "applicability": "Finding file has a source role, is proven non-documentation at base, and every changed file is documentation at base.",
         "exceptions": [
             "security_dimension",
             "documentation_or_comment_claim",
-            "test_applicable_documented_convention",
+            "test_applicable_convention",
         ],
-        "proof": "verified_fact",
         "outcome": "eliminate",
+        "proof": "verified_fact",
+        "category": "docs_only",
+        "stage": "early",
+        "predicate": "documentation_only_code_claim",
+        "applicability": "Finding file has a source role, is proven non-documentation at base, and every changed file is documentation at base.",
         "reference": "Extensions and mixed PRs prove neither whole-PR documentation scope nor irrelevance; unknown stays unknown.",
         "consumers": ["early"],
         "citation_roles": [],
     },
     {
+        "facts": ["lockfile_basename"],
+        "exceptions": ["security_dimension"],
+        "outcome": "eliminate",
+        "proof": "verified_fact",
         "category": "lockfile",
         "stage": "early",
         "predicate": "lockfile",
-        "facts": ["lockfile_basename"],
         "basenames": [
             "package-lock.json",
             "npm-shrinkwrap.json",
@@ -1327,104 +1358,105 @@ EXCLUSION_CATEGORIES: list[ExclusionRow] = [
             "packages.lock.json",
         ],
         "applicability": "Lockfile scope is basename-only membership in this closed list.",
-        "exceptions": ["security_dimension"],
-        "proof": "verified_fact",
-        "outcome": "eliminate",
         "reference": "Security findings survive regardless of the lockfile basename.",
         "consumers": ["early"],
         "citation_roles": [],
     },
     {
+        "facts": ["admission"],
+        "exceptions": ["named_in_repo_convention", "confirmed_present_defect"],
+        "outcome": "admission",
+        "proof": "admission",
         "category": "general_quality",
         "stage": "admission",
         "predicate": "canonical_admission",
-        "facts": ["admission"],
         "applicability": "Consume canonical quality admission and its present_defect promotion.",
-        "exceptions": ["named_in_repo_convention", "confirmed_present_defect"],
-        "proof": "admission",
-        "outcome": "admission",
         "reference": "A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.",
         "consumers": ["admission"],
         "citation_roles": [],
     },
     {
+        "facts": ["reachability"],
+        "exceptions": ["present_static_defect"],
+        "outcome": "body",
+        "proof": "verified_fact",
         "category": "latent",
         "stage": "post_validation",
         "predicate": "future_change_only",
-        "facts": ["reachability"],
         "applicability": "Existing future-change-only reachability assessment appropriate to the actual claim.",
-        "exceptions": ["present_static_defect"],
-        "proof": "verified_fact",
-        "outcome": "body",
         "reference": "Placement after admission and vetting; no invented runtime trigger or early challenge exclusion.",
         "consumers": ["post_validation"],
         "citation_roles": [],
     },
     {
-        "category": "test_only_pattern",
-        "stage": "skeptical",
-        "predicate": "harmless_test_pattern",
         "facts": ["path_role"],
-        "applicability": "Cited harmless test-role pattern and its applicability; test path alone is insufficient.",
         "exceptions": [
+            "security_dimension",
             "test_coverage_origin",
             "test_applicable_convention",
             "genuine_test_defect",
         ],
-        "proof": "citation",
         "outcome": "eliminate",
+        "proof": "citation",
+        "category": "test_only_pattern",
+        "stage": "skeptical",
+        "predicate": "harmless_test_pattern",
+        "applicability": "Cited harmless test-role pattern and its applicability; test path alone is insufficient.",
         "reference": "Wrong assertions, mocks and waits remain defects.",
         "consumers": ["validator", "challenger"],
         "citation_roles": ["rule", "applicability"],
     },
     {
+        "facts": [],
+        "exceptions": ["security_dimension", "present_static_defect"],
+        "outcome": "eliminate",
+        "proof": "citation",
         "category": "lint_catchable",
         "stage": "skeptical",
         "predicate": "tool_covers_claim",
-        "facts": [],
         "applicability": "Cite applicable repository tool, rule or configuration and coverage of the actual claim.",
-        "exceptions": [],
-        "proof": "citation",
-        "outcome": "eliminate",
         "reference": "Familiar syntax and assumed CI tools are insufficient.",
         "consumers": ["validator", "challenger"],
         "citation_roles": ["rule", "applicability"],
     },
     {
+        "facts": [],
+        "exceptions": ["security_dimension"],
+        "outcome": "eliminate",
+        "proof": "citation",
         "category": "suppressed",
         "stage": "skeptical",
         "predicate": "suppression_covers_claim",
-        "facts": [],
         "applicability": "Cited suppression location, range and rule cover this issue.",
-        "exceptions": [],
-        "proof": "citation",
-        "outcome": "eliminate",
         "reference": "A nearby suppression does not establish applicability.",
         "consumers": ["validator", "challenger"],
         "citation_roles": ["rule", "applicability"],
     },
     {
+        "facts": [],
+        "exceptions": ["security_dimension"],
+        "outcome": "eliminate",
+        "proof": "citation",
         "category": "opted_out",
         "stage": "skeptical",
         "predicate": "opt_out_covers_claim",
-        "facts": [],
         "applicability": "Cite repository opt-out mechanism and applicable file or rule opt-out.",
-        "exceptions": [],
-        "proof": "citation",
-        "outcome": "eliminate",
         "reference": "An author assertion is not an opt-out mechanism.",
         "consumers": ["validator", "challenger"],
         "citation_roles": ["rule", "applicability"],
     },
     {
+        "facts": ["conventions_confirmation"],
+        "exceptions": [
+            "security_dimension",
+            "proven_incorrect_or_dangerous_behavior_including_security",
+        ],
+        "outcome": "eliminate",
+        "proof": "citation",
         "category": "intentional",
         "stage": "skeptical",
         "predicate": "confirmed_intent",
-        "facts": ["conventions_confirmation"],
-        "applicability": "Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation.",
-        "exceptions": ["proven_incorrect_or_dangerous_behavior_including_security"],
-        "proof": "citation",
-        "outcome": "eliminate",
+        "applicability": "Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation; both must be outside PR-added lines in the captured diff.",
         "reference": "The side record is only a gating fact, never a finding or proof; description and intentional wording are insufficient.",
         "consumers": ["validator", "challenger"],
         "citation_roles": ["rule", "applicability"],
@@ -2087,11 +2119,12 @@ class CiteResultsItemSource(TypedDict):
     verifier_version: str
 
 
-class CiteResultsItem(TypedDict):
+class CiteResultsItem(TypedDict, total=False):
     request: CiteResultsItemRequest
     status: CitationStatus
     detail: str
     source: CiteResultsItemSource
+    added_lines: list[int]
 
 
 class ReductionDetailItem(TypedDict, total=False):
@@ -2101,13 +2134,17 @@ class ReductionDetailItem(TypedDict, total=False):
     missing_field: str
     missing_fields: list[str]
     missing_evidence: str
+    category: ExclusionCategory
 
 
-class ScopeDecisionsItem(TypedDict):
+class ScopeDecisionsItem(TypedDict, total=False):
     stage: _ScopeDecisionsItemStage_Literal
     category: ExclusionCategory
     applies: bool | None
     outcome: Disposition
+    reason: _ReductionDetailItemReason_Literal
+    request_ids: list[str]
+    confirmation_id: str
 
 
 class ReductionProvenance(TypedDict, total=False):

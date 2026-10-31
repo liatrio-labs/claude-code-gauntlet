@@ -513,6 +513,7 @@ export async function runWith(ctx, rawArgs) {
         findings: admitted, limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath, sourceCapture: A.verify?.sourceCapture,
       });
       out.eliminated = [...(verifyOut.eliminated || []), ...(filterOut.eliminated || []), ...(out.eliminated || [])];
+      out.conventions_confirmations = deepClone(discoverOut.conventions_confirmations || []);
       return out;
     });
     await runPhase('cite', () => citeStage(c, {

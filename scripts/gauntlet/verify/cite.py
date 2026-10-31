@@ -10,6 +10,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
+from gauntlet.diff import annotate_diff, parse_diff, patch_report_policy
 from gauntlet.fs import write_atomic
 from gauntlet.location import Quote, valid_quote
 from gauntlet.registry import (
@@ -282,15 +283,20 @@ def run_citations(
             return unavailable("corrupt_attempt_identity")
         source = SourceAdapter(Path(root), args.target_kind, None)
         store = None
+        facts = None
         with suppress(OSError, ValueError, TypeError):
+            diff = Path(args.diff_file).read_bytes()
             store = load_capture(
                 source,
                 Path(args.capture_output_dir),
                 metadata,
-                Path(args.diff_file).read_bytes(),
+                diff,
                 requested_sha=sha,
             )
             source = store.adapter(Path(root))
+            annotate_diff(diff)
+            text = diff.decode("utf-8", "surrogateescape")
+            facts = parse_diff(text, policy=patch_report_policy(text))
         cache: dict[tuple[object, ...], CitationStatus] = {}
         rows: list[CiteRow] = []
         for record in records:
@@ -300,7 +306,16 @@ def run_citations(
             status, detail = _classify_record(
                 record, source, store, metadata, ids, identities, cache
             )
-            rows.append(result(record, status, detail))
+            row = result(record, status, detail)
+            if facts is not None and detail == "explicit_source_range":
+                q = cast(CitationRequest, record["request"])
+                row["added_lines"] = [
+                    line
+                    for line in range(q["line_start"], q["line_end"] + 1)
+                    if q["side"] == "head"
+                    and facts.valid_lines.get((q["file"], line), 0) is None
+                ]
+            rows.append(row)
         attempts[-1]["results"] = rows
         try:
             write_atomic(ledger_path, json.dumps(ledger, ensure_ascii=True))

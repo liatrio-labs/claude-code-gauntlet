@@ -156,6 +156,7 @@ for (const row of OUTCOME_ROWS) test(`discover outcome: ${row.name}`, async () =
     } : undefined });
   const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {}, ...row.input });
   const expected = structuredClone(row.expected ?? DISCOVER_GOLDEN);
+  expected.conventions_confirmations = [];
   for (const finding of expected.findings) delete finding.skeptical_assessments;
   assert.deepEqual(out, expected);
   assert.deepEqual(ctx.calls.map((call) => call.label), (row.expected ?? DISCOVER_GOLDEN).dispatched);

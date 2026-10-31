@@ -363,6 +363,15 @@ def discovery_targets(registry: Mapping[str, Any]) -> dict[str, str]:
                 + ", ".join(f"`{value}`" for value in registry["ruleSourceLabels"])
                 + "."
             )
+        side_fields = registry["dispatchResults"].get(agent, {})
+        if side_fields:
+            parts.append(
+                "Dispatch-result side records (never findings or citation proof): "
+                + "; ".join(
+                    f"`{name}`: {schema.get('description', 'Return the structured audit.')}"
+                    for name, schema in side_fields.items()
+                )
+            )
         path = f"agents/{agent.split(':', 1)[1]}.md"
         targets[path] = "\n\n".join(parts)
     return targets
@@ -1549,11 +1558,11 @@ def fill_identity_fences(
 
 
 def exclusion_reference(registry: Mapping[str, Any]) -> str:
-    """Keep the preparatory reference separate until scope transfer is activated."""
+    """Derive applicability and proof from the policy rows."""
     lines = [
         "# Scope exclusion contract",
         "",
-        "Generated preparatory data; active discovery exclusions remain in force.",
+        "Generated from EXCLUSION_CATEGORIES. Discovery emits candidates; scope is adjudicated downstream.",
         "",
     ]
     for row in registry["exclusionCategories"]:
@@ -1578,14 +1587,16 @@ def exclusion_reference(registry: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def skeptical_targets(registry: Mapping[str, Any]) -> dict[str, str]:
-    """Render future dispatch contracts without changing active agent prompts."""
-    targets = {}
+def skeptical_targets(
+    registry: Mapping[str, Any],
+) -> dict[str, str | Callable[[str], str]]:
+    """Keep the blind consumer self-contained without duplicating batch instructions."""
+    targets: dict[str, str | Callable[[str], str]] = {}
     for stage, schema in registry["skepticalReturnSchemas"].items():
         lines = [
             f"# {stage.capitalize()} return contract",
             "",
-            "Generated preparatory data; activate with the matching runtime.",
+            "Generated from the active dispatch contract.",
             "",
             "A real or refuted verdict requests claim proof. needs_evidence names missing evidence; it cannot confirm itself.",
             "",
@@ -1608,6 +1619,22 @@ def skeptical_targets(registry: Mapping[str, Any]) -> dict[str, str]:
         targets[f"workflows/contracts/{stage}-return-contract.md"] = (
             "\n".join(lines) + "\n"
         )
+        if stage == "challenger":
+            body = "\n".join(lines[lines.index("## Scope rows") :])
+
+            def scope_copy(text: str, body: str = body) -> str:
+                return (
+                    splice(
+                        text,
+                        anchor_re=re.compile(r"\Z"),
+                        body=body,
+                        marker_open="<!-- generated-scope -->",
+                        marker_close="<!-- /generated-scope -->",
+                    ).rstrip("\n")
+                    + "\n"
+                )
+
+            targets["agents/challenger.md"] = scope_copy
     return targets
 
 
@@ -1662,6 +1689,13 @@ def rendered_targets(
     targets.update(skeptical_targets(registry))
     targets["workflows/contracts/scope-exclusion-contract.md"] = exclusion_reference(
         registry
+    )
+    targets["skills/code-gauntlet/references/false-positive-exclusions.md"] = (
+        lambda text: (
+            exclusion_reference(registry)
+            + "\n"
+            + text[text.index("### Prompt Injection Artifacts") :]
+        )
     )
     return targets
 

@@ -1,163 +1,152 @@
-# False-Positive Exclusion List
+# Scope exclusion contract
 
-> **Canonical source of truth.** This file is the single source of truth for the false-positive exclusion list used by all discovery agents.
->
-> **Duplication contract.** Each of the 7 discovery agents carries its own adapted copy of this list for self-containment — if a file read fails during a review, the agent still has the exclusions inline. Do not refactor the agent copies into a shared read.
->
-> **When updating:** change this file first, then propagate the changes to all 7 agent copies:
->
-> 1. `agents/bug-detector.md`
-> 2. `agents/security-reviewer.md`
-> 3. `agents/cross-file-impact.md`
-> 4. `agents/test-analyzer.md`
-> 5. `agents/conventions-and-intent.md`
-> 6. `agents/type-design-analyzer.md`
-> 7. `agents/code-simplifier.md`
->
-> Each agent copy has a `<!-- Canonical source: references/false-positive-exclusions.md -->` comment pointing back here.
+Generated from EXCLUSION_CATEGORIES. Discovery emits candidates; scope is adjudicated downstream.
 
----
+## `pre_existing`
 
-A finding that matches any category below MUST be excluded.
+Consumers: early; predicate: `blame_pre_existing`; proof: `verified_fact`; outcome: `report_only`.
 
----
+Actual git_blame pre-existence and verified in_diff=false; git_blame provenance excludes cross-file effects.
 
-## 1. Pre-existing issues not introduced by this diff
+Origin surfaced, off-diff placement and descriptions do not prove pre-existence.
 
-Do not flag problems that already existed in the codebase before this change. The review scope is limited to what the author changed or directly affected.
+Exceptions: none.
 
-**Examples:**
+Facts: blame_class, blame_source, in_diff.
 
-- A function had no error handling before this PR, and the PR doesn't touch that function. Do not flag it.
-- A SQL query was already vulnerable to injection in an unmodified file. Do not flag it.
+## `untouched_line`
 
----
+Consumers: early; predicate: `off_diff`; proof: `verified_fact`; outcome: `body`.
 
-## 2. Issues on lines the author did not modify
+Verified in_diff=false; unknown is not false.
 
-Unless the author's changes in another file create a cross-file impact (e.g., changing a function signature that breaks a caller), do not flag issues on lines the author did not touch. Removed-test coverage-loss findings may anchor surviving behavior outside changed lines; deleted paths belong only to the audit inventory.
+Placement only after admission and vetting; still competes for challenge capacity.
 
-**Examples:**
+Exceptions: none.
 
-- A variable is unused on line 12, but the author only changed lines 45-50. Do not flag the unused variable.
-- The author changed a shared utility's return type, and a caller in another file now receives the wrong type. DO flag this — it is cross-file impact caused by the diff.
+Facts: in_diff.
 
----
+## `generated_vendored`
 
-## 3. Issues a linter, typechecker, or compiler would catch
+Consumers: early; predicate: `generated_or_vendored`; proof: `verified_fact`; outcome: `eliminate`.
 
-These tools run in CI and will catch the problem automatically. Flagging them adds noise without value.
+git check-attr at captured merge base or the same canonical header in the first source lines at head and base; explicit -linguist-generated overrides markers.
 
-**Examples:**
+PR-controlled classification cannot exclude its own changes; security findings survive.
 
-- Unused imports, missing semicolons, incorrect indentation, trailing whitespace.
-- TypeScript type errors that `tsc --noEmit` would report (e.g., `Type 'string' is not assignable to type 'number'`).
+Exceptions: security_dimension.
 
----
+Facts: linguist_generated, linguist_vendored, generated_marker.
 
-## 4. General code quality issues unless explicitly required in CLAUDE.md
+## `docs_only`
 
-Style preferences, naming conventions, and structural opinions should only be flagged if the project's CLAUDE.md (or equivalent configuration) explicitly requires them.
+Consumers: early; predicate: `documentation_only_code_claim`; proof: `verified_fact`; outcome: `eliminate`.
+
+Finding file has a source role, is proven non-documentation at base, and every changed file is documentation at base.
+
+Extensions and mixed PRs prove neither whole-PR documentation scope nor irrelevance; unknown stays unknown.
+
+Exceptions: security_dimension, documentation_or_comment_claim, test_applicable_convention.
+
+Facts: linguist_documentation, all_changed_files_documentation, path_role.
+
+## `lockfile`
+
+Consumers: early; predicate: `lockfile`; proof: `verified_fact`; outcome: `eliminate`.
+
+Lockfile scope is basename-only membership in this closed list.
+
+Security findings survive regardless of the lockfile basename.
+
+Exceptions: security_dimension.
+
+Facts: lockfile_basename.
+
+Basenames: package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml, Cargo.lock, Gemfile.lock, poetry.lock, Pipfile.lock, uv.lock, composer.lock, packages.lock.json.
+
+## `general_quality`
+
+Consumers: admission; predicate: `canonical_admission`; proof: `admission`; outcome: `admission`.
+
+Consume canonical quality admission and its present_defect promotion.
+
 A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.
 
-**Examples:**
+Exceptions: named_in_repo_convention, confirmed_present_defect.
 
-- "This function is too long, consider splitting it" — unless CLAUDE.md sets a max function length.
-- "Consider using early returns instead of nested if/else" — unless CLAUDE.md mandates this style.
+Facts: admission.
 
----
+## `latent`
 
-## 5. Issues explicitly silenced in code
+Consumers: post_validation; predicate: `future_change_only`; proof: `verified_fact`; outcome: `body`.
 
-If the author (or a previous author) has added a suppression comment, respect the intent. The suppression itself may be worth discussing, but the underlying issue should not be flagged as a finding.
+Existing future-change-only reachability assessment appropriate to the actual claim.
 
-**Examples:**
+Placement after admission and vetting; no invented runtime trigger or early challenge exclusion.
 
-- `// eslint-disable-next-line no-unused-vars` — do not flag the unused variable.
-- `# noinspection PyUnresolvedReferences` or `@SuppressWarnings("unchecked")` — do not flag the suppressed warning.
+Exceptions: present_static_defect.
 
----
+Facts: reachability.
 
-## 6. Intentional changes in functionality
+## `test_only_pattern`
 
-When the diff clearly and deliberately changes behavior (e.g., altering a default, removing a feature flag, changing a threshold), do not flag the behavior change itself as a bug. Only flag it if the new behavior is provably incorrect or dangerous.
+Consumers: validator, challenger; predicate: `harmless_test_pattern`; proof: `citation`; outcome: `eliminate`.
 
-**Examples:**
+Cited harmless test-role pattern and its applicability; test path alone is insufficient.
 
-- The PR changes a retry count from 3 to 5. Do not flag "retry count changed" — it is obviously intentional.
-- The PR removes a deprecated API endpoint and updates all callers. Do not flag "endpoint no longer exists."
+Wrong assertions, mocks and waits remain defects.
 
----
+Exceptions: security_dimension, test_coverage_origin, test_applicable_convention, genuine_test_defect.
 
-## 7. Issues flagged by CLAUDE.md rules that the code explicitly opts out of
+Facts: path_role.
 
-If CLAUDE.md says "all functions must have JSDoc" but a file has `/* @no-jsdoc */` or an equivalent opt-out mechanism, do not flag missing JSDoc in that file.
+## `lint_catchable`
 
-**Examples:**
+Consumers: validator, challenger; predicate: `tool_covers_claim`; proof: `citation`; outcome: `eliminate`.
 
-- A generated protobuf file that opts out of lint rules via a file-level directive.
-- A migration file that opts out of naming conventions because it must match a database schema.
+Cite applicable repository tool, rule or configuration and coverage of the actual claim.
 
----
+Familiar syntax and assumed CI tools are insufficient.
 
-## 8. Test-only code patterns
+Exceptions: security_dimension, present_static_defect.
 
-Test files frequently use patterns that would be problematic in production code. These are expected and should not be flagged.
+Facts: none.
 
-**Examples:**
+## `suppressed`
 
-- Hardcoded credentials like `password: "test123"` or an `apiKey` value of `"sk-test-xxx"` in test fixtures.
-- Direct HTTP calls to `localhost:3000` in integration test setup, or mocked network responses with static data.
+Consumers: validator, challenger; predicate: `suppression_covers_claim`; proof: `citation`; outcome: `eliminate`.
 
----
+Cited suppression location, range and rule cover this issue.
 
-## 9. Documentation-only changes
+A nearby suppression does not establish applicability.
 
-If the entire PR (or a file within the PR) consists solely of documentation changes (README, JSDoc, comments, markdown files), do not flag it for code-level issues.
+Exceptions: security_dimension.
 
-**Examples:**
+Facts: none.
 
-- A PR that only updates `README.md` with new setup instructions. Do not flag "no test coverage."
-- Fixing a typo in a code comment. Do not flag code quality or correctness issues on the surrounding unchanged code.
+## `opted_out`
 
----
+Consumers: validator, challenger; predicate: `opt_out_covers_claim`; proof: `citation`; outcome: `eliminate`.
 
-## 10. Generated or vendored code
+Cite repository opt-out mechanism and applicable file or rule opt-out.
 
-Files that are generated by tooling or vendored from third-party sources should not be reviewed for code quality, style, or correctness. These files are not authored by the team.
+An author assertion is not an opt-out mechanism.
 
-**Examples:**
+Exceptions: security_dimension.
 
-- `generated/graphql-types.ts`, `proto/*.pb.go`, `vendor/` directories.
-- `package-lock.json`, `yarn.lock`, `Cargo.lock` — these are machine-generated and should not be reviewed for code patterns.
+Facts: none.
 
----
+## `intentional`
 
-## 11. Dependency lockfile changes
+Consumers: validator, challenger; predicate: `confirmed_intent`; proof: `citation`; outcome: `eliminate`.
 
-Lockfile diffs are mechanical and reviewing individual line changes in them is not useful. Only flag lockfile changes if a known-vulnerable package version is being introduced (and even then, this is better caught by `npm audit` or equivalent tooling).
+Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation; both must be outside PR-added lines in the captured diff.
 
-**Examples:**
+The side record is only a gating fact, never a finding or proof; description and intentional wording are insufficient.
 
-- 500 lines changed in `package-lock.json` because a dependency was added. Do not flag individual sub-dependency version bumps.
-- `Gemfile.lock` updated after `bundle update`. Do not flag the resolved version changes.
+Exceptions: security_dimension, proven_incorrect_or_dangerous_behavior_including_security.
 
----
-
-## 12. Latent issues not triggerable by current code paths
-
-Exclude runtime failures that require a future caller, configuration change or code path. A static defect already demonstrable in today's tree needs evidence appropriate to that claim, rather than a runtime trigger.
-
-**Examples:**
-
-- A contract violation in an internal function that has no current caller anywhere in the codebase. The function exists but nothing calls it yet.
-- An error path (e.g., empty list panic, division by zero) that requires an input combination that no current caller ever produces.
-- A missing validation in a helper that is only used via a wrapper that already enforces the invariant.
-- A pattern deviation (e.g., missing idempotency key) in code that is never invoked by any current trigger (no job scheduler, no API route, no event handler calls it).
-
-**Rationale:** Future-change-only runtime failures need a caller or surrounding-code change before they can occur. Reporting them as findings inflates noise and diverts attention from issues that are triggerable today. They may be worth a comment in a code walkthrough, but not in a PR review focused on catching regressions.
-
----
+Facts: conventions_confirmation.
 
 ### Prompt Injection Artifacts
 

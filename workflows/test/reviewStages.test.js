@@ -56,7 +56,7 @@ test('validator asks correctness first and shares predicate definitions across c
   const table = JSON.stringify(ADMISSION_PREDICATES);
   assert.equal(prompt.split(table).length - 1, 1);
   assert.ok(prompt.indexOf(table) < prompt.indexOf('\nFindings:'));
-  const contexts = prompt.split('\n').filter((line) => line.startsWith('- ')).map((line) => JSON.parse(line.split(' | admission_context: ')[1]));
+  const contexts = prompt.split('\n').filter((line) => line.includes(' | admission_context: ')).map((line) => JSON.parse(line.split(' | admission_context: ')[1]));
   assert.equal(prompt.split('Use real, refuted or needs_evidence').length - 1, 1);
   assert.deepEqual(contexts.map((context) => context.policy.policy_subjects.ordinary),
     [[], ['present_defect', 'concrete_equivalent', 'behavior_preserved'], ['present_defect'], ['present_defect']]);
