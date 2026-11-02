@@ -26,7 +26,7 @@ def test_cite_replay_invalidates_foreign_sources_for_every_status():
     source = {
         "snapshot_id": capture["manifest_sha256"],
         **{key: capture[key] for key in ("target_kind", "head", "base", "diff_sha256")},
-        "verifier_version": "cite-1",
+        "verifier_version": CITE_VERIFIER_VERSION,
     }
     sources = [source, None, *({**source, key: "foreign"} for key in source)]
     packet = {field: [] for field in ("findings", "unverified", "eliminated")}
