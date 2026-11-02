@@ -75,9 +75,9 @@ def _description_child():
     fake_claude.main()
     if "--version" in sys.argv:
         return
-    head, _, target, body = _fetch("github", 1, True)
+    head, _, target, body, base = _fetch("github", 1, True)
     output = Path(os.environ["CODE_GAUNTLET_OUTPUT_DIR"])
-    snapshot = dict(head_sha_full=head, target=target, body=body)
+    snapshot = dict(head_sha_full=head, base_sha_full=base, target=target, body=body)
     (output / "pr-description.json").write_text(json.dumps(snapshot), encoding="utf-8")
     defective = (
         Path("collection.py").read_bytes() == (FIXTURES / "defective.py").read_bytes()

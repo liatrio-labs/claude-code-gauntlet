@@ -5,6 +5,21 @@ import { fnv1a32 } from '../src/wire.js';
 import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, resolveReviewConfig } from '../src/args.js';
 import { interactiveArgs, headlessArgs, priorReviewDetector, prIdentity, reviewMdArgs } from './helpers/argsFixtures.js';
 
+test('source capture args bind the preparation receipt to the run identity', () => {
+  const a = interactiveArgs();
+  a.nonce = 'capture'; a.headShaShort = 'aaaa';
+  const receipt = { version: 1, nonce: a.nonce, target_kind: 'local', head: 'a'.repeat(40), base: 'b'.repeat(40),
+    diff_sha256: 'c'.repeat(64), manifest_sha256: 'd'.repeat(64), copied_bytes: 12, copied_files: 1, failure_count: 0, failure_sample: [] };
+  a.verify = { targetKind: 'local', sourceCapture: receipt };
+  assert.deepEqual(validateArgs(a), { ok: true, errors: [] });
+  for (const change of [null, { version: 2 }, { nonce: 'other' }, { head: 'b'.repeat(40) }, { base: 'short' },
+    { target_kind: 'branch' }, { diff_sha256: 'bad' }, { manifest_sha256: null }, { copied_bytes: -1 },
+    { copied_files: 0.5 }, { failure_count: -1 }, { failure_sample: [null] }]) {
+    a.verify.sourceCapture = change === null ? null : { ...receipt, ...change };
+    assert.equal(validateArgs(a).ok, false, JSON.stringify(change));
+  }
+});
+
 test('removed-test args treat every inventory path control character as unavailable', () => {
   const controls = [...Array.from({ length: 32 }, (_, i) => i),
     ...Array.from({ length: 33 }, (_, i) => i + 127), 0x2028, 0x2029];

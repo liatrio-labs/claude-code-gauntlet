@@ -22,7 +22,11 @@ Run status → checkout → SHA → prior-review gate → stale truncation in on
 ```bash
 echo "=== status ==="
 PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform github --pr {pr_number} --output-dir "{output_dir}" --snapshot-destination "code-gauntlet-inputs-{nonce}/pr-description.json") || exit 1
-TARGET_SHA=${PR_STATUS%%$'\n'*}
+BASE_SHA_FULL=${PR_STATUS%%$'\n'*}
+BASE_SHA_FULL=${BASE_SHA_FULL#base_sha_full=}
+echo "base_sha_full=$BASE_SHA_FULL"
+TARGET_SHA=${PR_STATUS#*$'\n'}
+TARGET_SHA=${TARGET_SHA%%$'\n'*}
 TARGET_SHA=${TARGET_SHA#head_sha=}
 CURRENT_SHA=$(git rev-parse HEAD)
 echo "target=$TARGET_SHA current=$CURRENT_SHA"
@@ -62,7 +66,11 @@ The headless mismatch branch stops before SHA resolution, prior-review detection
 ```bash
 echo "=== status ==="
 PR_STATUS=$({python} "{plugin_root}/scripts/pr_status.py" --platform gitlab --pr {pr_number} --output-dir "{output_dir}" --snapshot-destination "code-gauntlet-inputs-{nonce}/pr-description.json") || exit 1
-TARGET_SHA=${PR_STATUS%%$'\n'*}
+BASE_SHA_FULL=${PR_STATUS%%$'\n'*}
+BASE_SHA_FULL=${BASE_SHA_FULL#base_sha_full=}
+echo "base_sha_full=$BASE_SHA_FULL"
+TARGET_SHA=${PR_STATUS#*$'\n'}
+TARGET_SHA=${TARGET_SHA%%$'\n'*}
 TARGET_SHA=${TARGET_SHA#head_sha=}
 CURRENT_SHA=$(git rev-parse HEAD)
 echo "target=$TARGET_SHA current=$CURRENT_SHA"
@@ -95,7 +103,9 @@ echo "=== stale_truncate ==="
 printf '%s\n' "$PRIOR_JSON" | {python} "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha "$HEAD_SHA_SHORT"
 ```
 
-**Branch Composite A:** first resolve the comparison base in its own Bash call. Type the printed hex into `{base_sha}` in Composite B; shell variables do not survive between calls.
+Record the status producer's `base_sha_full` as `{base_sha}` alongside `{head_sha_full}`. It fetches the PR/MR head and current base branch and records their merge-base, including in stale clones. Existing description snapshots preserve both identities on resume.
+
+**Branch Composite A:** first resolve the comparison ref in its own Bash call. Type the printed hex into `{base_ref_sha}` below; shell variables do not survive between calls.
 
 ```bash
 {python} "{plugin_root}/scripts/resolve_branch.py" <<'CODE_GAUNTLET~BASE'
@@ -140,11 +150,16 @@ HEAD_SHA_FULL=$(git rev-parse HEAD) || exit 1
 echo "head_sha_short=$HEAD_SHA_SHORT"
 echo "head_sha_full=$HEAD_SHA_FULL"
 
+BASE_SHA_FULL=$(git merge-base "$HEAD_SHA_FULL" "{base_ref_sha}") || exit 1
+echo "base_sha_full=$BASE_SHA_FULL"
+
 echo "=== stale_truncate ==="
 {python} "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha "$HEAD_SHA_SHORT" --unconditional
 ```
 
-**Local Composite A:** run the branch composite's literal `sha` and `stale_truncate` sections, with no checkout or prior-review gate.
+Record the branch merge-base as `{base_sha}` for Composite B and source capture.
+
+**Local Composite A:** run the branch composite's literal `sha` and `stale_truncate` sections, replacing its merge-base assignment with `BASE_SHA_FULL=$HEAD_SHA_FULL`, with no checkout or prior-review gate. Record `{head_sha_full}` as `{base_sha}`.
 
 **`DEFERRED`:** the current SHA is the one a prior review covered. Run `{python} "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha {head_sha_short} --unconditional` only after a "Yes — review again" answer; a "No — skip" answer stops with the files intact. An exit 2 truncated nothing; resolve it the same way. The gate's rationale and its four outcomes are in `scripts/gauntlet/stale.py`'s docstring.
 
@@ -292,7 +307,7 @@ pre-parsed form for the same axis (single authority).
 Run this after 2d, 2e and 2k. Set `{target_type}` to `pr`, `mr`, `branch` or `local`. For PR/MR, replace `{snapshot_args}` with `--snapshot-file "code-gauntlet-inputs-{nonce}/pr-description.json"`; otherwise omit it. Branch/local calls need no snapshot and never fetch descriptions:
 
 ```bash
-{python} "{plugin_root}/scripts/write_shared_context.py" --output-dir "{output_dir}" --head-sha {head_sha_short} --target-type {target_type} --head-sha-full {head_sha_full} --repo-root "{repo_root}" {snapshot_args} <<'CODE_GAUNTLET_TRIAGE_{nonce}'
+{python} "{plugin_root}/scripts/write_shared_context.py" --output-dir "{output_dir}" --head-sha {head_sha_short} --target-type {target_type} --head-sha-full {head_sha_full} --repo-root "{repo_root}" --nonce "{nonce}" --base-sha {base_sha} {snapshot_args} <<'CODE_GAUNTLET_TRIAGE_{nonce}'
 {risk classification (2e) and AI-generated-code status (2k)}
 CODE_GAUNTLET_TRIAGE_{nonce}
 ```
@@ -301,6 +316,7 @@ The quoted delimiter passes the text verbatim. Never pipe it through `echo` or u
 The nonce in the delimiter keeps any line of the text from ending it.
 The script writes the context file threaded to the discovery, validate and summarize agents from the collector's `--out` file, stdin text, framed unverified PR/MR claims when applicable, framed repository layout and saved diff, in that order. Use `configResult.identity.repo_root` for `{repo_root}`.
 Stamp the printed `contextLines`, `contextChars`, `contextMaxLineChars` and `removedTests` into the args waist verbatim, never estimated, carried over or re-derived.
+Stamp `sourceCapture` verbatim into `verify.sourceCapture`. Use the recorded merge-base for `{base_sha}` (captured HEAD for local). The command checks the base and enumerates dirty/untracked paths before reserving `code-gauntlet-inputs-{nonce}/source-capture/`, then copies eligible source; clean files bind to captured HEAD blobs. Listing failures leave no reservation and can be retried. Reuse the original nonce and store on retry/resume. An interrupted reservation without a manifest requires starting the run over with a fresh nonce; never rebuild it from newer bytes. Missing or corrupt captures stop preparation. The receipt discloses bytes, failure count and a bounded filename sample; the manifest retains every failure. Capture artifacts and shared-context/author prose cannot establish source provenance.
 An exit 2 wrote no usable context; stop and report its one-line error.
 `scripts/gauntlet/shared_context.py`'s docstring holds the content and measurement rules.
 
@@ -357,6 +373,7 @@ Discovery agents return findings through structured output (`agent()`/`parallel(
 
   // verify handoff (sha-scoped) for the executor's pinned command:
   verify: {
+    sourceCapture: contextReceipt.sourceCapture,
     targetKind: "{target_kind}", // pr, mr, branch, or local, selected during preparation
     inputPathBase: "{output_dir}/code-gauntlet-phase4-input-{head_sha_short}",
     outputPathBase: "{output_dir}/code-gauntlet-phase4-output-{head_sha_short}"

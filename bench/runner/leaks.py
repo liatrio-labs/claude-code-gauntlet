@@ -273,6 +273,7 @@ def _shared_context_surfaces(root: Path) -> tuple[PromptSurface, ...]:
             json.dumps(
                 {
                     "head_sha_full": sha,
+                    "base_sha_full": sha,
                     "target": {
                         "platform": "github",
                         "web_origin": "https://github.com",

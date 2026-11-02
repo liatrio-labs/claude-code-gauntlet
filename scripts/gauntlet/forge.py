@@ -496,7 +496,7 @@ class GitHub(_ForgeAdapter):
                 str(number),
                 "--json",
                 "state,isDraft,url,headRefOid"
-                + (",body" if capture_description else ""),
+                + (",baseRefName,body" if capture_description else ""),
             ],
             timeout=_FETCH_TIMEOUT_SECONDS,
         )

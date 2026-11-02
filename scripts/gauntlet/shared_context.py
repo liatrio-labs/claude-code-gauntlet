@@ -198,6 +198,9 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         presentation += b"\n"
     triage = triage.strip(b"\r\n")
     layout = b"Layout unavailable: repository root not supplied."
+    capture = None
+    if args.nonce and not args.repo_root:
+        raise UsageError("source capture requires --repo-root", 2)
     if args.repo_root:
         if args.target_type != "local":
             if not args.head_sha_full:
@@ -208,6 +211,18 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         source = SourceAdapter.capture(
             Path(args.repo_root).resolve(), args.target_type, args.head_sha_full
         )
+        if args.nonce:
+            try:
+                capture = source.capture_sources(
+                    Path(args.output_dir), args.nonce, diff, args.base_sha
+                )
+                source = capture.adapter(source.root)
+                if not capture.receipt["head"].startswith(args.head_sha) or (
+                    args.head_sha_full and capture.receipt["head"] != args.head_sha_full
+                ):
+                    raise ValueError("source capture requested head mismatch")
+            except (OSError, ValueError) as exc:
+                raise UsageError(f"source capture unavailable ({exc})", 2) from None
         layout = _layout_json(layout_entries(source, changed_files)).encode("utf-8")
         layout = frame(
             "untrusted-code-content", layout + b"\n", {"kind": "repository-layout"}
@@ -261,6 +276,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         "contextChars": chars,
         "contextMaxLineChars": max(map(len, decoded.split("\n"))) + 1,
         "removedTests": removed_tests(diff.decode("utf-8", errors="replace")),
+        **({"sourceCapture": capture.receipt} if capture is not None else {}),
     }, 0
 
 
@@ -273,6 +289,8 @@ parser.add_argument(
 parser.add_argument("--head-sha-full")
 parser.add_argument("--snapshot-file")
 parser.add_argument("--repo-root")
+parser.add_argument("--nonce")
+parser.add_argument("--base-sha")
 CLI = Command(
     parser=parser,
     main=_execute,

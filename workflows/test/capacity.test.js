@@ -183,8 +183,9 @@ test('absent bucket limit: 47 files', async () => {
 test('anchor and map flags obey encoded command budget', () => {
   const anchor = Array.from({ length: 4 }, () => '\u{1F600}'.repeat(90)).join('\n');
   const findings = Array.from({ length: 6 }, (_, n) => ({ id: `f${n}`, file: 'source', anchor }));
-  const inp = { repoRoot: 'D:/repo', nonce: 'n', headShaShort: 'abcd', verify: {
+  const inp = { repoRoot: 'D:/repo', outputDir: 'D:/out', nonce: 'n', headShaShort: 'abcd', verify: {
     targetKind: 'local', contextFile: 'D:/out/context.md', contextMap: 'D:/out/map.json', diffPath: 'D:/out/raw.patch',
+    sourceCapture: { nonce: 'n', manifest_sha256: 'a'.repeat(64) },
   } };
   const one = predictVerifySliceInlineLength(findings.slice(0, 1), 'main', 'windows');
   const plan = planVerifySlices(findings, 6, one + 2, 'main', 'windows');
@@ -198,6 +199,8 @@ test('anchor and map flags obey encoded command budget', () => {
     assert.ok(command.includes('--target-kind local'));
     assert.ok(command.includes('--context-map D:/out/map.json'));
     assert.ok(command.includes('--context-file D:/out/context.md'));
+    assert.ok(command.includes('--source-capture'));
+    assert.ok(command.includes('--capture-output-dir D:/out'));
   }
   assert.ok(verifyInlineBudget(inp) < verifyInlineBudget({ ...inp, verify: {} }));
 });

@@ -99,6 +99,12 @@ def _prepare(root, case, fixture):
     git("checkout", "-q", "review-target")
     git("branch", "-f", "main", base)
     git("update-ref", "refs/pull/1/head", head)
+    # Preparation fetches the synthetic forge refs through the real git boundary.
+    git(
+        "config",
+        f"url.{worktree.as_posix()}.insteadOf",
+        "https://github.com/synthetic/collection.git",
+    )
     return worktree, base, head, git("diff", base, head)
 
 
