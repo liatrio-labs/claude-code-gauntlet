@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from gauntlet import fs, jsjson
+from gauntlet.registry import CITE_VERIFIER_VERSION
 from gauntlet.verify import wire as verify
 
 from tests.support.citations import citation_cli
@@ -25,7 +26,7 @@ def test_cite_replay_invalidates_foreign_sources_for_every_status():
     source = {
         "snapshot_id": capture["manifest_sha256"],
         **{key: capture[key] for key in ("target_kind", "head", "base", "diff_sha256")},
-        "verifier_version": "cite-1",
+        "verifier_version": CITE_VERIFIER_VERSION,
     }
     sources = [source, None, *({**source, key: "foreign"} for key in source)]
     packet = {field: [] for field in ("findings", "unverified", "eliminated")}
@@ -120,7 +121,7 @@ def test_cite_mode_receipts_bind_requests_and_source(tmp_path, monkeypatch, invo
         "head": capture["head"],
         "base": capture["base"],
         "diff_sha256": capture["diff_sha256"],
-        "verifier_version": "cite-1",
+        "verifier_version": CITE_VERIFIER_VERSION,
     }
     changed, changed_data, changed_token = call(
         [{**q, "quote": "return another_value;"}], batch="87654321", real=True
