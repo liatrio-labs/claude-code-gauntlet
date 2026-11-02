@@ -387,6 +387,7 @@ def check_retry(original, *, now, reset_confirmed_at=None):
     if (
         original.validity.observed
         and original.validity.observed.controls.auth_mode == "subscription"
+        and _usage_limit_possible(original)
         and (
             not reset_confirmed_at
             or not timestamp(original.completed_at)
@@ -397,6 +398,26 @@ def check_retry(original, *, now, reset_confirmed_at=None):
         raise ValueError(
             "reset_not_confirmed: record reset time after failure and before retry"
         )
+
+
+def _usage_limit_possible(attempt):
+    # Invalid/ok checkpoints come from validation gates; CLI errors (including an
+    # instant zero-cost is_error response) are failed, and a blocked child may timeout.
+    if attempt.checkpoint_status == "ok" or (
+        attempt.checkpoint_status in ("invalid", "drifted")
+        and attempt.checkpoint_reason
+    ):
+        return False
+    return attempt.checkpoint_reason not in {
+        "all_degraded",
+        "pipeline_failed",
+        "pipeline_degraded",
+        "claude_not_found",
+        "incomplete_sha_entry",
+        "mirror_error",
+        "naive_output_unparseable",
+        "no_payload",
+    }
 
 
 def load_attempt(path):
