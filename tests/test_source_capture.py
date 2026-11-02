@@ -20,6 +20,47 @@ def repository(tmp_path, monkeypatch):
     return root, SourceAdapter.capture(root, "local", None)
 
 
+@pytest.mark.parametrize("portable", [False, True])
+def test_capture_trusts_symlinked_roots_but_refuses_children(
+    tmp_path, monkeypatch, symlink_or_skip, portable
+):
+    if portable:
+        monkeypatch.setattr(os, "supports_dir_fd", set())
+        monkeypatch.setattr(os, "supports_fd", set())
+    root, _ = repository(tmp_path, monkeypatch)
+    (root / "source").write_bytes(b"return changed_value;\n")
+    (root / "folder").mkdir()
+    (root / "folder" / "nested").write_bytes(b"nested_value\n")
+    (root / "file-link").symlink_to(root / "source")
+    (root / "folder-link").symlink_to(root / "folder", target_is_directory=True)
+    repo_link = tmp_path / "repo-link"
+    repo_link.symlink_to(root, target_is_directory=True)
+    output = tmp_path / "output"
+    output.mkdir()
+    output_link = tmp_path / "output-link"
+    output_link.symlink_to(output, target_is_directory=True)
+
+    source = SourceAdapter.capture(repo_link, "local", None)
+    assert source.read("source") == ("return changed_value;",)
+    assert source.entries("folder") == ("folder/nested",)
+    assert source.path_kind("folder") == "directory"
+    assert source.read("file-link") is None
+    assert source.read("folder-link/nested") is None
+    assert source.entries("folder-link") is None
+    assert source.path_kind("folder-link") == "unknown"
+
+    capture = source.capture_sources(output_link, "linked", b"")
+    assert capture.receipt["copied_files"] == 2
+    assert capture.manifest["copies"]["file-link"] is None
+    assert capture.manifest["copies"]["folder-link"] is None
+    (root / "source").write_bytes(b"return later_value;\n")
+    resumed = source_capture.load_capture(
+        source, output_link, capture.receipt, b"", source.captured_head
+    )
+    assert resumed.adapter(repo_link).read("source") == ("return changed_value;",)
+    assert resumed.adapter(repo_link).read("folder-link/nested") is None
+
+
 @pytest.mark.parametrize("operation", ["merge-base", "diff", "ls-files"])
 def test_capture_git_failure_does_not_reserve(tmp_path, monkeypatch, operation):
     root, source = repository(tmp_path, monkeypatch)

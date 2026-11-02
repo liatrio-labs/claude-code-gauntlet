@@ -7834,8 +7834,8 @@ function normalizePhaseFindings(name, out, replayed, args, decisions = []) {
       if (!f || !Array.isArray(f.cite_results)) continue;
       for (const result of f.cite_results) {
         if (!result || typeof result !== 'object') continue;
-        if (result.status !== 'matched' || (result.request?.snapshot_id === source.snapshot_id
-          && sameCiteValue(result.source, source))) continue;
+        if (sameCiteValue(result.source, source)
+          && (result.status !== 'matched' || result.request?.snapshot_id === source.snapshot_id)) continue;
         out.cite_audit = [...(out.cite_audit || []), { finding_id: f.id, result: { ...result } }];
         result.status = 'unavailable';
         result.detail = 'snapshot_mismatch';
