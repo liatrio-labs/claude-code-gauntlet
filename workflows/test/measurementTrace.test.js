@@ -27,21 +27,21 @@ for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves
   }
   const trace = JSON.parse(on.measurement.text);
   const replay = JSON.parse(on.measurement.replay.text);
-  assert.equal(replay.state.phaseReached, 'challenge');
-  assert.deepEqual(replay.state.completed, ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge']);
+  assert.equal(replay.state.phaseReached, 'cite');
+  assert.deepEqual(replay.state.completed, ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'cite']);
   assert.equal(Object.hasOwn(replay.state.phaseOutputs, 'report'), false);
   assert.equal(/trace_id|discovery_dimension/.test(JSON.stringify(replay.state)), false);
   assert.deepEqual(replay.persistence.map(({ label, agent_type, prompt_sha256, error }) => ({ label, agent_type, prompt_sha256, error })),
     measured.ctx.calls.filter(({ label }) => ['artifact-writer', 'assemble-artifacts'].includes(label))
       .map(({ label, agentType, prompt }) => ({ label, agent_type: agentType, prompt_sha256: createHash('sha256').update(prompt).digest('hex'), error: null })));
-  assert.deepEqual(trace.snapshots.map((s) => s.stage), ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'dispose', 'select']);
+  assert.deepEqual(trace.snapshots.map((s) => s.stage), ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'cite', 'dispose', 'select']);
   assert.equal(trace.schema_version, 1);
   assert.equal(trace.complete, true);
   const first = trace.versions.find((v) => v.finding.id === 'FILTER');
   assert.equal(first.finding.confidence, 65);
   assert.ok(trace.versions.some((v) => v.trace_id === first.trace_id && v.finding.confidence === 45));
   const decisions = trace.snapshots.flatMap((s) => s.decisions);
-  for (const code of ['duplicate_id', 'verify_eliminated', 'threshold', 'challenge_removed', 'challenge_cap', 'validation_skipped', 'delivery_cap']) {
+  for (const code of ['duplicate_id', 'verify_eliminated', 'threshold', 'refuted', 'challenge_cap', 'validation_skipped', 'delivery_cap']) {
     assert.ok(decisions.some((d) => d.reason_code === code), code);
   }
   assert.ok(decisions.every((d) => TRACE_REASONS.includes(d.reason_code)));
@@ -73,8 +73,8 @@ test('replay coverage is partial and malformed trace flags refuse dispatch', asy
   const out = await runWith(first.ctx, first.args);
   const replay = measurementScenario('return', { measurementTrace: true, checkpoints: persistedScenario(out, first.state).checkpoints.phases });
   const resumed = await runWith(replay.ctx, replay.args);
-  const trace = JSON.parse(resumed.measurement.text);
-  assert.equal(trace.snapshots.find((s) => s.stage === 'challenge').coverage, 'partial');
+  assert.deepEqual(resumed.measurement,{status:'unavailable',reason:'cite_checkpoint'});
+  assert.equal(replay.ctx.calls.some(c=>/^(validate-|verify-|challenge-|code-gauntlet:)/.test(c.label)),false);
   const malformed = measurementScenario('return', { measurementTrace: 'yes' });
   assert.equal((await runWith(malformed.ctx, malformed.args)).ok, false);
   assert.equal(malformed.ctx.calls.length, 0);

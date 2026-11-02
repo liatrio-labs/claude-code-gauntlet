@@ -102,7 +102,7 @@ export async function verifyStage(ctx, input) {
     ...plan.oversize.map((finding) => ({ kind: 'oversize', finding, position: findings.indexOf(finding) })),
   ].sort((a, b) => a.position - b.position);
 
-  // Preserve input order because applyChallenges breaks ranking ties by position.
+  // Preserve input order because ranking breaks ties by position.
   for (const unit of units) {
     if (unit.kind === 'oversize') {
       const content = { findings: [projectVerifySliceFinding(unit.finding)], base_branch: baseBranch };

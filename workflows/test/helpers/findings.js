@@ -1,4 +1,5 @@
 import { evaluateAdmission } from '../../src/admission.js';
+import { skepticalAssessment } from './verdicts.js';
 
 export function finding(overrides = {}) {
   const dimensionFields = {
@@ -15,6 +16,7 @@ export function finding(overrides = {}) {
     description: 'The function returns the wrong result for a real input.',
     agent: 'bug-detector', dimension: 'bug', ...dimensionFields[overrides.dimension], ...overrides,
   };
+  value.skeptical_assessments ??= [skepticalAssessment(value.id), skepticalAssessment(value.id, 'challenger')];
   for (const key of Object.keys(value)) if (value[key] === undefined) delete value[key];
   evaluateAdmission(value);
   for (const key of ['report_tag', 'report_destination']) if (Object.hasOwn(overrides, key)) value[key] = overrides[key];

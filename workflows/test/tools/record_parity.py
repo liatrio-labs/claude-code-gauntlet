@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Record verify-wire goldens with Python and the JS encoder for slice_inline.
+"""Record Python-owned goldens and slice_inline with the JS encoder.
+
+The four transform golden families are owned by workflows/test/goldens.test.js.
 
 Usage: python3 workflows/test/tools/record_parity.py [--check] [<script>] [<case>]
 """

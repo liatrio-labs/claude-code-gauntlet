@@ -201,7 +201,7 @@ function coerceReportFinding(finding, severities) {
       value = Array.isArray(raw) ? raw : [];
     } else if (['disposition_reasons', 'delivery_group', 'admission', 'admission_assessments', 'body_fix_task_eligible'].includes(key)) {
       value = raw;
-    } else if (key === 'consolidation_primary' || key === 'challenge_contested') {
+    } else if (key === 'consolidation_primary') {
       value = raw;
     } else if (key === 'risk_level') {
       value = reportRiskLevel(raw);
@@ -416,9 +416,15 @@ function admissionHoldback(finding) {
     && Array.isArray(finding.admission.reasons);
 }
 
+function semanticHoldback(finding) {
+  return admissionHoldback(finding) || (incompleteVetting(finding).length === 0
+    && !['failed', 'capped', 'skipped'].includes(finding.challenge) && finding.disposition === 'held_back');
+}
+
 function unverifiedReason(finding) {
   if (admissionHoldback(finding)) return `admission predicates not established: ${finding.admission.reasons
     .filter((reason) => reason.status === 'held_back').map((reason) => inline(reason.predicate)).join(', ')}`;
+  if (semanticHoldback(finding)) return 'necessary skeptical evidence is incomplete';
   const reasons = incompleteVetting(finding).map((check) => UNVERIFIED_REASONS[check]);
   if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge)) {
     reasons.push(UNVERIFIED_REASONS.challenge[finding.challenge]);
@@ -446,15 +452,12 @@ function renderFinding(builder, finding, unverified, permalinks) {
   if (finding.origin === 'surfaced') {
     bullets.push('- **Origin:** surfaced — pre-existing, surfaced by this change');
   }
-  if (unverified) bullets.push(`- **${admissionHoldback(finding) ? 'Held back' : 'Unverified'} because:** ${unverifiedReason(finding)}`);
+  if (unverified) bullets.push(`- **${semanticHoldback(finding) ? 'Held back' : 'Unverified'} because:** ${unverifiedReason(finding)}`);
   if ((finding.report_tag ?? finding.report_destination) === 'suggestion') {
     bullets.push('- **Routing:** improvement suggestion');
   }
   if (finding.demoted_by === 'reachability') {
     bullets.push('- **Reachability:** only under a future change (severity demoted to low)');
-  }
-  if (finding.challenge_contested === true) {
-    bullets.push('- **Contested:** the challenger could not confirm the cited location');
   }
   if (bullets.length) blocks.push(() => bullets.forEach((line) => builder.addSpans(line, [where])));
 
@@ -557,8 +560,8 @@ function countsSentence(findings, rawCount, unverified, view) {
   sentence += count > 0 && breakdown.length ? ` — ${breakdown.join(', ')}.` : '.';
   const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
   if (suggestions) sentence += ` ${suggestions} routed as improvement ${plural(suggestions, 'suggestion')}.`;
-  const held = unverified.filter(admissionHoldback).length;
-  if (held) sentence += ` ${held} held back by admission.`;
+  const held = unverified.filter(semanticHoldback).length;
+  if (held) sentence += ` ${held} held back for incomplete evidence.`;
   if (unverified.length > held) sentence += ` ${unverified.length - held} unverified / pipeline-degraded.`;
   return sentence;
 }
@@ -837,8 +840,8 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
   const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, 'report');
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
-  const held = unverified.filter(admissionHoldback);
-  const degraded = unverified.filter((finding) => !admissionHoldback(finding));
+  const held = unverified.filter(semanticHoldback);
+  const degraded = unverified.filter((finding) => !semanticHoldback(finding));
   const findingsView = severityView(findings);
   const identity = inp.prIdentity && typeof inp.prIdentity === 'object' && !Array.isArray(inp.prIdentity)
     ? inp.prIdentity
@@ -908,9 +911,9 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
 
   if (held.length) {
     builder.add();
-    builder.add('## Findings held back by admission');
+    builder.add('## Findings held back');
     builder.add();
-    builder.add('These findings retain their validation but lack the evidence required for admission.');
+    builder.add('These findings retain their validation but lack necessary admission or skeptical evidence.');
     renderSeverityBuckets(builder, severityView(held), true, permalinks);
   }
   if (degraded.length) {

@@ -3,7 +3,6 @@ import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding
 
 import { pythonArgv, shellWord } from './wire.js';
 import { hostPlatformForRoots, trustedScriptPath } from './paths.js';
-import { collectCitations, planCiteBatches } from './citeWire.js';
 
 // Shell quoting preserves each argv word; retry paths stay fixed so outputs
 // overwrite the first attempt.
@@ -113,7 +112,7 @@ export const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize
 export const VERIFY_ATTEMPTS_PER_SLICE = STAGE_COSTS.verify.attempts;
 
 // Stay strictly under the platform's per-run agent fan-out ceiling; the gap is headroom.
-const AGENT_COUNT_GUARD = 900;
+export const AGENT_COUNT_GUARD = 900;
 // Widen the summarize bucket once its term alone exceeds this.
 const SUMMARIZE_TERM_BOUND = 300;
 const CHALLENGE_CAP_FLOOR = 5;
@@ -143,13 +142,7 @@ function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
 }
 
-function citeCost(findings, input, baseBranch) {
-  const records = Array.isArray(findings) ? collectCitations(findings) : [];
-  return planCiteBatches(records, verifyInlineBudget({ ...input, citeMode: true }),
-    baseBranch, hostPlatformForRoots(input)).batches.length * STAGE_COSTS.cite.attempts;
-}
-
-export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}, includeCite = true) {
+export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
   const findings = findingCount(nFindings);
@@ -157,8 +150,7 @@ export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'mai
   const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
   const validateCalls = validationCost(L, findings);
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
-  const citeCalls = includeCite ? citeCost(nFindings, input, baseBranch) : 0;
-  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + citeCalls + STAGE_COSTS.writer.attempts;
+  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + STAGE_COSTS.writer.attempts;
 }
 
 // Removing terms that cannot shrink guarantees termination when the inline budget binds.
@@ -169,7 +161,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
   const findings = findingCount(nFindings);
   const candidates = new Set(['summarize', 'verify', 'validate', 'challenge']);
 
-  while (worstCaseAgentCount(L, files, nFindings, baseBranch, input, false) >= AGENT_COUNT_GUARD && candidates.size > 0) {
+  while (worstCaseAgentCount(L, files, nFindings, baseBranch, input) >= AGENT_COUNT_GUARD && candidates.size > 0) {
     const summarizeTerm = ceilDiv(files, effectiveBucketSize(L)) + 1;
     if (summarizeTerm > SUMMARIZE_TERM_BOUND && candidates.has('summarize')) {
       // Doubling a raw absent size could lower the effective bucket size and increase fan-out.

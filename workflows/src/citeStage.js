@@ -1,4 +1,4 @@
-import { CITATION_REQUEST_SCHEMA, CITATION_RESULT_SCHEMA, CITE_VERIFIER_VERSION, STAGE_COSTS, matchesDispatchSchema, modelFor } from './registry.js';
+import { CITATION_REQUEST_SCHEMA, CITATION_RESULT_SCHEMA, CITE_VERIFIER_VERSION, STAGE_COSTS, matchesDispatchSchema, modelFor, dispatchReturnSchema } from './registry.js';
 import { CITE_ROLES_PER_STAGE, citeChecksum, sameCiteValue, citeDocument, citeRecordKey, citeSource, collectCitations, planCiteBatches, reusableCiteResult } from './citeWire.js';
 import { effectiveVerifyBaseBranch, verifyCommand, verifyInlineBudget } from './capacity.js';
 import { encodeSliceInline } from './verifyWire.js';
@@ -85,6 +85,7 @@ function triageCitations(records, { ledger, source, results, gaps, settle, unava
     const identity = peers.filter((r) => r.request?.request_id === record.request?.request_id);
     if (!matchesDispatchSchema(record.request, CITATION_REQUEST_SCHEMA) || identity.length !== 1
       || record.request.finding_id !== record.finding_id || record.request.stage !== record.stage
+      || record.request.snapshot_id !== source.snapshot_id
       || firstUnsafeNumber(record, 'citation') !== null) {
       settle(key, { ...unavailable(record, 'malformed_or_ambiguous_request'), status: 'rejected' });
       return false;
@@ -125,6 +126,7 @@ async function dispatchCitations(ctx, inp, records, pending, { ledger, source, r
     const token = encodeSliceInline(document);
     stats.cite_planned += STAGE_COSTS.cite.attempts - batch.attempts;
     while (batch.attempts < STAGE_COSTS.cite.attempts && batch.keys.some((key) => !results.has(key))) {
+      if (ctx.remainingAgentCalls?.() <= 0) break;
       // Reserve synchronously before handing control to the host or executor.
       batch.attempts += 1;
       batch.state = 'uncertain';
@@ -135,7 +137,7 @@ async function dispatchCitations(ctx, inp, records, pending, { ledger, source, r
         const command = verifyCommand({ ...inp, citeMode: true, citeAttempt: batch.attempts }, batch.id, nonce, token);
         env = await ctx.agent(`Run exactly this command; read --output and copy status, receipt and result.citations exactly.\n${command}`, {
           label: `cite-${batch.id}-${batch.attempts}`, agentType: 'code-gauntlet:executor',
-          model: modelFor('code-gauntlet:executor', inp.policy || {}), schema: CITE_ENVELOPE_SCHEMA,
+          model: modelFor('code-gauntlet:executor', inp.policy || {}), schema: dispatchReturnSchema(CITE_ENVELOPE_SCHEMA),
         });
       } catch { env = null; }
       const accepted = trustedCitations(env, inp, batch, nonce, batch.attempts, document, token, gaps);

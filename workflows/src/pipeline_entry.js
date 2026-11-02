@@ -2,7 +2,7 @@ import { runWith } from './run.js';
 import { parseEntryArgs } from './entry.js';
 
 // A distinct meta.name keeps slash-command resolution on the skill.
-export const meta = { name: 'code-gauntlet-pipeline', description: 'code-gauntlet v3 pipeline: phases 3-8 orchestration (Summarize, Discover, Merge, Verify, Validate, Filter, Challenge, Report) + artifact persistence', whenToUse: 'The code-gauntlet SKILL invokes this bundle by its registered name code-gauntlet:code-gauntlet-pipeline with the Phases 1-2 args waist. Invoked with anything else, it refuses before dispatch. Keep meta.name different from the skill name so slash-command resolution stays with the skill.', phases: ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'] };
+export const meta = { name: 'code-gauntlet-pipeline', description: 'code-gauntlet v3 pipeline: phases 3-8 orchestration (Summarize, Discover, Merge, Verify, Validate, Filter, Challenge, Cite, Dispose, Report) + artifact persistence', whenToUse: 'The code-gauntlet SKILL invokes this bundle by its registered name code-gauntlet:code-gauntlet-pipeline with the Phases 1-2 args waist. Invoked with anything else, it refuses before dispatch. Keep meta.name different from the skill name so slash-command resolution stays with the skill.', phases: ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'cite', 'report'] };
 const PIPELINE_VERSION = '3.56.0';
 
 async function run(rawArgs) {

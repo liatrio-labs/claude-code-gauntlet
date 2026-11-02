@@ -155,7 +155,9 @@ for (const row of OUTCOME_ROWS) test(`discover outcome: ${row.name}`, async () =
       return { findings: [], complete: true, total_seen: 0, removed_test_audit: [] };
     } : undefined });
   const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {}, ...row.input });
-  assert.deepEqual(out, row.expected ?? DISCOVER_GOLDEN);
+  const expected = structuredClone(row.expected ?? DISCOVER_GOLDEN);
+  for (const finding of expected.findings) delete finding.skeptical_assessments;
+  assert.deepEqual(out, expected);
   assert.deepEqual(ctx.calls.map((call) => call.label), (row.expected ?? DISCOVER_GOLDEN).dispatched);
   assert.deepEqual(ctx.violations, []);
   if (row.mutateSchema) assert.deepEqual({ DIMENSIONS, DISPATCH_RESULTS, FINDING_REQUIRED, FINDING_PROP_TYPES }, registrySnapshot);

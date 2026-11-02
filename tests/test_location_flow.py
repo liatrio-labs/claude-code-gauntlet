@@ -23,6 +23,117 @@ PATCH = (
 )
 
 
+def test_cited_refutation_is_absent_from_delivery_and_local_actions(
+    tmp_path, monkeypatch, invoke
+):
+    from gauntlet import fix_tasks, materialize, tasks
+    from gauntlet.source_capture import SourceAdapter
+
+    from tests.support.git_diff import git, init_git_repo
+
+    work = tmp_path / "repo"
+    work.mkdir()
+    init_git_repo(work, monkeypatch)
+    source = work / "source.txt"
+    source.write_text("return old_value;\n", encoding="utf-8", newline="")
+    git(work, "add", ".")
+    git(work, "commit", "-qm", "base")
+    base = git(work, "rev-parse", "HEAD")
+    source.write_text("return process(value);\n", encoding="utf-8", newline="")
+    git(work, "add", ".")
+    git(work, "commit", "-qm", "head")
+    head = git(work, "rev-parse", "HEAD")
+    output = work / "artifacts"
+    output.mkdir()
+    diff = git(work, "diff", base, head)
+    (output / f"code-gauntlet-diff-{head[:8]}.patch").write_text(
+        diff, encoding="utf-8", newline=""
+    )
+    capture = SourceAdapter.capture(work, "branch", head).capture_sources(
+        output, "proof", diff.encode(), base
+    )
+    script = r"""
+import {execFileSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
+import {pathToFileURL} from 'node:url';
+const [root,work,head,output,capture]=process.argv.slice(1);
+const load=n=>import(pathToFileURL(`${root}/workflows/${n}.js`));
+const {runWith}=await load('src/run');
+const {makeCtx,makeFinding}=await load('test/helpers/pipelineMock');
+const {validArgs}=await load('test/helpers/argsFixtures');
+const {skepticalAssessment}=await load('test/helpers/verdicts');
+const {shellSplit}=await load('test/helpers/shellWords');
+const findings=['validator','challenger'].flatMap(stage=>['bug','security'].map(dimension=>{
+ const id=`${stage}-${dimension}`;
+ const assessment=skepticalAssessment(id,stage,{verdict:'refuted'});
+ Object.assign(assessment.raw.citations[0],{snapshot_id:JSON.parse(capture).manifest_sha256,file:'source.txt',line_start:1,line_end:1});
+ return makeFinding(id,{file:'source.txt',line_start:1,line_end:1,dimension,
+  description:`REMOVED_ACTION_${id} describes a purported source defect.`,suggestion:`REMOVED_TASK_${id}`,
+  code:`REMOVED_FENCE_${id}`,suggested_fix_code:`REMOVED_PATCH_${id}`,
+  diff_validation:{in_diff:dimension==='bug'},challenge:stage==='validator'?'validator_terminal':'survived',
+  consolidation_key:'stale',consolidation_primary:true,skeptical_assessments:[assessment]});
+}));
+const survivor=makeFinding('SURVIVOR',{file:'source.txt',line_start:1,line_end:1,claimed_line_start:1,claimed_line_end:1,suggested_fix_code:'return survivor();'});
+const args=validArgs({repoRoot:work,outputDir:output,pluginRoot:root,python:'python',headShaShort:head.slice(0,8),nonce:'proof',
+ diffPath:`${output}/code-gauntlet-diff-${head.slice(0,8)}.patch`,verify:{targetKind:'branch',sourceCapture:JSON.parse(capture)},
+ delivery:{prIdentity:{owner:'o',repo:'r',pr_number:5,sha_full:head,platform:'github',web_origin:'https://github.com'}},
+ persist:{returnPrimaries:true},checkpoints:{challenge:{findings:[...findings,survivor],unverified:[],eliminated:[],gaps:[],stats:{}}}});
+const ctx=makeCtx(args);const agent=ctx.agent;
+ctx.agent=async(prompt,dispatch)=>{
+ if(!dispatch.label.startsWith('cite-'))return agent(prompt,dispatch);
+ const command=shellSplit(prompt.split('\n').at(-1));
+ execFileSync(command[0],command.slice(1),{cwd:work,env:process.env});
+ return JSON.parse(readFileSync(command[command.indexOf('--output')+1],'utf8'));
+};
+process.stdout.write(JSON.stringify(await runWith(ctx,args)));
+"""
+    result = subprocess.run(
+        _flow_command(
+            script, work, head, output.as_posix(), json.dumps(capture.receipt)
+        ),
+        cwd=work,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    envelope = json.loads(result.stdout)
+    assert envelope["ok"], envelope
+    task = tmp_path / "returned.json"
+    task.write_text(result.stdout, encoding="utf-8", newline="")
+    receipt = materialize.materialize(
+        str(task), "proof", str(output), tasks.TaskRoots((), None)
+    )
+    assert receipt["ok"], receipt
+    findings = json.loads(
+        (output / f"code-gauntlet-findings-{head[:8]}.json").read_bytes()
+    )
+    removed = [f for f in findings if f["id"] != "SURVIVOR"]
+    assert len(removed) == 4
+    assert all(f["disposition"] == "eliminate" for f in removed)
+    assert all(f["cite_results"][0]["status"] == "matched" for f in removed)
+    built, skipped = fix_tasks.build_tasks(findings, str(work), [])
+    assert len(built) == 1 and skipped == 0
+    assert "REMOVED_" not in json.dumps(built)
+    patches = invoke(
+        "report_patches", ["--output-dir", str(output), "--head-sha", head[:8]], work
+    )
+    assert patches.returncode == 0, patches.stderr
+    assert json.loads(patches.stdout)["kept"] == 1, patches.stdout.decode()
+    assert "REMOVED_" not in (
+        output / f"code-gauntlet-patches-{head[:8]}.md"
+    ).read_text(encoding="utf-8")
+    delivery = output / f"code-gauntlet-post-review-{head[:8]}.json"
+    selected = json.loads(delivery.read_bytes())
+    assert [f["id"] for f in selected["findings"]] == ["SURVIVOR"]
+    factory = install_forge_factory(monkeypatch, sys.modules[CLI.main.__module__])
+    factory.configure(FakeForge(diffs=[(diff, "", 0)]))
+    assert CLI.invoke([str(delivery), "--dry-run"]) == 0
+    posted = json.loads((output / "post-review-payload.json").read_bytes())
+    assert len(posted["payload"]["comments"]) == 1
+    assert "REMOVED_" not in json.dumps(posted)
+
+
 @pytest.mark.parametrize("target", ["local", "branch"])
 def test_citation_sources_keep_review_snapshot_identity(
     tmp_path, monkeypatch, invoke, target
@@ -234,6 +345,7 @@ const {validateStage, challengeStage} = await load('reviewStages');
 const {evaluateAdmission, admissionRequests, hasAdmission} = await load('admission');
 const {requiredAssessments} = await load('registry');
 const {disposeFindings} = await load('dispose');
+const {skepticalReturn} = await import(pathToFileURL(`${root}/workflows/test/helpers/verdicts.js`));
 const {deliveryAllows} = await load('location');
 const {shellSplit} = await import(pathToFileURL(`${root}/workflows/test/helpers/shellWords.js`));
 const ref = (file,anchor) => ({file,anchor,line_start:1,line_end:1});
@@ -301,12 +413,12 @@ const validated = await validateStage({parallel:async ts=>Promise.all(ts.map(t=>
  for(const predicate of requiredAssessments(f,row[5]||'ordinary'))if(!entries.some(e=>e.predicate===predicate))entries.push({predicate,status:'unresolved',references:requests.filter(key=>references[predicate].some(name=>name.endsWith(':')?key.startsWith(name):key===name))});
  if(row[7]==='foreign')entries[0].references=['foreign'];
  if(row[7]==='duplicate')entries.push(entries[0]);
- return {finding_id:f.id,confidence:99,policy_subject:row[5]||'ordinary',reachability:'current',admission_assessments:entries};
+ return skepticalReturn(f.id,'validator',{confidence:99,policy_subject:row[5]||'ordinary',reachability:'current',admission_assessments:entries});
 })})},{findings:verified.findings});
 for(const f of validated.findings){evaluateAdmission(f);assert.equal(f.admission.status,rows.find(r=>r[0]===f.id)[4],f.id);assert.ok(hasAdmission(f));}
 const mapped=validated.findings.find(f=>f.id==='cross-test');
 assert.equal(mapped.effective_test_kind,'defective_test');assert.equal(mapped.test_kind,undefined);
-const challenged=await challengeStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async()=>({score:90})},{findings:validated.findings});
+const challenged=await challengeStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async prompt=>skepticalReturn(prompt.match(/Finding identity: (\S+)/)[1],'challenger')},{findings:validated.findings});
 const out=disposeFindings(challenged);
 for(const f of [...out.findings,...out.unverified])assert.equal(deliveryAllows(f,'body'),f.admission.status==='admitted',f.id);
 assert.equal(out.findings.find(f=>f.id==='source-test').disposition,'report_only');
@@ -334,6 +446,7 @@ const load = (name) => import(pathToFileURL(`${plugin}/workflows/src/${name}.js`
 const { verifyStage } = await load('verifyStage');
 const { writerPayload } = await load('persistPlan');
 const { disposeFindings } = await load('dispose');
+const {skepticalAssessment} = await import(pathToFileURL(`${plugin}/workflows/test/helpers/verdicts.js`));
 const { evaluateAdmission } = await load('admission');
 const { shellSplit } = await import(pathToFileURL(`${plugin}/workflows/test/helpers/shellWords.js`));
 const prefix = `${work}/code-gauntlet-`;
@@ -355,7 +468,7 @@ const result = await verifyStage(ctx, { findings, pluginRoot: plugin, python: 'p
     inputPathBase: `${work}/slice-in`, outputPathBase: `${work}/slice-out`,
   } });
 if (!result.verified || calls !== 1) throw Error(JSON.stringify(result));
-const disposed = disposeFindings({ findings: result.findings.map(f=>evaluateAdmission({...f,validation:'validated',policy_subject:'ordinary',challenge:'survived'})) });
+const disposed = disposeFindings({ findings: result.findings.map(f=>evaluateAdmission({...f,validation:'validated',policy_subject:'ordinary',challenge:'survived',skeptical_assessments:[skepticalAssessment(f.id),skepticalAssessment(f.id,'challenger')]})) });
 const payload = writerPayload({ findings: disposed.findings, postReview: disposed.findings,
   prIdentity: { owner: 'o', repo: 'r', pr_number: 5, sha_full: sha, platform: 'github', web_origin: 'https://github.com' },
   reviewBody: 'Summary' });
@@ -574,6 +687,7 @@ const {mergeStage} = await load('mergeFindings');
 const {normalizePhaseFindings} = await load('checkpoints');
 const {writerPayload} = await load('persistPlan');
 const {disposeFindings} = await load('dispose');
+const {skepticalReturn, skepticalAssessment} = await import(pathToFileURL(`${root}/workflows/test/helpers/verdicts.js`));
 const {shellSplit} = await import(pathToFileURL(`${root}/workflows/test/helpers/shellWords.js`));
 const {evaluateAdmission} = await load('admission');
 const request = file => ({file, line_start:90, line_end:90, anchor:'return process(value);', location_status:'confirmed', confirmed:true});
@@ -597,9 +711,9 @@ const persist = async list => {
   if(!prompt.split('\nReturn ')[1]?.includes('site_confirmations') || !prompt.includes('same defect requiring the same correction'))throw Error('missing semantic contract');
   const packet=JSON.parse(prompt.split(' | site_requests: ')[1].split(' | admission_context: ')[0]);
   if(packet.length!==4 || packet.some(s=>s.line_start!==7))throw Error('requests are not resolved');
-  return {validations:[{finding_id:'ISSUE',confidence:90,policy_subject:'ordinary',...(list===null?{}:{site_confirmations:list})},{finding_id:'CONSTITUENT',confidence:85,policy_subject:'ordinary'}]};
+  return {validations:[skepticalReturn('ISSUE','validator',{confidence:90,...(list===null?{}:{site_confirmations:list})}),skepticalReturn('CONSTITUENT','validator',{confidence:85})]};
  }},{findings:structuredClone(verified.findings)});
- const out=disposeFindings({...validated,findings:validated.findings.map(f=>evaluateAdmission({...f,challenge:'survived'}))});
+ const out=disposeFindings({...validated,findings:validated.findings.map(f=>evaluateAdmission({...f,challenge:'survived',skeptical_assessments:[...f.skeptical_assessments,skepticalAssessment(f.id,'challenger')]}))});
  return writerPayload({findings:out.findings,postReview:selectDelivery(out.findings,1,'all'),checkpoints:{challenge:validated}});
 };
 const all = await persist(confirmations);
@@ -614,8 +728,8 @@ process.stdout.write(JSON.stringify({all,some,missing,tampered,gaps:raw.gaps,res
         text=True,
         encoding="utf-8",
         capture_output=True,
-        check=True,
     )
+    assert result.returncode == 0, result.stderr
     value = json.loads(result.stdout)
     assert len(value["gaps"]) == 1
     assert len(value["resolved"]["site_requests"]) == 5

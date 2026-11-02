@@ -1,4 +1,5 @@
 import { deepClone, RETURN_CHAR_BUDGET } from './wire.js';
+import { SKEPTICAL_FINDING_PROPERTIES } from './registry.js';
 
 export const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'cite', 'dispose', 'holdback', 'select', 'deliver'];
 export const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
@@ -27,7 +28,7 @@ export function traceDecision(finding, reason_code, reason, related = [], decisi
 export function eliminationDecisions(output) {
   const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
     'suppressed:intentional': 'suppression', 'suppressed:generated': 'suppression',
-    'challenge:removed': 'challenge_removed', 'challenge:downgraded': 'challenge_downgraded_removed' };
+    refuted: 'refuted' };
   return (output.eliminated || []).filter((f) => f.trace_id)
     .map((f) => traceDecision(f, codes[f.eliminated_by] || 'unknown', f.elimination_reason));
 }
@@ -84,5 +85,6 @@ export function appendBudgetedMeasurement(envelope, available, unavailable) {
 export function stripTraceFields(value) {
   if (!value || typeof value !== 'object') return;
   for (const key of ['trace_id', 'discovery_agent', 'discovery_dimension']) delete value[key];
-  for (const child of Object.values(value)) stripTraceFields(child);
+  // Skeptical records retain the producer's exact audit input across replay.
+  for (const [key, child] of Object.entries(value)) if (!Object.hasOwn(SKEPTICAL_FINDING_PROPERTIES, key)) stripTraceFields(child);
 }

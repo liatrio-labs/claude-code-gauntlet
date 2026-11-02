@@ -3,14 +3,24 @@
 import { INT_POLICY, coerceInt } from './wire.js';
 import { canonicalRange } from './location.js';
 import { matchAssessments } from './admission.js';
-import { VALIDATION_RETURN_PROPERTIES, REACHABILITY_VALUES } from './registry.js';
+import { VALIDATION_RETURN_PROPERTIES, REACHABILITY_VALUES, acceptSkepticalReturn } from './registry.js';
+
+// Scores use the same coercion as application; verdict acceptance never discards usable validation fields.
+export function validatorAssessment(finding, validation) {
+  const { id: _id, ...raw } = validation || {};
+  const normalized = { ...raw, confidence: coerceInt(raw.confidence, INT_POLICY.validation) };
+  const assessment = acceptSkepticalReturn(normalized, finding.id, 'validator');
+  const independent = Object.keys(VALIDATION_RETURN_PROPERTIES).concat(['confidence', 'reachability', 'justification']);
+  const errors = assessment.errors.filter((error) => !independent.some((field) => error === `$.${field}` || error.startsWith(`$.${field}[`) || error.startsWith(`$.${field}.`)));
+  return { ...assessment, status: errors.length ? 'incomplete' : 'complete', errors, raw };
+}
 
 export function applyValidations(findings, validations) {
   const findingById = new Map();
   for (const finding of findings) {
     delete finding.sites;
     delete finding.reachability;
-    for (const field of ['policy_subject', 'admission_assessments', 'admission', 'body_fix_task_eligible', 'effective_test_kind']) delete finding[field];
+    for (const field of ['policy_subject', 'admission_assessments', 'admission', 'body_fix_task_eligible', 'effective_test_kind', 'skeptical_assessments', 'cite_results']) delete finding[field];
     const fid = 'id' in finding ? finding.id : undefined;
     if (fid !== null && fid !== undefined) findingById.set(fid, finding);
   }
@@ -35,6 +45,8 @@ export function applyValidations(findings, validations) {
       unmatchedIds.push(vid);
       continue;
     }
+
+    finding.skeptical_assessments = [validatorAssessment(finding, validation)];
 
     if (!('original_confidence' in finding)) {
       finding.original_confidence = 'confidence' in finding ? finding.confidence : 0;

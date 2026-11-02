@@ -10,7 +10,7 @@ export function emptyRemovedTests() {
 export function checkpointArgs(checkpoints) {
   if (!isPlainObject(checkpoints) || Object.hasOwn(checkpoints, 'checksum')) return { checkpoints };
   const phases = checkpoints.phases === undefined ? checkpoints : checkpoints.phases;
-  if (!isPlainObject(phases) || !['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report']
+  if (!isPlainObject(phases) || !['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'cite', 'report']
     .some((name) => Object.hasOwn(phases, name))) return { checkpoints };
   const wrapper = checkpoints.phases === undefined ? { phases: checkpoints } : checkpoints;
   return { checkpoints: { ...wrapper, checksum: fnv1a32(JSON.stringify(wrapper, null, 2)) } };
