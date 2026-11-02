@@ -204,13 +204,19 @@ def test_contract_schema(agent_type: str) -> None:
     )
     text = read(f"agents/{agent_name(agent_type)}.md")
     body = text.split(gen.MARKER_OPEN)[1].split(gen.MARKER_CLOSE)[0]
+    scores = (
+        "`confidence` is certainty the issue exists, from 0 to 100; "
+        "`severity` is its impact: `critical`, `high`, `medium`, `low`. "
+        "Downstream stages decide delivery."
+    )
+    assert scores in body and text.count(scores) == 1
     blocks = _JSON_BLOCK.findall(body)
     assert len(blocks) == 1
     schema = json.loads(blocks[0])
     assert schema == contract["schema"]
     item = schema["properties"]["findings"]["items"]
     rows = [r for r in live["dimensions"] if r["agentType"] == agent_type]
-    required = [*live["required"], "anchor", *contract["requiredExtra"]]
+    required = [*live["required"], "anchor", "evidence", *contract["requiredExtra"]]
     assert item["required"] == required
     optional = [f for f in item["properties"] if f not in required]
     for label, fields in (("Required", required), ("Optional", optional)):
@@ -478,6 +484,16 @@ def test_agent_emission_contract():
     assert "by value" in rules and "{ findings, complete," in rules
     assert not re.search("Bash", rules, re.IGNORECASE)
     assert "Bash" in read("agents/executor.md")
+
+
+def test_discovery_has_no_emission_floor():
+    for name in DISCOVERY:
+        text = read(f"agents/{name}.md")
+        assert not re.search(
+            r"\b(?:only\s+report|are\s+not\s+findings|do\s+not\s+report|be\s+conservative)\b",
+            text,
+            re.IGNORECASE,
+        ), name
 
 
 def test_complete_read_contract():

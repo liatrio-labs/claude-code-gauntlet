@@ -271,8 +271,8 @@ def conditional_paragraphs(agent_rows: Sequence[Mapping[str, Any]]) -> list[str]
 
 
 _DISCOVERY_ANCHOR = re.compile(
-    r"Return JSON Schema \(first-party direct dispatch\):\n.*?"
-    r"(?=\n\n(?:Only report|For ordinary findings|Scores describe uncertainty)|\Z)",
+    r"(?:`confidence`[^\n]*\n\n)?Return JSON Schema \(first-party direct dispatch\):\n.*?"
+    r"(?=\n\n(?:Only report|For ordinary findings|Scores describe uncertainty)|\s*\Z)",
     re.DOTALL,
 )
 
@@ -325,6 +325,10 @@ def discovery_targets(registry: Mapping[str, Any]) -> dict[str, str]:
         item = schema["properties"]["findings"]["items"]
         optional = [f for f in item["properties"] if f not in item["required"]]
         parts = [
+            "`confidence` is certainty the issue exists, from 0 to 100; "
+            "`severity` is its impact: "
+            + ", ".join(f"`{value}`" for value in registry["severityOrder"])
+            + ". Downstream stages decide delivery.",
             "Return JSON Schema (first-party direct dispatch):\n\n```json\n"
             + json.dumps(schema, separators=(",", ":"))
             + "\n```",

@@ -300,3 +300,23 @@ test('anchor is required only at discovery dispatch', async () => {
   assert.deepEqual(merged.findings, [{ ...authored, origin_dimension: 'test_coverage' }]);
   assert.deepEqual(merged.methodology.validation_warnings, []);
 });
+
+test('every dispatched finding requires nonblank evidence and enumerated impact', async () => {
+  for (const policy of [{}, { gateway: true }, { provider: 'bedrock' }, { provider: 'vertex' }, { provider: 'foundry' }]) {
+    const ctx = stageCtx();
+    await discover(ctx, { policy });
+    assert.equal(ctx.calls.length, ROSTER.length);
+    for (const call of ctx.calls) {
+      const item = call.schema.properties.findings.items;
+      assert.ok(item.required.includes('evidence'), call.label);
+      const evidence = item.properties.evidence;
+      assert.equal(evidence.type, 'string');
+      assert.equal(evidence.minLength, 1);
+      assert.equal(typeof evidence.pattern, 'string');
+      const nonblank = new RegExp(evidence.pattern);
+      for (const value of ['', ' ', '\t\r\n', '\u00a0\u2003']) assert.equal(nonblank.test(value), false, call.label);
+      assert.equal(nonblank.test('source:7 establishes the failure'), true);
+      assert.deepEqual(item.properties.severity, { type: 'string', enum: ['critical', 'high', 'medium', 'low'] });
+    }
+  }
+});

@@ -1,20 +1,13 @@
 # Investigation Methodology: LSP-First
 
-> **Canonical source of truth.** This file is the single source of truth for investigation methodology used by all review agents.
+> **Canonical source of truth.** This file is the source of investigation methodology for validator and challenger.
 >
-> **Duplication contract.** Each agent carries an adapted copy of this guidance tailored to its domain. When updating, change this file first, then propagate to all 9 agent copies:
+> **Duplication contract.** Validator and challenger carry adapted copies of this guidance. When updating, change this file first, then propagate to both copies:
 >
-> 1. `agents/bug-detector.md`
-> 2. `agents/security-reviewer.md`
-> 3. `agents/cross-file-impact.md`
-> 4. `agents/test-analyzer.md`
-> 5. `agents/conventions-and-intent.md`
-> 6. `agents/type-design-analyzer.md`
-> 7. `agents/code-simplifier.md`
-> 8. `agents/validator.md`
-> 9. `agents/challenger.md`
+> 1. `agents/validator.md`
+> 2. `agents/challenger.md`
 >
-> Each agent copy has a `<!-- Canonical source: references/investigation-methodology.md -->` comment pointing back here. `change-summarizer` is excluded (reads supplied shared context with `Read`, without semantic code navigation).
+> Both copies have a `<!-- Canonical source: references/investigation-methodology.md -->` comment pointing back here.
 
 ## Investigation goals
 

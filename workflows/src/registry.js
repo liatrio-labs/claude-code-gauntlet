@@ -91,6 +91,8 @@ const SOURCE_REFERENCE = {
   }, required: ['file', 'line_start', 'line_end', 'anchor'], additionalProperties: false,
 };
 
+export const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
+
 // Use full schema fragments for arrays because the host requires items; scalar fields can use type shorthand.
 // Verification stamps origin, so discovery does not require it.
 export const FINDING_PROP_TYPES = deepFreeze({
@@ -118,6 +120,8 @@ export const FINDING_PROP_TYPES = deepFreeze({
 export const DISCOVERY_FINDING_PROP_TYPES = deepFreeze(Object.fromEntries(Object.entries(FINDING_PROP_TYPES)
   .filter(([, schema]) => schema.discovery !== false)
   .map(([name, schema]) => {
+    if (name === 'evidence') return [name, { type: 'string', minLength: 1, pattern: '\\S' }];
+    if (name === 'severity') return [name, { type: 'string', enum: SEVERITY_ORDER }];
     if (typeof schema === 'string') return [name, schema];
     const { discovery, ...wireSchema } = schema;
     return [name, wireSchema];
@@ -146,8 +150,6 @@ export const DELIVERY_GROUP_SCHEMA = deepFreeze({ type: 'object', properties: {
 
 // Flat required fields must be unconditional for every dimension in a dispatch to avoid forcing fabricated sibling fields.
 export const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
-
-export const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
 
 const closedDispatchRow = (properties, optional = []) => ({
   type: 'object', properties, required: Object.keys(properties).filter((key) => !optional.includes(key)), additionalProperties: false,

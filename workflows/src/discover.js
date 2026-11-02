@@ -154,7 +154,7 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
   }
   // Only discovery dispatch requires a quote; pipeline-authored and replayed findings can remain unconfirmed.
   props.anchor.minLength = 1;
-  const required = [...FINDING_REQUIRED, 'anchor', ...(requiredExtra || [])];
+  const required = [...FINDING_REQUIRED, 'anchor', 'evidence', ...(requiredExtra || [])];
   const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
   if (conditionalRequired && conditionalRequired.length) {
     // The platform accepts conditional requirements nested in finding items rather than top-level schema composition.

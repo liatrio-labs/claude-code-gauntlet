@@ -212,6 +212,7 @@ const SOURCE_REFERENCE = {
     anchor: { type: 'string', minLength: 1 },
   }, required: ['file', 'line_start', 'line_end', 'anchor'], additionalProperties: false,
 };
+const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
 const FINDING_PROP_TYPES = deepFreeze({
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
@@ -231,6 +232,8 @@ const FINDING_PROP_TYPES = deepFreeze({
 const DISCOVERY_FINDING_PROP_TYPES = deepFreeze(Object.fromEntries(Object.entries(FINDING_PROP_TYPES)
   .filter(([, schema]) => schema.discovery !== false)
   .map(([name, schema]) => {
+    if (name === 'evidence') return [name, { type: 'string', minLength: 1, pattern: '\\S' }];
+    if (name === 'severity') return [name, { type: 'string', enum: SEVERITY_ORDER }];
     if (typeof schema === 'string') return [name, schema];
     const { discovery, ...wireSchema } = schema;
     return [name, wireSchema];
@@ -254,7 +257,6 @@ const DELIVERY_GROUP_SCHEMA = deepFreeze({ type: 'object', properties: {
   issue_key: { type: 'string' }, lead_id: { type: 'string' }, finding_ids: { type: 'array', items: { type: 'string' } },
 }, required: ['issue_key', 'lead_id', 'finding_ids'], additionalProperties: false });
 const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
-const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
 const closedDispatchRow = (properties, optional = []) => ({
   type: 'object', properties, required: Object.keys(properties).filter((key) => !optional.includes(key)), additionalProperties: false,
 });
@@ -2196,7 +2198,7 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
     props[k] = typeof t === 'string' ? { type: t } : deepClone(t);
   }
   props.anchor.minLength = 1;
-  const required = [...FINDING_REQUIRED, 'anchor', ...(requiredExtra || [])];
+  const required = [...FINDING_REQUIRED, 'anchor', 'evidence', ...(requiredExtra || [])];
   const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
   if (conditionalRequired && conditionalRequired.length) {
     itemSchema.allOf = conditionalRequired.map(({ dimension, required: dimRequired }) => ({

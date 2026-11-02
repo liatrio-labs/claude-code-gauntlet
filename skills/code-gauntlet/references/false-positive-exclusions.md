@@ -1,20 +1,8 @@
 # False-Positive Exclusion List
 
-> **Canonical source of truth.** This file is the single source of truth for the false-positive exclusion list used by all discovery agents.
+> **Scope.** This reference is for validator and challenger; discovery agents do not carry exclusion lists.
 >
-> **Duplication contract.** Each of the 7 discovery agents carries its own adapted copy of this list for self-containment — if a file read fails during a review, the agent still has the exclusions inline. Do not refactor the agent copies into a shared read.
->
-> **When updating:** change this file first, then propagate the changes to all 7 agent copies:
->
-> 1. `agents/bug-detector.md`
-> 2. `agents/security-reviewer.md`
-> 3. `agents/cross-file-impact.md`
-> 4. `agents/test-analyzer.md`
-> 5. `agents/conventions-and-intent.md`
-> 6. `agents/type-design-analyzer.md`
-> 7. `agents/code-simplifier.md`
->
-> Each agent copy has a `<!-- Canonical source: references/false-positive-exclusions.md -->` comment pointing back here.
+> **Maintenance.** Keep this reference aligned with `agents/validator.md` and `agents/challenger.md`; their prompts and registry admission rules govern validation and delivery.
 
 ---
 
