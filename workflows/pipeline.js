@@ -267,11 +267,11 @@ const POLICY_SUBJECTS = {
 };
 const QUALITY_ADMISSION = {
   field: 'quality_basis', promotion: { predicate: 'present_defect', kind: 'current_correctness' }, kinds: {
-    current_correctness: { description: 'A demonstrated present production defect.', required: [], predicates: ['present_defect'], phase: 'semantic', core: true, tier: 'main' },
-    duplication: { description: 'Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior.', required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
-    simpler_equivalent: { description: 'A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths.', required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
-    stack_idiom: { description: 'A behavior-preserving replacement supported by applicable existing repository precedent; identify the precedent and the cost it removes.', required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
-    other: { description: 'No demonstrated defect, redundancy, simpler equivalent or applicable precedent; unsupported preferences stay report_only.', required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
+    current_correctness: { description: 'Present production defect.', required: [], predicates: ['present_defect'], phase: 'semantic', core: true, tier: 'main' },
+    duplication: { description: 'Duplicated behavior identified by duplicate_of.', required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
+    simpler_equivalent: { description: 'Simpler replacement preserving observable behavior.', required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
+    stack_idiom: { description: 'Behavior-preserving replacement grounded in existing repository precedent.', required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
+    other: { description: 'No demonstrated defect, duplication, simpler equivalent or applicable precedent.', required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
   },
 };
 const DIMENSIONS = deepFreeze([
@@ -322,9 +322,9 @@ const DIMENSIONS = deepFreeze([
   ...row, policySubjects: POLICY_SUBJECTS,
   schemaExtra: { ...row.schemaExtra, ...(row.admission ? {
     [row.admission.field]: { type: 'string', enum: Object.keys(row.admission.kinds), description: row.admission === QUALITY_ADMISSION
-      ? 'Select the demonstrated quality basis. Behavior-preserving improvements do not require a production defect. '
+      ? 'Basis for the finding. '
         + Object.entries(row.admission.kinds).map(([kind, rule]) => `${kind}: ${rule.description}`).join(' ')
-      : 'Test issue kind used to assess admission and production-defect promotion.' },
+      : 'Classification of the test issue.' },
     ...(row.admission === QUALITY_ADMISSION ? {
       duplicate_of: { ...SOURCE_REFERENCE, description: 'Source reference to the existing implementation duplicated here.' },
       precedent: { ...SOURCE_REFERENCE, description: 'Source reference to an existing repository idiom supporting the change.' },

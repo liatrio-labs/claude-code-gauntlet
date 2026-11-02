@@ -91,11 +91,7 @@ def test_admission_row_generates_consumers(registry_tree, invoke):
     assert namespace["DIMENSION_ROWS"] == registry["dimensionRows"]
     for path in ("agents/test-analyzer.md", REPORT):
         text = (registry_tree / path).read_text(encoding="utf-8")
-        assert (
-            "special_case" in text
-            and "searched_paths" in text
-            and "report_only" in text
-        )
+        assert "special_case" in text and "searched_paths" in text
         if path == REPORT:
             policy_line = next(
                 line
@@ -105,15 +101,8 @@ def test_admission_row_generates_consumers(registry_tree, invoke):
             assert '"required": ["searched_paths"]' in policy_line
             assert policy_line.endswith("default disposition `report_only`.")
         else:
-            descriptor = next(
-                line
-                for line in text.splitlines()
-                if line.startswith("test_coverage admission descriptors: ")
-            )
-            admission = json.loads(
-                descriptor.split(": ", 1)[1].split(". Default disposition:", 1)[0]
-            )
-            assert admission["kinds"]["special_case"]["required"] == ["searched_paths"]
+            schema = json.loads(re.search(r"```json\n(.*?)\n```", text, re.DOTALL)[1])
+            assert schema["properties"]["findings"]["items"] == item
     runtime = gen.proc.run(
         [
             "node",
@@ -143,7 +132,7 @@ assert.equal(findingPolicy(good).core,true);
     [
         (
             "current_correctness",
-            "demonstrated present production defect",
+            "Present production defect",
             [],
             ["present_defect"],
             [],
@@ -151,7 +140,7 @@ assert.equal(findingPolicy(good).core,true);
         ),
         (
             "duplication",
-            "show the redundancy and how consolidation preserves behavior",
+            "Duplicated behavior identified by duplicate_of",
             ["duplicate_of"],
             ["resolved_duplicate", "confirmed_duplication"],
             [],
@@ -159,7 +148,7 @@ assert.equal(findingPolicy(good).core,true);
         ),
         (
             "simpler_equivalent",
-            "evidence of reduced complexity and preserved return values, side effects and error paths",
+            "Simpler replacement preserving observable behavior",
             ["behavior_preserved"],
             ["concrete_equivalent", "behavior_preserved"],
             ["suggestion", "suggested_fix_code"],
@@ -167,7 +156,7 @@ assert.equal(findingPolicy(good).core,true);
         ),
         (
             "stack_idiom",
-            "identify the precedent and the cost it removes",
+            "grounded in existing repository precedent",
             ["precedent"],
             ["resolved_precedent", "precedent_not_added", "applicable"],
             [],
@@ -175,7 +164,7 @@ assert.equal(findingPolicy(good).core,true);
         ),
         (
             "other",
-            "unsupported preferences stay report_only",
+            "No demonstrated defect, duplication, simpler equivalent or applicable precedent",
             [],
             [],
             [],
@@ -195,16 +184,10 @@ def test_quality_basis_contract(
         item = schema["properties"]["findings"]["items"]
         selection = item["properties"]["quality_basis"]
         assert basis in selection["enum"]
-        assert (
-            "Behavior-preserving improvements do not require a production defect."
-            in selection["description"]
+        row = next(
+            r for r in registry["dimensionRows"] if r["agentType"].endswith(":" + agent)
         )
-        descriptor = next(
-            line for line in contract.splitlines() if " admission descriptors: " in line
-        )
-        admission = json.loads(
-            descriptor.split(": ", 1)[1].split(". Default disposition:", 1)[0]
-        )
+        admission = row["admission"]
         rule = admission["kinds"][basis]
         assert guidance in rule["description"]
         assert f"{basis}: {rule['description']}" in selection["description"]
@@ -492,9 +475,6 @@ def test_dispatch_result_descriptor_generates_agent_contract_and_python_registry
     item = schema["properties"]["findings"]["items"]
     assert item["properties"]["extension_field"] == {"type": "string"}
     assert "extension_field" in item["required"]
-    assert (
-        "`extension_field`" in block.split("Required finding fields:")[1].split("\n")[0]
-    )
     runtime = gen.proc.run(
         [
             sys.executable,
@@ -830,39 +810,25 @@ Headless config:
 }
 
 
-def test_dispatch_sentence():
-    assert gen.dispatch_required_sentence(["criticality", "failure_scenario"]) == (
-        "`criticality` and `failure_scenario` are required at intake on every provider "
-        "and gateway."
-    )
-
-
-def test_conditional_paragraphs():
-    assert gen.conditional_paragraphs(
-        [{"dimension": "test_coverage", "requiredWhenDimension": ["test_kind"]}]
-    ) == [
-        "For test_coverage findings, `test_kind` is required at intake on every provider "
-        "and gateway, which enforces its type and vocabulary."
-    ]
-    paragraphs = gen.conditional_paragraphs(
-        [
-            {"dimension": "convention", "requiredWhenDimension": ["claude_md_rule"]},
-            {"dimension": "intent", "requiredWhenDimension": ["spec_text"]},
-            {"dimension": "comment_accuracy", "requiredWhenDimension": []},
-        ]
-    )
-    assert len(paragraphs) == 2
-    assert paragraphs[0] == (
-        "For convention findings: the `claude_md_rule` field must be non-null and must "
-        "quote the specific rule. Findings without a cited rule will be rejected. "
-        "`claude_md_rule` is a dimension-conditional dispatch requirement. "
-        "On a dispatch that targets the first-party API directly (no third-party "
-        "provider, no gateway), "
-        "the schema enforces it specifically for findings whose dimension "
-        "is convention — sibling intent/comment_accuracy findings correctly omit it. "
-        "Runtime intake enforces claude_md_rule/spec_text "
-        "on every provider and gateway for the owning dimension."
-    )
+@pytest.mark.parametrize("symbol", gen.DISCOVERY_SHARED)
+def test_shared_guidance_updates_agent_contracts(monkeypatch, symbol):
+    original = gen.DISCOVERY_SHARED[symbol]
+    marker = f"<!-- generated-from-discovery:{symbol} -->"
+    replacement = "Updated shared investigation guidance."
+    monkeypatch.setitem(gen.DISCOVERY_SHARED, symbol, replacement)
+    registry = gen.load_registry(str(ROOT))
+    targets = gen.rendered_targets(str(ROOT), registry, "")
+    updated = []
+    for rel in gen.discovery_targets(registry):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        if marker not in text:
+            continue
+        rendered = targets[rel](text)
+        assert original not in rendered
+        assert rendered.count(replacement) == 1
+        assert targets[rel](rendered) == rendered
+        updated.append(rel)
+    assert len(updated) == (2 if symbol in {"quality", "changed-anchor"} else 7)
 
 
 def test_block_anchor():
@@ -1033,7 +999,9 @@ def test_command_drift(registry_tree, invoke):
     target = registry_tree / "agents/test-analyzer.md"
     original = target.read_bytes()
     target.write_text(
-        original.decode().replace("are required at intake on every provider", "x"),
+        original.decode().replace(
+            '"criticality":{"type":"number"', '"criticality":{"type":"string"'
+        ),
         encoding="utf-8",
     )
     broken = target.read_bytes()

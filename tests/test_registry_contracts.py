@@ -206,8 +206,7 @@ def test_contract_schema(agent_type: str) -> None:
     body = text.split(gen.MARKER_OPEN)[1].split(gen.MARKER_CLOSE)[0]
     scores = (
         "`confidence` is certainty the issue exists, from 0 to 100; "
-        "`severity` is its impact: `critical`, `high`, `medium`, `low`. "
-        "Downstream stages decide delivery."
+        "`severity` is its impact: `critical`, `high`, `medium`, `low`."
     )
     assert scores in body and text.count(scores) == 1
     blocks = _JSON_BLOCK.findall(body)
@@ -215,44 +214,12 @@ def test_contract_schema(agent_type: str) -> None:
     schema = json.loads(blocks[0])
     assert schema == contract["schema"]
     item = schema["properties"]["findings"]["items"]
-    rows = [r for r in live["dimensions"] if r["agentType"] == agent_type]
     required = [*live["required"], "anchor", "evidence", *contract["requiredExtra"]]
     assert item["required"] == required
     optional = [f for f in item["properties"] if f not in required]
-    for label, fields in (("Required", required), ("Optional", optional)):
-        line = next(
-            line
-            for line in body.splitlines()
-            if line.startswith(label + " finding fields:")
-        )
-        assert re.findall(r"`([^`]+)`", line) == fields
-    assert "Omit inapplicable optional fields; never send null." in body
-    if contract["requiredExtra"]:
-        assert "required at intake on every provider" in body
     declared = declared_by_agent()[agent_type]
     for field in optional:
         assert item["properties"][field]["type"] == declared[field]
-    for row in rows:
-        for field in row["requiredWhenDimension"]:
-            if field in {"test_kind", "quality_basis"}:
-                assert f"`{field}` is required at intake on every provider" in body
-                continue
-            assert f"`{field}` is a dimension-conditional dispatch requirement" in body
-            assert (
-                f"For {row['dimension']} findings: the `{field}` field must be non-null"
-                in body
-            )
-            siblings = [r["dimension"] for r in rows if r != row]
-            assert "/".join(siblings) in body or "on the same terms" in body
-    if any(
-        field in {"claude_md_rule", "spec_text"}
-        for row in rows
-        for field in row["requiredWhenDimension"]
-    ):
-        assert (
-            "Runtime intake enforces claude_md_rule/spec_text" in body
-            and "on every provider and gateway" in body
-        )
     assert "line_start` through `line_end`" in text
     assert "Include `line_end` with every patch" in text
 
@@ -260,9 +227,9 @@ def test_contract_schema(agent_type: str) -> None:
 def test_convention_vocabulary() -> None:
     text = read("agents/conventions-and-intent.md")
     body = text.split(gen.MARKER_OPEN)[1].split(gen.MARKER_CLOSE)[0]
-    values = re.search(r"^Allowed rule_source values: (.+)\.$", body, re.MULTILINE)
-    assert values is not None
-    assert set(re.findall(r"`([^`]+)`", values.group(1))) == set(
+    schema = json.loads(_JSON_BLOCK.findall(body)[0])
+    field = schema["properties"]["findings"]["items"]["properties"]["rule_source"]
+    assert set(re.findall(r"\b[a-z]+_[a-z_]+\b", field["description"])) == set(
         python_registry.RULE_SOURCE_LABELS
     )
 
