@@ -183,7 +183,13 @@ process.stdout.write(JSON.stringify(results));
 """
     result = subprocess.run(
         _flow_command(
-            script, work, head, base, str(output), json.dumps(cases), json.dumps(files)
+            script,
+            work,
+            head,
+            base,
+            output.as_posix(),
+            json.dumps(cases),
+            json.dumps(files),
         ),
         cwd=work,
         capture_output=True,

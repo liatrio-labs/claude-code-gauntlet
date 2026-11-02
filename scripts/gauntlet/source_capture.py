@@ -338,6 +338,8 @@ class SourceAdapter:
             return None
 
     def _parts(self, file: str) -> tuple[str, ...] | None:
+        if not isinstance(file, str):
+            return None
         parts = tuple(file.split("/"))
         if (
             (self.target_kind != "local" and self.captured_head is None)

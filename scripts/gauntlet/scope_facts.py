@@ -59,6 +59,7 @@ def repository_scope(
     capture = source.source_capture
     if capture is None or indexed is None:
         return {}
+    files = [file for file in files if isinstance(file, str) and file]
     changed = set(indexed.files)
     for line in indexed.content.decode("utf-8", "surrogateescape").splitlines():
         if line.startswith(("rename from ", "copy from ")):
