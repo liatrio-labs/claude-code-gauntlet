@@ -117,6 +117,10 @@ class SourceAdapter:
         default_factory=dict, compare=False, repr=False
     )
 
+    def __post_init__(self) -> None:
+        # The caller's root may be an alias; only its children are untrusted paths.
+        object.__setattr__(self, "root", self.root.resolve())
+
     @classmethod
     def capture(
         cls, root: Path, target_kind: TargetKind, requested_sha: str | None
@@ -156,6 +160,7 @@ class SourceAdapter:
     ) -> SourceCapture:
         if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]*", nonce):
             raise ValueError("invalid source capture nonce")
+        output = output.resolve()
         parts = (f"code-gauntlet-inputs-{nonce}", "source-capture")
         directory = output.joinpath(*parts)
         if directory.exists() or (directory.parent / "source-capture-started").exists():
@@ -203,7 +208,6 @@ class SourceAdapter:
                 "-z",
                 timeout=LIST_TIMEOUT_SECONDS,
             )
-        output = output.resolve()
         excluded = (
             output.relative_to(self.root.resolve()).as_posix()
             if output.is_relative_to(self.root.resolve())
@@ -599,6 +603,7 @@ def load_capture(
         r"[A-Za-z0-9_-][A-Za-z0-9._-]*", nonce
     ):
         raise ValueError("invalid source capture nonce")
+    output = output.resolve()
     parts = (f"code-gauntlet-inputs-{nonce}", "source-capture")
     raw = _local_bytes(output, (*parts, "manifest.json"))
     m = json.loads(raw)
