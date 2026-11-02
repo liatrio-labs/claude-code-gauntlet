@@ -14,6 +14,73 @@ from gauntlet.verify import wire as verify
 from tests.support.citations import citation_cli
 
 
+def test_cite_replay_invalidates_foreign_sources_for_every_status():
+    project = Path(__file__).resolve().parents[1]
+    capture = {
+        "manifest_sha256": "d" * 64,
+        "target_kind": "branch",
+        "head": "a" * 40,
+        "base": "b" * 40,
+        "diff_sha256": "c" * 64,
+    }
+    source = {
+        "snapshot_id": capture["manifest_sha256"],
+        **{key: capture[key] for key in ("target_kind", "head", "base", "diff_sha256")},
+        "verifier_version": "cite-1",
+    }
+    sources = [source, None, *({**source, key: "foreign"} for key in source)]
+    packet = {field: [] for field in ("findings", "unverified", "eliminated")}
+    audit = []
+    expected = copy.deepcopy(packet)
+    for field in packet:
+        rows, wanted = [], []
+        for status in ("matched", "unmatched", "rejected", "unavailable"):
+            for origin in sources:
+                for snapshot in (source["snapshot_id"], "foreign"):
+                    row = {
+                        "status": status,
+                        "detail": "source_decision",
+                        "source": origin,
+                        "request": {"snapshot_id": snapshot, "file": "source"},
+                    }
+                    rows.append(row)
+                    invalid = origin != source or (
+                        status == "matched" and snapshot != source["snapshot_id"]
+                    )
+                    wanted.append(
+                        {**row, "status": "unavailable", "detail": "snapshot_mismatch"}
+                        if invalid
+                        else row
+                    )
+                    if invalid:
+                        audit.append({"finding_id": field, "result": row})
+        packet[field] = [{"id": field, "file": "source", "cite_results": rows}]
+        expected[field] = wanted
+    script = """
+import {normalizePhaseFindings} from './workflows/src/checkpoints.js';
+let input = ''; for await (const chunk of process.stdin) input += chunk;
+const {packet, capture} = JSON.parse(input);
+normalizePhaseFindings('cite', packet, true, {repoRoot: '/repo', verify: {sourceCapture: capture}});
+process.stdout.write(JSON.stringify(packet));
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=project,
+        input=json.dumps({"packet": packet, "capture": capture}),
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    )
+    replay = json.loads(result.stdout)
+    for field in packet:
+        assert replay[field][0]["cite_results"] == expected[field]
+    assert replay["cite_audit"] == audit
+    assert replay["gaps"] == ["cite_unavailable: replay proof source mismatch"] * len(
+        audit
+    )
+
+
 def test_cite_mode_receipts_bind_requests_and_source(tmp_path, monkeypatch, invoke):
     call, q, capture, root, output = citation_cli(tmp_path, monkeypatch, invoke)
     requests = [

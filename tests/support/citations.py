@@ -13,13 +13,21 @@ ROOT = Path(__file__).resolve().parents[2]
 QUOTE = 'return "café 😀 value";'
 
 
-def citation_cli(tmp_path, monkeypatch, invoke, *, in_repo_output=False):
+def citation_cli(
+    tmp_path,
+    monkeypatch,
+    invoke,
+    *,
+    in_repo_output=False,
+    source_file="source",
+    diff=None,
+):
     root = tmp_path / "repo"
     output = root / "output" if in_repo_output else tmp_path / "output"
     root.mkdir()
     output.mkdir()
     init_git_repo(root, monkeypatch)
-    for file in ("source", "vendor/generated"):
+    for file in (source_file, "vendor/generated"):
         path = root / file
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes((QUOTE + "\nsecond_source_line();\n").encode())
@@ -29,13 +37,14 @@ def citation_cli(tmp_path, monkeypatch, invoke, *, in_repo_output=False):
     git(root, "commit", "-qm", "base")
     base = git(root, "rev-parse", "HEAD")
     (root / "gone").unlink()
-    (root / "source").write_bytes(
+    (root / source_file).write_bytes(
         (QUOTE + "\nsecond_source_line();\n" + QUOTE + "\n").encode()
     )
     git(root, "add", ".")
     git(root, "commit", "-qm", "target")
     head = git(root, "rev-parse", "HEAD")
-    diff = (git(root, "diff", base, head) + "\n").encode()
+    if diff is None:
+        diff = (git(root, "diff", base, head) + "\n").encode()
     diff_path = output / "diff.patch"
     diff_path.write_bytes(diff)
     capture = (
@@ -49,7 +58,7 @@ def citation_cli(tmp_path, monkeypatch, invoke, *, in_repo_output=False):
         "request_id": "claim",
         "role": "claim",
         "snapshot_id": capture["manifest_sha256"],
-        "file": "source",
+        "file": source_file,
         "side": "head",
         "line_start": 1,
         "line_end": 1,

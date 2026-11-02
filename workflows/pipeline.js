@@ -3891,7 +3891,7 @@ const scopePredicates = {
 const scopeExceptions = {
   security_dimension: (f) => f.dimension === 'security' || f.agent === AGENT_SECURITY_REVIEWER,
   documentation_or_comment_claim: (f) => dimensionRow(f.dimension)?.dimension === 'comment_accuracy',
-  present_static_defect: (f) => f.reachability === 'current' ? true : f.reachability === 'future_change_only' ? false : null,
+  present_static_defect: (f) => f.reachability === 'current' ? findingPolicy(f).core : f.reachability === 'future_change_only' ? false : null,
   test_coverage_origin: (f) => findingPolicy({ ...f, policy_subject: undefined }, false).row?.dimension === 'test_coverage',
   test_applicable_convention: (f) => dimensionRow(f.dimension)?.dimension === 'convention',
   genuine_test_defect: (f) => !VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(f.policy_subject) || f.policy_subject === 'unresolved' ? null : f.policy_subject === 'test_defect',
@@ -7824,8 +7824,8 @@ function normalizePhaseFindings(name, out, replayed, args, decisions = []) {
       if (!f || !Array.isArray(f.cite_results)) continue;
       for (const result of f.cite_results) {
         if (!result || typeof result !== 'object') continue;
-        if (result.status !== 'matched' || (result.request?.snapshot_id === source.snapshot_id
-          && sameCiteValue(result.source, source))) continue;
+        if (sameCiteValue(result.source, source)
+          && (result.status !== 'matched' || result.request?.snapshot_id === source.snapshot_id)) continue;
         out.cite_audit = [...(out.cite_audit || []), { finding_id: f.id, result: { ...result } }];
         result.status = 'unavailable';
         result.detail = 'snapshot_mismatch';
