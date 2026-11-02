@@ -206,28 +206,18 @@ const PROMPT_ROWS = [
 for (const contextLine of ['CONTEXT_SENTINEL ', '']) test(`discovery transport: context=${Boolean(contextLine)}`, async () => {
   const inventory = { status: 'available', items: [{ id: 'AUDIT_SENTINEL', path: 'deleted.test' }], omitted: 0 };
   const ctx = stageCtx();
-  await discover(ctx, { contextLine, removedTests: inventory });
+  const repoRoot = '/repo';
+  await discover(ctx, { contextLine, repoRoot, removedTests: inventory });
   assert.deepEqual(ctx.calls.map((call) => call.label), PROMPT_ROWS.map((row) => row.agent));
   for (const row of PROMPT_ROWS) {
     const prompt = ctx.calls.find((call) => call.label === row.agent).prompt;
-    assert.ok(prompt.startsWith(contextLine + 'Investigate'));
-    assert.ok(prompt.includes(`Your dimension(s): ${row.dims}.`));
-    assert.ok(prompt.includes('LSP first, Grep fallback'));
-    assert.ok(prompt.includes('full codebase context around the diff'));
-    assert.ok(prompt.includes('no cap and no minimum'));
-    assert.ok(prompt.includes('regardless of importance or confidence'));
-    assert.ok(prompt.includes('metadata as unverified hypotheses'));
-    assert.ok(prompt.includes('including paths it omits'));
-    assert.ok(prompt.includes('evidence field must be non-empty') && prompt.includes('real lines you actually inspected'));
-    assert.ok(prompt.includes('name in evidence the specific file or path you checked'));
-    assert.ok(prompt.includes('Return { findings, complete, total_seen }'));
-    assert.ok(prompt.includes('single paragraph of prose, at most 500 characters'));
-    assert.doesNotMatch(prompt, /Additionally/);
+    assert.ok(prompt.startsWith(contextLine));
+    assert.ok(prompt.includes(`Repository: ${repoRoot}.`));
+    assert.ok(prompt.includes(`Dimensions: ${row.dims}.`));
     if (row.agent === 'code-gauntlet:test-analyzer') {
-      assert.ok(prompt.includes('required dispatch-result fields: removed_test_audit'));
-      assert.ok(prompt.includes('exactly one removed_test_audit row per id'));
-      assert.ok(prompt.endsWith(`Inventory: ${JSON.stringify(inventory)}`));
-    }
+      assert.ok(prompt.includes('Return { findings, complete, total_seen, removed_test_audit }'));
+      assert.ok(prompt.endsWith(`Removed-test inventory: ${JSON.stringify(inventory)}`));
+    } else assert.ok(prompt.includes('Return { findings, complete, total_seen }'));
   }
 });
 
