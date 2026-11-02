@@ -111,7 +111,6 @@ def _run_node(node_src: str, repo_root: str) -> proc.CompletedProcess[str]:
 _REGISTRY_MODULES = (
     "registry",
     "knobs",
-    "applyValidations",
     "injection",
     "outputPaths",
     "verifyWire",
@@ -135,6 +134,15 @@ _REGISTRY_FIELDS = (
     "resolvedSiteSchema: m.RESOLVED_SITE_SCHEMA",
     "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
     "validationReturnProperties: m.VALIDATION_RETURN_PROPERTIES",
+    "verdictReturnProperties: m.VERDICT_RETURN_PROPERTIES",
+    "citationRequestSchema: m.CITATION_REQUEST_SCHEMA",
+    "skepticalReturnSchemas: Object.fromEntries(Object.entries(m.SKEPTICAL_CONTRACTS)"
+    ".map(([stage, contract]) => [stage, contract.schema]))",
+    "skepticalFindingProperties: m.SKEPTICAL_FINDING_PROPERTIES",
+    "scopeAssessmentSchema: m.SCOPE_ASSESSMENT_SCHEMA",
+    "exclusionCategories: m.EXCLUSION_CATEGORIES",
+    "exclusionStages: m.EXCLUSION_STAGES",
+    "exclusionProofs: m.EXCLUSION_PROOFS",
     "anchorLimits: m.ANCHOR_LIMITS",
     "locationRights: m.LOCATION_RIGHTS",
     "locationStatuses: m.LOCATION_STATUSES",
@@ -155,7 +163,7 @@ _REGISTRY_FIELDS = (
     "brand: {mark: m.BRAND_MARK, name: m.BRAND_NAME}",
     "severityEmoji: m.SEVERITY_EMOJI",
     "severityOrder: m.SEVERITY_ORDER",
-    "reachability: v.REACHABILITY_VALUES",
+    "reachability: m.REACHABILITY_VALUES",
     "deltaKeys: w.DELTA_KEYS",
     "verifySliceFields: w.VERIFY_SLICE_FIELDS",
     "fixMaxLines: f.FIX_MAX_LINES",
@@ -193,7 +201,7 @@ def load_registry(repo_root: str) -> Mapping[str, Any]:
         + ", ".join(
             f"import('./workflows/src/{name}.js')" for name in _REGISTRY_MODULES
         )
-        + "]).then(([m, a, v, f, o, w, d, c]) => console.log(JSON.stringify({"
+        + "]).then(([m, a, f, o, w, d, c]) => console.log(JSON.stringify({"
         + fields
         + "})))"
     )
@@ -591,6 +599,14 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "Reachability": identity["reachability"],
         "LocationStatus": identity["locationStatuses"],
         "Disposition": identity["dispositions"],
+        "Verdict": identity["verdictReturnProperties"]["verdict"]["enum"],
+        "SkepticalStage": list(identity["skepticalReturnSchemas"]),
+        "ExclusionCategory": [
+            row["category"] for row in identity["exclusionCategories"]
+        ],
+        "ExclusionStage": identity["exclusionStages"],
+        "ExclusionOutcome": [*identity["dispositions"], "admission"],
+        "ExclusionProof": identity["exclusionProofs"],
         "Dimension": [row["dimension"] for row in identity["dimensionRows"]],
         "DeltaKey": delta_keys,
         "DeltaValueField": delta_value_fields,
@@ -632,6 +648,18 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
 
     def schema_type(schema: Any, name: str, *, public_enum: bool = False) -> str:
         if isinstance(schema, dict) and "enum" in schema:
+            for field, alias in (
+                ("Stage", "SkepticalStage"),
+                ("Category", "ExclusionCategory"),
+            ):
+                if name.endswith(field) and set(schema["enum"]) <= set(
+                    enum_types[alias]
+                ):
+                    return alias
+            if not public_enum:
+                for alias, values in enum_types.items():
+                    if values == schema["enum"]:
+                        return alias
             # Private aliases cannot shadow generated TypedDict class names.
             base = name if public_enum else f"_{name}_Literal"
             alias = base
@@ -691,6 +719,14 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     validation_types = {
         field: schema_type(schema, _pascal(field))
         for field, schema in identity["validationReturnProperties"].items()
+    }
+    schema_type(identity["citationRequestSchema"], "CitationRequest")
+    schema_type(identity["scopeAssessmentSchema"], "ScopeAssessment")
+    for stage, schema in identity["skepticalReturnSchemas"].items():
+        schema_type(schema, _pascal(stage) + "Return")
+    skeptical_types = {
+        field: schema_type(schema, _pascal(field))
+        for field, schema in identity["skepticalFindingProperties"].items()
     }
     delta_annotations = dict.fromkeys(("confidence", "line_start", "line_end"), "int")
     delta_annotations.update(
@@ -789,6 +825,8 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "DIMENSION_ROWS": identity["dimensionRows"],
         "RIGHT_ELIGIBILITY": identity["rightEligibility"],
         "STAGE_COSTS": identity["stageCosts"],
+        "CITATION_REQUEST_SCHEMA": identity["citationRequestSchema"],
+        "EXCLUSION_CATEGORIES": identity["exclusionCategories"],
         "BRAND_MARK": identity["brand"]["mark"],
         "BRAND_NAME": identity["brand"]["name"],
         "SEVERITY_EMOJI": identity["severityEmoji"],
@@ -811,7 +849,31 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "VERIFY_SLICE_FIELDS": "tuple[str, ...]",
         "VERIFY_REFERENCE_DESCRIPTORS": "Mapping[str, VerifyReferenceKind]",
         "DIMENSION_ROWS": "list[Mapping[str, Any]]",
+        "EXCLUSION_CATEGORIES": "list[ExclusionRow]",
     }
+    lines.extend(
+        [
+            "",
+            "class _ExclusionRowRequired(TypedDict):",
+            "    category: ExclusionCategory",
+            "    stage: ExclusionStage",
+            "    predicate: str",
+            "    facts: list[str]",
+            "    applicability: str",
+            "    exceptions: list[str]",
+            "    proof: ExclusionProof",
+            "    outcome: ExclusionOutcome",
+            "    reference: str",
+            "    consumers: list[str]",
+            "    citation_roles: list[str]",
+            "",
+            "",
+            "class ExclusionRow(_ExclusionRowRequired, total=False):",
+            "    basenames: list[str]",
+            "",
+            "",
+        ]
+    )
     for name, value in values.items():
         annotation = f": {annotations[name]}" if name in annotations else ""
         prefix = f"{name}{annotation} = "
@@ -866,6 +928,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "",
             "class FindingMetadata(FindingFacts, total=False):",
             *(field_annotation(field, kind) for field, kind in admission_types.items()),
+            *(field_annotation(field, kind) for field, kind in skeptical_types.items()),
             "    origin_dimension: Dimension",
             *(f"    {field}: {_pascal(field)}" for field in stamp_kinds),
             "    reference_diagnostics: list[ReferenceDiagnostic]",
@@ -1477,6 +1540,69 @@ def fill_identity_fences(
     return "\n".join(lines)
 
 
+def exclusion_reference(registry: Mapping[str, Any]) -> str:
+    """Keep the preparatory reference separate until scope transfer is activated."""
+    lines = [
+        "# Scope exclusion contract",
+        "",
+        "Generated preparatory data; active discovery exclusions remain in force.",
+        "",
+    ]
+    for row in registry["exclusionCategories"]:
+        lines.extend(
+            [
+                f"## `{row['category']}`",
+                "",
+                f"Consumers: {', '.join(row['consumers'])}; predicate: `{row['predicate']}`; proof: `{row['proof']}`; outcome: `{row['outcome']}`.",
+                "",
+                row["applicability"],
+                "",
+                row["reference"],
+                "",
+                "Exceptions: " + (", ".join(row["exceptions"]) or "none") + ".",
+                "",
+                "Facts: " + (", ".join(row["facts"]) or "none") + ".",
+                "",
+            ]
+        )
+        if "basenames" in row:
+            lines.extend(["Basenames: " + ", ".join(row["basenames"]) + ".", ""])
+    return "\n".join(lines)
+
+
+def skeptical_targets(registry: Mapping[str, Any]) -> dict[str, str]:
+    """Render future dispatch contracts without changing active agent prompts."""
+    targets = {}
+    for stage, schema in registry["skepticalReturnSchemas"].items():
+        lines = [
+            f"# {stage.capitalize()} return contract",
+            "",
+            "Generated preparatory data; activate with the matching runtime.",
+            "",
+            "A real or refuted verdict requests claim proof. needs_evidence names missing evidence; it cannot confirm itself.",
+            "",
+            "scope_assessments is an array, possibly empty. Quotes establish provenance, not semantic correctness.",
+            "",
+            "```json",
+            json.dumps(schema, indent=2),
+            "```",
+            "",
+        ]
+        lines.extend(["## Scope rows", ""])
+        for row in registry["exclusionCategories"]:
+            if stage not in row["consumers"]:
+                continue
+            lines.extend(
+                [
+                    f"- `{row['category']}`: {row['applicability']} Exceptions: {', '.join(row['exceptions']) or 'none'}. Proof: `{row['proof']}`; outcome: `{row['outcome']}`. {row['reference']}"
+                ]
+            )
+        targets[f"workflows/contracts/{stage}-return-contract.md"] = (
+            "\n".join(lines) + "\n"
+        )
+    return targets
+
+
 def rendered_targets(
     repo_root: str, registry: Mapping[str, Any], source: str
 ) -> dict[str, str | Callable[[str], str]]:
@@ -1525,6 +1651,10 @@ def rendered_targets(
         for rel_path, transforms in steps.items()
     }
     targets["scripts/gauntlet/registry.py"] = source
+    targets.update(skeptical_targets(registry))
+    targets["workflows/contracts/scope-exclusion-contract.md"] = exclusion_reference(
+        registry
+    )
     return targets
 
 

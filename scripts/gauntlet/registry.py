@@ -10,6 +10,27 @@ PolicyProvider = Literal["firstParty", "bedrock", "vertex", "foundry"]
 Reachability = Literal["current", "future_change_only", "uncertain"]
 LocationStatus = Literal["confirmed", "relocated", "unconfirmed"]
 Disposition = Literal["deliver", "body", "held_back", "report_only", "eliminate"]
+Verdict = Literal["real", "refuted", "needs_evidence"]
+SkepticalStage = Literal["validator", "challenger"]
+ExclusionCategory = Literal[
+    "pre_existing",
+    "untouched_line",
+    "generated_vendored",
+    "docs_only",
+    "lockfile",
+    "general_quality",
+    "latent",
+    "test_only_pattern",
+    "lint_catchable",
+    "suppressed",
+    "opted_out",
+    "intentional",
+]
+ExclusionStage = Literal["early", "admission", "post_validation", "skeptical"]
+ExclusionOutcome = Literal[
+    "deliver", "body", "held_back", "report_only", "eliminate", "admission"
+]
+ExclusionProof = Literal["verified_fact", "admission", "citation"]
 Dimension = Literal[
     "bug",
     "security",
@@ -65,9 +86,6 @@ TestKind = Literal[
 QualityBasis = Literal[
     "current_correctness", "duplication", "simpler_equivalent", "stack_idiom", "other"
 ]
-_ResolvedSitesItemLocationStatus_Literal = Literal[
-    "confirmed", "relocated", "unconfirmed"
-]
 _PolicySubject_Literal = Literal["test_defect", "coverage", "ordinary", "unresolved"]
 _AdmissionAssessmentsItemPredicate_Literal = Literal[
     "confirmed_test_defect",
@@ -82,6 +100,24 @@ _AdmissionAssessmentsItemPredicate_Literal = Literal[
     "current_defect",
 ]
 _AdmissionAssessmentsItemStatus_Literal = Literal["confirmed", "rejected", "unresolved"]
+_CitationRequestRole_Literal = Literal["claim", "rule", "applicability", "exception"]
+_CitationRequestSide_Literal = Literal["head", "old"]
+_ScopeAssessmentApplicability_Literal = Literal[
+    "applicable", "inapplicable", "contradicted"
+]
+_CiteResultsItemStatus_Literal = Literal[
+    "matched", "unmatched", "rejected", "unavailable"
+]
+_ReductionProvenanceReason_Literal = Literal[
+    "report_only",
+    "held_back",
+    "body_routed",
+    "refuted",
+    "out_of_scope",
+    "scope_contradicted",
+    "cite_unmatched",
+    "cite_unavailable",
+]
 PathRole = Literal["source", "test", "non_source", "unknown"]
 BlameClass = Literal["new", "pre_existing", "surfaced", "unknown"]
 BlameSource = Literal[
@@ -95,34 +131,29 @@ BlameSource = Literal[
 _ResolvedReferencesSearchedPathsItemKind_Literal = Literal[
     "file", "directory", "unknown"
 ]
-_ResolvedReferencesCandidateTestsItemPathRole_Literal = Literal[
-    "source", "test", "non_source", "unknown"
-]
-_ResolvedReferencesCandidateTestsItemLocationStatus_Literal = Literal[
-    "confirmed", "relocated", "unconfirmed"
-]
-_ResolvedReferencesProductionElementPathRole_Literal = Literal[
-    "source", "test", "non_source", "unknown"
-]
-_ResolvedReferencesProductionElementLocationStatus_Literal = Literal[
-    "confirmed", "relocated", "unconfirmed"
-]
-_ResolvedReferencesDuplicateOfPathRole_Literal = Literal[
-    "source", "test", "non_source", "unknown"
-]
-_ResolvedReferencesDuplicateOfLocationStatus_Literal = Literal[
-    "confirmed", "relocated", "unconfirmed"
-]
-_ResolvedReferencesPrecedentPathRole_Literal = Literal[
-    "source", "test", "non_source", "unknown"
-]
-_ResolvedReferencesPrecedentLocationStatus_Literal = Literal[
-    "confirmed", "relocated", "unconfirmed"
-]
 _AdmissionVersion_Literal = Literal[1]
 _AdmissionStatus_Literal = Literal["admitted", "report_only", "held_back"]
 _AdmissionReasonsItemStatus_Literal = Literal["report_only", "held_back"]
 _AdmissionTier_Literal = Literal["main", "suggestion"]
+
+
+class _ExclusionRowRequired(TypedDict):
+    category: ExclusionCategory
+    stage: ExclusionStage
+    predicate: str
+    facts: list[str]
+    applicability: str
+    exceptions: list[str]
+    proof: ExclusionProof
+    outcome: ExclusionOutcome
+    reference: str
+    consumers: list[str]
+    citation_roles: list[str]
+
+
+class ExclusionRow(_ExclusionRowRequired, total=False):
+    basenames: list[str]
+
 
 SEVERITY_ORDER: tuple[Severity, ...] = ("critical", "high", "medium", "low")
 
@@ -1138,6 +1169,252 @@ STAGE_COSTS = {
     },
 }
 
+CITATION_REQUEST_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "finding_id": {
+            "type": "string",
+            "minLength": 1,
+        },
+        "stage": {
+            "type": "string",
+            "enum": ["validator", "challenger"],
+        },
+        "request_id": {
+            "type": "string",
+            "minLength": 1,
+        },
+        "role": {
+            "type": "string",
+            "enum": ["claim", "rule", "applicability", "exception"],
+        },
+        "snapshot_id": {
+            "type": "string",
+            "minLength": 1,
+        },
+        "file": {
+            "type": "string",
+            "minLength": 1,
+            "$comment": "repo-path",
+        },
+        "side": {
+            "type": "string",
+            "enum": ["head", "old"],
+        },
+        "line_start": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+        },
+        "line_end": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+        },
+        "quote": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400,
+        },
+    },
+    "required": [
+        "finding_id",
+        "stage",
+        "request_id",
+        "role",
+        "snapshot_id",
+        "file",
+        "side",
+        "line_start",
+        "line_end",
+        "quote",
+    ],
+    "additionalProperties": False,
+}
+
+EXCLUSION_CATEGORIES: list[ExclusionRow] = [
+    {
+        "category": "pre_existing",
+        "stage": "early",
+        "predicate": "blame_pre_existing",
+        "facts": ["blame_class", "blame_source", "cross_file_refs"],
+        "applicability": "Actual git_blame pre-existence with no affected cross-file references.",
+        "exceptions": ["cross_file_effect_created_by_pr"],
+        "proof": "verified_fact",
+        "outcome": "report_only",
+        "reference": "Origin surfaced, off-diff placement and descriptions do not prove pre-existence.",
+        "consumers": ["early"],
+        "citation_roles": [],
+    },
+    {
+        "category": "untouched_line",
+        "stage": "early",
+        "predicate": "off_diff",
+        "facts": ["in_diff"],
+        "applicability": "Verified in_diff=false; unknown is not false.",
+        "exceptions": [],
+        "proof": "verified_fact",
+        "outcome": "body",
+        "reference": "Placement only after admission and vetting; still competes for challenge capacity.",
+        "consumers": ["early"],
+        "citation_roles": [],
+    },
+    {
+        "category": "generated_vendored",
+        "stage": "early",
+        "predicate": "generated_or_vendored",
+        "facts": ["linguist-generated", "linguist-vendored", "generated_marker"],
+        "applicability": "git check-attr at captured head or generated markers in the first source lines.",
+        "exceptions": ["security_dependency_vulnerability_claim"],
+        "proof": "verified_fact",
+        "outcome": "eliminate",
+        "reference": "A conventions word is not classification; the security exception requires no confirmed vulnerable version.",
+        "consumers": ["early"],
+        "citation_roles": [],
+    },
+    {
+        "category": "docs_only",
+        "stage": "early",
+        "predicate": "documentation_only_code_claim",
+        "facts": [
+            "linguist-documentation",
+            "all_changed_files_documentation",
+            "path_role",
+        ],
+        "applicability": "Finding file has a source role and every changed file is documentation, verified at captured head by git check-attr.",
+        "exceptions": [
+            "documentation_or_comment_claim",
+            "test_applicable_documented_convention",
+        ],
+        "proof": "verified_fact",
+        "outcome": "eliminate",
+        "reference": "Extensions and mixed PRs prove neither whole-PR documentation scope nor irrelevance; unknown stays unknown.",
+        "consumers": ["early"],
+        "citation_roles": [],
+    },
+    {
+        "category": "lockfile",
+        "stage": "early",
+        "predicate": "mechanical_lockfile",
+        "facts": ["lockfile_basename", "mechanical_change"],
+        "basenames": [
+            "package-lock.json",
+            "npm-shrinkwrap.json",
+            "yarn.lock",
+            "pnpm-lock.yaml",
+            "Cargo.lock",
+            "Gemfile.lock",
+            "poetry.lock",
+            "Pipfile.lock",
+            "uv.lock",
+            "composer.lock",
+            "packages.lock.json",
+        ],
+        "applicability": "Closed basename list and verified mechanical scope.",
+        "exceptions": ["security_dependency_vulnerability_claim"],
+        "proof": "verified_fact",
+        "outcome": "eliminate",
+        "reference": "The security exception is claim-based and needs no prior vulnerable-version confirmation.",
+        "consumers": ["early"],
+        "citation_roles": [],
+    },
+    {
+        "category": "general_quality",
+        "stage": "admission",
+        "predicate": "canonical_admission",
+        "facts": ["admission"],
+        "applicability": "Consume canonical quality admission and its present_defect promotion.",
+        "exceptions": ["named_in_repo_convention", "confirmed_present_defect"],
+        "proof": "admission",
+        "outcome": "admission",
+        "reference": "A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.",
+        "consumers": ["admission"],
+        "citation_roles": [],
+    },
+    {
+        "category": "latent",
+        "stage": "post_validation",
+        "predicate": "future_change_only",
+        "facts": ["reachability"],
+        "applicability": "Existing future-change-only reachability assessment appropriate to the actual claim.",
+        "exceptions": ["present_static_defect"],
+        "proof": "verified_fact",
+        "outcome": "body",
+        "reference": "Placement after admission and vetting; no invented runtime trigger or early challenge exclusion.",
+        "consumers": ["post_validation"],
+        "citation_roles": [],
+    },
+    {
+        "category": "test_only_pattern",
+        "stage": "skeptical",
+        "predicate": "harmless_test_pattern",
+        "facts": ["path_role"],
+        "applicability": "Cited harmless test-role pattern and its applicability; test path alone is insufficient.",
+        "exceptions": [
+            "test_coverage_origin",
+            "test_applicable_convention",
+            "genuine_test_defect",
+        ],
+        "proof": "citation",
+        "outcome": "eliminate",
+        "reference": "Wrong assertions, mocks and waits remain defects.",
+        "consumers": ["validator", "challenger"],
+        "citation_roles": ["rule", "applicability"],
+    },
+    {
+        "category": "lint_catchable",
+        "stage": "skeptical",
+        "predicate": "tool_covers_claim",
+        "facts": [],
+        "applicability": "Cite applicable repository tool, rule or configuration and coverage of the actual claim.",
+        "exceptions": [],
+        "proof": "citation",
+        "outcome": "eliminate",
+        "reference": "Familiar syntax and assumed CI tools are insufficient.",
+        "consumers": ["validator", "challenger"],
+        "citation_roles": ["rule", "applicability"],
+    },
+    {
+        "category": "suppressed",
+        "stage": "skeptical",
+        "predicate": "suppression_covers_claim",
+        "facts": [],
+        "applicability": "Cited suppression location, range and rule cover this issue.",
+        "exceptions": [],
+        "proof": "citation",
+        "outcome": "eliminate",
+        "reference": "A nearby suppression does not establish applicability.",
+        "consumers": ["validator", "challenger"],
+        "citation_roles": ["rule", "applicability"],
+    },
+    {
+        "category": "opted_out",
+        "stage": "skeptical",
+        "predicate": "opt_out_covers_claim",
+        "facts": [],
+        "applicability": "Cite repository opt-out mechanism and applicable file or rule opt-out.",
+        "exceptions": [],
+        "proof": "citation",
+        "outcome": "eliminate",
+        "reference": "An author assertion is not an opt-out mechanism.",
+        "consumers": ["validator", "challenger"],
+        "citation_roles": ["rule", "applicability"],
+    },
+    {
+        "category": "intentional",
+        "stage": "skeptical",
+        "predicate": "confirmed_intent",
+        "facts": ["conventions_confirmation"],
+        "applicability": "Structured conventions side-record identity in the same file and 10-line bucket, plus independent rule/comment citation.",
+        "exceptions": ["proven_incorrect_or_dangerous_behavior_including_security"],
+        "proof": "citation",
+        "outcome": "eliminate",
+        "reference": "The side record is only a gating fact, never a finding or proof; description and intentional wording are insufficient.",
+        "consumers": ["validator", "challenger"],
+        "citation_roles": ["rule", "applicability"],
+    },
+]
+
 BRAND_MARK = "⚔️"
 
 BRAND_NAME = "Code Gauntlet"
@@ -1602,7 +1879,7 @@ class ResolvedSitesItem(TypedDict):
     line_start: int
     line_end: int
     anchor: str
-    location_status: _ResolvedSitesItemLocationStatus_Literal
+    location_status: LocationStatus
     diff_validation: ResolvedSitesItemDiffValidation
 
 
@@ -1625,6 +1902,244 @@ class AdmissionAssessmentsItem(TypedDict):
     references: list[str]
 
 
+class CitationRequest(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    request_id: str
+    role: _CitationRequestRole_Literal
+    snapshot_id: str
+    file: str
+    side: _CitationRequestSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ScopeAssessmentCitationsItem(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    request_id: str
+    role: _CitationRequestRole_Literal
+    snapshot_id: str
+    file: str
+    side: _CitationRequestSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ScopeAssessment(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    category: ExclusionCategory
+    applicability: _ScopeAssessmentApplicability_Literal
+    citations: list[ScopeAssessmentCitationsItem]
+
+
+class ValidatorReturnCitationsItem(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    request_id: str
+    role: _CitationRequestRole_Literal
+    snapshot_id: str
+    file: str
+    side: _CitationRequestSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ValidatorReturnScopeAssessmentsItemCitationsItem(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    request_id: str
+    role: _CitationRequestRole_Literal
+    snapshot_id: str
+    file: str
+    side: _CitationRequestSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ValidatorReturnScopeAssessmentsItem(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    category: ExclusionCategory
+    applicability: _ScopeAssessmentApplicability_Literal
+    citations: list[ValidatorReturnScopeAssessmentsItemCitationsItem]
+
+
+class ValidatorReturnSiteConfirmationsItem(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    confirmed: bool
+
+
+class ValidatorReturnAdmissionAssessmentsItem(TypedDict):
+    predicate: _AdmissionAssessmentsItemPredicate_Literal
+    status: _AdmissionAssessmentsItemStatus_Literal
+    references: list[str]
+
+
+class ValidatorReturn(TypedDict, total=False):
+    finding_id: str
+    stage: SkepticalStage
+    verdict: Verdict
+    citations: list[ValidatorReturnCitationsItem]
+    missing_evidence: str
+    scope_assessments: list[ValidatorReturnScopeAssessmentsItem]
+    confidence: float
+    justification: str
+    reachability: Reachability
+    site_confirmations: list[ValidatorReturnSiteConfirmationsItem]
+    policy_subject: _PolicySubject_Literal
+    admission_assessments: list[ValidatorReturnAdmissionAssessmentsItem]
+
+
+class ChallengerReturnCitationsItem(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    request_id: str
+    role: _CitationRequestRole_Literal
+    snapshot_id: str
+    file: str
+    side: _CitationRequestSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ChallengerReturnScopeAssessmentsItemCitationsItem(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    request_id: str
+    role: _CitationRequestRole_Literal
+    snapshot_id: str
+    file: str
+    side: _CitationRequestSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ChallengerReturnScopeAssessmentsItem(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    category: ExclusionCategory
+    applicability: _ScopeAssessmentApplicability_Literal
+    citations: list[ChallengerReturnScopeAssessmentsItemCitationsItem]
+
+
+class ChallengerReturn(TypedDict, total=False):
+    finding_id: str
+    stage: SkepticalStage
+    verdict: Verdict
+    citations: list[ChallengerReturnCitationsItem]
+    missing_evidence: str
+    scope_assessments: list[ChallengerReturnScopeAssessmentsItem]
+
+
+class SkepticalAssessmentsItemCitationsItem(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    request_id: str
+    role: _CitationRequestRole_Literal
+    snapshot_id: str
+    file: str
+    side: _CitationRequestSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class SkepticalAssessmentsItemScopeAssessmentsItemCitationsItem(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    request_id: str
+    role: _CitationRequestRole_Literal
+    snapshot_id: str
+    file: str
+    side: _CitationRequestSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class SkepticalAssessmentsItemScopeAssessmentsItem(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    category: ExclusionCategory
+    applicability: _ScopeAssessmentApplicability_Literal
+    citations: list[SkepticalAssessmentsItemScopeAssessmentsItemCitationsItem]
+
+
+class SkepticalAssessmentsItem(TypedDict, total=False):
+    finding_id: str
+    stage: SkepticalStage
+    verdict: Verdict
+    citations: list[SkepticalAssessmentsItemCitationsItem]
+    missing_evidence: str
+    scope_assessments: list[SkepticalAssessmentsItemScopeAssessmentsItem]
+
+
+class CiteResultsItemRequest(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    request_id: str
+    role: _CitationRequestRole_Literal
+    snapshot_id: str
+    file: str
+    side: _CitationRequestSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class CiteResultsItem(TypedDict):
+    request: CiteResultsItemRequest
+    status: _CiteResultsItemStatus_Literal
+    detail: str
+
+
+class ScopeFactsItem(TypedDict):
+    category: ExclusionCategory
+    predicate: str
+    value: bool | None
+    snapshot_id: str
+
+
+class ScopeDecisionsItemCitationsItem(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    request_id: str
+    role: _CitationRequestRole_Literal
+    snapshot_id: str
+    file: str
+    side: _CitationRequestSide_Literal
+    line_start: int
+    line_end: int
+    quote: str
+
+
+class ScopeDecisionsItem(TypedDict):
+    finding_id: str
+    stage: SkepticalStage
+    category: ExclusionCategory
+    applicability: _ScopeAssessmentApplicability_Literal
+    citations: list[ScopeDecisionsItemCitationsItem]
+
+
+class ReductionProvenance(TypedDict, total=False):
+    finding_id: str
+    disposition: Disposition
+    reason: _ReductionProvenanceReason_Literal
+    category: ExclusionCategory
+    stage: SkepticalStage
+    request_ids: list[str]
+
+
 class ResolvedReferencesSearchedPathsItem(TypedDict):
     path: str
     available: bool
@@ -1639,9 +2154,9 @@ class ResolvedReferencesCandidateTestsItem(TypedDict, total=False):
     file: str
     line_start: int
     line_end: int
-    path_role: _ResolvedReferencesCandidateTestsItemPathRole_Literal
+    path_role: PathRole
     file_added: bool | None
-    location_status: _ResolvedReferencesCandidateTestsItemLocationStatus_Literal
+    location_status: LocationStatus
     diff_validation: ResolvedReferencesCandidateTestsItemDiffValidation
 
 
@@ -1653,9 +2168,9 @@ class ResolvedReferencesProductionElement(TypedDict, total=False):
     file: str
     line_start: int
     line_end: int
-    path_role: _ResolvedReferencesProductionElementPathRole_Literal
+    path_role: PathRole
     file_added: bool | None
-    location_status: _ResolvedReferencesProductionElementLocationStatus_Literal
+    location_status: LocationStatus
     diff_validation: ResolvedReferencesProductionElementDiffValidation
 
 
@@ -1667,9 +2182,9 @@ class ResolvedReferencesDuplicateOf(TypedDict, total=False):
     file: str
     line_start: int
     line_end: int
-    path_role: _ResolvedReferencesDuplicateOfPathRole_Literal
+    path_role: PathRole
     file_added: bool | None
-    location_status: _ResolvedReferencesDuplicateOfLocationStatus_Literal
+    location_status: LocationStatus
     diff_validation: ResolvedReferencesDuplicateOfDiffValidation
 
 
@@ -1681,9 +2196,9 @@ class ResolvedReferencesPrecedent(TypedDict, total=False):
     file: str
     line_start: int
     line_end: int
-    path_role: _ResolvedReferencesPrecedentPathRole_Literal
+    path_role: PathRole
     file_added: bool | None
-    location_status: _ResolvedReferencesPrecedentLocationStatus_Literal
+    location_status: LocationStatus
     diff_validation: ResolvedReferencesPrecedentDiffValidation
 
 
@@ -1759,6 +2274,11 @@ class FindingMetadata(FindingFacts, total=False):
     admission_assessments: list[AdmissionAssessmentsItem]
     admission: Admission
     body_fix_task_eligible: bool
+    skeptical_assessments: list[SkepticalAssessmentsItem]
+    cite_results: list[CiteResultsItem]
+    scope_facts: list[ScopeFactsItem]
+    scope_decisions: list[ScopeDecisionsItem]
+    reduction_provenance: ReductionProvenance
     origin_dimension: Dimension
     effective_test_kind: EffectiveTestKind
     reference_diagnostics: list[ReferenceDiagnostic]

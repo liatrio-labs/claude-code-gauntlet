@@ -28,6 +28,7 @@ def sync_targets(
             continue
         stale.append(name)
         if not check:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             write_atomic(path, expected)
     return stale
 

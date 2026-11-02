@@ -10,10 +10,130 @@ from gauntlet import registry as python_registry
 from gauntlet.style import extract_rules
 
 from tests.support.js_values import js_values
-from tests.support.repository import tracked_paths
+from tests.support.repository import copy_generator_tree, tracked_paths
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_FORMAT = ROOT / "skills/code-gauntlet/references/report-format.md"
+
+
+def test_skeptical_contracts_follow_registry_rows(tmp_path, invoke):
+    from tests.test_contract_gen import TARGETS
+
+    copy_generator_tree(
+        ROOT,
+        tmp_path,
+        (path for path in TARGETS if not path.startswith("workflows/contracts/")),
+    )
+    source = tmp_path / "workflows/src/registry.js"
+    original = source.read_text(encoding="utf-8")
+    changed = (
+        original.replace("category: 'lint_catchable'", "category: 'configured_tool'")
+        .replace(
+            "consumers: row.stage === 'skeptical'",
+            "consumers: row.category === 'configured_tool' ? ['validator'] : row.stage === 'skeptical'",
+        )
+        .replace("snapshot_id", "source_snapshot_id")
+    )
+    assert changed != original
+    source.write_text(changed, encoding="utf-8", newline="")
+    for args in ([], ["--check"]):
+        result = invoke(
+            "generate_contract_requirements",
+            ["--repo-root", str(tmp_path), *args],
+            tmp_path,
+        )
+        assert result.returncode == 0, result.stderr
+    reg = gen.load_registry(str(tmp_path))
+    namespace = {}
+    exec(
+        (tmp_path / "scripts/gauntlet/registry.py").read_text(encoding="utf-8"),
+        namespace,
+    )
+    assert namespace["EXCLUSION_CATEGORIES"] == reg["exclusionCategories"]
+    assert "SKEPTICAL_RETURN_SCHEMAS" not in namespace
+    assert namespace["CITATION_REQUEST_SCHEMA"] == reg["citationRequestSchema"]
+    assert "source_snapshot_id" in namespace["CitationRequest"].__annotations__
+    from typing import get_args
+
+    for name, values in (
+        ("ExclusionStage", reg["exclusionStages"]),
+        ("ExclusionOutcome", [*reg["dispositions"], "admission"]),
+        ("ExclusionProof", reg["exclusionProofs"]),
+    ):
+        assert list(get_args(namespace[name])) == values
+    annotations = namespace["ExclusionRow"].__annotations__
+    for field in ("stage", "outcome", "proof"):
+        assert annotations[field] is namespace["Exclusion" + field.title()]
+    assert (
+        namespace["CitationRequest"].__annotations__["stage"]
+        is namespace["SkepticalStage"]
+    )
+    assert (
+        namespace["ScopeAssessment"].__annotations__["category"]
+        is namespace["ExclusionCategory"]
+    )
+    aliases = [
+        get_args(value)
+        for name, value in namespace.items()
+        if "_Literal" in name or name in ("SkepticalStage", "ExclusionCategory")
+    ]
+    assert len(aliases) == len(set(aliases))
+    categories = [row["category"] for row in reg["exclusionCategories"]]
+    assert list(get_args(namespace["ExclusionCategory"])) == categories
+    assert "configured_tool" in categories and "lint_catchable" not in categories
+    assert next(
+        row
+        for row in reg["exclusionCategories"]
+        if row["category"] == "configured_tool"
+    )["consumers"] == ["validator"]
+    decisions = reg["skepticalFindingProperties"]["scope_decisions"]["items"]
+    stages = decisions["properties"]["stage"]["enum"]
+    assert [
+        (
+            variant["properties"]["stage"]["const"],
+            variant["properties"]["category"]["const"],
+        )
+        for variant in decisions["anyOf"]
+    ] == [
+        (stage, row["category"])
+        for row in reg["exclusionCategories"]
+        for stage in stages
+        if stage in row["consumers"]
+    ]
+    for stage, schema in reg["skepticalReturnSchemas"].items():
+        consumed = [
+            row for row in reg["exclusionCategories"] if stage in row["consumers"]
+        ]
+        contract = (
+            tmp_path / f"workflows/contracts/{stage}-return-contract.md"
+        ).read_text(encoding="utf-8")
+        assert json.loads(_JSON_BLOCK.search(contract).group(1)) == schema
+        assert schema["properties"]["scope_assessments"]["items"]["properties"][
+            "category"
+        ]["enum"] == [row["category"] for row in consumed]
+        assert [
+            variant["properties"]["category"]["const"]
+            for variant in schema["properties"]["scope_assessments"]["items"]["anyOf"]
+        ] == [row["category"] for row in consumed]
+        assert (
+            "source_snapshot_id"
+            in schema["properties"]["citations"]["items"]["properties"]
+        )
+        for row in reg["exclusionCategories"]:
+            assert (f"`{row['category']}`: {row['applicability']}" in contract) == (
+                row in consumed
+            )
+    reference = (
+        tmp_path / "workflows/contracts/scope-exclusion-contract.md"
+    ).read_text(encoding="utf-8")
+    for row in reg["exclusionCategories"]:
+        assert f"## `{row['category']}`" in reference
+        assert row["applicability"] in reference and row["reference"] in reference
+    for name in ("validator", "challenger"):
+        assert not (tmp_path / f"agents/{name}.md").exists()
+    for name in DISCOVERY:
+        relative = f"agents/{name}.md"
+        assert (tmp_path / relative).read_bytes() == (ROOT / relative).read_bytes()
 
 
 def test_report_extras_preserve_structured_values():
