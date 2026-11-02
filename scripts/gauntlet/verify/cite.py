@@ -10,7 +10,15 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
-from gauntlet.diff import annotate_diff, parse_diff, patch_report_policy
+from gauntlet.diff import (
+    annotate_diff,
+    diff_path_spelling,
+    is_line_valid,
+    is_new_file,
+    old_line_for,
+    parse_diff,
+    patch_report_policy,
+)
 from gauntlet.fs import write_atomic
 from gauntlet.location import Quote, valid_quote
 from gauntlet.registry import (
@@ -309,12 +317,20 @@ def run_citations(
             row = result(record, status, detail)
             if facts is not None and detail == "explicit_source_range":
                 q = cast(CitationRequest, record["request"])
-                row["added_lines"] = [
-                    line
-                    for line in range(q["line_start"], q["line_end"] + 1)
-                    if q["side"] == "head"
-                    and facts.valid_lines.get((q["file"], line), 0) is None
-                ]
+                added_lines = []
+                for line in range(q["line_start"], q["line_end"] + 1):
+                    if q["side"] == "old":
+                        continue
+                    path = diff_path_spelling(facts, q["file"], line)
+                    if is_new_file(facts, path):
+                        added_lines.append(line)
+                    elif not is_line_valid(facts, path, line):
+                        # Missing diff membership cannot prove pre-existing text.
+                        break
+                    elif old_line_for(facts, path, line) is None:
+                        added_lines.append(line)
+                else:
+                    row["added_lines"] = added_lines
             rows.append(row)
         attempts[-1]["results"] = rows
         try:

@@ -82,7 +82,9 @@ def test_citation_quote_checks_are_explicit_and_bounded(tmp_path, monkeypatch, i
         assert row["status"] == expected, (changes, row)
         assert row["request"] == {**q, **changes}
         assert row["source"]["snapshot_id"] == capture["manifest_sha256"]
-        if expected == "matched":
+        if expected == "matched" and (
+            row["request"]["side"] == "old" or row["request"]["file"] == "source"
+        ):
             assert row["added_lines"] == (
                 [3]
                 if row["request"]["file"] == "source"
@@ -90,6 +92,8 @@ def test_citation_quote_checks_are_explicit_and_bounded(tmp_path, monkeypatch, i
                 and row["request"]["line_start"] <= 3 <= row["request"]["line_end"]
                 else []
             )
+        elif expected == "matched":
+            assert "added_lines" not in row
     malformed, _, _ = call([None, q], batch="fffffff0")
     assert [r["status"] for r in malformed["result"]["citations"]] == [
         "rejected",
@@ -103,6 +107,35 @@ def test_citation_quote_checks_are_explicit_and_bounded(tmp_path, monkeypatch, i
     (directory / "manifest.json").write_bytes(b"{}")
     env, _, _ = call([q], batch="abcdef01")
     assert env["result"]["citations"][0]["status"] == "unavailable"
+
+
+@pytest.mark.parametrize("case", ["prefix_alias", "new_file", "undeterminable"])
+def test_cite_added_lines_require_known_diff_membership(
+    tmp_path, monkeypatch, invoke, case
+):
+    diff = (
+        "diff --git a/source b/source\n--- a/source\n+++ b/source\n"
+        f"@@ -2,0 +3 @@\n+{QUOTE}\n"
+    )
+    if case == "new_file":
+        diff = "diff --git a/source b/source\n--- /dev/null\n+++ b/source\n"
+    call, q, _, _, _ = citation_cli(
+        tmp_path,
+        monkeypatch,
+        invoke,
+        source_file="b/source" if case == "prefix_alias" else "source",
+        diff=diff.encode(),
+    )
+    start = 2 if case == "undeterminable" else 3
+    request = {**q, "line_start": start, "line_end": 3}
+    if case == "undeterminable":
+        request["quote"] = "second_source_line();\n" + QUOTE
+    row = call([request])[0]["result"]["citations"][0]
+    assert row["status"] == "matched"
+    if case == "undeterminable":
+        assert "added_lines" not in row
+    else:
+        assert row["added_lines"] == [3]
 
 
 def test_cite_cli_reserves_attempts_and_reuses_terminal_siblings(
