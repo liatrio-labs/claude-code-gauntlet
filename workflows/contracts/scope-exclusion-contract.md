@@ -6,13 +6,13 @@ Generated preparatory data; active discovery exclusions remain in force.
 
 Consumers: early; predicate: `blame_pre_existing`; proof: `verified_fact`; outcome: `report_only`.
 
-Actual git_blame pre-existence with no affected cross-file references.
+Actual git_blame pre-existence and verified in_diff=false; git_blame provenance excludes cross-file effects.
 
 Origin surfaced, off-diff placement and descriptions do not prove pre-existence.
 
-Exceptions: cross_file_effect_created_by_pr.
+Exceptions: none.
 
-Facts: blame_class, blame_source, cross_file_refs.
+Facts: blame_class, blame_source, in_diff.
 
 ## `untouched_line`
 
@@ -30,37 +30,37 @@ Facts: in_diff.
 
 Consumers: early; predicate: `generated_or_vendored`; proof: `verified_fact`; outcome: `eliminate`.
 
-git check-attr at captured head or generated markers in the first source lines.
+git check-attr at captured merge base or the same canonical header in the first source lines at head and base; explicit -linguist-generated overrides markers.
 
-A conventions word is not classification; the security exception requires no confirmed vulnerable version.
+PR-controlled classification cannot exclude its own changes; security findings survive.
 
-Exceptions: security_dependency_vulnerability_claim.
+Exceptions: security_dimension.
 
-Facts: linguist-generated, linguist-vendored, generated_marker.
+Facts: linguist_generated, linguist_vendored, generated_marker.
 
 ## `docs_only`
 
 Consumers: early; predicate: `documentation_only_code_claim`; proof: `verified_fact`; outcome: `eliminate`.
 
-Finding file has a source role and every changed file is documentation, verified at captured head by git check-attr.
+Finding file has a source role, is proven non-documentation at base, and every changed file is documentation at base.
 
 Extensions and mixed PRs prove neither whole-PR documentation scope nor irrelevance; unknown stays unknown.
 
-Exceptions: documentation_or_comment_claim, test_applicable_documented_convention.
+Exceptions: security_dimension, documentation_or_comment_claim, test_applicable_documented_convention.
 
-Facts: linguist-documentation, all_changed_files_documentation, path_role.
+Facts: linguist_documentation, all_changed_files_documentation, path_role.
 
 ## `lockfile`
 
-Consumers: early; predicate: `mechanical_lockfile`; proof: `verified_fact`; outcome: `eliminate`.
+Consumers: early; predicate: `lockfile`; proof: `verified_fact`; outcome: `eliminate`.
 
-Closed basename list and verified mechanical scope.
+Lockfile scope is basename-only membership in this closed list.
 
-The security exception is claim-based and needs no prior vulnerable-version confirmation.
+Security findings survive regardless of the lockfile basename.
 
-Exceptions: security_dependency_vulnerability_claim.
+Exceptions: security_dimension.
 
-Facts: lockfile_basename, mechanical_change.
+Facts: lockfile_basename.
 
 Basenames: package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml, Cargo.lock, Gemfile.lock, poetry.lock, Pipfile.lock, uv.lock, composer.lock, packages.lock.json.
 

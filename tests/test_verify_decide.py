@@ -42,6 +42,53 @@ def test_unreadable_non_source_path_has_unknown_role():
     assert path_role("vendor/missing", readable=False) == "unknown"
 
 
+def test_scope_facts_isolate_findings_without_file(tmp_path, monkeypatch):
+    from gauntlet.registry import SCOPE_FACT_KEYS
+
+    init_git_repo(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".gitattributes").write_text(
+        "source linguist-generated\n", encoding="utf-8", newline=""
+    )
+    (tmp_path / "source").write_text("return old_value;\n", encoding="utf-8")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "base")
+    base = git(tmp_path, "rev-parse", "HEAD")
+    (tmp_path / "source").write_text("return new_value;\n", encoding="utf-8")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "head")
+    source = SourceAdapter.capture(tmp_path, "branch", None)
+    diff = git(tmp_path, "diff", base, source.captured_head).encode()
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    capture = source.capture_sources(output, "scope", diff, base)
+    patch = output / "diff.patch"
+    patch.write_bytes(diff)
+    findings = [
+        {"id": "missing"},
+        {"id": "null", "file": None},
+        {"id": "empty", "file": ""},
+        {"id": "known", "file": "source", "anchor": "return new_value;"},
+    ]
+    result = verify.run_verification(
+        findings,
+        verify.VerifyContext(
+            str(tmp_path), base, target_kind="branch", source=capture.adapter(tmp_path)
+        ),
+        str(patch),
+    )
+    assert result["verified"] == findings
+    for finding in findings[:3]:
+        assert finding["path_role"] == "unknown"
+        assert all(
+            finding.get("scope_facts", {}).get(key) is None for key in SCOPE_FACT_KEYS
+        )
+    assert findings[3]["scope_facts"]["linguist_generated"] is True
+    assert (
+        findings[3]["scope_facts"]["snapshot_id"] == capture.receipt["manifest_sha256"]
+    )
+
+
 def test_portable_search_directory_uses_lstat(tmp_path, monkeypatch):
     (tmp_path / "tests").mkdir()
     monkeypatch.setattr(os, "supports_dir_fd", set())

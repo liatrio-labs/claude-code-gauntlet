@@ -46,6 +46,7 @@ from gauntlet.registry import (
     ResolvedSitesItem,
     VerifySliceFinding,
 )
+from gauntlet.scope_facts import repository_scope
 
 Origin = Literal["new", "surfaced"]
 BlameProvenance = (
@@ -310,8 +311,21 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
         return _stamp_blame(finding, ("unknown", "unavailable"), original_severity)
 
     blame_cmd = ["git", "blame", f"-L{line_start},{line_end}"]
-    if context.target_kind != "local":
-        blame_cmd.append(cast(str, context.sources().captured_head))
+    sources = context.sources()
+    if context.target_kind == "local" and sources.source_capture is not None:
+        # Local edits have no historical blame; only identical captured spans do.
+        captured = sources.read(filepath)
+        committed = SourceAdapter(
+            Path(context.repo_root), "branch", sources.captured_head
+        ).read(filepath)
+        if (
+            captured is None
+            or committed is None
+            or captured[span[0] - 1 : span[1]] != committed[span[0] - 1 : span[1]]
+        ):
+            return _stamp_blame(finding, ("unknown", "unavailable"), original_severity)
+    if context.target_kind != "local" or sources.source_capture is not None:
+        blame_cmd.append(cast(str, sources.captured_head))
     blame_cmd.extend(["--", filepath])
     blame_stdout, blame_stderr, blame_rc = proc.output(blame_cmd)
 
@@ -665,7 +679,10 @@ def run_verification(
     elif findings:
         warn("context map unavailable: context/map paths not supplied")
     sources = context.sources()
+    scope = repository_scope(sources, indexed, [f.get("file", "") for f in findings])
     for finding in findings:
+        if (file_scope := scope.get(finding.get("file", ""))) is not None:
+            finding["scope_facts"] = file_scope
         _resolve_references(finding, context, indexed)
         if "sites" in finding:
             finding["resolved_sites"] = []

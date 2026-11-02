@@ -74,7 +74,7 @@ test('skeptical descriptors derive verdict and scope variants', async () => {
       assert.equal(Object.hasOwn(schema.properties, name), false);
     }
   }
-  for (const name of ['skeptical_assessments', 'cite_results', 'scope_decisions']) assert.ok(FINDING_PATH_DESCRIPTORS[name]);
+  for (const name of ['skeptical_assessments', 'cite_results']) assert.ok(FINDING_PATH_DESCRIPTORS[name]);
   const proof = acceptSkepticalReturn({ finding_id: 'F', stage: 'validator', verdict: 'real', scope_assessments: [], citations: [request('validator')] }, 'F', 'validator');
   const normalized = normalizeFindingPaths([{ id: 'F', file: 'src/service', skeptical_assessments: [proof] }], '/repo').valid[0];
   assert.deepEqual(normalized.skeptical_assessments, [proof]);
@@ -93,7 +93,7 @@ test('skeptical descriptors derive verdict and scope variants', async () => {
 test('scope schemas bind category enums and variants to their consumers', () => {
   const schemas = [...Object.entries(SKEPTICAL_RETURN_SCHEMAS).map(([stage, schema]) =>
     [[stage], schema.properties.scope_assessments.items]),
-  [['validator', 'challenger'], SKEPTICAL_FINDING_PROPERTIES.scope_decisions.items]];
+  [['early', 'post_validation'], SKEPTICAL_FINDING_PROPERTIES.scope_decisions.items]];
   for (const [stages, schema] of schemas) {
     const rows = EXCLUSION_CATEGORIES.filter((row) => row.consumers.some((stage) => stages.includes(stage)));
     assert.deepEqual(schema.properties.category.enum, rows.map((row) => row.category));
@@ -106,7 +106,7 @@ test('exclusion rows use verified blame facts and defer latent placement until a
   const row = (category) => EXCLUSION_CATEGORIES.find((item) => item.category === category);
   assert.equal(row('latent').stage, 'post_validation');
   assert.deepEqual(row('latent').consumers, ['post_validation']);
-  assert.deepEqual(row('pre_existing').facts, ['blame_class', 'blame_source', 'cross_file_refs']);
+  assert.deepEqual(row('pre_existing').facts, ['blame_class', 'blame_source', 'in_diff']);
   assert.ok(EXCLUSION_NEW_FACTS.includes('in_diff'));
 });
 
