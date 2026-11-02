@@ -457,6 +457,12 @@ export const SKEPTICAL_FINDING_PROPERTIES = deepFreeze({
     missing_evidence: { type: 'string' },
     category: { type: 'string', enum: Object.keys(EXCLUSION_BY_CATEGORY) },
   }, ['stage', 'verdict', 'missing_field', 'missing_fields', 'missing_evidence', 'category']) },
+  reduction_proofs: { type: 'array', items: closedDispatchRow({
+    stage: SKEPTICAL_IDENTITY.stage,
+    verdict: { type: ['string', 'null'], enum: ['real', 'refuted', 'needs_evidence', null] },
+    proved: { type: 'boolean' }, unresolved: { type: 'boolean' }, unavailable: { type: 'boolean' },
+    operational_gap: { type: 'boolean' }, non_dispatch: { type: 'boolean' },
+  }) },
   scope_decisions: { type: 'array', items: { ...closedDispatchRow({
     stage: { type: 'string', enum: SCOPE_STAGES },
     category: { type: 'string', enum: SCOPE_ROWS.map((row) => row.category) },

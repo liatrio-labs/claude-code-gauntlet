@@ -818,6 +818,11 @@ test('whole issue groups reach every artifact', async (t) => {
   assert.equal((first.payload.report.match(/#### finding CORE\n/g) || []).length, 2);
   const resumed = await replayProducedCheckpoint(args, first.payload.checkpoints);
   assert.deepEqual(resumed.payload.postReview, first.payload.postReview);
+  const cited = first.payload.checkpoints.phases.cite;
+  assert.deepEqual(cited.findings.map((f) => f.id), raw.findings.map((f) => f.id));
+  const citeResume = await runAndCapture(validArgs({ ...args, checkpoints: { cite: cited } }));
+  assert.deepEqual(citeResume.payload.postReview, first.payload.postReview);
+  assert.deepEqual(citeResume.payload.findings, first.payload.findings);
   const returned = await runAndCapture(validArgs({ ...args, persist: { returnPrimaries: true }, checkpoints: { challenge: challengeOutput({ findings: raw.findings.slice(0, 3) }) } }));
   const entries = returned.out.persistReturn.entries;
   assert.deepEqual(deriveFromPlan(JSON.parse(entries.at(-1).text), entries[0].text).postReview.findings, groupPost);
@@ -962,6 +967,14 @@ test('final disposition survives replay and persistence', async () => {
   for (const i of [2, 3, 4, 5, 6]) assert.equal(body.includes(`finding RIGHT${i}`), false);
   assert.equal(body.includes('claim-1'), false);
   assert.equal(body.includes('claim-0'), false);
+  const outage = { ...reportInput, unverified: ['PRIVATE', 'OTHER'].map((id) => makeFinding(id, {
+    disposition: 'held_back', cite_results: [{ status: 'unavailable' }],
+    suggested_fix_code: 'PRIVATE_PATCH', suggestion: 'PRIVATE_TASK' })) };
+  for (const text of [renderSummaryBody(outage), renderReport(outage).split('## Change Context')[0]]) {
+    assert.equal((text.match(/Citation checking was unavailable/g) || []).length, 1);
+    assert.match(text, /held back for incomplete evidence/);
+    assert.doesNotMatch(text, /PRIVATE|OTHER/);
+  }
 });
 
 test('body findings rank with inline findings under the delivery cap', async () => {
@@ -997,6 +1010,10 @@ test('challenge checkpoint owns upstream eliminations across resume', async () =
   ] });
   assert.deepEqual(resumed.payload.findings.map((f) => f.id), ['KEEP', 'VERIFY_OLD', 'OLD']);
   assert.deepEqual(resumed.payload.checkpoints.phases.challenge.eliminated.map((f) => f.id), ['VERIFY_OLD', 'OLD']);
+  const citeResume = await runAndCapture(validArgs({ checkpoints: { cite: first.payload.checkpoints.phases.cite } }));
+  assert.deepEqual(citeResume.payload.findings, first.payload.findings);
+  assert.deepEqual(citeResume.payload.checkpoints.phases.cite.eliminated.map((f) => f.id), ['VERIFY_OLD', 'OLD']);
+  assert.equal(citeResume.ctx.calls.some((c) => /^(cite-|challenge-|validate-|verify-)/.test(c.label)), false);
 });
 
 test('legacy verify facts need admission and skipped challenges cannot place', async () => {

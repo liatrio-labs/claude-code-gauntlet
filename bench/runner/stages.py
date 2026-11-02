@@ -7,7 +7,8 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypedDict, get_args
 
-from gauntlet.registry import QualityBasis, TestKind
+from gauntlet import registry as contract
+from gauntlet.registry import ExclusionCategory, QualityBasis, TestKind
 
 from bench.runner.contracts import ScoreRef, artifact_allowed, exclusive_json
 from bench.runner.decode import decode
@@ -37,6 +38,7 @@ class FindingVersion:
     discovery_agent: str
     discovery_dimension: Dimension
     finding: dict[str, Any]
+    issue_id: str | None = None
 
     def projection(self):
         return dict(self.finding)
@@ -46,36 +48,41 @@ AdmissionStatus = Literal["report_only", "held_back"]
 PolicySubject = Literal["test_defect", "coverage", "ordinary", "unresolved"]
 
 
-class SelectionDetail(TypedDict):
-    kind: TestKind | QualityBasis | Literal["ordinary", "unknown"]
-
-
 class AdmissionReason(TypedDict):
     predicate: str
     status: AdmissionStatus
 
 
-class AdmissionContextDetail(SelectionDetail):
+class _DecisionFields(TypedDict, total=False):
+    stage: Literal["early", "post_validation", "validator", "challenger"]
+    category: ExclusionCategory
+    predicate: str
+    status: AdmissionStatus
+    kind: TestKind | QualityBasis | Literal["ordinary", "unknown"]
     policy_subject: PolicySubject
-    original_producer: str
-
-
-class AdmissionDetail(AdmissionContextDetail, AdmissionReason):
-    pass
-
-
-class ChallengeTerminalDetail(AdmissionContextDetail):
-    predicate: Literal["challenge_terminal"]
-
-
-class DisposalDetail(AdmissionContextDetail):
     predicates: list[AdmissionReason]
     surface: Literal["deliver", "body", "held_back", "report_only"]
 
 
-DecisionDetail = (
-    SelectionDetail | AdmissionDetail | ChallengeTerminalDetail | DisposalDetail
-)
+class DecisionDetail(_DecisionFields):
+    original_producer: str
+    finding_id: str | None
+    reduction: contract.ReductionDetailItem | contract.ReductionProvenance
+    issue_id: str
+    source: dict[str, Any] | None
+    request_ids: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class VerdictObservation:
+    trace_id: str
+    stage: Literal["validator", "challenger"]
+    verdict: Literal["real", "refuted", "needs_evidence"] | None
+    unresolved: bool
+    proved: bool
+    unavailable: bool
+    operational_gap: bool = False
+    non_dispatch: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +106,8 @@ class StageSnapshot:
     coverage: Coverage
     cap: int | None
     cap_hit: bool
+    verdicts: tuple[VerdictObservation, ...] | None = None
+    workload: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +117,20 @@ class MeasurementTrace:
     versions: tuple[FindingVersion, ...]
     snapshots: tuple[StageSnapshot, ...]
     complete: bool
+
+
+def trace_issue_ids(trace):
+    issues = {
+        d.trace_id: d.detail["issue_id"]
+        for s in trace.snapshots
+        if s.stage == "dispose"
+        for d in s.decisions
+        if d.detail and "issue_id" in d.detail
+    }
+    issues.update(
+        (v.trace_id, v.issue_id) for v in trace.versions if v.issue_id is not None
+    )
+    return issues
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +220,14 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
                     and bool(decision.related_trace_ids)
                 ),
                 "fold requires constituent identities and coalescence",
+            )
+        if snapshot.verdicts is not None:
+            _require(snapshot.stage == "cite", "verdict proof seam")
+            keys = [(v.trace_id, v.stage) for v in snapshot.verdicts]
+            _require(len(keys) == len(set(keys)), "duplicate assessment observation")
+            _require(
+                all(v.trace_id in identities for v in snapshot.verdicts),
+                "assessment reference",
             )
     actual = tuple(s.stage for s in trace.snapshots)
     reducers = set(actual) & {"dispose", "holdback"}

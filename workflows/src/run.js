@@ -130,7 +130,8 @@ export async function deliverFromCheckpoint(c, A, state) {
   const { summarize: summaryOut, discover: discoverOut, merge: mergeOut,
     verify: verifyOut, validate: validateOut, filter: filterOut } = phaseOutputs;
   const summaryCopy = deepClone(summaryOut);
-  const rawChallenge = phaseOutputs.cite;
+  // Legacy delivery replay has no cite phase and must stay closed without dispatching proof work.
+  const rawChallenge = phaseOutputs.cite || phaseOutputs.challenge;
   rewriteHostPathText(phaseOutputs.challenge || rawChallenge, summaryCopy, A.repoRoot);
   rewriteHostPathText(rawChallenge, summaryCopy, A.repoRoot);
   for (const field of ['findings', 'unverified']) for (const finding of phaseOutputs.challenge?.[field] || []) refreshAdmission(finding);
@@ -143,6 +144,11 @@ export async function deliverFromCheckpoint(c, A, state) {
     refreshAdmission(finding);
   }
   const challengeOut = disposeFindings(challengeCopy);
+  if (measurementTrace && phaseOutputs.cite) {
+    const disposed = [...challengeOut.findings, ...challengeOut.unverified, ...challengeOut.eliminated];
+    const cited = [...(rawChallenge.findings || []), ...(rawChallenge.unverified || [])];
+    recordStage(measurementTrace, 'cite', rawChallenge, { verdictFindings: disposed.filter((f) => cited.some((row) => row.trace_id === f.trace_id)) });
+  }
   if (measurementTrace) recordStage(measurementTrace, 'dispose', challengeOut, { decisions: challengeOut.decisions });
   if (markedCount > 0) {
     gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
@@ -375,7 +381,7 @@ export async function runWith(ctx, rawArgs) {
         .map((f) => traceDecision(f, 'audit_overlap', 'removed-test audit represents this anchor')));
     }
     if (name === 'discover') discoveryDecisions = [...decisionsFor(out), ...rejected];
-    if (measurementTrace && ['merge', 'verify', 'validate', 'filter', 'challenge', 'cite'].includes(name)) {
+    if (measurementTrace && ['merge', 'verify', 'validate', 'filter', 'challenge'].includes(name)) {
       recordStage(measurementTrace, name, out, { replayed,
         ...(!replayed && ((name === 'verify' && out.verified === false) || (name === 'validate' && (out.stats?.skipped > 0 || out.stats?.incomplete > 0)) || (name === 'challenge' && out.stats?.skipped > 0)) ? { coverage: 'partial' } : {}),
         ...(name === 'merge' ? { decisions: [...discoveryDecisions, ...rejected] } : rejected.length ? { decisions: rejected } : {}),

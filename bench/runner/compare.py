@@ -4,6 +4,7 @@ import math
 import random
 import sys
 from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from statistics import NormalDist
 from typing import Literal, TypedDict, get_args
@@ -313,6 +314,7 @@ class DeliveryDiagnostics:
     surfaces: dict[str, DeliveryDiagnosticsWire]
     record_coalescence: DeliveryDiagnosticsWire
     admission: DeliveryDiagnosticsWire
+    verdicts: DeliveryDiagnosticsWire
 
 
 @dataclass(frozen=True, slots=True)
@@ -563,6 +565,186 @@ def _record_coalescence(trace):
     return None
 
 
+def trace_records(trace):
+    """Use the reducer's persisted issue identity for both diagnostic views."""
+    final = next((s for s in trace.snapshots if s.stage == "dispose"), None)
+    if final is None:
+        return None
+    versions = {v.version_id: v for v in trace.versions}
+    latest = {v.trace_id: v.finding for v in trace.versions}
+    identities = {versions[v].trace_id for v in final.finding_version_ids}
+    identities.update(d.trace_id for d in final.decisions)
+    issues = stages.trace_issue_ids(trace)
+    return [
+        {
+            "trace_id": tid,
+            "member_id": tid,
+            "finding_id": f.get("id"),
+            "issue_id": issues.get(tid),
+            "original_producer": f.get("discovery_agent", f.get("agent")),
+            "origin_dimension": f.get("origin_dimension"),
+            "policy_subject": f.get("policy_subject"),
+            "admission": f.get("admission"),
+            "disposition": f.get("disposition"),
+            "scope": f.get("scope_decisions", []),
+            "reasons": f.get("disposition_reasons", []),
+        }
+        for tid in sorted(identities)
+        for f in [latest[tid]]
+    ]
+
+
+def _attempt_latency_ms(attempts):
+    durations = []
+    for attempt in attempts:
+        try:
+            start, end = (
+                datetime.fromisoformat(attempt[k].replace("Z", "+00:00"))
+                for k in ("started_at", "completed_at")
+            )
+            duration = (end - start).total_seconds() * 1000
+            if duration >= 0:
+                durations.append(duration)
+        except (KeyError, TypeError, ValueError):
+            pass
+    return sum(durations) if attempts and len(durations) == len(attempts) else None
+
+
+def _cite_workload(raw):
+    from gauntlet.registry import STAGE_COSTS
+
+    batches = raw.get("batches", [])
+    capture = raw.get("source_capture")
+    return dict(
+        batches=len(batches),
+        attempts=sum(b["attempts"] for b in batches),
+        retries=sum(max(0, b["attempts"] - 1) for b in batches),
+        exhausted=sum(
+            b["attempts"] >= STAGE_COSTS["cite"]["attempts"]
+            and b.get("state") != "complete"
+            for b in batches
+        ),
+        source_capture={
+            k: capture.get(k) for k in ("copied_files", "copied_bytes", "failure_count")
+        }
+        if capture
+        else None,
+    )
+
+
+def _stage_workload(snapshot):
+    raw = snapshot.workload or {}
+    attempts = raw.get("attempt_timestamps", raw.get("attempts"))
+    if not isinstance(attempts, list):
+        attempts = [
+            a for b in raw.get("batches", []) for a in b.get("attempt_timestamps", [])
+        ]
+    return {
+        **raw,
+        **(_cite_workload(raw) if snapshot.stage == "cite" else {}),
+        "latency_ms": _attempt_latency_ms(attempts),
+        "cost_usd": None,
+    }
+
+
+def trace_burden(trace):
+    """Burden and dispatch workload are available before verdict/cite support."""
+    if not trace.complete:
+        return None
+
+    challenge = next((s for s in trace.snapshots if s.stage == "challenge"), None)
+    discovery = next((s for s in trace.snapshots if s.stage == "discover"), None)
+    overflow = (
+        sum(d.reason_code == "challenge_cap" for d in challenge.decisions)
+        if challenge
+        else None
+    )
+    dispatched = (challenge.workload or {}).get("dispatched") if challenge else None
+    if challenge and dispatched is None:
+        latest = {v.trace_id: v.finding for v in trace.versions}
+        dispatched = sum(
+            f.get("challenge") in ("survived", "failed", "incomplete")
+            for f in latest.values()
+        )
+    workloads = {
+        s.stage: _stage_workload(s)
+        for s in trace.snapshots
+        if s.stage in ("verify", "validate", "challenge", "cite")
+    }
+    if challenge:
+        workloads["challenge"]["dispatched"] = dispatched
+    return {
+        "candidate_records": len(discovery.finding_version_ids) if discovery else None,
+        "challenge_overflow": overflow,
+        "challenge_overflow_rate": overflow / (dispatched + overflow)
+        if overflow is not None and dispatched is not None and dispatched + overflow
+        else None,
+        "challenge_dispatched": dispatched,
+        "workload": workloads,
+        "telemetry_unavailable": {
+            "latency_ms": "recorded attempt timestamps unavailable or incomplete",
+            "cost_usd": "priced from recorded screens later",
+        },
+    }
+
+
+def verdict_diagnostics(trace):
+    """Pool disposal's proof stamps, retaining failures and empty reviews."""
+    burden = trace_burden(trace)
+    if burden is None:
+        return None
+    cite = next((s for s in trace.snapshots if s.stage == "cite"), None)
+    result = {**burden, "records": trace_records(trace)}
+    if cite is None or cite.verdicts is None:
+        return result
+    latest = {v.trace_id: v.finding for v in trace.versions}
+    required = {(r.trace_id, r.stage) for r in cite.verdicts}
+    rows = tuple(
+        decode(
+            stages.VerdictObservation,
+            {"trace_id": tid, **row},
+        )
+        for tid, finding in latest.items()
+        for row in finding.get("reduction_proofs", [])
+        if (tid, row["stage"]) in required
+    )
+
+    def counts(rows):
+        proof = [r for r in rows if r.verdict in ("real", "refuted")]
+        matched = sum(r.proved for r in proof)
+        unresolved = sum(r.unresolved for r in rows)
+        return {
+            "required": len(rows),
+            "proof_denominator": len(proof),
+            "proved": matched,
+            "proof_rate": matched / len(proof) if proof else None,
+            "unresolved": unresolved,
+            "needs_evidence_share": unresolved / len(rows) if rows else None,
+            "operational_gaps": sum(r.operational_gap for r in rows),
+            "non_dispatch": sum(r.non_dispatch for r in rows),
+            "unavailable": sum(r.unavailable for r in rows),
+        }
+
+    result.update(
+        aggregate=counts(rows),
+        stages={
+            s: {
+                **counts([r for r in rows if r.stage == s]),
+                "verdicts": {
+                    v: counts([r for r in rows if r.stage == s and r.verdict == v])
+                    for v in ("real", "refuted")
+                },
+            }
+            for s in ("validator", "challenger")
+        },
+        verdicts={
+            v: counts([r for r in rows if r.verdict == v]) for v in ("real", "refuted")
+        },
+        assessments=[asdict(r) for r in rows],
+    )
+    return result
+
+
 def delivery_diagnostics(packet, population):
     """One row per selected review; consumers pool over rows, including empty ones."""
     inventory = read_json(packet.root / "complete.json")["files"]
@@ -636,34 +818,16 @@ def delivery_diagnostics(packet, population):
                 ),
                 reason or "surface scoring unavailable",
             )
-        fold = admission = None
+        fold = admission = verdicts = None
         trace_evidence = ("stage_trace_bindings.json",)
         if url in traces:
             path, trace = traces[url]
             trace_evidence += (path.relative_to(packet.root.resolve()).as_posix(),)
             fold = _record_coalescence(trace)
-            final = next((s for s in trace.snapshots if s.stage == "dispose"), None)
-            if final is not None:
-                versions = {v.version_id: v for v in trace.versions}
-                latest = {v.trace_id: v.finding for v in trace.versions}
-                identities = {
-                    versions[v].trace_id for v in final.finding_version_ids
-                } | {d.trace_id for d in final.decisions}
-                admission = {
-                    "records": [
-                        {
-                            "trace_id": tid,
-                            "origin_dimension": f.get("origin_dimension"),
-                            "original_producer": f.get("agent"),
-                            "policy_subject": f.get("policy_subject"),
-                            "admission": f.get("admission"),
-                            "disposition": f.get("disposition"),
-                            "reasons": f.get("disposition_reasons", []),
-                        }
-                        for tid in sorted(identities)
-                        for f in [latest[tid]]
-                    ]
-                }
+            verdicts = verdict_diagnostics(trace)
+            records = trace_records(trace)
+            if records is not None:
+                admission = {"records": records}
         rows.append(
             DeliveryDiagnostics(
                 packet.score_ref,
@@ -675,6 +839,9 @@ def delivery_diagnostics(packet, population):
                     "complete trace unavailable",
                 ),
                 metric(admission, trace_evidence, "admission trace unavailable"),
+                metric(
+                    verdicts, trace_evidence, "recorded assessment proof unavailable"
+                ),
             )
         )
     return tuple(rows)
