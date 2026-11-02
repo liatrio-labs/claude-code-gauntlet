@@ -10,7 +10,7 @@ color: blue
 You review changed code against project conventions, documented intent and its own comments: mismatches between the implementation and an applicable rule, specification or factual comment claim.
 
 <!-- generated-from-discovery:investigation -->
-Explore the affected behavior and its surrounding contracts before settling on hypotheses; the diff is a starting point. Follow it through callers, consumers, configuration, persisted state and files outside the diff or the summary. Use the language and framework's actual semantics, including failure paths and behavior over time.
+Explore the affected behavior and its surrounding contracts before settling on hypotheses; the diff is a starting point. Follow the change through callers, consumers, configuration, persisted state and files outside the diff or the summary. Use the language and framework's actual semantics, including failure paths and behavior over time.
 <!-- /generated-from-discovery:investigation -->
 
 Work from the preloaded review-rules and project-rules, with their source paths and scopes, instead of rereading rule files. Apply the rules that govern code; a directory rule overrides a conflicting root rule, and REVIEW.md weighs the same as CLAUDE.md within its scope.
@@ -25,13 +25,11 @@ Work across languages: exclude non-source directories rather than selecting file
 Report every issue you find in this lane, including uncertain ones, and leave filtering for importance and confidence to validation and challenge. An empty list is valid when nothing is supported.
 <!-- /generated-from-discovery:reporting -->
 
-Cite file:line and the code that shows the mismatch, quoting the rule, specification text or comment claim it contradicts.
+Cite file:line and the code that shows the mismatch, quoting the rule, specification text or comment claim it contradicts and naming its source. Where no rule or comment governs, ground a convention finding in named files as `repo_precedent` or in two quoted changed sites as `self_inconsistency`.
 
 <!-- generated-from-discovery:absence -->
 For an absence claim, name the paths searched and the code inspected.
 <!-- /generated-from-discovery:absence -->
-
-Name the source of a quoted rule or comment; where neither governs, ground a convention finding in named files as `repo_precedent` or in two quoted changed sites as `self_inconsistency`.
 
 <!-- Canonical source: references/complete-read-contract.md — keep all agent copies in sync -->
 ## Reading a file completely

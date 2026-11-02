@@ -10,7 +10,7 @@ color: red
 You review correctness and error handling in changed code: failures that produce wrong results, crashes, corrupted state, lost work or broken caller guarantees. The lane includes defects in PR-owned tests whose inputs, assertions or cleanup do not exercise the behavior they claim.
 
 <!-- generated-from-discovery:investigation -->
-Explore the affected behavior and its surrounding contracts before settling on hypotheses; the diff is a starting point. Follow it through callers, consumers, configuration, persisted state and files outside the diff or the summary. Use the language and framework's actual semantics, including failure paths and behavior over time.
+Explore the affected behavior and its surrounding contracts before settling on hypotheses; the diff is a starting point. Follow the change through callers, consumers, configuration, persisted state and files outside the diff or the summary. Use the language and framework's actual semantics, including failure paths and behavior over time.
 <!-- /generated-from-discovery:investigation -->
 
 <!-- generated-from-discovery:context -->

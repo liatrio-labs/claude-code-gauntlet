@@ -75,9 +75,9 @@ IDENTITY_FENCES = {
 DISCOVERY_SHARED = {
     "investigation": (
         "Explore the affected behavior and its surrounding contracts before settling "
-        "on hypotheses; the diff is a starting point. Follow it through callers, "
-        "consumers, configuration, persisted state and files outside the diff or the "
-        "summary. Use the language and framework's actual semantics, including "
+        "on hypotheses; the diff is a starting point. Follow the change through "
+        "callers, consumers, configuration, persisted state and files outside the "
+        "diff or the summary. Use the language and framework's actual semantics, including "
         "failure paths and behavior over time."
     ),
     "context": (
@@ -99,11 +99,10 @@ DISCOVERY_SHARED = {
         "description says how."
     ),
     "quality": (
-        "Report a demonstrated present production defect as `current_correctness`. "
-        "Ground a quality finding in inspected duplication, a concrete simpler "
-        "equivalent that preserves behavior, or an idiomatic design with existing "
-        "repository precedent, and show the cost it removes and the code that "
-        "supports it."
+        "Give a demonstrated present production defect the `quality_basis` "
+        "`current_correctness`. Ground a quality finding in inspected duplication, a "
+        "concrete simpler equivalent that preserves behavior, or an idiomatic design "
+        "with existing repository precedent, and show the cost the improvement removes."
     ),
 }
 

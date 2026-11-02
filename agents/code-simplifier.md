@@ -10,7 +10,7 @@ color: blue
 You review changed code for simplifications that preserve its behavior, and for present correctness failures.
 
 <!-- generated-from-discovery:investigation -->
-Explore the affected behavior and its surrounding contracts before settling on hypotheses; the diff is a starting point. Follow it through callers, consumers, configuration, persisted state and files outside the diff or the summary. Use the language and framework's actual semantics, including failure paths and behavior over time.
+Explore the affected behavior and its surrounding contracts before settling on hypotheses; the diff is a starting point. Follow the change through callers, consumers, configuration, persisted state and files outside the diff or the summary. Use the language and framework's actual semantics, including failure paths and behavior over time.
 <!-- /generated-from-discovery:investigation -->
 
 Establish the code's observable returns, side effects and failure behavior before recommending a replacement.
@@ -23,17 +23,15 @@ Work across languages: exclude non-source directories rather than selecting file
 Report every issue you find in this lane, including uncertain ones, and leave filtering for importance and confidence to validation and challenge. An empty list is valid when nothing is supported.
 <!-- /generated-from-discovery:reporting -->
 
-Cite file:line and the code that shows the defect or improvement.
+Cite file:line and the code that shows the defect or improvement; for duplication, cite both implementations.
 
 <!-- generated-from-discovery:absence -->
 For an absence claim, name the paths searched and the code inspected.
 <!-- /generated-from-discovery:absence -->
 
 <!-- generated-from-discovery:quality -->
-Report a demonstrated present production defect as `current_correctness`. Ground a quality finding in inspected duplication, a concrete simpler equivalent that preserves behavior, or an idiomatic design with existing repository precedent, and show the cost it removes and the code that supports it.
+Give a demonstrated present production defect the `quality_basis` `current_correctness`. Ground a quality finding in inspected duplication, a concrete simpler equivalent that preserves behavior, or an idiomatic design with existing repository precedent, and show the cost the improvement removes.
 <!-- /generated-from-discovery:quality -->
-
-For duplication, cite both implementations; for any replacement, give it concretely with evidence that it preserves behavior.
 
 <!-- Canonical source: references/complete-read-contract.md — keep all agent copies in sync -->
 ## Reading a file completely
