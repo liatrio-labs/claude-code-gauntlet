@@ -6,6 +6,7 @@ import { summarize, deriveAgentFlags, discover, allActiveDimensionsDegraded } fr
 import { validateStage, filterStage, challengeStage, selectDelivery } from './reviewStages.js';
 import { mergeStage } from './mergeFindings.js';
 import { verifyStage } from './verifyStage.js';
+import { citeStage } from './citeStage.js';
 import { FINDING_TEXT_FIELD_NAMES, FINDING_REWRITE_EXEMPT_FIELDS, conditionalSchemaActive } from './registry.js';
 import { mentionsPreparedHostRoot, prepareHostRootPatterns, rewritePreparedRepoRoot, safeFindingLabel } from './paths.js';
 import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs } from './args.js';
@@ -23,6 +24,8 @@ import { appendMeasurement, createMeasurementTrace, recordStage, traceDecision, 
 import { captureDeliveryReplay, appendDeliveryReplay } from './measurementReplay.js';
 import { deepClone } from './wire.js';
 import { evaluateAdmission } from './admission.js';
+
+export const PREPARED_REVIEW_STAGES = { cite: citeStage };
 
 // The host injects runtime globals, while tests supply context explicitly.
 function defaultCtx() {

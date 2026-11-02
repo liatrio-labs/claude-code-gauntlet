@@ -8,7 +8,185 @@ from pathlib import Path
 
 import pytest
 from gauntlet import fs, jsjson
+from gauntlet.registry import CITE_VERIFIER_VERSION
 from gauntlet.verify import wire as verify
+
+from tests.support.citations import citation_cli
+
+
+def test_cite_replay_invalidates_foreign_sources_for_every_status():
+    project = Path(__file__).resolve().parents[1]
+    capture = {
+        "manifest_sha256": "d" * 64,
+        "target_kind": "branch",
+        "head": "a" * 40,
+        "base": "b" * 40,
+        "diff_sha256": "c" * 64,
+    }
+    source = {
+        "snapshot_id": capture["manifest_sha256"],
+        **{key: capture[key] for key in ("target_kind", "head", "base", "diff_sha256")},
+        "verifier_version": CITE_VERIFIER_VERSION,
+    }
+    sources = [source, None, *({**source, key: "foreign"} for key in source)]
+    packet = {field: [] for field in ("findings", "unverified", "eliminated")}
+    audit = []
+    expected = copy.deepcopy(packet)
+    for field in packet:
+        rows, wanted = [], []
+        for status in ("matched", "unmatched", "rejected", "unavailable"):
+            for origin in sources:
+                for snapshot in (source["snapshot_id"], "foreign"):
+                    row = {
+                        "status": status,
+                        "detail": "source_decision",
+                        "source": origin,
+                        "request": {"snapshot_id": snapshot, "file": "source"},
+                    }
+                    rows.append(row)
+                    invalid = origin != source or (
+                        status == "matched" and snapshot != source["snapshot_id"]
+                    )
+                    wanted.append(
+                        {**row, "status": "unavailable", "detail": "snapshot_mismatch"}
+                        if invalid
+                        else row
+                    )
+                    if invalid:
+                        audit.append({"finding_id": field, "result": row})
+        packet[field] = [{"id": field, "file": "source", "cite_results": rows}]
+        expected[field] = wanted
+    script = """
+import {normalizePhaseFindings} from './workflows/src/checkpoints.js';
+let input = ''; for await (const chunk of process.stdin) input += chunk;
+const {packet, capture} = JSON.parse(input);
+normalizePhaseFindings('cite', packet, true, {repoRoot: '/repo', verify: {sourceCapture: capture}});
+process.stdout.write(JSON.stringify(packet));
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=project,
+        input=json.dumps({"packet": packet, "capture": capture}),
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    )
+    replay = json.loads(result.stdout)
+    for field in packet:
+        assert replay[field][0]["cite_results"] == expected[field]
+    assert replay["cite_audit"] == audit
+    assert replay["gaps"] == ["cite_unavailable: replay proof source mismatch"] * len(
+        audit
+    )
+
+
+def test_cite_mode_receipts_bind_requests_and_source(tmp_path, monkeypatch, invoke):
+    call, q, capture, root, output = citation_cli(tmp_path, monkeypatch, invoke)
+    requests = [
+        q,
+        {**q, "request_id": "other", "finding_id": "foreign"},
+        {**q, "request_id": "repeat"},
+        {**q, "request_id": "repeat"},
+    ]
+    env, data, token = call(requests, real=True)
+    r = env["receipt"]
+    assert r == {
+        "sha": capture["head"][:8],
+        "n_in": 4,
+        "nonce": "run.12345678.1",
+        "base_branch": "main",
+        "diff_source": {"path": str(output / "diff.patch"), "read": True},
+        "batch_id": "12345678",
+        "attempt": 1,
+        "inline_checksum": jsjson.fnv1a32(token),
+        "input_checksum": jsjson.checksum_or_none(data),
+        "deltas_checksum": jsjson.checksum_or_none(env["result"]["citations"]),
+        "record_proofs": [
+            {"id": row["id"], "checksum": jsjson.checksum_or_none(row)}
+            for row in data["requests"]
+        ],
+    }
+    rows = env["result"]["citations"]
+    assert [row["status"] for row in rows] == [
+        "matched",
+        "rejected",
+        "rejected",
+        "rejected",
+    ]
+    assert rows[0]["request"] == q
+    assert rows[0]["source"] == {
+        "snapshot_id": capture["manifest_sha256"],
+        "target_kind": "branch",
+        "head": capture["head"],
+        "base": capture["base"],
+        "diff_sha256": capture["diff_sha256"],
+        "verifier_version": CITE_VERIFIER_VERSION,
+    }
+    changed, changed_data, changed_token = call(
+        [{**q, "quote": "return another_value;"}], batch="87654321", real=True
+    )
+    assert changed["receipt"]["input_checksum"] != r["input_checksum"]
+    assert changed["receipt"]["record_proofs"][0] != r["record_proofs"][0]
+    assert changed["result"]["citations"][0]["status"] == "unmatched"
+    for index, extra in enumerate(
+        [
+            ["--target-kind", "local"],
+            ["--head-sha", "ffff"],
+            ["--source-capture", json.dumps({**capture, "base": "a" * 40})],
+        ]
+    ):
+        bad, _, _ = call([q], batch=f"aaaaaaa{index}", extra=extra, real=True)
+        assert bad["result"]["citations"][0]["status"] == "unavailable"
+    project = Path(__file__).resolve().parents[1]
+    packet = {
+        "nonce": "run",
+        "headShaShort": capture["head"][:8],
+        "repoRoot": root.as_posix(),
+        "pluginRoot": project.as_posix(),
+        "outputDir": output.as_posix(),
+        "python": "python",
+        "verify": {
+            "sourceCapture": capture,
+            "targetKind": "branch",
+            "baseBranch": "main",
+            "diffPath": (output / "diff.patch").as_posix(),
+            "inputPathBase": (output / "in").as_posix(),
+            "outputPathBase": (output / "out").as_posix(),
+        },
+        "findings": [
+            {
+                "id": "F",
+                "skeptical_assessments": [{"stage": "validator", "citations": [q]}],
+            }
+        ],
+    }
+    program = (
+        f"import {{citeStage}} from {json.dumps((project / 'workflows/src/citeStage.js').as_uri())};"
+        f"import {{shellSplit}} from {json.dumps((project / 'workflows/test/helpers/shellWords.js').as_uri())};"
+        "import {execFileSync} from 'node:child_process'; import fs from 'node:fs';"
+        "let s=''; for await (const c of process.stdin) s+=c; const inp=JSON.parse(s); let calls=0;"
+        "const ctx={agent:async (prompt,opts)=>{calls++; if(calls===1)throw new Error('dispatch never launched');"
+        "const [exe,...argv]=shellSplit(prompt.split('\\n').at(-1)); execFileSync(exe,argv,{cwd:inp.repoRoot});"
+        "return JSON.parse(fs.readFileSync(inp.verify.outputPathBase+'.cite'+opts.label.split('-')[1]+'.json','utf8'));}};"
+        "const first=await citeStage(ctx,inp); const resumed=await citeStage(ctx,JSON.parse(JSON.stringify(first)));"
+        "process.stdout.write(JSON.stringify({calls,resumed}));"
+    )
+    integrated = json.loads(
+        subprocess.run(
+            ["node", "--input-type=module", "-e", program],
+            input=json.dumps(packet),
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout
+    )
+    assert integrated["calls"] == 2
+    assert (
+        integrated["resumed"]["findings"][0]["cite_results"][0]["status"] == "matched"
+    )
+
 
 VECTORS = Path(__file__).parent / "fixtures/parity/slice_inline"
 EMPTY = '{"findings":[],"base_branch":"main"}'

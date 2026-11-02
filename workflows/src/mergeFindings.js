@@ -1,6 +1,6 @@
 // Finding path normalization, validation, deduplication, and merge envelopes.
 import { repoRelativeFindingPath, safeFindingLabel } from './paths.js';
-import { AGENTS, DIMENSIONS, FINDING_PROP_TYPES, FINDING_PATH_DESCRIPTORS, producerRow, findingPolicy } from './registry.js';
+import { AGENTS, DIMENSIONS, FINDING_PROP_TYPES, FINDING_PATH_DESCRIPTORS, CITATION_REQUEST_SCHEMA, CITATION_RESULT_SCHEMA, producerRow, findingPolicy } from './registry.js';
 import { measurementDecisions, traceDecision } from './measurementTrace.js';
 import { deepClone } from './wire.js';
 
@@ -66,6 +66,14 @@ export function normalizeFindingPaths(findings, repoRoot, decisions = []) {
       return undefined;
     };
     const confine = (value, schema, field) => {
+      if (schema === CITATION_REQUEST_SCHEMA || schema === CITATION_RESULT_SCHEMA) {
+        const request = schema === CITATION_RESULT_SCHEMA ? value?.request : value;
+        const path = repoRelativeFindingPath('', request?.file);
+        if ('reason' in path || path.file !== request?.file) {
+          droppedReference(field, 'non-canonical citation path', 'retained for citation audit');
+        }
+        return value;
+      }
       if (schema.$comment === 'repo-path') {
         const normalized = repoRelativeFindingPath(repoRoot, value);
         if ('reason' in normalized) {

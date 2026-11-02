@@ -31,6 +31,7 @@ from gauntlet.location import (
 from gauntlet.registry import DELTA_VALUE_FIELDS, Delta
 from gauntlet.source_capture import load_capture
 from gauntlet.verify import decide
+from gauntlet.verify.cite import CiteBatch, CiteResult, run_citations
 from gauntlet.verify.decide import FindingWire, VerificationResult
 
 
@@ -83,7 +84,18 @@ class FailedEnvelope(TypedDict):
     stderr: str
 
 
-Envelope = SuccessEnvelope | FailedEnvelope
+class CitationReceipt(Receipt):
+    batch_id: str | None
+    attempt: int | None
+
+
+class CiteSuccessEnvelope(TypedDict):
+    status: Literal["ok"]
+    receipt: CitationReceipt
+    result: CiteResult
+
+
+Envelope = SuccessEnvelope | CiteSuccessEnvelope | FailedEnvelope
 # Half-up rounding mirrors the JS side's pinNumericFields.
 _NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
 _INT_RE = re.compile(r"[+-]?\d+")
@@ -311,24 +323,67 @@ def build_deltas(findings: Sequence[object], verified: Sequence[object]) -> list
     return deltas
 
 
+def _receipt(
+    args: argparse.Namespace, sha: str, data: SliceInput, records: list[object]
+) -> Receipt:
+    receipt: Receipt = {
+        "sha": sha,
+        "n_in": len(records),
+        "nonce": args.nonce,
+        "deltas_checksum": None,
+        "inline_checksum": fnv1a32(args.input_inline),
+        "base_branch": cast(str, data.get("base_branch") or args.base_branch),
+        "diff_source": {"path": args.diff_file, "read": False},
+        "record_proofs": [
+            {"id": fid, "checksum": checksum_or_none(record)}
+            for record in records
+            if (fid := _record_id(record)) is not None
+        ],
+    }
+    # Both runtimes omit an input proof when the received value cannot be hashed.
+    if (checksum := checksum_or_none(data)) is not None:
+        receipt["input_checksum"] = checksum
+    return receipt
+
+
+def _cite_envelope(
+    args: argparse.Namespace, data: CiteBatch, root: str, receipt: Receipt
+) -> CiteSuccessEnvelope:
+    result = run_citations(args, data, root, receipt["sha"])
+    receipt["deltas_checksum"] = checksum_or_none(result["citations"])
+    receipt["diff_source"]["read"] = bool(
+        args.diff_file and Path(args.diff_file).is_file()
+    )
+    cite_receipt = cast(CitationReceipt, receipt)
+    cite_receipt["batch_id"] = args.cite_batch
+    cite_receipt["attempt"] = args.cite_attempt
+    return {"status": "ok", "receipt": cite_receipt, "result": result}
+
+
 def run_receipt(args: argparse.Namespace) -> Envelope:
     repo_root = decide.resolve_repo_root()
     sha = args.head_sha or decide.resolve_head_sha() or ""
     try:
+        decoded = decode_inline_slice(args.input_inline)
+        cite_mode = args.mode == "cite"
+        if cite_mode:
+            if not isinstance(decoded.get("requests"), list):
+                _inline_reject("cite mode requires request records")
+        else:
+            validate_input_shape(decoded)
+        data = cast(SliceInput, decoded)
+        records = (
+            cast(list[object], decoded["requests"]) if cite_mode else data["findings"]
+        )
         # Snapshot received values before coercion or decisions can rewrite them.
-        inline_checksum = fnv1a32(args.input_inline)
-        data = validate_input_shape(decode_inline_slice(args.input_inline))
-        input_checksum = checksum_or_none(data)
-        record_proofs: list[RecordProof] = [
-            {"id": fid, "checksum": checksum_or_none(finding)}
-            for finding in data["findings"]
-            if (fid := _record_id(finding)) is not None
-        ]
+        receipt = _receipt(args, sha, data, records)
         try:
             input_text = js_stringify_pretty(data)
         except JsSerializationError:
             input_text = json.dumps(data, indent=2, ensure_ascii=True)
         write_atomic(args.input, input_text)
+        if cite_mode:
+            return _cite_envelope(args, cast(CiteBatch, decoded), repo_root, receipt)
         for finding in data["findings"]:
             coerce_numeric_fields(finding)
         findings = cast(list[FindingWire], data["findings"])
@@ -352,20 +407,8 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
             context.source = store.adapter(Path(repo_root))
         result = decide.run_verification(findings, context, args.diff_file)
         deltas = build_deltas(findings, result["verified"])
-        receipt: Receipt = {
-            "sha": sha,
-            "n_in": len(findings),
-            "nonce": args.nonce,
-            "deltas_checksum": checksum_or_none(deltas),
-            "inline_checksum": inline_checksum,
-            "base_branch": context.base_branch,
-            "diff_source": {"path": args.diff_file, "read": context.diff_read},
-            "record_proofs": record_proofs,
-        }
-        # The executor accepts only strings; omit an unavailable input proof.
-        # trustSlice skips this check when dispatch cannot compute it either.
-        if input_checksum is not None:
-            receipt["input_checksum"] = input_checksum
+        receipt["deltas_checksum"] = checksum_or_none(deltas)
+        receipt["diff_source"]["read"] = context.diff_read
         # Deltas precede the arrays so a capped executor Read preserves the echo.
         return {
             "status": "ok",
@@ -386,6 +429,9 @@ def _parser() -> Parser:
             "line references against the diff."
         ),
     )
+    parser.add_argument("--mode", choices=("verify", "cite"), default="verify")
+    parser.add_argument("--cite-batch")
+    parser.add_argument("--cite-attempt", type=int)
     parser.add_argument(
         "--base-branch",
         default="main",
