@@ -10,6 +10,15 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
+from gauntlet.diff import (
+    annotate_diff,
+    diff_path_spelling,
+    is_line_valid,
+    is_new_file,
+    old_line_for,
+    parse_diff,
+    patch_report_policy,
+)
 from gauntlet.fs import write_atomic
 from gauntlet.location import Quote, valid_quote
 from gauntlet.registry import (
@@ -282,15 +291,20 @@ def run_citations(
             return unavailable("corrupt_attempt_identity")
         source = SourceAdapter(Path(root), args.target_kind, None)
         store = None
+        facts = None
         with suppress(OSError, ValueError, TypeError):
+            diff = Path(args.diff_file).read_bytes()
             store = load_capture(
                 source,
                 Path(args.capture_output_dir),
                 metadata,
-                Path(args.diff_file).read_bytes(),
+                diff,
                 requested_sha=sha,
             )
             source = store.adapter(Path(root))
+            annotate_diff(diff)
+            text = diff.decode("utf-8", "surrogateescape")
+            facts = parse_diff(text, policy=patch_report_policy(text))
         cache: dict[tuple[object, ...], CitationStatus] = {}
         rows: list[CiteRow] = []
         for record in records:
@@ -300,7 +314,24 @@ def run_citations(
             status, detail = _classify_record(
                 record, source, store, metadata, ids, identities, cache
             )
-            rows.append(result(record, status, detail))
+            row = result(record, status, detail)
+            if facts is not None and detail == "explicit_source_range":
+                q = cast(CitationRequest, record["request"])
+                added_lines = []
+                for line in range(q["line_start"], q["line_end"] + 1):
+                    if q["side"] == "old":
+                        continue
+                    path = diff_path_spelling(facts, q["file"], line)
+                    if is_new_file(facts, path):
+                        added_lines.append(line)
+                    elif not is_line_valid(facts, path, line):
+                        # Missing diff membership cannot prove pre-existing text.
+                        break
+                    elif old_line_for(facts, path, line) is None:
+                        added_lines.append(line)
+                else:
+                    row["added_lines"] = added_lines
+            rows.append(row)
         attempts[-1]["results"] = rows
         try:
             write_atomic(ledger_path, json.dumps(ledger, ensure_ascii=True))

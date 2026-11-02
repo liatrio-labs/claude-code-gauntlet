@@ -189,19 +189,19 @@ export function refreshAdmission(finding) {
   return hasAdmission(finding) ? finding : evaluateAdmission(finding);
 }
 
-export function admissionContext(finding, validation) {
-  const { promotion, original } = admissionPolicy(finding);
-  const promoted = hasPresentDefect(finding, validation?.admission_assessments);
-  const subjects = validation ? [validation.policy_subject] : Object.keys(original.row?.policySubjects || {});
+export function admissionContext(f, score) {
+  const { promotion, original } = admissionPolicy(f);
+  const promoted = hasPresentDefect(f, score?.admission_assessments);
+  const subjects = score ? [score.policy_subject] : Object.keys(original.row?.policySubjects || {});
+  const assessed = matchAssessments(f, score?.admission_assessments);
   const requirements = Object.fromEntries(subjects.map((subject) =>
-    [subject, requiredAssessments(finding, subject, promoted)]));
-  const missing = validation ? validationRejections(finding, validation)
-    .filter((reason) => reason.startsWith('missing_assessment:')).map((reason) => reason.slice('missing_assessment:'.length)) : null;
-  return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
-    policy: { policy_subjects: validation ? { [validation.policy_subject]: missing } : requirements,
-      ...(!validation && promotion ? { promotion: { predicate: promotion.predicate,
-        confirmed: requiredAssessments(finding, 'ordinary', true) } } : {}),
-      ...(!validation ? { body_fix_task: RIGHT_ELIGIBILITY.body.fixTask } : {}) },
-    claim: Object.fromEntries(DIMENSIONS.flatMap((row) => Object.keys(row.schemaExtra)).map((key) => [key, finding[key]])),
-    fix: finding.suggestion || finding.suggested_fix_code };
+    [subject, requiredAssessments(f, subject, promoted).filter((predicate) =>
+      !score || !assessed.some((entry) => entry.predicate === predicate))]));
+  return { requests: admissionRequests(f), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, f[key]])),
+    policy: { policy_subjects: requirements,
+      ...(!score && promotion ? { promotion: { predicate: promotion.predicate,
+        confirmed: requiredAssessments(f, 'ordinary', true) } } : {}),
+      ...(!score ? { body_fix_task: RIGHT_ELIGIBILITY.body.fixTask } : {}) },
+    claim: Object.fromEntries(DIMENSIONS.flatMap((row) => Object.keys(row.schemaExtra)).map((key) => [key, f[key]])),
+    fix: f.suggestion || f.suggested_fix_code };
 }

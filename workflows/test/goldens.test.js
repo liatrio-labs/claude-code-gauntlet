@@ -52,8 +52,8 @@ const FILTER_HANDLERS = {
   apply_exclusions: (input) => applyExclusions(input.findings, input.exclusion_patterns, input.config ?? null),
   apply_filter_pipeline: (input) => applyFilterPipeline(input.findings, input.config, input.exclusion_patterns, input.generated_at),
   detect_disagreement: (input) => {
-    const { active, suppressed, boostedCount } = detectDisagreement(input.findings);
-    return { active, suppressed, boosted_count: boostedCount };
+    const { active, boostedCount } = detectDisagreement(input.findings);
+    return { active, boosted_count: boostedCount };
   },
   _route_by_dimension: (input) => ({ route: routeByDimension(input.finding) }),
   consolidate_cross_agent: (input) => {

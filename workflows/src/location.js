@@ -1,4 +1,13 @@
 import { ANCHOR_LIMITS, LOCATION_RIGHTS, DISPOSITION_RIGHTS } from './registry.js';
+import { coerceInt, INT_POLICY } from './wire.js';
+
+export function lineBucket(line, proximity) {
+  const n = coerceInt(line, INT_POLICY.filter);
+  if (n === null) return 0;
+  const value = n / proximity;
+  const floor = Math.floor(value);
+  return (value - floor === 0.5 ? (floor % 2 === 0 ? floor : floor + 1) : Math.round(value)) * proximity;
+}
 
 export function canonicalRange(finding) {
   if (!['confirmed', 'relocated'].includes(finding?.location_status)) return null;

@@ -27,7 +27,6 @@ export function traceDecision(finding, reason_code, reason, related = [], decisi
 }
 export function eliminationDecisions(output) {
   const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
-    'suppressed:intentional': 'suppression', 'suppressed:generated': 'suppression',
     refuted: 'refuted', out_of_scope: 'out_of_scope' };
   return (output.eliminated || []).filter((f) => f.trace_id)
     .map((f) => traceDecision(f, codes[f.eliminated_by] || 'unknown', f.elimination_reason));
