@@ -139,7 +139,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 | `--measurement-window` | JSON path | off | Validate shared controls, arm treatment, time bounds and requested PRs before mirror work. Resume and retry require the original path and unchanged bytes. |
 | `--arm` | declared arm name | - | Arm in the window. Required for a new windowed run. |
 | `--run-index` | nonnegative integer | - | Planned run index in the window. Required for a new windowed run; `--runs` advances it for each sequential run. |
-| `--reset-confirmed-at` | timezone-aware timestamp | - | Operator-recorded subscription reset after the failed attempt completed and no later than retry start. |
+| `--reset-confirmed-at` | timezone-aware timestamp | - | Operator-recorded subscription reset after failure and no later than retry start, required only for usage-limit failures or failures whose class cannot be determined. |
 | `--baseline-equivalence-receipt` | JSON path | - | Copy the supplied JSON into the new run manifest. This runner does not validate its contents. |
 | `--resume` | `RUN_ID` | — | Re-run only the PRs of `RUN_ID` still `pending` (skips `ok`/`invalid`/`drifted` and also `timeout`/`failed` — use `--retry-failed` for those). |
 | `--retry-failed` | `RUN_ID` | — | Re-run attempts whose validity marks them retryable, including `invalid` and `drifted` outcomes. Legacy checkpoints without validity use `timeout`/`failed`. Confirmed operational failures are terminal. |

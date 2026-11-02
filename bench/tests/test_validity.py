@@ -217,6 +217,83 @@ def test_attempt_collection_two_strikes_preserves_first_bytes(
 
 
 @pytest.mark.parametrize(
+    "status,reason",
+    [
+        ("invalid", "pipeline_degraded"),
+        ("invalid", "config_echo_mismatch"),
+        ("failed", "all_degraded"),
+        ("failed", "pipeline_failed"),
+    ],
+)
+def test_subscription_non_limit_retry_needs_no_reset_and_is_terminal(
+    tmp_path, fingerprint, status, reason
+):
+    fp = replace(
+        fingerprint, controls=replace(fingerprint.controls, auth_mode="subscription")
+    )
+    directory, pr = tmp_path / "run", tmp_path / "run/pr-1"
+    manifest = {"provenance": fp.wire(), "window_id": "w", "anchor": "naive"}
+    first = v.collect_attempt(
+        directory,
+        pr,
+        url="u",
+        result=InvokeResult(status, reason=reason),
+        started_at="2026-10-20T10:00:00Z",
+        manifest=manifest,
+    )
+    v.check_retry(first, now=NOW)
+    retry = v.collect_attempt(
+        directory,
+        pr,
+        url="u",
+        result=InvokeResult("invalid", reason="pipeline_degraded"),
+        started_at=NOW,
+        manifest=manifest,
+        prior=first,
+    )
+    assert retry.validity.state == "operational_failure"
+    assert not retry.validity.retryable
+    retry_path = next(directory.glob(f"attempts/*/{retry.attempt_id}/attempt.json"))
+    assert v.load_attempt(retry_path) == retry
+    with pytest.raises(ValueError, match="attempt cannot retry"):
+        v.check_retry(retry, now=NOW)
+
+
+@pytest.mark.parametrize(
+    "status,reason",
+    [
+        ("failed", "is_error(success)"),
+        ("failed", "is_error(rate_limit_error)"),
+        ("timeout", "watchdog_timeout"),
+        ("failed", None),
+        ("failed", "unrecognized_failure"),
+        ("invalid", None),
+    ],
+)
+def test_subscription_limit_or_undetermined_retry_requires_reset(
+    tmp_path, fingerprint, status, reason
+):
+    fp = replace(
+        fingerprint, controls=replace(fingerprint.controls, auth_mode="subscription")
+    )
+    first = v.collect_attempt(
+        tmp_path / "run",
+        tmp_path / "run/pr-1",
+        url="u",
+        result=InvokeResult(status, reason=reason, cost_usd=0),
+        started_at="2026-10-20T11:59:59Z",
+        manifest={"provenance": fp.wire(), "anchor": "naive"},
+    )
+    with pytest.raises(ValueError, match="reset_not_confirmed"):
+        v.check_retry(first, now="2026-10-20T14:00:00Z")
+    v.check_retry(
+        first,
+        now="2026-10-20T14:00:00Z",
+        reset_confirmed_at="2026-10-20T13:00:00Z",
+    )
+
+
+@pytest.mark.parametrize(
     "change",
     [
         "reset_future",
