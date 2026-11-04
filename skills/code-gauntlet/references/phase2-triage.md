@@ -33,13 +33,7 @@ Before running any diff commands, confirm the local working tree matches the rev
 
 **PR/MR mode (`pr_number` set):** run the single capture/status recipe in Composite A, linked above. It validates the head and canonical target and captures the body as unverified claims for framed shared-context delivery. Reuse its status receipt.
 
-- **Branch comparison:** resolve the target branch with this bare quoted heredoc. Branch names are data, never shell words:
-
-```bash
-{python} "{plugin_root}/scripts/resolve_branch.py" <<'CODE_GAUNTLET~BRANCH'
-<branch name exactly as the user gave it>
-CODE_GAUNTLET~BRANCH
-```
+- **Branch comparison:** use the target-branch heredoc in [Composite A](phase2-preparation.md#phase-2-composite-a--pre-gather-status--checkout--sha--prior-review-gate--stale-truncation).
 
 Resolve the comparison base (the repository's default branch or the user's chosen base) with the literal `CODE_GAUNTLET~BASE` block in [phase2-preparation.md: Phase 2 Composite A](phase2-preparation.md#phase-2-composite-a--pre-gather-status--checkout--sha--prior-review-gate--stale-truncation), in its own Bash call. The resolver looks the name up as a local branch, then a remote-tracking branch (`origin/main`), and refuses a name that is both; a name that is neither, such as a tag, a SHA or `HEAD~1`, resolves as a git revision. If either call exits non-zero, stop and report its one-line error. Otherwise record the printed SHAs as `{target_sha}` and `{base_sha}` and type those hex values into later commands; shell variables do not survive between Bash calls. Never put the heredoc inside `$( )`: bash 3.2 parses its body for parentheses. `~` cannot appear in a git ref name, so no branch name can end the heredoc early.
 
@@ -88,13 +82,7 @@ Now that the working tree reflects the review target, compute the short SHA and 
 
 **3. Previously-reviewed gate** (`pr_url` + `prior_review` sections; PR/MR targets only — skip for `local`):
 
-Runs the gate documented in `phase1-preflight.md` → "Previously-Reviewed Gate", which resolves whether this PR/MR was already reviewed and whether the incremental path is safe. Pass the PR's **own URL** to `--pr-url` so the detector uses the base repository and its host. For both forges, the matching status section above already fetched the URL. Use this literal section in the same composite:
-
-```bash
-echo "=== pr_url ==="
-PR_URL=${PR_STATUS#*pr_url=}
-printf '%s\n' "$PR_URL"
-```
+Runs the gate documented in `phase1-preflight.md` → "Previously-Reviewed Gate", which resolves whether this PR/MR was already reviewed and whether the incremental path is safe. Use Composite A's `pr_url` section so the detector uses the PR's base repository and host.
 
 A Skip answer below stops the review without reverting the checkout.
 
@@ -111,45 +99,9 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 1. **PR/MR mode** (`pr_number` set) — Use Composite A's status receipt and saved diff commands. Get full SHA: `git rev-parse HEAD`
    - **GitHub (PR):** Gather the file list with `{python} "{plugin_root}/scripts/list_pr_files.py" --platform github --pr {pr_number}`. Gather the full diff with `gh pr diff {pr_number}`.
    - **GitLab (MR):** Gather the file list with `{python} "{plugin_root}/scripts/list_pr_files.py" --platform gitlab --pr {pr_number}` (the `files` producer in [phase2-preparation.md: Phase 2 Composite B](phase2-preparation.md#phase-2-composite-b--gather-diff-changed-files-line-count-misc)). Gather the full diff with `glab mr diff {pr_number}`.
-2. **Branch comparison** - use 2b's resolved SHAs. Save the changed-file JSON first, then the validated patch:
-
-   ```bash
-   if ! {python} "{plugin_root}/scripts/list_pr_files.py" --git-range "{base_sha}...{target_sha}" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
-     echo "files: FAILED"
-     exit 1
-   fi
-   command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
-   ```
-
-   ```bash
-   if ! {python} "{plugin_root}/scripts/save_git_diff.py" --git-range "{base_sha}...{target_sha}" --output "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"; then
-     echo "diff: FAILED"
-     exit 1
-   fi
-   ```
-
-3. **Local changes** - save the changed-file JSON first, then the validated patch:
-
-   ```bash
-   if ! {python} "{plugin_root}/scripts/list_pr_files.py" --git-range "HEAD" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"; then
-     echo "files: FAILED"
-     exit 1
-   fi
-   command cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
-   ```
-
-   ```bash
-   if ! {python} "{plugin_root}/scripts/save_git_diff.py" --git-range "HEAD" --output "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"; then
-     echo "diff: FAILED"
-     exit 1
-   fi
-   ```
-
-4. **Incremental** (2b-post step 3's gate resolved "Incremental"; PR/MR mode only) — use branch 1's full server file list saved below to bound the diff:
-
-   ```bash
-   {python} "{plugin_root}/scripts/incremental_diff.py" --files "{output_dir}/code-gauntlet-files-{head_sha_short}.json" --since {last_reviewed_sha} > "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"
-   ```
+2. **Branch comparison** — use 2b's resolved SHAs in [Composite B's branch comparison blocks](phase2-preparation.md#phase-2-composite-b--gather-diff-changed-files-line-count-misc).
+3. **Local changes** — use [Composite B's local changes blocks](phase2-preparation.md#phase-2-composite-b--gather-diff-changed-files-line-count-misc).
+4. **Incremental** (2b-post step 3's gate resolved "Incremental"; PR/MR mode only) — use [Composite B's incremental path](phase2-preparation.md#phase-2-composite-b--gather-diff-changed-files-line-count-misc).
 
    An unbounded diff would include unrelated files from a base-branch merge. A base merge that touches a PR file still appears. Validate the saved patch as below. If the command fails or the patch is empty, save branch 1's full server diff instead and disclose the fallback. Record `last_reviewed_sha` in the triage announcement and Phase 8 methodology.
 
@@ -348,7 +300,7 @@ verify: {
 }
 ```
 
-Supply only the path bases; the skill cannot pre-write findings that Discover and Merge have yet to produce. See [validation pipeline](validation-pipeline.md#verify-stage-verifystage) for slicing, the wire and trust checks.
+Supply `targetKind` and the path bases; the skill cannot pre-write findings that Discover and Merge have yet to produce. See [validation pipeline](validation-pipeline.md#verify-stage-verifystage) for slicing, the wire and trust checks.
 
 **`checkpoints` (resume only):** omit on a fresh run. On resume, copy the whole producer object, `checksum` included, from `return.checkpoints` or the file at `artifactPaths.checkpoints`; never edit it. See [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable) for refusal handling.
 

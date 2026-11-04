@@ -590,12 +590,19 @@ def test_shipped_branch_resolver_keeps_names_on_stdin(
         check=True,
         timeout=10,
     ).stdout
-    reference = skill_text(REPO / "skills/code-gauntlet/references/phase2-triage.md")
-    block = re.search(
-        r"```bash\n(python3 \S+/resolve_branch\.py.*?)\n```", reference, re.S
+    reference = skill_text(
+        REPO / "skills/code-gauntlet/references/phase2-preparation.md"
     )
-    assert block is not None
-    lines = block[1].splitlines()
+    blocks = [
+        body.strip()
+        for _, body in _shell_fences(reference)
+        if "resolve_branch.py" in body
+        and "CODE_GAUNTLET~BRANCH" in body
+        and "--checkout" not in body
+    ]
+    assert len(blocks) == 1
+    block = blocks[0]
+    lines = block.splitlines()
     assert lines[0].endswith("<<'CODE_GAUNTLET~BRANCH'")
     assert lines[1:] == [
         "<branch name exactly as the user gave it>",
@@ -631,8 +638,7 @@ def test_shipped_branch_resolver_keeps_names_on_stdin(
     )
     if bash:
         shell_block = (
-            block[1]
-            .replace("<branch name exactly as the user gave it>", branch)
+            block.replace("<branch name exactly as the user gave it>", branch)
             .replace("{plugin_root}", REPO.as_posix())
             .replace("python3 ", shlex.quote(Path(sys.executable).as_posix()) + " ", 1)
         )
@@ -928,17 +934,13 @@ def test_shipped_file_producer(platform, outcome, tmp_path):
         assert bool(result.stderr) == (outcome == "incomplete")
 
 
-@pytest.mark.parametrize(
-    "source",
-    [
-        "skills/code-gauntlet/references/phase2-preparation.md",
-        "skills/code-gauntlet/references/phase2-triage.md",
-    ],
-)
 @pytest.mark.parametrize("revision_range", ["HEAD", "{base_sha}...{target_sha}"])
 @pytest.mark.parametrize("outcome", ["success", "failure"])
-def test_shipped_git_file_producer(source, revision_range, outcome, tmp_path):
-    text = skill_text(REPO / source, python=shlex.quote(sys.executable))
+def test_shipped_git_file_producer(revision_range, outcome, tmp_path):
+    text = skill_text(
+        REPO / "skills/code-gauntlet/references/phase2-preparation.md",
+        python=shlex.quote(sys.executable),
+    )
     commands = [
         body.strip()
         for _, body in _shell_fences(text)
@@ -1123,12 +1125,9 @@ def test_shipped_forge_status_and_url(platform, outcome, tmp_path, monkeypatch):
         assert result.stderr == ""
 
 
-@pytest.mark.parametrize(
-    "source", ["references/phase2-preparation.md", "references/phase2-triage.md"]
-)
 @pytest.mark.parametrize("mode", ["branch", "local"])
 @pytest.mark.parametrize("outcome", ["success", "empty", "failure"])
-def test_shipped_patch_producer(source, mode, outcome, tmp_path, monkeypatch):
+def test_shipped_patch_producer(mode, outcome, tmp_path, monkeypatch):
     from tests.support.git_diff import assert_standard_patch, patch_repo
 
     base, target = patch_repo(tmp_path, monkeypatch)
@@ -1141,7 +1140,8 @@ def test_shipped_patch_producer(source, mode, outcome, tmp_path, monkeypatch):
     revision_range = "HEAD" if mode == "local" else "{base_sha}...{target_sha}"
     bodies = _shell_fences(
         skill_text(
-            REPO / "skills/code-gauntlet" / source, python=shlex.quote(sys.executable)
+            REPO / "skills/code-gauntlet/references/phase2-preparation.md",
+            python=shlex.quote(sys.executable),
         )
     )
     commands = [
