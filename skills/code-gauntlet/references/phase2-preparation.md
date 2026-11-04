@@ -193,11 +193,9 @@ echo "=== misc ==="
 On `files: FAILED`, stop and report the stderr reason (headless: non-zero outcome).
 
 - **Files** → this path becomes `args.changedFilesPath`; keep the same array inline for `args.changedFiles` (the Summarize stage reads it by value — the workflow cannot open the file).
-- **Context map** accompanies the framed context; Verify checks both digests before translating a context line.
 - **Diff** → this path becomes `args.diffPath`, passed to the verify executor as `--diff-file`.
 - **`numstat` counts the patch saved by the `diff` section with `scripts/diff_numstat.py`; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules.** Check `binary_files > 0` before treating a low count as no diff. This feeds `changedLines`, and the 2f scan reads the same saved patch, never a fresh diff fetch. Never run a second `gh pr diff` to re-fetch it.
 - **`misc`** gives a `generatedAt` candidate (re-stamp at args-assembly time if Phase 3 dispatch isn't immediate — `generatedAt` must reflect the actual assembly moment), and a `nonce` candidate matching `^[A-Za-z0-9._-]+$`.
-- **Risk classification (2e)** and **AI-generated-code detection (2f)** — classify changed files by risk as in `references/phase2-triage.md`; this feeds the context file. Neither runs here.
 
 **Incremental path** (Composite A's prior-review gate resolved Incremental): replace the `diff` section with:
 
@@ -266,21 +264,11 @@ If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workfl
    {python} "{plugin_root}/scripts/collect_project_rules.py" --repo-root "$(git rev-parse --show-toplevel)" --out "{output_dir}/code-gauntlet-project-rules-{head_sha_short}.md" --changed-files "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
    ```
 
-   Parse its one-line stdout JSON receipt and retain it; stop on failure instead of stamping a successful empty discovery. The script owns the repo-root, changed-file-directory, and ancestor walk. REVIEW.md text is copied with source provenance into review-rules blocks before project-rules blocks; the script does not parse its config fence. PROJECT_RULE_FILENAMES controls CLAUDE.md/AGENTS.md/QODO.md discovery, and REVIEW_RULE_FILENAME names the separate REVIEW.md source kind.
-   Project-rule imports resolve relative to their containing file, within the repository, to Markdown targets, up to four hops; inline imports are recognized outside code spans and fences. The review pass does not follow imports or deduplicate scopes by content. A project import of a realpath already rendered as review-rules records `review_rules_source` and stops at that target. Direct project walk hits remain eligible. Other project imports, including out-of-walk REVIEW.md targets, remain project rules and do not add review scopes.
-   Project rules remain additive: more specific directories win on conflict, with CLAUDE.md before AGENTS.md before QODO.md at equal specificity. REVIEW.md settings retain the separate pipeline precedence in `references/review-md-spec.md`.
+   Parse its one-line stdout JSON receipt and retain it; stop on failure instead of stamping a successful empty discovery.
 3. **Stamp REVIEW.md raw inputs from the receipt.** Read exactly the paths in `receipt.review_md`, in receipt order, and stamp `args.reviewMd` as `[{ path, text, checksum }, ...]`, using each repo-relative path and the full raw file text, copying `checksum` from its receipt entry and `args.reviewMdSetChecksum` from `receipt.review_md_checksum`. Do not sort, walk directories, or parse the files yourself. An empty list stamps `[]`, an authoritative "discovered nothing", not an omitted field. Keep the text by value because the workflow has no filesystem. Set `reviewConfigPath` to the root REVIEW.md path when the list contains `REVIEW.md`, otherwise null.
    A capped REVIEW.md remains listed: Read its full raw text for settings, retain the cap gap, and do not add its text separately to the shared context. A failed raw Read stops this handoff; never replace it with empty text. See `references/review-md-spec.md` for format and hierarchy; `resolveReviewConfig` owns parsing and subtree settings.
 
-Do not `Glob(pattern: "**/REVIEW.md")`; use the collector's receipt, not a second search. Never use `find` from Bash for locating these files. Never Read or Glob CLAUDE.md/AGENTS.md/QODO.md directly here.
-
-Do not hand-parse or schema-validate REVIEW.md here — pass the raw text through. The workflow's
-`resolveReviewConfig` (`workflows/src/args.js`) calls `buildReviewConfig` (`workflows/src/reviewConfig.js`), preserving a root layer
-and depth-ordered subtree layers. Filter selects the root layer or matching subtree layers per
-`finding.file`: thresholds override and `ignore` entries accumulate from root to the deepest match.
-In particular, `resolveReviewConfig` never pins a numeric default for
-`confidence_threshold` / `security_min_confidence` when REVIEW.md does not set one — the Filter
-stage's own built-in defaults (non-security **55**, security **70**) apply exactly when absent.
+Do not `Glob(pattern: "**/REVIEW.md")`; use the collector's receipt, not a second search. Never use `find` from Bash for locating these files.
 
 **Do not stamp both `args.reviewMd` and `args.reviewConfig`** (or both `args.exclusionsText` and
 `args.exclusionPatterns`) — the args waist refuses a waist that stamps both the raw and
@@ -298,19 +286,10 @@ CODE_GAUNTLET_TRIAGE_{nonce}
 
 The quoted delimiter passes the text verbatim. Never pipe it through `echo` or unquote the delimiter.
 The nonce in the delimiter keeps any line of the text from ending it.
-The script writes the context file threaded to the discovery, validate and summarize agents from the collector's `--out` file, stdin text, framed unverified PR/MR claims when applicable, framed repository layout and saved diff, in that order. Use `configResult.identity.repo_root` for `{repo_root}`.
+Use `configResult.identity.repo_root` for `{repo_root}`.
 Stamp the printed `contextLines`, `contextChars`, `contextMaxLineChars` and `removedTests` into the args waist verbatim, never estimated, carried over or re-derived.
 An exit 2 wrote no usable context; stop and report its one-line error.
 `scripts/gauntlet/shared_context.py`'s docstring holds the content and measurement rules.
-
-Diff body rows have source gutters: `N7 +|text` for additions, `N7  |text` for head
-context, and `O7 -|text` for deletions. The source text begins immediately after `|`.
-Headers and metadata retain their original bytes. The writer also saves
-`code-gauntlet-context-map-{head_sha_short}.json` beside the context. Its version-1
-entries map physical context LF line numbers to file, side (`head` or `old`), and
-source line. It hashes the final framed context and the original saved patch.
-Malformed hunks keep the raw framed presentation and emit an unavailable, empty map
-with a diagnostic. Both files must be written before a successful receipt.
 
 ## Args object shape
 
@@ -330,8 +309,8 @@ with a diagnostic. Both files must be written before a successful receipt.
   reviewScope: { requested: "incremental" | "full", kind: "incremental" | "full", since: string | null,
                  commits: integer | null, detector: null | { previously_reviewed, sha_resolvable,
                  head_advanced, sha_is_ancestor, incremental_safe, error } },  // REQUIRED
-  limits: {},  // stamp {} unless a genuine REVIEW.md override exists
-  delivery: { prIdentity },  // PR/MR targets only; see SKILL.md, "Assemble the args object"
+  limits: {},
+  delivery: { prIdentity },  // PR/MR targets only; see phase2-triage.md, "Args Preparation"
                                              // the artifact-writer then persists postReview as the post_review-ready
                                              // wrapper { owner, repo, pr_number, sha, platform, web_origin, review_body, findings } so
                                              // Phase 8 posts it without hand-assembly

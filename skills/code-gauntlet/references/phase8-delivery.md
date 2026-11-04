@@ -56,7 +56,7 @@ Exit 0 names the patches path beside the report, even with zero kept patches. Ex
 
 **On `ok: true` after materialization or writer persistence:** read the artifacts — they are the source of truth for delivery. Do not reconstruct, re-filter, or re-rank findings from the return value or from memory.
 
-- `artifactPaths.postReview` — the pipeline's **pre-selected delivery payload**: the challenge-survivors chosen by the delivery tier (`args.delivery.tier` — `all` (default) keeps every survivor, `main_only` keeps main-tagged only), ranked by `selectDelivery` and truncated to `limits.deliveryCap`, each carrying its `report_tag`. Same **union schema** as the findings file, so `post_review.py` consumes it unchanged. This is the selected delivery set: `deliver` entries become inline comments and `body` entries appear only in the review-body digest. The poster applies placement; the live agent posts the payload verbatim and never re-selects.
+- `artifactPaths.postReview` — the pipeline's **pre-selected delivery payload**, already tiered, ranked and capped, in the findings file's **union schema** so `post_review.py` consumes it unchanged. `deliver` entries become inline comments and `body` entries appear only in the review-body digest. The poster applies placement; post the payload verbatim and never re-select.
 - `artifactPaths.findings` — every disposed record, including body-routed, held-back, report-only, and eliminated findings; rights live in `disposition`. Injection eliminations retain only `id`, `title`, `eliminated_by`, and `elimination_reason`; their full forensic records remain in the raw challenge checkpoint. Other records carry the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged.
 - `artifactPaths.report` — the rendered report markdown, produced **in code** by
   `renderReport()` (`workflows/src/renderReport.js`): title, identity line, Summary, Findings
@@ -96,7 +96,7 @@ path of `artifactPaths.report` plus a short chat summary, and skip posting.
 **Question 1 of 2 — Delivery.** The report already exists on disk; the only open question is whether the
 findings also post to the PR. Ask once, after materialization, before anything is posted:
 
-> Headless mode exception: do not present this `AskUserQuestion`; deliver per `configResult.resolved.delivery`, with `selectDelivery` applying the receipt-backed tier and cap after Challenge and before Phase 8 posts `artifactPaths.postReview` verbatim.
+> Headless mode exception: do not present this `AskUserQuestion`; deliver per `configResult.resolved.delivery` and post `artifactPaths.postReview` verbatim.
 > See `references/headless-mode.md`.
 
 ```
@@ -137,7 +137,7 @@ follows `configResult.resolved.post_mode`.)
 
 When `delivery.prIdentity` is set in the args waist, the persisted `artifactPaths.postReview` file
 already is the post_review-ready wrapper (`{ owner, repo, pr_number, sha, platform, web_origin, review_body, findings }`).
-Pass that file to `post_review.py` unchanged. Its `review_body` is exactly the report's outcome-first Summary section body: counts, selected findings index, and any remainder. Keep its `sha` because it pins the prior-review marker to the reviewed commit. Code-owned byte budgets and folding are documented in [delivery rendering](../../../docs/delivery-rendering.md).
+Pass that file to `post_review.py` unchanged. Keep its `sha` because it pins the prior-review marker to the reviewed commit. Code-owned byte budgets and folding are documented in [delivery rendering](../../../docs/delivery-rendering.md).
 
 When the artifact is the legacy bare findings array, invoke `post_review.py` with `--report` and the
 identity flags. The script derives the Summary body from the report and forms the wrapper in code:

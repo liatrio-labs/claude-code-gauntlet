@@ -5,7 +5,7 @@ Sub-steps, detection logic, and **args preparation** for Phase 2: Target, Triage
 ## Contents
 
 - **2a** VCS platform detection — **2b** Working tree checkout — **2b-post** SHA + previously-reviewed gate + stale cleanup — **2c** Review target + diff/changed-files save
-- **2d** Project context (CLAUDE.md, REVIEW.md parse) — **2e** Risk classification
+- **2d** Project context (CLAUDE.md, REVIEW.md collection) — **2e** Risk classification
 - **2f** AI-generated code detection — **2g** Review dimensions
 - **Shared agent context file** — **Args preparation** (the args waist the workflow consumes)
 - **Triage announcement**
@@ -96,11 +96,11 @@ PR_URL=${PR_STATUS#*pr_url=}
 printf '%s\n' "$PR_URL"
 ```
 
-This runs **here, not in Phase 1**: the gate compares the last-reviewed commit against the PR head and counts the commits between them, so it needs the working tree at the review target and the PR's objects fetched. Before checkout it would measure whatever branch the session started on. By this point the checkout section has already switched the working tree to the PR; a Skip answer below stops the review but does not revert the checkout — the tree stays checked out on the PR branch.
+A Skip answer below stops the review without reverting the checkout.
 
 If the gate resolves to **Incremental**, store `last_reviewed_sha` — section 2c's incremental branch consumes it. If it resolves to **Skip**, stop the run here. Otherwise continue as a full review.
 
-**4. Truncate stale files** with `scripts/stale_truncate.py` so a re-run does not blend old artifacts with new. If it prints `DEFERRED`, run the `--unconditional` form only after a "Yes — review again" answer; a "No — skip" answer stops with the files intact. The gate rationale and outcomes live in `scripts/gauntlet/stale.py`'s docstring.
+**4. Truncate stale files** with `scripts/stale_truncate.py` so a re-run does not blend old artifacts with new; handle `DEFERRED` as in Composite A.
 
 ---
 
@@ -162,16 +162,12 @@ On `files: FAILED`, stop the handoff and report the stderr reason (headless: non
 
 **Run these saves as [phase2-preparation.md: Phase 2 Composite B](phase2-preparation.md#phase-2-composite-b--gather-diff-changed-files-line-count-misc)** — one Bash call. `files` runs first and gates the rest: the incremental diff reads its list, and `numstat` reads the saved patch. That section owns the exact script.
 
-`changedLines` (threaded into `args.changedLines`, Args Preparation below) is counted from the diff actually saved above — the incremental diff on the incremental path, never branch 1's full-PR diff. The `numstat` section runs `scripts/diff_numstat.py` against that saved patch; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules. Check `binary_files > 0` before treating a low count as no diff. Never run a second `gh pr diff`; the 2f scan reads the same saved patch, never a fresh diff fetch.
+`changedLines` (threaded into `args.changedLines`, Args Preparation below) is counted from the diff actually saved above — the incremental diff on the incremental path, never branch 1's full-PR diff.
 
 For PR/MR server diffs, validate the saved diff before relying on it. Branch/local validation is enforced by `save_git_diff.py`:
 
 - Non-empty (file size > 0)
 - Starts with `diff --git` (confirms it is a valid unified diff, not an error message)
-
-If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own git diff chain inside an executor subagent. For branch/local targets, use the diff and file-list commands in steps 2/3 above.
-
-Use only the collector receipt from 2d for REVIEW.md discovery and its output for CLAUDE.md/AGENTS.md/QODO.md rules.
 
 ---
 
@@ -181,12 +177,9 @@ After 2c saves the changed-file list, follow [phase2-preparation.md: Discover RE
 
 ### REVIEW.md Detection
 
-Complete 2d before 2e. REVIEW.md thresholds and ignore patterns apply to matching finding subtrees through the pipeline. Every context-reading agent receives all source-path-tagged `review-rules` blocks; each block's prose is advisory for its source directory's subtree.
+Complete 2d before 2e.
 
 A successful empty discovery never blocks or asks a question. Collector or raw Read failures stop the handoff.
-
-> Headless mode has identical behavior. REVIEW.md is read-only in both modes. See
-> `references/headless-mode.md`.
 
 ---
 
@@ -196,8 +189,6 @@ A successful empty discovery never blocks or asks a question. Collector or raw R
 - **Medium risk** — business logic, services, controllers, middleware, state management. 50-200 lines changed.
 - **Low risk** — tests, docs, config, generated code, lockfiles, formatting-only. <50 lines changed.
 
-High-risk files get expanded context (callers, callees); low-risk get lighter review.
-
 **Content-change promotion.** After initial classification, check LOW-risk files for substantive content changes — any diff line that changes a string value, numeric value, or identifier (not just formatting, whitespace, markup, or delimiters). Files with substantive content changes get promoted to MEDIUM. This is type-agnostic.
 
 Promotion triggers: i18n text changes, config value changes, CSS/SCSS numeric changes, changed string literals or identifiers.
@@ -205,7 +196,7 @@ Stay LOW: lock files, whitespace-only changes, generated code updates, tag case 
 
 ### Light Review for Trivial PRs
 
-If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). Stamp the answer verbatim into `args.scopeAnswer` (`"light"` or `"full"`); the workflow derives the dimensions from it (2g). Announce the actual dimension set — `bugs, security` for light, the full list for full. `args.riskTable` is REQUIRED on every run regardless of the answer (or of whether this question was even asked) — see Args Preparation below.
+If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). Stamp the answer verbatim into `args.scopeAnswer` (`"light"` or `"full"`); the workflow derives the dimensions from it (2g). Announce the actual dimension set — `bugs, security` for light, the full list for full.
 
 > Headless exception: do not ask, and leave `scopeAnswer` out; interactive runs stamp the question answer.
 
@@ -249,13 +240,13 @@ Every other valid run dispatches all seven discovery agents.
 
 ## Shared Agent Context File
 
-The workflow's **summarize, discovery, and validate** agents Read a shared context file. The workflow threads exactly this path to them: `{output_dir}/code-gauntlet-context-{head_sha_short}.md`. The skill must write it there before the Phase 3 `Workflow` call, or the agents' "Read the shared context" step hits a missing file. The **challenger** is not in that list: it is structurally blind (it receives only a finding's title, description, and location and opens the code itself), so the Challenge stage is given no context path at all.
+The workflow's **summarize, discovery, and validate** agents Read `{output_dir}/code-gauntlet-context-{head_sha_short}.md`; write it before the Phase 3 `Workflow` call.
 
 Use the command in [phase2-preparation.md: Write the shared agent context file](phase2-preparation.md#write-the-shared-agent-context-file) and `scripts/write_shared_context.py`; pass the 2e risk classification and 2f AI-generated-code status as Markdown on stdin.
 
 ### Measure it
 
-Stamp the script receipt verbatim. Size fields are optional only so a skipped step degrades to a disclosed `context_unmeasured` gap, never a licence to skip; `contextChars` or `contextMaxLineChars` without `contextLines` is refused at the waist. `contextReadPlan` and `sharedContextLine` (`workflows/src/contextPlan.js`) turn the measurements into the Read calls.
+Stamp the script receipt verbatim. Size fields are optional only so a skipped step degrades to a disclosed `context_unmeasured` gap, never a licence to skip.
 
 ---
 
@@ -287,8 +278,6 @@ The title and URL reach the script only through the pipe.
 The waist treats `null` as absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`.
 Keep `reviewConfigPath: null` when the receipt has no root REVIEW.md, even if it lists subdirectory files; this field records root provenance.
 
-The workflow derives the host platform from `repoRoot`, `outputDir`, and `pluginRoot`; any drive-form root selects Windows command limits.
-
 **Required fields (`validateArgs` fails loud without them):**
 
 | Field | Value |
@@ -298,7 +287,7 @@ The workflow derives the host platform from `repoRoot`, `outputDir`, and `plugin
 | `repoRoot` | `configResult.identity.repo_root` (Python-resolved wire path) |
 | `outputDir` | resolved `{output_dir}` (absolute) |
 | `headShaShort` | `head_sha_short` from 2b-post |
-| `nonce` | freshly generated, matching `^[A-Za-z0-9._-]+$` (interpolated into the verify executor argv per slice — no whitespace/shell metacharacters) |
+| `nonce` | the run nonce from Composite A, preserved on resume, matching `^[A-Za-z0-9._-]+$` (interpolated into the verify executor argv per slice — no whitespace/shell metacharacters) |
 | `generatedAt` | current wall-clock as an ISO8601 string — the workflow's injected clock (it never calls `new Date()`) |
 | `diffPath` | `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch` |
 | `changedFiles` | the changed-file array, by value (Summarize bucketing; the workflow has no disk access) |
@@ -309,7 +298,7 @@ The workflow derives the host platform from `repoRoot`, `outputDir`, and `plugin
 | `python` | Phase 1 selection: `python3`, `python`, or `py -3`; optional, defaults to `python3`. |
 | `reviewScope` | Stamp per [phase2-preparation.md: Composite A](phase2-preparation.md#phase-2-composite-a--pre-gather-status--checkout--sha--prior-review-gate--stale-truncation), after the prior-review gate. |
 | `policy` | `{ tier, subagentModel, provider, gateway, mappedAliases }` — see below |
-| `limits` | Stamp `{}` unless a genuine REVIEW.md-set override exists. |
+| `limits` | Stamp `{}`. |
 | `delivery` | For PR/MR targets, stamp only `{ prIdentity }` using the generated field contract above. Omit it for local targets. |
 
 <!-- generated-from-registry-identity:derived_waist_fields — do not edit; run scripts/generate_contract_requirements.py -->
@@ -340,12 +329,12 @@ Model dispatch, including user mappings and gateway naming, follows [model-polic
 **Other inputs (optional unless noted):**
 
 - `scopeAnswer` — `"light"` or `"full"`, stamped only when the 2e trivial-scope gate asked (see 2e).
-- `contextLines` / `contextChars` / `contextMaxLineChars` — the shared context file's measured size and maximum line length (including LF) from `write_shared_context.py`'s receipt. **Not provenance — consumed.** `contextReadPlan` turns them into the exact `Read` calls the Summarize/Discover/Validate prompts enumerate, so the agent is told which calls to make instead of having to notice an unannounced truncation. Optional (absent ⇒ count-free read-to-end wording); character measurements require `contextLines`; all must be positive integers.
+- `contextLines` / `contextChars` / `contextMaxLineChars` — the shared context file's measured size and maximum line length (including LF) from `write_shared_context.py`'s receipt. **Not provenance — consumed** by the Read plan. Optional (absent ⇒ count-free read-to-end wording); character measurements require `contextLines`; all must be positive integers.
 - `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).
-- `reviewMd` / `reviewMdSetChecksum` - `[{ path, text, checksum }, ...]` plus `receipt.review_md_checksum` in collector receipt order (2d), the raw text of every REVIEW.md listed by the receipt. Never hand-parse it here: the workflow's `resolveReviewConfig` (`workflows/src/args.js`) builds root and subtree layers before the Filter stage selects settings by finding file. An empty array is a legal, authoritative "discovered nothing."
+- `reviewMd` / `reviewMdSetChecksum` - `[{ path, text, checksum }, ...]` plus `receipt.review_md_checksum` in collector receipt order (2d), the raw text of every REVIEW.md listed by the receipt; never hand-parse it. An empty array is a legal, authoritative "discovered nothing."
 - `exclusionsText` — the raw text of whatever exclusions source was found (e.g. `.reviewignore`), parsed by `resolveReviewConfig` via `loadExclusions` (`workflows/src/reviewConfig.js`).
-- `reviewConfig` / `exclusionPatterns` — the LEGACY pre-parsed form. Still accepted for backward compatibility (bench children, older callers), but do not stamp these alongside `reviewMd`/`exclusionsText` for the same axis — the waist rejects a waist that stamps both the raw and pre-parsed form (single authority).
+- `reviewConfig` / `exclusionPatterns` — the legacy pre-parsed form; never stamp it alongside `reviewMd`/`exclusionsText` for the same axis.
 - `reviewConfigPath` - the root REVIEW.md path (or `null`), carried for provenance. When `reviewMd` is an array, this must be non-null iff an entry has path exactly "REVIEW.md"; legacy pre-parsed callers retain their existing path provenance.
 - `persist` - optional, `{ returnPrimaries: true }`. Stamp it to use the RETURN channel. The workflow derives the fallback assemble command from `pluginRoot`; omit both script-path fields. With `returnPrimaries: false`, the artifact-writer transcribes primaries and the executor derives post-review and checkpoint artifacts. Without `persist`, the legacy by-value writer remains available.
 
@@ -359,7 +348,7 @@ verify: {
 }
 ```
 
-Supply the path bases and any REVIEW.md `verifySliceSize` override; the skill cannot pre-write findings that Discover and Merge have yet to produce. See [validation pipeline](validation-pipeline.md#verify-stage-verifystage) for slicing, the wire and trust checks.
+Supply only the path bases; the skill cannot pre-write findings that Discover and Merge have yet to produce. See [validation pipeline](validation-pipeline.md#verify-stage-verifystage) for slicing, the wire and trust checks.
 
 **`checkpoints` (resume only):** omit on a fresh run. On resume, copy the whole producer object, `checksum` included, from `return.checkpoints` or the file at `artifactPaths.checkpoints`; never edit it. See [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable) for refusal handling.
 

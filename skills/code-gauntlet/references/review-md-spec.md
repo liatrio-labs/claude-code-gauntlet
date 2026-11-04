@@ -16,7 +16,7 @@ REVIEW.md is a markdown file. The only part code-gauntlet's parser reads mechani
 config block — a fenced ```` ```yaml # code-gauntlet ```` block, or an
 `<!-- code-gauntlet-config -->` comment block — containing plain `key: value` lines in four
 recognized snake_case keys. Everything else in the file (headings, prose, a `## Rules` list) is
-free markdown and is never parsed; the collector copies the whole file, including its config block, into a source-path-tagged `review-rules` block in the shared context read by every context-reading agent (summarize, discovery, validate), with prose advisory for that source directory's subtree (see "Rules and other prose" below).
+free markdown and is never parsed (see "Rules and other prose" below).
 
 The collector receipt carries a checksum of each file's normalized text and of the ordered list; the workflow discloses unproven or mismatched text as run gaps while applying the stamped settings.
 
@@ -78,7 +78,7 @@ dimensions or excludes files. Structural controls:
 - **Which findings are suppressed** is the `ignore` list in the config block (see below) — a
   substring match against finding text, not a file-path exclusion.
 
-Rules intended for all context-reading agents (summarize, discovery, validate) should be:
+Rules should be:
 
 - Specific and actionable (not vague guidelines)
 - Objectively verifiable (an agent can determine compliance)

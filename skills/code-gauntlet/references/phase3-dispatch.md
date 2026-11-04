@@ -53,6 +53,6 @@ read-plan safeguards, executor proofs, and writer fallbacks; read it when diagno
 ## Permission troubleshooting
 
 Live permission-mode behavior is unverified. Under `acceptEdits`, a dynamic-workflow review gate
-or the executor's `verify_findings.py` Bash command may wait for approval the workflow cannot
+or an executor's pinned `verify_findings.py` or `assemble_artifacts.py` Bash command may wait for approval the workflow cannot
 surface. Check the gate and command permissions before retrying a stalled run. Do not infer
 completion from a permission stall or bypass the invocation and recovery contracts.

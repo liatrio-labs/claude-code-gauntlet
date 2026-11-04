@@ -28,8 +28,6 @@ Inspect the session tool definitions for `Workflow` before other work. `ToolSear
 code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.
 ```
 
-The same availability check applies in interactive and headless modes.
-
 ---
 
 ## Resolve Review Target
@@ -156,7 +154,6 @@ Store `python` from the first line as one of `python3`, `python`, or `py -3`.
 Substitute `{python}` with those fixed argv words in every later command; quote each word separately.
 Copy it into `args.python` and pass `--python "{python}"` to the awaiter.
 Store the plugin-dir confirmation from section 2. If a directory is missing, stop because `plugin_root` was resolved wrong.
-Store the resolver JSON and stderr block from section 3. Retain them as `configResult`; its stderr block is the Phase 2 gate.
 Store the eligibility receipt from section 4 for PR/MR targets.
 
 **Do not resolve the head SHA yet** — it is computed after PR checkout in Phase 2 so the SHA reflects the actual PR HEAD, not whatever branch was checked out when the session started.
@@ -293,11 +290,7 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
 
 ## Configuration Resolution (no questions)
 
-The eligibility receipt selects the interactive draft question.
-PR-not-found handling and the previously-reviewed gate keep their own templates.
 Headless runs resolve every gate without `AskUserQuestion`.
-
-The resolver owns configuration values. The generated block below names the waist fields the workflow derives from its receipt.
 
 | Config key | Resolution |
 |---|---|
