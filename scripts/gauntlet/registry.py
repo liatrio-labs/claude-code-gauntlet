@@ -1028,10 +1028,6 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         "agentType": "code-gauntlet:code-simplifier",
         "conditionalFlag": "deep",
         "schemaExtra": {
-            "behavior_preserved": {
-                "type": "string",
-                "description": "How the proposed simplification preserves observable behavior.",
-            },
             "quality_basis": {
                 "type": "string",
                 "enum": [
@@ -1092,6 +1088,10 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                 "required": ["file", "line_start", "line_end", "anchor"],
                 "additionalProperties": False,
                 "description": "Source reference to an existing repository idiom supporting the change.",
+            },
+            "behavior_preserved": {
+                "type": "string",
+                "description": "Why the simpler equivalent preserves observable behavior.",
             },
         },
         "requiredExtra": [],
@@ -1195,10 +1195,10 @@ DETAIL_FIELDS_BY_DIMENSION = {
         "behavior_preserved",
     ),
     "simplification": (
-        "behavior_preserved",
         "quality_basis",
         "duplicate_of",
         "precedent",
+        "behavior_preserved",
     ),
 }
 

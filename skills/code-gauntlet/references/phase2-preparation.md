@@ -249,10 +249,6 @@ if ! {python} "{plugin_root}/scripts/save_git_diff.py" --git-range "HEAD" --outp
 fi
 ```
 
-On `files: FAILED`, stop the handoff and report the stderr reason (headless: non-zero outcome).
-
-If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own `git diff` chain inside an executor subagent (which has shell) — not in this composite.
-
 **Composites A/B do not subsume 2d or 2f.** Run 2d's collector as a separate script call after the changed-file list is saved; its receipt is the only REVIEW.md discovery source. Keep AI-marker scanning (2f) as separate Grep tool calls under `references/phase2-triage.md`; never use `grep` from Bash for those searches.
 
 ## Discover REVIEW.md and stamp its raw text
@@ -311,9 +307,6 @@ An exit 2 wrote no usable context; stop and report its one-line error.
                  head_advanced, sha_is_ancestor, incremental_safe, error } },  // REQUIRED
   limits: {},
   delivery: { prIdentity },  // PR/MR targets only; see phase2-triage.md, "Args Preparation"
-                                             // the artifact-writer then persists postReview as the post_review-ready
-                                             // wrapper { owner, repo, pr_number, sha, platform, web_origin, review_body, findings } so
-                                             // Phase 8 posts it without hand-assembly
 
   // by-value inputs the in-memory stages need (the workflow has no disk):
   changedFiles, changedLines, baseBranch, reviewMd, reviewMdSetChecksum, exclusionsText,

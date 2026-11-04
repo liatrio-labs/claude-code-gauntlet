@@ -316,7 +316,7 @@ const DIMENSIONS = deepFreeze([
       promptExtra: null },
   { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
     defaultDisposition: 'held_back', defaultTier: 'suggestion', admission: QUALITY_ADMISSION,
-    schemaExtra: { behavior_preserved: { type: 'string', description: 'How the proposed simplification preserves observable behavior.' } }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
+    schemaExtra: {}, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
       promptExtra: null },
 ].map((row) => ({
   core: false,

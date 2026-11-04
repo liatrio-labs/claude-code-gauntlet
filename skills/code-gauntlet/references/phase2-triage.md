@@ -105,8 +105,6 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 
    An unbounded diff would include unrelated files from a base-branch merge. A base merge that touches a PR file still appears. Validate the saved patch as below. If the command fails or the patch is empty, save branch 1's full server diff instead and disclose the fallback. Record `last_reviewed_sha` in the triage announcement and Phase 8 methodology.
 
-On `files: FAILED`, stop the handoff and report the stderr reason (headless: non-zero outcome).
-
 **Save the diff and the changed-file list (the workflow has no git access):** Persist both git-derived inputs to disk so the workflow can consume them.
 
 1. **Changed files** → `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file. On the incremental path, this stays branch 1's full server file list unchanged — the same list branch 4 uses to bound the diff, never a narrower incremental-only set. Saved **first**, so branch 4's incremental diff (below) has a file list already on disk to bound against.

@@ -107,10 +107,10 @@ For convention findings, `rule_source` selects the heading for `claude_md_rule`:
 | `duplicate_of` | object | type_design | no | Source reference to the existing implementation duplicated here. |
 | `precedent` | object | type_design | no | Source reference to an existing repository idiom supporting the change. |
 | `behavior_preserved` | string | type_design | no | Why the simpler equivalent preserves observable behavior. |
-| `behavior_preserved` | string | simplification | no | How the proposed simplification preserves observable behavior. |
 | `quality_basis` | string | simplification | conditional | Basis for the finding. current_correctness: Present production defect. duplication: Duplicated behavior identified by duplicate_of. simpler_equivalent: Simpler replacement preserving observable behavior. stack_idiom: Behavior-preserving replacement grounded in existing repository precedent. other: No demonstrated defect, duplication, simpler equivalent or applicable precedent. |
 | `duplicate_of` | object | simplification | no | Source reference to the existing implementation duplicated here. |
 | `precedent` | object | simplification | no | Source reference to an existing repository idiom supporting the change. |
+| `behavior_preserved` | string | simplification | no | Why the simpler equivalent preserves observable behavior. |
 
 Required is tri-state. A `yes` field is required in the owning agent's dispatch; a `conditional` field is schema-required for its dimension on first-party direct dispatches. Runtime intake enforces both requirements for the owning row on every provider and gateway, including kind-specific evidence requirements. A `no` field is optional unless its admission kind requires it. Omit inapplicable fields; never emit null.
 
