@@ -67,5 +67,5 @@ Never edit, summarize, unwrap, rebuild, or re-sign the checkpoint.
 
 - Never re-dispatch discovery/verify stages by hand to "reconstruct" lost output — the
   cache replay or checkpoint path is always cheaper and provably consistent.
-- Record the recovery in the report methodology: the failing phase, the recovery path
+- Record the recovery in the chat methodology: the failing phase, the recovery path
   used, and whether any stage re-ran live.

@@ -373,26 +373,14 @@ def test_handwritten_field_tables():
         assert cells[2].lower() == expected
 
 
-@pytest.mark.parametrize("surface", ["wrapper", "example"])
-def test_delivery_vocabulary(surface):
+def test_delivery_vocabulary():
     assert js_values()["FIELD_RENAMES"]["body"] == "description"
     text = read("skills/code-gauntlet/references/delivery-guide.md")
     blocks = _JSON_BLOCK.findall(text)
-    assert len(blocks) == 2
-    if surface == "wrapper":
-        obj = json.loads(blocks[0])
-        assert isinstance(obj, dict)
-        findings = obj["findings"]
-    else:
-        match = re.search(
-            r"\*\*Example workflow:\*\*(.*?)(?=^\*\*Script behavior:\*\*)",
-            text,
-            re.MULTILINE | re.DOTALL,
-        )
-        assert match is not None
-        example_blocks = _JSON_BLOCK.findall(match.group(1))
-        assert example_blocks == [blocks[1]]
-        findings = json.loads(example_blocks[0])
+    assert len(blocks) == 1
+    obj = json.loads(blocks[0])
+    assert isinstance(obj, dict)
+    findings = obj["findings"]
     assert isinstance(findings, list) and findings
     for finding in findings:
         assert "body" in finding

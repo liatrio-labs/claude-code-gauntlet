@@ -96,7 +96,7 @@ If the gate resolves to **Incremental**, store `last_reviewed_sha` — section 2
 
 Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. Do not re-derive the PR number here.
 
-1. **PR/MR mode** (`pr_number` set) — Use Composite A's status receipt and saved diff commands. Get full SHA: `git rev-parse HEAD`
+1. **PR/MR mode** (`pr_number` set) — Use Composite A's status receipt and Composite B's saved diff commands. Get full SHA: `git rev-parse HEAD`
    - **GitHub (PR):** Gather the file list with `{python} "{plugin_root}/scripts/list_pr_files.py" --platform github --pr {pr_number}`. Gather the full diff with `gh pr diff {pr_number}`.
    - **GitLab (MR):** Gather the file list with `{python} "{plugin_root}/scripts/list_pr_files.py" --platform gitlab --pr {pr_number}` (the `files` producer in [phase2-preparation.md: Phase 2 Composite B](phase2-preparation.md#phase-2-composite-b--gather-diff-changed-files-line-count-misc)). Gather the full diff with `glab mr diff {pr_number}`.
 2. **Branch comparison** — use 2b's resolved SHAs in [Composite B's branch comparison blocks](phase2-preparation.md#phase-2-composite-b--gather-diff-changed-files-line-count-misc).

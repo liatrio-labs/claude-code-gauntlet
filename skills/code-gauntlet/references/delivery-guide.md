@@ -151,37 +151,6 @@ A wrong type on the fields below is refused before any forge access; other field
 `owner`/`repo`: strings; `pr_number`: non-bool integer or string; `platform`: string or null; `web_origin`: string when present.
 `findings`: array of objects; `file`: string when present; `line`/`end_line`: non-bool integer or null; `consolidation_key`: string or null.
 
-**Example workflow:**
-
-Standalone caller example only. During Phase 8, pass the persisted `artifactPaths.postReview`
-file unchanged; never reconstruct it from this example.
-
-Use the Write tool to save the input JSON at
-`{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json`. Finding text stays
-in the JSON file rather than becoming Python or shell source:
-
-```json
-[
-  {
-    "file": "app.js",
-    "line": 42,
-    "severity": "critical",
-    "title": "SQL injection in query builder",
-    "body": "User input concatenated into SQL without parameterization.",
-    "suggested_fix_code": "const query = db.prepare('SELECT * FROM users WHERE id = ?').get(id);"
-  }
-]
-```
-
-Then post the file:
-
-```bash
-{python} "{plugin_root}/scripts/post_review.py" \
-  "{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json" \
-  --report "{output_dir}/code-gauntlet-report-{head_sha_short}.md" \
-  --owner "myorg" --repo "myapp" --pr-number 42 --platform github --sha "FULL_HEAD_SHA"
-```
-
 **Script behavior:**
 
 - **GitHub:** Posts a single batched review with inline comments (event: COMMENT), then summary.

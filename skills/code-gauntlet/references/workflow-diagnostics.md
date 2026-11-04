@@ -36,7 +36,7 @@ The Discover stage groups the nine dimensions by agent and fans out one task per
 6. **code-simplifier** — behavior-preserving simplifications and present correctness defects. Dimension: `simplification`.
 7. **type-design-analyzer** — invariants, invalid states, and type design quality. Dimension: `type_design`.
 
-Each agent returns structured findings against the canonical schema (`agent()` `schema`), wrapped in the per-agent envelope `{ findings, complete, total_seen }`. The orchestrator injects the `agent` field during Merge. Discovery agents receive the **context file path** (`{output_dir}/code-gauntlet-context-{head_sha_short}.md`), its **read plan**, and the repository root in the prompt; test-analyzer also receives the `removedTests` inventory. All shared context (rules, risk, diff) lives in that file, which Phase 2 wrote.
+Each agent returns structured findings against the canonical schema (`agent()` `schema`), wrapped in the per-agent envelope `{ findings, complete, total_seen }`. Discovery agents receive the **context file path** (`{output_dir}/code-gauntlet-context-{head_sha_short}.md`), its **read plan**, and the repository root in the prompt; test-analyzer also receives the `removedTests` inventory. All shared context (rules, risk, diff) lives in that file, which Phase 2 wrote.
 
 ## Shared-context read plan
 

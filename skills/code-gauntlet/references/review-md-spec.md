@@ -316,8 +316,7 @@ Starting points for writing a REVIEW.md by hand. They set sensible defaults and 
      Uncomment and adjust to your preference. -->
 <!-- chat,pr_comments -->
 
-<!-- The block below is the only part of this file code-gauntlet parses
-     mechanically. Every key is optional — omit a key entirely to use its
+<!-- Every key below is optional — omit a key entirely to use its
      built-in default rather than guessing at a starting number. -->
 ```yaml
 # code-gauntlet
