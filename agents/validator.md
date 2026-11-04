@@ -11,7 +11,6 @@ Decide whether each supplied finding is true of the committed tree. PR metadata 
 
 Supplied evidence is a lead; inspect the code yourself.
 
-<!-- Shared guidance: references/investigation-methodology.md -->
 <!-- generated-from-verification:investigation -->
 Attempt to disprove the claim from code beyond the diff; a runtime failure needs a reachable caller and precondition or a concrete failing input. Cite decisive code at file:line, including protections and paths searched for absence claims.
 <!-- /generated-from-verification:investigation -->
@@ -34,18 +33,3 @@ Report reachability separately from confidence in the claim:
 ## Reading a file completely
 
 A `Read` can return part of a file without a truncation notice; check that you reached the measured end or exhaust the file.
-
-## Output format
-
-```json
-{
-  "validations": [
-    {
-      "finding_id": "<id>",
-      "confidence": <0-100>,
-      "justification": "<one-sentence explanation of your assessment>",
-      "reachability": "<current|future_change_only|uncertain>"
-    }
-  ]
-}
-```

@@ -13,8 +13,6 @@ The validation pipeline runs inside `workflows/pipeline.js`. Its deterministic t
 
 **Pipeline order inside the workflow:** Merge → **Verify** → **Validate** → **Filter** → **Challenge** → Report.
 
-The five transform golden families under `tests/fixtures/parity/` are JavaScript-owned.
-
 ---
 
 ## Verify stage (`verifyStage`)
@@ -74,21 +72,13 @@ These proofs check consistency against transcription errors; an executor that re
 
 ## Validate stage (`validateStage`)
 
-Independent re-scoring by fresh agents, defaulting to Sonnet subject to the resolved override; each validator tries to disprove the finding against the code within that dispatch.
+Independent re-scoring by fresh agents, defaulting to Sonnet subject to the resolved override.
 
-The stage batches findings into `limits.validateBatch` chunks and dispatches one `validator` per batch through `parallel()`. Each validator attempts to **disprove** each finding and returns `[{ id, confidence, justification, reachability }]` (confidence 0–100). Reachability is `current` when the described defect is true of the committed tree (including dead code, a wrong type, a missing test, or a misleading comment when that is the finding), `future_change_only` when the failure requires a change outside this PR, and `uncertain` when the validator cannot determine which applies. `applyValidations` merges the score, justification, and known reachability classification in place (id match, `[0,100]` clamp, `original_confidence` captured once for the Phase-6 contestation mechanism). The validator's shipped output uses `finding_id`; the stage accepts both `finding_id` and `id`.
+The stage batches findings into `limits.validateBatch` chunks and dispatches one `validator` per batch through `parallel()`. Each validator attempts to **disprove** each finding and returns `{ validations: [{ finding_id, confidence, justification, reachability, policy_subject, admission_assessments }] }` (confidence 0–100). Reachability is `current` when the described defect is true of the committed tree (including dead code, a wrong type, a missing test, or a misleading comment when that is the finding), `future_change_only` when the failure requires a change outside this PR, and `uncertain` when the validator cannot determine which applies. `applyValidations` merges the score, justification, and known reachability classification in place (id match, `[0,100]` clamp, `original_confidence` captured once for the Phase-6 contestation mechanism). The stage also accepts `id` for `finding_id`.
 
-**Confidence rubric** (validator agent definition holds the authoritative copy):
+**Confidence rubric:** the shared scale in [investigation-methodology.md](investigation-methodology.md).
 
-```
-  0  = definitely a false positive
- 25  = probably false positive
- 50  = uncertain
- 75  = probably real — no meaningful counter-evidence
-100  = definitely real
-```
-
-**Degradation.** A null/malformed batch or a missing matched score marks the affected findings `validation='skipped'`, with confidence untouched and one gap per batch naming the count. They still face challenge, then survivors enter the unverified bucket and appear only in the report. Degraded verify slices (`origin='unknown'`) follow the same route. How often validators omit scores is unmeasured.
+**Degradation.** A null/malformed batch or a missing matched score marks the affected findings `validation='skipped'`, with confidence untouched and one gap per batch naming the count. They still face challenge, then survivors enter the unverified bucket and appear only in the report. Degraded verify slices (`origin='unknown'`) follow the same route.
 
 ---
 
@@ -108,7 +98,7 @@ Pure, deterministic JS — no agents. It applies dimension-specific confidence/s
 
 ## Challenge stage (`challengeStage`)
 
-Blind, independent scrutiny — the only stage where findings face agents that have never seen the original reasoning. Fresh challengers see **only** `blindChallengeFields`: `title`, `description`, `file`, `line_start`, and `line_end` (an allowlist, not a delete-list — no evidence, origin, cross_file_refs, or reasoning can ever leak). Defaults to Sonnet, subject to the resolved override.
+Blind, independent scrutiny — the only stage where findings face agents that have never seen the original reasoning. Fresh challengers see **only** `blindChallengeFields`: `title`, `description`, `file`, `line_start`, `line_end`, and a removed-test reference when present (an allowlist, not a delete-list — no evidence, origin, cross_file_refs, or reasoning can ever leak). Defaults to Sonnet, subject to the resolved override.
 
 The stage ranks clean findings first, then incomplete findings, and blind-challenges the top `min(n, limits.challengeCap)` through `parallel()`, and applies the score thresholds. Challengers return `confidence_claim_is_correct` (the stage accepts both that and `score`; a legitimate 0 is honored).
 

@@ -57,7 +57,7 @@ Exit 0 names the patches path beside the report, even with zero kept patches. Ex
 **On `ok: true` after materialization or writer persistence:** read the artifacts — they are the source of truth for delivery. Do not reconstruct, re-filter, or re-rank findings from the return value or from memory.
 
 - `artifactPaths.postReview` — the pipeline's **pre-selected delivery payload**: the challenge-survivors chosen by the delivery tier (`args.delivery.tier` — `all` (default) keeps every survivor, `main_only` keeps main-tagged only), ranked by `selectDelivery` and truncated to `limits.deliveryCap`, each carrying its `report_tag`. Same **union schema** as the findings file, so `post_review.py` consumes it unchanged. This is the selected delivery set: `deliver` entries become inline comments and `body` entries appear only in the review-body digest. The poster applies placement; the live agent posts the payload verbatim and never re-selects.
-- `artifactPaths.findings` — every disposed record, including body-routed, held-back, report-only, and eliminated findings; rights live in `disposition`. Injection eliminations retain only `id`, `title`, `eliminated_by`, and `elimination_reason`; their full forensic records remain in the raw challenge checkpoint. Other records carry the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged. Delivery never selects from this full file: the posted set is `artifactPaths.postReview`, posted verbatim.
+- `artifactPaths.findings` — every disposed record, including body-routed, held-back, report-only, and eliminated findings; rights live in `disposition`. Injection eliminations retain only `id`, `title`, `eliminated_by`, and `elimination_reason`; their full forensic records remain in the raw challenge checkpoint. Other records carry the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged.
 - `artifactPaths.report` — the rendered report markdown, produced **in code** by
   `renderReport()` (`workflows/src/renderReport.js`): title, identity line, Summary, Findings
   by severity, the Unverified/pipeline-degraded section, the Review Dimensions Summary, and
@@ -67,19 +67,14 @@ Exit 0 names the patches path beside the report, even with zero kept patches. Ex
 
 **On failure, partial artifacts, or a checkpoint refusal:** follow [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable). That reference owns whole-object copying (`checksum` included), checksum re-copy, and interactive/headless retry limits. Never edit the checkpoint.
 
-Code renders the integer gap count in report methodology regardless of `ok`. Chat points to that section and adds only gaps arising after the report stage. Each entry names a degraded or skipped stage (unverified findings, skipped validation batch, capped challenges, partial artifacts).
-
 Read `references/report-format.md` for the PR comment format.
 
 ### Methodology inputs
 
-The renderer owns the methodology section and receives its inputs through the args waist: plugin
-and pipeline version, resolved policy and per-stage models, effective delivery selection,
-review scope, stage and merge statistics, the integer gap count, and dispatched/degraded
-dimensions. The chat methodology at delivery points to this report section and adds only what
-the orchestrator knows after the report stage: materialization proof, the patches path, delivery
-outcome, post-report gaps, and wall-clock duration. It never reconstructs or appends report
-content.
+The renderer owns the report's methodology section, including the gap count. The chat methodology at
+delivery points to that section and adds only what the orchestrator knows after the report stage:
+materialization proof, the patches path, delivery outcome, post-report gaps, and wall-clock duration.
+It never reconstructs or appends report content.
 
 ### Permalinks
 
@@ -122,10 +117,8 @@ For a GitLab target, say `MR !{pr_number}` in the question and `Post to MR (Reco
 **When the PR is closed or merged, or the target is a local diff, do not ask** — there is nothing to post
 to; deliver markdown-only and say so.
 
-- **"Post to PR"** → post `artifactPaths.postReview` **verbatim**. This is the pipeline's pre-selected
-  set: the survivors chosen by `args.delivery.tier`, ranked by `selectDelivery`, capped at
-  `limits.deliveryCap`. There is no per-finding walkthrough and no deselection UI — the user's choice is
-  post or don't. Never re-filter by tag, re-rank, or re-apply the cap.
+- **"Post to PR"** → post `artifactPaths.postReview` **verbatim**. The user's choice is post or don't;
+  there is no per-finding walkthrough, re-filtering, re-ranking or re-capping.
 - **"Markdown only"** → post nothing and **do not write a new file**. The full report is already
   persisted at `artifactPaths.report` (e.g. `{output_dir}/code-gauntlet-report-{head_sha_short}.md`). Tell
   the user that absolute path in chat — that is the delivery. The only allowed write outside
@@ -157,7 +150,7 @@ identity flags. The script derives the Summary body from the report and forms th
 
 The `{web_origin}` placeholder comes from `delivery.prIdentity.web_origin`.
 
-> Headless carve-out (`configResult.resolved.post_mode == "dry-run"`): append `--dry-run` to the `post_review.py` invocation so it captures the payload instead of posting. `post_review.py` self-enforces this regardless — it reads `CODE_GAUNTLET_POST_MODE` directly and treats `dry-run` as `--dry-run` even when the flag is omitted (belt-and-braces) — but pass the flag explicitly so the dry-run intent is visible in the command.
+> Headless carve-out (`configResult.resolved.post_mode == "dry-run"`): append `--dry-run` to the `post_review.py` invocation so it captures the payload instead of posting.
 
 See `references/delivery-guide.md` for the findings JSON schema and validation details.
 

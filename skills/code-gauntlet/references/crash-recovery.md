@@ -39,10 +39,7 @@ When resume by id is unavailable, copy the checkpoint object **whole, `checksum`
 from `return.checkpoints` on failure or partial persistence, or from the file at
 `artifactPaths.checkpoints` after successful persistence, into `args.checkpoints`.
 The slim disk checkpoint retains challenge output and per-phase counts; upstream phases run again.
-Never edit, summarize, unwrap, rebuild, or re-sign the checkpoint. The producer's checksum covers
-`JSON.stringify` of the whole object except `checksum`, with two-space indentation,
-native key order and UTF-16 hashing. This detects value drift, not authentication or
-changes to the disk JSON's presentation whitespace. Fractional numbers remain valid.
+Never edit, summarize, unwrap, rebuild, or re-sign the checkpoint.
 
 - A signed `.phases` map replays completed outputs and dispatches missing phases.
 - After checksum and shape checks, missing or incoherent location status becomes `unconfirmed`.

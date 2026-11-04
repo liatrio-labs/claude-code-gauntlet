@@ -50,18 +50,9 @@ ignore:
 ````
 
 The config block can go anywhere in the file — the parser searches for it independent of any
-heading. It is shown here after `## Rules` only because that's how the scaffolding templates below
-lay a file out.
+heading.
 
-One more setting is read through a separate mechanism. The resolver checks only the root REVIEW.md for a line matching `^## Default Delivery[ \t]*$`.
-
-Its body ends at the next ATX heading matching `^#{1,6}[ \t]`, a fence opener matching `^[ \t]{0,3}(`{3,}|~{3,})`, or EOF. Universal newlines are supported.
-
-Remove paired HTML comments, including multiline comments, before selecting the first remaining non-blank line.
-
-Trim that line. It is a candidate only when it matches `^[a-z_]+(,[a-z_]+)*$`; otherwise the setting is unset. The delivery rule validates candidates, including unknown tokens, duplicates, and local `pr_comments` values.
-
-An environment pin wins over this value and the headless default. Interactive mode ignores it. The scaffold's commented `<!-- chat,pr_comments -->` value is unset.
+One more setting, `## Default Delivery`, is read through a separate mechanism; see [Default Delivery](#default-delivery).
 
 A `## Model Tier` heading is inert prose. The model policy remains fixed, and its environment pin is documented in `references/headless-mode.md`.
 
@@ -75,11 +66,11 @@ first and uses that one.
 
 ### Rules and other prose
 
-`## Rules` (or any other free-text section — a `## Focus` or `## Skip` heading some REVIEW.md files
-still carry from older guidance) is never parsed for structure. Its content is advisory: the collector copies the whole REVIEW.md file into a `review-rules` block tagged with its source path; every context-reading agent (summarize, discovery, validate) receives every block and can apply its prose to that directory's subtree.
-A `## Focus` or `## Skip` heading has no such effect beyond that — code-gauntlet does not read them
-as instructions to gate dimensions or exclude files; they are just more prose an agent may or may
-not act on. Two structural things actually do gate/exclude, and neither is REVIEW.md-configurable:
+`## Rules` and any other free-text section, including a `## Focus` or `## Skip` heading, is never
+parsed for structure. Its content is advisory: the collector copies the whole REVIEW.md file into a
+`review-rules` block tagged with its source path; every context-reading agent (summarize, discovery,
+validate) receives every block and can apply its prose to that directory's subtree. No heading gates
+dimensions or excludes files. Two structural things do, and neither is REVIEW.md-configurable:
 
 - **Which dimensions run** is decided automatically by the trivial-scope gate (all changed files
   low-risk and under 50 changed lines → light scope, `bug` + `security` only; otherwise every
@@ -189,9 +180,9 @@ is no in-file place to put a per-entry note that both parses correctly and doesn
 - A **root** `REVIEW.md` at the repo root (its thresholds and ignore apply to all files by default)
 - **Subdirectory** `REVIEW.md` files in any directory on that walked set (their thresholds and ignore apply to files in that directory tree)
 
-Subdirectory REVIEW.md files are optional — they're only needed when different parts of the codebase need different thresholds or ignore patterns (e.g., stricter security for an API directory or suppressions for a legacy module). Their prose is advisory for the source directory's subtree: every context-reading agent (summarize, discovery, validate) receives every block in the shared context, tagged with the REVIEW.md source path; thresholds and ignore patterns are enforced per subtree by the pipeline.
+Subdirectory REVIEW.md files are optional — they're only needed when different parts of the codebase need different thresholds or ignore patterns (e.g., stricter security for an API directory or suppressions for a legacy module).
 
-**Placement decision test:** before adding a rule to a subdirectory REVIEW.md, ask "would this rule generate false positives in the other stack?" If yes, place it in that subdirectory's REVIEW.md as advisory guidance for its subtree; every context-reading agent still receives the block, tagged with its source path. If the rule applies cleanly everywhere, place it in root. Thresholds and ignore patterns in that subdirectory file are enforced for its subtree. Example: "Never use `async void`" is meaningless in a React frontend — record it in `backend/REVIEW.md` as advisory prose. "Validate all user input" applies everywhere — record it in root.
+**Placement decision test:** before adding a rule to a subdirectory REVIEW.md, ask "would this rule generate false positives in the other stack?" If yes, place it in that subdirectory's REVIEW.md as advisory guidance for its subtree. If the rule applies cleanly everywhere, place it in root. Example: "Never use `async void`" is meaningless in a React frontend — record it in `backend/REVIEW.md` as advisory prose. "Validate all user input" applies everywhere — record it in root.
 
 ### Inheritance model
 
@@ -209,7 +200,7 @@ When a subdirectory has its own REVIEW.md, its settings combine with the root as
 In short: **thresholds override and ignore patterns accumulate per matching subtree; every context-reading agent receives all source-tagged prose blocks as advisory guidance for their source subtrees.**
 
 Thresholds and `ignore` are scoped per subtree by `finding.file`: the root layer is the default,
-and matching directory layers override present thresholds and append their ignore lists. Free prose (`## Rules` and other guidance) reaches every context-reading agent (summarize, discovery, validate) in the shared context as source-path-tagged blocks; each block is advisory for its directory's subtree. Matching uses a byte-exact, case-sensitive `dir/` prefix with no normalization of
+and matching directory layers override present thresholds and append their ignore lists. Matching uses a byte-exact, case-sensitive `dir/` prefix with no normalization of
 finding paths; a non-matching or non-string file uses the root layer. `.reviewignore` remains
 global, and `default_delivery` remains root-only.
 
@@ -250,7 +241,7 @@ REVIEW.md is read-only in both modes. When none is discovered, the report render
 
 For rules in REVIEW.md, these principles follow research on AI reviewer effectiveness:
 
-1. **15-25 rules per file, ~50 rules across all REVIEW.md files combined.** Beyond these limits, LLM adherence degrades for ALL rules, not just new ones. The review system's own prompts consume ~50 instruction slots; each rule competes for the remaining capacity. With a root + two subdirectory files (e.g., backend + frontend), budget roughly 15-20 for root and 10-15 per subdirectory.
+1. **15-25 rules per file, ~50 rules across all REVIEW.md files combined.** Beyond these limits, LLM adherence degrades for ALL rules, not just new ones. With a root + two subdirectory files (e.g., backend + frontend), budget roughly 15-20 for root and 10-15 per subdirectory.
 2. **Prescriptive for security/correctness, directional for design.** "All async methods MUST accept CancellationToken" (binary pass/fail) vs "Prefer immutable types where practical" (allows edge cases). Prescriptive rules produce low false-positive rates; directional rules handle nuance.
 3. **Always include rationale.** "Never force push" is a flat instruction. "Never force push — this rewrites shared history and is unrecoverable for collaborators" helps the reviewer generalize to related scenarios (like `git reset --hard` on shared branches).
 4. **Specific and verifiable.** Each rule should have a binary pass/fail condition. "Write clean code" is unverifiable. "All public API endpoints must validate request body schema before processing" is verifiable.
@@ -322,7 +313,7 @@ Starting points for writing a REVIEW.md by hand. They set sensible defaults and 
 
 <!-- How to deliver review results. Comma-separated list.
      Options: chat, pr_comments, markdown
-     When set, skips the delivery preference prompt.
+     Read by headless runs only; interactive runs ask after the report.
      Task creation is always offered separately after delivery.
      Uncomment and adjust to your preference. -->
 <!-- chat,pr_comments -->

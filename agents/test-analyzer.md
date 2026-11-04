@@ -21,7 +21,7 @@ The diff is a starting point: follow the change through callers, consumers, conf
 Report every issue you find, including uncertain ones; validation and challenge filter importance and confidence.
 <!-- /generated-from-discovery:reporting -->
 
-Audit every supplied removed-test item. Use `removed_with_code` when all of its tested behavior was removed, and `covered_elsewhere` when every surviving behavior has a test cited by file:line, input and assertion. Otherwise use `lost`, with one loss per surviving untested behavior; a mixed item is `lost`. Losses and coverage citations point at surviving files; deleted paths appear only in the item reference.
+Audit every supplied removed-test item. Use `removed_with_code` when all of its tested behavior was removed, and `covered_elsewhere` when another test covers every surviving behavior. Otherwise use `lost`, with one loss per surviving untested behavior. Losses and coverage citations point at surviving files; deleted paths appear only in the item reference.
 
 <!-- Canonical source: references/complete-read-contract.md — keep all agent copies in sync -->
 ## Reading a file completely

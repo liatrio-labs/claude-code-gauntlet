@@ -13,10 +13,6 @@ Implementation details for each delivery method in Phase 8, interactive and head
 
 ## PR/MR Comments (platform-aware)
 
-**Only comment on files in the diff.** The GitHub/GitLab API rejects inline comments on files not part of the PR/MR diff (HTTP 422). Before posting each inline comment, verify the file path is in the changed files list. Cross-file impact findings about files outside the diff go in the top-level summary comment with a note: "This finding references `path/to/file.cs` which is not in this PR's diff."
-
-Batch inline comments into a single GitHub review event to avoid one notification per finding.
-
 Follow [phase8-delivery.md](phase8-delivery.md#stage-1-deliver-the-report) for delivery authorization
 and the immutable `artifactPaths.postReview` payload. This guide documents the posting interface.
 
@@ -62,20 +58,10 @@ A multi-line fence on GitLab carries an offsets header, `` ```suggestion:-m+n ``
 decided by the poster from the discussion's anchor line — never supplied on the finding itself.
 A single-line fix still renders a plain `` ```suggestion `` fence.
 
-**A fence that would overlap another kept fence in the same file demotes to prose.** GitLab
-refuses to batch-apply a set of suggestions with any two overlapping ranges in one file, and
-serially applying one outdates the other — so before rendering, the poster walks the fences in
-delivery order (the pipeline's own priority ranking, not line position) and withholds any whose
-apply range overlaps one it has already kept in that file: the earlier fence wins, and a withheld
-fence claims no range of its own. Overlap uses GitLab's closed-interval semantic: two single-line
-fences anchored at the identical line collide; two fences that merely touch (`[n, m]` next to
-`[m + 1, k]`) do not. A demoted finding still ships with its prose `suggestion` — only the
-one-click affordance is withheld — and which of a run's ranked fences are withheld is a pure
-function of the findings and the diff, so a rerun reaches the same verdict regardless of what has
-already posted.
-This rule is scoped to overlapping ranges: GitHub's batch apply can also fail on multi-line
-suggestions that are merely adjacent rather than overlapping, and a fence is never withheld for
-that case.
+**A fence that would overlap another kept fence in the same file demotes to prose.** The poster
+walks fences in delivery order and keeps the earlier one. Ranges are closed intervals: fences at
+the identical line collide, while adjacent fences do not and are never withheld. A demoted finding
+keeps its prose `suggestion`.
 
 <!-- generated-from-registry-identity:severity_legend — do not edit; run scripts/generate_contract_requirements.py -->
 Product mark: ⚔️ (Code Gauntlet). Severity emojis: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
@@ -102,12 +88,6 @@ either stamp is held back, unless its disposition is `eliminate`. Bare arrays st
 wrapper arguments above, but unstamped findings post no comments.
 
 **Findings JSON schema:**
-
-> `suggested_fix_code` below is optional and gated: every discovery agent may emit it, but
-> `post_review.py` only renders it as a `suggestion` fence when it passes the deterministic
-> apply-check (string, non-stale, matching range and anchor, within the size bound); otherwise
-> the finding falls back to the prose `suggestion`. Callers constructing their own post-review
-> JSON pass through the same gate.
 
 > `post_review.py` reads the **v2-aliased** field names (`body`, `line`, `end_line`).
 > The persist boundary adds these aliases alongside the canonical names
@@ -155,7 +135,7 @@ when maintaining escaping or host rendering.
   - `severity` — emoji selected from: critical, high, medium, low
   - `title` — one-line finding summary
   - `body` — explanation and context (delivery alias of canonical `description`; see boundary note above)
-  - `suggestion` — optional prose fix advice, rendered under a **Suggested fix:** heading. Carried on every finding the pipeline produces (canonical schema), so the delivery JSON should pass it straight through.
+  - `suggestion` — optional prose fix advice, rendered under a **Suggested fix:** heading.
   - `claude_md_rule` / `spec_text` — optional; whichever survives sanitize renders under a heading as a blockquote (`claude_md_rule` preferred when both survive). When `claude_md_rule` is rendered, `rule_source` selects **Cited rule**, **Cited comment**, **Repo precedent**, or **Inconsistency**. Unknown or absent values use **Cited rule**. A `spec_text` fallback uses **Cited rule**. The raw `rule_source` value is never rendered.
   - `suggested_fix_code` — optional code block, rendered as a committable GitHub/GitLab suggestion IF it passes `post_review.py`'s deterministic apply-check at the render site; otherwise stripped and the finding falls back to the prose `suggestion`. A body-budget cut also omits a suggestion block whole. Emitted by discovery agents when the fix is a byte-exact drop-in replacement, or supplied directly by a caller's own post-review JSON — same gate either way.
     A patch containing marker-shaped text is downgraded with reason `marker_shaped`.

@@ -14,8 +14,6 @@
 
 Code-gauntlet runs unattended when `CODE_GAUNTLET_HEADLESS=1`. In headless mode, no `AskUserQuestion` is ever presented: every interactive gate is resolved deterministically from the resolver result. A single `AskUserQuestion` call in a headless run deadlocks the process — the harness marks such runs invalid.
 
-This file is the authority for the headless contract. It covers the environment table, resolver precedence, validation, the hard rules, the per-gate resolution, and the `Headless config:` block.
-
 ---
 
 ## Env contract
@@ -35,10 +33,6 @@ The resolver is the one reader of configuration pins and the one producer of the
 | `CODE_GAUNTLET_PR_NOT_FOUND_POLICY` | `local,error` | `error` |
 | `CODE_GAUNTLET_TRIVIAL_SCOPE` | `light,full` | `full` |
 <!-- /generated-from-registry-identity:headless_env_table -->
-
-- The resolver validates the model tier and resolves delivery methods.
-- The resolver resolves posting mode, comment cap, and delivery tier.
-- The resolver resolves draft, previously-reviewed, PR-not-found, and trivial-scope policies.
 
 ---
 
@@ -109,7 +103,7 @@ Every interactive gate maps to a deterministic headless outcome. Phase 1 eligibi
 | Closed/merged PR | `check_eligibility.py` bypasses the interactive closed stop, then evaluates the remaining eligibility rules. |
 | Empty / lockfile-only PR | `check_eligibility.py` returns `stop` before draft handling. |
 | Draft PR | `check_eligibility.py` applies `resolved.draft_policy`: `review` proceeds; `skip` stops the run. |
-| Previously reviewed (Phase 2 2b-post step 3, after checkout) | `resolved.reviewed_policy`: `incremental` scopes the diff to new commits only when `detect_prior_review.py`'s `incremental_safe` is true; when the head has not advanced, the recorded SHA is unresolvable, history was rewritten, or detection errored, it degrades to `full` and discloses the degradation. `skip` stops the run only when `previously_reviewed` is true and `sha_is_ancestor` is true; on rewritten history it proceeds as a full review with the degradation disclosed. Detection is read-only and exits successfully for every outcome. |
+| Previously reviewed (Phase 2 2b-post step 3, after checkout) | `resolved.reviewed_policy`, per [Prior-review policy](#prior-review-policy): `skip` stops only when `previously_reviewed` and `sha_is_ancestor` are both true; `incremental` falls back to a disclosed full review unless `incremental_safe`. |
 | Trivial / light-scope (all low-risk, <50 lines) | `CODE_GAUNTLET_TRIVIAL_SCOPE` selects the scope: `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven discovery agents covering nine dimensions. The resolver emits no resolved key for `trivial_scope`. |
 | REVIEW.md detection | Discovered configs apply as in interactive mode: root defaults plus matching subtree overrides. |
 | Phase 8 Stage 1 (delivery question) | Not asked. Deliver per `resolved.delivery` and post `artifactPaths.postReview` verbatim, including its renderer-owned outcome-first Summary body. `selectDelivery` applies the receipt-backed tier and cap after Challenge. Posting follows `resolved.post_mode`; `dry-run` captures the payload without posting. |
@@ -142,10 +136,6 @@ Headless config:
   pipeline_version=3.1.3 (bundle)
   plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)
 ```
-
-The nine echoed knobs are followed by `pipeline_version` and `plugin_root` identity lines. The report renders the validated waist, and the Phase 1 Bash result carries the resolver block.
-
-The example shows a bench-configured run with environment pins. A run relying on headless defaults would show e.g. `delivery=markdown (default)` and `pr_comment_cap=6 (default)`, and a REVIEW.md-sourced value would show e.g. `delivery=chat (review_md)`.
 
 The pipeline renders the block in the report's last `Review Methodology` section. At delivery, point the chat methodology to that section and include the materialization proof, patches path, delivery outcome, post-report gaps, and duration.
 If no report materializes, repeat the block in the final message as the fallback receipt.

@@ -158,14 +158,13 @@ PR/MR targets copy detector values verbatim into `detector`.
 Copy `previously_reviewed`, `sha_resolvable`, `head_advanced`, `sha_is_ancestor`, and `incremental_safe`.
 Set `error` to the first `prior_review.errors` value, or `null`.
 Use `kind: "incremental"` only for an incremental request with `detector.incremental_safe: true`.
-Set `since` to the detector's safe `last_reviewed_sha` only for incremental kind.
-Set `since` to `null` otherwise.
+Set `since` to the detector's safe `last_reviewed_sha` for incremental kind, otherwise `null`.
 Otherwise use `kind: "full"` and retain the detector.
 The renderer derives the fallback explanation from retained detector facts.
 
 > Headless mode: apply the prior-review policy in [headless-mode.md](headless-mode.md#prior-review-policy) before continuing.
 
-All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (REVIEW.md provenance and CLAUDE.md/AGENTS.md/QODO.md import resolution from `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` by `scripts/write_shared_context.py` before measurement and writing). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see [phase2-triage.md: Args Preparation](phase2-triage.md#args-preparation)). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. `scripts/stale_truncate.py` covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
+All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (REVIEW.md provenance and CLAUDE.md/AGENTS.md/QODO.md import resolution from `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` by `scripts/write_shared_context.py` before measurement and writing). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see [phase2-triage.md: Args Preparation](phase2-triage.md#args-preparation)). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. `scripts/stale_truncate.py` covers every purpose name in this list.
 
 ## Phase 2 Composite B — gather (diff, changed-files, line count, misc)
 
@@ -312,10 +311,6 @@ entries map physical context LF line numbers to file, side (`head` or `old`), an
 source line. It hashes the final framed context and the original saved patch.
 Malformed hunks keep the raw framed presentation and emit an unavailable, empty map
 with a diagnostic. Both files must be written before a successful receipt.
-
-The workflow's Summarize stage produces the change summary internally.
-
-Discovery agents return findings through structured output (`agent()`/`parallel()` schema).
 
 ## Args object shape
 

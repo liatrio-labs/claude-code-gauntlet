@@ -10,8 +10,7 @@ Workflow(
 ```
 
 Invoke by registered name, with the assembled args object. Never pass a cache `scriptPath`,
-copy the bundle, split the stages, or reproduce them inline. Validation rejects malformed args
-before dispatch. Stage defaults and resolved overrides are in [model-policy.md](model-policy.md).
+copy the bundle, split the stages, or reproduce them inline. Stage defaults and resolved overrides are in [model-policy.md](model-policy.md).
 
 The compact return is
 `{ ok, phaseReached, stats, artifactPaths: { findings, report, postReview, checkpoints }, checkpoints, resolvedPolicy, gaps, persistReturn }`.

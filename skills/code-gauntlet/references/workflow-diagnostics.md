@@ -28,15 +28,15 @@ Models per stage come from `resolvePolicy`; [model-policy.md](model-policy.md) o
 
 The Discover stage groups the nine dimensions by agent and fans out one task per **active** agent (a dimension is active when its `conditionalFlag` is null — the ungateable core dims `bug`, `security` — or its entry in the pipeline's own DERIVED scope-gating map (`deriveAgentFlags`, from `riskTable`/`changedLines`/`scopeAnswer` — see `references/phase2-triage.md`) is not the literal `false`; the seven extended dims share the `deep` flag, so a light-scope derivation of `{ deep: false }` leaves only bug-detector + security-reviewer):
 
-1. **bug-detector** — logic errors, edge cases, null handling, race conditions, API misuse. Dimension: `bug`.
-2. **security-reviewer** — OWASP top 10, injection, auth bypass, data exposure, crypto. Defaults to Opus, subject to the resolved override. Dimension: `security`.
-3. **cross-file-impact** — caller/dependent tracing, cross-module impact. Dimension: `cross_file_impact`.
-4. **test-analyzer** — coverage gaps, test quality. Dimension: `test_coverage`.
-5. **conventions-and-intent** — CLAUDE.md/REVIEW.md adherence, intent alignment, comment accuracy. Dimensions: `convention`, `intent`, `comment_accuracy`.
-6. **code-simplifier** — simplification opportunities, dead code, redundancy. Dimension: `simplification`.
-7. **type-design-analyzer** — type encapsulation, invariant expression. Dimension: `type_design`.
+1. **bug-detector** — correctness, error handling, and defects in changed tests. Dimension: `bug`.
+2. **security-reviewer** — security across trust boundaries and attacker-controlled operations. Defaults to Opus, subject to the resolved override. Dimension: `security`.
+3. **cross-file-impact** — compatibility between changed code and its consumers. Dimension: `cross_file_impact`.
+4. **test-analyzer** — test behavior, coverage gaps, and exposed production defects. Dimension: `test_coverage`.
+5. **conventions-and-intent** — project conventions, documented intent, and comment accuracy. Dimensions: `convention`, `intent`, `comment_accuracy`.
+6. **code-simplifier** — behavior-preserving simplifications and present correctness defects. Dimension: `simplification`.
+7. **type-design-analyzer** — invariants, invalid states, and type design quality. Dimension: `type_design`.
 
-Each agent returns structured findings against the canonical schema (`agent()` `schema`), wrapped in the per-agent envelope `{ findings, complete, total_seen }`. The orchestrator injects the `agent` field during Merge. Discovery agents receive the **context file path** (`{output_dir}/code-gauntlet-context-{head_sha_short}.md`), its **read plan**, and their target dimension(s) in the prompt; test-analyzer also receives the `removedTests` inventory. All shared context (rules, risk, diff) lives in that file, which Phase 2 wrote.
+Each agent returns structured findings against the canonical schema (`agent()` `schema`), wrapped in the per-agent envelope `{ findings, complete, total_seen }`. The orchestrator injects the `agent` field during Merge. Discovery agents receive the **context file path** (`{output_dir}/code-gauntlet-context-{head_sha_short}.md`), its **read plan**, and the repository root in the prompt; test-analyzer also receives the `removedTests` inventory. All shared context (rules, risk, diff) lives in that file, which Phase 2 wrote.
 
 ## Shared-context read plan
 

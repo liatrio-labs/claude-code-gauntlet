@@ -12,7 +12,7 @@
 
 Workflow-tool availability check, review target resolution, the error-path AskUserQuestion templates, and question-free configuration resolution for Phase 1.
 
-> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) happens in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Output-directory resolve/ignore/mkdir is owned by `scripts/ensure_output_dir.py` in the composite below — not Phase 2. Phase 1's own Bash work is that composite (ensure_output_dir, plugin confirmation, config resolution, and eligibility) — no checkout-dependent state.
+> **Note:** Phase 1's own Bash work is the composite below; it holds no checkout-dependent state.
 
 ---
 
@@ -22,7 +22,7 @@ Inspect the session tool definitions for `Workflow` before other work. `ToolSear
 
 - **No Bash tool (PowerShell only)** -> print `Install Git for Windows to run code-gauntlet in Bash.` and STOP.
 - **Present in your tool definitions** → continue with target resolution.
-- **Absent from your tool definitions** → print exactly the message below and STOP. Do not emulate the pipeline by dispatching agents inline.
+- **Absent from your tool definitions** → print exactly the message below and STOP.
 
 ```
 code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.
@@ -155,11 +155,9 @@ On success, stdout is one absolute path line — store it as `{output_dir}` / `a
 Store `python` from the first line as one of `python3`, `python`, or `py -3`.
 Substitute `{python}` with those fixed argv words in every later command; quote each word separately.
 Copy it into `args.python` and pass `--python "{python}"` to the awaiter.
-Store: `output_dir` from section 1.
 Store the plugin-dir confirmation from section 2. If a directory is missing, stop because `plugin_root` was resolved wrong.
 Store the resolver JSON and stderr block from section 3. Retain them as `configResult`; its stderr block is the Phase 2 gate.
 Store the eligibility receipt from section 4 for PR/MR targets.
-The resolver owns its configuration inputs.
 
 **Do not resolve the head SHA yet** — it is computed after PR checkout in Phase 2 so the SHA reflects the actual PR HEAD, not whatever branch was checked out when the session started.
 
@@ -183,8 +181,6 @@ The resolver owns precedence and validation. It renders the configuration block 
 That stderr block is the Phase 2 entry gate. Retain the JSON as `configResult`, including `mode`, `waist`, `resolved`, and `identity`.
 
 Copy `configResult.waist` verbatim into args. For later decisions, use only `configResult.resolved.<knob>`.
-
-The resolver returns its JSON on stdout. A resolver failure stops the composite with `config: FAILED`.
 
 ---
 
@@ -225,12 +221,9 @@ It always exits 0 and prints exactly one JSON object on stdout (detection degrad
 }
 ```
 
-`marker` is not a verbatim echo of the parsed payload. `sanitize_marker`
-allow-lists its keys (`version`, `findings_count`, `sha`, `_token`, `_legacy`),
-bounds every value, and reports other keys by NAME only under `unknown_keys`.
-Values of unknown keys are never echoed. The poster's body can contain untrusted
-text, so an unbounded echo could pipe arbitrary text into the orchestrator's
-context.
+`marker` is not a verbatim echo of the parsed payload: `sanitize_marker` keeps
+allow-listed keys with bounded values and names other keys under `unknown_keys`
+without their values, because the poster's body can contain untrusted text.
 
 Prior-review detection and GitLab delivery deduplication trust only entries written by
 this run's posting account. GitHub logins compare without case; GitLab usernames
@@ -300,7 +293,7 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
 
 ## Configuration Resolution (no questions)
 
-Configuration resolution asks no questions. The eligibility receipt selects the interactive draft question.
+The eligibility receipt selects the interactive draft question.
 PR-not-found handling and the previously-reviewed gate keep their own templates.
 Headless runs resolve every gate without `AskUserQuestion`.
 
@@ -323,8 +316,6 @@ The workflow fills these receipt entries itself; never stamp them.
 
 - `configEcho.review_md` (interactive runs): `present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`.
 <!-- /generated-from-registry-identity:derived_waist_fields -->
-
-**Resolved-config echo.** The generated `config_receipt` fence in SKILL.md contains both resolver fixtures. Phase 1 uses the resolver block in the Bash result, and Phase 2 gates on that result.
 
 ---
 

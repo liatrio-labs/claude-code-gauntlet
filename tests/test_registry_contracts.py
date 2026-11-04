@@ -660,8 +660,6 @@ def test_mark_producer_registry():
     for rel in tracked(
         "skills/code-gauntlet/*.md", "skills/code-gauntlet/references/*.md"
     ):
-        if not (ROOT / rel).is_file():
-            continue
         text = read(rel)
         bodies = re.findall(
             "<!-- generated-from-registry-identity:[^\\n]*\\n(.*?)<!-- "
