@@ -152,7 +152,7 @@ After this call: interpret `prior_review`'s JSON per `references/phase1-prefligh
 
 Stamp `reviewScope` from this resolved state before assembling the waist.
 Local and branch targets stamp `{ requested: "full", kind: "full", since: null, commits: null, detector: null }`.
-Headless PR/MR targets omit `requested` (see the derived waist fields in [SKILL.md: Assemble the args object](../SKILL.md#assemble-the-args-object)).
+Headless PR/MR targets omit `requested` (see the derived waist fields in [phase2-triage.md: Args Preparation](phase2-triage.md#args-preparation)).
 Interactive targets stamp the recorded gate answer, or `"full"` when no prior review existed.
 PR/MR targets copy detector values verbatim into `detector`.
 Copy `previously_reviewed`, `sha_resolvable`, `head_advanced`, `sha_is_ancestor`, and `incremental_safe`.
@@ -165,7 +165,7 @@ The renderer derives the fallback explanation from retained detector facts.
 
 > Headless mode: apply the prior-review policy in [headless-mode.md](headless-mode.md#prior-review-policy) before continuing.
 
-All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (REVIEW.md provenance and CLAUDE.md/AGENTS.md/QODO.md import resolution from `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` by `scripts/write_shared_context.py` before measurement and writing). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see [SKILL.md: Assemble the args object](../SKILL.md#assemble-the-args-object)). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. `scripts/stale_truncate.py` covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
+All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (REVIEW.md provenance and CLAUDE.md/AGENTS.md/QODO.md import resolution from `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` by `scripts/write_shared_context.py` before measurement and writing). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see [phase2-triage.md: Args Preparation](phase2-triage.md#args-preparation)). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. `scripts/stale_truncate.py` covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
 
 ## Phase 2 Composite B — gather (diff, changed-files, line count, misc)
 

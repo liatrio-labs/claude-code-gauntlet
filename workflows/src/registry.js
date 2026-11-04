@@ -105,7 +105,7 @@ export const FINDING_PROP_TYPES = deepFreeze({
   suggestion: 'string', claude_md_rule: 'string',
   // Delivery applies deterministic fix checks before rendering a committable fence.
   // The field alone does not guarantee that a patch will ship.
-  suggested_fix_code: 'string',
+  suggested_fix_code: { type: 'string', description: 'Complete replacement for file lines line_start through line_end, including indentation; include line_end. Omit if uncertain or incomplete.' },
   cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
   sites: { discovery: true, type: 'array', description: 'Additional locations of this issue.', items: {
     type: 'object', properties: {
@@ -121,6 +121,8 @@ export const DISCOVERY_FINDING_PROP_TYPES = deepFreeze(Object.fromEntries(Object
   .filter(([, schema]) => schema.discovery !== false)
   .map(([name, schema]) => {
     if (name === 'evidence') return [name, { type: 'string', minLength: 1, pattern: '\\S' }];
+    if (name === 'description') return [name, { type: 'string', description: 'One prose paragraph of at most 500 characters; code belongs in evidence.' }];
+    if (name === 'confidence') return [name, { type: 'number', description: 'Certainty the issue exists, from 0 to 100.' }];
     if (name === 'severity') return [name, { type: 'string', enum: SEVERITY_ORDER }];
     if (typeof schema === 'string') return [name, schema];
     const { discovery, ...wireSchema } = schema;
@@ -223,7 +225,7 @@ export const DIMENSIONS = deepFreeze([
     [row.admission.field]: { type: 'string', enum: Object.keys(row.admission.kinds), description: row.admission === QUALITY_ADMISSION
       ? 'Basis for the finding. '
         + Object.entries(row.admission.kinds).map(([kind, rule]) => `${kind}: ${rule.description}`).join(' ')
-      : 'Classification of the test issue.' },
+      : 'defective_test: a PR-owned test that would still pass if the behavior it claims broke; production_defect: present production defect; critical_gap: no test covers important surviving behavior; additional_case: any other coverage case.' },
     ...(row.admission === QUALITY_ADMISSION ? {
       duplicate_of: { ...SOURCE_REFERENCE, description: 'Source reference to the existing implementation duplicated here.' },
       precedent: { ...SOURCE_REFERENCE, description: 'Source reference to an existing repository idiom supporting the change.' },
@@ -323,7 +325,7 @@ export const DISPATCH_RESULTS = deepFreeze({
         }) },
         losses: { type: 'array', items: closedDispatchRow({
           file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
-          title: { type: 'string', minLength: 1 }, description: { type: 'string', minLength: 1 },
+          title: { type: 'string', minLength: 1 }, description: { ...DISCOVERY_FINDING_PROP_TYPES.description, minLength: 1 },
           severity: { type: 'string', minLength: 1, enum: SEVERITY_ORDER },
           confidence: { type: 'number', minimum: 0, maximum: 100 },
           ...Object.fromEntries(REMOVED_LOSS_FIELDS.map((key) => {

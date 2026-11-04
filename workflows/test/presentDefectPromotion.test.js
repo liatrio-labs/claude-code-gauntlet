@@ -168,8 +168,6 @@ test('admission retry requests only missing selected-kind evidence and cannot re
     admission_assessments: [assessment('confirmed_test_defect'), assessment('present_defect')] }] } });
   const out = await validateStage(ctx, { findings: [f] });
   assert.equal(ctx.calls.length, 2);
-  assert.ok(ctx.calls[1].prompt.startsWith('Supply only the missing admission assessments'));
-  assert.ok(ctx.calls[1].prompt.endsWith('Return { validations: [{ finding_id, admission_assessments }] } (one entry per finding).'));
   const context = JSON.parse(ctx.calls[1].prompt.split(' | admission_context: ')[1].split('\n')[0]);
   assert.deepEqual(context.policy, { policy_subjects: { test_defect: ['confirmed_test_defect'] } });
   assert.deepEqual(Object.keys(context.predicates), ['confirmed_test_defect']);

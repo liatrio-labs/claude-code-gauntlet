@@ -281,6 +281,7 @@ DISPATCH_RESULTS = {
                                 },
                                 "description": {
                                     "type": "string",
+                                    "description": "One prose paragraph of at most 500 characters; code belongs in evidence.",
                                     "minLength": 1,
                                 },
                                 "severity": {
@@ -682,7 +683,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                     "production_defect",
                     "additional_case",
                 ],
-                "description": "Classification of the test issue.",
+                "description": "defective_test: a PR-owned test that would still pass if the behavior it claims broke; production_defect: present production defect; critical_gap: no test covers important surviving behavior; additional_case: any other coverage case.",
             },
         },
         "requiredExtra": ["criticality", "failure_scenario"],

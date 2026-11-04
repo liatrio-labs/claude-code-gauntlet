@@ -33,15 +33,6 @@ const VALIDATE_SCHEMA = {
   required: ['validations'],
 };
 
-function validateReturnDescriptor() {
-  return Object.entries(VALIDATE_SCHEMA.properties.validations.items.properties)
-    .map(([name, schema]) => {
-      const values = Array.isArray(schema.enum) ? ` (${schema.enum.join(' | ')})` : '';
-      return `${name}${values}`;
-    })
-    .join(', ');
-}
-
 function assessmentRequirement(predicates) {
   return { ...(predicates.length ? { properties: { admission_assessments: { allOf: predicates.map((predicate) => ({
     contains: { properties: { predicate: { const: predicate } }, required: ['predicate'] },
@@ -199,8 +190,8 @@ function validatePrompt(inp, batch, accepted) {
     const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
     return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f, accepted.get(f.id)))}`;
   }).join('\n');
-  if (batch.every((finding) => accepted.has(finding.id))) return `${ctxLine}Supply only the missing admission assessments listed in each finding's admission_context. Correctness, reachability and policy_subject are fixed. Use confirmed, rejected or unresolved with the exact request names inspected in references.\nFindings:\n${block}\nReturn { validations: [{ finding_id, admission_assessments }] } (one entry per finding).`;
-  return `${ctxLine}Validate this batch. Judge correctness and reachability independently of admission evidence or posting value. Classify policy_subject by the claim, regardless of producer; a test location alone does not reclassify a grounded convention claim. Assess the selected subject's predicates in admission_context; a confirmed promotion uses only its confirmed requirements. Use confirmed, rejected or unresolved with the exact inspected request names in references; resolved locations and confidence alone do not confirm predicates. Assess body_fix_task separately. For resolved site_requests, return site_confirmations for the same defect requiring the same correction.\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } (one entry per finding).`;
+  if (batch.every((finding) => accepted.has(finding.id))) return `${ctxLine}Supply missing admission assessments in admission_context; correctness, reachability and policy_subject are fixed. References name inspected requests.\nFindings:\n${block}`;
+  return `${ctxLine}Judge correctness and reachability independently of admission evidence or posting value. Classify policy_subject by the claim, regardless of producer or test location. Assess admission_context predicates; references name inspected requests. Resolved locations and confidence alone do not confirm predicates. Assess body_fix_task separately. Confirm site_requests only for the same defect requiring the same correction.\nFindings:\n${block}`;
 }
 
 // The runtime has no wall clock, so generated_at must come from the supplied arguments.
@@ -246,7 +237,7 @@ function challengePrompt(finding, diffPath) {
   const range = b.location || (b.line_end !== '' && b.line_end !== b.line_start ? `${b.line_start}-${b.line_end}` : `${b.line_start}`);
   const removedContext = b.removed_test
     ? `\nRead saved diff ${b.diffPath}: deleted test ${JSON.stringify(b.removed_test.path)}, old lines ${b.removed_test.old_start}-${b.removed_test.old_end}. Compare its input and assertion with surviving tests at HEAD for the same behavior.` : '';
-  return `Challenge this claim.${removedContext}\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}\nReturn { confidence_claim_is_correct, justification }.`;
+  return `${removedContext}\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}`;
 }
 
 // Parallel results retain candidate positions so failures stay attributable to individual findings.

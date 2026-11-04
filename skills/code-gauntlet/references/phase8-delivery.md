@@ -24,13 +24,35 @@ The Phase 3 `Workflow` call returned a compact object that always includes a `ch
 
 **All-degraded mode:** an `error` prefixed `all-degraded:` means every active discovery dimension failed and **no review was performed** — deliver it as a hard failure via resume-from-checkpoint below, never as a clean/empty report. The per-agent `gaps` and `resolvedPolicy` (model/provider actually resolved) carry the diagnosis — a model/provider mismatch is the usual cause. The resume re-dispatches discovery because the `discover` checkpoint is deliberately absent from `return.checkpoints`.
 
-**When `persistReturn` is present, run `materialize_artifacts.py` before anything below** — the artifacts do not exist yet. [SKILL.md: Phase 8: Materialize, collect, patch, deliver](../SKILL.md#phase-8-materialize-collect-patch-deliver) owns the command and its exit-code table. The short version: the pipeline returned its primaries instead of dictating them to an artifact-writer, the harness put that return on disk at `tasks/<task-id>.output`, and this one command writes the primaries out of it and derives `post-review.json` + `checkpoint-all.json` from them. Exit 0 means everything landed and every content proof matched.
+**When `persistReturn` is present, run `materialize_artifacts.py` before anything below** — the artifacts do not exist yet. The pipeline returned its primaries instead of dictating them to an artifact-writer, the harness put that return on disk at `tasks/<task-id>.output`, and this one command writes the primaries out of it and derives `post-review.json` + `checkpoint-all.json` from them. Also try this on RETURN awaiter exit 4:
+
+```
+Bash(command: {python} "{plugin_root}/scripts/materialize_artifacts.py"
+              --output-dir "{output_dir}"
+              --task "<persistReturn.resolvedPath, or the Phase 3 Task ID>"
+              --nonce {nonce})
+```
+
+Pass the available `--task` and/or `--nonce`; use both when known. Do not read returned entries by hand.
+
+| Exit | Required action |
+| --- | --- |
+| 0 | Every artifact landed and every content proof matched; collect. |
+| 1 | Declare `artifact-materialize` with receipt `gaps`/`errors`; salvage only its `materialized` paths. Never post without a materialized `post-review.json`. |
+| 2 | Fix the malformed command from stderr and retry. |
 
 Never hand-write an artifact from `persistReturn`; `await_workflow.py` elides its entries so the original serialized text reaches `materialize_artifacts.py` without model transcription.
 
 Findings with skipped validation or unknown verify origin are challenged, then disposed as `held_back` to the report's Unverified / pipeline-degraded section alongside capped or failed challenges. They remain in findings.json with their `disposition`, which grants no PR-comment, patch, or fix-task rights. Old challenge checkpoints pass through the same disposal before delivery.
 
-**Then render the apply-checked patches** whenever `artifactPaths.findings` is non-null — [SKILL.md: Phase 8: Materialize, collect, patch, deliver](../SKILL.md#phase-8-materialize-collect-patch-deliver) owns the command, its exit-code rules, and where the patches path is surfaced in delivery.
+**Then render the apply-checked patches** whenever `artifactPaths.findings` is non-null, including salvage:
+
+```
+Bash(command: {python} "{plugin_root}/scripts/report_patches.py" --output-dir "{output_dir}" --head-sha {head_sha_short})
+```
+
+Exit 0 names the patches path beside the report, even with zero kept patches. Exit 1 declares a
+`report-patches` gap from receipt `errors` and delivers everything else. Exit 2 fixes the command.
 
 **On `ok: true` after materialization or writer persistence:** read the artifacts — they are the source of truth for delivery. Do not reconstruct, re-filter, or re-rank findings from the return value or from memory.
 
@@ -148,7 +170,7 @@ See `references/delivery-guide.md` for the findings JSON schema and validation d
 > Headless mode exception: the task board is skipped — present no
 > `AskUserQuestion` and create no tasks. See `references/headless-mode.md`.
 
-The question itself is the block under the Phase 8 MANDATORY GATE in SKILL.md; it is asked there, verbatim.
+The question itself is the block under Phase 8 in SKILL.md; it is asked there, verbatim.
 
 "Yes" creates one FIX task for every finding in the delivered set. When `artifactPaths.postReview` is
 null, the delivery set was not persisted, so do not present the task-board offer and create no tasks.

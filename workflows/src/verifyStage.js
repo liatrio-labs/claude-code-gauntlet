@@ -387,5 +387,5 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
 // Read the deltas prefix because length-capped Reads give no truncation notice;
 // the later full finding arrays are unnecessary for the join.
 function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
-  return `Run this command exactly; return only status, receipt and result.deltas from --output. Copy every present receipt field (${Object.keys(VERIFY_RECEIPT_FIELDS).join(', ')}) and delta exactly; the deltas carry a checksum.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
+  return verifyCommand(inp, i, sliceNonce, inlinePayload);
 }

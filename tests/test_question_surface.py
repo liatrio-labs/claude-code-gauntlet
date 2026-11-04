@@ -135,7 +135,7 @@ def test_task_board_site_is_pinned_verbatim(question_sites):
         "options": [
             (
                 "Yes — create tasks",
-                "One FIX task per delivered finding via TaskCreate (FIX-bug-1, FIX-conv-2, ...)",
+                "One FIX task per delivered finding via TaskCreate (FIX-bug-detector-1, FIX-conventions-and-intent-2, ...)",
             ),
             ("No — done", "Finish the review without creating tasks"),
         ],
@@ -147,27 +147,18 @@ def test_task_board_site_is_pinned_verbatim(question_sites):
 
 def test_task_board_gate_states_the_action_boundary():
     skill = (SKILLS / "code-gauntlet" / "SKILL.md").read_text(encoding="utf-8")
-    gate_line = next(
-        line
-        for line in skill.splitlines()
-        if "MANDATORY GATE" in line and "task-board question" in line
-    )
-    assert "only TaskCreate makes one task per delivered finding" in gate_line
-    assert "never issues, PRs, or branches" in gate_line
-    gate = skill.index("task-board question below")
-    paragraph_end = skill.index("\n", gate)
-    exception = skill.index(
-        "> If `artifactPaths.postReview` is null, skip the offer; say no delivery "
-        "set was persisted, so no tasks can be created."
-    )
+    gate = skill.index("Offer the task-board question")
+    boundary = skill[gate : skill.index("```\nAskUserQuestion(", gate)]
+    assert "skip headless" in boundary
+    assert "`artifactPaths.postReview` is null" in boundary
+    assert "use TaskCreate for each delivered finding" in boundary
+    assert "never issues, PRs or branches" in boundary
     block = skill.index(
         'question: "Create fix tasks on the task board from these findings?"'
     )
     next_section = skill.index("### Print methodology")
     assert gate < block, "offer must follow its gate"
     assert block < next_section, "offer must precede Print methodology"
-    assert paragraph_end < exception, "exception must follow the gate paragraph"
-    assert exception < block, "exception must precede the offer"
 
 
 def test_every_site_conforms_to_the_schema(question_sites):

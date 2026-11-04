@@ -67,14 +67,14 @@ function summarizePrompt(inp, files) {
   const ctxLine = inp.contextLine || '';
   // The supplied changedLines count is authoritative; deriving it from the diff can make summary and report totals disagree.
   const countLine = summaryCountLine(inp);
-  return `${ctxLine}Summarize these changed files: ${files.join(', ')}.${countLine} Return { summary }.`;
+  return `${ctxLine}Changed files: ${files.join(', ')}.${countLine}`;
 }
 
 // The merge prompt needs the same count pin because it can otherwise reintroduce drift after bucket summaries.
 function summarizeMergePrompt(inp, partials) {
   const joined = partials.map((p) => p.summary || '').filter(Boolean).join('\n---\n');
   const countLine = summaryCountLine(inp);
-  return `Synthesize these partial summaries.${countLine}\n${joined}\nReturn { summary }.`;
+  return `Partial summaries:${countLine}\n${joined}`;
 }
 
 // Only fields required by every sibling dimension can safely constrain a shared dispatch.
@@ -179,6 +179,22 @@ export function findingSchema(spec, policy) {
       then: { required: [...rule.required], ...(rule.anyOf ? { anyOf: rule.anyOf.map((field) => ({ required: [field] })) } : {}) },
     }))];
   }
+  // Dispatch owns identity; multi-lane agents still choose which lane a claim belongs to.
+  delete item.properties.id;
+  item.required = item.required.filter((key) => key !== 'id');
+  if (spec.dimensions.length === 1) {
+    delete item.properties.dimension;
+    item.required = item.required.filter((key) => key !== 'dimension');
+    for (const rule of item.allOf || []) {
+      delete rule.if.properties.dimension;
+      rule.if.required = rule.if.required.filter((key) => key !== 'dimension');
+      if (rule.if.required.length === 0) item.required.push(...rule.then.required);
+    }
+    if (item.allOf) item.allOf = item.allOf.filter((rule) => rule.if.required.length > 0);
+    if (item.allOf?.length === 0) delete item.allOf;
+  } else {
+    item.properties.dimension.description = `Review lane: ${spec.dimensions.join(', ')}.`;
+  }
   return {
     type: 'object',
     properties: {
@@ -186,8 +202,8 @@ export function findingSchema(spec, policy) {
         type: 'array',
         items: item,
       },
-      complete: { type: 'boolean' },
-      total_seen: { type: 'number' },
+      complete: { type: 'boolean', description: 'Whether investigation is finished.' },
+      total_seen: { type: 'number', description: 'Number of candidates examined, including unreported ones.' },
       ...deepClone(resultFields),
     },
     required: ['findings', 'complete', 'total_seen', ...Object.keys(resultFields)],
@@ -273,7 +289,12 @@ export async function discover(ctx, input) {
       return;
     }
     for (const [occurrence, raw] of list.entries()) {
-      const f = trace ? stampDiscovery(trace, raw, spec, i, occurrence) : deepClone(raw);
+      const candidate = deepClone(raw);
+      if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+        if (candidate.id === undefined) candidate.id = `${spec.agentType.split(':').pop()}-${occurrence + 1}`;
+        if (spec.dimensions.length === 1 && candidate.dimension === undefined) candidate.dimension = spec.dimensions[0];
+      }
+      const f = trace ? stampDiscovery(trace, candidate, spec, i, occurrence) : candidate;
       if (trace) intake.push(f);
       if (f && typeof f === 'object' && !Array.isArray(f)) {
         for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics']) delete f[key];
@@ -344,11 +365,8 @@ export async function discover(ctx, input) {
 // Dispatch carries per-review inputs; the named agent owns investigation guidance.
 function discoverPrompt(inp, spec) {
   const ctxLine = inp.contextLine || '';
-  const dims = spec.dimensions.join(', ');
-  const base = `${ctxLine}Repository: ${inp.repoRoot || '.'}. Dimensions: ${dims}.`;
-  const resultFields = DISPATCH_RESULTS[spec.agentType] || {};
-  const resultContract = ` Return { ${['findings', 'complete', 'total_seen', ...Object.keys(resultFields)].join(', ')} }.`;
+  const base = `${ctxLine}Repository: ${inp.repoRoot || '.'}.`;
   const audit = spec.agentType === AGENT_TYPE_TEST_ANALYZER
     ? ` Removed-test inventory: ${JSON.stringify(inp.removedTests || { status: 'unavailable', items: [] })}` : '';
-  return `${base}${spec.promptExtra ? ` ${spec.promptExtra}` : ''}${resultContract}${audit}`;
+  return `${base}${spec.promptExtra ? ` ${spec.promptExtra}` : ''}${audit}`;
 }

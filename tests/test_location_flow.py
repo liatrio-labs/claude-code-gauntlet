@@ -429,7 +429,7 @@ const confirmations = verified.findings[0].resolved_sites.map(s=>({file:s.file,l
 const persist = async list => {
  const validated = await validateStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async(prompt,o)=>{
   if(!o.schema.properties.validations.items.properties.site_confirmations)throw Error('missing return metadata');
-  if(!prompt.split('\nReturn ')[1]?.includes('site_confirmations') || !prompt.includes('same defect requiring the same correction'))throw Error('missing semantic contract');
+  if(!prompt.includes('same defect requiring the same correction'))throw Error('missing semantic contract');
   const packet=JSON.parse(prompt.split(' | site_requests: ')[1].split(' | admission_context: ')[0]);
   if(packet.length!==4 || packet.some(s=>s.line_start!==7))throw Error('requests are not resolved');
   return {validations:[{finding_id:'ISSUE',confidence:90,policy_subject:'ordinary',...(list===null?{}:{site_confirmations:list})},{finding_id:'CONSTITUENT',confidence:85,policy_subject:'ordinary'}]};

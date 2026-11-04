@@ -107,7 +107,7 @@ for (const row of POLICY_ROWS) test(`conditional schema policy: ${row.name}`, as
   for (const call of ctx.calls) {
     const item = call.schema.properties.findings.items;
     assert.equal(item.allOf, undefined);
-    assert.deepEqual(item.properties.dimension, { type: 'string' });
+    assert.equal(Boolean(item.properties.dimension), call.agentType === 'code-gauntlet:conventions-and-intent');
   }
 });
 
@@ -213,11 +213,9 @@ for (const contextLine of ['CONTEXT_SENTINEL ', '']) test(`discovery transport: 
     const prompt = ctx.calls.find((call) => call.label === row.agent).prompt;
     assert.ok(prompt.startsWith(contextLine));
     assert.ok(prompt.includes(`Repository: ${repoRoot}.`));
-    assert.ok(prompt.includes(`Dimensions: ${row.dims}.`));
     if (row.agent === 'code-gauntlet:test-analyzer') {
-      assert.ok(prompt.includes('Return { findings, complete, total_seen, removed_test_audit }'));
       assert.ok(prompt.endsWith(`Removed-test inventory: ${JSON.stringify(inventory)}`));
-    } else assert.ok(prompt.includes('Return { findings, complete, total_seen }'));
+    }
   }
 });
 
@@ -246,7 +244,6 @@ for (const row of SUMMARY_ROWS) test(`summarize: ${row.name}`, async () => {
   assert.deepEqual(ctx.calls.map((call) => call.label), row.labels);
   for (const [index, call] of ctx.calls.entries()) {
     assert.deepEqual(call.schema, SUMMARY_SCHEMA);
-    assert.ok(call.prompt.includes('Return { summary }'));
     if (row.changedLines) assert.ok(call.prompt.includes(`${row.changedLines} changed lines`));
     if (call.label === 'summarize-merge') assert.ok(call.prompt.includes('p0\n---\np1'));
     else {

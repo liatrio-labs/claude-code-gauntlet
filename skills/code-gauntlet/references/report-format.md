@@ -67,7 +67,7 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | string | yes | Unique ID, e.g. `bug-1`, `sec-2` |
+| `id` | string | yes | Unique ID, e.g. `bug-detector-1`, `security-reviewer-2` |
 | `file` | string | yes | Relative file path |
 | `line_start` | number | yes | Starting line number |
 | `line_end` | number | no | Ending line number |
@@ -77,13 +77,13 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `confidence` | number | yes | 0-100 CERTAINTY score |
 | `dimension` | string | yes | Review dimension (bug, security, cross-file, etc.) |
 | `origin` | string | no | Blame classification stamped by `scripts/verify_findings.py` — the one canonical field no agent emits. |
-| `evidence` | string | no | Code snippet or behavior demonstrating the issue. Required by the discovery PROMPT (must be non-empty) though schema-optional. |
+| `evidence` | string | no | Code snippet or behavior demonstrating the issue. Required and non-empty in the discovery schema. |
 | `anchor` | string | yes | Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters. |
+| `suggested_fix_code` | string | no | Complete replacement for file lines line_start through line_end, including indentation; include line_end. Omit if uncertain or incomplete. |
 | `sites` | array | no | Additional locations of this issue. |
 | `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
 | `claude_md_rule` | string | conditional | The cited project rule, quoted with its source file; required by contract for convention findings; OMITTED (never null) when no rule applies. |
 | `cross_file_refs` | array | no | Other files involved in the finding |
-| `suggested_fix_code` | string | no | Exact replacement source for `file:line_start-line_end`, emitted by discovery agents only when the fix is a byte-exact, drop-in replacement for exactly those lines. The report body never carries this field — the renderer excludes it and its removal stamps through the registry-derived `reportExtraFields()` projection in `workflows/src/renderReport.js`. Delivery renders it as a committable GitHub/GitLab `suggestion` block after `scripts/gauntlet/delivery/gate.py`'s deterministic apply-check (one-click apply) — non-string, stale, wrong-range, wrong-anchor, or oversized fails the check and the finding downgrades to the prose `suggestion` instead; on GitLab, the render-site apply range is the discussion anchor plus offsets, not the stated range directly, so a span the anchor and offsets can't realize within GitLab's cap downgrades the same way. A fence that passes every per-finding check can still be withheld when an earlier, higher-priority kept fence claims an overlapping apply range in the same file (`overlaps_kept_fence`), because the platforms refuse or mis-apply batches with overlapping suggestions. The report *path* renders the kept patches only through `scripts/report_patches.py`'s sibling artifact `code-gauntlet-patches-{head_sha_short}.md` — a read-only apply-check over the pinned diff, run once at Phase 8; platform render-site constraints and the set-level overlap withholding are not applied there, so a patch listed in that artifact may still downgrade at delivery. |
 
 For convention findings, `rule_source` selects the heading for `claude_md_rule`: `documented_rule` uses **Cited rule**, `code_comment` uses **Cited comment**, `repo_precedent` uses **Repo precedent**, and `self_inconsistency` uses **Inconsistency**. Intent findings include `spec_text` and omit `rule_source`; comment_accuracy findings omit `rule_source`, `claude_md_rule`, and `spec_text`. Unknown or absent values use **Cited rule**. A `spec_text` fallback also uses **Cited rule**. The raw `rule_source` value is never rendered.
 
@@ -99,7 +99,7 @@ For convention findings, `rule_source` selects the heading for `claude_md_rule`:
 | `searched_paths` | array | test_coverage | no | Repository files or directories searched for coverage. |
 | `candidate_tests` | array | test_coverage | no | Inspected tests, including their input and assertion. |
 | `production_element` | object | test_coverage | no | Source reference to the production behavior whose coverage is assessed. |
-| `test_kind` | string | test_coverage | conditional | Classification of the test issue. |
+| `test_kind` | string | test_coverage | conditional | defective_test: a PR-owned test that would still pass if the behavior it claims broke; production_defect: present production defect; critical_gap: no test covers important surviving behavior; additional_case: any other coverage case. |
 | `rule_source` | string | convention | no | Basis for the cited rule: documented_rule, code_comment, repo_precedent, or self_inconsistency. |
 | `spec_text` | string | intent | conditional | Quoted specification or requirement contradicted by the implementation. |
 | `invalid_state_example` | string | type_design | no | Concrete invalid state permitted by the type design. |

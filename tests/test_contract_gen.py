@@ -722,83 +722,6 @@ EXPECTED_BODIES = {
         "The final delivery summary opens with `MARK NAME` on its first line and "
         "carries no other\nemoji, except severity emoji when listing findings."
     ),
-    (SKILL, "config_receipt"): (
-        "The resolver owns the printed configuration block and the keyed "
-        "`configEcho` receipt."
-        """
-
-**Interactive block:**
-
-```text
-Resolved config:
-  alpha=i-alpha (fixed)
-  gamma=raw (default)
-  epsilon=null (default)
-  pipeline_version={pipeline_version} (bundle)
-  plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)
-```
-
-**Interactive receipt:**
-
-```json
-{
-    "alpha": {
-        "value": "i-alpha",
-        "source": "fixed"
-    },
-    "gamma": {
-        "value": "raw",
-        "source": "default"
-    },
-    "epsilon": {
-        "value": "null",
-        "source": "default"
-    }
-}
-```
-
-**Headless block:**
-
-```text
-Headless config:
-  alpha=h-alpha (env)
-  beta=h-beta (default)
-  gamma=raw (default)
-  zeta=1 (default)
-  eta=a,b (default)
-  pipeline_version={pipeline_version} (bundle)
-  plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)
-```
-
-**Headless receipt:**
-
-```json
-{
-    "alpha": {
-        "value": "h-alpha",
-        "source": "env"
-    },
-    "beta": {
-        "value": "h-beta",
-        "source": "default"
-    },
-    "gamma": {
-        "value": "raw",
-        "source": "default"
-    },
-    "zeta": {
-        "value": "1",
-        "source": "default"
-    },
-    "eta": {
-        "value": "a,b",
-        "source": "default"
-    }
-}
-```"""
-    ),
-    (SKILL, "derived_waist_fields"): _EXPECTED_DERIVED_WAIST_FIELDS,
-    (SKILL, "pr_identity_fields"): _EXPECTED_PR_IDENTITY_FIELDS,
     (TRIAGE, "derived_waist_fields"): _EXPECTED_DERIVED_WAIST_FIELDS,
     (TRIAGE, "pr_identity_fields"): _EXPECTED_PR_IDENTITY_FIELDS,
     (PREFLIGHT, "derived_waist_fields"): _EXPECTED_DERIVED_WAIST_FIELDS,
@@ -1068,7 +991,6 @@ def test_added_knob(registry_tree, invoke):
     assert stale.returncode == 1
     assert stale.stderr == (
         b"generate_contract_requirements: stale generated registry blocks: "
-        b"skills/code-gauntlet/SKILL.md, "
         b"skills/code-gauntlet/references/phase2-triage.md, "
         b"skills/code-gauntlet/references/phase1-preflight.md, "
         b"scripts/gauntlet/registry.py; run: python3 "

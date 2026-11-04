@@ -1361,9 +1361,9 @@ const CONTEXT_ROWS = [
   { name: 'measured readers include final tail and validator', input: { contextLines: 2028, contextChars: 94784 }, gaps: [],
     markers: ['exactly 4 Read calls', 'Read(offset=1924, limit=105)'] },
   { name: 'unmeasured readers get one actionable fallback', input: {}, gaps: [UNMEASURED_GAP],
-    markers: ['until a call returns no further content', 'Do not stop before that'], fallback: true },
+    markers: ['until a call returns no further content'], fallback: true },
   { name: 'unplannable readers get distinct fallback', input: { contextLines: 1500001 }, gaps: [UNPLANNABLE_GAP],
-    markers: ['until a call returns no further content', 'Do not stop before that'], fallback: true },
+    markers: ['until a call returns no further content'], fallback: true },
   { name: 'measured sandbox globals', input: { contextLines: 2028, contextChars: 94784 }, sandbox: true, gaps: [],
     markers: ['exactly 4 Read calls', 'Read(offset=1924, limit=105)'] },
 ];
@@ -1378,7 +1378,6 @@ for (const row of CONTEXT_ROWS) test(`context wiring: ${row.name}`, async () => 
   const readers = ctx.calls.filter((call) => !call.label.startsWith('verify-') && call.prompt.includes('/repo/.code-gauntlet/code-gauntlet-context-abc1234.md'));
   assert.deepEqual(readers.map((call) => call.label), ['summarize', ...DISCOVERY, 'validate-batch-0']);
   for (const call of readers) {
-    assert.ok(call.prompt.includes('without a truncation notice'));
     for (const marker of row.markers) assert.ok(call.prompt.includes(marker));
     if (row.fallback) assert.doesNotMatch(call.prompt, /It is \d+ lines|undefined|NaN/);
   }

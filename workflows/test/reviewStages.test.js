@@ -199,9 +199,6 @@ for (const row of VALIDATE_ROWS) test(`validate result: ${row.name}`, async () =
   for (const call of ctx.calls) assert.equal(call.agentType, 'code-gauntlet:validator');
   assert.deepEqual(ctx.violations, []);
 });
-const VALIDATE_TAIL = '\nReturn { validations: [{ finding_id, confidence, justification, '
-  + 'reachability (current | future_change_only | uncertain), site_confirmations, policy_subject (test_defect | coverage | ordinary | unresolved), admission_assessments }] } '
-  + '(one entry per finding).';
 const VALIDATE_PROMPT_ROWS = [
   { name: 'equal range endpoints print once', fields: { file: 'one.js', line_start: 42, line_end: 42 },
     block: '- f1 [bug/high] one.js:42 \u2014 The function returns the wrong result for a real input.' },
@@ -215,7 +212,6 @@ for (const row of VALIDATE_PROMPT_ROWS) test(`validate prompt: ${row.name}`, asy
   await validateStage(ctx, { findings: [finding(row.fields)], contextLine: 'VALIDATOR_CONTEXT ' });
   assert.ok(ctx.calls[0].prompt.startsWith('VALIDATOR_CONTEXT '));
   assert.ok(ctx.calls[0].prompt.includes(row.block));
-  assert.ok(ctx.calls[0].prompt.endsWith(VALIDATE_TAIL));
   const { anyOf, ...base } = ctx.calls[0].schema.properties.validations.items;
   assert.ok(anyOf.length > 0);
   assert.deepEqual({ ...ctx.calls[0].schema, properties: { validations: { type: 'array', items: base } } }, { type: 'object', properties: { validations: {
@@ -328,7 +324,6 @@ for (const row of CHALLENGE_ROWS) test(`challenge result: ${row.name}`, async ()
   for (const call of ctx.calls) assert.equal(call.agentType, 'code-gauntlet:challenger');
   assert.deepEqual(ctx.violations, []);
 });
-const BLIND_RETURN = 'Return { confidence_claim_is_correct, justification }';
 const BLIND_ROWS = [
   { name: 'range', file: 'SENTINEL_FILE.js', start: 12, end: 15, location: 'SENTINEL_FILE.js:12-15' },
   { name: 'single line', file: 'src/one.js', start: 9, end: 9, location: 'src/one.js:9' },
@@ -353,7 +348,6 @@ for (const row of BLIND_ROWS) test(`blind prompt: ${row.name}`, async () => {
   await challengeStage(ctx, { findings: [f] });
   assert.ok(ctx.calls[0].prompt.includes('Claim: SENTINEL_TITLE\nSENTINEL_DESC'));
   assert.ok(ctx.calls[0].prompt.includes(`Location to inspect: ${row.location}`));
-  assert.ok(ctx.calls[0].prompt.includes(BLIND_RETURN));
   assert.doesNotMatch(ctx.calls[0].prompt, /SENTINEL_EVIDENCE_LEAK|SENTINEL_REASONING_LEAK|SENTINEL_XREF_LEAK|SENTINEL_RATIONALE_LEAK|96|surfaced/);
   assert.deepEqual(ctx.calls[0].schema, { type: 'object', properties: {
     confidence_claim_is_correct: { type: 'number' }, justification: { type: 'string' },

@@ -347,7 +347,7 @@ def _run_shipped(
 def test_shipped_pr_identity_keeps_author_text_on_stdin(
     platform: str, url_key: str, url: str, tmp_path: Path, monkeypatch
 ) -> None:
-    skill = skill_text(REPO / "skills/code-gauntlet/SKILL.md")
+    skill = skill_text(REPO / "skills/code-gauntlet/references/phase2-triage.md")
     start = skill.index("<!-- generated-from-registry-identity:pr_identity_fields")
     end = skill.index(
         "<!-- /generated-from-registry-identity:pr_identity_fields", start

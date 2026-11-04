@@ -203,7 +203,6 @@ for (const [name, patch, gaps] of LEGACY_ROWS) {
     assert.deepEqual(labels(ctx), ['artifact-writer']);
     const payload = parseWriterPayload(ctx.calls[0].prompt);
     assert.ok(ctx.calls[0].prompt.includes(JSON.stringify(PATHS)));
-    assert.ok(ctx.calls[0].prompt.includes('Return { artifactPaths }'));
     assert.ok(!Array.isArray(payload));
     assert.deepEqual(payload, writerPayload(input));
     assert.equal(out.persistReturn, undefined);
@@ -267,8 +266,6 @@ for (const [name, input, commandWords = COMMAND_WORDS, expectedPaths = PATHS, ch
     assert.deepEqual(Object.keys(out.artifactPaths), ['findings', 'report', 'postReview', 'checkpoints']);
     assert.deepEqual(out.gaps, []);
     assert.deepEqual(labels(ctx), ['artifact-writer', 'assemble-artifacts']);
-    assert.ok(ctx.calls[0].prompt.includes('text verbatim to its path'));
-    assert.ok(ctx.calls[0].prompt.includes('Return { written }'));
     assert.ok(ctx.calls[1].prompt.includes('stdout JSON verbatim'));
     assert.equal(ctx.calls[0].agentType, 'code-gauntlet:artifact-writer');
     assert.equal(ctx.calls[1].agentType, 'code-gauntlet:executor');

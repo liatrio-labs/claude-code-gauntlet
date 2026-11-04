@@ -58,14 +58,6 @@ QUOTE_NEAR_RULES = re.compile(
     r'["\u201c]([^"\u201d\n]{12,})["\u201d]',
     re.IGNORECASE,
 )
-QUOTE_EXEMPTIONS = {
-    (
-        "skills/code-gauntlet/references/false-positive-exclusions.md",
-        "all functions must have JSDoc",
-    ),
-}
-
-
 # Backticked prose terms that are English, schema field names, or host globals named
 # precisely because they are ABSENT - none of them are repo symbols.
 NOT_SYMBOLS = {
@@ -102,6 +94,7 @@ def test_rules_file_quotations_resolve(tracked_files: list[str]) -> None:
         path
         for path in tracked_files
         if path.endswith(".md")
+        and (REPO / path).is_file()
         and (
             path.startswith("skills/")
             or (path.startswith("agents/") and path.count("/") == 1)
@@ -111,8 +104,6 @@ def test_rules_file_quotations_resolve(tracked_files: list[str]) -> None:
     for doc in docs:
         text = (REPO / doc).read_text(encoding="utf-8")
         for quote in QUOTE_NEAR_RULES.findall(text):
-            if (doc, quote) in QUOTE_EXEMPTIONS:
-                continue
             if quote not in corpus:
                 missing.append((doc, quote[:80]))
     assert not missing, f"rules quotations not found in any AGENTS.md: {missing}"

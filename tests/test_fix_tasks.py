@@ -595,20 +595,26 @@ def test_caller_fix_protocol():
     question = skill.index(
         'question: "Create fix tasks on the task board from these findings?"'
     )
-    invocation = skill.index(
+    methodology = skill.index("### Print methodology")
+    assert question < methodology
+    assert "references/phase8-delivery.md#stage-2-task-board" in skill[:question]
+    delivery = (root / "skills/code-gauntlet/references/phase8-delivery.md").read_text(
+        encoding="utf-8"
+    )
+    stage = delivery.index("## Stage 2: Task Board")
+    invocation = delivery.index(
         '{python} "{plugin_root}/scripts/render_fix_tasks.py" '
         '"<artifactPaths.postReview>" --repo-root "<repoRoot>"'
     )
-    methodology = skill.index("### Print methodology")
-    assert question < invocation < methodology
-    block = skill[invocation:methodology]
+    assert stage < invocation
+    block = delivery[invocation:]
     for phrase in (
         "Parse stdout as a JSON array",
-        "assert its length equals the delivered count",
+        "assert that its length equals the delivered count",
         "TaskCreate(subject, description)",
         "then `TaskUpdate(taskId, metadata)`",
-        "Stop and report any parse, count, or call failure",
-        "Never hand-compose",
+        "Stop on any parse,\ncount, or call failure and report it",
+        "Never fall back to hand composition",
     ):
         assert phrase in block
 

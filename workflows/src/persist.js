@@ -347,13 +347,13 @@ export function parseWriterPayload(prompt) {
 
 function writeArtifactsPrompt(inp, paths) {
   const payload = JSON.stringify(writerPayload(inp));
-  return `Write the object payload to these paths: ${JSON.stringify(paths)}. Return { artifactPaths }.\n${WRITER_PAYLOAD_MARKER}${payload}`;
+  return `Paths: ${JSON.stringify(paths)}\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 
 // Exact strings constrain the writer to the byte spelling the content proof checks.
 function finalArtifactsWriterPrompt(entries) {
   const payload = JSON.stringify(entries);
-  return `Write each text verbatim to its path. Return { written }.\n${WRITER_PAYLOAD_MARKER}${payload}`;
+  return `${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 
 const ASSEMBLE_RECEIPT_SCHEMA = {

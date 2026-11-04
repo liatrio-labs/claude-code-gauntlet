@@ -16,20 +16,16 @@ export function assertPrompt(prompt) {
   }
 }
 
-// Each conditional-required allOf entry has { if, then }, rather than
-// a full JSON Schema — `if`/`then` here carry only `properties`/`required`, no `type` (the
-// measured-accepted spelling discover.js emits). Local validity coverage only: this pins the
-// SHAPE (if.properties.dimension.const, if.required, then.required), not that it is
-// semantically the right dimension/field pair — that is discover.test.js's job.
+// Conditional fragments omit type; their required keys must name const selectors.
 function assertValidConditional(clause, path) {
   if (!clause || typeof clause !== 'object') throw new Error(`schema ${path}: allOf entry must be an object`);
   if (!clause.if || typeof clause.if !== 'object') throw new Error(`schema ${path}: allOf entry must declare "if"`);
   if (!clause.then || typeof clause.then !== 'object') throw new Error(`schema ${path}: allOf entry must declare "then"`);
   if (!clause.if.properties || typeof clause.if.properties !== 'object') throw new Error(`schema ${path}.if: must declare "properties"`);
-  if (!clause.if.properties.dimension || typeof clause.if.properties.dimension.const !== 'string') {
-    throw new Error(`schema ${path}.if.properties.dimension: must declare a string "const"`);
-  }
   if (!Array.isArray(clause.if.required)) throw new Error(`schema ${path}.if: must declare "required" as an array`);
+  for (const key of clause.if.required) {
+    if (typeof clause.if.properties[key]?.const !== 'string') throw new Error(`schema ${path}.if.properties.${key}: must declare a string "const"`);
+  }
   if (!Array.isArray(clause.then.required)) throw new Error(`schema ${path}.then: must declare "required" as an array`);
 }
 

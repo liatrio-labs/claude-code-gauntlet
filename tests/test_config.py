@@ -366,23 +366,6 @@ def test_git_root_probe_oserror_is_setup_failure(config_cli, monkeypatch):
     )
 
 
-@pytest.mark.parametrize(
-    ("mode", "label", "echo"),
-    [
-        ("interactive", "Interactive", INTERACTIVE_ECHO),
-        ("headless", "Headless", HEADLESS_ECHO),
-    ],
-)
-def test_generated_receipts_are_resolver_fixtures(mode, label, echo):
-    skill = (ROOT / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
-    match = re.search(
-        rf"\*\*{label} receipt:\*\*\n\n```json\n(.*?)\n```", skill, re.DOTALL
-    )
-    assert match is not None
-    assert json.loads(match[1]) == echo
-    assert resolver.resolve(mode, {}, None, "pr")["configEcho"] == echo
-
-
 def assert_resolved_mentions(root):
     allowed = {
         "model_tier",
