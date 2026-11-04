@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate agent contracts and shared discovery guidance from one source."""
+"""Generate agent contracts and shared review guidance from one source."""
 
 from __future__ import annotations
 
@@ -105,6 +105,30 @@ DISCOVERY_SHARED = {
         "with existing repository precedent, and show the cost the improvement removes."
     ),
 }
+
+
+VERIFICATION_SHARED = {
+    "investigation": (
+        "Attempt to disprove the claim by inspecting the code and its surrounding "
+        "contracts beyond the diff. For a runtime failure, establish a reachable "
+        "caller and precondition or a concrete failing input. For a static defect, "
+        "inspect the code that makes the claim true or false. Cite decisive evidence "
+        "at file:line, including any protection that defeats the claim; name the "
+        "paths searched for absence claims."
+    ),
+    "context": DISCOVERY_SHARED["context"],
+    "confidence": (
+        "Score certainty that the claim is correct from 0 to 100: 0 means disproved; "
+        "25 probably false; 50 uncertain; 75 probably real with no meaningful "
+        "counter-evidence; 100 clearly present with no mitigating factors. "
+        "Explain uncertainty through the evidence that remains unresolved."
+    ),
+}
+VERIFICATION_TARGETS = (
+    "agents/validator.md",
+    "agents/challenger.md",
+    "skills/code-gauntlet/references/investigation-methodology.md",
+)
 
 
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -318,6 +342,19 @@ def fill_discovery_shared(text: str) -> str:
                 marker_open=marker_open,
                 marker_close=marker_close,
             )
+    return text
+
+
+def fill_verification_shared(text: str) -> str:
+    """Keep verification decisions grounded in one shared evidence contract."""
+    for symbol, body in VERIFICATION_SHARED.items():
+        text = splice(
+            text,
+            re.compile(r"(?!)"),
+            body,
+            marker_open=f"<!-- generated-from-verification:{symbol} -->",
+            marker_close=f"<!-- /generated-from-verification:{symbol} -->",
+        )
     return text
 
 
@@ -1455,6 +1492,8 @@ def rendered_targets(
                 allow_append=True,
             )
         )
+    for rel_path in VERIFICATION_TARGETS:
+        steps.setdefault(rel_path, []).append(fill_verification_shared)
     steps.setdefault(REPORT_FORMAT_REL, []).append(
         partial(rewrite_required_column, registry=registry)
     )

@@ -174,7 +174,7 @@ test('absent bucket limit: 47 files', async () => {
   assert.deepEqual(out, { summary: 's', gaps: [] });
   assert.deepEqual(ctx.violations, []);
   for (const call of ctx.calls) {
-    assert.ok(call.prompt.includes('The authoritative changed-line count is 1211; cite that number verbatim'));
+    assert.ok(call.prompt.includes('1211 changed lines'));
     assert.deepEqual(call.schema, { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] });
   }
 });

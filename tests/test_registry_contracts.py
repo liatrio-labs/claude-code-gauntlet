@@ -385,7 +385,6 @@ def test_machine_string_registry():
         "HEADLESS INPUT ERROR:",
         "code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic "
         "workflows. Install the pre-rename deep-review v2.x for older CLIs.",
-        "the deltas carry a checksum",
         "PAYLOAD_JSON:",
         'PRODUCT = "code-gauntlet"',
     } <= {row["string"] for row in rows}

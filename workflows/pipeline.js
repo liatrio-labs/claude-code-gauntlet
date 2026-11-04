@@ -2125,20 +2125,20 @@ async function summarize(ctx, input) {
     return { summary: '', gaps: ['summarize failed'] };
   }
 }
-function summaryCountLine(inp, suffix) {
+function summaryCountLine(inp) {
   return typeof inp.changedLines === 'number' && inp.changedLines > 0
-    ? ` The authoritative changed-line count is ${inp.changedLines}; cite that number verbatim if you mention change size — never re-estimate it${suffix}`
+    ? ` If mentioning change size, use the authoritative count: ${inp.changedLines} changed lines.`
     : '';
 }
 function summarizePrompt(inp, files) {
   const ctxLine = inp.contextLine || '';
-  const countLine = summaryCountLine(inp, ' from the diff.');
-  return `${ctxLine}Summarize the semantic intent of these changed files for report change context: ${files.join(', ')}.${countLine} Return { summary }.`;
+  const countLine = summaryCountLine(inp);
+  return `${ctxLine}Summarize these changed files: ${files.join(', ')}.${countLine} Return { summary }.`;
 }
 function summarizeMergePrompt(inp, partials) {
   const joined = partials.map((p) => p.summary || '').filter(Boolean).join('\n---\n');
-  const countLine = summaryCountLine(inp, '.');
-  return `Combine these per-bucket change summaries into one concise semantic summary.${countLine} Partials:\n${joined}\nReturn { summary }.`;
+  const countLine = summaryCountLine(inp);
+  return `Synthesize these partial summaries.${countLine}\n${joined}\nReturn { summary }.`;
 }
 function intersectRequiredExtra(rows) {
   if (!rows || rows.length === 0) return [];
@@ -5348,7 +5348,7 @@ function validatePrompt(inp, batch, accepted) {
     return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f, accepted.get(f.id)))}`;
   }).join('\n');
   if (batch.every((finding) => accepted.has(finding.id))) return `${ctxLine}Supply only the missing admission assessments listed in each finding's admission_context. Correctness, reachability and policy_subject are fixed. Use confirmed, rejected or unresolved with the exact request names inspected in references.\nFindings:\n${block}\nReturn { validations: [{ finding_id, admission_assessments }] } (one entry per finding).`;
-  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. First judge the correctness of each claim and return confidence, justification and reachability from the code. Complete that judgment before admission; missing admission evidence or posting value must not lower confidence or change reachability. Then classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess only the predicates for the selected policy_subject in that finding's admission_context, using confirmed, rejected or unresolved and the exact request names inspected in references. If its promotion predicate is confirmed, use only the promotion's confirmed requirements. Resolution and confidence are not semantic confirmation. Assess body_fix_task predicates separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. On an admission-only retry, return finding_id and only missing admission_assessments listed in that context; the accepted correctness and reachability judgments are fixed.\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
+  return `${ctxLine}Validate this batch. Judge correctness and reachability independently of admission evidence or posting value. Classify policy_subject by the claim, regardless of producer; a test location alone does not reclassify a grounded convention claim. Assess the selected subject's predicates in admission_context; a confirmed promotion uses only its confirmed requirements. Use confirmed, rejected or unresolved with the exact inspected request names in references; resolved locations and confidence alone do not confirm predicates. Assess body_fix_task separately. For resolved site_requests, return site_confirmations for the same defect requiring the same correction.\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } (one entry per finding).`;
 }
 function filterStage(input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -5385,8 +5385,8 @@ function challengePrompt(finding, diffPath) {
   const b = blindChallengeFields(finding, diffPath);
   const range = b.location || (b.line_end !== '' && b.line_end !== b.line_start ? `${b.line_start}-${b.line_end}` : `${b.line_start}`);
   const removedContext = b.removed_test
-    ? `\nRead saved diff ${b.diffPath}: deleted test ${JSON.stringify(b.removed_test.path)}, old lines ${b.removed_test.old_start}-${b.removed_test.old_end}. Check the removed input and assertion, then search surviving tests at HEAD for the same behavior. This coverage-loss claim is verifiable from the saved diff and surviving tests.` : '';
-  return `Independently check the claim's central facts against raw code at ${b.file}:${range}, opening enough surrounding context with Read/Grep/LSP to prove or disprove the actual claim. Runtime failures require a current trigger; static defects require evidence of the static claim. Do not lower the score merely because upstream evidence is withheld. If the central assertion remains unverifiable from code and context, score it 25 or below (below 25 when nothing in code confirms it). Reserve scores above 25 for positively confirmed claims. A removed-test claim can be verified from its deleted location in the saved diff and surviving assertions at HEAD.${removedContext}\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct 0-100 (higher = the claim holds).`;
+    ? `\nRead saved diff ${b.diffPath}: deleted test ${JSON.stringify(b.removed_test.path)}, old lines ${b.removed_test.old_start}-${b.removed_test.old_end}. Compare its input and assertion with surviving tests at HEAD for the same behavior.` : '';
+  return `Challenge this claim.${removedContext}\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}\nReturn { confidence_claim_is_correct, justification }.`;
 }
 async function challengeStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -5805,7 +5805,7 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
   };
 }
 function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
-  return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (${Object.keys(VERIFY_RECEIPT_FIELDS).join(', ')} when present; never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token is the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do not return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered delta value costs the whole attempt its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
+  return `Run this command exactly; return only status, receipt and result.deltas from --output. Copy every present receipt field (${Object.keys(VERIFY_RECEIPT_FIELDS).join(', ')}) and delta exactly; the deltas carry a checksum.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
 }
 // --- args.js ---
 function resolveRemovedTestsArgs(args) {
@@ -7017,11 +7017,11 @@ function parseWriterPayload(prompt) {
 }
 function writeArtifactsPrompt(inp, paths) {
   const payload = JSON.stringify(writerPayload(inp));
-  return `Persist these code-gauntlet artifacts to disk exactly as given. Write the payload's findings (as pretty JSON) to ${paths.findings}, the payload's report (verbatim markdown) to ${paths.report}, the payload's postReview (the pre-selected delivery set, as pretty JSON) to ${paths.postReview}, and the payload's checkpoints (as JSON) to ${paths.checkpoints}. Return { artifactPaths } echoing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
+  return `Write the object payload to these paths: ${JSON.stringify(paths)}. Return { artifactPaths }.\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 function finalArtifactsWriterPrompt(entries) {
   const payload = JSON.stringify(entries);
-  return `Persist these code-gauntlet artifacts to disk exactly as given. For every entry in the payload, write its "text" verbatim to its "path" — byte for byte, nothing before it and nothing after the final byte (no trailing commentary, no tool-call markup). Do not reformat, re-indent, or re-serialize. Return { written } listing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
+  return `Write each text verbatim to its path. Return { written }.\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 const ASSEMBLE_RECEIPT_SCHEMA = {
   type: 'object',
@@ -7058,7 +7058,7 @@ const ASSEMBLE_RECEIPT_SCHEMA = {
   },
 };
 function assemblePrompt(scriptPath, planPath, python) {
-  return `Run exactly this command, then return its single line of stdout JSON verbatim via the schema:\n${pythonArgv(python).map(shellWord).join(' ')} ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
+  return `Run this command exactly; return stdout JSON verbatim:\n${pythonArgv(python).map(shellWord).join(' ')} ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
 }
 // --- checkpoints.js ---
 function unwrapCheckpointMap(cp) {

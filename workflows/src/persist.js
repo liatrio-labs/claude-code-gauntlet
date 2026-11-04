@@ -347,13 +347,13 @@ export function parseWriterPayload(prompt) {
 
 function writeArtifactsPrompt(inp, paths) {
   const payload = JSON.stringify(writerPayload(inp));
-  return `Persist these code-gauntlet artifacts to disk exactly as given. Write the payload's findings (as pretty JSON) to ${paths.findings}, the payload's report (verbatim markdown) to ${paths.report}, the payload's postReview (the pre-selected delivery set, as pretty JSON) to ${paths.postReview}, and the payload's checkpoints (as JSON) to ${paths.checkpoints}. Return { artifactPaths } echoing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
+  return `Write the object payload to these paths: ${JSON.stringify(paths)}. Return { artifactPaths }.\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 
 // Exact strings constrain the writer to the byte spelling the content proof checks.
 function finalArtifactsWriterPrompt(entries) {
   const payload = JSON.stringify(entries);
-  return `Persist these code-gauntlet artifacts to disk exactly as given. For every entry in the payload, write its "text" verbatim to its "path" — byte for byte, nothing before it and nothing after the final byte (no trailing commentary, no tool-call markup). Do not reformat, re-indent, or re-serialize. Return { written } listing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
+  return `Write each text verbatim to its path. Return { written }.\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 
 const ASSEMBLE_RECEIPT_SCHEMA = {
@@ -393,5 +393,5 @@ const ASSEMBLE_RECEIPT_SCHEMA = {
 
 // Shell quoting keeps paths with spaces in one argument without exposing shell operators.
 function assemblePrompt(scriptPath, planPath, python) {
-  return `Run exactly this command, then return its single line of stdout JSON verbatim via the schema:\n${pythonArgv(python).map(shellWord).join(' ')} ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
+  return `Run this command exactly; return stdout JSON verbatim:\n${pythonArgv(python).map(shellWord).join(' ')} ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
 }

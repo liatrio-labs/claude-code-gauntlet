@@ -56,9 +56,9 @@ export async function summarize(ctx, input) {
   }
 }
 
-function summaryCountLine(inp, suffix) {
+function summaryCountLine(inp) {
   return typeof inp.changedLines === 'number' && inp.changedLines > 0
-    ? ` The authoritative changed-line count is ${inp.changedLines}; cite that number verbatim if you mention change size — never re-estimate it${suffix}`
+    ? ` If mentioning change size, use the authoritative count: ${inp.changedLines} changed lines.`
     : '';
 }
 
@@ -66,15 +66,15 @@ function summarizePrompt(inp, files) {
   // The prebuilt context instruction gives summarizers the same read coverage as discovery agents.
   const ctxLine = inp.contextLine || '';
   // The supplied changedLines count is authoritative; deriving it from the diff can make summary and report totals disagree.
-  const countLine = summaryCountLine(inp, ' from the diff.');
-  return `${ctxLine}Summarize the semantic intent of these changed files for report change context: ${files.join(', ')}.${countLine} Return { summary }.`;
+  const countLine = summaryCountLine(inp);
+  return `${ctxLine}Summarize these changed files: ${files.join(', ')}.${countLine} Return { summary }.`;
 }
 
 // The merge prompt needs the same count pin because it can otherwise reintroduce drift after bucket summaries.
 function summarizeMergePrompt(inp, partials) {
   const joined = partials.map((p) => p.summary || '').filter(Boolean).join('\n---\n');
-  const countLine = summaryCountLine(inp, '.');
-  return `Combine these per-bucket change summaries into one concise semantic summary.${countLine} Partials:\n${joined}\nReturn { summary }.`;
+  const countLine = summaryCountLine(inp);
+  return `Synthesize these partial summaries.${countLine}\n${joined}\nReturn { summary }.`;
 }
 
 // Only fields required by every sibling dimension can safely constrain a shared dispatch.

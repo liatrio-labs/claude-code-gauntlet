@@ -222,22 +222,13 @@ for (const contextLine of ['CONTEXT_SENTINEL ', '']) test(`discovery transport: 
 });
 
 const SUMMARY_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
-const SINGLE_PROMPT = 'Summarize the semantic intent of these changed files for report change context: a.js, b.js. '
-  + 'Return { summary }.';
 const SUMMARY_GOLDEN = { summary: 's', gaps: [] };
 const SUMMARY_ROWS = [
-  { name: 'absent count', labels: ['summarize'], prompts: [SINGLE_PROMPT] },
+  { name: 'absent count', labels: ['summarize'], fileGroups: [['a.js', 'b.js']] },
   { name: 'small PR count and context prefix', changedLines: 10, contextLine: 'SUMMARY_CONTEXT ',
-    labels: ['summarize'], prompts: ['SUMMARY_CONTEXT '
-      + 'Summarize the semantic intent of these changed files for report change context: a.js, b.js. '
-      + 'The authoritative changed-line count is 10; cite that number verbatim if you mention change size '
-      + '\u2014 never re-estimate it from the diff. Return { summary }.'] },
+    labels: ['summarize'], fileGroups: [['a.js', 'b.js']] },
   { name: 'large count with few files stays single', files: ['a.js'], changedLines: 1211, bucketSize: 20,
-    labels: ['summarize'], prompts: [
-      'Summarize the semantic intent of these changed files for report change context: a.js. '
-      + 'The authoritative changed-line count is 1211; cite that number verbatim if you mention change size '
-      + '\u2014 never re-estimate it from the diff. Return { summary }.',
-    ] },
+    labels: ['summarize'], fileGroups: [['a.js']] },
   { name: 'single throw', changedLines: 10, nulls: ['summarize'], labels: ['summarize'],
     expected: { summary: '', gaps: ['summarize failed'] } },
   { name: 'all buckets null', changedLines: 600, nulls: ['summarize-bucket-0', 'summarize-bucket-1'],
@@ -245,17 +236,7 @@ const SUMMARY_ROWS = [
   { name: 'bucket files and merge preserve partials and count', files: ['a.js', 'b.js', 'c.js'], changedLines: 600,
     bucketSize: 2, replies: { 'summarize-bucket-0': { summary: 'p0' }, 'summarize-bucket-1': { summary: 'p1' },
       'summarize-merge': { summary: 'merged' } }, labels: ['summarize-bucket-0', 'summarize-bucket-1', 'summarize-merge'],
-    prompts: [
-      'Summarize the semantic intent of these changed files for report change context: a.js, b.js. '
-        + 'The authoritative changed-line count is 600; cite that number verbatim if you mention change size '
-        + '\u2014 never re-estimate it from the diff. Return { summary }.',
-      'Summarize the semantic intent of these changed files for report change context: c.js. '
-        + 'The authoritative changed-line count is 600; cite that number verbatim if you mention change size '
-        + '\u2014 never re-estimate it from the diff. Return { summary }.',
-      'Combine these per-bucket change summaries into one concise semantic summary. '
-        + 'The authoritative changed-line count is 600; cite that number verbatim if you mention change size '
-        + '\u2014 never re-estimate it. Partials:\np0\n---\np1\nReturn { summary }.',
-    ], expected: { summary: 'merged', gaps: [] } },
+    fileGroups: [['a.js', 'b.js'], ['c.js']], expected: { summary: 'merged', gaps: [] } },
 ];
 for (const row of SUMMARY_ROWS) test(`summarize: ${row.name}`, async () => {
   const ctx = stageCtx({ reply: { summary: 's' }, replies: row.replies, nulls: row.nulls });
@@ -263,8 +244,16 @@ for (const row of SUMMARY_ROWS) test(`summarize: ${row.name}`, async () => {
     contextLine: row.contextLine, limits: { summarizeBucketSize: row.bucketSize ?? 1 } });
   assert.deepEqual(out, row.expected ?? SUMMARY_GOLDEN);
   assert.deepEqual(ctx.calls.map((call) => call.label), row.labels);
-  if (row.prompts) assert.deepEqual(ctx.calls.map((call) => call.prompt), row.prompts);
-  for (const call of ctx.calls) assert.deepEqual(call.schema, SUMMARY_SCHEMA);
+  for (const [index, call] of ctx.calls.entries()) {
+    assert.deepEqual(call.schema, SUMMARY_SCHEMA);
+    assert.ok(call.prompt.includes('Return { summary }'));
+    if (row.changedLines) assert.ok(call.prompt.includes(`${row.changedLines} changed lines`));
+    if (call.label === 'summarize-merge') assert.ok(call.prompt.includes('p0\n---\np1'));
+    else {
+      if (row.contextLine) assert.ok(call.prompt.startsWith(row.contextLine));
+      if (row.fileGroups) assert.ok(call.prompt.includes(row.fileGroups[index].join(', ')));
+    }
+  }
   assert.deepEqual(ctx.violations, []);
 });
 

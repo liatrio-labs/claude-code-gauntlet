@@ -30,6 +30,7 @@ TARGETS = (
     "agents/test-analyzer.md",
     "agents/code-simplifier.md",
     "agents/conventions-and-intent.md",
+    *gen.VERIFICATION_TARGETS,
     REPORT,
     DELIVERY,
     SKILL,
@@ -829,6 +830,20 @@ def test_shared_guidance_updates_agent_contracts(monkeypatch, symbol):
         assert targets[rel](rendered) == rendered
         updated.append(rel)
     assert len(updated) == (2 if symbol in {"quality", "changed-anchor"} else 7)
+
+
+@pytest.mark.parametrize("symbol", gen.VERIFICATION_SHARED)
+def test_verification_guidance_updates_all_consumers(monkeypatch, symbol):
+    original = gen.VERIFICATION_SHARED[symbol]
+    replacement = "Updated verification evidence contract."
+    monkeypatch.setitem(gen.VERIFICATION_SHARED, symbol, replacement)
+    targets = gen.rendered_targets(str(ROOT), gen.load_registry(str(ROOT)), "")
+    for rel in gen.VERIFICATION_TARGETS:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        rendered = targets[rel](text)
+        assert original not in rendered
+        assert rendered.count(replacement) == 1
+        assert targets[rel](rendered) == rendered
 
 
 def test_block_anchor():

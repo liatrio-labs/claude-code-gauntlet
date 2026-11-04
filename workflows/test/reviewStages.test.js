@@ -33,8 +33,7 @@ test('validator asks correctness first and scopes admission questions to each co
     finding({ id: 'f3', dimension: 'type_design', quality_basis: 'other' }),
     finding({ id: 'f4', dimension: 'test_coverage', test_kind: 'additional_case' })] });
   const prompt = ctx.calls[0].prompt;
-  assert.ok(prompt.indexOf('First judge the correctness') < prompt.indexOf('Then classify policy_subject'));
-  assert.ok(prompt.includes('missing admission evidence or posting value must not lower confidence or change reachability'));
+  assert.ok(prompt.includes('correctness and reachability independently of admission evidence or posting value'));
   const contexts = prompt.split('\n').filter((line) => line.startsWith('- ')).map((line) => JSON.parse(line.split(' | admission_context: ')[1]));
   assert.deepEqual(contexts.map((context) => context.policy.policy_subjects.ordinary),
     [[], ['present_defect', 'concrete_equivalent', 'behavior_preserved'], ['present_defect'], ['present_defect']]);
@@ -201,7 +200,7 @@ for (const row of VALIDATE_ROWS) test(`validate result: ${row.name}`, async () =
   assert.deepEqual(ctx.violations, []);
 });
 const VALIDATE_TAIL = '\nReturn { validations: [{ finding_id, confidence, justification, '
-  + 'reachability (current | future_change_only | uncertain), site_confirmations, policy_subject (test_defect | coverage | ordinary | unresolved), admission_assessments }] } \u2014 confidence 0-100 '
+  + 'reachability (current | future_change_only | uncertain), site_confirmations, policy_subject (test_defect | coverage | ordinary | unresolved), admission_assessments }] } '
   + '(one entry per finding).';
 const VALIDATE_PROMPT_ROWS = [
   { name: 'equal range endpoints print once', fields: { file: 'one.js', line_start: 42, line_end: 42 },
@@ -214,8 +213,7 @@ const VALIDATE_PROMPT_ROWS = [
 for (const row of VALIDATE_PROMPT_ROWS) test(`validate prompt: ${row.name}`, async () => {
   const ctx = stageCtx({ reply: [] });
   await validateStage(ctx, { findings: [finding(row.fields)], contextLine: 'VALIDATOR_CONTEXT ' });
-  assert.ok(ctx.calls[0].prompt.startsWith('VALIDATOR_CONTEXT Independently validate'));
-  assert.ok(ctx.calls[0].prompt.includes('code-evidence and disproof contract'));
+  assert.ok(ctx.calls[0].prompt.startsWith('VALIDATOR_CONTEXT '));
   assert.ok(ctx.calls[0].prompt.includes(row.block));
   assert.ok(ctx.calls[0].prompt.endsWith(VALIDATE_TAIL));
   const { anyOf, ...base } = ctx.calls[0].schema.properties.validations.items;
@@ -330,8 +328,7 @@ for (const row of CHALLENGE_ROWS) test(`challenge result: ${row.name}`, async ()
   for (const call of ctx.calls) assert.equal(call.agentType, 'code-gauntlet:challenger');
   assert.deepEqual(ctx.violations, []);
 });
-const BLIND_TAIL = '\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct '
-  + '0-100 (higher = the claim holds).';
+const BLIND_RETURN = 'Return { confidence_claim_is_correct, justification }';
 const BLIND_ROWS = [
   { name: 'range', file: 'SENTINEL_FILE.js', start: 12, end: 15, location: 'SENTINEL_FILE.js:12-15' },
   { name: 'single line', file: 'src/one.js', start: 9, end: 9, location: 'src/one.js:9' },
@@ -354,10 +351,9 @@ for (const row of BLIND_ROWS) test(`blind prompt: ${row.name}`, async () => {
     file: row.file, line_start: row.start, line_end: row.end });
   const ctx = stageCtx({ reply: { score: 80 } });
   await challengeStage(ctx, { findings: [f] });
-  assert.ok(ctx.calls[0].prompt.startsWith("Independently check the claim's central facts against raw code"));
   assert.ok(ctx.calls[0].prompt.includes('Claim: SENTINEL_TITLE\nSENTINEL_DESC'));
   assert.ok(ctx.calls[0].prompt.includes(`Location to inspect: ${row.location}`));
-  assert.ok(ctx.calls[0].prompt.endsWith(BLIND_TAIL));
+  assert.ok(ctx.calls[0].prompt.includes(BLIND_RETURN));
   assert.doesNotMatch(ctx.calls[0].prompt, /SENTINEL_EVIDENCE_LEAK|SENTINEL_REASONING_LEAK|SENTINEL_XREF_LEAK|SENTINEL_RATIONALE_LEAK|96|surfaced/);
   assert.deepEqual(ctx.calls[0].schema, { type: 'object', properties: {
     confidence_claim_is_correct: { type: 'number' }, justification: { type: 'string' },

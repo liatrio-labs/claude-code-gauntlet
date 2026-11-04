@@ -184,12 +184,6 @@ for (const [name, first, second, partial, artifactPaths, gaps] of RETRY_ROWS) {
     }
   });
 }
-const LEGACY_WRITER_LINE = 'Persist these code-gauntlet artifacts to disk exactly as given. '
-  + `Write the payload's findings (as pretty JSON) to ${PATHS.findings}, `
-  + `the payload's report (verbatim markdown) to ${PATHS.report}, the payload's postReview `
-  + `(the pre-selected delivery set, as pretty JSON) to ${PATHS.postReview}, and the payload's checkpoints `
-  + `(as JSON) to ${PATHS.checkpoints}. Return { artifactPaths } echoing the paths you wrote. `
-  + 'The payload is the single JSON line after the marker below.';
 const LEGACY_ROWS = [
   ['absent persist', { persist: undefined }, []],
   ['duplicate ids', { findings: [makeFinding('DUP'), makeFinding('DUP')] }, [
@@ -208,7 +202,8 @@ for (const [name, patch, gaps] of LEGACY_ROWS) {
     assert.deepEqual(out, expectedWith(SUCCESS_GOLDEN, { gaps }));
     assert.deepEqual(labels(ctx), ['artifact-writer']);
     const payload = parseWriterPayload(ctx.calls[0].prompt);
-    assert.equal(ctx.calls[0].prompt.split('\n')[0], LEGACY_WRITER_LINE);
+    assert.ok(ctx.calls[0].prompt.includes(JSON.stringify(PATHS)));
+    assert.ok(ctx.calls[0].prompt.includes('Return { artifactPaths }'));
     assert.ok(!Array.isArray(payload));
     assert.deepEqual(payload, writerPayload(input));
     assert.equal(out.persistReturn, undefined);
@@ -235,12 +230,6 @@ test('JSON input uses the same artifact paths', async () => {
   assert.deepEqual(await writeArtifacts(ctx, input), { artifactPaths: PATHS, gaps: [], partial: false });
   assert.deepEqual(labels(ctx), ['artifact-writer']);
 });
-const DERIVED_WRITER_LINE = 'Persist these code-gauntlet artifacts to disk exactly as given. '
-  + 'For every entry in the payload, write its "text" verbatim to its "path" '
-  + '\u2014 byte for byte, nothing before it and nothing after the final byte (no trailing commentary, no tool-call markup). '
-  + 'Do not reformat, re-indent, or re-serialize. Return { written } listing the paths you wrote. '
-  + 'The payload is the single JSON line after the marker below.';
-const ASSEMBLE_LINE = 'Run exactly this command, then return its single line of stdout JSON verbatim via the schema:';
 const COMMAND_WORDS = ['python3', SCRIPT, '--plan', PLAN_PATH];
 const PROMPT_ROWS = [
   ...[['python', ['python']], ['py -3', ['py', '-3']]].map(([python, words]) => [
@@ -278,8 +267,9 @@ for (const [name, input, commandWords = COMMAND_WORDS, expectedPaths = PATHS, ch
     assert.deepEqual(Object.keys(out.artifactPaths), ['findings', 'report', 'postReview', 'checkpoints']);
     assert.deepEqual(out.gaps, []);
     assert.deepEqual(labels(ctx), ['artifact-writer', 'assemble-artifacts']);
-    assert.equal(ctx.calls[0].prompt.split('\n')[0], DERIVED_WRITER_LINE);
-    assert.equal(ctx.calls[1].prompt.split('\n')[0], ASSEMBLE_LINE);
+    assert.ok(ctx.calls[0].prompt.includes('text verbatim to its path'));
+    assert.ok(ctx.calls[0].prompt.includes('Return { written }'));
+    assert.ok(ctx.calls[1].prompt.includes('stdout JSON verbatim'));
     assert.equal(ctx.calls[0].agentType, 'code-gauntlet:artifact-writer');
     assert.equal(ctx.calls[1].agentType, 'code-gauntlet:executor');
     const entries = parseWriterPayload(ctx.calls[0].prompt);
