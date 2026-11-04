@@ -325,7 +325,7 @@ console.log(JSON.stringify([{}, {contextLines:300}, {contextLines:2028}, {contex
         ("1501", "528"),
     ]
     assert "until line 2028" in multiple
-    assert "11 Read calls of limit=750" in rule
+    assert "11 planned Read calls of limit=750" in rule
     assert "stepping by 750 through line 8250" in rule
 
 
@@ -598,7 +598,7 @@ def test_waist_consumers(rel: str, needles: tuple[str, ...]) -> None:
 def test_triage_dispatch():
     section = re.split(
         r"(?m)^(?:---|## )",
-        read("skills/code-gauntlet/references/phase2-triage.md").split("## 2l.", 1)[1],
+        read("skills/code-gauntlet/references/phase2-triage.md").split("## 2g.", 1)[1],
         maxsplit=1,
     )[0]
     assert "deriveAgentFlags" in section

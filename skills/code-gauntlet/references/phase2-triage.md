@@ -6,8 +6,7 @@ Sub-steps, detection logic, and **args preparation** for Phase 2: Target, Triage
 
 - **2a** VCS platform detection — **2b** Working tree checkout — **2b-post** SHA + previously-reviewed gate + stale cleanup — **2c** Review target + diff/changed-files save
 - **2d** Project context (CLAUDE.md, REVIEW.md parse) — **2e** Risk classification
-- **2g** Test discovery — **2h** Docs/specs
-- **2k** AI-generated code detection — **2l** Review dimensions
+- **2f** AI-generated code detection — **2g** Review dimensions
 - **Shared agent context file** — **Args preparation** (the args waist the workflow consumes)
 - **Triage announcement**
 
@@ -163,7 +162,7 @@ On `files: FAILED`, stop the handoff and report the stderr reason (headless: non
 
 **Run these saves as [phase2-preparation.md: Phase 2 Composite B](phase2-preparation.md#phase-2-composite-b--gather-diff-changed-files-line-count-misc)** — one Bash call. `files` runs first and gates the rest: the incremental diff reads its list, and `numstat` reads the saved patch. That section owns the exact script.
 
-`changedLines` (threaded into `args.changedLines`, Args Preparation below) is counted from the diff actually saved above — the incremental diff on the incremental path, never branch 1's full-PR diff. The `numstat` section runs `scripts/diff_numstat.py` against that saved patch; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules. Check `binary_files > 0` before treating a low count as no diff. Never run a second `gh pr diff`; the 2k scan reads the same saved patch, never a fresh diff fetch.
+`changedLines` (threaded into `args.changedLines`, Args Preparation below) is counted from the diff actually saved above — the incremental diff on the incremental path, never branch 1's full-PR diff. The `numstat` section runs `scripts/diff_numstat.py` against that saved patch; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules. Check `binary_files > 0` before treating a low count as no diff. Never run a second `gh pr diff`; the 2f scan reads the same saved patch, never a fresh diff fetch.
 
 For PR/MR server diffs, validate the saved diff before relying on it. Branch/local validation is enforced by `save_git_diff.py`:
 
@@ -172,7 +171,7 @@ For PR/MR server diffs, validate the saved diff before relying on it. Branch/loc
 
 If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own git diff chain inside an executor subagent. For branch/local targets, use the diff and file-list commands in steps 2/3 above.
 
-Check for `docs/`, `specs/`, and `research/` directories. Use only the collector receipt from 2d for REVIEW.md discovery and its output for CLAUDE.md/AGENTS.md/QODO.md rules.
+Use only the collector receipt from 2d for REVIEW.md discovery and its output for CLAUDE.md/AGENTS.md/QODO.md rules.
 
 ---
 
@@ -197,7 +196,7 @@ A successful empty discovery never blocks or asks a question. Collector or raw R
 - **Medium risk** — business logic, services, controllers, middleware, state management. 50-200 lines changed.
 - **Low risk** — tests, docs, config, generated code, lockfiles, formatting-only. <50 lines changed.
 
-High-risk files get expanded context (callers, callees, related tests); low-risk get lighter review.
+High-risk files get expanded context (callers, callees); low-risk get lighter review.
 
 **Content-change promotion.** After initial classification, check LOW-risk files for substantive content changes — any diff line that changes a string value, numeric value, or identifier (not just formatting, whitespace, markup, or delimiters). Files with substantive content changes get promoted to MEDIUM. This is type-agnostic.
 
@@ -206,7 +205,7 @@ Stay LOW: lock files, whitespace-only changes, generated code updates, tag case 
 
 ### Light Review for Trivial PRs
 
-If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). Stamp the answer verbatim into `args.scopeAnswer` (`"light"` or `"full"`); the workflow derives the dimensions from it (2l). Announce the actual dimension set — `bugs, security` for light, the full list for full. `args.riskTable` is REQUIRED on every run regardless of the answer (or of whether this question was even asked) — see Args Preparation below.
+If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). Stamp the answer verbatim into `args.scopeAnswer` (`"light"` or `"full"`); the workflow derives the dimensions from it (2g). Announce the actual dimension set — `bugs, security` for light, the full list for full. `args.riskTable` is REQUIRED on every run regardless of the answer (or of whether this question was even asked) — see Args Preparation below.
 
 > Headless exception: do not ask, and leave `scopeAnswer` out; interactive runs stamp the question answer.
 
@@ -214,49 +213,7 @@ Only stamp `scopeAnswer` when this gate actually fired (every file low-risk AND 
 
 ---
 
-## 2g. Related Test Discovery
-
-For each changed production file, use **Glob** to find related tests without filtering by language
-or extension. Select paths with a case-insensitive directory segment `test`, `tests`, `spec`,
-`specs` or `__tests__`; or basename tokens `test_*`, `*_test`, `*_spec`, `*.test.*`, `*.spec.*`,
-`*Test`, `*Tests`, `*Spec` (stem before the first dot). Exclude non-source directories such as
-vendor, node_modules, third_party, deps and generated output before selection.
-Include related tests in context for bug-detector and test-analyzer. The saved-diff inventory
-uses the old path for removed and renamed tests.
-
-Example:
-
-```text
-Glob(pattern: "**/*.test.*")
-Glob(pattern: "**/*_test*")
-Glob(pattern: "**/test_*")
-Glob(pattern: "**/__tests__/**/*")
-Glob(pattern: "**/tests/**/*")
-```
-
-Never use `find` or `grep` from Bash for test discovery.
-
----
-
-## 2h. Docs/Specs Context
-
-If `docs/`, `specs/`, `research/` exist, read relevant files. Send only to the conventions-and-intent agent — NOT all agents (avoids biasing toward confirming intent rather than finding bugs).
-
-**Tool instructions for file discovery:**
-
-Use **Glob** to find documentation and specification files:
-
-```
-Glob(pattern: "docs/**/*.md")
-Glob(pattern: "specs/**/*.md")
-Glob(pattern: "research/**/*.md")
-```
-
-Then use **Read** to load relevant files for each changed file's directory. Never use `find` from Bash for locating docs/specs.
-
----
-
-## 2k. AI-Generated Code Detection
+## 2f. AI-Generated Code Detection
 
 Scan for AI co-author trailers, attribution comments, AI tool metadata. **Elevate AI-generated files one risk level**. Include AI-generation status in risk classification sent to all agents.
 
@@ -282,7 +239,7 @@ Never use `grep` or `find` from Bash for AI detection.
 
 ---
 
-## 2l. Determine Review Dimensions
+## 2g. Determine Review Dimensions
 
 The workflow computes the dispatched dimensions with `deriveAgentFlags(riskTable, changedLines, scopeAnswer)` in `workflows/src/discover.js`.
 A `light` answer on a light-eligible diff (every changed file low-risk and fewer than 50 changed lines) yields `{ deep: false }` and dispatches only bug-detector and security-reviewer.
@@ -294,7 +251,7 @@ Every other valid run dispatches all seven discovery agents.
 
 The workflow's **summarize, discovery, and validate** agents Read a shared context file. The workflow threads exactly this path to them: `{output_dir}/code-gauntlet-context-{head_sha_short}.md`. The skill must write it there before the Phase 3 `Workflow` call, or the agents' "Read the shared context" step hits a missing file. The **challenger** is not in that list: it is structurally blind (it receives only a finding's title, description, and location and opens the code itself), so the Challenge stage is given no context path at all.
 
-Use the command in [phase2-preparation.md: Write the shared agent context file](phase2-preparation.md#write-the-shared-agent-context-file) and `scripts/write_shared_context.py`; pass the 2e risk classification and 2k AI-generated-code status as Markdown on stdin.
+Use the command in [phase2-preparation.md: Write the shared agent context file](phase2-preparation.md#write-the-shared-agent-context-file) and `scripts/write_shared_context.py`; pass the 2e risk classification and 2f AI-generated-code status as Markdown on stdin.
 
 ### Measure it
 

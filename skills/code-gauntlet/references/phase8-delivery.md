@@ -43,7 +43,7 @@ Pass the available `--task` and/or `--nonce`; use both when known. Do not read r
 
 Never hand-write an artifact from `persistReturn`; `await_workflow.py` elides its entries so the original serialized text reaches `materialize_artifacts.py` without model transcription.
 
-Findings with skipped validation or unknown verify origin are challenged, then disposed as `held_back` to the report's Unverified / pipeline-degraded section alongside capped or failed challenges. They remain in findings.json with their `disposition`, which grants no PR-comment, patch, or fix-task rights. Old challenge checkpoints pass through the same disposal before delivery.
+Findings with skipped validation or unknown verify origin bypass challenge and are disposed as `held_back` to the report's Unverified / pipeline-degraded section alongside capped or failed challenges. They remain in findings.json with their `disposition`, which grants no PR-comment, patch, or fix-task rights. Old challenge checkpoints pass through the same disposal before delivery.
 
 **Then render the apply-checked patches** whenever `artifactPaths.findings` is non-null, including salvage:
 
@@ -102,11 +102,11 @@ findings also post to the PR. Ask once, after materialization, before anything i
 ```
 AskUserQuestion(
   questions: [{
-    question: "The review is done and the report is saved. Post the {postReview_count} selected findings to PR #{pr_number} as inline comments?",
+    question: "The review is done and the report is saved. Post the {postReview_count} selected findings to PR #{pr_number}?",
     header: "Delivery",
     multiSelect: false,
     options: [
-      { label: "Post to PR (Recommended)", description: "Post the pipeline's selected set as inline comments, batched into one review event" },
+      { label: "Post to PR (Recommended)", description: "Post the pipeline's selected set, batched into one review event" },
       { label: "Markdown only", description: "Skip posting — I'll give you the path to the saved report" }
     ]
   }]

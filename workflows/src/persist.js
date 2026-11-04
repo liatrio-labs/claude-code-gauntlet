@@ -393,5 +393,5 @@ const ASSEMBLE_RECEIPT_SCHEMA = {
 
 // Shell quoting keeps paths with spaces in one argument without exposing shell operators.
 function assemblePrompt(scriptPath, planPath, python) {
-  return `Run this command exactly; return stdout JSON verbatim:\n${pythonArgv(python).map(shellWord).join(' ')} ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
+  return `${pythonArgv(python).map(shellWord).join(' ')} ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
 }

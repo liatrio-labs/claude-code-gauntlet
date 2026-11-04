@@ -1357,15 +1357,15 @@ const UNPLANNABLE_GAP = 'context_unplannable: args.contextLines was stamped (150
   + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.';
 const CONTEXT_ROWS = [
   { name: 'maximum line width reaches every reader', input: { contextLines: 2028, contextChars: 94784, contextMaxLineChars: 1000 }, gaps: [],
-    markers: ['exactly 68 Read calls of limit=30', 'stepping by 30 through line 2028'] },
+    markers: ['68 planned Read calls of limit=30', 'stepping by 30 through line 2028'] },
   { name: 'measured readers include final tail and validator', input: { contextLines: 2028, contextChars: 94784 }, gaps: [],
-    markers: ['exactly 4 Read calls', 'Read(offset=1924, limit=105)'] },
+    markers: ['4 planned Read calls', 'Read(offset=1924, limit=105)'] },
   { name: 'unmeasured readers get one actionable fallback', input: {}, gaps: [UNMEASURED_GAP],
     markers: ['until a call returns no further content'], fallback: true },
   { name: 'unplannable readers get distinct fallback', input: { contextLines: 1500001 }, gaps: [UNPLANNABLE_GAP],
     markers: ['until a call returns no further content'], fallback: true },
   { name: 'measured sandbox globals', input: { contextLines: 2028, contextChars: 94784 }, sandbox: true, gaps: [],
-    markers: ['exactly 4 Read calls', 'Read(offset=1924, limit=105)'] },
+    markers: ['4 planned Read calls', 'Read(offset=1924, limit=105)'] },
 ];
 for (const row of CONTEXT_ROWS) test(`context wiring: ${row.name}`, async () => {
   const args = validArgs(row.input);

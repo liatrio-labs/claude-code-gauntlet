@@ -76,7 +76,7 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `severity` | string | yes | `critical`, `high`, `medium`, or `low`; the report renders any other value as `low`, while the original value stays in `findings.json`. |
 | `confidence` | number | yes | 0-100 CERTAINTY score |
 | `dimension` | string | yes | Review dimension (bug, security, cross-file, etc.) |
-| `origin` | string | no | Blame classification stamped by `scripts/verify_findings.py` — the one canonical field no agent emits. |
+| `origin` | string | no | Blame classification stamped by `scripts/verify_findings.py`. |
 | `evidence` | string | no | Code snippet or behavior demonstrating the issue. Required and non-empty in the discovery schema. |
 | `anchor` | string | yes | Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters. |
 | `suggested_fix_code` | string | no | Complete replacement for file lines line_start through line_end, including indentation; include line_end. Omit if uncertain or incomplete. |
@@ -99,7 +99,7 @@ For convention findings, `rule_source` selects the heading for `claude_md_rule`:
 | `searched_paths` | array | test_coverage | no | Repository files or directories searched for coverage. |
 | `candidate_tests` | array | test_coverage | no | Inspected tests, including their input and assertion. |
 | `production_element` | object | test_coverage | no | Source reference to the production behavior whose coverage is assessed. |
-| `test_kind` | string | test_coverage | conditional | defective_test: a PR-owned test that would still pass if the behavior it claims broke; production_defect: present production defect; critical_gap: no test covers important surviving behavior; additional_case: any other coverage case. |
+| `test_kind` | string | test_coverage | conditional | defective_test: a PR-owned test that would still pass if the behavior it tests broke; production_defect: present production defect; critical_gap: no test covers important surviving behavior; additional_case: any other coverage case. |
 | `rule_source` | string | convention | no | Basis for the cited rule: documented_rule, code_comment, repo_precedent, or self_inconsistency. |
 | `spec_text` | string | intent | conditional | Quoted specification or requirement contradicted by the implementation. |
 | `invalid_state_example` | string | type_design | no | Concrete invalid state permitted by the type design. |
@@ -169,8 +169,7 @@ Missing or unknown disposition or admission is held back. Delivery intersects ad
 
 The report is rendered in code by `renderReport()` in `workflows/src/renderReport.js`. What follows
 is that function's literal output over a placeholder fixture, emitted by
-`scripts/generate_contract_requirements.py` (`--check` in CI). A template that promises a
-rendering the code does not perform is the exact defect class issues #47/#67 were filed for.
+`scripts/generate_contract_requirements.py` (`--check` in CI).
 
 <!-- generated-from-registry-identity:full_report_template — do not edit; run scripts/generate_contract_requirements.py -->
 ````markdown

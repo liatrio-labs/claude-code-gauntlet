@@ -78,7 +78,7 @@ The stage batches findings into `limits.validateBatch` chunks and dispatches one
 
 **Confidence rubric:** the shared scale in [investigation-methodology.md](investigation-methodology.md).
 
-**Degradation.** A null/malformed batch or a missing matched score marks the affected findings `validation='skipped'`, with confidence untouched and one gap per batch naming the count. They still face challenge, then survivors enter the unverified bucket and appear only in the report. Degraded verify slices (`origin='unknown'`) follow the same route.
+**Degradation.** A null/malformed batch or a missing matched score after retry marks the affected findings `validation='skipped'`, with confidence untouched and one gap per batch naming the count. They bypass challenge and enter the unverified bucket, appearing only in the report. Degraded verify slices (`origin='unknown'`) follow the same route.
 
 ---
 
@@ -100,7 +100,7 @@ Pure, deterministic JS — no agents. It applies dimension-specific confidence/s
 
 Blind, independent scrutiny — the only stage where findings face agents that have never seen the original reasoning. Fresh challengers see **only** `blindChallengeFields`: `title`, `description`, `file`, `line_start`, `line_end`, and a removed-test reference when present (an allowlist, not a delete-list — no evidence, origin, cross_file_refs, or reasoning can ever leak). Defaults to Sonnet, subject to the resolved override.
 
-The stage ranks clean findings first, then incomplete findings, and blind-challenges the top `min(n, limits.challengeCap)` through `parallel()`, and applies the score thresholds. Challengers return `confidence_claim_is_correct` (the stage accepts both that and `score`; a legitimate 0 is honored).
+The stage ranks admitted, fully vetted findings and blind-challenges the top `min(n, limits.challengeCap)` through `parallel()`. Other findings bypass challenge as `admission_terminal`. Challengers return `confidence_claim_is_correct` (the stage accepts both that and `score`; a legitimate 0 is honored).
 
 **Thresholds** (`applyChallenges`):
 
@@ -109,7 +109,7 @@ The stage ranks clean findings first, then incomplete findings, and blind-challe
 - **50–74** → `challenge_contested: true`; surfaced re-routed to `"suggestion"`
 - **≥ 75** → survives unchanged
 
-After thresholds it ranks survivors and retains upstream eliminations in the challenge checkpoint. Challenge cap overflow is stamped `challenge='capped'`; null/unscored results are stamped `challenge='failed'`. After the replay belt, `disposeFindings` assigns delivery dispositions once: incomplete verification, validation, or challenge becomes `held_back`; clean findings become `deliver` when location and diff facts allow inline placement, or `body` otherwise. Legacy records without diff facts retain location-based placement, and `challenge='skipped'` remains unchallenged. Eliminations become `eliminate`. The reducer clears stale consolidation and regroups clean survivors. All records enter findings.json and their corresponding report sections; only `deliver` and `body` records share the ranked delivery cap.
+After thresholds it ranks survivors and retains upstream eliminations in the challenge checkpoint. Challenge cap overflow is stamped `challenge='capped'`; null/unscored results are stamped `challenge='failed'`. After the replay belt, `disposeFindings` assigns delivery dispositions once: incomplete verification, validation, or challenge becomes `held_back`; admission-terminal records retain `report_only` or `held_back`; admitted challenge survivors become `deliver` when location and diff facts allow inline placement, or `body` otherwise. Eliminations become `eliminate`. The reducer clears stale consolidation and regroups clean survivors. All records enter findings.json and their corresponding report sections; only `deliver` and `body` records share the ranked delivery cap.
 
 ---
 

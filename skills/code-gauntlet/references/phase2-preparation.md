@@ -195,9 +195,9 @@ On `files: FAILED`, stop and report the stderr reason (headless: non-zero outcom
 - **Files** → this path becomes `args.changedFilesPath`; keep the same array inline for `args.changedFiles` (the Summarize stage reads it by value — the workflow cannot open the file).
 - **Context map** accompanies the framed context; Verify checks both digests before translating a context line.
 - **Diff** → this path becomes `args.diffPath`, passed to the verify executor as `--diff-file`.
-- **`numstat` counts the patch saved by the `diff` section with `scripts/diff_numstat.py`; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules.** Check `binary_files > 0` before treating a low count as no diff. This feeds `changedLines`, and the 2k scan reads the same saved patch, never a fresh diff fetch. Never run a second `gh pr diff` to re-fetch it.
+- **`numstat` counts the patch saved by the `diff` section with `scripts/diff_numstat.py`; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules.** Check `binary_files > 0` before treating a low count as no diff. This feeds `changedLines`, and the 2f scan reads the same saved patch, never a fresh diff fetch. Never run a second `gh pr diff` to re-fetch it.
 - **`misc`** gives a `generatedAt` candidate (re-stamp at args-assembly time if Phase 3 dispatch isn't immediate — `generatedAt` must reflect the actual assembly moment), and a `nonce` candidate matching `^[A-Za-z0-9._-]+$`.
-- **Risk classification (2e)** and **AI-generated-code detection (2k)** — classify changed files by risk as in `references/phase2-triage.md`; this feeds the context file. Neither runs here.
+- **Risk classification (2e)** and **AI-generated-code detection (2f)** — classify changed files by risk as in `references/phase2-triage.md`; this feeds the context file. Neither runs here.
 
 **Incremental path** (Composite A's prior-review gate resolved Incremental): replace the `diff` section with:
 
@@ -255,7 +255,7 @@ On `files: FAILED`, stop the handoff and report the stderr reason (headless: non
 
 If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own `git diff` chain inside an executor subagent (which has shell) — not in this composite.
 
-**Composites A/B do not subsume 2d, 2g, or 2k.** Run 2d's collector as a separate script call after the changed-file list is saved; its receipt is the only REVIEW.md discovery source. Keep test discovery (2g) and AI-marker scanning (2k) as separate Glob/Grep tool calls under `references/phase2-triage.md`; never use `find` or `grep` from Bash for those searches.
+**Composites A/B do not subsume 2d or 2f.** Run 2d's collector as a separate script call after the changed-file list is saved; its receipt is the only REVIEW.md discovery source. Keep AI-marker scanning (2f) as separate Grep tool calls under `references/phase2-triage.md`; never use `grep` from Bash for those searches.
 
 ## Discover REVIEW.md and stamp its raw text
 
@@ -288,11 +288,11 @@ pre-parsed form for the same axis (single authority).
 
 ## Write the shared agent context file
 
-Run this after 2d, 2e and 2k. Set `{target_type}` to `pr`, `mr`, `branch` or `local`. For PR/MR, replace `{snapshot_args}` with `--snapshot-file "code-gauntlet-inputs-{nonce}/pr-description.json"`; otherwise omit it. Branch/local calls need no snapshot and never fetch descriptions:
+Run this after 2d, 2e and 2f. Set `{target_type}` to `pr`, `mr`, `branch` or `local`. For PR/MR, replace `{snapshot_args}` with `--snapshot-file "code-gauntlet-inputs-{nonce}/pr-description.json"`; otherwise omit it. Branch/local calls need no snapshot and never fetch descriptions:
 
 ```bash
 {python} "{plugin_root}/scripts/write_shared_context.py" --output-dir "{output_dir}" --head-sha {head_sha_short} --target-type {target_type} --head-sha-full {head_sha_full} --repo-root "{repo_root}" {snapshot_args} <<'CODE_GAUNTLET_TRIAGE_{nonce}'
-{risk classification (2e) and AI-generated-code status (2k)}
+{risk classification (2e) and AI-generated-code status (2f)}
 CODE_GAUNTLET_TRIAGE_{nonce}
 ```
 

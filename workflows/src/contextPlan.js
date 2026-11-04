@@ -44,10 +44,10 @@ export function sharedContextLine(inp, plan) {
   const tail = `If partial, continue after the last received line until line ${total}.`;
   if (plan.length <= READ_PLAN_MAX_ENUMERATED) {
     const calls = plan.map((p) => `Read(offset=${p.offset}, limit=${p.limit})`).join(', ');
-    return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls: ${calls}. ${tail} `;
+    return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls: ${calls}. ${tail} `;
   }
   const span = plan[0].limit;
-  return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
+  return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
 }
 
 export function setupContext(inp) {

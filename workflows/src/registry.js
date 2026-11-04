@@ -225,7 +225,7 @@ export const DIMENSIONS = deepFreeze([
     [row.admission.field]: { type: 'string', enum: Object.keys(row.admission.kinds), description: row.admission === QUALITY_ADMISSION
       ? 'Basis for the finding. '
         + Object.entries(row.admission.kinds).map(([kind, rule]) => `${kind}: ${rule.description}`).join(' ')
-      : 'defective_test: a PR-owned test that would still pass if the behavior it claims broke; production_defect: present production defect; critical_gap: no test covers important surviving behavior; additional_case: any other coverage case.' },
+      : 'defective_test: a PR-owned test that would still pass if the behavior it tests broke; production_defect: present production defect; critical_gap: no test covers important surviving behavior; additional_case: any other coverage case.' },
     ...(row.admission === QUALITY_ADMISSION ? {
       duplicate_of: { ...SOURCE_REFERENCE, description: 'Source reference to the existing implementation duplicated here.' },
       precedent: { ...SOURCE_REFERENCE, description: 'Source reference to an existing repository idiom supporting the change.' },

@@ -128,7 +128,7 @@ unchanged. See [delivery rendering](../../../docs/delivery-rendering.md#outbound
 when maintaining escaping or host rendering.
 
 - `review_body` — the pipeline-rendered Summary body: counts, selected findings index, and any remainder. The change summary stays in Change Context. Code applies UTF-8 body budgets and preserves the footer; see [delivery rendering](../../../docs/delivery-rendering.md#posted-body-budgets).
-- `findings` — array of inline comments
+- `findings` — selected findings
   - `file` — relative path in repository
   - `line` — line number in diff (new version)
   - `end_line` — optional; enables multi-line comments on GitHub

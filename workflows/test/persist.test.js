@@ -266,7 +266,6 @@ for (const [name, input, commandWords = COMMAND_WORDS, expectedPaths = PATHS, ch
     assert.deepEqual(Object.keys(out.artifactPaths), ['findings', 'report', 'postReview', 'checkpoints']);
     assert.deepEqual(out.gaps, []);
     assert.deepEqual(labels(ctx), ['artifact-writer', 'assemble-artifacts']);
-    assert.ok(ctx.calls[1].prompt.includes('stdout JSON verbatim'));
     assert.equal(ctx.calls[0].agentType, 'code-gauntlet:artifact-writer');
     assert.equal(ctx.calls[1].agentType, 'code-gauntlet:executor');
     const entries = parseWriterPayload(ctx.calls[0].prompt);

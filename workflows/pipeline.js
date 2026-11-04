@@ -326,7 +326,7 @@ const DIMENSIONS = deepFreeze([
     [row.admission.field]: { type: 'string', enum: Object.keys(row.admission.kinds), description: row.admission === QUALITY_ADMISSION
       ? 'Basis for the finding. '
         + Object.entries(row.admission.kinds).map(([kind, rule]) => `${kind}: ${rule.description}`).join(' ')
-      : 'defective_test: a PR-owned test that would still pass if the behavior it claims broke; production_defect: present production defect; critical_gap: no test covers important surviving behavior; additional_case: any other coverage case.' },
+      : 'defective_test: a PR-owned test that would still pass if the behavior it tests broke; production_defect: present production defect; critical_gap: no test covers important surviving behavior; additional_case: any other coverage case.' },
     ...(row.admission === QUALITY_ADMISSION ? {
       duplicate_of: { ...SOURCE_REFERENCE, description: 'Source reference to the existing implementation duplicated here.' },
       precedent: { ...SOURCE_REFERENCE, description: 'Source reference to an existing repository idiom supporting the change.' },
@@ -1179,10 +1179,10 @@ function sharedContextLine(inp, plan) {
   const tail = `If partial, continue after the last received line until line ${total}.`;
   if (plan.length <= READ_PLAN_MAX_ENUMERATED) {
     const calls = plan.map((p) => `Read(offset=${p.offset}, limit=${p.limit})`).join(', ');
-    return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls: ${calls}. ${tail} `;
+    return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls: ${calls}. ${tail} `;
   }
   const span = plan[0].limit;
-  return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
+  return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
 }
 function setupContext(inp) {
   const plan = contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars);
@@ -7066,7 +7066,7 @@ const ASSEMBLE_RECEIPT_SCHEMA = {
   },
 };
 function assemblePrompt(scriptPath, planPath, python) {
-  return `Run this command exactly; return stdout JSON verbatim:\n${pythonArgv(python).map(shellWord).join(' ')} ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
+  return `${pythonArgv(python).map(shellWord).join(' ')} ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
 }
 // --- checkpoints.js ---
 function unwrapCheckpointMap(cp) {

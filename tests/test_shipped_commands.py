@@ -273,7 +273,7 @@ def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) ->
         "{target_type}": "local",
         "{head_sha_full}": SHA.ljust(40, "0"),
         "{snapshot_args}": "",
-        "{risk classification (2e) and AI-generated-code status (2k)}": triage,
+        "{risk classification (2e) and AI-generated-code status (2f)}": triage,
     }
     for placeholder, value in replacements.items():
         block = block.replace(placeholder, value)

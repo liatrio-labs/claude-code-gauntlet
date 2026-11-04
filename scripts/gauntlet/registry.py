@@ -683,7 +683,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                     "production_defect",
                     "additional_case",
                 ],
-                "description": "defective_test: a PR-owned test that would still pass if the behavior it claims broke; production_defect: present production defect; critical_gap: no test covers important surviving behavior; additional_case: any other coverage case.",
+                "description": "defective_test: a PR-owned test that would still pass if the behavior it tests broke; production_defect: present production defect; critical_gap: no test covers important surviving behavior; additional_case: any other coverage case.",
             },
         },
         "requiredExtra": ["criticality", "failure_scenario"],

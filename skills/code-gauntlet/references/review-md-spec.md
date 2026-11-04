@@ -70,11 +70,11 @@ first and uses that one.
 parsed for structure. Its content is advisory: the collector copies the whole REVIEW.md file into a
 `review-rules` block tagged with its source path; every context-reading agent (summarize, discovery,
 validate) receives every block and can apply its prose to that directory's subtree. No heading gates
-dimensions or excludes files. Two structural things do, and neither is REVIEW.md-configurable:
+dimensions or excludes files. Structural controls:
 
-- **Which dimensions run** is decided automatically by the trivial-scope gate (all changed files
-  low-risk and under 50 changed lines → light scope, `bug` + `security` only; otherwise every
-  dimension runs). There is no REVIEW.md key that changes this.
+- **Which dimensions run** follows the trivial-scope choice: `light` runs `bug` + `security`
+  only when all changed files are low-risk and under 50 changed lines; otherwise every dimension
+  runs. There is no REVIEW.md key that changes this.
 - **Which findings are suppressed** is the `ignore` list in the config block (see below) — a
   substring match against finding text, not a file-path exclusion.
 
@@ -118,7 +118,7 @@ way to give `conventions` a different bar than `bugs`.
 Controls how review results are delivered. A comma-separated list of delivery methods:
 
 - `chat` — Display the full report in the conversation
-- `pr_comments` — Post findings as inline PR/MR comments
+- `pr_comments` — Post findings to the PR/MR
 - `markdown` — Surface the path to the already-persisted report under the output directory (`artifactPaths.report`); no default new file
 
 Only the root `REVIEW.md` may provide this setting. The section opener is a line matching
@@ -196,8 +196,6 @@ When a subdirectory has its own REVIEW.md, its settings combine with the root as
 | `default_delivery` | **Root-only** — only the root REVIEW.md text is checked | Headless delivery is a review-wide setting |
 | `rules` (and other free prose) | **Advisory per source subtree** - every context-reading agent (summarize, discovery, validate) receives every source-path-tagged block in the shared context | The path identifies where the prose is advisory; settings enforcement belongs to the pipeline |
 | `ignore` | **Accumulate per matching subtree** — matching subdirectory patterns add to root patterns for files under that subtree | Suppressions are additive within the governed subtree |
-
-In short: **thresholds override and ignore patterns accumulate per matching subtree; every context-reading agent receives all source-tagged prose blocks as advisory guidance for their source subtrees.**
 
 Thresholds and `ignore` are scoped per subtree by `finding.file`: the root layer is the default,
 and matching directory layers override present thresholds and append their ignore lists. Matching uses a byte-exact, case-sensitive `dir/` prefix with no normalization of
@@ -314,7 +312,7 @@ Starting points for writing a REVIEW.md by hand. They set sensible defaults and 
 <!-- How to deliver review results. Comma-separated list.
      Options: chat, pr_comments, markdown
      Read by headless runs only; interactive runs ask after the report.
-     Task creation is always offered separately after delivery.
+     Task creation is offered separately after interactive delivery.
      Uncomment and adjust to your preference. -->
 <!-- chat,pr_comments -->
 
