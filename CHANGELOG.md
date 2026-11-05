@@ -2,6 +2,152 @@
 
 <!-- version list -->
 
+## v3.60.0 (2026-11-05)
+
+### Bug Fixes
+
+- A retry keeps the corrected assessment it asked for
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Address gauntlet findings ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Admission follows the effective kind and validators get only applicable questions
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Admission never hides core findings and binds test claims to PR-owned tests
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Bench retries wait for a usage reset only after a limit failure
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Bounded layout lines and restored calibration in the prompt cuts
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Give demonstrated quality improvements a delivery path
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Keep GitLab prior-review detection and main's ranking and reruns
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Keep injection-eliminated prose out of persisted artifacts
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Keep sites out of discovery until confirmation exists
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Keep thresholds, intake traces and fail-closed admission in kind routing
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Missing admission assessments hold back the finding instead of skipping validation
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Normalize Windows drive-letter and mixed-separator paths the same way everywhere
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Restore test and type investigation breadth
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Validation completeness, post-filter admission and a lean validator prompt
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- **bench**: Keep surface order and confine surface source copies
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+### Features
+
+- Carry source-bound admission facts
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Deliver verified issue groups as one comment
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Derive finding kinds and routing from dimension rows
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Enforce evidence-backed admission before placement
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- One final disposition decides every finding's delivery rights
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Promote validator-confirmed present defects and retry incomplete validation
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- **bench**: Replay stored delivery and capture its inputs on measured runs
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- **bench**: Report delivery burden and attribution in comparisons
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- **bench**: Trace disposition reasons and score body findings beside inline
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+### Refactoring
+
+- Cut coverage advice and bound discovery context
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Cut coverage advice and bound discovery context (#46)
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Drop a redundant symlink check in layout listing
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- **bench**: Surface replay child errors and share the measured return budget fallback
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+### Testing
+
+- Keep the layout test portable to Windows
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- Pass the plugin root in POSIX form in the site-flow harness
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- **bench**: Cover multi-producer sole matches and name the coalescence helper
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- **bench**: Description eval fixture emits the dispose stage and disposition
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+- **bench**: Replay fixture carries the required present-defect assessment
+  ([#569](https://github.com/liatrio-labs/claude-code-gauntlet/pull/569),
+  [`ab031f1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ab031f1597411cb8acc3a9509268a87681fcfb1b))
+
+
 ## v3.59.0 (2026-11-05)
 
 ### Bug Fixes
