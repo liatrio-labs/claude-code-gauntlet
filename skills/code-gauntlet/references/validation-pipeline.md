@@ -21,7 +21,7 @@ The five transform golden families under `tests/fixtures/parity/` are JavaScript
 
 Classifies each finding as `new` (introduced by this change) or `surfaced` (pre-existing code exposed by the change), fact-checks evidence against file content, and validates line references against the diff. It is the one stage that still shells out to Python — the workflow has no shell, so it dispatches an **executor** agent per finding-slice.
 
-**The executor pattern.** The stage plans slices under `VERIFY_INLINE_CHAR_BUDGET` and `limits.verifySliceSize`, then dispatches executors sequentially. `VERIFY_SLICE_FIELDS` generates the Python wire type: `id`, `file`, `line_start`, `line_end`, `severity`, `confidence`, optional verbatim `anchor`, plus true-only `has_cross_file_refs` and `has_removed_test_location`, and sorted, space-joined `symbols` when nonempty. JS extracts symbols once per finding. Prose, reference arrays, removed-test records and `origin` stay on held findings. Each executor runs:
+**The executor pattern.** The stage plans slices under `VERIFY_INLINE_CHAR_BUDGET` and `limits.verifySliceSize`, then dispatches executors sequentially. `VERIFY_SLICE_FIELDS` generates the Python wire type: `id`, `file`, `line_start`, `line_end`, `severity`, `confidence`, optional verbatim `anchor`, `sites`, and registry-defined reference requests (`searched_paths`, `candidate_tests`, `production_element`, `duplicate_of`, `precedent`). Sites and source references carry only `file`, `line_start`, `line_end`, and `anchor`; searched paths remain strings. True-only `has_cross_file_refs` and `has_removed_test_location`, plus sorted, space-joined `symbols` when nonempty, complete the slice. JS extracts symbols once per finding. Prose, removed-test records and `origin` stay on held findings. Each executor runs:
 
 ```
 {python} "{plugin_root}/scripts/verify_findings.py" --input '{inputPathBase}.slice{i}.json' --input-inline '<payload>' \
@@ -40,13 +40,14 @@ a per-finding **delta**, omitting the findings themselves:
   receipt: { sha, n_in, nonce, deltas_checksum, input_checksum?, inline_checksum,
              base_branch, diff_source: { path, read }, record_proofs: [ { id, checksum }, ... ] },
   result: {
-    deltas: [ { id, verified, origin?, severity?, confidence?, elimination_reason?, line_start?, line_end?, location_status }, ... ],
+    deltas: [ { id, verified, origin?, severity?, confidence?, elimination_reason?, line_start?, line_end?, location_status,
+                diff_validation?, resolved_sites?, anchor?, path_role?, file_added?, blame_class?, blame_source?, resolved_references? }, ... ],
     verified, eliminated, stats   // full arrays and stats on disk; NEVER echoed by the executor
   },
 } | { status: 'failed', exitCode, stderr }
 ```
 
-`deltas` carries decisions keyed by id in slice order. `joinVerifyDeltas` applies them to held findings, preserving `description`, `evidence`, `cross_file_refs`, `removed_test`, `agent` and other extras. A delta with `verified: false` removes its finding.
+`deltas` carries decisions keyed by id in slice order. `joinVerifyDeltas` applies them to held findings, preserving `description`, `evidence`, `cross_file_refs`, `removed_test`, `agent` and other extras. `diff_validation` carries `in_diff`; resolved sites carry their file, range, anchor, location status and diff fact. Reference facts carry path role, file-added, location and diff facts; searched paths carry path, availability and kind. `anchor` returns only when Python derives one for a removed loss. Path, blame and reference facts require a matching non-null record proof; stale facts are stripped before joining and on degradation. A delta with `verified: false` removes its finding.
 
 **Trust.** Each attempt requires `status==='ok'`, the dispatched nonce (`{nonce}.{i}`), head sha, and effective `base_branch`. The receipt's `diff_source` must echo the dispatched diff path (null for a git diff) and confirm it was read. `record_proofs` is mandatory. Its ids must be unique and equal the delta id set. Duplicate deltas veto the attempt too. One foreign id appearing once in both lists is ignored; more than one vetoes the attempt. Each delta must have a boolean `verified` and an honest elimination stamp: `verified: false` requires `elimination_reason`, while `verified: true` must not carry one. The workflow recomputes `deltas_checksum` over the echoed deltas in `record_proofs` order, regardless of delta echo order. A changed delta rejects the whole attempt.
 

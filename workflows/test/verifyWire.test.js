@@ -90,6 +90,18 @@ test('join pins numerics when the delta omits confidence', () => {
     [{ id: 'F0', claimed_line_start: 42, claimed_line_end: 9, confidence: 83, location_status: 'unconfirmed' }]);
 });
 
+test('fact joins require membership in the matched proof set', () => {
+  const facts = { path_role: 'source', file_added: true, blame_class: 'new', blame_source: 'git_blame', resolved_references: {} };
+  const held = ['matched', 'unmatched'].map((id) => ({ id, ...facts }));
+  const deltas = held.map(({ id }) => ({ id, verified: true, ...facts }));
+  const joined = joinVerifyDeltas(held, deltas, new Set(['matched']));
+  for (const [key, value] of Object.entries(facts)) {
+    assert.deepEqual(joined[0][key], value);
+    assert.equal(Object.hasOwn(joined[1], key), false);
+    assert.equal(Object.hasOwn(joinVerifyDeltas(held, deltas)[0], key), false);
+  }
+});
+
 for (const c of loadCases('review_text_checksum')) {
   test(`review_text_checksum parity: ${c.name}`, () => {
     const normalized = normalizeReviewText(c.input.text);

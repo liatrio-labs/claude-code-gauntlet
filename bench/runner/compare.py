@@ -408,7 +408,7 @@ def packet_precision(packet, population, *, surface="inline"):
 
 
 def _delivery_burden(candidates):
-    from gauntlet.removed_tests import is_test_path
+    from gauntlet.paths import is_test_path
 
     issues, unknown = {}, 0
     for c in candidates:

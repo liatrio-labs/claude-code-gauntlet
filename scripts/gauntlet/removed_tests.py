@@ -1,7 +1,6 @@
 """Inventory removed test text without depending on a source language."""
 
 import hashlib
-import re
 from dataclasses import dataclass
 from typing import Literal, TypedDict
 
@@ -13,31 +12,7 @@ from gauntlet.diff import (
     walk_diff,
 )
 from gauntlet.jsjson import fnv1a32, js_stringify_pretty
-
-NON_SOURCE_DIRS = frozenset(
-    {
-        "vendor",
-        "node_modules",
-        "third_party",
-        "third-party",
-        "deps",
-        "generated",
-        "__generated__",
-        "dist",
-        "build",
-        "out",
-        "target",
-        ".git",
-        ".venv",
-        "venv",
-        ".tox",
-        ".cache",
-        "coverage",
-    }
-)
-_TEST_DIRS = frozenset({"test", "tests", "spec", "specs", "__tests__"})
-_BASENAME_RE = re.compile(r"^(?:test_.+|.+_(?:test|spec))$", re.IGNORECASE)
-_SUFFIX_RE = re.compile(r"(?:Tests?|Spec)$")
+from gauntlet.paths import is_test_path
 
 
 class RemovedTestLocation(TypedDict):
@@ -67,20 +42,6 @@ class _Removal:
     start: int
     end: int
     deleted: bool
-
-
-def is_test_path(path: str) -> bool:
-    parts = path.split("/")
-    if any(part.lower() in NON_SOURCE_DIRS for part in parts[:-1]):
-        return False
-    basename = parts[-1]
-    stem = basename.split(".", 1)[0]
-    return (
-        any(part.lower() in _TEST_DIRS for part in parts[:-1])
-        or bool(_BASENAME_RE.fullmatch(stem))
-        or bool(re.search(r"\.(?:test|spec)\.", basename, re.IGNORECASE))
-        or bool(_SUFFIX_RE.search(stem))
-    )
 
 
 def removed_tests(diff_text: str) -> RemovedTestsReceipt:

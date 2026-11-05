@@ -33,6 +33,12 @@ DeltaKey = Literal[
     "location_status",
     "diff_validation",
     "resolved_sites",
+    "anchor",
+    "path_role",
+    "file_added",
+    "blame_class",
+    "blame_source",
+    "resolved_references",
 ]
 DeltaValueField = Literal[
     "origin",
@@ -44,7 +50,14 @@ DeltaValueField = Literal[
     "location_status",
     "diff_validation",
     "resolved_sites",
+    "anchor",
+    "path_role",
+    "file_added",
+    "blame_class",
+    "blame_source",
+    "resolved_references",
 ]
+VerifyReferenceKind = Literal["search_paths", "reference_list", "reference"]
 
 EffectiveTestKind = Literal["defective_test"]
 
@@ -58,6 +71,19 @@ QualityBasis = Literal[
     "simpler_equivalent",
     "stack_idiom",
     "other",
+]
+
+PathRole = Literal["source", "test", "non_source", "unknown"]
+
+BlameClass = Literal["new", "pre_existing", "surfaced", "unknown"]
+
+BlameSource = Literal[
+    "git_blame",
+    "local_diff",
+    "cross_file_refs",
+    "off_diff",
+    "removed_loss",
+    "unavailable",
 ]
 
 SEVERITY_ORDER: tuple[Severity, ...] = ("critical", "high", "medium", "low")
@@ -103,6 +129,12 @@ DELTA_KEYS: tuple[DeltaKey, ...] = (
     "location_status",
     "diff_validation",
     "resolved_sites",
+    "anchor",
+    "path_role",
+    "file_added",
+    "blame_class",
+    "blame_source",
+    "resolved_references",
 )
 
 DELTA_VALUE_FIELDS: tuple[DeltaValueField, ...] = (
@@ -115,6 +147,12 @@ DELTA_VALUE_FIELDS: tuple[DeltaValueField, ...] = (
     "location_status",
     "diff_validation",
     "resolved_sites",
+    "anchor",
+    "path_role",
+    "file_added",
+    "blame_class",
+    "blame_source",
+    "resolved_references",
 )
 
 VERIFY_SLICE_FIELDS: tuple[str, ...] = (
@@ -126,10 +164,23 @@ VERIFY_SLICE_FIELDS: tuple[str, ...] = (
     "confidence",
     "anchor",
     "sites",
+    "searched_paths",
+    "candidate_tests",
+    "production_element",
+    "duplicate_of",
+    "precedent",
     "has_cross_file_refs",
     "has_removed_test_location",
     "symbols",
 )
+
+VERIFY_REFERENCE_DESCRIPTORS: Mapping[str, VerifyReferenceKind] = {
+    "searched_paths": "search_paths",
+    "candidate_tests": "reference_list",
+    "production_element": "reference",
+    "duplicate_of": "reference",
+    "precedent": "reference",
+}
 
 DISPATCH_RESULTS = {
     "code-gauntlet:test-analyzer": {
@@ -208,10 +259,92 @@ DISPATCH_RESULTS = {
                                     "type": "number",
                                     "minimum": 1,
                                     "maximum": 10,
+                                    "description": "Impact of the untested behavior on a 1 to 10 scale.",
                                 },
                                 "failure_scenario": {
                                     "type": "string",
+                                    "description": "Concrete input or condition and the failure it exposes.",
                                     "minLength": 1,
+                                },
+                                "searched_paths": {
+                                    "type": "array",
+                                    "$comment": "search-paths",
+                                    "description": "Repository files or directories searched for coverage.",
+                                    "items": {
+                                        "type": "string",
+                                        "$comment": "repo-path",
+                                    },
+                                },
+                                "candidate_tests": {
+                                    "type": "array",
+                                    "description": "Inspected tests, including their input and assertion.",
+                                    "items": {
+                                        "type": "object",
+                                        "$comment": "source-reference",
+                                        "properties": {
+                                            "file": {
+                                                "type": "string",
+                                                "$comment": "repo-path",
+                                            },
+                                            "line_start": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                            },
+                                            "line_end": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                            },
+                                            "anchor": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                            },
+                                            "input": {
+                                                "type": "string",
+                                            },
+                                            "assertion": {
+                                                "type": "string",
+                                            },
+                                        },
+                                        "required": [
+                                            "file",
+                                            "line_start",
+                                            "line_end",
+                                            "anchor",
+                                            "input",
+                                            "assertion",
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                },
+                                "production_element": {
+                                    "type": "object",
+                                    "$comment": "source-reference",
+                                    "properties": {
+                                        "file": {
+                                            "type": "string",
+                                            "$comment": "repo-path",
+                                        },
+                                        "line_start": {
+                                            "type": "integer",
+                                            "minimum": 1,
+                                        },
+                                        "line_end": {
+                                            "type": "integer",
+                                            "minimum": 1,
+                                        },
+                                        "anchor": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                        },
+                                    },
+                                    "required": [
+                                        "file",
+                                        "line_start",
+                                        "line_end",
+                                        "anchor",
+                                    ],
+                                    "additionalProperties": False,
+                                    "description": "Source reference to the production behavior whose coverage is assessed.",
                                 },
                                 "anchor": {
                                     "type": "string",
@@ -227,6 +360,8 @@ DISPATCH_RESULTS = {
                                 "confidence",
                                 "criticality",
                                 "failure_scenario",
+                                "searched_paths",
+                                "candidate_tests",
                             ],
                             "additionalProperties": False,
                         },
@@ -380,6 +515,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                         "searched_paths",
                         "candidate_tests",
                     ],
+                    "optional": ["production_element"],
                     "predicates": [
                         "criticality_at_least_8",
                         "resolved_production_element",
@@ -422,6 +558,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
             },
             "searched_paths": {
                 "type": "array",
+                "$comment": "search-paths",
                 "description": "Repository files or directories searched for coverage.",
                 "items": {
                     "type": "string",
@@ -433,6 +570,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
                 "description": "Inspected tests, including their input and assertion.",
                 "items": {
                     "type": "object",
+                    "$comment": "source-reference",
                     "properties": {
                         "file": {
                             "type": "string",
@@ -470,6 +608,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
             },
             "production_element": {
                 "type": "object",
+                "$comment": "source-reference",
                 "properties": {
                     "file": {
                         "type": "string",
@@ -706,6 +845,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
             },
             "duplicate_of": {
                 "type": "object",
+                "$comment": "source-reference",
                 "properties": {
                     "file": {
                         "type": "string",
@@ -730,6 +870,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
             },
             "precedent": {
                 "type": "object",
+                "$comment": "source-reference",
                 "properties": {
                     "file": {
                         "type": "string",
@@ -852,6 +993,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
             },
             "duplicate_of": {
                 "type": "object",
+                "$comment": "source-reference",
                 "properties": {
                     "file": {
                         "type": "string",
@@ -876,6 +1018,7 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
             },
             "precedent": {
                 "type": "object",
+                "$comment": "source-reference",
                 "properties": {
                     "file": {
                         "type": "string",
@@ -1403,7 +1546,113 @@ class SiteConfirmationsItem(TypedDict):
     confirmed: bool
 
 
-class FindingMetadata(TypedDict, total=False):
+class ResolvedReferencesSearchedPathsItem(TypedDict):
+    path: str
+    available: bool
+    kind: Literal["file", "directory", "unknown"]
+
+
+class ResolvedReferencesCandidateTestsItemDiffValidation(TypedDict):
+    in_diff: bool | None
+
+
+class ResolvedReferencesCandidateTestsItem(TypedDict, total=False):
+    file: str
+    line_start: int
+    line_end: int
+    path_role: Literal["source", "test", "non_source", "unknown"]
+    file_added: bool | None
+    location_status: Literal["confirmed", "relocated", "unconfirmed"]
+    diff_validation: ResolvedReferencesCandidateTestsItemDiffValidation
+
+
+class ResolvedReferencesProductionElementDiffValidation(TypedDict):
+    in_diff: bool | None
+
+
+class ResolvedReferencesProductionElement(TypedDict, total=False):
+    file: str
+    line_start: int
+    line_end: int
+    path_role: Literal["source", "test", "non_source", "unknown"]
+    file_added: bool | None
+    location_status: Literal["confirmed", "relocated", "unconfirmed"]
+    diff_validation: ResolvedReferencesProductionElementDiffValidation
+
+
+class ResolvedReferencesDuplicateOfDiffValidation(TypedDict):
+    in_diff: bool | None
+
+
+class ResolvedReferencesDuplicateOf(TypedDict, total=False):
+    file: str
+    line_start: int
+    line_end: int
+    path_role: Literal["source", "test", "non_source", "unknown"]
+    file_added: bool | None
+    location_status: Literal["confirmed", "relocated", "unconfirmed"]
+    diff_validation: ResolvedReferencesDuplicateOfDiffValidation
+
+
+class ResolvedReferencesPrecedentDiffValidation(TypedDict):
+    in_diff: bool | None
+
+
+class ResolvedReferencesPrecedent(TypedDict, total=False):
+    file: str
+    line_start: int
+    line_end: int
+    path_role: Literal["source", "test", "non_source", "unknown"]
+    file_added: bool | None
+    location_status: Literal["confirmed", "relocated", "unconfirmed"]
+    diff_validation: ResolvedReferencesPrecedentDiffValidation
+
+
+class ResolvedReferences(TypedDict, total=False):
+    searched_paths: list[ResolvedReferencesSearchedPathsItem]
+    candidate_tests: list[ResolvedReferencesCandidateTestsItem]
+    production_element: ResolvedReferencesProductionElement
+    duplicate_of: ResolvedReferencesDuplicateOf
+    precedent: ResolvedReferencesPrecedent
+
+
+class VerifyCandidateTestsItem(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    anchor: str
+
+
+class VerifyProductionElement(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    anchor: str
+
+
+class VerifyDuplicateOf(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    anchor: str
+
+
+class VerifyPrecedent(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    anchor: str
+
+
+class FindingFacts(TypedDict, total=False):
+    path_role: PathRole
+    file_added: bool | None
+    blame_class: BlameClass
+    blame_source: BlameSource
+    resolved_references: ResolvedReferences
+
+
+class FindingMetadata(FindingFacts, total=False):
     origin_dimension: Dimension
     effective_test_kind: EffectiveTestKind
     reference_diagnostics: list[str]
@@ -1453,6 +1702,12 @@ class Delta(_DeltaRequired, total=False):
     location_status: LocationStatus
     diff_validation: DiffValidation
     resolved_sites: list[ResolvedSitesItem]
+    anchor: str
+    path_role: PathRole
+    file_added: bool | None
+    blame_class: BlameClass
+    blame_source: BlameSource
+    resolved_references: ResolvedReferences
 
 
 class VerifySliceFinding(TypedDict, total=False):
@@ -1464,6 +1719,11 @@ class VerifySliceFinding(TypedDict, total=False):
     confidence: Any
     anchor: str
     sites: list[SitesItem]
+    searched_paths: list[str]
+    candidate_tests: list[VerifyCandidateTestsItem]
+    production_element: VerifyProductionElement
+    duplicate_of: VerifyDuplicateOf
+    precedent: VerifyPrecedent
     has_cross_file_refs: Any
     has_removed_test_location: Any
     symbols: Any

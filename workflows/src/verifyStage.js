@@ -1,8 +1,8 @@
 import { canonicalRange, clearLocation } from './location.js';
 import { hostPlatformForRoots } from './paths.js';
-import { LOCATION_STATUSES, RESOLVED_SITE_SCHEMA, modelFor } from './registry.js';
+import { FINDING_PROP_TYPES, LOCATION_STATUSES, RESOLVED_SITE_SCHEMA, VERIFY_FACT_PROPERTIES, modelFor } from './registry.js';
 import { firstUnsafeNumber } from './wire.js';
-import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum } from './verifyWire.js';
+import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum, stripVerifyFacts } from './verifyWire.js';
 import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
 import { measurementDecisions, traceDecision } from './measurementTrace.js';
 
@@ -57,6 +57,8 @@ const VERIFY_SCHEMA = {
               location_status: { type: 'string', enum: LOCATION_STATUSES },
               diff_validation: { type: 'object', properties: { in_diff: { type: ['boolean', 'null'] } }, required: ['in_diff'], additionalProperties: false },
               resolved_sites: RESOLVED_SITE_SCHEMA,
+              anchor: FINDING_PROP_TYPES.anchor,
+              ...VERIFY_FACT_PROPERTIES,
             },
             required: ['id', 'verified', 'location_status'],
           },
@@ -189,7 +191,9 @@ export async function verifyStage(ctx, input) {
 }
 
 function degradedSlice(slice) {
-  return slice.map((f) => ({ ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' }));
+  return slice.map((f) => {
+    return stripVerifyFacts({ ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' });
+  });
 }
 
 const emptyInputProof = () => ({
@@ -220,12 +224,14 @@ function prepareVerifySlice(slice, baseBranch) {
 async function verifySliceWithRetry(c, inp, i, slice, record) {
   const first = await dispatchVerifySlice(c, inp, i, slice, record, `${inp.nonce}.${i}`, `verify-slice-${i}`);
   const accepted = new Map((first.deltas || []).map((d) => [d.id, d]));
+  const matchedProofIds = new Set(first.matchedProofIds);
   const unresolved = slice.filter((f) => !accepted.has(f.id));
   let last = first;
   if (unresolved.length) {
     const retryRecord = { ...prepareVerifySlice(unresolved, record.baseBranch), model: record.model };
     last = await dispatchVerifySlice(c, inp, i, unresolved, retryRecord, `${inp.nonce}.${i}.r1`, `verify-slice-${i}-retry`);
     for (const d of last.deltas || []) accepted.set(d.id, d);
+    for (const id of last.matchedProofIds || []) matchedProofIds.add(id);
   }
   const degraded = slice.length - accepted.size;
   return {
@@ -233,7 +239,7 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
       .map((f) => ({ ...f, eliminated_by: 'verify', elimination_reason: accepted.get(f.id).elimination_reason })),
     // Accepted membership includes trusted eliminations exactly once after retry.
     verified: slice.flatMap((f) => accepted.has(f.id)
-      ? joinVerifyDeltas([f], [accepted.get(f.id)]) : degradedSlice([f])),
+      ? joinVerifyDeltas([f], [accepted.get(f.id)], matchedProofIds) : degradedSlice([f])),
     degraded,
     localised: unresolved.length ? slice.length - unresolved.length : 0,
     retriedFindings: unresolved.length,
@@ -363,12 +369,14 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
 
   // An unsupported expected value cannot safely be localised by record proof.
   const wholeSlice = [...expectedProofs.values()].some((proof) => proof === null);
+  const matchesRecordProof = (id) => expectedProofs.get(id) !== null && proofs.get(id) === expectedProofs.get(id);
   if (wholeSlice && diagnostic) return { ok: false, ...diagnostic };
-  const deltas = ids.filter((id) => !malformedLocations.has(id) && byId.has(id) && (wholeSlice || proofs.get(id) === expectedProofs.get(id)))
+  const deltas = ids.filter((id) => !malformedLocations.has(id) && byId.has(id) && (wholeSlice || matchesRecordProof(id)))
     .map((id) => byId.get(id));
   if (wholeSlice && deltas.length !== ids.length) return { ok: false, reason: 'delta does not cover dispatched findings' };
   return {
     ok: true, deltas,
+    matchedProofIds: new Set(deltas.filter((d) => matchesRecordProof(d.id)).map((d) => d.id)),
     proven: !diagnostic && deltas.length === ids.length,
     reason: diagnostic?.reason || `record proof missing or mismatched for ${ids.length - deltas.length} of ${n} finding(s)`,
     inputFault: deltas.length !== ids.length

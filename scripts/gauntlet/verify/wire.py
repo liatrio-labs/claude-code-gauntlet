@@ -293,6 +293,8 @@ def build_deltas(findings: Sequence[object], verified: Sequence[object]) -> list
             raise ValueError("resolved delta lacks a valid anchor span")
         delta: dict[str, object] = {"id": fid, "verified": id(finding) in kept}
         for key in DELTA_VALUE_FIELDS:
+            if key == "anchor" and not finding.get("derived_loss_anchor"):
+                continue
             value = finding.get(key)
             if value is None:
                 continue

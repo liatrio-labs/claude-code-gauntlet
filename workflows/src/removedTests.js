@@ -1,6 +1,6 @@
 import { canonicalRange } from './location.js';
 import { fnv1a32, isPlainObject, stripPythonWhitespace } from './wire.js';
-import { AGENT_TYPE_TEST_ANALYZER, DISPATCH_RESULTS } from './registry.js';
+import { AGENT_TYPE_TEST_ANALYZER, DISPATCH_RESULTS, REMOVED_LOSS_FIELDS } from './registry.js';
 import { repoRelativeFindingPath } from './paths.js';
 
 export function hasRemovedTestLocation(finding) {
@@ -104,10 +104,12 @@ export function checkRemovedTestAudit(inventory, rows, repoRoot) {
       }
       rowFindings.push({
         id: `removed-test:${id}:${index + 1}`, agent: 'test-analyzer', dimension: 'test_coverage',
+        test_kind: 'critical_gap',
         file: normalized.file, line_start: loss.line, location_status: 'unconfirmed',
         ...(Object.hasOwn(loss, 'anchor') ? { anchor: loss.anchor } : {}), title: loss.title, description: loss.description,
-        severity: loss.severity, confidence: loss.confidence, criticality: loss.criticality,
-        failure_scenario: loss.failure_scenario, removed_test: { id, path, old_start, old_end },
+        severity: loss.severity, confidence: loss.confidence,
+        ...Object.fromEntries(REMOVED_LOSS_FIELDS.filter((key) => Object.hasOwn(loss, key)).map((key) => [key, loss[key]])),
+        removed_test: { id, path, old_start, old_end },
       });
     }
     if (rowFindings.length === row.losses.length) findings.push(...rowFindings);

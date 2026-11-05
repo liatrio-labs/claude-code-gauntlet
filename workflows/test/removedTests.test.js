@@ -23,6 +23,7 @@ const loss = {
   file: 'source', line: 1, title: 'Coverage lost for override precedence',
   description: 'Override precedence still controls selection, but no surviving assertion exercises competing values.',
   severity: 'high', confidence: 95, criticality: 8,
+  searched_paths: ['tests'], candidate_tests: [],
   failure_scenario: 'Reversing selection precedence silently chooses the wrong value.',
 };
 const lost = { id: item.id, status: 'lost', covered_by: [], losses: [loss] };
@@ -36,6 +37,7 @@ test('audit dispatch converts losses and reserves removed_test for code', async 
   assert.equal(out.findings.length, 1);
   assert.deepEqual(out.findings[0], {
     id: `removed-test:${item.id}:1`, agent: 'test-analyzer', dimension: 'test_coverage',
+    test_kind: 'critical_gap', searched_paths: loss.searched_paths, candidate_tests: loss.candidate_tests,
     file: loss.file, line_start: loss.line, location_status: 'unconfirmed', title: loss.title, description: loss.description,
     severity: loss.severity, confidence: loss.confidence, criticality: loss.criticality,
     failure_scenario: loss.failure_scenario,

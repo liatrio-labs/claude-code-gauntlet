@@ -969,7 +969,7 @@ def test_path_aliases(
         pytest.param(
             "--- /dev/null\n+++ b/x\n@@ -0,0 +1 @@\n+first\n",
             {"b/x": (1,), "x": (1,)},
-            id="empty-old-no-new-files",
+            id="empty-old-added-file-facts",
         ),
     ],
 )
@@ -982,7 +982,9 @@ def test_path_membership(
         actual.setdefault(path, []).append(line)
     assert {path: tuple(lines) for path, lines in actual.items()} == expected
     assert facts.valid_lines.keys() == facts.line_texts.keys()
-    assert facts.new_files == frozenset()
+    assert facts.new_files == (
+        frozenset(expected) if "--- /dev/null\n" in diff_text else frozenset()
+    )
     assert facts.old_paths == {}
 
 

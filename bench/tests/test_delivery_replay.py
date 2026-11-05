@@ -295,8 +295,8 @@ def test_candidate_dispose_trace(tmp_path, evidence):
         (
             {"file": "outside.js", "has_removed_test_location": True},
             {
-                "in_diff": True,
-                "reason": "removed test inventory anchors a new coverage loss",
+                "in_diff": False,
+                "reason": "lines 10-10 of 'outside.js' not found in diff — loss origin retained (was: new)",
             },
         ),
         (
