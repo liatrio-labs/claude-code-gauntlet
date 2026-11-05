@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyStage } from '../src/verifyStage.js';
-import { deltaContentProof } from '../src/verifyWire.js';
+import { deltaContentProof, encodeSliceInline, projectVerifySliceFinding } from '../src/verifyWire.js';
 import { ANCHOR_LIMITS } from '../src/registry.js';
 import { deltaEnvelope, deltasFor, ELIMINATION_STAMP, verifyCtx, verifyInput, dispatchedFindings, sliceInputRecorder } from './helpers/verifyDelta.js';
 import { outsideSingleQuotes, shellSplit } from './helpers/shellWords.js';
@@ -371,19 +371,18 @@ const bulk = (prefix, length, chars) => Array.from({ length }, (_, i) => ({
   evidence: 'e', severity: 'high', confidence: 90, cross_file_refs: [], origin: 'new',
 }));
 const FANOUT_ROWS = [
-  { name: 'count bound advises raising slice size', findings: bulk('COUNT', 130, 800),
+  { name: 'count bound advises raising slice size', findings: bulk('COUNT', 130, 10),
     gap: ('verify_fanout: effective verifySliceSize=25 splits 130 finding(s) into 6 slices (above the 5-slice '
       + 'disclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. Raise verifySliceSize to '
       + 'reduce fan-out.') },
   { name: 'budget bound advises that raising slice size will not help', findings: bulk('FAT', 60, 4100),
-    gap: ('verify_fanout: effective verifySliceSize=25 splits 60 finding(s) into 6 slices (above the 5-slice '
-      + 'disclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. The inline character '
+    gap: ('verify_fanout: effective verifySliceSize=25 splits 60 finding(s) into 60 slices (above the 5-slice '
+      + 'disclosure threshold) \u2014 up to 120 executor dispatches at 2 attempts per slice. The inline character '
       + 'budget bound this split; raising verifySliceSize will not reduce this fan-out.') },
 ];
 for (const row of FANOUT_ROWS) {
   test(`fan-out: ${row.name}`, async () => {
-    const ctx = verifyCtx((index, _attempt, call) => deltaEnvelope(JSON.parse(inlineOf(call)).findings, { nonce: ['n-1.0', 'n-1.1',
-      'n-1.2', 'n-1.3', 'n-1.4', 'n-1.5'][index] }));
+    const ctx = verifyCtx((index, _attempt, call) => deltaEnvelope(JSON.parse(inlineOf(call)).findings, { nonce: `n-1.${index}` }));
     const out = await verifyStage(ctx, verifyInput(row.findings, { limits: { verifySliceSize: 25 } }));
     assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('verify_fanout:')), [row.gap]);
     assert.equal(out.inputProof.oversize, 0);
@@ -420,18 +419,80 @@ test('shell quoting preserves paths with spaces, apostrophes and special branch 
   assert.doesNotMatch(outsideSingleQuotes(commandOf(ctx.calls[0])), /[$`]/);
 });
 
-for (const hostPlatform of ['posix', 'windows']) test(`oversize finding is disclosed without dispatch and leaves the next slice nonce intact: ${hostPlatform}`, async () => {
+test('many small findings dispatch tokens under the copy budget with the exact-copy instruction', async () => {
+  const findings = Array.from({ length: 100 }, (_, i) => ({ id: `F${i}`, file: 'x'.repeat(200) }));
+  const ctx = verifyCtx((index, _attempt, call) => deltaEnvelope(dispatchedFindings(call.prompt), { nonce: `n-1.${index}` }));
+  const out = await verifyStage(ctx, verifyInput(findings));
+  assert.equal(out.verified, true);
+  assert.deepEqual(ctx.calls.map((call) => dispatchedFindings(call.prompt).length), [22, 22, 22, 22, 12]);
+  assert.deepEqual(out.findings.map((f) => f.id), findings.map((f) => f.id));
+  assert.deepEqual(out.inputProof, { ...ZERO, slices: 5, proven: 5 });
+  for (const call of ctx.calls) {
+    assert.ok(inlineOf(call).length <= 5000);
+    assert.doesNotMatch(inlineOf(call), /[\r\n]/);
+    assert.equal(call.prompt.split('\n')[0], 'Reproduce the quoted --input-inline token character for character with no line breaks.');
+    assert.equal(call.prompt.split('\n').length, 2);
+  }
+});
+
+for (const hostPlatform of ['posix', 'windows']) test(`oversize copy gets its own verified slice and retains retry recovery: ${hostPlatform}`, async () => {
+  const findings = findingsFor(3);
+  findings[1].file = 'x'.repeat(6000);
+  const ctx = verifyCtx((index, attempt, call) => {
+    if (index === 1 && attempt === 1) return { status: 'failed', stderr: 'transient' };
+    return deltaEnvelope(dispatchedFindings(call.prompt), { nonce: `n-1.${index}${attempt === 2 ? '.r1' : ''}` });
+  });
+  const out = await verifyStage(ctx, verifyInput(findings, { repoRoot: hostPlatform === 'windows' ? 'D:/repo' : '/repo' }));
+  assert.equal(out.verified, true);
+  assert.deepEqual(out.findings, findings.map(located));
+  assert.deepEqual(ctx.calls.map((call) => dispatchedFindings(call.prompt).map((f) => f.id)), [['F0'], ['F1'], ['F1'], ['F2']]);
+  assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0', 'verify-slice-1', 'verify-slice-1-retry', 'verify-slice-2']);
+  assert.ok(inlineOf(ctx.calls[1]).length > 5000);
+  assert.deepEqual(out.inputProof, { ...ZERO, slices: 3, proven: 3, retried: 1, retriedFindings: 1 });
+  for (const call of ctx.calls) assert.ok(call.prompt.startsWith('Reproduce the quoted --input-inline token character for character with no line breaks.\n'));
+});
+
+test('finding over the Windows native command limit is disclosed without dispatch and leaves the next slice nonce intact', async () => {
   const findings = [
-    { id: 'BIG', file: 'x'.repeat(hostPlatform === 'windows' ? 31000 : 50000), line_start: 1, origin: 'new', cross_file_refs: [] },
+    { id: 'BIG', file: 'x'.repeat(31000), line_start: 1, origin: 'new', cross_file_refs: [] },
     { id: 'OK', file: 'b.js', line_start: 2, line_end: 2, anchor: 'return process(value);', origin: 'new', cross_file_refs: [] },
   ];
   const ctx = verifyCtx(() => deltaEnvelope([findings[1]], { nonce: 'n-1.0', n_in: 1 }));
-  const out = await verifyStage(ctx, verifyInput(findings, { repoRoot: hostPlatform === 'windows' ? 'D:/repo' : '/repo', limits: { verifySliceSize: 2 } }));
+  const out = await verifyStage(ctx, verifyInput(findings, { repoRoot: 'D:/repo', limits: { verifySliceSize: 2 } }));
   assert.equal(out.verified, false);
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1, oversize: 1, degradedFindings: 1 });
   assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0']);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['BIG', 'unknown'], ['OK', 'new']]);
-  assert.deepEqual(out.gaps, [`verify: UNVERIFIED \u2014 finding BIG has ${hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length'} ${hostPlatform === 'windows' ? 31089 : 50073}, over VERIFY_INLINE_CHAR_BUDGET=${hostPlatform === 'windows' ? 30421 : 50000}; 1 of 2 finding(s) in stage marked origin=unknown, surfaced-classification skipped, held back to the report`]);
+  assert.deepEqual(out.gaps, ['verify: UNVERIFIED \u2014 finding BIG has inline cost 31089, over hard cap=30421 (copy target=5000); 1 of 2 finding(s) in stage marked origin=unknown, surfaced-classification skipped, held back to the report']);
+});
+
+for (const hostPlatform of ['posix', 'windows']) test(`finding over 50,000 characters degrades between neighbors without dispatch: ${hostPlatform}`, async () => {
+  const findings = findingsFor(3);
+  findings[1].file = 'x'.repeat(50000);
+  const ctx = verifyCtx((index, _attempt, call) => deltaEnvelope(dispatchedFindings(call.prompt), { nonce: `n-1.${index}` }));
+  const out = await verifyStage(ctx, verifyInput(findings, {
+    repoRoot: hostPlatform === 'windows' ? 'D:/repo' : '/repo', limits: { verifySliceSize: 3 },
+  }));
+  assert.equal(out.verified, false);
+  assert.deepEqual(out.inputProof, { ...ZERO, slices: 2, proven: 2, oversize: 1, degradedFindings: 1 });
+  assert.deepEqual(ctx.calls.map((call) => dispatchedFindings(call.prompt).map((f) => f.id)), [['F0'], ['F2']]);
+  assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0', 'verify-slice-1']);
+  assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['F0', 'new'], ['F1', 'unknown'], ['F2', 'new']]);
+  assert.equal(out.gaps.length, 1);
+  assert.match(out.gaps[0], /finding F1 has inline cost \d+, over hard cap=\d+ \(copy target=5000\); 1 of 3 finding\(s\)/);
+  if (hostPlatform === 'posix') assert.match(out.gaps[0], /hard cap=50000/);
+});
+
+test('finding exactly at the POSIX hard cap dispatches in its own slice', async () => {
+  const finding = { id: 'EXACT', file: '' };
+  const emptyLength = encodeSliceInline({ findings: [projectVerifySliceFinding(finding)], base_branch: 'main' }).length;
+  const findings = [{ ...finding, file: 'x'.repeat(50000 - emptyLength) }];
+  const ctx = verifyCtx(() => deltaEnvelope(findings, { nonce: 'n-1.0' }));
+  const out = await verifyStage(ctx, verifyInput(findings, { repoRoot: '/repo' }));
+  assert.equal(out.verified, true);
+  assert.equal(ctx.calls.length, 1);
+  assert.equal(inlineOf(ctx.calls[0]).length, 50000);
+  assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1 });
 });
 
 test('location deltas require shape and content proofs', async () => {
