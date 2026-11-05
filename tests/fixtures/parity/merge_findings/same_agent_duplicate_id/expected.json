@@ -9,6 +9,7 @@
       "file": "src/app.py",
       "id": "F1",
       "line_start": 10,
+      "origin_dimension": "bug",
       "severity": "medium",
       "title": "first"
     }

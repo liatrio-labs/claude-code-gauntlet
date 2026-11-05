@@ -6,7 +6,7 @@ import shutil
 import sys
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from gauntlet import contract_gen as gen
@@ -45,6 +45,177 @@ TARGETS = (
 def registry_tree(tmp_path: Path) -> Path:
     copy_generator_tree(ROOT, tmp_path, TARGETS)
     return tmp_path
+
+
+def test_admission_row_generates_consumers(registry_tree, invoke):
+    source = registry_tree / "workflows/src/registry.js"
+    original = source.read_text(encoding="utf-8")
+    changed = original.replace(
+        "additional_case: { required: []",
+        "special_case: { required: ['searched_paths']",
+    ).replace(
+        "defaultDisposition: 'held_back', defaultTier: 'main', admission:",
+        "core: true, defaultDisposition: 'report_only', defaultTier: 'suggestion', admission:",
+    )
+    assert changed != original
+    source.write_text(changed, encoding="utf-8", newline="")
+    result = invoke(
+        "generate_contract_requirements",
+        ["--repo-root", str(registry_tree)],
+        registry_tree,
+    )
+    assert result.returncode == 0, result.stderr
+    registry = gen.load_registry(str(registry_tree))
+    row = next(
+        r for r in registry["dimensionRows"] if r["dimension"] == "test_coverage"
+    )
+    assert row["admission"]["kinds"]["special_case"]["required"] == ["searched_paths"]
+    contract = next(
+        c
+        for c in registry["discoveryContracts"]
+        if c["agentType"].endswith(":test-analyzer")
+    )
+    item = contract["schema"]["properties"]["findings"]["items"]
+    assert "special_case" in item["properties"]["test_kind"]["enum"]
+    assert any(
+        c["if"]["properties"].get("test_kind", {}).get("const") == "special_case"
+        and c["then"]["required"] == ["searched_paths"]
+        for c in item["allOf"]
+    )
+    namespace = {}
+    exec(
+        (registry_tree / "scripts/gauntlet/registry.py").read_text(encoding="utf-8"),
+        namespace,
+    )
+    assert "special_case" in str(namespace["TestKind"])
+    assert namespace["DIMENSION_ROWS"] == registry["dimensionRows"]
+    for path in ("agents/test-analyzer.md", REPORT):
+        text = (registry_tree / path).read_text(encoding="utf-8")
+        assert (
+            "special_case" in text
+            and "searched_paths" in text
+            and "report_only" in text
+        )
+        if path == REPORT:
+            policy_line = next(
+                line
+                for line in text.splitlines()
+                if line.startswith("- `test_kind: special_case`")
+            )
+            assert '"required": ["searched_paths"]' in policy_line
+            assert policy_line.endswith("default disposition `report_only`.")
+        else:
+            descriptor = next(
+                line
+                for line in text.splitlines()
+                if line.startswith("test_coverage admission descriptors: ")
+            )
+            admission = json.loads(
+                descriptor.split(": ", 1)[1].split(". Default disposition:", 1)[0]
+            )
+            assert admission["kinds"]["special_case"]["required"] == ["searched_paths"]
+    runtime = gen.proc.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import assert from 'node:assert/strict';
+import {mergeStage} from './workflows/src/mergeFindings.js';
+import {findingPolicy} from './workflows/src/registry.js';
+const f = {id:'one',file:'source',line_start:1,title:'A claim',description:'Evidence',severity:'high',confidence:90,
+ dimension:'test_coverage',agent:'test-analyzer',test_kind:'special_case',criticality:9,failure_scenario:'Failure'};
+assert.equal(mergeStage({findings:[f]},{}).findings.length,0);
+const good = mergeStage({findings:[{...f,searched_paths:['tests']}]},{}).findings[0];
+assert.equal(findingPolicy(good).defaultDisposition,'report_only');
+assert.equal(findingPolicy({...good,test_kind:undefined}).tier,'suggestion');
+assert.equal(findingPolicy({...good,test_kind:undefined}).defaultDisposition,'report_only');
+assert.equal(findingPolicy(good).core,true);
+""",
+        ],
+        cwd=str(registry_tree),
+    )
+    assert runtime.returncode == 0, runtime.stderr
+
+
+@pytest.mark.parametrize(
+    "basis,guidance,required,predicates,any_of,disposition",
+    [
+        (
+            "current_correctness",
+            "demonstrated present production defect",
+            [],
+            ["present_defect"],
+            [],
+            "held_back",
+        ),
+        (
+            "duplication",
+            "show the redundancy and how consolidation preserves behavior",
+            ["duplicate_of"],
+            ["resolved_duplicate", "confirmed_duplication"],
+            [],
+            "held_back",
+        ),
+        (
+            "simpler_equivalent",
+            "evidence of reduced complexity and preserved return values, side effects and error paths",
+            ["behavior_preserved"],
+            ["concrete_equivalent", "behavior_preserved"],
+            ["suggestion", "suggested_fix_code"],
+            "held_back",
+        ),
+        (
+            "stack_idiom",
+            "identify the precedent and the cost it removes",
+            ["precedent"],
+            ["resolved_precedent", "precedent_not_added", "applicable"],
+            [],
+            "held_back",
+        ),
+        (
+            "other",
+            "unsupported preferences stay report_only",
+            [],
+            [],
+            [],
+            "report_only",
+        ),
+    ],
+    ids=["correctness", "duplication", "equivalent", "idiom", "unsupported"],
+)
+def test_quality_basis_contract(
+    basis, guidance, required, predicates, any_of, disposition
+):
+    registry = gen.load_registry(str(ROOT))
+    contracts = gen.discovery_targets(registry)
+    for agent in ("code-simplifier", "type-design-analyzer"):
+        contract = contracts[f"agents/{agent}.md"]
+        schema = json.loads(re.search(r"```json\n(.*?)\n```", contract, re.DOTALL)[1])
+        item = schema["properties"]["findings"]["items"]
+        selection = item["properties"]["quality_basis"]
+        assert basis in selection["enum"]
+        assert (
+            "Behavior-preserving improvements do not require a production defect."
+            in selection["description"]
+        )
+        descriptor = next(
+            line for line in contract.splitlines() if " admission descriptors: " in line
+        )
+        admission = json.loads(
+            descriptor.split(": ", 1)[1].split(". Default disposition:", 1)[0]
+        )
+        rule = admission["kinds"][basis]
+        assert guidance in rule["description"]
+        assert f"{basis}: {rule['description']}" in selection["description"]
+        assert rule["required"] == required
+        assert rule["predicates"] == predicates
+        assert rule.get("anyOf", []) == any_of
+        assert rule.get("defaultDisposition", "held_back") == disposition
+        assert rule["phase"] == ("deterministic" if basis == "other" else "semantic")
+        assert rule["tier"] == (
+            "main" if basis == "current_correctness" else "suggestion"
+        )
 
 
 def test_disposition_row_generates_consumers(registry_tree, invoke):
@@ -134,6 +305,12 @@ def test_site_descriptor_gates_discovery_consumers(
         "line_end": int,
         "anchor": str,
     }
+    metadata = namespace["FindingMetadata"].__annotations__
+    assert metadata["line_end"] is int
+    assert get_args(metadata["sites"]) == (namespace["ResolvedSitesItem"],)
+    assert {"location_status", "diff_validation"} <= namespace[
+        "ResolvedSitesItem"
+    ].__annotations__.keys()
     assert "resolved_sites" in namespace["Delta"].__annotations__
     contracts = {}
     for agent in gen.load_registry(str(registry_tree))["agents"]:
@@ -290,8 +467,8 @@ def test_dispatch_result_descriptor_generates_agent_contract_and_python_registry
         f"  'code-gauntlet:{agent}': {{ audit_note: {{ type: 'string' }} }},",
     )
     text = text.replace(
-        "schemaExtra: { hidden_errors: 'string' }",
-        "schemaExtra: { extension_field: 'string', hidden_errors: 'string' }",
+        "schemaExtra: { hidden_errors:",
+        "schemaExtra: { extension_field: 'string', hidden_errors:",
     ).replace("requiredExtra: []", "requiredExtra: ['extension_field']", 1)
     source.write_text(text, encoding="utf-8")
     (registry_tree / "agents" / f"{agent}.md").write_text(
@@ -316,6 +493,17 @@ def test_dispatch_result_descriptor_generates_agent_contract_and_python_registry
     assert (
         "`extension_field`" in block.split("Required finding fields:")[1].split("\n")[0]
     )
+    runtime = gen.proc.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.path.insert(0, 'scripts'); "
+            "from gauntlet.delivery.input import Finding; "
+            "assert Finding.__annotations__['extension_field'] is str",
+        ],
+        cwd=str(registry_tree),
+    )
+    assert runtime.returncode == 0, runtime.stderr
     generated = (registry_tree / "scripts/gauntlet/registry.py").read_text(
         encoding="utf-8"
     )
@@ -642,13 +830,18 @@ Headless config:
 
 def test_dispatch_sentence():
     assert gen.dispatch_required_sentence(["criticality", "failure_scenario"]) == (
-        "`criticality` and `failure_scenario` are required by the dispatch schema "
-        "\u2014 a finding missing any of them is rejected at the StructuredOutput "
-        "boundary and retried, so all must always be present."
+        "`criticality` and `failure_scenario` are required at intake on every provider "
+        "and gateway."
     )
 
 
 def test_conditional_paragraphs():
+    assert gen.conditional_paragraphs(
+        [{"dimension": "test_coverage", "requiredWhenDimension": ["test_kind"]}]
+    ) == [
+        "For test_coverage findings, `test_kind` is required at intake on every provider "
+        "and gateway, which enforces its type and vocabulary."
+    ]
     paragraphs = gen.conditional_paragraphs(
         [
             {"dimension": "convention", "requiredWhenDimension": ["claude_md_rule"]},
@@ -664,15 +857,9 @@ def test_conditional_paragraphs():
         "On a dispatch that targets the first-party API directly (no third-party "
         "provider, no gateway), "
         "the schema enforces it specifically for findings whose dimension "
-        "is convention — sibling intent/comment_accuracy findings correctly omit it — "
-        "and this contract is the enforcement floor on every run, including "
-        "third-party providers "
-        "and gateway sessions where the schema stays flat. This agent's dispatch mixes "
-        "convention, intent, and comment_accuracy findings in one schema, so a "
-        "dimension-blind schema requirement (the flat `requiredExtra` mechanism, which "
-        "only single-dimension agents can use) was never an option here — omitting "
-        "the field on the wrong dimension is correct while omitting it on this one is "
-        "a contract violation."
+        "is convention — sibling intent/comment_accuracy findings correctly omit it. "
+        "Runtime intake enforces claude_md_rule/spec_text "
+        "on every provider and gateway for the owning dimension."
     )
 
 
@@ -734,6 +921,21 @@ def test_required_column(field_registry):
         "| `claude_md_rule` | string | conditional | citation |\n"
         "| `not_a_real_field` | string | yes | invented |\n"
     )
+
+
+def test_report_fields_preserve_row_descriptions():
+    registry = gen.load_registry(str(ROOT))
+    text = gen.rewrite_required_column(
+        "### Per-dimension fields\n\n| old | table |\n\n", registry
+    )
+    for row in registry["dimensionRows"]:
+        for field, schema in row["schemaExtra"].items():
+            assert isinstance(schema, dict) and schema["description"]
+            assert (
+                f"| `{field}` | {schema['type']} | {row['dimension']} | "
+                f"{gen.field_required_status(field, registry)} | {schema['description']} |"
+            ) in text
+    assert '"type":' not in text
 
 
 @pytest.mark.parametrize(
@@ -829,7 +1031,8 @@ def test_command_drift(registry_tree, invoke):
     target = registry_tree / "agents/test-analyzer.md"
     original = target.read_bytes()
     target.write_text(
-        original.decode().replace("all must always be present", "x"), encoding="utf-8"
+        original.decode().replace("are required at intake on every provider", "x"),
+        encoding="utf-8",
     )
     broken = target.read_bytes()
     stale = invoke(

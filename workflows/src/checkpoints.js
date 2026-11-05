@@ -3,6 +3,7 @@ import { normalizeFindingPaths } from './mergeFindings.js';
 import { fnv1a32, isPlainObject, RETURN_CHAR_BUDGET } from './wire.js';
 import { applyInjectedProseStrip, applyReplayInjectionScan } from './injection.js';
 import { normalizeFieldNames } from './filterFindings.js';
+import { normalizePipelineStamps } from './registry.js';
 
 // Arrays are unusable phase maps: indexing a phase name can otherwise replay an Array prototype method.
 function unwrapCheckpointMap(cp) {
@@ -283,7 +284,9 @@ export function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) 
   }
   const counts = {};
   for (const [name, out] of Object.entries(outputs)) counts[name] = phaseFindingCount(out);
-  return signCheckpoints({ phases, completed, phaseReached, counts });
+  const rejected = outputs.merge?.rejected || outputs.discover?.rejected;
+  return signCheckpoints({ phases, completed, phaseReached, counts,
+    ...(rejected?.length ? { intake_rejected: rejected } : {}) });
 }
 
 // Duplicate detection depends on scan order, so the round trip must preserve original positions.
@@ -327,6 +330,7 @@ export function normalizePhaseFindings(name, out, replayed, args, decisions = []
   for (const [, field] of checkpointFindingListsForPhase(name)) {
     if (!Array.isArray(out[field])) continue;
     for (const finding of out[field]) if (finding && typeof finding === 'object') {
+      if (replayed) normalizePipelineStamps(finding);
       delete finding.disposition;
       delete finding.disposition_reasons;
       delete finding.delivery_group;

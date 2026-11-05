@@ -8,15 +8,13 @@
       "description": "the counter increment is not synchronized",
       "file": "k1.py",
       "id": "G1",
+      "line_end": 100,
       "line_start": 100,
-      "promoted_from": "test-analyzer",
-      "promotion_reason": "test-analyzer finding describes a functional correctness issue that exists today (not a missing-coverage gap)",
+      "location_status": "confirmed",
       "report_destination": "main",
       "report_tag": "main",
       "severity": "medium",
-      "title": "race condition in worker pool",
-      "line_end": 100,
-      "location_status": "confirmed"
+      "title": "race condition in worker pool"
     },
     {
       "agent": "conventions-and-intent",
@@ -25,14 +23,14 @@
       "dimension": "comment-accuracy",
       "file": "k2.py",
       "id": "G2",
+      "line_end": 200,
       "line_start": 200,
+      "location_status": "confirmed",
       "report_destination": "suggestion",
       "report_tag": "suggestion",
       "routed_by": "dimension",
       "severity": "low",
-      "title": "stale comment",
-      "line_end": 200,
-      "location_status": "confirmed"
+      "title": "stale comment"
     },
     {
       "agent": "conventions-and-intent",
@@ -40,13 +38,13 @@
       "description": "uses camelCase instead of snake_case",
       "file": "k3.py",
       "id": "G3",
+      "line_end": 300,
       "line_start": 300,
+      "location_status": "confirmed",
       "report_destination": "main",
       "report_tag": "main",
       "severity": "medium",
-      "title": "violates naming convention documented in style guide",
-      "line_end": 300,
-      "location_status": "confirmed"
+      "title": "violates naming convention documented in style guide"
     },
     {
       "agent": "some-unknown-agent",
@@ -54,13 +52,13 @@
       "description": "unclear origin",
       "file": "k4.py",
       "id": "G4",
+      "line_end": 400,
       "line_start": 400,
+      "location_status": "confirmed",
       "report_destination": "main",
       "report_tag": "main",
       "severity": "high",
-      "title": "weird finding",
-      "line_end": 400,
-      "location_status": "confirmed"
+      "title": "weird finding"
     },
     {
       "agent": "code-simplifier",
@@ -68,13 +66,13 @@
       "description": "this block can be simplified",
       "file": "k5.py",
       "id": "G5",
+      "line_end": 500,
       "line_start": 500,
+      "location_status": "confirmed",
       "report_destination": "suggestion",
       "report_tag": "suggestion",
       "severity": "low",
-      "title": "redundant code",
-      "line_end": 500,
-      "location_status": "confirmed"
+      "title": "redundant code"
     }
   ]
 }

@@ -2,6 +2,46 @@
   "base_branch": "main",
   "findings": [
     {
+      "agent": "conventions-and-intent",
+      "claude_md_rule": "Validation failures surface as 422 (CLAUDE.md section 4)",
+      "confidence": 75,
+      "cross_file_refs": [],
+      "description": "The spec requires a 422 for a schema violation, but the handler swallows it and returns 200.",
+      "dimension": "intent",
+      "evidence": "Line 113: return Response(status=200) inside the ValidationError branch",
+      "file": "src/api/handlers.py",
+      "id": "conv-1",
+      "line_end": 114,
+      "line_start": 112,
+      "origin": "new",
+      "origin_dimension": "intent",
+      "severity": "medium",
+      "spec_text": "A request failing schema validation MUST return 422 Unprocessable Entity.",
+      "suggestion": "Return a 422 with the validation detail instead of a 200.",
+      "title": "Handler returns 200 on a validation failure"
+    }
+  ],
+  "head_sha": "abc123",
+  "methodology": {
+    "agents_dispatched": [
+      "test-analyzer",
+      "conventions-and-intent"
+    ],
+    "dropped_no_id": 0,
+    "duplicates_resolved": 0,
+    "findings_per_channel": {
+      "ndjson": 1,
+      "text_fallback": 0
+    },
+    "truncation_warnings": [],
+    "validation_warnings": [
+      "[test-1] Invalid required field 'test_kind' for test_coverage \u2014 finding rejected"
+    ]
+  },
+  "owner": "o",
+  "pr_number": 47,
+  "rejected": [
+    {
       "agent": "test-analyzer",
       "claude_md_rule": "Every error path must carry a regression test (CLAUDE.md section 7)",
       "confidence": 90,
@@ -21,42 +61,7 @@
       "severity": "high",
       "suggestion": "Mock the gateway to raise PaymentGatewayError and assert the transaction is rolled back.",
       "title": "Missing test for the payment failure rollback path"
-    },
-    {
-      "agent": "conventions-and-intent",
-      "claude_md_rule": "Validation failures surface as 422 (CLAUDE.md section 4)",
-      "confidence": 75,
-      "cross_file_refs": [],
-      "description": "The spec requires a 422 for a schema violation, but the handler swallows it and returns 200.",
-      "dimension": "intent",
-      "evidence": "Line 113: return Response(status=200) inside the ValidationError branch",
-      "file": "src/api/handlers.py",
-      "id": "conv-1",
-      "line_end": 114,
-      "line_start": 112,
-      "origin": "new",
-      "severity": "medium",
-      "spec_text": "A request failing schema validation MUST return 422 Unprocessable Entity.",
-      "suggestion": "Return a 422 with the validation detail instead of a 200.",
-      "title": "Handler returns 200 on a validation failure"
     }
   ],
-  "head_sha": "abc123",
-  "methodology": {
-    "agents_dispatched": [
-      "test-analyzer",
-      "conventions-and-intent"
-    ],
-    "dropped_no_id": 0,
-    "duplicates_resolved": 0,
-    "findings_per_channel": {
-      "ndjson": 2,
-      "text_fallback": 0
-    },
-    "truncation_warnings": [],
-    "validation_warnings": []
-  },
-  "owner": "o",
-  "pr_number": 47,
   "repo": "r"
 }

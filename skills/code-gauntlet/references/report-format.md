@@ -79,6 +79,7 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `origin` | string | no | Blame classification stamped by `scripts/verify_findings.py` — the one canonical field no agent emits. |
 | `evidence` | string | no | Code snippet or behavior demonstrating the issue. Required by the discovery PROMPT (must be non-empty) though schema-optional. |
 | `anchor` | string | yes | Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters. |
+| `sites` | array | no | Additional locations of this issue. |
 | `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
 | `claude_md_rule` | string | conditional | The cited project rule, quoted with its source file; required by contract for convention findings; OMITTED (never null) when no rule applies. |
 | `cross_file_refs` | array | no | Other files involved in the finding |
@@ -90,17 +91,28 @@ For convention findings, `rule_source` selects the heading for `claude_md_rule`:
 
 | Field | Type | Dimension | Required | Description |
 |-------|------|-----------|----------|-------------|
-| `hidden_errors` | string | bug | no | Errors the fix would surface that the visible code path hides |
-| `attack_vector` | string | security | yes | How the issue is exploited |
-| `affected_consumers` | array | cross_file_impact | yes | Other call sites/files impacted by the change |
-| `criticality` | number | test_coverage | yes | A 1-10 IMPACT scale, distinct from `confidence`'s 0-100 certainty scale, emitted as a number and never quoted. |
-| `failure_scenario` | string | test_coverage | yes | Concrete scenario the missing coverage would miss |
-| `spec_text` | string | intent | conditional | The spec/requirement text the code is checked against |
-| `rule_source` | string | convention | no | The grounding kind that selects the cited heading when `claude_md_rule` is rendered |
-| `invalid_state_example` | string | type_design | no | A concrete value the current types allow but shouldn't |
-| `behavior_preserved` | string | simplification | yes | Why the simplification is behavior-preserving |
+| `hidden_errors` | string | bug | no | How an error is hidden or silently swallowed. |
+| `attack_vector` | string | security | yes | Concrete attack path and its preconditions. |
+| `affected_consumers` | array | cross_file_impact | yes | Repository paths of consumers affected by the change. |
+| `criticality` | number | test_coverage | yes | Impact of the untested behavior on a 1 to 10 scale. |
+| `failure_scenario` | string | test_coverage | yes | Concrete input or condition and the failure it exposes. |
+| `searched_paths` | array | test_coverage | no | Repository files or directories searched for coverage. |
+| `candidate_tests` | array | test_coverage | no | Inspected tests, including their input and assertion. |
+| `production_element` | object | test_coverage | no | Source reference to the production behavior whose coverage is assessed. |
+| `test_kind` | string | test_coverage | conditional | Test issue kind used to assess admission and production-defect promotion. |
+| `rule_source` | string | convention | no | Basis for the cited rule: documented_rule, code_comment, repo_precedent, or self_inconsistency. |
+| `spec_text` | string | intent | conditional | Quoted specification or requirement contradicted by the implementation. |
+| `invalid_state_example` | string | type_design | no | Concrete invalid state permitted by the type design. |
+| `quality_basis` | string | type_design | conditional | Select the demonstrated quality basis. Behavior-preserving improvements do not require a production defect. current_correctness: A demonstrated present production defect. duplication: Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior. simpler_equivalent: A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths. stack_idiom: A behavior-preserving replacement supported by applicable existing repository precedent; identify the precedent and the cost it removes. other: No demonstrated defect, redundancy, simpler equivalent or applicable precedent; unsupported preferences stay report_only. |
+| `duplicate_of` | object | type_design | no | Source reference to the existing implementation duplicated here. |
+| `precedent` | object | type_design | no | Source reference to an existing repository idiom supporting the change. |
+| `behavior_preserved` | string | type_design | no | Why the simpler equivalent preserves observable behavior. |
+| `behavior_preserved` | string | simplification | no | How the proposed simplification preserves observable behavior. |
+| `quality_basis` | string | simplification | conditional | Select the demonstrated quality basis. Behavior-preserving improvements do not require a production defect. current_correctness: A demonstrated present production defect. duplication: Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior. simpler_equivalent: A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths. stack_idiom: A behavior-preserving replacement supported by applicable existing repository precedent; identify the precedent and the cost it removes. other: No demonstrated defect, redundancy, simpler equivalent or applicable precedent; unsupported preferences stay report_only. |
+| `duplicate_of` | object | simplification | no | Source reference to the existing implementation duplicated here. |
+| `precedent` | object | simplification | no | Source reference to an existing repository idiom supporting the change. |
 
-Required is tri-state. A `yes` field is appended to that dimension's dispatch required list (FINDING_REQUIRED plus the row's `requiredExtra`, never the other way around — FINDING_REQUIRED itself never carries a per-dimension field): the platform rejects a finding missing it at the StructuredOutput boundary, and the agent retries. A `conditional` field (`claude_md_rule`, `spec_text` — registry.js's `requiredWhenDimension`) is schema-required only on a dispatch that targets the first-party API directly with no gateway (`resolvedPolicy.conditionalSchema`), and only for a finding whose `dimension` matches the field's owning dimension — a nested `allOf`/`if`/`then` in the conventions-and-intent item schema, the one provider-measured shape that survives dispatch (a top-level conditional construct 400s). A `no` field carries neither promotion. Both `conditional` and `no` fields are contract-enforced by the agent's `.md` prose where its own dimension calls for it, everywhere the schema construct does not ride — third-party providers, gateway sessions, and every sibling dimension of a `conditional` field's own dispatch — and `no` fields are never schema-promoted at all: only a field the owning contract emits unconditionally (no OMIT branch, within its own dimension for `conditional`, within every dimension for `yes`) can be promoted to schema-required. Every per-dimension field is never nullable regardless: a not-applicable value is OMITTED, not emitted as null.
+Required is tri-state. A `yes` field is required in the owning agent's dispatch; a `conditional` field is schema-required for its dimension on first-party direct dispatches. Runtime intake enforces both requirements for the owning row on every provider and gateway, including kind-specific evidence requirements. A `no` field is optional unless its admission kind requires it. Omit inapplicable fields; never emit null.
 
 <!-- generated-from-registry-location: do not edit; scripts/generate_contract_requirements.py -->
 ## Location Status and Rights
@@ -126,6 +138,29 @@ Missing or unknown disposition is held back. Delivery intersects these rights wi
 | held_back | no | no | unverified | no | no | no | no |
 | report_only | no | no | finding | no | no | no | no |
 | eliminate | no | no | eliminated | no | no | no | no |
+
+### test_coverage admission
+
+- `test_kind: defective_test`: {"phase": "semantic", "predicates": ["pr_owned_test", "confirmed_test_defect", "test_diff_site_for_inline"], "required": [], "tier": "main"}; default disposition `held_back`.
+- `test_kind: critical_gap`: {"phase": "semantic", "predicates": ["criticality_at_least_8", "resolved_production_element", "complete_searches", "complete_behavioral_absence"], "required": ["criticality", "failure_scenario", "searched_paths", "candidate_tests"], "tier": "main"}; default disposition `held_back`.
+- `test_kind: production_defect`: {"core": true, "dimension": "bug", "phase": "semantic", "predicates": ["present_defect"], "required": [], "tier": "main"}; default disposition `held_back`.
+- `test_kind: additional_case`: {"defaultDisposition": "report_only", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
+
+### type_design admission
+
+- `quality_basis: current_correctness`: {"core": true, "description": "A demonstrated present production defect.", "phase": "semantic", "predicates": ["present_defect"], "required": [], "tier": "main"}; default disposition `held_back`.
+- `quality_basis: duplication`: {"description": "Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior.", "phase": "semantic", "predicates": ["resolved_duplicate", "confirmed_duplication"], "required": ["duplicate_of"], "tier": "suggestion"}; default disposition `held_back`.
+- `quality_basis: simpler_equivalent`: {"anyOf": ["suggestion", "suggested_fix_code"], "description": "A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths.", "phase": "semantic", "predicates": ["concrete_equivalent", "behavior_preserved"], "required": ["behavior_preserved"], "tier": "suggestion"}; default disposition `held_back`.
+- `quality_basis: stack_idiom`: {"description": "A behavior-preserving replacement supported by applicable existing repository precedent; identify the precedent and the cost it removes.", "phase": "semantic", "predicates": ["resolved_precedent", "precedent_not_added", "applicable"], "required": ["precedent"], "tier": "suggestion"}; default disposition `held_back`.
+- `quality_basis: other`: {"defaultDisposition": "report_only", "description": "No demonstrated defect, redundancy, simpler equivalent or applicable precedent; unsupported preferences stay report_only.", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
+
+### simplification admission
+
+- `quality_basis: current_correctness`: {"core": true, "description": "A demonstrated present production defect.", "phase": "semantic", "predicates": ["present_defect"], "required": [], "tier": "main"}; default disposition `held_back`.
+- `quality_basis: duplication`: {"description": "Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior.", "phase": "semantic", "predicates": ["resolved_duplicate", "confirmed_duplication"], "required": ["duplicate_of"], "tier": "suggestion"}; default disposition `held_back`.
+- `quality_basis: simpler_equivalent`: {"anyOf": ["suggestion", "suggested_fix_code"], "description": "A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths.", "phase": "semantic", "predicates": ["concrete_equivalent", "behavior_preserved"], "required": ["behavior_preserved"], "tier": "suggestion"}; default disposition `held_back`.
+- `quality_basis: stack_idiom`: {"description": "A behavior-preserving replacement supported by applicable existing repository precedent; identify the precedent and the cost it removes.", "phase": "semantic", "predicates": ["resolved_precedent", "precedent_not_added", "applicable"], "required": ["precedent"], "tier": "suggestion"}; default disposition `held_back`.
+- `quality_basis: other`: {"defaultDisposition": "report_only", "description": "No demonstrated defect, redundancy, simpler equivalent or applicable precedent; unsupported preferences stay report_only.", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
 <!-- /generated-from-registry-location -->
 
 ---

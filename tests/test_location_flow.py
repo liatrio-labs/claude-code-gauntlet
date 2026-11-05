@@ -226,14 +226,16 @@ def test_resolution_bypass_breaks_positive_placement(tmp_path, monkeypatch, caps
         _placement(tmp_path, monkeypatch, capsys, "github", 600, bypass=True)
 
 
-def test_sites_require_resolution_and_confirmation(tmp_path):
+def test_sites_require_resolution_and_confirmation(tmp_path, monkeypatch):
     quote = "return process(value);"
     paths = ["primary.txt", *(f"site-{n}.txt" for n in range(4))]
     patch = ""
     for path in paths:
         lines = [f"context-{n}" for n in range(100)]
         lines[6] = quote
-        (tmp_path / path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (tmp_path / path).write_text(
+            "\n".join(lines) + "\n", encoding="utf-8", newline=""
+        )
         patch += f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -6,2 +6,2 @@\n context-5\n {quote}\n"
     for command in (
         ["init", "-q"],
@@ -252,7 +254,7 @@ def test_sites_require_resolution_and_confirmation(tmp_path):
     sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True, encoding="utf-8"
     ).strip()
-    (tmp_path / "saved.patch").write_text(patch, encoding="utf-8")
+    (tmp_path / "saved.patch").write_text(patch, encoding="utf-8", newline="")
     script = r"""
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
@@ -261,25 +263,38 @@ const [root, work, sha] = process.argv.slice(1);
 const load = n => import(pathToFileURL(`${root}/workflows/src/${n}.js`));
 const {verifyStage} = await load('verifyStage');
 const {validateStage} = await load('reviewStages');
+const {selectDelivery} = await load('reviewStages');
+const {discover} = await load('discover');
+const {mergeStage} = await load('mergeFindings');
 const {normalizePhaseFindings} = await load('checkpoints');
 const {writerPayload} = await load('persistPlan');
 const {disposeFindings} = await load('dispose');
 const {shellSplit} = await import(pathToFileURL(`${root}/workflows/test/helpers/shellWords.js`));
 const request = file => ({file, line_start:90, line_end:90, anchor:'return process(value);', location_status:'confirmed', confirmed:true});
-const raw = {findings:[{id:'ISSUE',file:'primary.txt',line_start:7,line_end:7,anchor:'return process(value);',title:'Stale value',description:'A code claim.',severity:'high',confidence:90,dimension:'bug',origin:'new',
- sites:[...Array.from({length:4},(_,n)=>request(`${work}/site-${n}.txt`)), request('../escape'), {...request('site-0.txt'),anchor:'missing quote'}]}]};
+const candidate = {id:'ISSUE',file:'primary.txt',line_start:7,line_end:7,anchor:'return process(value);',title:'Stale value',description:'A code claim.',severity:'high',confidence:90,dimension:'bug',origin:'new',
+ sites:[...Array.from({length:4},(_,n)=>request(`${work}/site-${n}.txt`)), request('../escape'), {...request('site-0.txt'),anchor:'missing quote'}]};
+const discovered = await discover({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async(_,o)=>{
+ if(!o.schema.properties.findings.items.properties.sites)throw Error('missing discovery sites');
+ const findings = o.agentType.endsWith(':bug-detector') ? [candidate]
+  : o.agentType.endsWith(':security-reviewer') ? [{...candidate,id:'CONSTITUENT',dimension:'security',attack_vector:'Shared defect',sites:[]}]:[];
+ return {findings,complete:true,total_seen:findings.length,removed_test_audit:[]};
+}},{removedTests:{status:'available',items:[],omitted:0}});
+const raw = mergeStage(discovered,{});
 normalizePhaseFindings('merge',raw,false,{repoRoot:work});
 const input = {...raw,pluginRoot:root,python:'python',headShaShort:sha,nonce:'sites',policy:{},limits:{},verify:{targetKind:'branch',baseBranch:'HEAD',diffPath:`${work}/saved.patch`,inputPathBase:`${work}/in`,outputPathBase:`${work}/out`}};
 const context = tamper => ({agent:async prompt=>{const c=shellSplit(prompt.split('\n').at(-1));execFileSync(c[0],c.slice(1),{cwd:work,env:process.env});const env=JSON.parse(readFileSync(c[c.indexOf('--output')+1],'utf8'));if(tamper)env.result.deltas[0].resolved_sites[0].line_start=9;return env;}});
 const verified = await verifyStage(context(false),input);
 const confirmations = verified.findings[0].resolved_sites.map(s=>({file:s.file,line_start:s.line_start,line_end:s.line_end,confirmed:true}));
 const persist = async list => {
- const validated = await validateStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async(_,o)=>{
+ const validated = await validateStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async(prompt,o)=>{
   if(!o.schema.properties.validations.items.properties.site_confirmations)throw Error('missing return metadata');
-  return {validations:[{finding_id:'ISSUE',confidence:90,...(list===null?{}:{site_confirmations:list})}]};
+  if(!prompt.split('\nReturn ')[1]?.includes('site_confirmations') || !prompt.includes('same defect requiring the same correction'))throw Error('missing semantic contract');
+  const packet=JSON.parse(prompt.split(' | site_requests: ')[1].split('\n')[0]);
+  if(packet.length!==4 || packet.some(s=>s.line_start!==7))throw Error('requests are not resolved');
+  return {validations:[{finding_id:'ISSUE',confidence:90,...(list===null?{}:{site_confirmations:list})},{finding_id:'CONSTITUENT',confidence:85}]};
  }},{findings:structuredClone(verified.findings)});
  const out=disposeFindings(validated);
- return writerPayload({findings:out.findings,postReview:out.findings,checkpoints:{challenge:validated}});
+ return writerPayload({findings:out.findings,postReview:selectDelivery(out.findings,1,'all'),checkpoints:{challenge:validated}});
 };
 const all = await persist(confirmations);
 const some = await persist([{...confirmations[0],confirmed:true},{...confirmations[1],confirmed:false},{...confirmations[3],confirmed:'true'},{file:'foreign.txt',line_start:7,line_end:7,confirmed:true}]);
@@ -301,6 +316,7 @@ process.stdout.write(JSON.stringify({all,some,missing,tampered,gaps:raw.gaps,res
     assert "sites" not in value["resolved"]
     sites = value["all"]["postReview"][0]["sites"]
     assert len(sites) == 4
+    assert [f["id"] for f in value["all"]["postReview"]] == ["ISSUE", "CONSTITUENT"]
     assert all(
         (s["line_start"], s["line_end"], s["location_status"], s["diff_validation"])
         == (7, 7, "relocated", {"in_diff": True})
@@ -315,3 +331,27 @@ process.stdout.write(JSON.stringify({all,some,missing,tampered,gaps:raw.gaps,res
     )
     assert not value["tampered"]["verified"]
     assert value["tampered"]["findings"][0]["sites"] == []
+    delivery = tmp_path / "delivery.json"
+    delivery.write_text(
+        json.dumps(
+            {
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "sha": sha,
+                "findings": value["all"]["postReview"],
+            }
+        ),
+        encoding="utf-8",
+        newline="",
+    )
+    factory = install_forge_factory(monkeypatch, sys.modules[CLI.main.__module__])
+    factory.configure(FakeForge(diffs=[(patch, "", 0)]))
+    assert CLI.invoke([str(delivery), "--dry-run"]) == 0
+    posted = json.loads(
+        (tmp_path / "post-review-payload.json").read_text(encoding="utf-8")
+    )
+    comments = posted["payload"]["comments"]
+    assert len(comments) == 1
+    for n in range(4):
+        assert f"site-{n}.txt:7" in comments[0]["body"]

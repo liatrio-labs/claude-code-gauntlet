@@ -1,6 +1,6 @@
 {
-  "main_count": 1,
-  "suggestion_count": 1,
+  "main_count": 2,
+  "suggestion_count": 0,
   "tagged": [
     {
       "agent": "test-analyzer",
@@ -18,14 +18,13 @@
       "id": "test-1",
       "line_end": 82,
       "line_start": 67,
+      "location_status": "unconfirmed",
       "origin": "new",
-      "report_destination": "suggestion",
-      "report_tag": "suggestion",
-      "routed_by": "dimension",
+      "report_destination": "main",
+      "report_tag": "main",
       "severity": "high",
       "suggestion": "Mock the gateway to raise PaymentGatewayError and assert the transaction is rolled back.",
-      "title": "Missing test for the payment failure rollback path",
-      "location_status": "unconfirmed"
+      "title": "Missing test for the payment failure rollback path"
     },
     {
       "agent": "conventions-and-intent",
@@ -39,14 +38,14 @@
       "id": "conv-1",
       "line_end": 114,
       "line_start": 112,
+      "location_status": "confirmed",
       "origin": "new",
       "report_destination": "main",
       "report_tag": "main",
       "severity": "medium",
       "spec_text": "A request failing schema validation MUST return 422 Unprocessable Entity.",
       "suggestion": "Return a 422 with the validation detail instead of a 200.",
-      "title": "Handler returns 200 on a validation failure",
-      "location_status": "confirmed"
+      "title": "Handler returns 200 on a validation failure"
     }
   ]
 }

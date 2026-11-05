@@ -3,6 +3,7 @@ import { incompleteVetting, UNVERIFIED_REASONS } from './vetting.js';
 import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
 import { eliminationDecisions, traceDecision } from './measurementTrace.js';
+import { findingPolicy } from './registry.js';
 
 export function disposeFindings(challenged) {
   const input = deepClone(challenged);
@@ -22,15 +23,19 @@ export function disposeFindings(challenged) {
     }
     if ((input.unverified || []).includes(finding) && !reasons.length) reasons.push('held_back');
     let disposition = 'body';
+    const policy = findingPolicy(finding);
     if (reasons.length) disposition = 'held_back';
-    else if ((finding.diff_validation === undefined || finding.diff_validation?.in_diff === true) && locationAllows(finding, 'inline')) {
+    else if (policy.row?.admission) {
+      disposition = policy.defaultDisposition === 'report_only' ? 'report_only' : 'held_back';
+      reasons.push(disposition);
+    } else if ((finding.diff_validation === undefined || finding.diff_validation?.in_diff === true) && locationAllows(finding, 'inline')) {
       disposition = 'deliver';
     } else reasons.push('body_routed');
     finding.disposition = disposition;
     finding.disposition_reasons = reasons;
     (disposition === 'held_back' ? unverified : findings).push(finding);
     if (finding.trace_id) for (const reason of finding.disposition_reasons) {
-      decisions.push(traceDecision(finding, reason, reason, [], disposition === 'held_back' ? 'held_back' : 'body_routed'));
+      decisions.push(traceDecision(finding, reason, reason, [], ['held_back', 'report_only'].includes(disposition) ? disposition : 'body_routed'));
     }
   }
   const eliminations = eliminationDecisions({ eliminated: eliminated.map((f) => ({ ...f, trace_id: f.trace_id || 'unused' })) });
@@ -58,7 +63,7 @@ export function disposeFindings(challenged) {
   }
   return { findings, unverified, eliminated, groups, decisions, stats: { ...input.stats,
     skipped: unverified.filter((f) => Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
-    held_back: unverified.filter((f) => !Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
+    held_back: unverified.length,
     cross_agent_consolidated: consolidatedCount, final_count: findings.length } };
 }
 

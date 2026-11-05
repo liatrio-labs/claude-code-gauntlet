@@ -9,6 +9,7 @@
       "file": "src/app.py",
       "id": "F1",
       "line_start": 10,
+      "origin_dimension": "bug",
       "severity": "medium",
       "title": "example finding"
     },
@@ -20,6 +21,7 @@
       "file": "src/app.py",
       "id": "F2",
       "line_start": 20,
+      "origin_dimension": "bug",
       "severity": "medium",
       "title": "example finding"
     }

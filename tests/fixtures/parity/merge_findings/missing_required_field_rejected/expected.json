@@ -9,6 +9,7 @@
       "file": "src/app.py",
       "id": "F1",
       "line_start": 10,
+      "origin_dimension": "bug",
       "severity": "medium",
       "title": "example finding"
     }
@@ -31,5 +32,17 @@
   },
   "owner": "o",
   "pr_number": 1,
+  "rejected": [
+    {
+      "agent": "bug-detector",
+      "confidence": "high",
+      "description": "a description of the finding",
+      "dimension": "bug",
+      "file": "src/app.py",
+      "id": "F2",
+      "line_start": 10,
+      "title": "example finding"
+    }
+  ],
   "repo": "r"
 }

@@ -67,7 +67,7 @@ for (const row of VALIDATE_ROWS) test(`validate result: ${row.name}`, async () =
   assert.deepEqual(ctx.violations, []);
 });
 const VALIDATE_TAIL = '\nReturn { validations: [{ finding_id, confidence, justification, '
-  + 'reachability (current | future_change_only | uncertain) }] } \u2014 confidence 0-100 '
+  + 'reachability (current | future_change_only | uncertain), site_confirmations }] } \u2014 confidence 0-100 '
   + '(one entry per finding).';
 const VALIDATE_PROMPT_ROWS = [
   { name: 'equal range endpoints print once', fields: { file: 'one.js', line_start: 42, line_end: 42 },

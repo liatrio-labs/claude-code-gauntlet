@@ -5,7 +5,8 @@ import { LIMIT_DEFAULTS } from './registry.js';
 import { effectiveBucketSize } from './capacity.js';
 import { deepClone } from './wire.js';
 import { checkRemovedTestAudit } from './removedTests.js';
-import { stampDiscovery, recordStage } from './measurementTrace.js';
+import { stampDiscovery, recordStage, measurementDecisions } from './measurementTrace.js';
+import { validateFindings } from './mergeFindings.js';
 
 // StructuredOutput requires an object wrapper around summary prose.
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
@@ -110,6 +111,9 @@ export function agentSpecs(dims = DIMENSIONS) {
       .filter((r) => (r.requiredWhenDimension || []).length)
       .map((r) => ({ dimension: r.dimension, required: [...r.requiredWhenDimension].sort() }))
       .sort((a1, b1) => a1.dimension.localeCompare(b1.dimension));
+    spec.admissionRequired = spec.rows.flatMap((row) => row.admission ? Object.entries(row.admission.kinds)
+      .filter(([, kind]) => kind.required.length || kind.anyOf?.length)
+      .map(([kind, rule]) => ({ dimension: row.dimension, field: row.admission.field, kind, ...rule })) : []);
     delete spec.rows;
     return spec;
   });
@@ -168,12 +172,19 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
 export function findingSchema(spec, policy) {
   const conditionalRequired = conditionalSchemaActive(policy) ? (spec.conditionalRequired || []) : [];
   const resultFields = DISPATCH_RESULTS[spec.agentType] || {};
+  const item = findingItemSchema(spec.schemaExtra, spec.requiredExtra, conditionalRequired);
+  if (conditionalSchemaActive(policy) && spec.admissionRequired?.length) {
+    item.allOf = [...(item.allOf || []), ...spec.admissionRequired.map((rule) => ({
+      if: { properties: { dimension: { const: rule.dimension }, [rule.field]: { const: rule.kind } }, required: ['dimension', rule.field] },
+      then: { required: [...rule.required], ...(rule.anyOf ? { anyOf: rule.anyOf.map((field) => ({ required: [field] })) } : {}) },
+    }))];
+  }
   return {
     type: 'object',
     properties: {
       findings: {
         type: 'array',
-        items: findingItemSchema(spec.schemaExtra, spec.requiredExtra, conditionalRequired),
+        items: item,
       },
       complete: { type: 'boolean' },
       total_seen: { type: 'number' },
@@ -226,6 +237,8 @@ export async function discover(ctx, input) {
   const gaps = [];
   const findings = [];
   const intake = [];
+  const rejected = [];
+  const decisions = [];
   const trace = inp.measurementTrace;
   const degradedDims = [];
 
@@ -260,12 +273,16 @@ export async function discover(ctx, input) {
       return;
     }
     for (const [occurrence, raw] of list.entries()) {
-      const f = trace ? stampDiscovery(trace, raw, spec, i, occurrence) : raw;
+      const f = trace ? stampDiscovery(trace, raw, spec, i, occurrence) : deepClone(raw);
       if (trace) intake.push(f);
-      for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line']) delete f[key];
-      // Filtering and merge grouping require canonical short agent names, so dispatch prefixes must be stripped.
-      f.agent = spec.agentType.split(':').pop();
-      findings.push(f);
+      if (f && typeof f === 'object' && !Array.isArray(f)) {
+        for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics']) delete f[key];
+        f.agent = spec.agentType.split(':').pop();
+      }
+      const checked = validateFindings([f], decisions);
+      gaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
+      rejected.push(...checked.rejected);
+      findings.push(...checked.valid);
     }
     const nearCap = discoveryCap != null && (res.total_seen >= discoveryCap || list.length >= discoveryCap);
     if (res.complete === false || nearCap) {
@@ -314,13 +331,14 @@ export async function discover(ctx, input) {
     gaps.push(`discover: ${droppedNoLineEnd} finding(s) emitted suggested_fix_code without line_end — field dropped (a patch must state its range)`);
   }
 
-  return {
+  return measurementDecisions({
     findings,
+    ...(rejected.length ? { rejected } : {}),
     gaps,
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
-  };
+  }, decisions);
 }
 
 // Concrete evidence requirements make absence claims auditable; registry-scoped prompt extras preserve each agent's investigation breadth.
