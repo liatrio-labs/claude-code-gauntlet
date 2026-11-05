@@ -243,6 +243,10 @@ def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
         "judge_failed",
         "audit_overlap",
         "cut_select",
+        "cut_dispose",
+        "cut_challenge",
+        "cut_filter",
+        "cut_verify",
     ],
 )
 def test_score_to_dimension_credit_and_loss_funnel(
@@ -303,13 +307,23 @@ def test_score_to_dimension_credit_and_loss_funnel(
                 snapshot["stage"] = "holdback"
                 snapshot["decisions"] = [asdict(decision)]
         path.write_text(json.dumps(raw), encoding="utf-8")
-    if trace_status == "cut_select":
+    cut = trace_status.removeprefix("cut_") if trace_status.startswith("cut_") else None
+    if cut:
         raw = read_json(path)
-        raw["dropped_stages"] = ["select"]
-        raw["snapshots"][-1].update(
-            finding_version_ids=[], decisions=[], coverage="unavailable"
-        )
+        start = next(i for i, s in enumerate(raw["snapshots"]) if s["stage"] == cut)
+        raw["dropped_stages"] = [s["stage"] for s in raw["snapshots"][start:]]
+        for snapshot in raw["snapshots"][start:]:
+            snapshot.update(
+                finding_version_ids=[], decisions=[], coverage="unavailable"
+            )
         path.write_text(json.dumps(raw), encoding="utf-8")
+
+        def unavailable_treatment(*args):
+            pytest.fail("dropped selection must not require a delivery treatment tree")
+
+        monkeypatch.setattr(
+            score.provenance, "resolve_treatment_root", unavailable_treatment
+        )
     if trace_status not in ("missing", "collection_failed"):
         (pr / "code-gauntlet-measurement-abc1234.json").write_bytes(
             path.read_bytes() if trace_status != "unreadable" else b"{}"
@@ -331,7 +345,9 @@ def test_score_to_dimension_credit_and_loss_funnel(
                 raise RuntimeError("unavailable judge")
 
         monkeypatch.setattr(type(score_case), "scorer", fail_judge)
-    packet = score_case.execute(attribution=trace_status != "disabled")
+    packet = score_case.execute(
+        attribution=trace_status != "disabled", surface_views=bool(cut)
+    )
     loaded = observations.load_packet(Path(packet["ledger_row"]["packet_path"]))
     assert {r.stage for r in stages.read_rows(loaded.root)}.isdisjoint({"cite"})
     assert packet["profiles"]["all"]["tp"] == 1
@@ -339,6 +355,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
         2
         if trace_status
         in ("readable", "holdback", "judge_failed", "audit_overlap", "cut_select")
+        or cut
         else 1
     )
     tools = read_json(loaded.root / "candidates.json")[score_case.url]
@@ -350,9 +367,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
             / loaded.manifest.evaluator.judge_pin
             / "candidates.json"
         )
-        assert ("discover:" + keep in read_json(inputs)[score_case.url]) == (
-            trace_status == "cut_select"
-        )
+        assert ("discover:" + keep in read_json(inputs)[score_case.url]) == bool(cut)
     if trace_status == "collection_failed":
         assert loaded.manifest.trace_collection[
             score_case.url
@@ -368,7 +383,9 @@ def test_score_to_dimension_credit_and_loss_funnel(
     funnel = stages.loss_funnel(
         rows, population={b.bug_id for b in loaded.observations}
     )
-    if trace_status == "cut_select":
+    if cut:
+        assert loaded.surface_view is None
+        assert read_json(loaded.root / "surface-views.json")["unavailable_reason"]
         discovery_rows = [r for r in rows if r.stage == "discover"]
         assert all(
             r.coverage == "complete" and r.survives is not None for r in discovery_rows
@@ -377,8 +394,20 @@ def test_score_to_dimension_credit_and_loss_funnel(
         assert all(
             r.coverage == "unavailable" and r.survives is None
             for r in rows
-            if r.stage == "select"
+            if r.stage in raw["dropped_stages"]
         )
+        assert read_json(loaded.root / "provenance_errors.json") == {}
+        assert all(c.provenance_status == "legacy_unknown" for c in loaded.candidates)
+        if cut in ("filter", "verify"):
+            lost_bugs = {
+                r.bug_id for r in discovery_rows if lost in r.matched_version_ids
+            }
+            assert lost_bugs
+            assert all(
+                r.loss.status == "unavailable"
+                for r in rows
+                if r.stage == "deliver" and r.bug_id in lost_bugs
+            )
     elif trace_status in ("readable", "holdback", "audit_overlap"):
         assert (
             dict(funnel.losses)[

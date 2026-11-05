@@ -565,7 +565,7 @@ def _record_coalescence(trace):
 
 def _admission_records(trace):
     final = next((s for s in trace.snapshots if s.stage == "dispose"), None)
-    if final is None:
+    if final is None or final.coverage == "unavailable":
         return None
     versions = {v.version_id: v.trace_id for v in trace.versions}
     latest = {v.trace_id: v.finding for v in trace.versions}

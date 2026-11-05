@@ -1013,7 +1013,8 @@ def test_precision_pools_stored_core_counts_and_filters_bug_ids(case, tmp_path):
     assert (report.interval.lower, report.interval.upper) == pytest.approx((-2 / 15, 0))
 
 
-def test_admission_diagnostics_preserve_issue_and_producer(case, tmp_path):
+@pytest.mark.parametrize("dropped", [False, True])
+def test_admission_diagnostics_preserve_issue_and_producer(case, tmp_path, dropped):
     from bench.runner import stages
     from bench.runner.epochs import file_hash
     from bench.tests.test_stages import emit_trace
@@ -1078,6 +1079,17 @@ def test_admission_diagnostics_preserve_issue_and_producer(case, tmp_path):
             for i, s in enumerate(trace.snapshots)
         ),
     )
+    if dropped:
+        trace = replace(
+            trace,
+            dropped_stages=("dispose", "select"),
+            snapshots=tuple(
+                replace(s, finding_version_ids=(), decisions=(), coverage="unavailable")
+                if s.stage in ("dispose", "select")
+                else s
+                for s in trace.snapshots
+            ),
+        )
     root = tmp_path / "diagnostic-score"
     (root / "sources").mkdir(parents=True)
     write(root / "sources/trace.json", asdict(trace))
@@ -1213,6 +1225,12 @@ def test_admission_diagnostics_preserve_issue_and_producer(case, tmp_path):
     }
     assert set(rows) == set(packet.manifest.selected_attempts)
     selected = rows[url]
+    if dropped:
+        assert not selected.admission["available"]
+        assert selected.admission["values"] is None
+        assert selected.admission["reason"] == "admission trace unavailable"
+        assert not selected.record_coalescence["available"]
+        return
     held_record = next(
         r
         for r in selected.admission["values"]["records"]

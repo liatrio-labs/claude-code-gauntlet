@@ -624,6 +624,8 @@ def dimension_metrics(candidates, bugs, stage_rows, profile, traces):
 
 def bind_delivery_trace(trace, candidates, *, omissions=()):
     """Overlay pure, payload-proven posting omissions on producer selection."""
+    if "select" in trace.dropped_stages:
+        return trace
     _require(
         sum(s.stage in ("dispose", "holdback") for s in trace.snapshots) == 1,
         "final reducer",

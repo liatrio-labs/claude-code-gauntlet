@@ -813,7 +813,7 @@ def score_run(
     # Outside the per-PR guard: a missing treatment tree must fail, not mark PRs ambiguous.
     replay_root = (
         provenance.resolve_treatment_root(run_dir, manifest.get("treatment_git_sha"))
-        if traces
+        if any("select" not in trace.dropped_stages for _, trace in traces.values())
         else None
     )
     original_traces = traces.copy()

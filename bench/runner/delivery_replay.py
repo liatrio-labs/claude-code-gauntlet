@@ -79,6 +79,7 @@ class ReplayReceiptWire(TypedDict):
     input_hashes: dict[str, str]
     artifact_hashes: dict[str, str]
     trace_availability: Literal["available", "unavailable"]
+    trace_unavailable_reason: str | None
     attribution_scope: Literal["post_challenge_delivery"]
 
 
@@ -102,6 +103,7 @@ class ReplayInputs:
     input_hashes: tuple[tuple[str, str], ...]
     source_paths: tuple[Path, ...]
     diff: bytes | None = None
+    trace_unavailable_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,12 +273,24 @@ def load_replay_inputs(manifest_path):
             if bucket in output:
                 output[bucket] = [_projection(f) for f in output[bucket]]
     trace = None
+    trace_unavailable_reason = "trace source unavailable"
     if "trace" in contents:
         trace = load_trace(
             root / sources["trace"]["path"], expected_sha256=sources["trace"]["sha256"]
         )
         if trace.run_nonce != wire["args"].get("nonce") or not trace.complete:
             raise ValueError("trace belongs to another or incomplete review")
+        dependencies = {"challenge", "holdback", "dispose", *UPSTREAM_STAGES}
+        dropped = [s for s in trace.dropped_stages if s in dependencies]
+        if dropped:
+            trace_unavailable_reason = (
+                "budget dropped identity join stages: " + ", ".join(dropped)
+            )
+            trace = None
+        else:
+            trace_unavailable_reason = None
+    # Decide availability before any join so a budget cut cannot leave partial identities.
+    if trace is not None:
         rejoin_trace_identity(state["phaseOutputs"]["challenge"], trace)
         for stage in UPSTREAM_STAGES:
             rejoin_trace_identity(
@@ -296,6 +310,7 @@ def load_replay_inputs(manifest_path):
         tuple(hashes),
         tuple(paths),
         contents.get("diff"),
+        trace_unavailable_reason,
     )
 
 
@@ -691,6 +706,7 @@ def replay_delivery(inputs, *, candidate=False):
         "trace_availability": "available"
         if inputs.trace is not None
         else "unavailable",
+        "trace_unavailable_reason": inputs.trace_unavailable_reason,
         "attribution_scope": "post_challenge_delivery",
     }
     return ReplayResult(
