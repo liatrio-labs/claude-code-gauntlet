@@ -161,8 +161,6 @@ _REGISTRY_FIELDS = (
     "verifyReferenceFields: m.VERIFY_REFERENCE_FIELDS",
     "verifyFactProperties: m.VERIFY_FACT_PROPERTIES",
     "admissionStampProperties: m.ADMISSION_STAMP_PROPERTIES",
-    "rightEligibility: m.RIGHT_ELIGIBILITY",
-    "stageCosts: m.STAGE_COSTS",
     "discoveryFindingTypes: m.DISCOVERY_FINDING_PROP_TYPES",
     "resolvedSiteSchema: m.RESOLVED_SITE_SCHEMA",
     "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
@@ -296,33 +294,35 @@ def discovery_targets(registry: Mapping[str, Any]) -> dict[str, str]:
     return targets
 
 
+_NEVER_MATCH = re.compile(r"(?!)")
+
+
+def _fill_shared(
+    text: str, namespace: str, bodies: Mapping[str, str], *, skip_absent: bool
+) -> str:
+    for symbol, body in bodies.items():
+        marker_open = f"<!-- generated-from-{namespace}:{symbol} -->"
+        marker_close = f"<!-- /generated-from-{namespace}:{symbol} -->"
+        if skip_absent and marker_open not in text and marker_close not in text:
+            continue
+        text = splice(
+            text,
+            _NEVER_MATCH,
+            body,
+            marker_open=marker_open,
+            marker_close=marker_close,
+        )
+    return text
+
+
 def fill_discovery_shared(text: str) -> str:
     """Inline shared guidance so each prompt remains a self-contained contract."""
-    for symbol, body in DISCOVERY_SHARED.items():
-        marker_open = f"<!-- generated-from-discovery:{symbol} -->"
-        marker_close = f"<!-- /generated-from-discovery:{symbol} -->"
-        if marker_open in text or marker_close in text:
-            text = splice(
-                text,
-                re.compile(r"(?!)"),
-                body,
-                marker_open=marker_open,
-                marker_close=marker_close,
-            )
-    return text
+    return _fill_shared(text, "discovery", DISCOVERY_SHARED, skip_absent=True)
 
 
 def fill_verification_shared(text: str) -> str:
     """Keep verification decisions grounded in one shared evidence contract."""
-    for symbol, body in VERIFICATION_SHARED.items():
-        text = splice(
-            text,
-            re.compile(r"(?!)"),
-            body,
-            marker_open=f"<!-- generated-from-verification:{symbol} -->",
-            marker_close=f"<!-- /generated-from-verification:{symbol} -->",
-        )
-    return text
+    return _fill_shared(text, "verification", VERIFICATION_SHARED, skip_absent=False)
 
 
 def field_required_status(
@@ -740,6 +740,62 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "",
         *(literal_type(name, values) for name, values in enum_types.items()),
         "",
+        "",
+        "class PolicySubject(TypedDict, total=False):",
+        "    dimension: Dimension",
+        "    kind: str",
+        "    stamp: str",
+        "    original: bool",
+        "    defaultDisposition: Disposition",
+        "",
+        "",
+        "class AdmissionKind(TypedDict, total=False):",
+        "    description: str",
+        "    required: list[str]",
+        "    optional: list[str]",
+        "    anyOf: list[str]",
+        "    predicates: list[str]",
+        '    phase: Literal["semantic", "deterministic"]',
+        "    dimension: Dimension",
+        "    core: bool",
+        '    tier: Literal["main", "suggestion"]',
+        "    defaultDisposition: Disposition",
+        "",
+        "",
+        "class AdmissionPromotion(TypedDict, total=False):",
+        "    predicate: str",
+        "    kind: str",
+        "    stamp: str",
+        "",
+        "",
+        "class DimensionAdmission(TypedDict):",
+        "    field: str",
+        "    promotion: AdmissionPromotion",
+        "    kinds: dict[str, AdmissionKind]",
+        "",
+        "",
+        "class _RequiredDimensionRow(TypedDict):",
+        "    dimension: Dimension",
+        "    agentType: str",
+        "    core: bool",
+        "    defaultDisposition: Disposition",
+        '    defaultTier: Literal["main", "suggestion"]',
+        "    aliases: list[str]",
+        "    admission: DimensionAdmission | None",
+        "    conditionalFlag: str | None",
+        "    schemaExtra: dict[str, Any]",
+        "    requiredExtra: list[str]",
+        "    requiredWhenDimension: list[str]",
+        "    modelOverride: ModelAlias | None",
+        "    promptExtra: str | None",
+        "    policySubjects: dict[str, PolicySubject]",
+        "",
+        "",
+        "class DimensionRow(_RequiredDimensionRow, total=False):",
+        "    functionalRouting: bool",
+        "    agentFallback: bool",
+        "",
+        "",
     ]
     values = {
         "SEVERITY_ORDER": tuple(identity["severityOrder"]),
@@ -754,8 +810,6 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "VERIFY_REFERENCE_DESCRIPTORS": identity["verifyReferenceDescriptors"],
         "DISPATCH_RESULTS": identity.get("dispatchResults", {}),
         "DIMENSION_ROWS": identity["dimensionRows"],
-        "RIGHT_ELIGIBILITY": identity["rightEligibility"],
-        "STAGE_COSTS": identity["stageCosts"],
         "BRAND_MARK": identity["brand"]["mark"],
         "BRAND_NAME": identity["brand"]["name"],
         "SEVERITY_EMOJI": identity["severityEmoji"],
@@ -777,7 +831,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "DELTA_VALUE_FIELDS": "tuple[DeltaValueField, ...]",
         "VERIFY_SLICE_FIELDS": "tuple[str, ...]",
         "VERIFY_REFERENCE_DESCRIPTORS": "Mapping[str, VerifyReferenceKind]",
-        "DIMENSION_ROWS": "list[Mapping[str, Any]]",
+        "DIMENSION_ROWS": "list[DimensionRow]",
     }
     for name, value in values.items():
         annotation = f": {annotations[name]}" if name in annotations else ""
@@ -904,7 +958,17 @@ _TEMPLATE_FINDING = {
     **_placeholders("finding", "id file title description confidence dimension"),
     "location_status": "confirmed",
     "disposition": "deliver",
-    "admission": {"version": 1, "status": "admitted", "input_proof": "template"},
+    "admission": {
+        "version": 1,
+        "status": "admitted",
+        "input_proof": "template",
+        "input_fields": [],
+        "reasons": [],
+        "kind": "ordinary",
+        "core": True,
+        "tier": "main",
+        "inline_eligible": True,
+    },
     "line_start": 10,
     "line_end": 10,
 }
@@ -1110,7 +1174,17 @@ def pr_identity_fields_body(identity: Mapping[str, Any]) -> list[str]:
 _INLINE_SAMPLE_FINDING = {
     "location_status": "confirmed",
     "disposition": "deliver",
-    "admission": {"version": 1, "status": "admitted", "input_proof": "template"},
+    "admission": {
+        "version": 1,
+        "status": "admitted",
+        "input_proof": "template",
+        "input_fields": [],
+        "reasons": [],
+        "kind": "ordinary",
+        "core": True,
+        "tier": "main",
+        "inline_eligible": True,
+    },
     "line_start": 10,
     "line_end": 10,
     "severity": "severity",

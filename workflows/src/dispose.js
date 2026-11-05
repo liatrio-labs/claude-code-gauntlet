@@ -5,6 +5,8 @@ import { consolidateCrossAgent } from './filterFindings.js';
 import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
 import { hasAdmission } from './admission.js';
 
+const DELIVERABLE_CHALLENGES = ['survived', 'contested', 'downgraded'];
+
 export function disposeFindings(challenged) {
   const input = deepClone(challenged);
   const findings = [];
@@ -12,6 +14,8 @@ export function disposeFindings(challenged) {
   const eliminated = input.eliminated || [];
   const decisions = [];
   for (const finding of [...(input.findings || []), ...(input.unverified || [])]) {
+    delete finding.site_requests;
+    delete finding.resolved_sites;
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
     delete finding.delivery_group;
@@ -26,7 +30,7 @@ export function disposeFindings(challenged) {
     else if (!admitted || finding.admission.status !== 'admitted') {
       disposition = admitted ? finding.admission.status : 'held_back';
       reasons.push(disposition);
-    } else if (finding.challenge !== 'survived' && finding.challenge !== 'contested' && finding.challenge !== 'downgraded') {
+    } else if (!DELIVERABLE_CHALLENGES.includes(finding.challenge)) {
       disposition = 'held_back';
       reasons.push('challenge_failed');
     } else if (finding.admission.inline_eligible && finding.reachability !== 'future_change_only'

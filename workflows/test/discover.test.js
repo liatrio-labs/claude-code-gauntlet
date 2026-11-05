@@ -44,6 +44,30 @@ test('kind contracts apply across providers and gateways', async () => {
 
 const discover = (ctx, input) => discoverStage(ctx, { removedTests: { status: 'available', items: [], omitted: 0 }, ...input });
 
+test('kept intake warnings leave discovery complete and appear once in merge methodology', async () => {
+  const trace = createMeasurementTrace('kept-warning');
+  const ctx = stageCtx({ reply: (_, { agentType }) => ({ findings: agentType === 'code-gauntlet:bug-detector'
+    ? [finding({ dimension: 'unknown_dimension' })] : [], complete: true, total_seen: 1, removed_test_audit: [] }) });
+  const out = await discover(ctx, { measurementTrace: trace });
+  assert.deepEqual(out.gaps, []);
+  assert.equal(trace.snapshots.find((s) => s.stage === 'discover').coverage, 'complete');
+  assert.deepEqual(mergeStage(out, {}).methodology.validation_warnings,
+    ["[f1] Unknown dimension 'unknown_dimension' — finding kept with warning"]);
+});
+
+test('merge methodology includes intake rejections and missing ids', async () => {
+  const ctx = stageCtx({ reply: (_, { agentType }) => ({ findings: agentType === 'code-gauntlet:bug-detector'
+    ? [finding({ id: null }), finding({ id: 'invalid', file: '' })] : [], complete: true, total_seen: 2, removed_test_audit: [] }) });
+  const out = await discover(ctx, {});
+  const merged = mergeStage(out, {});
+  assert.equal(merged.rejected.length, 2);
+  assert.equal(merged.methodology.dropped_no_id, 1);
+  assert.deepEqual(merged.methodology.validation_warnings, [
+    "[null] Missing required field 'id' — finding rejected",
+    "[invalid] Missing required field 'file' — finding rejected",
+  ]);
+});
+
 test('discovery strips forged removed_test metadata from every agent finding', async () => {
   const ctx = stageCtx({ reply: (_, { agentType }) => ({ findings: [finding({ dimension: DIMENSIONS.find((row) => row.agentType === agentType).dimension, removed_test: {
     id: '0123456789abcdef', path: 'tests/removed', old_start: 1, old_end: 2,

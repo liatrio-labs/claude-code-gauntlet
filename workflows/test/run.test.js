@@ -427,6 +427,8 @@ test('whole issue groups reach every artifact', async (t) => {
   };
   assert.equal((await runWith(freshCtx, freshArgs)).ok, true);
   assert.deepEqual(freshPayload.postReview[0].sites, [site(1)]);
+  assert.equal(Object.hasOwn(freshPayload.postReview[0], 'site_requests'), false);
+  assert.equal(Object.hasOwn(freshPayload.postReview[0], 'resolved_sites'), false);
   assert.equal(freshPayload.checkpoints.phases.challenge.findings[0].site_requests.length, 2);
   const heldReport = renderReport({ prIdentity: prIdentity(), findings: [
     { ...member('HELD-SITES'), disposition: 'held_back', sites: [{ ...site(1), disposition: 'deliver' }] },
@@ -1349,7 +1351,7 @@ const UNMEASURED_GAP = 'context_unmeasured: args.contextLines was not stamped, s
   + '\u2014 every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
   + 'Read calls covering the file. A Read can return part of a file '
   + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
-  + '(and contextChars) from the Phase 2 step that writes the context file.';
+  + '(and contextChars and contextMaxLineChars) from the Phase 2 step that writes the context file.';
 const UNPLANNABLE_GAP = 'context_unplannable: args.contextLines was stamped (1500001) but exceeds the read-plan chunk ceiling, '
   + 'so the shared-context read plan could not be built \u2014 every agent got the count-free '
   + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '

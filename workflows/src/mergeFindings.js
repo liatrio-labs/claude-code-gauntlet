@@ -167,7 +167,8 @@ export function validateFindings(findings, decisions = []) {
 export function merge(findingsByAgent, meta) {
   const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
   const agents = M.agents;
-  const allWarnings = [];
+  const intakeRejected = M.rejected || [];
+  const allWarnings = validateFindings(deepClone(intakeRejected)).warnings;
   const decisions = [];
 
   // Dictionary selection preserves repeated roster keys and integer-key enumeration.
@@ -206,7 +207,7 @@ export function merge(findingsByAgent, meta) {
   }
 
   let droppedNoId = 0;
-  for (const f of allFlat) {
+  for (const f of [...allFlat, ...intakeRejected].filter((f) => f && typeof f === 'object' && !Array.isArray(f))) {
     const fid = f.id;
     if (fid === undefined || fid === null || fid === '') droppedNoId += 1;
   }

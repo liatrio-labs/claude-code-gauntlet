@@ -39,6 +39,14 @@ const EXACT_PLAN_ROWS = [
   { name: 'one line exceeds character budget', lines: 3, chars: 180000,
     expected: [{ offset: 1, limit: 1 }, { offset: 2, limit: 1 }, { offset: 3, limit: 1 }] },
 ];
+test('one wide line retains an exact read plan for a larger context', () => {
+  const plan = contextReadPlan(5000, 550000, 50000);
+  assert.equal(plan.length, 19);
+  assert.deepEqual(plan[0], { offset: 1, limit: 272 });
+  assert.equal(plan.at(-1).offset + plan.at(-1).limit, 5001);
+  assert.match(sharedContextLine({ contextPath: 'context', contextLines: 5000, contextChars: 550000, contextMaxLineChars: 50000 }),
+    /continue after the last received line until line 5000/);
+});
 for (const row of EXACT_PLAN_ROWS) test(`exact plan: ${row.name}`, () => {
   const plan = contextReadPlan(row.lines, row.chars);
   assert.deepEqual(plan, row.expected);

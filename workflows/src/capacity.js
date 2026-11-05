@@ -137,10 +137,6 @@ function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
 }
 
-function citeCost(L, findings, challenges) {
-  return ceilDiv(challenges, effectiveBatchSize(L, findings)) * STAGE_COSTS.cite.attempts;
-}
-
 export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
@@ -149,8 +145,7 @@ export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'mai
   const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
   const validateCalls = validationCost(L, findings);
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
-  const citeCalls = citeCost(L, findings, challengeCalls);
-  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + citeCalls + STAGE_COSTS.writer.attempts;
+  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + STAGE_COSTS.writer.attempts;
 }
 
 // Removing terms that cannot shrink guarantees termination when the inline budget binds.
@@ -173,9 +168,8 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
     // Compare each term using its full dispatch cost so retrying verify slices receive the same weight as in the guard.
     const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch, input);
     const challengeCount = Math.min(findings, effectiveChallengeCap(L, findings));
-    const citeTerm = citeCost(L, findings, challengeCount);
-    const validateTerm = validationCost(L, findings) + citeTerm;
-    const challengeTerm = challengeCount + citeTerm;
+    const validateTerm = validationCost(L, findings);
+    const challengeTerm = challengeCount;
     const choices = [
       ['validate', validateTerm],
       ['verify', currentVerifyTerm],
@@ -186,7 +180,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
     const [largest] = choices;
     if (largest[0] === 'validate') {
       L.validateBatch = effectiveBatchSize(L, findings) * 2;
-      if (validationCost(L, findings) + citeCost(L, findings, challengeCount) >= validateTerm) candidates.delete('validate');
+      if (validationCost(L, findings) >= validateTerm) candidates.delete('validate');
     } else if (largest[0] === 'verify') {
       L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
       if (verifyTerm(L, nFindings, baseBranch, input) >= currentVerifyTerm) candidates.delete('verify');
@@ -194,7 +188,7 @@ export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', in
       // Halving the effective cap ensures progress even when the nominal cap exceeds the finding count.
       L.challengeCap = Math.min(challengeCount, Math.max(CHALLENGE_CAP_FLOOR, Math.floor(challengeCount / 2)));
       const next = Math.min(findings, effectiveChallengeCap(L, findings));
-      if (next + citeCost(L, findings, next) >= challengeTerm) candidates.delete('challenge');
+      if (next >= challengeTerm) candidates.delete('challenge');
     }
   }
   return L;

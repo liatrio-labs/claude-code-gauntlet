@@ -7,17 +7,25 @@ const READ_PLAN_MAX_ENUMERATED = 10;
 // The allocation ceiling prevents fatal heap exhaustion that bypasses error handling and gap disclosure.
 const READ_PLAN_MAX_CHUNKS = 2000;
 
+function lineWidthEstimate(maxLineChars, chars, total) {
+  if (Number.isSafeInteger(maxLineChars) && maxLineChars > 0) return maxLineChars;
+  if (Number.isSafeInteger(chars) && chars > 0) return chars / total;
+  return 0;
+}
+
 // Offsets are one-based to match the Read tool.
 // An unknown line count cannot justify a guessed coverage plan.
 export function contextReadPlan(lines, chars, maxLineChars) {
   const total = Number.isSafeInteger(lines) && lines > 0 ? lines : 0;
   if (total === 0) return [];
   // Maximum line width bounds uneven chunks; older receipts supply only an average estimate.
-  const perLine = Number.isSafeInteger(maxLineChars) && maxLineChars > 0
-    ? maxLineChars
-    : (Number.isSafeInteger(chars) && chars > 0 ? chars / total : 0);
-  const byChars = perLine > 0 ? Math.floor(READ_PLAN_MAX_CHARS / perLine) : READ_PLAN_MAX_LINES;
-  const span = Math.max(1, Math.min(READ_PLAN_MAX_LINES, byChars));
+  const spanFor = (width) => Math.max(1, Math.min(READ_PLAN_MAX_LINES,
+    width > 0 ? Math.floor(READ_PLAN_MAX_CHARS / width) : READ_PLAN_MAX_LINES));
+  let span = spanFor(lineWidthEstimate(maxLineChars, chars, total));
+  // One oversized line must not erase a usable plan; continuation covers truncated chunks.
+  if (Math.ceil(total / span) > READ_PLAN_MAX_CHUNKS && Number.isSafeInteger(chars) && chars > 0) {
+    span = spanFor(lineWidthEstimate(undefined, chars, total));
+  }
   if (Math.ceil(total / span) > READ_PLAN_MAX_CHUNKS) return [];
   const plan = [];
   for (let offset = 1; offset <= total; offset += span) {
@@ -59,7 +67,7 @@ export function setupContext(inp) {
       + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
       + 'Read calls covering the file. A Read can return part of a file '
       + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
-      + '(and contextChars) from the Phase 2 step that writes the context file.']
+      + '(and contextChars and contextMaxLineChars) from the Phase 2 step that writes the context file.']
     : (plan.length === 0
       ? ['context_unplannable: args.contextLines was stamped (' + inp.contextLines + ') but exceeds the read-plan chunk '
         + 'ceiling, so the shared-context read plan could not be built — every agent got the count-free '

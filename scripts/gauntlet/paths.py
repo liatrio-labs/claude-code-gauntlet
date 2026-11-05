@@ -35,9 +35,13 @@ _BASENAME_RE = re.compile(r"^(?:test_.+|.+_(?:test|spec))$", re.IGNORECASE)
 _SUFFIX_RE = re.compile(r"(?:Tests?|Spec)$")
 
 
+def _in_non_source_dir(parts: list[str]) -> bool:
+    return any(part.lower() in NON_SOURCE_DIRS for part in parts[:-1])
+
+
 def is_test_path(path: str) -> bool:
     parts = path.split("/")
-    if any(part.lower() in NON_SOURCE_DIRS for part in parts[:-1]):
+    if _in_non_source_dir(parts):
         return False
     basename = parts[-1]
     stem = basename.split(".", 1)[0]
@@ -53,7 +57,7 @@ def path_role(path: str, *, readable: bool) -> PathRole:
     if not readable:
         return "unknown"
     parts = path.split("/")
-    if any(part.lower() in NON_SOURCE_DIRS for part in parts[:-1]):
+    if _in_non_source_dir(parts):
         return "non_source"
     if is_test_path(path):
         return "test"

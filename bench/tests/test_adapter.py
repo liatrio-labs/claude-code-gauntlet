@@ -8,6 +8,7 @@ from gauntlet.delivery.fold import PLATFORM_BODY_LIMITS
 from gauntlet.forge import JsonFetch
 
 from bench.adapter.adapt import merge_candidates, payload_to_candidates
+from tests.support.delivery import admitted_stamp
 from tests.support.posting import invoke_posting
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "adapter"
@@ -608,11 +609,7 @@ def capture(
             "review_body": "Automated review summary.",
             "findings": [
                 {
-                    "admission": {
-                        "version": 1,
-                        "status": "admitted",
-                        "input_proof": "fixture",
-                    },
+                    "admission": admitted_stamp(),
                     "disposition": "deliver",
                     **finding,
                 }

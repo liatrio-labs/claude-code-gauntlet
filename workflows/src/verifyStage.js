@@ -191,9 +191,7 @@ export async function verifyStage(ctx, input) {
 }
 
 function degradedSlice(slice) {
-  return slice.map((f) => {
-    return stripVerifyFacts({ ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' });
-  });
+  return slice.map((f) => stripVerifyFacts({ ...clearLocation(pinNumericFields(f)), ...(f.sites ? { sites: [], resolved_sites: [] } : {}), origin: 'unknown' }));
 }
 
 const emptyInputProof = () => ({

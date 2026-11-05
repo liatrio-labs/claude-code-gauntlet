@@ -563,6 +563,32 @@ def _record_coalescence(trace):
     return None
 
 
+def _admission_records(trace):
+    final = next((s for s in trace.snapshots if s.stage == "dispose"), None)
+    if final is None:
+        return None
+    versions = {v.version_id: v.trace_id for v in trace.versions}
+    latest = {v.trace_id: v.finding for v in trace.versions}
+    identities = {versions[v] for v in final.finding_version_ids} | {
+        d.trace_id for d in final.decisions
+    }
+    records = []
+    for tid in sorted(identities):
+        finding = latest[tid]
+        records.append(
+            {
+                "trace_id": tid,
+                "origin_dimension": finding.get("origin_dimension"),
+                "original_producer": finding.get("agent"),
+                "policy_subject": finding.get("policy_subject"),
+                "admission": finding.get("admission"),
+                "disposition": finding.get("disposition"),
+                "reasons": finding.get("disposition_reasons", []),
+            }
+        )
+    return {"records": records}
+
+
 def delivery_diagnostics(packet, population):
     """One row per selected review; consumers pool over rows, including empty ones."""
     inventory = read_json(packet.root / "complete.json")["files"]
@@ -642,28 +668,7 @@ def delivery_diagnostics(packet, population):
             path, trace = traces[url]
             trace_evidence += (path.relative_to(packet.root.resolve()).as_posix(),)
             fold = _record_coalescence(trace)
-            final = next((s for s in trace.snapshots if s.stage == "dispose"), None)
-            if final is not None:
-                versions = {v.version_id: v for v in trace.versions}
-                latest = {v.trace_id: v.finding for v in trace.versions}
-                identities = {
-                    versions[v].trace_id for v in final.finding_version_ids
-                } | {d.trace_id for d in final.decisions}
-                admission = {
-                    "records": [
-                        {
-                            "trace_id": tid,
-                            "origin_dimension": f.get("origin_dimension"),
-                            "original_producer": f.get("agent"),
-                            "policy_subject": f.get("policy_subject"),
-                            "admission": f.get("admission"),
-                            "disposition": f.get("disposition"),
-                            "reasons": f.get("disposition_reasons", []),
-                        }
-                        for tid in sorted(identities)
-                        for f in [latest[tid]]
-                    ]
-                }
+            admission = _admission_records(trace)
         rows.append(
             DeliveryDiagnostics(
                 packet.score_ref,

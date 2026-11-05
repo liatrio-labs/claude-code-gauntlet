@@ -5,7 +5,7 @@ from typing import TypedDict, cast
 from gauntlet.cli import CliError
 from gauntlet.delivery.gate import is_plain_int
 from gauntlet.forge import parse_web_origin
-from gauntlet.location import normalize_location
+from gauntlet.location import normalize_location, parse_admission
 from gauntlet.registry import (
     DIMENSION_ROWS,
     DeliveryGroup,
@@ -86,12 +86,17 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
             admission_fields.setdefault(row["admission"]["field"], set()).update(
                 row["admission"]["kinds"]
             )
-        promotion = (row["admission"] or {}).get("promotion", {})
-        for subject in [*row["policySubjects"].values(), promotion]:
-            if "stamp" in subject:
-                admission_fields.setdefault(subject["stamp"], set()).add(
-                    subject["kind"]
-                )
+        admission = row["admission"]
+        stamps = [
+            (s["stamp"], s["kind"])
+            for s in row["policySubjects"].values()
+            if "stamp" in s
+        ]
+        if admission and "stamp" in admission.get("promotion", {}):
+            promotion = admission["promotion"]
+            stamps.append((promotion["stamp"], promotion["kind"]))
+        for field, admitted in stamps:
+            admission_fields.setdefault(field, set()).add(admitted)
     for index, finding in enumerate(findings):
         if not isinstance(finding, dict):
             raise CliError(f"findings[{index}] must be an object")
@@ -138,7 +143,7 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
     normalized = [normalize_location(f) for f in findings]
     for finding in normalized:
         if finding.get("disposition") != "eliminate" and (
-            "admission" not in finding or "disposition" not in finding
+            parse_admission(finding) is None or "disposition" not in finding
         ):
             finding["disposition"] = "held_back"
     return cast(ReviewInput, {**data, "findings": normalized})

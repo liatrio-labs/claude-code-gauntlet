@@ -81,7 +81,7 @@ export const DISPOSITION_RIGHTS = deepFreeze({
 });
 export const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
 export const RIGHT_ELIGIBILITY = deepFreeze({ body: { fixTask: ['current_defect', 'current_reachability', 'confirmed_location'] } });
-export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2 }, validate: { retryBatchDivisor: 5 }, cite: { attempts: 2 }, writer: { attempts: 2 } });
+export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2 }, validate: { retryBatchDivisor: 5 }, writer: { attempts: 2 } });
 
 const SOURCE_REFERENCE = {
   type: 'object', $comment: 'source-reference', properties: {
@@ -281,8 +281,9 @@ export const ADMISSION_PREDICATES = deepFreeze({
   current_reachability: { fact: 'reachability' },
   confirmed_location: { fact: 'location' },
 });
+export const ASSESSED_PREDICATES = deepFreeze(Object.keys(ADMISSION_PREDICATES).filter((key) => ADMISSION_PREDICATES[key].references));
 const ASSESSMENT = { type: 'object', properties: {
-  predicate: { type: 'string', enum: Object.keys(ADMISSION_PREDICATES).filter((key) => ADMISSION_PREDICATES[key].references) },
+  predicate: { type: 'string', enum: ASSESSED_PREDICATES },
   status: { type: 'string', enum: ['confirmed', 'rejected', 'unresolved'] },
   references: { type: 'array', items: { type: 'string' } },
 }, required: ['predicate', 'status', 'references'], additionalProperties: false };
@@ -310,6 +311,10 @@ export const VERIFY_FACT_KEYS = deepFreeze(Object.keys(VERIFY_FACT_PROPERTIES));
 export function dimensionRow(dimension) {
   return DIMENSIONS.find((row) => row.dimension === dimension || row.aliases.includes(dimension));
 }
+
+// Policy and routing match a dimension case-insensitively, as the filter guards do;
+// intake stays exact so its required-field rules key on the declared name.
+const policyRow = (dimension) => dimensionRow(typeof dimension === 'string' ? dimension.toLowerCase() : dimension);
 
 const LOSS_ADMISSION = dimensionRow('test_coverage').admission.kinds.critical_gap;
 export const REMOVED_LOSS_FIELDS = deepFreeze([...LOSS_ADMISSION.required, ...LOSS_ADMISSION.optional]);
@@ -355,7 +360,7 @@ export function findingPolicy(finding, effective = true) {
     || DIMENSIONS.find((candidate) => typeof finding.dimension === 'string' && candidate.admission?.kinds[finding[candidate.admission.field]]?.dimension === finding.dimension)
     || (original && (original.dimension === finding.dimension || promotion === finding.dimension)
       ? original : null)
-    || dimensionRow(finding.dimension) || producer.find((candidate) => candidate.agentFallback) || producer[0];
+    || policyRow(finding.dimension) || producer.find((candidate) => candidate.agentFallback) || producer[0];
   const subject = row?.policySubjects[finding.policy_subject];
   const stampedKind = effective && finding.admission?.status === 'admitted' ? finding.admission.kind : undefined;
   const selected = stampedKind && stampedKind === row?.admission?.promotion?.kind ? row
@@ -380,7 +385,7 @@ export function admissionPolicy(finding, policySubject, promoted = false) {
 export function requiredAssessments(finding, policySubject, promoted = false) {
   const { promotion, kind } = admissionPolicy(finding, policySubject, promoted);
   return [...new Set([promotion?.predicate, ...(kind?.predicates || [])])]
-    .filter((predicate) => ADMISSION_PREDICATES[predicate]?.references);
+    .filter((predicate) => ASSESSED_PREDICATES.includes(predicate));
 }
 
 export function normalizePipelineStamps(finding) {

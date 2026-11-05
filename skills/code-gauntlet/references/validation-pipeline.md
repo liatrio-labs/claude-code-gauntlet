@@ -5,13 +5,14 @@
 - [Verify stage (`verifyStage`)](#verify-stage-verifystage)
 - [Validate stage (`validateStage`)](#validate-stage-validatestage)
 - [Filter stage (`filterStage`)](#filter-stage-filterstage)
+- [Admission (`evaluateAdmission`)](#admission-evaluateadmission)
 - [Challenge stage (`challengeStage`)](#challenge-stage-challengestage)
 - [Report stage (`renderReport`)](#report-stage-renderreport)
 - [Operational Recovery](#operational-recovery)
 
 The validation pipeline runs inside `workflows/pipeline.js`. Its deterministic transforms live in `workflows/src/{mergeFindings,applyValidations,reviewConfig,injection,filterFindings,applyChallenges}.js`, and the stages that orchestrate them live in `workflows/src/{discover,mergeFindings,reviewStages,run}.js`, with the verify stage in `workflows/src/{verifyWire,capacity,verifyStage}.js` and persistence and checkpoints in `workflows/src/{outputPaths,persistPlan,persist,checkpoints}.js`. The retained `verify_findings.py` executor handles the verify boundary. This reference documents what each stage does for interpreting gaps and persisted artifacts.
 
-**Pipeline order inside the workflow:** Merge → **Verify** → **Validate** → **Filter** → **Challenge** → Report.
+**Pipeline order inside the workflow:** Merge → **Verify** → **Validate** → **Filter** → **Admission** → **Challenge** → Report. Admission is also evaluated before Filter so routing uses the current policy verdict.
 
 ---
 
@@ -78,7 +79,7 @@ The stage batches findings into `limits.validateBatch` chunks and dispatches one
 
 **Confidence rubric:** the shared scale in [investigation-methodology.md](investigation-methodology.md).
 
-**Degradation.** A null/malformed batch or a missing matched score after retry marks the affected findings `validation='skipped'`, with confidence untouched and one gap per batch naming the count. They bypass challenge and enter the unverified bucket, appearing only in the report. Degraded verify slices (`origin='unknown'`) follow the same route.
+**Retry and degradation.** One follow-up round retries missing scores or admission assessments in smaller batches. Accepted correctness, reachability and policy-subject decisions remain fixed when only assessments are missing. A null/malformed batch or a missing matched score after retry marks the affected findings `validation='skipped'`, with confidence untouched and one gap per batch naming the count. They bypass challenge and enter the unverified bucket, appearing only in the report. Degraded verify slices (`origin='unknown'`) follow the same route.
 
 ---
 
@@ -95,6 +96,10 @@ Pure, deterministic JS — no agents. It applies dimension-specific confidence/s
 `resolveReviewConfig` parses the raw REVIEW.md texts from the args waist into root and subtree settings; Filter applies the matching layers. The workflow cannot read the files itself.
 
 ---
+
+## Admission (`evaluateAdmission`)
+
+The deterministic reducer persists `admitted`, `report_only` or `held_back` with predicate reasons and an input proof. It runs again after Filter because filtering can change policy inputs. Only admitted, fully vetted findings can be challenged. Missing or invalid stamps are held back at disposal, including legacy records; admitted findings without an inline location route to the body.
 
 ## Challenge stage (`challengeStage`)
 
@@ -114,6 +119,8 @@ After thresholds it ranks survivors and retains upstream eliminations in the cha
 ---
 
 ## Report stage (`renderReport`)
+
+`report_only` findings appear under **Findings held back by admission** with their predicate reasons. `held_back` findings appear under **Unverified / pipeline-degraded findings**; neither status grants posting or fix rights.
 
 Renders `report.md` in code — `renderReport()` in `workflows/src/renderReport.js`, with text primitives in `workflows/src/outboundText.js` and report vocabularies in `workflows/src/registry.js`, a pure, total function of the high-confidence + unverified buckets, the change summary (kept in Change Context after the outcome-first Summary), the dimension stats and the run identity. No dispatch, no segmentation, no fallback: there is nothing to throw and nothing to degrade, so the stage emits no gaps. `evidence` renders for every finding that carries one, in both buckets. The renderer also appends the code-owned Review Methodology section, including the machine-parsed identity receipt, as the report's last section. Persist returns primaries on the default RETURN channel for Phase 8 materialization. Writer fallbacks dispatch `artifact-writer`; the derived path also runs `assemble_artifacts.py`. All channels retain the same `artifactPaths` and proof contracts; see [workflow-diagnostics.md](workflow-diagnostics.md#executor-and-writer-roles).
 

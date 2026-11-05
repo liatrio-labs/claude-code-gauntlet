@@ -465,7 +465,8 @@ process.stdout.write(JSON.stringify({all,some,missing,tampered,gaps:raw.gaps,res
     )
     assert [s["file"] for s in value["some"]["findings"][0]["sites"]] == ["site-0.txt"]
     assert value["missing"]["findings"][0]["sites"] == []
-    assert len(value["all"]["findings"][0]["site_requests"]) == 5
+    assert "site_requests" not in value["all"]["findings"][0]
+    assert "resolved_sites" not in value["all"]["findings"][0]
     assert (
         len(value["all"]["checkpoints"]["challenge"]["findings"][0]["site_requests"])
         == 5

@@ -60,7 +60,7 @@ Exit 0 names the patches path beside the report, even with zero kept patches. Ex
 - `artifactPaths.findings` — every disposed record, including body-routed, held-back, report-only, and eliminated findings; rights live in `disposition`. Injection eliminations retain only `id`, `title`, `eliminated_by`, and `elimination_reason`; their full forensic records remain in the raw challenge checkpoint. Other records carry the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged.
 - `artifactPaths.report` — the rendered report markdown, produced **in code** by
   `renderReport()` (`workflows/src/renderReport.js`): title, identity line, Summary, Findings
-  by severity, the Unverified/pipeline-degraded section, the Review Dimensions Summary, and
+  by severity, Findings held back by admission, the Unverified/pipeline-degraded section, the Review Dimensions Summary, and
   the last-section Review Methodology with its code-rendered identity receipt and methodology
   table. The report is complete when materialized; the orchestrator never appends to `report.md`.
 - `artifactPaths.checkpoints` holds the signed slim resume object. The return's own `checkpoints` contains only completed phase names. See [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable).

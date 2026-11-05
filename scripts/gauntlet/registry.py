@@ -124,6 +124,62 @@ _AdmissionStatus_Literal = Literal["admitted", "report_only", "held_back"]
 _AdmissionReasonsItemStatus_Literal = Literal["report_only", "held_back"]
 _AdmissionTier_Literal = Literal["main", "suggestion"]
 
+
+class PolicySubject(TypedDict, total=False):
+    dimension: Dimension
+    kind: str
+    stamp: str
+    original: bool
+    defaultDisposition: Disposition
+
+
+class AdmissionKind(TypedDict, total=False):
+    description: str
+    required: list[str]
+    optional: list[str]
+    anyOf: list[str]
+    predicates: list[str]
+    phase: Literal["semantic", "deterministic"]
+    dimension: Dimension
+    core: bool
+    tier: Literal["main", "suggestion"]
+    defaultDisposition: Disposition
+
+
+class AdmissionPromotion(TypedDict, total=False):
+    predicate: str
+    kind: str
+    stamp: str
+
+
+class DimensionAdmission(TypedDict):
+    field: str
+    promotion: AdmissionPromotion
+    kinds: dict[str, AdmissionKind]
+
+
+class _RequiredDimensionRow(TypedDict):
+    dimension: Dimension
+    agentType: str
+    core: bool
+    defaultDisposition: Disposition
+    defaultTier: Literal["main", "suggestion"]
+    aliases: list[str]
+    admission: DimensionAdmission | None
+    conditionalFlag: str | None
+    schemaExtra: dict[str, Any]
+    requiredExtra: list[str]
+    requiredWhenDimension: list[str]
+    modelOverride: ModelAlias | None
+    promptExtra: str | None
+    policySubjects: dict[str, PolicySubject]
+
+
+class DimensionRow(_RequiredDimensionRow, total=False):
+    functionalRouting: bool
+    agentFallback: bool
+
+
 SEVERITY_ORDER: tuple[Severity, ...] = ("critical", "high", "medium", "low")
 
 MODEL_ALIASES: tuple[ModelAlias, ...] = ("sonnet", "opus", "haiku")
@@ -413,7 +469,7 @@ DISPATCH_RESULTS = {
     },
 }
 
-DIMENSION_ROWS: list[Mapping[str, Any]] = [
+DIMENSION_ROWS: list[DimensionRow] = [
     {
         "core": True,
         "defaultDisposition": "deliver",
@@ -1117,27 +1173,6 @@ DIMENSION_ROWS: list[Mapping[str, Any]] = [
         },
     },
 ]
-
-RIGHT_ELIGIBILITY = {
-    "body": {
-        "fixTask": ["current_defect", "current_reachability", "confirmed_location"],
-    },
-}
-
-STAGE_COSTS = {
-    "verify": {
-        "attempts": 2,
-    },
-    "validate": {
-        "retryBatchDivisor": 5,
-    },
-    "cite": {
-        "attempts": 2,
-    },
-    "writer": {
-        "attempts": 2,
-    },
-}
 
 BRAND_MARK = "⚔️"
 

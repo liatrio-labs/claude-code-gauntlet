@@ -288,20 +288,21 @@ export async function discover(ctx, input) {
       degradedDims.push(...spec.dimensions);
       return;
     }
+    const agentName = spec.agentType.split(':').pop();
     for (const [occurrence, raw] of list.entries()) {
       const candidate = deepClone(raw);
       if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-        if (candidate.id === undefined) candidate.id = `${spec.agentType.split(':').pop()}-${occurrence + 1}`;
+        if (candidate.id === undefined) candidate.id = `${agentName}-${occurrence + 1}`;
         if (spec.dimensions.length === 1 && candidate.dimension === undefined) candidate.dimension = spec.dimensions[0];
       }
       const f = trace ? stampDiscovery(trace, candidate, spec, i, occurrence) : candidate;
       if (trace) intake.push(f);
       if (f && typeof f === 'object' && !Array.isArray(f)) {
         for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics']) delete f[key];
-        f.agent = spec.agentType.split(':').pop();
+        f.agent = agentName;
       }
       const checked = validateFindings([f], decisions);
-      gaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
+      if (checked.rejected.length) gaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
       rejected.push(...checked.rejected);
       findings.push(...checked.valid);
     }

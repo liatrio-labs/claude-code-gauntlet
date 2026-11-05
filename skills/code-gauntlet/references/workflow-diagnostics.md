@@ -13,8 +13,9 @@ The workflow checkpoints stage outputs and records partial coverage as gaps. Tot
 | 2 | **Discover** | one `parallel()` fan-out to every active discovery agent (see roster) | a null member marks that agent's dimensions degraded |
 | 3 | **Merge** | pure JS (no agents) — regroups + dedups discovered findings | — |
 | 4 | **Verify** | one `executor` per finding-slice, sequential; retry sends only unresolved findings | `record_proofs` map trusted deltas to findings; `base_branch` and `diff_source` path/read gate each attempt; `n_in`, `inline_checksum` and `input_checksum` are diagnostics; only findings unresolved after retry get `origin=unknown`; other slices unaffected; `verified=false` iff any finding degraded; loud gap per degraded slice; affected findings held back to the report |
-| 5 | **Validate** | one `validator` per batch, `parallel()` | a null/malformed batch or missing score after retry → affected findings `validation=skipped`, held back to the report |
+| 5 | **Validate** | one `validator` per batch, `parallel()`, plus one follow-up round for missing scores or assessments | a null/malformed batch or missing score after retry → affected findings `validation=skipped`, held back to the report |
 | 6 | **Filter** | pure JS (no agents) — thresholds, injection filter, dedup, routing | — |
+|  | **Admission** | pure `evaluateAdmission`, repeated after Filter changes inputs | non-admitted or incompletely vetted findings bypass challenge as `admission_terminal`; disposal keeps `report_only` or `held_back` |
 | 7 | **Challenge** | one `challenger` per admitted, fully vetted finding (blind), up to `limits.challengeCap` | overflow → `challenge=capped`, null/unscored → `challenge=failed`; unchallenged and incomplete findings are held back after replay checks |
 |  | **Select delivery** | pure `selectDelivery` applies `args.delivery.tier` (`all` ⇒ every survivor, `main_only` ⇒ main-tagged), ranks, and caps at `limits.deliveryCap` | — (deterministic glue, no dispatch) |
 | 8 | **Report** | **no dispatch** — `renderReport()` builds `report.md` as a pure function of the pipeline's own output | — (deterministic: there is no dispatch to fail) |
@@ -41,8 +42,8 @@ Each agent returns structured findings against the canonical schema (`agent()` `
 ## Shared-context read plan
 
 Phase 2 stamps `contextLines`, `contextChars` and `contextMaxLineChars` (including LF).
-`contextReadPlan` bounds each chunk by 750 lines and 30,000 characters using the maximum
-line length, falling back to the average for older receipts. It enumerates at most ten
+`contextReadPlan` caps each planned chunk at 750 lines and targets 30,000 characters using the maximum
+line length, falling back to the average for older receipts or when a wide line would exceed the chunk ceiling. It enumerates at most ten
 calls, then expresses longer plans as an offset rule, with a ceiling of 2,000 chunks.
 Agents make every planned call and continue past the last received line if a call stops early.
 `runWith` builds `sharedContextLine` once and threads `contextLine` to stages so they cannot

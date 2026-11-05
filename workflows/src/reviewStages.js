@@ -9,7 +9,7 @@ import { applyFilterPipeline } from './filterFindings.js';
 import { applyChallenges, rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
 import { deliveryGroups } from './dispose.js';
-import { admissionContext, admissionRequests, hasAdmission, validationRejections } from './admission.js';
+import { admissionContext, admissionRequests, hasAdmission, validationRejections, missingAssessments, MISSING_ASSESSMENT } from './admission.js';
 
 // The platform rejects array-rooted tool schemas, so validation entries need an object wrapper.
 const VALIDATE_SCHEMA = {
@@ -44,22 +44,21 @@ function validateSchema(batch, accepted) {
   const variants = batch.flatMap((finding) => {
     const previous = accepted.get(finding.id);
     if (previous) {
-      const requirements = assessmentRequirement(validationRejections(finding, previous)
-        .map((reason) => reason.slice('missing_assessment:'.length)));
+      const requirements = assessmentRequirement(missingAssessments(finding, previous));
       return [{ ...requirements, properties: { finding_id: { enum: [finding.id] }, ...requirements.properties } }];
     }
+    const { promotion } = admissionPolicy(finding);
+    const references = Object.hasOwn(admissionRequests(finding), 'primary') ? ['primary'] : [];
     return VALIDATION_RETURN_PROPERTIES.policy_subject.enum.map((subject) => {
-      const { promotion } = admissionPolicy(finding);
       const requirements = assessmentRequirement(requiredAssessments(finding, subject));
-      const references = Object.keys(admissionRequests(finding)).filter((key) => key === 'primary');
-      const conditional = promotion && references.length > 0;
-      return { properties: { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] },
-        ...(!conditional ? requirements.properties : {}) }, required: [...base.required, ...(!conditional ? requirements.required : [])],
-        ...(conditional ? { if: { properties: { admission_assessments: { contains: {
+      const properties = { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] } };
+      const plain = { properties: { ...properties, ...requirements.properties }, required: [...base.required, ...requirements.required] };
+      if (!promotion || references.length === 0) return plain;
+      return { properties, required: base.required, if: { properties: { admission_assessments: { contains: {
           properties: { predicate: { const: promotion.predicate }, status: { const: 'confirmed' },
             references: { const: references } }, required: ['predicate', 'status', 'references'],
         } } }, required: ['admission_assessments'] },
-        then: assessmentRequirement(requiredAssessments(finding, subject, true)), else: requirements } : {}),
+        then: assessmentRequirement(requiredAssessments(finding, subject, true)), else: requirements,
       };
     });
   });
@@ -114,7 +113,7 @@ export async function validateStage(ctx, input) {
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
         const previous = accepted.get(finding.id);
-        const missing = previous ? validationRejections(finding, previous).map((reason) => reason.slice('missing_assessment:'.length)) : [];
+        const missing = previous ? missingAssessments(finding, previous) : [];
         const replacements = (Array.isArray(entry.admission_assessments) ? entry.admission_assessments : [])
           .filter((assessment) => missing.includes(assessment?.predicate));
         const merged = previous && label.startsWith('validate-retry-') ? { ...previous,
@@ -123,7 +122,7 @@ export async function validateStage(ctx, input) {
         const reasons = validationRejections(finding, merged);
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
         // Missing admission evidence still warrants a retry, but does not invalidate a score.
-        if (reasons.every((reason) => reason.startsWith('missing_assessment:'))) accepted.set(finding.id, merged);
+        if (reasons.every((reason) => reason.startsWith(MISSING_ASSESSMENT))) accepted.set(finding.id, merged);
       }
     }
     validatorAudit(audit, label, res, rejections);
@@ -147,7 +146,7 @@ export async function validateStage(ctx, input) {
     const unscored = batch.filter((finding) => !accepted.has(finding.id));
     if (unscored.length) {
       const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))]
-        .filter((reason) => !reason.startsWith('missing_assessment:'));
+        .filter((reason) => !reason.startsWith(MISSING_ASSESSMENT));
       let problem = mainLists[idx] ? 'omitted scores' : 'returned null/malformed';
       if (reasons.some((reason) => !['missing_entry', 'malformed_return'].includes(reason))) {
         problem = `returned invalid/incomplete entries (${reasons.join(', ')})`;
