@@ -2,6 +2,39 @@
 
 <!-- version list -->
 
+## v3.61.1 (2026-11-05)
+
+### Bug Fixes
+
+- Cap a single verify finding at 50,000 characters on every host
+  ([#580](https://github.com/liatrio-labs/claude-code-gauntlet/pull/580),
+  [`6653a1f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6653a1f540167fdf7fcff0d09e5af1a89cdf81eb))
+
+- Keep evidence in the trace projection and derive fields from its readers
+  ([#581](https://github.com/liatrio-labs/claude-code-gauntlet/pull/581),
+  [`a44dbbc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a44dbbc3b642855c0e67fe8cf42f6a28e4dd4ebf))
+
+- Keep the measurement trace under the workflow return budget
+  ([#581](https://github.com/liatrio-labs/claude-code-gauntlet/pull/581),
+  [`a44dbbc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a44dbbc3b642855c0e67fe8cf42f6a28e4dd4ebf))
+
+- Keep the measurement trace under the workflow return budget (#46)
+  ([#581](https://github.com/liatrio-labs/claude-code-gauntlet/pull/581),
+  [`a44dbbc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a44dbbc3b642855c0e67fe8cf42f6a28e4dd4ebf))
+
+- Keep verify slice tokens short so the executor copies them intact
+  ([#580](https://github.com/liatrio-labs/claude-code-gauntlet/pull/580),
+  [`6653a1f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6653a1f540167fdf7fcff0d09e5af1a89cdf81eb))
+
+- Keep verify slice tokens short so the executor copies them intact (#46)
+  ([#580](https://github.com/liatrio-labs/claude-code-gauntlet/pull/580),
+  [`6653a1f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6653a1f540167fdf7fcff0d09e5af1a89cdf81eb))
+
+- **bench**: Treat budget-dropped trace stages as unavailable, not as errors
+  ([#581](https://github.com/liatrio-labs/claude-code-gauntlet/pull/581),
+  [`a44dbbc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a44dbbc3b642855c0e67fe8cf42f6a28e4dd4ebf))
+
+
 ## v3.61.0 (2026-11-05)
 
 ### Bug Fixes
