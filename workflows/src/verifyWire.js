@@ -79,8 +79,8 @@ export function encodeSliceInline(content) {
   return encoded;
 }
 
-// Leave room for the rest of the executor command.
-export const VERIFY_INLINE_CHAR_BUDGET = 50000;
+// Short tokens reduce executor transcription failures.
+export const VERIFY_INLINE_CHAR_BUDGET = 5000;
 
 // Generated into Python; this order also governs the delta checksum.
 // Anchor is returned only for removed losses whose quote verification derived.

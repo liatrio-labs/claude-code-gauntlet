@@ -27,13 +27,15 @@ export function verifyCommand(inp, i, sliceNonce, inlinePayload) {
 }
 
 // CreateProcess counts the entire UTF-16 command, including executable and quoting.
-export function verifyInlineBudget(input = {}) {
-  if (hostPlatformForRoots(input) !== 'windows') return VERIFY_INLINE_CHAR_BUDGET;
+export function verifyCommandInlineBudget(input = {}) {
+  if (hostPlatformForRoots(input) !== 'windows') return Infinity;
   const prepared = { ...input, verify: { ...(input.verify || {}),
     baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
   const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
   return Math.max(0, 32767 - overhead - 2048);
 }
+
+export const verifyInlineBudget = (input = {}) => Math.min(VERIFY_INLINE_CHAR_BUDGET, verifyCommandInlineBudget(input));
 
 export const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
 
@@ -56,8 +58,8 @@ export function predictVerifySliceInlineLength(slice, baseBranch, hostPlatform) 
   return verifySliceLengthFromCosts(envelopeLength, findingCost, slice.length);
 }
 
-// A skipped oversize finding hides a boundary that neighboring slices cannot reconstruct, so the planner records closing reasons.
-export function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPlatform) {
+// Indivisible findings may exceed the copy target, but never the native command limit.
+export function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPlatform, hardBudget = Infinity) {
   const source = Array.isArray(findings) ? findings : [];
   const branch = effectiveVerifyBaseBranch(baseBranch);
   const maxFindings = Math.max(1, sliceSize || source.length || 1);
@@ -80,9 +82,15 @@ export function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPl
   for (const finding of source) {
     const findingCost = projectedVerifyFindingInlineLength(finding, hostPlatform);
     const singleCost = verifySliceLengthFromCosts(envelopeAllowance, findingCost, 1);
-    if (singleCost > maxChars) {
+    if (singleCost > hardBudget) {
       flush('oversize');
       oversize.push(finding);
+      continue;
+    }
+    if (singleCost > maxChars) {
+      flush('budget');
+      current.push(finding);
+      flush('budget');
       continue;
     }
     const candidateCost = verifySliceLengthFromCosts(
@@ -131,7 +139,7 @@ function findingCount(findings) {
 function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   const count = findingCount(findings);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudget(input), baseBranch, hostPlatformForRoots(input)).slices.length
+    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudget(input), baseBranch, hostPlatformForRoots(input), verifyCommandInlineBudget(input)).slices.length
       * VERIFY_ATTEMPTS_PER_SLICE;
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;

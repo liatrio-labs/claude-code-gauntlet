@@ -1306,7 +1306,7 @@ function encodeSliceInline(content) {
   }
   return encoded;
 }
-const VERIFY_INLINE_CHAR_BUDGET = 50000;
+const VERIFY_INLINE_CHAR_BUDGET = 5000;
 const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason', 'line_start', 'line_end', 'location_status', 'diff_validation', 'resolved_sites', 'anchor', ...VERIFY_FACT_KEYS];
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
 const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
@@ -1417,13 +1417,14 @@ function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   }
   return parts.map(shellWord).join(' ');
 }
-function verifyInlineBudget(input = {}) {
-  if (hostPlatformForRoots(input) !== 'windows') return VERIFY_INLINE_CHAR_BUDGET;
+function verifyCommandInlineBudget(input = {}) {
+  if (hostPlatformForRoots(input) !== 'windows') return Infinity;
   const prepared = { ...input, verify: { ...(input.verify || {}),
     baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
   const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
   return Math.max(0, 32767 - overhead - 2048);
 }
+const verifyInlineBudget = (input = {}) => Math.min(VERIFY_INLINE_CHAR_BUDGET, verifyCommandInlineBudget(input));
 const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
 function verifyInlineCost(token, hostPlatform) {
   return token.length + (hostPlatform === 'windows' ? (token.match(/["\\]/g) || []).length : 0);
@@ -1439,7 +1440,7 @@ function predictVerifySliceInlineLength(slice, baseBranch, hostPlatform) {
   for (const finding of slice) findingCost += projectedVerifyFindingInlineLength(finding, hostPlatform);
   return verifySliceLengthFromCosts(envelopeLength, findingCost, slice.length);
 }
-function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPlatform) {
+function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPlatform, hardBudget = Infinity) {
   const source = Array.isArray(findings) ? findings : [];
   const branch = effectiveVerifyBaseBranch(baseBranch);
   const maxFindings = Math.max(1, sliceSize || source.length || 1);
@@ -1461,9 +1462,15 @@ function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPlatform)
   for (const finding of source) {
     const findingCost = projectedVerifyFindingInlineLength(finding, hostPlatform);
     const singleCost = verifySliceLengthFromCosts(envelopeAllowance, findingCost, 1);
-    if (singleCost > maxChars) {
+    if (singleCost > hardBudget) {
       flush('oversize');
       oversize.push(finding);
+      continue;
+    }
+    if (singleCost > maxChars) {
+      flush('budget');
+      current.push(finding);
+      flush('budget');
       continue;
     }
     const candidateCost = verifySliceLengthFromCosts(
@@ -1498,7 +1505,7 @@ function findingCount(findings) {
 function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   const count = findingCount(findings);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudget(input), baseBranch, hostPlatformForRoots(input)).slices.length
+    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudget(input), baseBranch, hostPlatformForRoots(input), verifyCommandInlineBudget(input)).slices.length
       * VERIFY_ATTEMPTS_PER_SLICE;
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
@@ -5566,7 +5573,8 @@ async function verifyStage(ctx, input) {
   const baseBranch = effectiveVerifyBaseBranch((inp.verify || {}).baseBranch);
   const hostPlatform = hostPlatformForRoots(inp);
   const inlineBudget = verifyInlineBudget(inp);
-  const plan = planVerifySlices(findings, sliceSize, inlineBudget, baseBranch, hostPlatform);
+  const hardBudget = verifyCommandInlineBudget(inp);
+  const plan = planVerifySlices(findings, sliceSize, inlineBudget, baseBranch, hostPlatform, hardBudget);
   const slices = plan.slices;
   const gaps = [];
   if (slices.length > VERIFY_FANOUT_DISCLOSE_THRESHOLD) {
@@ -5597,7 +5605,7 @@ async function verifyStage(ctx, input) {
       inputProof.degradedFindings += 1;
       out.push(...degradedSlice([unit.finding]));
       gaps.push(verifyDegradeGap(
-        `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has ${lengthKind} ${encodedLength}, over VERIFY_INLINE_CHAR_BUDGET=${inlineBudget}`,
+        `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has ${lengthKind} ${encodedLength}, over Windows command inline budget=${hardBudget}`,
         1,
         findings.length,
       ));
@@ -5609,7 +5617,7 @@ async function verifyStage(ctx, input) {
     const payload = record.inlinePayload;
     const predictedPayloadLength = predictVerifySliceInlineLength(slice, baseBranch);
     const commandCost = predictVerifySliceInlineLength(slice, baseBranch, hostPlatform);
-    if (payload.length !== predictedPayloadLength || commandCost > inlineBudget) {
+    if (payload.length !== predictedPayloadLength || commandCost > hardBudget || (slice.length > 1 && commandCost > inlineBudget)) {
       throw new Error(`verify inline planner produced an oversized slice ${i} (${commandCost} > ${inlineBudget})`);
     }
     const degrade = (detail) => {
@@ -5820,7 +5828,8 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
   };
 }
 function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
-  return verifyCommand(inp, i, sliceNonce, inlinePayload);
+  return 'Reproduce the quoted --input-inline token character for character with no line breaks.\n'
+    + verifyCommand(inp, i, sliceNonce, inlinePayload);
 }
 // --- args.js ---
 function resolveRemovedTestsArgs(args) {

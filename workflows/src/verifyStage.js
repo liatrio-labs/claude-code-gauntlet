@@ -3,7 +3,7 @@ import { hostPlatformForRoots } from './paths.js';
 import { FINDING_PROP_TYPES, LOCATION_STATUSES, RESOLVED_SITE_SCHEMA, VERIFY_FACT_PROPERTIES, modelFor } from './registry.js';
 import { firstUnsafeNumber } from './wire.js';
 import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum, stripVerifyFacts } from './verifyWire.js';
-import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
+import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyCommandInlineBudget, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
 import { measurementDecisions, traceDecision } from './measurementTrace.js';
 
 // Allow honest failures in the schema to avoid fabricated successes under retry
@@ -95,7 +95,8 @@ export async function verifyStage(ctx, input) {
   const baseBranch = effectiveVerifyBaseBranch((inp.verify || {}).baseBranch);
   const hostPlatform = hostPlatformForRoots(inp);
   const inlineBudget = verifyInlineBudget(inp);
-  const plan = planVerifySlices(findings, sliceSize, inlineBudget, baseBranch, hostPlatform);
+  const hardBudget = verifyCommandInlineBudget(inp);
+  const plan = planVerifySlices(findings, sliceSize, inlineBudget, baseBranch, hostPlatform, hardBudget);
   const slices = plan.slices;
 
   const gaps = [];
@@ -133,7 +134,7 @@ export async function verifyStage(ctx, input) {
       inputProof.degradedFindings += 1;
       out.push(...degradedSlice([unit.finding]));
       gaps.push(verifyDegradeGap(
-        `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has ${lengthKind} ${encodedLength}, over VERIFY_INLINE_CHAR_BUDGET=${inlineBudget}`,
+        `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has ${lengthKind} ${encodedLength}, over Windows command inline budget=${hardBudget}`,
         1,
         findings.length,
       ));
@@ -145,7 +146,7 @@ export async function verifyStage(ctx, input) {
     const payload = record.inlinePayload;
     const predictedPayloadLength = predictVerifySliceInlineLength(slice, baseBranch);
     const commandCost = predictVerifySliceInlineLength(slice, baseBranch, hostPlatform);
-    if (payload.length !== predictedPayloadLength || commandCost > inlineBudget) {
+    if (payload.length !== predictedPayloadLength || commandCost > hardBudget || (slice.length > 1 && commandCost > inlineBudget)) {
       throw new Error(`verify inline planner produced an oversized slice ${i} (${commandCost} > ${inlineBudget})`);
     }
     const degrade = (detail) => {
@@ -385,5 +386,6 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
 // Read the deltas prefix because length-capped Reads give no truncation notice;
 // the later full finding arrays are unnecessary for the join.
 function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
-  return verifyCommand(inp, i, sliceNonce, inlinePayload);
+  return 'Reproduce the quoted --input-inline token character for character with no line breaks.\n'
+    + verifyCommand(inp, i, sliceNonce, inlinePayload);
 }
