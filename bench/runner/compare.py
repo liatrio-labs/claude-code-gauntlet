@@ -1246,7 +1246,7 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
     selections, cells, stage_rows, block_reports = [], [], [], []
     ordinals = {(a.name, r.run_id): i for a in arms for i, r in enumerate(a.scores)}
     for block in blocks or (ResolvedBlock(None, None, None, arms),):
-        ss, local_runs = [], []
+        ss, local_runs, run_starts = [], [], {}
         listing = {}
         for arm in block.arms:
             listing[arm.name] = (
@@ -1274,6 +1274,8 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
             )
             for packet in ps:
                 run = _packet_run(packet)
+                if run.get("started"):
+                    run_starts[arm.name, run["run_index"]] = run["started"]
                 if arm.name == spec.candidate.name:
                     if (
                         spec.unseal
@@ -1320,7 +1322,7 @@ def compare_arms(spec, *, packet_loader=default_packet_loader):
             validity.validate_matrix(
                 ss, block.window, epoch=epoch, expected_run_indices=local_runs[0][1]
             )
-            validity.validate_interleaving(ss, block.window, local_runs)
+            validity.validate_interleaving(ss, block.window, local_runs, run_starts)
         for selection in ss:
             index = ordinals[selection.arm, selection.score_ref.run_id]
             rows = tuple(replace(r, run_index=index) for r in selection.observations)

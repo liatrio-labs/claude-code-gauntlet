@@ -679,7 +679,7 @@ def load_selected_attempt(packet, url, aid):
 PAIR_START_TOLERANCE = timedelta(minutes=1)
 
 
-def validate_interleaving(selections, window, runs):
+def validate_interleaving(selections, window, runs, run_starts=None):
     order = tuple((a, r) for a, r in window.planned_order if r in dict(runs)[a])
     starts = {
         (a, r): [
@@ -693,8 +693,20 @@ def validate_interleaving(selections, window, runs):
     def before(a, b):
         return max(starts[a]) < min(starts[b])
 
+    # The harness records each run's start; a retry's selected attempt starts late
+    # by design and must not move its run's start. No attempt precedes its run.
+    run_starts = run_starts or {}
+    if any(
+        key in run_starts and min(starts[key]) < timestamp(run_starts[key])
+        for key in order
+    ):
+        raise ValueError("selected attempts do not follow planned interleaving")
+
+    def first(key):
+        return timestamp(run_starts[key]) if key in run_starts else min(starts[key])
+
     def together(a, b):
-        return abs(min(starts[a]) - min(starts[b])) <= PAIR_START_TOLERANCE
+        return abs(first(a) - first(b)) <= PAIR_START_TOLERANCE
 
     def valid_pair(pair):
         return (

@@ -753,6 +753,8 @@ def test_a_run_pair_may_start_together_but_never_overlaps_the_next_pair(case, tm
 
     def restart(arm, index, at, only=None):
         ref = getattr(spec, arm).scores[index]
+        if only is None:
+            case.runs[ref]["started"] = at
         for (r, u), attempt in list(case.attempts.items()):
             if r == ref and only in (None, u):
                 case.attempts[r, u] = replace(attempt, started_at=at)
@@ -763,6 +765,23 @@ def test_a_run_pair_may_start_together_but_never_overlaps_the_next_pair(case, tm
     paired(spec, packets)
     restart("baseline", 1, "2026-10-20T12:04:30Z", only=retried)
     refuses(paired, spec, packets, match="planned interleaving")
+
+
+def test_a_pair_started_together_stays_together_when_its_first_pr_retries(
+    case, tmp_path
+):
+    spec, packets = case.build()
+    spec = audited(spec, packets, tmp_path / "audit")
+    base, cand = spec.baseline.scores[0], spec.candidate.scores[0]
+    case.runs[cand]["started"] = case.runs[base]["started"]
+    for (r, u), attempt in list(case.attempts.items()):
+        if r == cand:
+            case.attempts[r, u] = replace(attempt, started_at="2026-10-20T12:01:20Z")
+    late = next(u for r, u in case.attempts if r == base)
+    case.attempts[base, late] = replace(
+        case.attempts[base, late], started_at="2026-10-20T12:01:40Z"
+    )
+    paired(spec, packets)
 
 
 @pytest.fixture
