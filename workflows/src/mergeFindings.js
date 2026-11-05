@@ -174,7 +174,7 @@ export function merge(findingsByAgent, meta) {
   // Dictionary selection preserves repeated roster keys and integer-key enumeration.
   const selected = {};
   for (const agent of agents) {
-    const group = (findingsByAgent || {})[agent] || [];
+    const group = findingsByAgent[agent] || [];
     const findings = [];
     for (let i = 0; i < group.length; i += 1) {
       let obj;
@@ -239,7 +239,7 @@ export function merge(findingsByAgent, meta) {
 
 export function mergeStage(discoverOut, meta) {
   const out = discoverOut || { findings: [] };
-  const M = typeof meta === 'string' ? JSON.parse(meta) : (meta || {});
+  const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
   const findings = out.findings || [];
 
   const byAgent = {};

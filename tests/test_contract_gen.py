@@ -481,8 +481,8 @@ def test_dispatch_result_descriptor_generates_agent_contract_and_python_registry
             sys.executable,
             "-c",
             "import sys; sys.path.insert(0, 'scripts'); "
-            "from gauntlet.delivery.input import Finding; "
-            "assert Finding.__annotations__['extension_field'] is str",
+            + "from gauntlet.delivery.input import Finding; "
+            + "assert Finding.__annotations__['extension_field'] is str",
         ],
         cwd=str(registry_tree),
     )
