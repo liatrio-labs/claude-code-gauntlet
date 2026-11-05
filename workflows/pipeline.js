@@ -1417,14 +1417,16 @@ function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   }
   return parts.map(shellWord).join(' ');
 }
-function verifyCommandInlineBudget(input = {}) {
-  if (hostPlatformForRoots(input) !== 'windows') return Infinity;
-  const prepared = { ...input, verify: { ...(input.verify || {}),
-    baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
-  const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
-  return Math.max(0, 32767 - overhead - 2048);
+function verifyInlineBudgets(input = {}) {
+  let hard = 50000;
+  if (hostPlatformForRoots(input) === 'windows') {
+    const prepared = { ...input, verify: { ...(input.verify || {}),
+      baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
+    const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
+    hard = Math.min(hard, Math.max(0, 32767 - overhead - 2048));
+  }
+  return Object.freeze({ copy: Math.min(VERIFY_INLINE_CHAR_BUDGET, hard), hard });
 }
-const verifyInlineBudget = (input = {}) => Math.min(VERIFY_INLINE_CHAR_BUDGET, verifyCommandInlineBudget(input));
 const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
 function verifyInlineCost(token, hostPlatform) {
   return token.length + (hostPlatform === 'windows' ? (token.match(/["\\]/g) || []).length : 0);
@@ -1440,11 +1442,13 @@ function predictVerifySliceInlineLength(slice, baseBranch, hostPlatform) {
   for (const finding of slice) findingCost += projectedVerifyFindingInlineLength(finding, hostPlatform);
   return verifySliceLengthFromCosts(envelopeLength, findingCost, slice.length);
 }
-function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPlatform, hardBudget = Infinity) {
+function planVerifySlices(findings, sliceSize, { copy, hard }, baseBranch, hostPlatform) {
+  if (!Number.isFinite(copy) || !Number.isFinite(hard) || copy < 0 || copy > hard) {
+    throw new Error('verify inline budgets must satisfy 0 <= copy <= hard with finite limits');
+  }
   const source = Array.isArray(findings) ? findings : [];
   const branch = effectiveVerifyBaseBranch(baseBranch);
   const maxFindings = Math.max(1, sliceSize || source.length || 1);
-  const maxChars = Math.max(0, budget ?? VERIFY_INLINE_CHAR_BUDGET);
   const envelopeAllowance = verifyInlineCost(encodeSliceInline({ findings: [], base_branch: branch }), hostPlatform);
   const slices = [];
   const oversize = [];
@@ -1462,12 +1466,12 @@ function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPlatform,
   for (const finding of source) {
     const findingCost = projectedVerifyFindingInlineLength(finding, hostPlatform);
     const singleCost = verifySliceLengthFromCosts(envelopeAllowance, findingCost, 1);
-    if (singleCost > hardBudget) {
+    if (singleCost > hard) {
       flush('oversize');
       oversize.push(finding);
       continue;
     }
-    if (singleCost > maxChars) {
+    if (singleCost > copy) {
       flush('budget');
       current.push(finding);
       flush('budget');
@@ -1478,7 +1482,7 @@ function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPlatform,
       currentFindingCost + findingCost,
       current.length + 1,
     );
-    if (current.length > 0 && (current.length >= maxFindings || candidateCost > maxChars)) {
+    if (current.length > 0 && (current.length >= maxFindings || candidateCost > copy)) {
       flush(current.length >= maxFindings ? 'count' : 'budget');
     }
     current.push(finding);
@@ -1505,7 +1509,7 @@ function findingCount(findings) {
 function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   const count = findingCount(findings);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudget(input), baseBranch, hostPlatformForRoots(input), verifyCommandInlineBudget(input)).slices.length
+    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudgets(input), baseBranch, hostPlatformForRoots(input)).slices.length
       * VERIFY_ATTEMPTS_PER_SLICE;
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
@@ -5572,9 +5576,8 @@ async function verifyStage(ctx, input) {
   const model = modelFor('code-gauntlet:executor', inp.policy || {});
   const baseBranch = effectiveVerifyBaseBranch((inp.verify || {}).baseBranch);
   const hostPlatform = hostPlatformForRoots(inp);
-  const inlineBudget = verifyInlineBudget(inp);
-  const hardBudget = verifyCommandInlineBudget(inp);
-  const plan = planVerifySlices(findings, sliceSize, inlineBudget, baseBranch, hostPlatform, hardBudget);
+  const budgets = verifyInlineBudgets(inp);
+  const plan = planVerifySlices(findings, sliceSize, budgets, baseBranch, hostPlatform);
   const slices = plan.slices;
   const gaps = [];
   if (slices.length > VERIFY_FANOUT_DISCLOSE_THRESHOLD) {
@@ -5600,12 +5603,11 @@ async function verifyStage(ctx, input) {
     if (unit.kind === 'oversize') {
       const content = { findings: [projectVerifySliceFinding(unit.finding)], base_branch: baseBranch };
       const encodedLength = verifyInlineCost(encodeSliceInline(content), hostPlatform);
-      const lengthKind = hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length';
       inputProof.oversize += 1;
       inputProof.degradedFindings += 1;
       out.push(...degradedSlice([unit.finding]));
       gaps.push(verifyDegradeGap(
-        `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has ${lengthKind} ${encodedLength}, over Windows command inline budget=${hardBudget}`,
+        `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has inline cost ${encodedLength}, over hard cap=${budgets.hard} (copy target=${budgets.copy})`,
         1,
         findings.length,
       ));
@@ -5617,8 +5619,17 @@ async function verifyStage(ctx, input) {
     const payload = record.inlinePayload;
     const predictedPayloadLength = predictVerifySliceInlineLength(slice, baseBranch);
     const commandCost = predictVerifySliceInlineLength(slice, baseBranch, hostPlatform);
-    if (payload.length !== predictedPayloadLength || commandCost > hardBudget || (slice.length > 1 && commandCost > inlineBudget)) {
-      throw new Error(`verify inline planner produced an oversized slice ${i} (${commandCost} > ${inlineBudget})`);
+    const payloadLengthMismatch = payload.length !== predictedPayloadLength;
+    const exceedsHardCap = commandCost > budgets.hard;
+    const exceedsCopyTarget = slice.length > 1 && commandCost > budgets.copy;
+    if (payloadLengthMismatch || exceedsHardCap || exceedsCopyTarget) {
+      const failed = [
+        [payloadLengthMismatch, 'payload length mismatch'],
+        [exceedsHardCap, 'hard cap exceeded'],
+        [exceedsCopyTarget, 'multi-finding copy target exceeded'],
+      ].filter(([fails]) => fails).map(([, name]) => name).join(', ');
+      throw new Error(`verify inline planner invariant failed for slice ${i}: ${failed} `
+        + `(payload length=${payload.length}, predicted=${predictedPayloadLength}, inline cost=${commandCost}, copy target=${budgets.copy}, hard cap=${budgets.hard})`);
     }
     const degrade = (detail) => {
       out.push(...degradedSlice(slice));

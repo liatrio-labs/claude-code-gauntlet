@@ -3,7 +3,7 @@ import { hostPlatformForRoots } from './paths.js';
 import { FINDING_PROP_TYPES, LOCATION_STATUSES, RESOLVED_SITE_SCHEMA, VERIFY_FACT_PROPERTIES, modelFor } from './registry.js';
 import { firstUnsafeNumber } from './wire.js';
 import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum, stripVerifyFacts } from './verifyWire.js';
-import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudget, verifyCommandInlineBudget, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
+import { VERIFY_ATTEMPTS_PER_SLICE, verifyInlineBudgets, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
 import { measurementDecisions, traceDecision } from './measurementTrace.js';
 
 // Allow honest failures in the schema to avoid fabricated successes under retry
@@ -94,9 +94,8 @@ export async function verifyStage(ctx, input) {
   const model = modelFor('code-gauntlet:executor', inp.policy || {});
   const baseBranch = effectiveVerifyBaseBranch((inp.verify || {}).baseBranch);
   const hostPlatform = hostPlatformForRoots(inp);
-  const inlineBudget = verifyInlineBudget(inp);
-  const hardBudget = verifyCommandInlineBudget(inp);
-  const plan = planVerifySlices(findings, sliceSize, inlineBudget, baseBranch, hostPlatform, hardBudget);
+  const budgets = verifyInlineBudgets(inp);
+  const plan = planVerifySlices(findings, sliceSize, budgets, baseBranch, hostPlatform);
   const slices = plan.slices;
 
   const gaps = [];
@@ -129,12 +128,11 @@ export async function verifyStage(ctx, input) {
     if (unit.kind === 'oversize') {
       const content = { findings: [projectVerifySliceFinding(unit.finding)], base_branch: baseBranch };
       const encodedLength = verifyInlineCost(encodeSliceInline(content), hostPlatform);
-      const lengthKind = hostPlatform === 'windows' ? 'Windows argv length' : 'encoded length';
       inputProof.oversize += 1;
       inputProof.degradedFindings += 1;
       out.push(...degradedSlice([unit.finding]));
       gaps.push(verifyDegradeGap(
-        `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has ${lengthKind} ${encodedLength}, over Windows command inline budget=${hardBudget}`,
+        `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has inline cost ${encodedLength}, over hard cap=${budgets.hard} (copy target=${budgets.copy})`,
         1,
         findings.length,
       ));
@@ -146,8 +144,17 @@ export async function verifyStage(ctx, input) {
     const payload = record.inlinePayload;
     const predictedPayloadLength = predictVerifySliceInlineLength(slice, baseBranch);
     const commandCost = predictVerifySliceInlineLength(slice, baseBranch, hostPlatform);
-    if (payload.length !== predictedPayloadLength || commandCost > hardBudget || (slice.length > 1 && commandCost > inlineBudget)) {
-      throw new Error(`verify inline planner produced an oversized slice ${i} (${commandCost} > ${inlineBudget})`);
+    const payloadLengthMismatch = payload.length !== predictedPayloadLength;
+    const exceedsHardCap = commandCost > budgets.hard;
+    const exceedsCopyTarget = slice.length > 1 && commandCost > budgets.copy;
+    if (payloadLengthMismatch || exceedsHardCap || exceedsCopyTarget) {
+      const failed = [
+        [payloadLengthMismatch, 'payload length mismatch'],
+        [exceedsHardCap, 'hard cap exceeded'],
+        [exceedsCopyTarget, 'multi-finding copy target exceeded'],
+      ].filter(([fails]) => fails).map(([, name]) => name).join(', ');
+      throw new Error(`verify inline planner invariant failed for slice ${i}: ${failed} `
+        + `(payload length=${payload.length}, predicted=${predictedPayloadLength}, inline cost=${commandCost}, copy target=${budgets.copy}, hard cap=${budgets.hard})`);
     }
     const degrade = (detail) => {
       out.push(...degradedSlice(slice));

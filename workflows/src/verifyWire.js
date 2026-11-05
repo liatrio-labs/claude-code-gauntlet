@@ -79,7 +79,7 @@ export function encodeSliceInline(content) {
   return encoded;
 }
 
-// Short tokens reduce executor transcription failures.
+// Long tokens were often garbled in the executor's copy; keep each copy short.
 export const VERIFY_INLINE_CHAR_BUDGET = 5000;
 
 // Generated into Python; this order also governs the delta checksum.

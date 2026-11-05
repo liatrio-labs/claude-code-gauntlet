@@ -1336,7 +1336,7 @@ import { pathToFileURL } from 'node:url';
 const [root, outputDir, python] = process.argv.slice(1);
 const load = (path) => import(pathToFileURL(`${root}/${path}`).href);
 const { verifyStage } = await load('workflows/src/verifyStage.js');
-const { verifyCommandInlineBudget } = await load('workflows/src/capacity.js');
+const { verifyInlineBudgets } = await load('workflows/src/capacity.js');
 const { verifyCtx, verifyInput, deltaEnvelope } = await load('workflows/test/helpers/verifyDelta.js');
 const { writeArtifacts } = await load('workflows/src/persist.js');
 const { persistCtx, persistInput } = await load('workflows/test/helpers/persistFixtures.js');
@@ -1344,7 +1344,7 @@ const { parseWriterPayload } = await load('workflows/src/persist.js');
 const input = { python, pluginRoot: root, nonce: 'n-1', headShaShort: 'abc123',
   verify: { scriptPath: '/untrusted.py', inputPathBase: `${outputDir}/input`, outputPathBase: `${outputDir}/verified` } };
 const finding = { id: 'F1', file: 'source.py', line_start: 1, origin: 'new', description: '' };
-const budget = verifyCommandInlineBudget(input);
+const budget = verifyInlineBudgets(input).hard;
 // A long path survives projection and fills the Windows argv budget.
 finding.file = 'x'.repeat(budget - 200);
 const ctx = verifyCtx(() => deltaEnvelope([finding], { nonce: 'n-1.0' }));

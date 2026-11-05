@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyStage } from '../src/verifyStage.js';
-import { deltaContentProof } from '../src/verifyWire.js';
+import { deltaContentProof, encodeSliceInline, projectVerifySliceFinding } from '../src/verifyWire.js';
 import { ANCHOR_LIMITS } from '../src/registry.js';
 import { deltaEnvelope, deltasFor, ELIMINATION_STAMP, verifyCtx, verifyInput, dispatchedFindings, sliceInputRecorder } from './helpers/verifyDelta.js';
 import { outsideSingleQuotes, shellSplit } from './helpers/shellWords.js';
@@ -463,7 +463,36 @@ test('finding over the Windows native command limit is disclosed without dispatc
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1, oversize: 1, degradedFindings: 1 });
   assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0']);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['BIG', 'unknown'], ['OK', 'new']]);
-  assert.deepEqual(out.gaps, ['verify: UNVERIFIED \u2014 finding BIG has Windows argv length 31089, over Windows command inline budget=30421; 1 of 2 finding(s) in stage marked origin=unknown, surfaced-classification skipped, held back to the report']);
+  assert.deepEqual(out.gaps, ['verify: UNVERIFIED \u2014 finding BIG has inline cost 31089, over hard cap=30421 (copy target=5000); 1 of 2 finding(s) in stage marked origin=unknown, surfaced-classification skipped, held back to the report']);
+});
+
+for (const hostPlatform of ['posix', 'windows']) test(`finding over 50,000 characters degrades between neighbors without dispatch: ${hostPlatform}`, async () => {
+  const findings = findingsFor(3);
+  findings[1].file = 'x'.repeat(50000);
+  const ctx = verifyCtx((index, _attempt, call) => deltaEnvelope(dispatchedFindings(call.prompt), { nonce: `n-1.${index}` }));
+  const out = await verifyStage(ctx, verifyInput(findings, {
+    repoRoot: hostPlatform === 'windows' ? 'D:/repo' : '/repo', limits: { verifySliceSize: 3 },
+  }));
+  assert.equal(out.verified, false);
+  assert.deepEqual(out.inputProof, { ...ZERO, slices: 2, proven: 2, oversize: 1, degradedFindings: 1 });
+  assert.deepEqual(ctx.calls.map((call) => dispatchedFindings(call.prompt).map((f) => f.id)), [['F0'], ['F2']]);
+  assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0', 'verify-slice-1']);
+  assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['F0', 'new'], ['F1', 'unknown'], ['F2', 'new']]);
+  assert.equal(out.gaps.length, 1);
+  assert.match(out.gaps[0], /finding F1 has inline cost \d+, over hard cap=\d+ \(copy target=5000\); 1 of 3 finding\(s\)/);
+  if (hostPlatform === 'posix') assert.match(out.gaps[0], /hard cap=50000/);
+});
+
+test('finding exactly at the POSIX hard cap dispatches in its own slice', async () => {
+  const finding = { id: 'EXACT', file: '' };
+  const emptyLength = encodeSliceInline({ findings: [projectVerifySliceFinding(finding)], base_branch: 'main' }).length;
+  const findings = [{ ...finding, file: 'x'.repeat(50000 - emptyLength) }];
+  const ctx = verifyCtx(() => deltaEnvelope(findings, { nonce: 'n-1.0' }));
+  const out = await verifyStage(ctx, verifyInput(findings, { repoRoot: '/repo' }));
+  assert.equal(out.verified, true);
+  assert.equal(ctx.calls.length, 1);
+  assert.equal(inlineOf(ctx.calls[0]).length, 50000);
+  assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1 });
 });
 
 test('location deltas require shape and content proofs', async () => {

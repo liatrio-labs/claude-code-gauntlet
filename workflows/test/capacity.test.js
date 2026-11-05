@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   verifyCommand, verifyInlineCost, planVerifySlices, predictVerifySliceInlineLength, worstCaseAgentCount, coarsenLimits,
-  verifyInlineBudget, verifyCommandInlineBudget, effectiveVerifyBaseBranch, effectiveSliceSize, effectiveChallengeCap, effectiveBucketSize, effectiveBatchSize,
+  verifyInlineBudgets, effectiveVerifyBaseBranch, effectiveSliceSize, effectiveChallengeCap, effectiveBucketSize, effectiveBatchSize,
 } from '../src/capacity.js';
 import { encodeSliceInline, projectVerifySliceFinding } from '../src/verifyWire.js';
 import { summarize } from '../src/discover.js';
@@ -16,18 +16,21 @@ const BASIC = [
 const PLAN_GOLDEN = { slices: [['A', 'B'], ['C']], oversize: [], closeReasons: ['count', null] };
 
 for (const key of ['repoRoot', 'outputDir', 'pluginRoot']) test(`Windows budget derives from ${key}`, () => {
-  assert.equal(verifyInlineBudget({ [key]: 'd:/work/repo' }), 5000);
-  assert.equal(verifyInlineBudget({ [key]: '/work/repo' }), 5000);
-  assert.equal(verifyCommandInlineBudget({ [key]: '/work/repo' }), Infinity);
+  const windows = verifyInlineBudgets({ [key]: 'd:/work/repo' });
+  assert.equal(windows.copy, 5000);
+  assert.ok(windows.hard < 32767);
+  assert.deepEqual(verifyInlineBudgets({ [key]: '/work/repo' }), { copy: 5000, hard: 50000 });
   const input = { [key]: 'd:/work/repo', verify: { contextFile: 'x'.repeat(27000) } };
-  assert.equal(verifyInlineBudget(input), verifyCommandInlineBudget(input));
-  assert.ok(verifyInlineBudget(input) < 5000);
+  const constrained = verifyInlineBudgets(input);
+  assert.equal(constrained.copy, constrained.hard);
+  assert.ok(constrained.copy < 5000);
+  assert.deepEqual(verifyInlineBudgets({ ...input, verify: { contextFile: 'x'.repeat(32767) } }), { copy: 0, hard: 0 });
 });
 const PLAN_ROWS = [
   { name: 'Windows quoted JSON budget', size: 25, budget: 250, hostPlatform: 'windows', length: 281,
     input: Array.from({ length: 4 }, (_, i) => ({ id: `F${i}`, file: 'a'.repeat(30) })),
     expected: { slices: [['F0', 'F1', 'F2'], ['F3']], oversize: [], closeReasons: ['budget', null] } },
-  { name: 'count closes a slice', input: BASIC, size: 2, budget: 100000 },
+  { name: 'count closes a slice', input: BASIC, size: 2, budget: 50000 },
   { name: 'single finding exceeds budget', input: [BASIC[0]], size: 2, budget: 10,
     expected: { slices: [['A']], oversize: [], closeReasons: ['budget'] } },
   { name: 'native command limit withholds an indivisible finding', input: [BASIC[0]], size: 2, budget: 10, hardBudget: 10,
@@ -39,6 +42,9 @@ const PLAN_ROWS = [
       { id: 'BIG', origin: 'new', cross_file_refs: [], file: 'x'.repeat(5000) },
       { id: 'C', origin: 'new', cross_file_refs: [] }],
     expected: { slices: [['A'], ['BIG'], ['C']], oversize: [], closeReasons: ['budget', 'budget', null] } },
+  { name: 'hard-oversize flushes the preceding slice between neighbors', size: 3, budget: 5000,
+    input: [{ id: 'A' }, { id: 'BIG', file: 'x'.repeat(50000) }, { id: 'C' }],
+    expected: { slices: [['A'], ['C']], oversize: ['BIG'], closeReasons: ['oversize', null] } },
   { name: 'exact long-branch equality fits', size: 2, budget: 1311, branch: 'b'.repeat(1000), length: 1311,
     input: [
       { id: 'fit-a', file: 'x'.repeat(100), line_start: 1, origin: 'new', cross_file_refs: [] },
@@ -47,7 +53,7 @@ const PLAN_ROWS = [
 ];
 for (const row of PLAN_ROWS) test(`slice planning: ${row.name}`, () => {
   const input = JSON.parse(JSON.stringify(row.input));
-  const out = planVerifySlices(input, row.size, row.budget, row.branch, row.hostPlatform, row.hardBudget);
+  const out = planVerifySlices(input, row.size, { copy: row.budget, hard: row.hardBudget ?? 50000 }, row.branch, row.hostPlatform);
   assert.deepEqual(input, row.input);
   assert.deepEqual({ slices: out.slices.map((slice) => slice.map((f) => f.id)),
     oversize: out.oversize.map((f) => f.id), closeReasons: out.closeReasons }, row.expected ?? PLAN_GOLDEN);
@@ -58,9 +64,14 @@ for (const row of PLAN_ROWS) test(`slice planning: ${row.name}`, () => {
   if (row.length) assert.equal(predictVerifySliceInlineLength(input, row.branch, row.hostPlatform), row.length);
 });
 
-test('default copy budget splits many small findings without losing or reordering them', () => {
+for (const budgets of [undefined, { copy: 5000 }, { copy: 5000, hard: Infinity },
+  { copy: -1, hard: 50000 }, { copy: 5000, hard: 4999 }]) test(`planner rejects incomplete or invalid budgets: ${JSON.stringify(budgets)}`, () => {
+  assert.throws(() => planVerifySlices(BASIC, 2, budgets));
+});
+
+test('copy budget splits many small findings without losing or reordering them', () => {
   const findings = Array.from({ length: 100 }, (_, i) => ({ id: `F${i}`, file: 'x'.repeat(200) }));
-  const plan = planVerifySlices(findings, 200);
+  const plan = planVerifySlices(findings, 200, verifyInlineBudgets());
   assert.deepEqual(plan.slices.map((slice) => slice.length), [22, 22, 22, 22, 12]);
   assert.deepEqual(plan.slices.map((slice) => predictVerifySliceInlineLength(slice)), [4931, 4941, 4941, 4941, 2711]);
   assert.deepEqual(plan.slices.flat(), findings);
@@ -73,7 +84,7 @@ const COST_ROWS = [
   { branch: 'b'.repeat(1000), lengths: [2042, 1969, 2071, 2072, 2121, 1278] },
 ];
 for (const row of COST_ROWS) test(`encoder costs: branch length ${row.branch.length}`, () => {
-  const plan = planVerifySlices(randomFindings(275, 37), 7, 5000, row.branch);
+  const plan = planVerifySlices(randomFindings(275, 37), 7, verifyInlineBudgets(), row.branch);
   assert.deepEqual(plan.oversize, []);
   assert.deepEqual(plan.slices.map((slice) => predictVerifySliceInlineLength(slice, row.branch)), row.lengths);
   assert.deepEqual(plan.slices.map((slice) => encodeSliceInline({
@@ -96,6 +107,8 @@ const COUNT_ROWS = [
     findings: [{ id: 'A', file: 'x'.repeat(30000) }, { id: 'B', file: 'y'.repeat(30000) }], count: 18 },
   { name: 'small copy slices include every retry', limits: COUNT_GOLDEN, files: 0,
     findings: Array.from({ length: 100 }, (_, i) => ({ id: `F${i}`, file: 'x'.repeat(200) })), count: 84 },
+  { name: 'hard-oversize finding consumes no verify dispatch', limits: COUNT_GOLDEN, files: 0,
+    findings: [{ id: 'BIG', file: 'x'.repeat(50000) }], count: 13 },
 ];
 for (const row of COUNT_ROWS) test(`agent count: ${row.name}`, () => {
   assert.equal(worstCaseAgentCount(row.limits, row.files, row.findings), row.count);
@@ -142,8 +155,8 @@ const BRANCH_ROWS = [
 for (const row of BRANCH_ROWS) test(`array guard branch: ${row.name}`, () => {
   const findings = Array.from({ length: 800 }, (_, i) => ({ id: `F${i}`, file: (i % 2 ? 'y' : 'x').repeat(2450) }));
   const limits = { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 };
-  assert.equal(planVerifySlices(findings, 25, verifyInlineBudget(row.input), row.branch,
-    row.input ? 'windows' : 'posix', verifyCommandInlineBudget(row.input)).slices.length, row.slices);
+  assert.equal(planVerifySlices(findings, 25, verifyInlineBudgets(row.input), row.branch,
+    row.input ? 'windows' : 'posix').slices.length, row.slices);
   assert.equal(worstCaseAgentCount(limits, 0, findings, row.branch, row.input), row.count);
   const coarse = coarsenLimits(limits, 0, findings, row.branch, row.input);
   assert.deepEqual(coarse, row.coarse);
@@ -170,7 +183,7 @@ const EMPTY_BRANCH_ROWS = [undefined, null, '', 'main'];
 for (const [index, branch] of EMPTY_BRANCH_ROWS.entries()) test(`empty branch normalization: ${index}`, () => {
   const findings = Array.from({ length: 4 }, (_, i) => ({ id: `F${i}`, file: 'x'.repeat(100) }));
   assert.equal(effectiveVerifyBaseBranch(branch), 'main');
-  assert.deepEqual(planVerifySlices(findings, 25, 352, branch).slices.map((slice) => slice.map((f) => f.id)),
+  assert.deepEqual(planVerifySlices(findings, 25, { ...verifyInlineBudgets(), copy: 352 }, branch).slices.map((slice) => slice.map((f) => f.id)),
     [['F0', 'F1'], ['F2', 'F3']]);
   assert.equal(worstCaseAgentCount({ validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 }, 0, findings, branch), 14);
 });
@@ -210,7 +223,7 @@ test('anchor and map flags obey encoded command budget', () => {
     targetKind: 'local', contextFile: 'D:/out/context.md', contextMap: 'D:/out/map.json', diffPath: 'D:/out/raw.patch',
   } };
   const one = predictVerifySliceInlineLength(findings.slice(0, 1), 'main', 'windows');
-  const plan = planVerifySlices(findings, 6, one + 2, 'main', 'windows');
+  const plan = planVerifySlices(findings, 6, { ...verifyInlineBudgets(inp), copy: one + 2 }, 'main', 'windows');
   assert.equal(plan.slices.length, 6);
   for (const slice of plan.slices) {
     const content = { findings: slice.map(projectVerifySliceFinding), base_branch: 'main' };
@@ -222,6 +235,6 @@ test('anchor and map flags obey encoded command budget', () => {
     assert.ok(command.includes('--context-map D:/out/map.json'));
     assert.ok(command.includes('--context-file D:/out/context.md'));
   }
-  assert.equal(verifyInlineBudget(inp), 5000);
-  assert.ok(verifyCommandInlineBudget(inp) < verifyCommandInlineBudget({ ...inp, verify: {} }));
+  assert.equal(verifyInlineBudgets(inp).copy, 5000);
+  assert.ok(verifyInlineBudgets(inp).hard < verifyInlineBudgets({ ...inp, verify: {} }).hard);
 });

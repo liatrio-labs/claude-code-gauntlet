@@ -26,16 +26,17 @@ export function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   return parts.map(shellWord).join(' ');
 }
 
-// CreateProcess counts the entire UTF-16 command, including executable and quoting.
-export function verifyCommandInlineBudget(input = {}) {
-  if (hostPlatformForRoots(input) !== 'windows') return Infinity;
-  const prepared = { ...input, verify: { ...(input.verify || {}),
-    baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
-  const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
-  return Math.max(0, 32767 - overhead - 2048);
+// Keep a finite ceiling on every host; CreateProcess also needs room for executable and quoting.
+export function verifyInlineBudgets(input = {}) {
+  let hard = 50000;
+  if (hostPlatformForRoots(input) === 'windows') {
+    const prepared = { ...input, verify: { ...(input.verify || {}),
+      baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
+    const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
+    hard = Math.min(hard, Math.max(0, 32767 - overhead - 2048));
+  }
+  return Object.freeze({ copy: Math.min(VERIFY_INLINE_CHAR_BUDGET, hard), hard });
 }
-
-export const verifyInlineBudget = (input = {}) => Math.min(VERIFY_INLINE_CHAR_BUDGET, verifyCommandInlineBudget(input));
 
 export const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
 
@@ -58,12 +59,14 @@ export function predictVerifySliceInlineLength(slice, baseBranch, hostPlatform) 
   return verifySliceLengthFromCosts(envelopeLength, findingCost, slice.length);
 }
 
-// Indivisible findings may exceed the copy target, but never the native command limit.
-export function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPlatform, hardBudget = Infinity) {
+// Isolate long copies so neighbouring findings can still use short tokens.
+export function planVerifySlices(findings, sliceSize, { copy, hard }, baseBranch, hostPlatform) {
+  if (!Number.isFinite(copy) || !Number.isFinite(hard) || copy < 0 || copy > hard) {
+    throw new Error('verify inline budgets must satisfy 0 <= copy <= hard with finite limits');
+  }
   const source = Array.isArray(findings) ? findings : [];
   const branch = effectiveVerifyBaseBranch(baseBranch);
   const maxFindings = Math.max(1, sliceSize || source.length || 1);
-  const maxChars = Math.max(0, budget ?? VERIFY_INLINE_CHAR_BUDGET);
   const envelopeAllowance = verifyInlineCost(encodeSliceInline({ findings: [], base_branch: branch }), hostPlatform);
   const slices = [];
   const oversize = [];
@@ -82,12 +85,12 @@ export function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPl
   for (const finding of source) {
     const findingCost = projectedVerifyFindingInlineLength(finding, hostPlatform);
     const singleCost = verifySliceLengthFromCosts(envelopeAllowance, findingCost, 1);
-    if (singleCost > hardBudget) {
+    if (singleCost > hard) {
       flush('oversize');
       oversize.push(finding);
       continue;
     }
-    if (singleCost > maxChars) {
+    if (singleCost > copy) {
       flush('budget');
       current.push(finding);
       flush('budget');
@@ -98,7 +101,7 @@ export function planVerifySlices(findings, sliceSize, budget, baseBranch, hostPl
       currentFindingCost + findingCost,
       current.length + 1,
     );
-    if (current.length > 0 && (current.length >= maxFindings || candidateCost > maxChars)) {
+    if (current.length > 0 && (current.length >= maxFindings || candidateCost > copy)) {
       flush(current.length >= maxFindings ? 'count' : 'budget');
     }
     current.push(finding);
@@ -139,7 +142,7 @@ function findingCount(findings) {
 function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   const count = findingCount(findings);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudget(input), baseBranch, hostPlatformForRoots(input), verifyCommandInlineBudget(input)).slices.length
+    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudgets(input), baseBranch, hostPlatformForRoots(input)).slices.length
       * VERIFY_ATTEMPTS_PER_SLICE;
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
