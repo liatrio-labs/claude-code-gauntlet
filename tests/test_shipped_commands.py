@@ -14,7 +14,6 @@ from tests.support.phase2 import (
     ARTIFACTS,
     SHA,
     TRUNCATED,
-    normalize_frame_ids,
     seed_artifacts,
     write_context_inputs,
 )
@@ -192,6 +191,9 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
     assert "`" not in command
     output_dir = tmp_path / "o'brien out[1]"
     output_dir.mkdir()
+    checkout = tmp_path / "review checkout"
+    checkout.mkdir()
+    (checkout / "layout-marker").write_bytes(b"source")
     collector_path = collector.group(1)
     diff_path = diff_redirect.group(1)
     for placeholder, value in {
@@ -207,6 +209,7 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
     command = (
         command.replace("{plugin_root}", REPO.as_posix())
         .replace("{output_dir}", output_dir.as_posix())
+        .replace("{repo_root}", checkout.as_posix())
         .replace("{head_sha_short}", SHA)
         .replace("{target_type}", "local")
         .replace("{head_sha_full}", SHA.ljust(40, "0"))
@@ -221,25 +224,23 @@ def test_shipped_context_paths(tmp_path: Path) -> None:
         capture_output=True,
         check=False,
     )
-    expected = (
-        b"rules\n\n## Risk classification and AI-generated-code status\n\n"
-        b"Risk: low\nAI-generated-code status: none\n\n"
-        b'## Diff\n\n<untrusted-code-content id="ID">\ndiff\n'
-        b'</untrusted-code-content id="ID">\n'
-    )
     assert result.returncode == 0, result.stderr
-    assert result.stdout == (
-        b'{"contextLines": 12, "contextChars": 243, "removedTests": '
-        b'{"status": "available", "items": [], "omitted": 0, '
-        b'"checksum": "fnv1a32:0x6c377a08"}}\n'
-    )
     assert result.stderr == b""
-    assert (
-        normalize_frame_ids(
-            (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
-        )
-        == expected
+    context = (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
+    receipt = json.loads(result.stdout)
+    assert receipt["contextLines"] == context.count(b"\n")
+    assert receipt["contextChars"] == len(context.decode("utf-8"))
+    layout = re.search(
+        rb'kind="repository-layout"[^>]*>\n(.*?)\n</untrusted-code-content',
+        context,
+        re.S,
     )
+    assert layout is not None
+    assert json.loads(layout[1]) == {
+        "entries": ["layout-marker"],
+        "unavailable": [],
+        "omitted": [],
+    }
 
 
 @pytest.mark.skipif(
@@ -266,6 +267,7 @@ def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) ->
     replacements = {
         "{plugin_root}": REPO.as_posix(),
         "{output_dir}": output_dir.as_posix(),
+        "{repo_root}": cwd.as_posix(),
         "{head_sha_short}": SHA,
         "{nonce}": NONCE,
         "{target_type}": "local",
@@ -288,7 +290,7 @@ def test_nonce_heredoc_preserves_fixed_delimiter_text_as_data(tmp_path: Path) ->
     assert (
         b"\n## Risk classification and AI-generated-code status\n\n"
         + triage.encode("utf-8")
-        + b"\n\n## Diff\n"
+        + b"\n\n## Repository layout:"
         in context
     )
 

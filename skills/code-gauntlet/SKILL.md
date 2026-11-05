@@ -44,8 +44,8 @@ an output directory after producer failure.
 
 Only the collector receipt supplies project-rule discovery. Pass full raw REVIEW.md texts in
 receipt order with checksums and set checksum, or authoritative `[]`. Failed raw Reads stop;
-never combine raw/pre-parsed inputs on one axis. Copy `contextLines`, `contextChars`, and
-`removedTests` from the context receipt. Stamp `riskTable` for exactly the changed files.
+never combine raw/pre-parsed inputs on one axis. Copy `contextLines`, `contextChars`,
+`contextMaxLineChars` and `removedTests` from the context receipt. Stamp `riskTable` for exactly the changed files.
 Only interactive all-low-risk changes under 50 lines ask and stamp light/full `scopeAnswer`;
 headless omits it. Code derives scope flags and refuses inconsistent inputs.
 Capture `policy.subagentModel`, `policy.provider`, `policy.gateway`, and `policy.mappedAliases`

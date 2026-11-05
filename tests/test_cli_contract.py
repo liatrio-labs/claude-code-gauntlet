@@ -506,7 +506,7 @@ SUCCESS = {
             f"code-gauntlet-project-rules-{SHA}.md": "rules\n",
             f"code-gauntlet-diff-{SHA}.patch": "diff\n",
         },
-        f"--output-dir {{dir}} --head-sha {SHA}",
+        f"--output-dir {{dir}} --head-sha {SHA} --repo-root {{dir}}",
     ),
 }
 AWAIT = "--timeout-seconds 0 --since-epoch 0 --max-attempts 2"

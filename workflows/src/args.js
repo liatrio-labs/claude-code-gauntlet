@@ -41,7 +41,7 @@ const NULL_TOLERANCE_CONSEQUENCE = deepFreeze({
   scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
 });
 
-const CONTEXT_SIZE_MAX = deepFreeze({ contextLines: 5000000, contextChars: 500000000 });
+const CONTEXT_SIZE_MAX = deepFreeze({ contextLines: 5000000, contextChars: 500000000, contextMaxLineChars: 500000000 });
 
 const LIMIT_KEYS = deepFreeze([
   'summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize',
@@ -73,7 +73,7 @@ const ARGS_FIELD_CHECKS = deepFreeze({
     { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
     { key: 'changedLines', domain: 'number', message: 'changedLines must be a number' },
   ],
-  context: ['contextLines', 'contextChars'].map((key) => ({
+  context: Object.keys(CONTEXT_SIZE_MAX).map((key) => ({
     key, domain: 'safeInteger', minimum: 1, maximum: CONTEXT_SIZE_MAX[key],
     message: '{label} must be a positive safe integer (the measured size of the shared context file) when present',
     boundMessage: '{label} is {value}, above the {maximum} ceiling '
@@ -418,6 +418,9 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
   validateArgsFields(args, 'context', errors);
   if (args.contextChars !== undefined && args.contextLines === undefined) {
     errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
+  }
+  if (args.contextMaxLineChars !== undefined && args.contextLines === undefined) {
+    errors.push('contextMaxLineChars requires contextLines — line width alone cannot size a line-offset read plan');
   }
   // Validate every config layer before paid stages so malformed subtree settings cannot fail during filtering.
   if (args.reviewConfig !== undefined) {

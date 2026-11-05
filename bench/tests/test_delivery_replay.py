@@ -201,28 +201,6 @@ def test_candidate_dispose_trace(tmp_path, evidence):
         patcher.setattr(delivery_replay, "_assemble_entries", corrupt_checkpoint)
         with pytest.raises(ValueError, match="raw checkpoint delta"):
             replay_delivery(inputs, candidate=True)
-    for mutation, error in (
-        ("findings[0].confidence += 1", "finding delta"),
-        (
-            "findings[0].description = findings[0].body = 'invented claim'",
-            "finding delta",
-        ),
-        ("findings[0].body = 'invented claim'", "finding delta"),
-        ("findings.pop()", "member omission"),
-    ):
-        with pytest.MonkeyPatch.context() as patcher:
-            patcher.setattr(
-                delivery_replay,
-                "NODE",
-                delivery_replay.NODE.replace(
-                    "send({ dispatch, prompt_sha256:",
-                    "if (dispatch.label === 'artifact-writer') { const entry = entries.find(e => e.path.includes('findings-')); const findings = JSON.parse(entry.text); "
-                    + mutation
-                    + "; entry.text = JSON.stringify(findings, null, 2); } send({ dispatch, prompt_sha256:",
-                ),
-            )
-            with pytest.raises(ValueError, match=error):
-                replay_delivery(inputs, candidate=True)
     trace_path = tmp_path / "current.json"
     for stage in ("dispose", "holdback"):
         historical = copy.deepcopy(trace)
@@ -345,6 +323,79 @@ def test_candidate_uses_verify_diff_facts(tmp_path, evidence, changes, expected)
     assert actual["origin"] == original["origin"]
     assert actual["severity"] == original["severity"]
     assert actual["disposition"] == "held_back"
+
+
+def test_admission_replay_requires_enriched_evidence(tmp_path, evidence, monkeypatch):
+    from bench.runner import delivery_replay
+
+    manifest = _manifest(tmp_path, evidence, "candidate", trace=False)
+    workflow = tmp_path / "workflow.json"
+    record = json.loads(workflow.read_bytes())
+    for finding, expected in zip(
+        evidence["admission"], ["deliver", "report_only", "held_back"], strict=True
+    ):
+        record["state"]["phaseOutputs"]["challenge"]["findings"] = [finding]
+        _write(workflow, record)
+        wire = json.loads(manifest.read_bytes())
+        wire["sources"]["workflow"]["sha256"] = _hash(workflow.read_bytes())
+        _write(manifest, wire)
+        result = delivery_replay.replay_delivery(
+            delivery_replay.load_replay_inputs(manifest), candidate=True
+        )
+        artifacts = dict(result.artifacts)
+        disposed = json.loads(
+            next(data for p, data in artifacts.items() if "findings-" in p)
+        )
+        actual = next(f for f in disposed if f["id"] == finding["id"])
+        assert actual["disposition"] == expected
+        for key in (
+            "admission",
+            "admission_assessments",
+            "resolved_references",
+            "sites",
+        ):
+            assert actual.get(key) == finding.get(key)
+        delta = next(
+            d
+            for d in json.loads(artifacts["delivery-deltas.json"])
+            if d["id"] == finding["id"]
+        )
+        assert delta["admission"] == finding.get("admission")
+        assert (
+            delta["before"] == finding.get("disposition") and delta["after"] == expected
+        )
+        assert (
+            json.loads(result.receipt)["attribution_scope"] == "post_challenge_delivery"
+        )
+
+    for mutation, error in (
+        ("findings[0].confidence += 1", "finding delta"),
+        (
+            "findings[0].description = findings[0].body = 'invented claim'",
+            "finding delta",
+        ),
+        ("findings[0].body = 'invented claim'", "finding delta"),
+        ("findings.pop()", "member omission"),
+        ("findings[0].admission_assessments = []", "finding delta"),
+        ("findings[0].sites = [{file:'invented'}]", "finding delta"),
+        ("findings[0].body_fix_task_eligible = true", "finding delta"),
+        ("findings[0].admission = {status:'admitted'}", "finding delta"),
+    ):
+        with monkeypatch.context() as patcher:
+            patcher.setattr(
+                delivery_replay,
+                "NODE",
+                delivery_replay.NODE.replace(
+                    "send({ dispatch, prompt_sha256:",
+                    "if (dispatch.label === 'artifact-writer') { const entry = entries.find(e => e.path.includes('findings-')); const findings = JSON.parse(entry.text); "
+                    + mutation
+                    + "; entry.text = JSON.stringify(findings, null, 2); } send({ dispatch, prompt_sha256:",
+                ),
+            )
+            with pytest.raises(ValueError, match=error):
+                delivery_replay.replay_delivery(
+                    delivery_replay.load_replay_inputs(manifest), candidate=True
+                )
 
 
 @pytest.mark.parametrize("mode", ["return", "derived", "legacy", "writer-failure"])

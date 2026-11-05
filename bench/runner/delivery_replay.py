@@ -16,7 +16,7 @@ from typing import Any, Literal, TypedDict
 
 from gauntlet.artifacts import assemble, plan_checksum
 from gauntlet.jsjson import js_stringify_pretty
-from gauntlet.registry import Disposition
+from gauntlet.registry import Admission, Disposition
 
 from bench.runner.decode import decode
 from bench.runner.epochs import digest
@@ -79,6 +79,7 @@ class ReplayReceiptWire(TypedDict):
     input_hashes: dict[str, str]
     artifact_hashes: dict[str, str]
     trace_availability: Literal["available", "unavailable"]
+    attribution_scope: Literal["post_challenge_delivery"]
 
 
 class DeliveryDeltaWire(TypedDict):
@@ -89,6 +90,7 @@ class DeliveryDeltaWire(TypedDict):
     after: Disposition
     reasons: list[ReasonCode]
     surface: Literal["inline", "body"] | None
+    admission: Admission | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -556,6 +558,7 @@ def _candidate_artifacts(inputs, artifacts, paths, before, expected_checkpoint):
                 "after": finding["disposition"],
                 "reasons": finding["disposition_reasons"],
                 "surface": surfaces.get((finding.get("id"), finding.get("file"))),
+                "admission": finding.get("admission"),
             }
         )
     if before:
@@ -681,6 +684,7 @@ def replay_delivery(inputs, *, candidate=False):
         "trace_availability": "available"
         if inputs.trace is not None
         else "unavailable",
+        "attribution_scope": "post_challenge_delivery",
     }
     return ReplayResult(
         result,
