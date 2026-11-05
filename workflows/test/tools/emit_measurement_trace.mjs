@@ -2,8 +2,13 @@ import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { runWith } from '../../src/run.js';
 import { measurementScenario, persistedScenario } from '../helpers/measurementScenario.js';
+import { largeMeasurement } from '../helpers/largeMeasurement.js';
 
 const [outPath, mode = 'return', outputDir] = process.argv.slice(2);
+if (mode === 'large') {
+  writeFileSync(outPath, largeMeasurement().out.measurement.text);
+  process.exit(0);
+}
 const { args, ctx, state } = measurementScenario(mode === 'audit' ? 'return' : mode, { measurementTrace: true, ...(outputDir ? { outputDir } : {}) }, { auditOverlap: mode === 'audit' });
 const out = await runWith(ctx, args);
 if (!out.ok || out.measurement?.status !== 'available') throw new Error(JSON.stringify(out));

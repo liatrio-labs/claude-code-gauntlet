@@ -7,6 +7,8 @@ import { createMeasurementTrace, stampDiscovery, recordStage, appendMeasurement,
 import { validArgs } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { captureDeliveryReplay, appendDeliveryReplay } from '../src/measurementReplay.js';
+import { largeMeasurement } from './helpers/largeMeasurement.js';
+import { RETURN_CHAR_BUDGET } from '../src/wire.js';
 
 for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves every prompt, schema and user artifact: ${mode}`, async () => {
   const plain = measurementScenario(mode);
@@ -35,7 +37,7 @@ for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves
     measured.ctx.calls.filter(({ label }) => ['artifact-writer', 'assemble-artifacts'].includes(label))
       .map(({ label, agentType, prompt }) => ({ label, agent_type: agentType, prompt_sha256: createHash('sha256').update(prompt).digest('hex'), error: null })));
   assert.deepEqual(trace.snapshots.map((s) => s.stage), ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'dispose', 'select']);
-  assert.equal(trace.schema_version, 1);
+  assert.equal(trace.schema_version, 2);
   assert.equal(trace.complete, true);
   const first = trace.versions.find((v) => v.finding.id === 'FILTER');
   assert.equal(first.finding.confidence, 65);
@@ -61,11 +63,75 @@ test('large optional trace preserves primary recovery and native Unicode bytes',
   const envelope = { ok: false, checkpoints: { phases: { discover: {} }, checksum: 'held' } };
   const out = appendMeasurement(envelope, trace);
   assert.deepEqual(out.checkpoints, envelope.checkpoints);
-  assert.equal(out.measurement.status, 'unavailable');
+  assert.equal(out.measurement.status, 'available');
+  const cut = JSON.parse(out.measurement.text);
+  assert.deepEqual(cut.dropped_stages, ['discover']);
+  assert.equal(cut.snapshots[0].coverage, 'unavailable');
+  assert.deepEqual(cut.versions, []);
   assert.equal(Object.hasOwn(out, 'persistReturn'), false);
   const small = createMeasurementTrace('n');
   recordStage(small, 'discover', [stampDiscovery(small, { description: '\u00e9' }, { agentType: 'a', dimensions: [] }, 0, 0)]);
   assert.ok(appendMeasurement(envelope, small).measurement.text.includes('\u00e9'));
+});
+
+test('400 long claims retain discovery within the return budget and reuse versions across diagnostic stamps', () => {
+  const { trace, envelope, out } = largeMeasurement();
+  assert.equal(out.measurement.status, 'available');
+  assert.ok(JSON.stringify(out).length <= RETURN_CHAR_BUDGET);
+  assert.equal(out.review, envelope.review);
+  const saved = JSON.parse(out.measurement.text);
+  assert.deepEqual(saved.dropped_stages, []);
+  assert.equal(saved.snapshots[0].coverage, 'complete');
+  assert.equal(saved.snapshots[0].finding_version_ids.length, 400);
+  assert.equal(saved.versions.length, 400);
+  for (const snapshot of saved.snapshots) assert.deepEqual(snapshot.finding_version_ids, saved.snapshots[0].finding_version_ids);
+  assert.equal(Object.hasOwn(saved.versions[0].finding, 'evidence'), false);
+  trace.versions[0].finding.description = 'mutated after return';
+  assert.notEqual(saved.versions[0].finding.description, trace.versions[0].finding.description);
+});
+
+test('budget cuts later stages with their unused versions while preserving discovery and decision references', () => {
+  const trace = createMeasurementTrace('cut');
+  const f = stampDiscovery(trace, { description: 'discovered defect' }, { agentType: 'a', dimensions: [] }, 0, 0);
+  const invalid = stampDiscovery(trace, { description: 'invalid claim' }, { agentType: 'a', dimensions: [] }, 0, 1);
+  recordStage(trace, 'discover', [f], { removed: [invalid], decisions: [traceDecision(invalid, 'invalid_shape', 'malformed', [f.trace_id])] });
+  recordStage(trace, 'merge', [{ ...f, description: 'é'.repeat(600000) }], { decisions: [traceDecision(f, 'unknown', 'kept', [], 'kept')] });
+  recordStage(trace, 'verify', [{ ...f, description: 'z'.repeat(600000) }]);
+  const original = JSON.stringify(trace);
+  const out = appendMeasurement({ ok: true }, trace);
+  assert.ok(JSON.stringify(out).length <= RETURN_CHAR_BUDGET);
+  const saved = JSON.parse(out.measurement.text);
+  assert.deepEqual(saved.dropped_stages, ['verify']);
+  assert.equal(saved.snapshots[0].coverage, 'complete');
+  assert.equal(saved.snapshots[1].coverage, 'complete');
+  assert.equal(saved.snapshots[2].coverage, 'unavailable');
+  assert.deepEqual(saved.snapshots[2].finding_version_ids, []);
+  assert.equal(saved.versions.length, 3);
+  assert.ok(saved.versions.some((v) => v.trace_id === invalid.trace_id));
+  assert.equal(JSON.stringify(trace), original);
+  const tighter = JSON.parse(appendMeasurement({ review: 'x'.repeat(500000) }, saved).measurement.text);
+  assert.deepEqual(tighter.dropped_stages, ['merge', 'verify']);
+  assert.equal(tighter.snapshots[0].coverage, 'complete');
+  const noRoom = { review: 'x'.repeat(RETURN_CHAR_BUDGET) };
+  assert.deepEqual(appendMeasurement(noRoom, trace), noRoom);
+});
+
+test('replaying old versions preserves snapshot IDs when ignored stamps collapse to one claim', () => {
+  const original = createMeasurementTrace('old');
+  const finding = stampDiscovery(original, { description: 'claim' }, { agentType: 'a', dimensions: [] }, 0, 0);
+  recordStage(original, 'discover', [finding]);
+  const first = original.versions[0];
+  const previous = { schema_version: 1, versions: [first, { ...first, version_id: 'v1', finding: { ...finding, evidence: 'stage stamp' } }] };
+  const trace = createMeasurementTrace('old', previous);
+  recordStage(trace, 'discover', [finding]);
+  assert.deepEqual(trace.versions.map((v) => v.version_id), ['v0', 'v1']);
+  assert.deepEqual(trace.snapshots[0].finding_version_ids, ['v1']);
+  assert.deepEqual(trace.versions[0].finding, trace.versions[1].finding);
+  recordStage(trace, 'merge', [{ ...finding, confidence: 75 }]);
+  assert.deepEqual(trace.snapshots[1].finding_version_ids, ['v2']);
+  const pruned = createMeasurementTrace('old', { versions: [trace.versions[0], trace.versions[2]] });
+  recordStage(pruned, 'discover', [{ ...finding, confidence: 80 }]);
+  assert.deepEqual(pruned.snapshots[0].finding_version_ids, ['v3']);
 });
 
 test('replay coverage is partial and malformed trace flags refuse dispatch', async () => {

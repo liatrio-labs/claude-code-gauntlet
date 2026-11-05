@@ -16,7 +16,7 @@ from typing import Any, Literal, TypedDict
 
 from gauntlet.artifacts import assemble, plan_checksum
 from gauntlet.jsjson import js_stringify_pretty
-from gauntlet.registry import Admission, Disposition
+from gauntlet.registry import TRACE_FINDING_FIELDS, Admission, Disposition
 
 from bench.runner.decode import decode
 from bench.runner.epochs import digest
@@ -153,7 +153,12 @@ def _projection(finding):
 
 
 def rejoin_trace_identity(challenge, trace, stage: UpstreamStage | None = None):
-    """Use full projections and holdback references, never a finding-id join."""
+    """Join consumed claim fields and holdback references, preserving replay inputs."""
+
+    def claim(finding):
+        fields = TRACE_FINDING_FIELDS if trace.schema_version == 2 else finding
+        return {k: finding[k] for k in fields if k in finding and k not in IDENTITY}
+
     (holdback,) = [s for s in trace.snapshots if s.stage in ("holdback", "dispose")]
     versions = {v.version_id: v for v in trace.versions}
     allowed = {versions[v].trace_id for v in holdback.finding_version_ids}
@@ -187,9 +192,9 @@ def rejoin_trace_identity(challenge, trace, stage: UpstreamStage | None = None):
                 candidates.extend(
                     {**v.projection(), "challenge": marker}
                     for v in trace.versions
-                    if v.trace_id in referenced and _projection(v.finding) == prior
+                    if v.trace_id in referenced and claim(v.finding) == claim(prior)
                 )
-            matches = {f["trace_id"] for f in candidates if _projection(f) == finding}
+            matches = {f["trace_id"] for f in candidates if claim(f) == claim(finding)}
             if len(matches) != 1 or used & matches:
                 raise ValueError("missing or ambiguous challenge occurrence")
             (tid,) = matches
@@ -197,10 +202,9 @@ def rejoin_trace_identity(challenge, trace, stage: UpstreamStage | None = None):
             matched = next(
                 f
                 for f in reversed(candidates)
-                if f["trace_id"] == tid and _projection(f) == finding
+                if f["trace_id"] == tid and claim(f) == claim(finding)
             )
-            finding.clear()
-            finding.update(matched)
+            finding.update({k: matched[k] for k in IDENTITY})
 
 
 def load_replay_inputs(manifest_path):
@@ -304,7 +308,7 @@ import { plannedArtifactPaths, persistPlanPath } from './workflows/src/outputPat
 import { validateArgs } from './workflows/src/args.js';
 import { checkpointChecksumErrors, checkpointShapeErrors, readCheckpoints, slimPersistedCheckpoints, applyChallengeReplayBelt } from './workflows/src/checkpoints.js';
 import { writerPayload } from './workflows/src/persistPlan.js';
-import { createMeasurementTrace, recordStage, appendMeasurement } from './workflows/src/measurementTrace.js';
+import { createMeasurementTrace, appendMeasurement } from './workflows/src/measurementTrace.js';
 const reader = createInterface({ input: process.stdin });
 const lines = reader[Symbol.asyncIterator]();
 const input = JSON.parse((await lines.next()).value);
@@ -313,10 +317,10 @@ const { args, state } = input;
 try {
   if (!validateArgs(args).ok || checkpointChecksumErrors(args.checkpoints).length || checkpointShapeErrors(readCheckpoints(args)).length) throw new Error('invalid original args');
   if (!input.checkpoint?.phases?.challenge || checkpointChecksumErrors(input.checkpoint).length || checkpointShapeErrors(readCheckpoints({ checkpoints: input.checkpoint })).length) throw new Error('invalid source checkpoint');
-  state.measurementTrace = input.trace ? createMeasurementTrace(args.nonce) : null;
+  state.measurementTrace = input.trace ? createMeasurementTrace(args.nonce, input.trace) : null;
   if (input.trace) {
-    for (const version of input.trace.versions) recordStage(state.measurementTrace, 'discover', [version.finding]);
     state.measurementTrace.snapshots = input.trace.snapshots.filter((s) => !['dispose', 'holdback', 'select', 'deliver'].includes(s.stage));
+    state.measurementTrace.dropped_stages = (input.trace.dropped_stages || []).filter((s) => state.measurementTrace.snapshots.some((snapshot) => snapshot.stage === s));
   }
   state.measured = (out) => appendMeasurement(out, state.measurementTrace);
   state.runPhase = async (name, thunk) => {

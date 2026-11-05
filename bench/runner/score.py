@@ -818,6 +818,8 @@ def score_run(
     )
     original_traces = traces.copy()
     for url, (path, trace) in traces.items():
+        if "select" in trace.dropped_stages:
+            continue
         info = per_pr[url]
         pr_dir = Path(info["pr_dir"])
         diff_path = pr_dir / "diff.patch"
