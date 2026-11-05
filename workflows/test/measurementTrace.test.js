@@ -54,9 +54,9 @@ for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves
   assert.ok(trace.snapshots.some((s) => s.cap_hit));
 });
 
-test('large optional trace preserves primary recovery and native Unicode bytes', () => {
+for (const field of ['description', 'evidence']) test(`large optional ${field} preserves primary recovery and native Unicode bytes`, () => {
   const trace = createMeasurementTrace('n');
-  const f = stampDiscovery(trace, { id: 'A', description: '\u00e9'.repeat(1100000), dimension: 'forged', trace_id: 'forged' }, { agentType: 'a', dimensions: [] }, 0, 0);
+  const f = stampDiscovery(trace, { id: 'A', [field]: '\u00e9'.repeat(1100000), dimension: 'forged', trace_id: 'forged' }, { agentType: 'a', dimensions: [] }, 0, 0);
   assert.equal(f.trace_id, 'n:0:0');
   assert.equal(f.discovery_dimension, 'unknown');
   recordStage(trace, 'discover', [f]);
@@ -75,7 +75,7 @@ test('large optional trace preserves primary recovery and native Unicode bytes',
 });
 
 test('400 long claims retain discovery within the return budget and reuse versions across diagnostic stamps', () => {
-  const { trace, envelope, out } = largeMeasurement();
+  const { trace, findings, envelope, out } = largeMeasurement();
   assert.equal(out.measurement.status, 'available');
   assert.ok(JSON.stringify(out).length <= RETURN_CHAR_BUDGET);
   assert.equal(out.review, envelope.review);
@@ -85,9 +85,12 @@ test('400 long claims retain discovery within the return budget and reuse versio
   assert.equal(saved.snapshots[0].finding_version_ids.length, 400);
   assert.equal(saved.versions.length, 400);
   for (const snapshot of saved.snapshots) assert.deepEqual(snapshot.finding_version_ids, saved.snapshots[0].finding_version_ids);
-  assert.equal(Object.hasOwn(saved.versions[0].finding, 'evidence'), false);
-  trace.versions[0].finding.description = 'mutated after return';
-  assert.notEqual(saved.versions[0].finding.description, trace.versions[0].finding.description);
+  assert.equal(saved.versions[0].finding.evidence, findings[0].evidence);
+  assert.equal(Object.hasOwn(saved.versions[0].finding, 'reference_diagnostics'), false);
+  const recorded = JSON.stringify(trace.versions[0].finding);
+  findings[0].description = 'caller mutation after recording';
+  findings[0].admission.kind = 'caller mutation of nested field';
+  assert.equal(JSON.stringify(trace.versions[0].finding), recorded);
 });
 
 test('budget cuts later stages with their unused versions while preserving discovery and decision references', () => {
@@ -121,7 +124,7 @@ test('replaying old versions preserves snapshot IDs when ignored stamps collapse
   const finding = stampDiscovery(original, { description: 'claim' }, { agentType: 'a', dimensions: [] }, 0, 0);
   recordStage(original, 'discover', [finding]);
   const first = original.versions[0];
-  const previous = { schema_version: 1, versions: [first, { ...first, version_id: 'v1', finding: { ...finding, evidence: 'stage stamp' } }] };
+  const previous = { schema_version: 1, versions: [first, { ...first, version_id: 'v1', finding: { ...finding, validation: 'stage stamp' } }] };
   const trace = createMeasurementTrace('old', previous);
   recordStage(trace, 'discover', [finding]);
   assert.deepEqual(trace.versions.map((v) => v.version_id), ['v0', 'v1']);

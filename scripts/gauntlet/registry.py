@@ -285,6 +285,7 @@ TRACE_FINDING_FIELDS: tuple[str, ...] = (
     "title",
     "description",
     "body",
+    "evidence",
     "severity",
     "suggestion",
     "suggested_fix_code",
