@@ -12,6 +12,7 @@ from bench.adapter.adapt import payload_to_candidates
 from bench.runner import observations, provenance, score, stages, validity
 from bench.runner.epochs import read_json
 from bench.tests.test_stages import emit_trace
+from tests.support.delivery import admitted_stamp
 
 
 def surface_review(tmp_path, platform="github", *, budget_omission=False, grouped=True):
@@ -149,7 +150,7 @@ def test_group_surfaces_preserve_identity(tmp_path, monkeypatch, capsys, forge_f
             "line_end": 7,
             "location_status": "confirmed",
             "anchor": "return process(value);",
-            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+            "admission": admitted_stamp(),
             "disposition": "deliver",
             "dimension": dimension,
             "title": "Same title",
@@ -366,7 +367,7 @@ def test_independent_producer_payload_preserves_patch_demotion_and_order(platfor
         {
             **f,
             "trace_id": f"fixture:0:{i}",
-            "admission": {"version": 1, "status": "admitted", "input_proof": "fixture"},
+            "admission": admitted_stamp(),
             "disposition": "deliver",
             "discovery_agent": "synthetic",
             "discovery_dimension": "bug",

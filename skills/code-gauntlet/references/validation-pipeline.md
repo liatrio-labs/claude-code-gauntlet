@@ -5,15 +5,14 @@
 - [Verify stage (`verifyStage`)](#verify-stage-verifystage)
 - [Validate stage (`validateStage`)](#validate-stage-validatestage)
 - [Filter stage (`filterStage`)](#filter-stage-filterstage)
+- [Admission (`evaluateAdmission`)](#admission-evaluateadmission)
 - [Challenge stage (`challengeStage`)](#challenge-stage-challengestage)
 - [Report stage (`renderReport`)](#report-stage-renderreport)
 - [Operational Recovery](#operational-recovery)
 
 The validation pipeline runs inside `workflows/pipeline.js`. Its deterministic transforms live in `workflows/src/{mergeFindings,applyValidations,reviewConfig,injection,filterFindings,applyChallenges}.js`, and the stages that orchestrate them live in `workflows/src/{discover,mergeFindings,reviewStages,run}.js`, with the verify stage in `workflows/src/{verifyWire,capacity,verifyStage}.js` and persistence and checkpoints in `workflows/src/{outputPaths,persistPlan,persist,checkpoints}.js`. The retained `verify_findings.py` executor handles the verify boundary. This reference documents what each stage does for interpreting gaps and persisted artifacts.
 
-**Pipeline order inside the workflow:** Merge → **Verify** → **Validate** → **Filter** → **Challenge** → Report.
-
-The five transform golden families under `tests/fixtures/parity/` are JavaScript-owned.
+**Pipeline order inside the workflow:** Merge → **Verify** → **Validate** → **Filter** → **Admission** → **Challenge** → Report. Admission is also evaluated before Filter so routing uses the current policy verdict.
 
 ---
 
@@ -74,21 +73,13 @@ These proofs check consistency against transcription errors; an executor that re
 
 ## Validate stage (`validateStage`)
 
-Independent re-scoring by fresh agents, defaulting to Sonnet subject to the resolved override; each validator tries to disprove the finding against the code within that dispatch.
+Independent re-scoring by fresh agents, defaulting to Sonnet subject to the resolved override.
 
-The stage batches findings into `limits.validateBatch` chunks and dispatches one `validator` per batch through `parallel()`. Each validator attempts to **disprove** each finding and returns `[{ id, confidence, justification, reachability }]` (confidence 0–100). Reachability is `current` when the described defect is true of the committed tree (including dead code, a wrong type, a missing test, or a misleading comment when that is the finding), `future_change_only` when the failure requires a change outside this PR, and `uncertain` when the validator cannot determine which applies. `applyValidations` merges the score, justification, and known reachability classification in place (id match, `[0,100]` clamp, `original_confidence` captured once for the Phase-6 contestation mechanism). The validator's shipped output uses `finding_id`; the stage accepts both `finding_id` and `id`.
+The stage batches findings into `limits.validateBatch` chunks and dispatches one `validator` per batch through `parallel()`. Each validator attempts to **disprove** each finding and returns `{ validations: [{ finding_id, confidence, justification, reachability, policy_subject, admission_assessments }] }` (confidence 0–100). Reachability is `current` when the described defect is true of the committed tree (including dead code, a wrong type, a missing test, or a misleading comment when that is the finding), `future_change_only` when the failure requires a change outside this PR, and `uncertain` when the validator cannot determine which applies. `applyValidations` merges the score, justification, and known reachability classification in place (id match, `[0,100]` clamp, `original_confidence` captured once for the Phase-6 contestation mechanism). The stage also accepts `id` for `finding_id`.
 
-**Confidence rubric** (validator agent definition holds the authoritative copy):
+**Confidence rubric:** the shared scale in [investigation-methodology.md](investigation-methodology.md).
 
-```
-  0  = definitely a false positive
- 25  = probably false positive
- 50  = uncertain
- 75  = probably real — no meaningful counter-evidence
-100  = definitely real
-```
-
-**Degradation.** A null/malformed batch or a missing matched score marks the affected findings `validation='skipped'`, with confidence untouched and one gap per batch naming the count. They still face challenge, then survivors enter the unverified bucket and appear only in the report. Degraded verify slices (`origin='unknown'`) follow the same route. How often validators omit scores is unmeasured.
+**Retry and degradation.** One follow-up round retries missing scores or admission assessments in smaller batches. Accepted correctness, reachability and policy-subject decisions remain fixed when only assessments are missing. A null/malformed batch or a missing matched score after retry marks the affected findings `validation='skipped'`, with confidence untouched and one gap per batch naming the count. They bypass challenge and enter the unverified bucket, appearing only in the report. Degraded verify slices (`origin='unknown'`) follow the same route.
 
 ---
 
@@ -106,11 +97,15 @@ Pure, deterministic JS — no agents. It applies dimension-specific confidence/s
 
 ---
 
+## Admission (`evaluateAdmission`)
+
+The deterministic reducer persists `admitted`, `report_only` or `held_back` with predicate reasons and an input proof. It runs again after Filter because filtering can change policy inputs. Only admitted, fully vetted findings can be challenged. Missing or invalid stamps are held back at disposal, including legacy records; admitted findings without an inline location route to the body.
+
 ## Challenge stage (`challengeStage`)
 
-Blind, independent scrutiny — the only stage where findings face agents that have never seen the original reasoning. Fresh challengers see **only** `blindChallengeFields`: `title`, `description`, `file`, `line_start`, and `line_end` (an allowlist, not a delete-list — no evidence, origin, cross_file_refs, or reasoning can ever leak). Defaults to Sonnet, subject to the resolved override.
+Blind, independent scrutiny — the only stage where findings face agents that have never seen the original reasoning. Fresh challengers see **only** `blindChallengeFields`: `title`, `description`, `file`, `line_start`, `line_end`, and a removed-test reference when present (an allowlist, not a delete-list — no evidence, origin, cross_file_refs, or reasoning can ever leak). Defaults to Sonnet, subject to the resolved override.
 
-The stage ranks clean findings first, then incomplete findings, and blind-challenges the top `min(n, limits.challengeCap)` through `parallel()`, and applies the score thresholds. Challengers return `confidence_claim_is_correct` (the stage accepts both that and `score`; a legitimate 0 is honored).
+The stage ranks admitted, fully vetted findings and blind-challenges the top `min(n, limits.challengeCap)` through `parallel()`. Other findings bypass challenge as `admission_terminal`. Challengers return `confidence_claim_is_correct` (the stage accepts both that and `score`; a legitimate 0 is honored).
 
 **Thresholds** (`applyChallenges`):
 
@@ -119,11 +114,13 @@ The stage ranks clean findings first, then incomplete findings, and blind-challe
 - **50–74** → `challenge_contested: true`; surfaced re-routed to `"suggestion"`
 - **≥ 75** → survives unchanged
 
-After thresholds it ranks survivors and retains upstream eliminations in the challenge checkpoint. Challenge cap overflow is stamped `challenge='capped'`; null/unscored results are stamped `challenge='failed'`. After the replay belt, `disposeFindings` assigns delivery dispositions once: incomplete verification, validation, or challenge becomes `held_back`; clean findings become `deliver` when location and diff facts allow inline placement, or `body` otherwise. Legacy records without diff facts retain location-based placement, and `challenge='skipped'` remains unchallenged. Eliminations become `eliminate`. The reducer clears stale consolidation and regroups clean survivors. All records enter findings.json and their corresponding report sections; only `deliver` and `body` records share the ranked delivery cap.
+After thresholds it ranks survivors and retains upstream eliminations in the challenge checkpoint. Challenge cap overflow is stamped `challenge='capped'`; null/unscored results are stamped `challenge='failed'`. After the replay belt, `disposeFindings` assigns delivery dispositions once: incomplete verification, validation, or challenge becomes `held_back`; admission-terminal records retain `report_only` or `held_back`; admitted challenge survivors become `deliver` when location and diff facts allow inline placement, or `body` otherwise. Eliminations become `eliminate`. The reducer clears stale consolidation and regroups clean survivors. All records enter findings.json and their corresponding report sections; only `deliver` and `body` records share the ranked delivery cap.
 
 ---
 
 ## Report stage (`renderReport`)
+
+`report_only` findings appear under **Findings held back by admission** with their predicate reasons. `held_back` findings appear under **Unverified / pipeline-degraded findings**; neither status grants posting or fix rights.
 
 Renders `report.md` in code — `renderReport()` in `workflows/src/renderReport.js`, with text primitives in `workflows/src/outboundText.js` and report vocabularies in `workflows/src/registry.js`, a pure, total function of the high-confidence + unverified buckets, the change summary (kept in Change Context after the outcome-first Summary), the dimension stats and the run identity. No dispatch, no segmentation, no fallback: there is nothing to throw and nothing to degrade, so the stage emits no gaps. `evidence` renders for every finding that carries one, in both buckets. The renderer also appends the code-owned Review Methodology section, including the machine-parsed identity receipt, as the report's last section. Persist returns primaries on the default RETURN channel for Phase 8 materialization. Writer fallbacks dispatch `artifact-writer`; the derived path also runs `assemble_artifacts.py`. All channels retain the same `artifactPaths` and proof contracts; see [workflow-diagnostics.md](workflow-diagnostics.md#executor-and-writer-roles).
 

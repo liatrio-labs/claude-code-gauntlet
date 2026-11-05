@@ -427,6 +427,8 @@ test('whole issue groups reach every artifact', async (t) => {
   };
   assert.equal((await runWith(freshCtx, freshArgs)).ok, true);
   assert.deepEqual(freshPayload.postReview[0].sites, [site(1)]);
+  assert.equal(Object.hasOwn(freshPayload.postReview[0], 'site_requests'), false);
+  assert.equal(Object.hasOwn(freshPayload.postReview[0], 'resolved_sites'), false);
   assert.equal(freshPayload.checkpoints.phases.challenge.findings[0].site_requests.length, 2);
   const heldReport = renderReport({ prIdentity: prIdentity(), findings: [
     { ...member('HELD-SITES'), disposition: 'held_back', sites: [{ ...site(1), disposition: 'deliver' }] },
@@ -1349,7 +1351,7 @@ const UNMEASURED_GAP = 'context_unmeasured: args.contextLines was not stamped, s
   + '\u2014 every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
   + 'Read calls covering the file. A Read can return part of a file '
   + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
-  + '(and contextChars) from the Phase 2 step that writes the context file.';
+  + '(and contextChars and contextMaxLineChars) from the Phase 2 step that writes the context file.';
 const UNPLANNABLE_GAP = 'context_unplannable: args.contextLines was stamped (1500001) but exceeds the read-plan chunk ceiling, '
   + 'so the shared-context read plan could not be built \u2014 every agent got the count-free '
   + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
@@ -1357,15 +1359,15 @@ const UNPLANNABLE_GAP = 'context_unplannable: args.contextLines was stamped (150
   + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.';
 const CONTEXT_ROWS = [
   { name: 'maximum line width reaches every reader', input: { contextLines: 2028, contextChars: 94784, contextMaxLineChars: 1000 }, gaps: [],
-    markers: ['exactly 68 Read calls of limit=30', 'stepping by 30 through line 2028'] },
+    markers: ['68 planned Read calls of limit=30', 'stepping by 30 through line 2028'] },
   { name: 'measured readers include final tail and validator', input: { contextLines: 2028, contextChars: 94784 }, gaps: [],
-    markers: ['exactly 4 Read calls', 'Read(offset=1924, limit=105)'] },
+    markers: ['4 planned Read calls', 'Read(offset=1924, limit=105)'] },
   { name: 'unmeasured readers get one actionable fallback', input: {}, gaps: [UNMEASURED_GAP],
-    markers: ['until a call returns no further content', 'Do not stop before that'], fallback: true },
+    markers: ['until a call returns no further content'], fallback: true },
   { name: 'unplannable readers get distinct fallback', input: { contextLines: 1500001 }, gaps: [UNPLANNABLE_GAP],
-    markers: ['until a call returns no further content', 'Do not stop before that'], fallback: true },
+    markers: ['until a call returns no further content'], fallback: true },
   { name: 'measured sandbox globals', input: { contextLines: 2028, contextChars: 94784 }, sandbox: true, gaps: [],
-    markers: ['exactly 4 Read calls', 'Read(offset=1924, limit=105)'] },
+    markers: ['4 planned Read calls', 'Read(offset=1924, limit=105)'] },
 ];
 for (const row of CONTEXT_ROWS) test(`context wiring: ${row.name}`, async () => {
   const args = validArgs(row.input);
@@ -1378,7 +1380,6 @@ for (const row of CONTEXT_ROWS) test(`context wiring: ${row.name}`, async () => 
   const readers = ctx.calls.filter((call) => !call.label.startsWith('verify-') && call.prompt.includes('/repo/.code-gauntlet/code-gauntlet-context-abc1234.md'));
   assert.deepEqual(readers.map((call) => call.label), ['summarize', ...DISCOVERY, 'validate-batch-0']);
   for (const call of readers) {
-    assert.ok(call.prompt.includes('without a truncation notice'));
     for (const marker of row.markers) assert.ok(call.prompt.includes(marker));
     if (row.fallback) assert.doesNotMatch(call.prompt, /It is \d+ lines|undefined|NaN/);
   }

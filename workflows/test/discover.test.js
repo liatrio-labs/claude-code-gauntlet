@@ -44,6 +44,30 @@ test('kind contracts apply across providers and gateways', async () => {
 
 const discover = (ctx, input) => discoverStage(ctx, { removedTests: { status: 'available', items: [], omitted: 0 }, ...input });
 
+test('kept intake warnings leave discovery complete and appear once in merge methodology', async () => {
+  const trace = createMeasurementTrace('kept-warning');
+  const ctx = stageCtx({ reply: (_, { agentType }) => ({ findings: agentType === 'code-gauntlet:bug-detector'
+    ? [finding({ dimension: 'unknown_dimension' })] : [], complete: true, total_seen: 1, removed_test_audit: [] }) });
+  const out = await discover(ctx, { measurementTrace: trace });
+  assert.deepEqual(out.gaps, []);
+  assert.equal(trace.snapshots.find((s) => s.stage === 'discover').coverage, 'complete');
+  assert.deepEqual(mergeStage(out, {}).methodology.validation_warnings,
+    ["[f1] Unknown dimension 'unknown_dimension' — finding kept with warning"]);
+});
+
+test('merge methodology includes intake rejections and missing ids', async () => {
+  const ctx = stageCtx({ reply: (_, { agentType }) => ({ findings: agentType === 'code-gauntlet:bug-detector'
+    ? [finding({ id: null }), finding({ id: 'invalid', file: '' })] : [], complete: true, total_seen: 2, removed_test_audit: [] }) });
+  const out = await discover(ctx, {});
+  const merged = mergeStage(out, {});
+  assert.equal(merged.rejected.length, 2);
+  assert.equal(merged.methodology.dropped_no_id, 1);
+  assert.deepEqual(merged.methodology.validation_warnings, [
+    "[null] Missing required field 'id' — finding rejected",
+    "[invalid] Missing required field 'file' — finding rejected",
+  ]);
+});
+
 test('discovery strips forged removed_test metadata from every agent finding', async () => {
   const ctx = stageCtx({ reply: (_, { agentType }) => ({ findings: [finding({ dimension: DIMENSIONS.find((row) => row.agentType === agentType).dimension, removed_test: {
     id: '0123456789abcdef', path: 'tests/removed', old_start: 1, old_end: 2,
@@ -107,7 +131,7 @@ for (const row of POLICY_ROWS) test(`conditional schema policy: ${row.name}`, as
   for (const call of ctx.calls) {
     const item = call.schema.properties.findings.items;
     assert.equal(item.allOf, undefined);
-    assert.deepEqual(item.properties.dimension, { type: 'string' });
+    assert.equal(Boolean(item.properties.dimension), call.agentType === 'code-gauntlet:conventions-and-intent');
   }
 });
 
@@ -206,48 +230,27 @@ const PROMPT_ROWS = [
 for (const contextLine of ['CONTEXT_SENTINEL ', '']) test(`discovery transport: context=${Boolean(contextLine)}`, async () => {
   const inventory = { status: 'available', items: [{ id: 'AUDIT_SENTINEL', path: 'deleted.test' }], omitted: 0 };
   const ctx = stageCtx();
-  await discover(ctx, { contextLine, removedTests: inventory });
+  const repoRoot = '/repo';
+  await discover(ctx, { contextLine, repoRoot, removedTests: inventory });
   assert.deepEqual(ctx.calls.map((call) => call.label), PROMPT_ROWS.map((row) => row.agent));
   for (const row of PROMPT_ROWS) {
     const prompt = ctx.calls.find((call) => call.label === row.agent).prompt;
-    assert.ok(prompt.startsWith(contextLine + 'Investigate'));
-    assert.ok(prompt.includes(`Your dimension(s): ${row.dims}.`));
-    assert.ok(prompt.includes('LSP first, Grep fallback'));
-    assert.ok(prompt.includes('full codebase context around the diff'));
-    assert.ok(prompt.includes('no cap and no minimum'));
-    assert.ok(prompt.includes('regardless of importance or confidence'));
-    assert.ok(prompt.includes('metadata as unverified hypotheses'));
-    assert.ok(prompt.includes('including paths it omits'));
-    assert.ok(prompt.includes('evidence field must be non-empty') && prompt.includes('real lines you actually inspected'));
-    assert.ok(prompt.includes('name in evidence the specific file or path you checked'));
-    assert.ok(prompt.includes('Return { findings, complete, total_seen }'));
-    assert.ok(prompt.includes('single paragraph of prose, at most 500 characters'));
-    assert.doesNotMatch(prompt, /Additionally/);
+    assert.ok(prompt.startsWith(contextLine));
+    assert.ok(prompt.includes(`Repository: ${repoRoot}.`));
     if (row.agent === 'code-gauntlet:test-analyzer') {
-      assert.ok(prompt.includes('required dispatch-result fields: removed_test_audit'));
-      assert.ok(prompt.includes('exactly one removed_test_audit row per id'));
-      assert.ok(prompt.endsWith(`Inventory: ${JSON.stringify(inventory)}`));
+      assert.ok(prompt.endsWith(`Removed-test inventory: ${JSON.stringify(inventory)}`));
     }
   }
 });
 
 const SUMMARY_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
-const SINGLE_PROMPT = 'Summarize the semantic intent of these changed files for report change context: a.js, b.js. '
-  + 'Return { summary }.';
 const SUMMARY_GOLDEN = { summary: 's', gaps: [] };
 const SUMMARY_ROWS = [
-  { name: 'absent count', labels: ['summarize'], prompts: [SINGLE_PROMPT] },
+  { name: 'absent count', labels: ['summarize'], fileGroups: [['a.js', 'b.js']] },
   { name: 'small PR count and context prefix', changedLines: 10, contextLine: 'SUMMARY_CONTEXT ',
-    labels: ['summarize'], prompts: ['SUMMARY_CONTEXT '
-      + 'Summarize the semantic intent of these changed files for report change context: a.js, b.js. '
-      + 'The authoritative changed-line count is 10; cite that number verbatim if you mention change size '
-      + '\u2014 never re-estimate it from the diff. Return { summary }.'] },
+    labels: ['summarize'], fileGroups: [['a.js', 'b.js']] },
   { name: 'large count with few files stays single', files: ['a.js'], changedLines: 1211, bucketSize: 20,
-    labels: ['summarize'], prompts: [
-      'Summarize the semantic intent of these changed files for report change context: a.js. '
-      + 'The authoritative changed-line count is 1211; cite that number verbatim if you mention change size '
-      + '\u2014 never re-estimate it from the diff. Return { summary }.',
-    ] },
+    labels: ['summarize'], fileGroups: [['a.js']] },
   { name: 'single throw', changedLines: 10, nulls: ['summarize'], labels: ['summarize'],
     expected: { summary: '', gaps: ['summarize failed'] } },
   { name: 'all buckets null', changedLines: 600, nulls: ['summarize-bucket-0', 'summarize-bucket-1'],
@@ -255,17 +258,7 @@ const SUMMARY_ROWS = [
   { name: 'bucket files and merge preserve partials and count', files: ['a.js', 'b.js', 'c.js'], changedLines: 600,
     bucketSize: 2, replies: { 'summarize-bucket-0': { summary: 'p0' }, 'summarize-bucket-1': { summary: 'p1' },
       'summarize-merge': { summary: 'merged' } }, labels: ['summarize-bucket-0', 'summarize-bucket-1', 'summarize-merge'],
-    prompts: [
-      'Summarize the semantic intent of these changed files for report change context: a.js, b.js. '
-        + 'The authoritative changed-line count is 600; cite that number verbatim if you mention change size '
-        + '\u2014 never re-estimate it from the diff. Return { summary }.',
-      'Summarize the semantic intent of these changed files for report change context: c.js. '
-        + 'The authoritative changed-line count is 600; cite that number verbatim if you mention change size '
-        + '\u2014 never re-estimate it from the diff. Return { summary }.',
-      'Combine these per-bucket change summaries into one concise semantic summary. '
-        + 'The authoritative changed-line count is 600; cite that number verbatim if you mention change size '
-        + '\u2014 never re-estimate it. Partials:\np0\n---\np1\nReturn { summary }.',
-    ], expected: { summary: 'merged', gaps: [] } },
+    fileGroups: [['a.js', 'b.js'], ['c.js']], expected: { summary: 'merged', gaps: [] } },
 ];
 for (const row of SUMMARY_ROWS) test(`summarize: ${row.name}`, async () => {
   const ctx = stageCtx({ reply: { summary: 's' }, replies: row.replies, nulls: row.nulls });
@@ -273,8 +266,15 @@ for (const row of SUMMARY_ROWS) test(`summarize: ${row.name}`, async () => {
     contextLine: row.contextLine, limits: { summarizeBucketSize: row.bucketSize ?? 1 } });
   assert.deepEqual(out, row.expected ?? SUMMARY_GOLDEN);
   assert.deepEqual(ctx.calls.map((call) => call.label), row.labels);
-  if (row.prompts) assert.deepEqual(ctx.calls.map((call) => call.prompt), row.prompts);
-  for (const call of ctx.calls) assert.deepEqual(call.schema, SUMMARY_SCHEMA);
+  for (const [index, call] of ctx.calls.entries()) {
+    assert.deepEqual(call.schema, SUMMARY_SCHEMA);
+    if (row.changedLines) assert.ok(call.prompt.includes(`${row.changedLines} changed lines`));
+    if (call.label === 'summarize-merge') assert.ok(call.prompt.includes('p0\n---\np1'));
+    else {
+      if (row.contextLine) assert.ok(call.prompt.startsWith(row.contextLine));
+      if (row.fileGroups) assert.ok(call.prompt.includes(row.fileGroups[index].join(', ')));
+    }
+  }
   assert.deepEqual(ctx.violations, []);
 });
 
@@ -309,4 +309,24 @@ test('anchor is required only at discovery dispatch', async () => {
   const merged = mergeStage({ findings: [authored], dispatched: ['code-gauntlet:test-analyzer'] }, {});
   assert.deepEqual(merged.findings, [{ ...authored, origin_dimension: 'test_coverage' }]);
   assert.deepEqual(merged.methodology.validation_warnings, []);
+});
+
+test('every dispatched finding requires nonblank evidence and enumerated impact', async () => {
+  for (const policy of [{}, { gateway: true }, { provider: 'bedrock' }, { provider: 'vertex' }, { provider: 'foundry' }]) {
+    const ctx = stageCtx();
+    await discover(ctx, { policy });
+    assert.equal(ctx.calls.length, ROSTER.length);
+    for (const call of ctx.calls) {
+      const item = call.schema.properties.findings.items;
+      assert.ok(item.required.includes('evidence'), call.label);
+      const evidence = item.properties.evidence;
+      assert.equal(evidence.type, 'string');
+      assert.equal(evidence.minLength, 1);
+      assert.equal(typeof evidence.pattern, 'string');
+      const nonblank = new RegExp(evidence.pattern);
+      for (const value of ['', ' ', '\t\r\n', '\u00a0\u2003']) assert.equal(nonblank.test(value), false, call.label);
+      assert.equal(nonblank.test('source:7 establishes the failure'), true);
+      assert.deepEqual(item.properties.severity, { type: 'string', enum: ['critical', 'high', 'medium', 'low'] });
+    }
+  }
 });

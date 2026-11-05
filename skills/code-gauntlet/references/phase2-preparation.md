@@ -152,20 +152,19 @@ After this call: interpret `prior_review`'s JSON per `references/phase1-prefligh
 
 Stamp `reviewScope` from this resolved state before assembling the waist.
 Local and branch targets stamp `{ requested: "full", kind: "full", since: null, commits: null, detector: null }`.
-Headless PR/MR targets omit `requested` (see the derived waist fields in [SKILL.md: Assemble the args object](../SKILL.md#assemble-the-args-object)).
+Headless PR/MR targets omit `requested` (see the derived waist fields in [phase2-triage.md: Args Preparation](phase2-triage.md#args-preparation)).
 Interactive targets stamp the recorded gate answer, or `"full"` when no prior review existed.
 PR/MR targets copy detector values verbatim into `detector`.
 Copy `previously_reviewed`, `sha_resolvable`, `head_advanced`, `sha_is_ancestor`, and `incremental_safe`.
 Set `error` to the first `prior_review.errors` value, or `null`.
 Use `kind: "incremental"` only for an incremental request with `detector.incremental_safe: true`.
-Set `since` to the detector's safe `last_reviewed_sha` only for incremental kind.
-Set `since` to `null` otherwise.
+Set `since` to the detector's safe `last_reviewed_sha` for incremental kind, otherwise `null`.
 Otherwise use `kind: "full"` and retain the detector.
 The renderer derives the fallback explanation from retained detector facts.
 
 > Headless mode: apply the prior-review policy in [headless-mode.md](headless-mode.md#prior-review-policy) before continuing.
 
-All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (REVIEW.md provenance and CLAUDE.md/AGENTS.md/QODO.md import resolution from `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` by `scripts/write_shared_context.py` before measurement and writing). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see [SKILL.md: Assemble the args object](../SKILL.md#assemble-the-args-object)). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. `scripts/stale_truncate.py` covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
+All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (REVIEW.md provenance and CLAUDE.md/AGENTS.md/QODO.md import resolution from `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` by `scripts/write_shared_context.py` before measurement and writing). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see [phase2-triage.md: Args Preparation](phase2-triage.md#args-preparation)). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. `scripts/stale_truncate.py` covers every purpose name in this list.
 
 ## Phase 2 Composite B — gather (diff, changed-files, line count, misc)
 
@@ -194,11 +193,9 @@ echo "=== misc ==="
 On `files: FAILED`, stop and report the stderr reason (headless: non-zero outcome).
 
 - **Files** → this path becomes `args.changedFilesPath`; keep the same array inline for `args.changedFiles` (the Summarize stage reads it by value — the workflow cannot open the file).
-- **Context map** accompanies the framed context; Verify checks both digests before translating a context line.
 - **Diff** → this path becomes `args.diffPath`, passed to the verify executor as `--diff-file`.
-- **`numstat` counts the patch saved by the `diff` section with `scripts/diff_numstat.py`; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules.** Check `binary_files > 0` before treating a low count as no diff. This feeds `changedLines`, and the 2k scan reads the same saved patch, never a fresh diff fetch. Never run a second `gh pr diff` to re-fetch it.
+- **`numstat` counts the patch saved by the `diff` section with `scripts/diff_numstat.py`; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules.** Check `binary_files > 0` before treating a low count as no diff. This feeds `changedLines`, and the 2f scan reads the same saved patch, never a fresh diff fetch. Never run a second `gh pr diff` to re-fetch it.
 - **`misc`** gives a `generatedAt` candidate (re-stamp at args-assembly time if Phase 3 dispatch isn't immediate — `generatedAt` must reflect the actual assembly moment), and a `nonce` candidate matching `^[A-Za-z0-9._-]+$`.
-- **Risk classification (2e)** and **AI-generated-code detection (2k)** — classify changed files by risk as in `references/phase2-triage.md`; this feeds the context file. Neither runs here.
 
 **Incremental path** (Composite A's prior-review gate resolved Incremental): replace the `diff` section with:
 
@@ -252,11 +249,7 @@ if ! {python} "{plugin_root}/scripts/save_git_diff.py" --git-range "HEAD" --outp
 fi
 ```
 
-On `files: FAILED`, stop the handoff and report the stderr reason (headless: non-zero outcome).
-
-If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own `git diff` chain inside an executor subagent (which has shell) — not in this composite.
-
-**Composites A/B do not subsume 2d, 2g, or 2k.** Run 2d's collector as a separate script call after the changed-file list is saved; its receipt is the only REVIEW.md discovery source. Keep test discovery (2g) and AI-marker scanning (2k) as separate Glob/Grep tool calls under `references/phase2-triage.md`; never use `find` or `grep` from Bash for those searches.
+**Composites A/B do not subsume 2d or 2f.** Run 2d's collector as a separate script call after the changed-file list is saved; its receipt is the only REVIEW.md discovery source. Keep AI-marker scanning (2f) as separate Grep tool calls under `references/phase2-triage.md`; never use `grep` from Bash for those searches.
 
 ## Discover REVIEW.md and stamp its raw text
 
@@ -267,21 +260,11 @@ If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workfl
    {python} "{plugin_root}/scripts/collect_project_rules.py" --repo-root "$(git rev-parse --show-toplevel)" --out "{output_dir}/code-gauntlet-project-rules-{head_sha_short}.md" --changed-files "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
    ```
 
-   Parse its one-line stdout JSON receipt and retain it; stop on failure instead of stamping a successful empty discovery. The script owns the repo-root, changed-file-directory, and ancestor walk. REVIEW.md text is copied with source provenance into review-rules blocks before project-rules blocks; the script does not parse its config fence. PROJECT_RULE_FILENAMES controls CLAUDE.md/AGENTS.md/QODO.md discovery, and REVIEW_RULE_FILENAME names the separate REVIEW.md source kind.
-   Project-rule imports resolve relative to their containing file, within the repository, to Markdown targets, up to four hops; inline imports are recognized outside code spans and fences. The review pass does not follow imports or deduplicate scopes by content. A project import of a realpath already rendered as review-rules records `review_rules_source` and stops at that target. Direct project walk hits remain eligible. Other project imports, including out-of-walk REVIEW.md targets, remain project rules and do not add review scopes.
-   Project rules remain additive: more specific directories win on conflict, with CLAUDE.md before AGENTS.md before QODO.md at equal specificity. REVIEW.md settings retain the separate pipeline precedence in `references/review-md-spec.md`.
+   Parse its one-line stdout JSON receipt and retain it; stop on failure instead of stamping a successful empty discovery.
 3. **Stamp REVIEW.md raw inputs from the receipt.** Read exactly the paths in `receipt.review_md`, in receipt order, and stamp `args.reviewMd` as `[{ path, text, checksum }, ...]`, using each repo-relative path and the full raw file text, copying `checksum` from its receipt entry and `args.reviewMdSetChecksum` from `receipt.review_md_checksum`. Do not sort, walk directories, or parse the files yourself. An empty list stamps `[]`, an authoritative "discovered nothing", not an omitted field. Keep the text by value because the workflow has no filesystem. Set `reviewConfigPath` to the root REVIEW.md path when the list contains `REVIEW.md`, otherwise null.
    A capped REVIEW.md remains listed: Read its full raw text for settings, retain the cap gap, and do not add its text separately to the shared context. A failed raw Read stops this handoff; never replace it with empty text. See `references/review-md-spec.md` for format and hierarchy; `resolveReviewConfig` owns parsing and subtree settings.
 
-Do not `Glob(pattern: "**/REVIEW.md")`; use the collector's receipt, not a second search. Never use `find` from Bash for locating these files. Never Read or Glob CLAUDE.md/AGENTS.md/QODO.md directly here.
-
-Do not hand-parse or schema-validate REVIEW.md here — pass the raw text through. The workflow's
-`resolveReviewConfig` (`workflows/src/args.js`) calls `buildReviewConfig` (`workflows/src/reviewConfig.js`), preserving a root layer
-and depth-ordered subtree layers. Filter selects the root layer or matching subtree layers per
-`finding.file`: thresholds override and `ignore` entries accumulate from root to the deepest match.
-In particular, `resolveReviewConfig` never pins a numeric default for
-`confidence_threshold` / `security_min_confidence` when REVIEW.md does not set one — the Filter
-stage's own built-in defaults (non-security **55**, security **70**) apply exactly when absent.
+Do not `Glob(pattern: "**/REVIEW.md")`; use the collector's receipt, not a second search. Never use `find` from Bash for locating these files.
 
 **Do not stamp both `args.reviewMd` and `args.reviewConfig`** (or both `args.exclusionsText` and
 `args.exclusionPatterns`) — the args waist refuses a waist that stamps both the raw and
@@ -289,33 +272,20 @@ pre-parsed form for the same axis (single authority).
 
 ## Write the shared agent context file
 
-Run this after 2d, 2e and 2k. Set `{target_type}` to `pr`, `mr`, `branch` or `local`. For PR/MR, replace `{snapshot_args}` with `--snapshot-file "code-gauntlet-inputs-{nonce}/pr-description.json"`; otherwise omit it. Branch/local calls need no snapshot and never fetch descriptions:
+Run this after 2d, 2e and 2f. Set `{target_type}` to `pr`, `mr`, `branch` or `local`. For PR/MR, replace `{snapshot_args}` with `--snapshot-file "code-gauntlet-inputs-{nonce}/pr-description.json"`; otherwise omit it. Branch/local calls need no snapshot and never fetch descriptions:
 
 ```bash
 {python} "{plugin_root}/scripts/write_shared_context.py" --output-dir "{output_dir}" --head-sha {head_sha_short} --target-type {target_type} --head-sha-full {head_sha_full} --repo-root "{repo_root}" {snapshot_args} <<'CODE_GAUNTLET_TRIAGE_{nonce}'
-{risk classification (2e) and AI-generated-code status (2k)}
+{risk classification (2e) and AI-generated-code status (2f)}
 CODE_GAUNTLET_TRIAGE_{nonce}
 ```
 
 The quoted delimiter passes the text verbatim. Never pipe it through `echo` or unquote the delimiter.
 The nonce in the delimiter keeps any line of the text from ending it.
-The script writes the context file threaded to the discovery, validate and summarize agents from the collector's `--out` file, stdin text, framed unverified PR/MR claims when applicable, framed repository layout and saved diff, in that order. Use `configResult.identity.repo_root` for `{repo_root}`.
+Use `configResult.identity.repo_root` for `{repo_root}`.
 Stamp the printed `contextLines`, `contextChars`, `contextMaxLineChars` and `removedTests` into the args waist verbatim, never estimated, carried over or re-derived.
 An exit 2 wrote no usable context; stop and report its one-line error.
 `scripts/gauntlet/shared_context.py`'s docstring holds the content and measurement rules.
-
-Diff body rows have source gutters: `N7 +|text` for additions, `N7  |text` for head
-context, and `O7 -|text` for deletions. The source text begins immediately after `|`.
-Headers and metadata retain their original bytes. The writer also saves
-`code-gauntlet-context-map-{head_sha_short}.json` beside the context. Its version-1
-entries map physical context LF line numbers to file, side (`head` or `old`), and
-source line. It hashes the final framed context and the original saved patch.
-Malformed hunks keep the raw framed presentation and emit an unavailable, empty map
-with a diagnostic. Both files must be written before a successful receipt.
-
-The workflow's Summarize stage produces the change summary internally.
-
-Discovery agents return findings through structured output (`agent()`/`parallel()` schema).
 
 ## Args object shape
 
@@ -335,11 +305,8 @@ Discovery agents return findings through structured output (`agent()`/`parallel(
   reviewScope: { requested: "incremental" | "full", kind: "incremental" | "full", since: string | null,
                  commits: integer | null, detector: null | { previously_reviewed, sha_resolvable,
                  head_advanced, sha_is_ancestor, incremental_safe, error } },  // REQUIRED
-  limits: {},  // stamp {} unless a genuine REVIEW.md override exists
-  delivery: { prIdentity },  // PR/MR targets only; see SKILL.md, "Assemble the args object"
-                                             // the artifact-writer then persists postReview as the post_review-ready
-                                             // wrapper { owner, repo, pr_number, sha, platform, web_origin, review_body, findings } so
-                                             // Phase 8 posts it without hand-assembly
+  limits: {},
+  delivery: { prIdentity },  // PR/MR targets only; see phase2-triage.md, "Args Preparation"
 
   // by-value inputs the in-memory stages need (the workflow has no disk):
   changedFiles, changedLines, baseBranch, reviewMd, reviewMdSetChecksum, exclusionsText,

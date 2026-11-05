@@ -280,7 +280,11 @@ def test_doc_contract__phase2_triage_prescribes_the_bounded_incremental_diff():
         for line in _read(PREPARATION_REL).splitlines()
         if "incremental_diff.py" in line
     )
-    assert command in text
+    assert command not in text
+    assert (
+        "[Composite B's incremental path](phase2-preparation.md#"
+        "phase-2-composite-b--gather-diff-changed-files-line-count-misc)"
+    ) in text
     assert '--files "{output_dir}/code-gauntlet-files-{head_sha_short}.json"' in command
     assert "--since {last_reviewed_sha}" in command
     assert "git diff {last_reviewed_sha}" not in text

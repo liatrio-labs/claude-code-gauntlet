@@ -74,7 +74,17 @@ const ROUTE_ROWS = [
   { name: 'cross file impact routes main', input: { dimension: 'cross_file_impact' }, expected: 'main' },
   { name: 'convention with wrong result promotes main', input: { dimension: 'convention', title: 'Incorrect return value',
     description: 'The function returns wrong result for edge cases' }, expected: 'main' },
+  { name: 'mixed-case comment accuracy retains suggestion routing', input: { dimension: 'Comment_Accuracy', agent: 'conventions-and-intent' }, expected: 'suggestion' },
+  ...[['wrong'], null].map((title) => ({ name: `non-string title ${title}`, input: {
+    dimension: 'convention', title, description: 'Naming concern',
+  }, expected: 'suggestion' })),
 ];
+test('mixed-case intent retains core singleton status', () => {
+  const f = finding({ dimension: 'Intent', agent: 'conventions-and-intent', confidence: 85 });
+  detectDisagreement([f]);
+  assert.equal(f.confidence, 85);
+  assert.equal(f.singleton_penalty, undefined);
+});
 for (const row of ROUTE_ROWS) test('dimension route: ' + row.name, () => {
   assert.equal(routeByDimension(finding(row.input), row.routes), row.expected);
 });

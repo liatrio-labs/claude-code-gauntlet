@@ -7,6 +7,6 @@ Each file here is a subagent system prompt.
   field named only in a contract is rejected. Omit a not-applicable field; never send `null`.
 - Findings return by value as `{ findings, complete, total_seen }`. Nothing is written to disk,
   and no discovery contract has a shell tool.
-- The false-positive exclusion list and the complete-read contract are duplicated across
+- The complete-read contract is duplicated across
   contracts on purpose, so each survives a failed file read. Tests pin the copies byte-identical.
   Do not refactor them into a shared read.

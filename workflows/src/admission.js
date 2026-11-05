@@ -1,4 +1,4 @@
-import { ADMISSION_PREDICATES, RIGHT_ELIGIBILITY, VERIFY_FACT_PROPERTIES, VERIFY_REFERENCE_DESCRIPTORS, FINDING_PROP_TYPES, DIMENSIONS, findingPolicy, admissionPolicy, requiredAssessments, VALIDATION_RETURN_PROPERTIES } from './registry.js';
+import { ADMISSION_PREDICATES, ASSESSED_PREDICATES, RIGHT_ELIGIBILITY, VERIFY_FACT_PROPERTIES, VERIFY_REFERENCE_DESCRIPTORS, FINDING_PROP_TYPES, DIMENSIONS, findingPolicy, admissionPolicy, requiredAssessments, VALIDATION_RETURN_PROPERTIES } from './registry.js';
 import { canonicalRange } from './location.js';
 import { fnv1a32, INT_POLICY, coerceInt } from './wire.js';
 
@@ -26,7 +26,7 @@ export function matchAssessments(finding, entries) {
   if (!Array.isArray(entries)) return [];
   return entries.filter((entry) => {
     const descriptor = ADMISSION_PREDICATES[entry?.predicate];
-    if (!descriptor?.references || !['confirmed', 'rejected', 'unresolved'].includes(entry.status)
+    if (!ASSESSED_PREDICATES.includes(entry?.predicate) || !['confirmed', 'rejected', 'unresolved'].includes(entry.status)
       || entries.filter((other) => other?.predicate === entry.predicate).length !== 1
       || !Array.isArray(entry.references) || new Set(entry.references).size !== entry.references.length
       || entry.references.some((key) => typeof key !== 'string' || !Object.hasOwn(requests, key))) return false;
@@ -42,16 +42,21 @@ export function hasPresentDefect(finding, entries) {
     .some((entry) => entry.predicate === promotion.predicate && entry.status === 'confirmed');
 }
 
+export const MISSING_ASSESSMENT = 'missing_assessment:';
+
+export function missingAssessments(finding, validation) {
+  const assessments = matchAssessments(finding, validation?.admission_assessments);
+  const assessed = new Set(assessments.map((entry) => entry.predicate));
+  return requiredAssessments(finding, validation?.policy_subject, hasPresentDefect(finding, assessments))
+    .filter((predicate) => !assessed.has(predicate));
+}
+
 export function validationRejections(finding, validation) {
   if (!validation) return ['missing_entry'];
   const reasons = [];
   if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
   if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
-  const assessments = matchAssessments(finding, validation.admission_assessments);
-  const assessed = new Set(assessments.map((entry) => entry.predicate));
-  for (const predicate of requiredAssessments(finding, validation.policy_subject, hasPresentDefect(finding, assessments))) {
-    if (!assessed.has(predicate)) reasons.push(`missing_assessment:${predicate}`);
-  }
+  reasons.push(...missingAssessments(finding, validation).map((predicate) => `${MISSING_ASSESSMENT}${predicate}`));
   return reasons;
 }
 
@@ -140,7 +145,7 @@ function predicateResult(finding, predicate) {
   return null;
 }
 
-// This is the only policy evaluation. Disposal and sinks consume its persisted result.
+// Re-evaluate the persisted verdict after filtering changes inputs; disposal and sinks only consume it.
 export function evaluateAdmission(finding) {
   delete finding.admission;
   delete finding.effective_test_kind;
@@ -191,10 +196,9 @@ export function admissionContext(finding, validation) {
   const subjects = validation ? [validation.policy_subject] : Object.keys(original.row?.policySubjects || {});
   const requirements = Object.fromEntries(subjects.map((subject) =>
     [subject, requiredAssessments(finding, subject, promoted)]));
-  const missing = validation ? validationRejections(finding, validation)
-    .filter((reason) => reason.startsWith('missing_assessment:')).map((reason) => reason.slice('missing_assessment:'.length)) : null;
+  const missing = validation ? missingAssessments(finding, validation) : null;
   const predicates = [...new Set(missing || [...Object.values(requirements).flat(), ...RIGHT_ELIGIBILITY.body.fixTask])]
-    .filter((predicate) => ADMISSION_PREDICATES[predicate]?.references);
+    .filter((predicate) => ASSESSED_PREDICATES.includes(predicate));
   return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
     policy: { policy_subjects: validation ? { [validation.policy_subject]: missing } : requirements,
       ...(!validation && promotion ? { promotion: { predicate: promotion.predicate,

@@ -81,7 +81,7 @@ export const DISPOSITION_RIGHTS = deepFreeze({
 });
 export const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
 export const RIGHT_ELIGIBILITY = deepFreeze({ body: { fixTask: ['current_defect', 'current_reachability', 'confirmed_location'] } });
-export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2 }, validate: { retryBatchDivisor: 5 }, cite: { attempts: 2 }, writer: { attempts: 2 } });
+export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2 }, validate: { retryBatchDivisor: 5 }, writer: { attempts: 2 } });
 
 const SOURCE_REFERENCE = {
   type: 'object', $comment: 'source-reference', properties: {
@@ -90,6 +90,8 @@ const SOURCE_REFERENCE = {
     anchor: { type: 'string', minLength: 1 },
   }, required: ['file', 'line_start', 'line_end', 'anchor'], additionalProperties: false,
 };
+
+export const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
 
 // Use full schema fragments for arrays because the host requires items; scalar fields can use type shorthand.
 // Verification stamps origin, so discovery does not require it.
@@ -103,7 +105,7 @@ export const FINDING_PROP_TYPES = deepFreeze({
   suggestion: 'string', claude_md_rule: 'string',
   // Delivery applies deterministic fix checks before rendering a committable fence.
   // The field alone does not guarantee that a patch will ship.
-  suggested_fix_code: 'string',
+  suggested_fix_code: { type: 'string', description: 'Complete replacement for file lines line_start through line_end, including indentation; include line_end. Omit if uncertain or incomplete.' },
   cross_file_refs: { type: 'array', items: { type: 'string', $comment: 'repo-path' } },
   sites: { discovery: true, type: 'array', description: 'Additional locations of this issue.', items: {
     type: 'object', properties: {
@@ -118,6 +120,10 @@ export const FINDING_PROP_TYPES = deepFreeze({
 export const DISCOVERY_FINDING_PROP_TYPES = deepFreeze(Object.fromEntries(Object.entries(FINDING_PROP_TYPES)
   .filter(([, schema]) => schema.discovery !== false)
   .map(([name, schema]) => {
+    if (name === 'evidence') return [name, { type: 'string', minLength: 1, pattern: '\\S' }];
+    if (name === 'description') return [name, { type: 'string', description: 'One prose paragraph of at most 500 characters; code belongs in evidence.' }];
+    if (name === 'confidence') return [name, { type: 'number', description: 'Certainty the issue exists, from 0 to 100.' }];
+    if (name === 'severity') return [name, { type: 'string', enum: SEVERITY_ORDER }];
     if (typeof schema === 'string') return [name, schema];
     const { discovery, ...wireSchema } = schema;
     return [name, wireSchema];
@@ -147,8 +153,6 @@ export const DELIVERY_GROUP_SCHEMA = deepFreeze({ type: 'object', properties: {
 // Flat required fields must be unconditional for every dimension in a dispatch to avoid forcing fabricated sibling fields.
 export const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
 
-export const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
-
 const closedDispatchRow = (properties, optional = []) => ({
   type: 'object', properties, required: Object.keys(properties).filter((key) => !optional.includes(key)), additionalProperties: false,
 });
@@ -161,11 +165,11 @@ const POLICY_SUBJECTS = {
 
 const QUALITY_ADMISSION = {
   field: 'quality_basis', promotion: { predicate: 'present_defect', kind: 'current_correctness' }, kinds: {
-    current_correctness: { description: 'A demonstrated present production defect.', required: [], predicates: ['present_defect'], phase: 'semantic', core: true, tier: 'main' },
-    duplication: { description: 'Real duplicated behavior identified by duplicate_of; show the redundancy and how consolidation preserves behavior.', required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
-    simpler_equivalent: { description: 'A concrete simpler replacement with evidence of reduced complexity and preserved return values, side effects and error paths.', required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
-    stack_idiom: { description: 'A behavior-preserving replacement supported by applicable existing repository precedent; identify the precedent and the cost it removes.', required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
-    other: { description: 'No demonstrated defect, redundancy, simpler equivalent or applicable precedent; unsupported preferences stay report_only.', required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
+    current_correctness: { description: 'Present production defect.', required: [], predicates: ['present_defect'], phase: 'semantic', core: true, tier: 'main' },
+    duplication: { description: 'Duplicated behavior identified by duplicate_of.', required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
+    simpler_equivalent: { description: 'Simpler replacement preserving observable behavior.', required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
+    stack_idiom: { description: 'Behavior-preserving replacement grounded in existing repository precedent.', required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
+    other: { description: 'No demonstrated defect, duplication, simpler equivalent or applicable precedent.', required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
   },
 };
 
@@ -211,7 +215,7 @@ export const DIMENSIONS = deepFreeze([
       promptExtra: null },
   { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
     defaultDisposition: 'held_back', defaultTier: 'suggestion', admission: QUALITY_ADMISSION,
-    schemaExtra: { behavior_preserved: { type: 'string', description: 'How the proposed simplification preserves observable behavior.' } }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
+    schemaExtra: {}, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
       promptExtra: null },
 ].map((row) => ({
   core: false,
@@ -219,9 +223,9 @@ export const DIMENSIONS = deepFreeze([
   ...row, policySubjects: POLICY_SUBJECTS,
   schemaExtra: { ...row.schemaExtra, ...(row.admission ? {
     [row.admission.field]: { type: 'string', enum: Object.keys(row.admission.kinds), description: row.admission === QUALITY_ADMISSION
-      ? 'Select the demonstrated quality basis. Behavior-preserving improvements do not require a production defect. '
+      ? 'Basis for the finding. '
         + Object.entries(row.admission.kinds).map(([kind, rule]) => `${kind}: ${rule.description}`).join(' ')
-      : 'Test issue kind used to assess admission and production-defect promotion.' },
+      : 'defective_test: a PR-owned test that would still pass if the behavior it tests broke; production_defect: present production defect; critical_gap: no test covers important surviving behavior; additional_case: any other coverage case.' },
     ...(row.admission === QUALITY_ADMISSION ? {
       duplicate_of: { ...SOURCE_REFERENCE, description: 'Source reference to the existing implementation duplicated here.' },
       precedent: { ...SOURCE_REFERENCE, description: 'Source reference to an existing repository idiom supporting the change.' },
@@ -277,8 +281,9 @@ export const ADMISSION_PREDICATES = deepFreeze({
   current_reachability: { fact: 'reachability' },
   confirmed_location: { fact: 'location' },
 });
+export const ASSESSED_PREDICATES = deepFreeze(Object.keys(ADMISSION_PREDICATES).filter((key) => ADMISSION_PREDICATES[key].references));
 const ASSESSMENT = { type: 'object', properties: {
-  predicate: { type: 'string', enum: Object.keys(ADMISSION_PREDICATES).filter((key) => ADMISSION_PREDICATES[key].references) },
+  predicate: { type: 'string', enum: ASSESSED_PREDICATES },
   status: { type: 'string', enum: ['confirmed', 'rejected', 'unresolved'] },
   references: { type: 'array', items: { type: 'string' } },
 }, required: ['predicate', 'status', 'references'], additionalProperties: false };
@@ -307,6 +312,10 @@ export function dimensionRow(dimension) {
   return DIMENSIONS.find((row) => row.dimension === dimension || row.aliases.includes(dimension));
 }
 
+// Policy and routing match a dimension case-insensitively, as the filter guards do;
+// intake stays exact so its required-field rules key on the declared name.
+const policyRow = (dimension) => dimensionRow(typeof dimension === 'string' ? dimension.toLowerCase() : dimension);
+
 const LOSS_ADMISSION = dimensionRow('test_coverage').admission.kinds.critical_gap;
 export const REMOVED_LOSS_FIELDS = deepFreeze([...LOSS_ADMISSION.required, ...LOSS_ADMISSION.optional]);
 export const DISPATCH_RESULTS = deepFreeze({
@@ -321,7 +330,7 @@ export const DISPATCH_RESULTS = deepFreeze({
         }) },
         losses: { type: 'array', items: closedDispatchRow({
           file: { type: 'string', minLength: 1 }, line: { type: 'integer', minimum: 1 },
-          title: { type: 'string', minLength: 1 }, description: { type: 'string', minLength: 1 },
+          title: { type: 'string', minLength: 1 }, description: { ...DISCOVERY_FINDING_PROP_TYPES.description, minLength: 1 },
           severity: { type: 'string', minLength: 1, enum: SEVERITY_ORDER },
           confidence: { type: 'number', minimum: 0, maximum: 100 },
           ...Object.fromEntries(REMOVED_LOSS_FIELDS.map((key) => {
@@ -351,7 +360,7 @@ export function findingPolicy(finding, effective = true) {
     || DIMENSIONS.find((candidate) => typeof finding.dimension === 'string' && candidate.admission?.kinds[finding[candidate.admission.field]]?.dimension === finding.dimension)
     || (original && (original.dimension === finding.dimension || promotion === finding.dimension)
       ? original : null)
-    || dimensionRow(finding.dimension) || producer.find((candidate) => candidate.agentFallback) || producer[0];
+    || policyRow(finding.dimension) || producer.find((candidate) => candidate.agentFallback) || producer[0];
   const subject = row?.policySubjects[finding.policy_subject];
   const stampedKind = effective && finding.admission?.status === 'admitted' ? finding.admission.kind : undefined;
   const selected = stampedKind && stampedKind === row?.admission?.promotion?.kind ? row
@@ -376,7 +385,7 @@ export function admissionPolicy(finding, policySubject, promoted = false) {
 export function requiredAssessments(finding, policySubject, promoted = false) {
   const { promotion, kind } = admissionPolicy(finding, policySubject, promoted);
   return [...new Set([promotion?.predicate, ...(kind?.predicates || [])])]
-    .filter((predicate) => ADMISSION_PREDICATES[predicate]?.references);
+    .filter((predicate) => ASSESSED_PREDICATES.includes(predicate));
 }
 
 export function normalizePipelineStamps(finding) {

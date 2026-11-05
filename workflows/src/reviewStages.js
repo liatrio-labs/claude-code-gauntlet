@@ -9,7 +9,7 @@ import { applyFilterPipeline } from './filterFindings.js';
 import { applyChallenges, rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
 import { deliveryGroups } from './dispose.js';
-import { admissionContext, admissionRequests, hasAdmission, validationRejections } from './admission.js';
+import { admissionContext, admissionRequests, hasAdmission, validationRejections, missingAssessments, MISSING_ASSESSMENT } from './admission.js';
 
 // The platform rejects array-rooted tool schemas, so validation entries need an object wrapper.
 const VALIDATE_SCHEMA = {
@@ -33,15 +33,6 @@ const VALIDATE_SCHEMA = {
   required: ['validations'],
 };
 
-function validateReturnDescriptor() {
-  return Object.entries(VALIDATE_SCHEMA.properties.validations.items.properties)
-    .map(([name, schema]) => {
-      const values = Array.isArray(schema.enum) ? ` (${schema.enum.join(' | ')})` : '';
-      return `${name}${values}`;
-    })
-    .join(', ');
-}
-
 function assessmentRequirement(predicates) {
   return { ...(predicates.length ? { properties: { admission_assessments: { allOf: predicates.map((predicate) => ({
     contains: { properties: { predicate: { const: predicate } }, required: ['predicate'] },
@@ -53,22 +44,21 @@ function validateSchema(batch, accepted) {
   const variants = batch.flatMap((finding) => {
     const previous = accepted.get(finding.id);
     if (previous) {
-      const requirements = assessmentRequirement(validationRejections(finding, previous)
-        .map((reason) => reason.slice('missing_assessment:'.length)));
+      const requirements = assessmentRequirement(missingAssessments(finding, previous));
       return [{ ...requirements, properties: { finding_id: { enum: [finding.id] }, ...requirements.properties } }];
     }
+    const { promotion } = admissionPolicy(finding);
+    const references = Object.hasOwn(admissionRequests(finding), 'primary') ? ['primary'] : [];
     return VALIDATION_RETURN_PROPERTIES.policy_subject.enum.map((subject) => {
-      const { promotion } = admissionPolicy(finding);
       const requirements = assessmentRequirement(requiredAssessments(finding, subject));
-      const references = Object.keys(admissionRequests(finding)).filter((key) => key === 'primary');
-      const conditional = promotion && references.length > 0;
-      return { properties: { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] },
-        ...(!conditional ? requirements.properties : {}) }, required: [...base.required, ...(!conditional ? requirements.required : [])],
-        ...(conditional ? { if: { properties: { admission_assessments: { contains: {
+      const properties = { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] } };
+      const plain = { properties: { ...properties, ...requirements.properties }, required: [...base.required, ...requirements.required] };
+      if (!promotion || references.length === 0) return plain;
+      return { properties, required: base.required, if: { properties: { admission_assessments: { contains: {
           properties: { predicate: { const: promotion.predicate }, status: { const: 'confirmed' },
             references: { const: references } }, required: ['predicate', 'status', 'references'],
         } } }, required: ['admission_assessments'] },
-        then: assessmentRequirement(requiredAssessments(finding, subject, true)), else: requirements } : {}),
+        then: assessmentRequirement(requiredAssessments(finding, subject, true)), else: requirements,
       };
     });
   });
@@ -123,7 +113,7 @@ export async function validateStage(ctx, input) {
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
         const previous = accepted.get(finding.id);
-        const missing = previous ? validationRejections(finding, previous).map((reason) => reason.slice('missing_assessment:'.length)) : [];
+        const missing = previous ? missingAssessments(finding, previous) : [];
         const replacements = (Array.isArray(entry.admission_assessments) ? entry.admission_assessments : [])
           .filter((assessment) => missing.includes(assessment?.predicate));
         const merged = previous && label.startsWith('validate-retry-') ? { ...previous,
@@ -132,7 +122,7 @@ export async function validateStage(ctx, input) {
         const reasons = validationRejections(finding, merged);
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
         // Missing admission evidence still warrants a retry, but does not invalidate a score.
-        if (reasons.every((reason) => reason.startsWith('missing_assessment:'))) accepted.set(finding.id, merged);
+        if (reasons.every((reason) => reason.startsWith(MISSING_ASSESSMENT))) accepted.set(finding.id, merged);
       }
     }
     validatorAudit(audit, label, res, rejections);
@@ -156,7 +146,7 @@ export async function validateStage(ctx, input) {
     const unscored = batch.filter((finding) => !accepted.has(finding.id));
     if (unscored.length) {
       const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))]
-        .filter((reason) => !reason.startsWith('missing_assessment:'));
+        .filter((reason) => !reason.startsWith(MISSING_ASSESSMENT));
       let problem = mainLists[idx] ? 'omitted scores' : 'returned null/malformed';
       if (reasons.some((reason) => !['missing_entry', 'malformed_return'].includes(reason))) {
         problem = `returned invalid/incomplete entries (${reasons.join(', ')})`;
@@ -199,8 +189,8 @@ function validatePrompt(inp, batch, accepted) {
     const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
     return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f, accepted.get(f.id)))}`;
   }).join('\n');
-  if (batch.every((finding) => accepted.has(finding.id))) return `${ctxLine}Supply only the missing admission assessments listed in each finding's admission_context. Correctness, reachability and policy_subject are fixed. Use confirmed, rejected or unresolved with the exact request names inspected in references.\nFindings:\n${block}\nReturn { validations: [{ finding_id, admission_assessments }] } (one entry per finding).`;
-  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. First judge the correctness of each claim and return confidence, justification and reachability from the code. Complete that judgment before admission; missing admission evidence or posting value must not lower confidence or change reachability. Then classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess only the predicates for the selected policy_subject in that finding's admission_context, using confirmed, rejected or unresolved and the exact request names inspected in references. If its promotion predicate is confirmed, use only the promotion's confirmed requirements. Resolution and confidence are not semantic confirmation. Assess body_fix_task predicates separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. On an admission-only retry, return finding_id and only missing admission_assessments listed in that context; the accepted correctness and reachability judgments are fixed.\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
+  if (batch.every((finding) => accepted.has(finding.id))) return `${ctxLine}Supply missing admission assessments in admission_context; correctness, reachability and policy_subject are fixed. References name inspected requests.\nFindings:\n${block}`;
+  return `${ctxLine}Judge correctness and reachability independently of admission evidence or posting value. Classify policy_subject by the claim, regardless of producer or test location. Assess admission_context predicates; references name inspected requests. Resolved locations and confidence alone do not confirm predicates. Assess body_fix_task separately. Confirm site_requests only for the same defect requiring the same correction.\nFindings:\n${block}`;
 }
 
 // The runtime has no wall clock, so generated_at must come from the supplied arguments.
@@ -240,13 +230,13 @@ export function blindChallengeFields(finding, diffPath) {
   };
 }
 
-// Conservative scores prevent unverifiable absence claims from becoming high-confidence findings.
+// Deleted locations need the saved diff because they cannot be inspected at HEAD.
 function challengePrompt(finding, diffPath) {
   const b = blindChallengeFields(finding, diffPath);
   const range = b.location || (b.line_end !== '' && b.line_end !== b.line_start ? `${b.line_start}-${b.line_end}` : `${b.line_start}`);
   const removedContext = b.removed_test
-    ? `\nRead saved diff ${b.diffPath}: deleted test ${JSON.stringify(b.removed_test.path)}, old lines ${b.removed_test.old_start}-${b.removed_test.old_end}. Check the removed input and assertion, then search surviving tests at HEAD for the same behavior. This coverage-loss claim is verifiable from the saved diff and surviving tests.` : '';
-  return `Independently check the claim's central facts against raw code at ${b.file}:${range}, opening enough surrounding context with Read/Grep/LSP to prove or disprove the actual claim. Runtime failures require a current trigger; static defects require evidence of the static claim. Do not lower the score merely because upstream evidence is withheld. If the central assertion remains unverifiable from code and context, score it 25 or below (below 25 when nothing in code confirms it). Reserve scores above 25 for positively confirmed claims. A removed-test claim can be verified from its deleted location in the saved diff and surviving assertions at HEAD.${removedContext}\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct 0-100 (higher = the claim holds).`;
+    ? `\nRead saved diff ${b.diffPath}: deleted test ${JSON.stringify(b.removed_test.path)}, old lines ${b.removed_test.old_start}-${b.removed_test.old_end}. Compare its input and assertion with surviving tests at HEAD for the same behavior.` : '';
+  return `${removedContext}\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}`;
 }
 
 // Parallel results retain candidate positions so failures stay attributable to individual findings.

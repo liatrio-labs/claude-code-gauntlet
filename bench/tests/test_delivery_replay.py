@@ -15,6 +15,33 @@ FIXTURES = Path(__file__).parent / "fixtures"
 SOURCE_DIGEST = "0" * 64
 
 
+def test_candidate_digest_tracks_unstaged_deletions(tmp_path, monkeypatch):
+    from bench.runner import delivery_replay
+
+    kept = tmp_path / "kept"
+    removed = tmp_path / "removed"
+    kept.write_bytes(b"retained prompt")
+    removed.write_bytes(b"obsolete prompt")
+    rows = [b"100644 " + b"0" * 40 + b" 0\t" + path for path in (b"kept", b"removed")]
+    real_run = subprocess.run
+
+    def run(command, **kwargs):
+        if command[1] == "ls-files":
+            return subprocess.CompletedProcess(
+                command, 0, stdout=b"\0".join(rows) + b"\0"
+            )
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(delivery_replay, "ROOT", tmp_path)
+    monkeypatch.setattr(delivery_replay.subprocess, "run", run)
+    before = delivery_replay._target_digest()
+    removed.unlink()
+    unstaged = delivery_replay._target_digest()
+    assert unstaged != before
+    rows.pop()
+    assert delivery_replay._target_digest() == unstaged
+
+
 def _hash(value):
     return hashlib.sha256(value).hexdigest()
 

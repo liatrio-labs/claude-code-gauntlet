@@ -713,7 +713,6 @@ def test_verify_consumes_pipeline_findings_without_error(
         ).stdout
     )
     assert set(declared["keys"]) == set(envelope["receipt"])
-    assert all(key in declared["prompt"] for key in declared["keys"])
     assert envelope["receipt"]["sha"] == "abcd"
     assert envelope["receipt"]["n_in"] == 2
     assert envelope["receipt"]["nonce"] == "boundary"

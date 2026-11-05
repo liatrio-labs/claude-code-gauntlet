@@ -18,6 +18,7 @@ from gauntlet.registry import (
     ANCHOR_LIMITS,
     DISPOSITION_RIGHTS,
     LOCATION_RIGHTS,
+    Admission,
     Disposition,
     LocationStatus,
 )
@@ -218,6 +219,38 @@ def normalize_location(finding: Mapping[str, object]) -> dict[str, object]:
     return out
 
 
+def parse_admission(finding: Mapping[str, object]) -> Admission | None:
+    """Check the persisted verdict shape before granting delivery rights."""
+    stamp = finding.get("admission")
+    if not isinstance(stamp, dict):
+        return None
+    proof = stamp.get("input_proof")
+    fields = stamp.get("input_fields")
+    reasons = stamp.get("reasons")
+    if (
+        type(stamp.get("version")) is not int
+        or stamp["version"] != 1
+        or stamp.get("status") not in ("admitted", "report_only", "held_back")
+        or not isinstance(proof, str)
+        or not proof.strip()
+        or not isinstance(fields, list)
+        or not all(isinstance(field, str) for field in fields)
+        or not isinstance(reasons, list)
+        or any(
+            not isinstance(reason, dict)
+            or not isinstance(reason.get("predicate"), str)
+            or reason.get("status") not in ("report_only", "held_back")
+            for reason in reasons
+        )
+        or not isinstance(stamp.get("kind"), str)
+        or type(stamp.get("core")) is not bool
+        or stamp.get("tier") not in ("main", "suggestion")
+        or type(stamp.get("inline_eligible")) is not bool
+    ):
+        return None
+    return cast(Admission, stamp)
+
+
 def delivery_allows(finding: Mapping[str, object], right: str) -> bool:
     stamp = finding.get("disposition")
     reasons = finding.get("disposition_reasons", [])
@@ -233,13 +266,8 @@ def delivery_allows(finding: Mapping[str, object], right: str) -> bool:
         return rights["report"] == "finding"
     if right in ("unverified", "eliminated"):
         return rights["report"] == right
-    admission = finding.get("admission")
-    if not (
-        isinstance(admission, dict)
-        and admission.get("version") == 1
-        and admission.get("status") == "admitted"
-        and isinstance(admission.get("input_proof"), str)
-    ):
+    admission = parse_admission(finding)
+    if admission is None or admission["status"] != "admitted":
         return False
     if (
         stamp == "body"
@@ -480,6 +508,9 @@ class SourceAdapter:
             return tuple(sorted(names))
         except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):
             return None
+
+    def valid_path(self, file: str) -> bool:
+        return self._parts(file) is not None
 
     def _parts(self, file: str) -> tuple[str, ...] | None:
         parts = tuple(file.split("/"))

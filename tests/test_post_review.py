@@ -553,6 +553,65 @@ def test_legacy_file_without_disposition_is_held_back(posting, platform):
     assert "```suggestion" not in summary
 
 
+@pytest.mark.parametrize(
+    "admission",
+    [
+        None,
+        {},
+        "admitted",
+        {**admitted_stamp(), "version": 2},
+        {**admitted_stamp(), "version": True},
+        {k: v for k, v in admitted_stamp().items() if k != "input_proof"},
+        {**admitted_stamp(), "input_proof": 1},
+        {**admitted_stamp(), "input_proof": ""},
+        {**admitted_stamp(), "reasons": "none"},
+        {**admitted_stamp(), "reasons": [None]},
+        {**admitted_stamp(), "input_fields": [1]},
+        {**admitted_stamp(), "tier": "unknown"},
+    ],
+)
+def test_malformed_admission_cannot_enter_confirmed_delivery(posting, admission):
+    member = located(admission=admission)
+    data = review(findings=[member], review_body="")
+    assert validate_review_input(data)["findings"][0]["disposition"] == "held_back"
+    summary, comments = surfaces(posting(data, diff=DIFF))
+    assert comments == []
+    assert "Range bug" not in summary
+
+
+@pytest.mark.parametrize("disposition", ["deliver", "eliminate"])
+def test_missing_admission_is_held_back_except_eliminations(posting, disposition):
+    from gauntlet.location import delivery_allows
+
+    member = located(disposition=disposition)
+    del member["admission"]
+    normalized = validate_review_input(review(findings=[member]))["findings"][0]
+    expected = "eliminate" if disposition == "eliminate" else "held_back"
+    assert normalized["disposition"] == expected
+    assert delivery_allows(normalized, "eliminated") == (disposition == "eliminate")
+    assert delivery_allows(normalized, "unverified") == (disposition == "deliver")
+    assert surfaces(posting(review(findings=[member]), diff=DIFF))[1] == []
+
+
+@pytest.mark.parametrize(
+    "admission",
+    [
+        {**admitted_stamp(), "status": "held_back"},
+        {**admitted_stamp(), "status": "report_only"},
+        {**admitted_stamp(), "version": 2},
+        {k: v for k, v in admitted_stamp().items() if k != "input_proof"},
+        {**admitted_stamp(), "input_proof": 1},
+        None,
+    ],
+)
+def test_non_admitted_stamp_grants_no_action_rights(admission):
+    from gauntlet.location import delivery_allows
+
+    member = located(admission=admission)
+    for right in ("inline", "body", "patch", "fence", "fixTask", "sourceLink"):
+        assert not delivery_allows(member, right)
+
+
 def test_body_disposition_digest_and_malformed_reasons(posting):
     body_findings = [
         located(

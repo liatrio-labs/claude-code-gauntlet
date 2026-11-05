@@ -17,6 +17,8 @@ for (const dimension of KNOWN_DIMENSIONS) test(`known dimension: ${dimension}`, 
 const VALIDATION_ROWS = [
   { name: 'unknown dimension stays with its own label', fields: { dimension: 'new_dimension' }, kept: 1,
     warning: "[f1] Unknown dimension 'new_dimension' \u2014 finding kept with warning" },
+  { name: 'mixed-case dimension stays at intake', fields: { dimension: 'Intent', agent: 'conventions-and-intent' }, kept: 1,
+    warning: "[f1] Unknown dimension 'Intent' \u2014 finding kept with warning" },
   { name: 'missing dimension stays', fields: { dimension: undefined }, kept: 1,
     warning: "[f1] Missing 'dimension' field \u2014 finding kept with warning" },
   { name: 'missing file rejects', fields: { file: undefined }, kept: 0,
@@ -144,7 +146,8 @@ const STAGE_ROWS = [
   { name: 'zero-finding agent remains in roster', input: { findings: [finding({ id: 'F1', agent: 'bug-detector' })],
     gaps: [], degraded: [], dispatched: ['code-gauntlet:bug-detector', 'code-gauntlet:code-simplifier'] },
     ids: ['F1'], agents: ['bug-detector', 'code-simplifier'] },
-  { name: 'array is rejected at discovery intake', value: [], discovery: true, ids: [], agents: FULL_AGENTS },
+  { name: 'array is rejected at discovery intake', value: [], discovery: true, ids: [], agents: FULL_AGENTS,
+    warnings: ['Invalid finding shape: expected an object — finding rejected'] },
 ];
 for (const row of STAGE_ROWS) test(`merge stage: ${row.name}`, async () => {
   let input = row.input;
@@ -165,6 +168,16 @@ for (const row of STAGE_ROWS) test(`merge stage: ${row.name}`, async () => {
 });
 
 const PATH_GOLDEN = { files: ['src/a.js'], refs: undefined, consumers: undefined, warnings: [], rewrites: 1 };
+for (const [field, value] of [['line_start', '1'], ['line_end', 1.5], ['anchor', 7]]) {
+  test(`nested reference drops an invalid ${field}`, () => {
+    const ref = { file: 'src/test', line_start: 1, line_end: 1, anchor: 'return value;', input: 'empty', assertion: 'rejects', [field]: value };
+    const out = normalizeFindingPaths([finding({ duplicate_of: ref, candidate_tests: [ref] })], '/repo');
+    assert.equal(Object.hasOwn(out.valid[0], 'duplicate_of'), false);
+    assert.deepEqual(out.valid[0].candidate_tests, []);
+    assert.deepEqual(out.valid[0].reference_diagnostics.map((d) => d.field), ['candidate_tests', 'duplicate_of']);
+    assert.ok(out.warnings.every((warning) => warning.includes(`.${field} path: expected`)));
+  });
+}
 const PATH_ROWS = [
   ...[String.raw`C:\repo\a.txt`, String.raw`C:\repo/a.txt`, String.raw`C:/repo\a.txt`].map((file) => ({
     name: `Windows top-level and nested paths ${file}`, root: String.raw`C:\repo`, input: [finding({ file,

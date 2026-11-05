@@ -167,13 +167,14 @@ export function validateFindings(findings, decisions = []) {
 export function merge(findingsByAgent, meta) {
   const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
   const agents = M.agents;
-  const allWarnings = [];
+  const intakeRejected = M.rejected || [];
+  const allWarnings = validateFindings(deepClone(intakeRejected)).warnings;
   const decisions = [];
 
   // Dictionary selection preserves repeated roster keys and integer-key enumeration.
   const selected = {};
   for (const agent of agents) {
-    const group = (findingsByAgent || {})[agent] || [];
+    const group = findingsByAgent[agent] || [];
     const findings = [];
     for (let i = 0; i < group.length; i += 1) {
       let obj;
@@ -206,7 +207,7 @@ export function merge(findingsByAgent, meta) {
   }
 
   let droppedNoId = 0;
-  for (const f of allFlat) {
+  for (const f of [...allFlat, ...intakeRejected].filter((f) => f && typeof f === 'object' && !Array.isArray(f))) {
     const fid = f.id;
     if (fid === undefined || fid === null || fid === '') droppedNoId += 1;
   }
@@ -238,7 +239,7 @@ export function merge(findingsByAgent, meta) {
 
 export function mergeStage(discoverOut, meta) {
   const out = discoverOut || { findings: [] };
-  const M = typeof meta === 'string' ? JSON.parse(meta) : (meta || {});
+  const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
   const findings = out.findings || [];
 
   const byAgent = {};

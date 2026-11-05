@@ -429,7 +429,7 @@ const confirmations = verified.findings[0].resolved_sites.map(s=>({file:s.file,l
 const persist = async list => {
  const validated = await validateStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async(prompt,o)=>{
   if(!o.schema.properties.validations.items.properties.site_confirmations)throw Error('missing return metadata');
-  if(!prompt.split('\nReturn ')[1]?.includes('site_confirmations') || !prompt.includes('same defect requiring the same correction'))throw Error('missing semantic contract');
+  if(!prompt.includes('same defect requiring the same correction'))throw Error('missing semantic contract');
   const packet=JSON.parse(prompt.split(' | site_requests: ')[1].split(' | admission_context: ')[0]);
   if(packet.length!==4 || packet.some(s=>s.line_start!==7))throw Error('requests are not resolved');
   return {validations:[{finding_id:'ISSUE',confidence:90,policy_subject:'ordinary',...(list===null?{}:{site_confirmations:list})},{finding_id:'CONSTITUENT',confidence:85,policy_subject:'ordinary'}]};
@@ -465,7 +465,8 @@ process.stdout.write(JSON.stringify({all,some,missing,tampered,gaps:raw.gaps,res
     )
     assert [s["file"] for s in value["some"]["findings"][0]["sites"]] == ["site-0.txt"]
     assert value["missing"]["findings"][0]["sites"] == []
-    assert len(value["all"]["findings"][0]["site_requests"]) == 5
+    assert "site_requests" not in value["all"]["findings"][0]
+    assert "resolved_sites" not in value["all"]["findings"][0]
     assert (
         len(value["all"]["checkpoints"]["challenge"]["findings"][0]["site_requests"])
         == 5

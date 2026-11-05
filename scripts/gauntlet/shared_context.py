@@ -76,6 +76,25 @@ def _layout_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=True, indent=2).replace("<", "\\u003c")
 
 
+def _omission(directory: str, count: int) -> str:
+    return f"{directory or '.'}: {count} entries omitted"
+
+
+def _budgeted_names(directory: str, candidates: list[str]) -> tuple[list[str], int]:
+    # Reserve escaped JSON space for the largest possible omission disclosure.
+    remaining = READ_PLAN_MAX_CHARS - len(
+        f"    {_layout_json(_omission(directory, len(candidates)))},\n"
+    )
+    listed = []
+    for name in candidates:
+        size = len(f"    {_layout_json(name)},\n")
+        if size > remaining:
+            break
+        listed.append(name)
+        remaining -= size
+    return listed, len(candidates) - len(listed)
+
+
 def layout_entries(source: SourceAdapter, changed_files: Iterable[str]) -> LayoutWire:
     def included(path: str) -> bool:
         return all(part.lower() not in NON_SOURCE_DIRS for part in path.split("/")[:-1])
@@ -84,7 +103,7 @@ def layout_entries(source: SourceAdapter, changed_files: Iterable[str]) -> Layou
     directories.update(
         file.rpartition("/")[0]
         for file in changed_files
-        if source._parts(file) is not None and included(file)
+        if source.valid_path(file) and included(file)
     )
     names: set[str] = set()
     unavailable = []
@@ -94,23 +113,12 @@ def layout_entries(source: SourceAdapter, changed_files: Iterable[str]) -> Layou
         if entries is None:
             unavailable.append(directory or ".")
         else:
-            candidates = [name for name in entries if included(name)]
-            disclosure = f"{directory or '.'}: {len(candidates)} entries omitted"
-            # Charge escaped names, JSON indentation and the omission disclosure
-            # against the same character budget used by the Read planner.
-            remaining = READ_PLAN_MAX_CHARS - len(f"    {_layout_json(disclosure)},\n")
-            listed = 0
-            for name in candidates:
-                size = len(f"    {_layout_json(name)},\n")
-                if size > remaining:
-                    break
-                names.add(name)
-                remaining -= size
-                listed += 1
-            if listed < len(candidates):
-                omitted.append(
-                    f"{directory or '.'}: {len(candidates) - listed} entries omitted"
-                )
+            listed, count = _budgeted_names(
+                directory, [name for name in entries if included(name)]
+            )
+            names.update(listed)
+            if count:
+                omitted.append(_omission(directory, count))
     return {"entries": sorted(names), "unavailable": unavailable, "omitted": omitted}
 
 

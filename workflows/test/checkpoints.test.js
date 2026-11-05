@@ -48,7 +48,7 @@ const CONTEXT_GAP = 'context_unmeasured: args.contextLines was not stamped, so t
 + 'could not be computed \u2014 every agent got the count-free "read until a Read returns '
 + 'no further content" wording instead of the exact Read calls covering the file. A Read can return part of a file with no '
 + 'truncation notice, and an agent that stops there reviews only what it saw. Stamp '
-+ 'contextLines (and contextChars) from the Phase 2 step that writes the context file.';
++ 'contextLines (and contextChars and contextMaxLineChars) from the Phase 2 step that writes the context file.';
 const missingChallengeFindings = challengeOutput();
 delete missingChallengeFindings.findings;
 const RUN_REFUSAL_ROWS = [

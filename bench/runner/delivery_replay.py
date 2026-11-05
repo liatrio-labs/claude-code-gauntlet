@@ -396,6 +396,9 @@ def _target_digest():
         path = _safe(ROOT / name)
         if path.is_symlink():
             raise ValueError("unsupported plugin symlink")
+    # An unstaged deletion must hash like the same staged removal.
+    rows = [row for row in rows if (ROOT / row[1]).exists()]
+    paths = [name for _, name in rows]
     hashes = (
         subprocess.run(
             ["git", "hash-object", "--no-filters", "--", *paths],

@@ -40,6 +40,7 @@ from gauntlet.registry import (
     VERIFY_REFERENCE_DESCRIPTORS,
     FindingFacts,
     LocationStatus,
+    PathRole,
     ResolvedReferences,
     ResolvedReferencesCandidateTestsItem,
     ResolvedReferencesSearchedPathsItem,
@@ -550,19 +551,27 @@ def _resolve_source(
     )
 
 
+def _file_facts(
+    file: str, lines: tuple[str, ...] | None, facts: DiffFacts | None
+) -> tuple[PathRole, bool | None]:
+    return (
+        path_role(file, readable=lines is not None),
+        None if facts is None or lines is None else file in facts.new_files,
+    )
+
+
 def _reference_fact(
     request: Mapping[str, object], context: VerifyContext, indexed: AnnotatedDiff | None
 ) -> ResolvedReferencesCandidateTestsItem:
     file = request.get("file")
     file = file if isinstance(file, str) else ""
     lines = context.sources().read(file)
+    role, added = _file_facts(file, lines, context.facts)
     resolution = _resolve_source(request, context, indexed)
     fact: ResolvedReferencesCandidateTestsItem = {
         "file": file,
-        "path_role": path_role(file, readable=lines is not None),
-        "file_added": None
-        if context.facts is None or lines is None
-        else file in context.facts.new_files,
+        "path_role": role,
+        "file_added": added,
         "location_status": resolution.status,
         "diff_validation": {"in_diff": None},
     }
@@ -604,9 +613,9 @@ def _resolve_references(
         else:
             facts = [
                 _reference_fact(
-                    value if isinstance(value, dict) else {}, context, indexed
+                    request if isinstance(request, dict) else {}, context, indexed
                 )
-                for value in values
+                for request in values
             ]
             resolved[key] = facts[0] if kind == "reference" else facts
     finding["resolved_references"] = cast(ResolvedReferences, resolved)
@@ -695,10 +704,7 @@ def run_verification(
             )
         file = finding.get("file", "")
         source = sources.read(file)
-        finding["path_role"] = path_role(file, readable=source is not None)
-        finding["file_added"] = (
-            None if facts is None or source is None else file in facts.new_files
-        )
+        finding["path_role"], finding["file_added"] = _file_facts(file, source, facts)
         _derive_loss_anchor(finding, source)
         resolution = _resolve_source(finding, context, indexed)
         for key, claimed in (
