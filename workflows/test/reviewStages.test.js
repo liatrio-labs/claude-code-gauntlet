@@ -3,24 +3,152 @@ import assert from 'node:assert/strict';
 import { validateStage, filterStage, challengeStage, blindChallengeFields, selectDelivery } from '../src/reviewStages.js';
 import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
-import { VALIDATION_RETURN_PROPERTIES } from '../src/registry.js';
+import { VALIDATION_RETURN_PROPERTIES, ADMISSION_PREDICATES, RIGHT_ELIGIBILITY } from '../src/registry.js';
+import { evaluateAdmission } from '../src/admission.js';
+
+test('validator classification omissions skip core findings and duplicate scores retain base behavior', async () => {
+  for (const dimension of ['bug', 'security', 'cross_file_impact', 'intent', 'convention', 'comment_accuracy']) {
+    for (const subject of [undefined, 'invalid', 'ordinary']) {
+      const ctx = stageCtx({ reply: [{ id: 'f1', confidence: 80, policy_subject: subject }] });
+      const out = await validateStage(ctx, { findings: [finding({ dimension })] });
+      const f = evaluateAdmission(out.findings[0]);
+      assert.equal(f.validation, subject === 'ordinary' ? 'validated' : 'skipped');
+      assert.equal(f.admission.status, subject === 'ordinary' ? 'admitted' : 'held_back');
+      assert.deepEqual(f.admission.reasons, subject === 'ordinary' ? [] : [{ predicate: 'validation', status: 'held_back' }]);
+      assert.deepEqual(out.gaps, subject === 'ordinary' ? [] : [invalidGap('invalid_policy_subject')]);
+    }
+  }
+  const ctx = stageCtx({ reply: [70, 85].map((confidence) => ({ id: 'f1', confidence, policy_subject: 'ordinary', reachability: 'current' })) });
+  const out = await validateStage(ctx, { findings: [finding()] });
+  assert.deepEqual(out.gaps, []);
+  assert.equal(out.findings[0].confidence, 85);
+  assert.equal(out.findings[0].reachability, 'current');
+  assert.equal(evaluateAdmission(out.findings[0]).admission.status, 'admitted');
+});
+
+test('validator asks correctness first and scopes admission questions to each conditional claim', async () => {
+  const ctx = stageCtx({ reply: [] });
+  await validateStage(ctx, { findings: [finding(),
+    finding({ id: 'f2', dimension: 'simplification', quality_basis: 'simpler_equivalent' }),
+    finding({ id: 'f3', dimension: 'type_design', quality_basis: 'other' }),
+    finding({ id: 'f4', dimension: 'test_coverage', test_kind: 'additional_case' })] });
+  const prompt = ctx.calls[0].prompt;
+  assert.ok(prompt.indexOf('First judge the correctness') < prompt.indexOf('Then classify policy_subject'));
+  assert.ok(prompt.includes('missing admission evidence or posting value must not lower confidence or change reachability'));
+  const contexts = prompt.split('\n').filter((line) => line.startsWith('- ')).map((line) => JSON.parse(line.split(' | admission_context: ')[1]));
+  assert.deepEqual(contexts.map((context) => context.policy.policy_subjects.ordinary),
+    [[], ['present_defect', 'concrete_equivalent', 'behavior_preserved'], ['present_defect'], ['present_defect']]);
+  assert.deepEqual(contexts.slice(2).map((context) => Object.keys(context.predicates)),
+    [['present_defect', 'current_defect'], ['present_defect', 'current_defect']]);
+  for (const context of contexts) {
+    for (const [predicate, descriptor] of Object.entries(context.predicates)) assert.deepEqual(descriptor, ADMISSION_PREDICATES[predicate]);
+    assert.deepEqual(context.policy.body_fix_task, RIGHT_ELIGIBILITY.body.fixTask);
+  }
+});
+
+test('validation completeness accepts unlocated assessments without promoting empty confirmations', async () => {
+  for (const status of ['rejected', 'confirmed', 'unresolved']) {
+    const ctx = stageCtx({ reply: [{ finding_id: 'f1', confidence: 80, policy_subject: 'ordinary',
+      admission_assessments: [{ predicate: 'present_defect', status, references: [] }] }] });
+    const out = await validateStage(ctx, { findings: [finding({ dimension: 'test_coverage',
+      test_kind: 'additional_case', location_status: 'unconfirmed' })] });
+    assert.equal(out.stats.skipped, 0, status);
+    assert.equal(out.stats.batches_dispatched, 1, status);
+    assert.deepEqual(out.gaps, []);
+    const f = evaluateAdmission(out.findings[0]);
+    assert.equal(f.admission.status, 'report_only', status);
+    assert.equal(f.admission.kind, 'additional_case', status);
+    assert.deepEqual(f.admission_assessments, [{ predicate: 'present_defect',
+      status: status === 'confirmed' ? 'unresolved' : status, references: [] }]);
+  }
+});
+
+test('validation retries partial search references once and admission holds the finding back', async () => {
+  const ctx = stageCtx({ reply: [{ finding_id: 'f1', confidence: 80, policy_subject: 'ordinary',
+    admission_assessments: [
+      { predicate: 'present_defect', status: 'confirmed', references: ['searched_paths:0'] },
+      { predicate: 'resolved_production_element', status: 'confirmed', references: ['production_element'] },
+      { predicate: 'complete_searches', status: 'confirmed', references: ['searched_paths:0'] },
+      { predicate: 'complete_behavioral_absence', status: 'confirmed', references: ['production_element', 'searched_paths:0'] },
+    ] }] });
+  const out = await validateStage(ctx, { findings: [finding({ dimension: 'test_coverage', test_kind: 'critical_gap',
+    candidate_tests: [], resolved_references: {
+      production_element: { file: 'src/x.py', line_start: 10, line_end: 10, location_status: 'confirmed' },
+      searched_paths: [{ path: 'tests/unit', available: true }, { path: 'tests/integration', available: true }],
+      candidate_tests: [],
+    } })] });
+  assert.equal(out.stats.skipped, 0);
+  assert.equal(out.stats.batches_dispatched, 2);
+  assert.deepEqual(out.gaps, []);
+  const f = evaluateAdmission(out.findings[0]);
+  assert.equal(f.admission.kind, 'critical_gap');
+  assert.equal(f.admission.status, 'held_back');
+  assert.deepEqual(f.admission.reasons, [
+    { predicate: 'complete_searches', status: 'held_back' },
+    { predicate: 'complete_behavioral_absence', status: 'held_back' },
+    { predicate: 'present_defect', status: 'held_back' },
+  ]);
+  assert.deepEqual(f.admission_assessments, [
+    { predicate: 'resolved_production_element', status: 'confirmed', references: ['production_element'] },
+  ]);
+});
+
+for (const omitted of [true, false]) test(`validation repairs wrong reference names with coverage assessments ${omitted ? 'omitted' : 'present'}`, async () => {
+  const coverage = ['resolved_production_element', 'complete_searches', 'complete_behavioral_absence']
+    .map((predicate) => ({ predicate, status: 'confirmed', references: [] }));
+  const presentDefect = { predicate: 'present_defect', status: 'confirmed', references: ['primary'] };
+  const missing = ['present_defect', ...(omitted ? coverage.map((entry) => entry.predicate) : [])];
+  const ctx = stageCtx({ reply: [{ finding_id: 'f1', confidence: 80, policy_subject: 'ordinary', reachability: 'current',
+    admission_assessments: [{ ...presentDefect, references: ['a.js:3'] }, ...(omitted ? [] : coverage)] }],
+  replies: { 'validate-retry-0': [{ finding_id: 'f1', admission_assessments: [presentDefect, ...coverage] }] } });
+  const out = await validateStage(ctx, { findings: [finding({ dimension: 'test_coverage', test_kind: 'critical_gap',
+    file: 'a.js', line_start: 3 })] });
+  assert.deepEqual(ctx.calls.map((call) => call.label), ['validate-batch-0', 'validate-retry-0']);
+  const f = evaluateAdmission(out.findings[0]);
+  assert.equal(f.admission.kind, 'production_defect');
+  assert.equal(f.admission.status, 'admitted');
+  assert.equal(f.confidence, 80);
+  assert.equal(f.reachability, 'current');
+  assert.deepEqual(out.audit.batches[0].rejections[0].reasons, missing.map((predicate) => `missing_assessment:${predicate}`));
+  const context = JSON.parse(ctx.calls[1].prompt.split(' | admission_context: ')[1].split('\n')[0]);
+  assert.deepEqual(context.policy.policy_subjects.ordinary, missing);
+  assert.deepEqual(ctx.calls[1].schema.properties.validations.items.anyOf[0].properties.admission_assessments.allOf
+    .map((requirement) => requirement.contains.properties.predicate.const), missing);
+  assert.deepEqual(out.gaps, []);
+  assert.deepEqual(ctx.violations, []);
+});
+
+test('validation completeness requires one well-formed assessment per predicate', async () => {
+  const entry = { predicate: 'present_defect', status: 'rejected', references: [] };
+  for (const admission_assessments of [undefined, [], [null], [entry, entry],
+    [{ ...entry, status: 'invalid' }], [{ ...entry, references: null }], [{ ...entry, references: [1] }]]) {
+    const ctx = stageCtx({ reply: [{ finding_id: 'f1', confidence: 80, policy_subject: 'ordinary', admission_assessments }] });
+    const out = await validateStage(ctx, { findings: [finding({ dimension: 'test_coverage', test_kind: 'additional_case' })] });
+    assert.equal(out.stats.skipped, 0);
+    assert.equal(out.findings[0].validation, 'validated');
+    assert.deepEqual(out.gaps, []);
+    assert.ok(evaluateAdmission(out.findings[0]).admission.reasons.some((reason) => reason.predicate === 'present_defect' && reason.status === 'held_back'));
+    assert.deepEqual(out.audit.batches[0].rejections[0].reasons, ['missing_assessment:present_defect']);
+  }
+});
 
 const omittedGap = (idx, count) => `validate-batch-${idx}: validator omitted scores — ${count} finding(s) unvalidated (validation=skipped, held back to the report)`;
+const invalidGap = (reasons) => `validate-batch-0: validator returned invalid/incomplete entries (${reasons}) — 1 finding(s) unvalidated (validation=skipped, held back to the report)`;
 const VALIDATE_STATS = { batches_dispatched: 1, batches_completed: 1, validated: 1, skipped: 1, adjusted: 1 };
 const VALIDATE_ROWS = [
   { name: 'id adjustment', input: [finding({ id: 'F1', confidence: 90 }), finding({ id: 'F2', confidence: 80 })],
-    reply: [{ id: 'F1', confidence: 50, justification: 'weak' }, { id: 'F2', confidence: 'invalid' }, null],
-    gaps: [omittedGap(0, 1)],
+    reply: [{ id: 'F1', confidence: 50, policy_subject: 'ordinary', justification: 'weak' }, { id: 'F2', confidence: 'invalid' }, null],
+    gaps: [invalidGap('invalid_confidence, invalid_policy_subject')],
     expected: [['F1', 50, 90, 'weak', undefined, 'validated'], ['F2', 80, undefined, undefined, undefined, 'skipped']] },
   { name: 'finding_id adjustment', input: [finding({ id: 'F1', confidence: 90 }), finding({ id: 'F2', confidence: 80 })],
-    reply: [{ finding_id: 'F1', confidence: 40, justification: 'reachable only hypothetically' }], gaps: [omittedGap(0, 1)],
+    reply: [{ finding_id: 'F1', confidence: 40, policy_subject: 'ordinary', justification: 'reachable only hypothetically' }], gaps: [omittedGap(0, 1)],
     expected: [['F1', 40, 90, 'reachable only hypothetically', undefined, 'validated'],
       ['F2', 80, undefined, undefined, undefined, 'skipped']] },
   { name: 'validations envelope', input: [finding({ confidence: 40 })],
-    reply: { validations: [{ id: 'f1', confidence: 85 }] }, stats: { ...VALIDATE_STATS, validated: 1, skipped: 0 },
+    reply: { validations: [{ id: 'f1', confidence: 85, policy_subject: 'ordinary' }] }, stats: { ...VALIDATE_STATS, validated: 1, skipped: 0 },
     expected: [['f1', 85, 40, undefined, undefined, 'validated']] },
   { name: 'known reachability', input: [finding({ id: 'F1', confidence: 80 })],
-    reply: [{ finding_id: 'F1', confidence: 80, reachability: 'future_change_only' }],
+    reply: [{ finding_id: 'F1', confidence: 80, policy_subject: 'ordinary', reachability: 'future_change_only' }],
     stats: { ...VALIDATE_STATS, validated: 1, skipped: 0 }, expected: [['F1', 80, 80, undefined, 'future_change_only', 'validated']] },
   { name: 'count batches', batch: 2,
     input: ['F1', 'F2', 'F3', 'F4', 'F5'].map((id) => finding({ id, confidence: 80 })), reply: [],
@@ -57,17 +185,23 @@ const VALIDATE_ROWS = [
 for (const row of VALIDATE_ROWS) test(`validate result: ${row.name}`, async () => {
   const ctx = stageCtx({ reply: row.reply, nulls: row.nulls });
   const out = await validateStage(ctx, { findings: structuredClone(row.input), limits: { validateBatch: row.batch ?? 10 } });
-  assert.deepEqual(Object.keys(out), ['findings', 'gaps', 'stats']);
+  assert.deepEqual(Object.keys(out), row.input.length ? ['findings', 'gaps', 'audit', 'stats'] : ['findings', 'gaps', 'stats']);
   assert.deepEqual(out.findings.map((f) => [f.id, f.confidence, f.original_confidence,
     f.validation_justification, f.reachability, f.validation]), row.expected);
-  assert.deepEqual(out.stats, row.stats ?? VALIDATE_STATS);
+  const expectedStats = { ...(row.stats ?? VALIDATE_STATS) };
+  const pendingCount = row.expected.filter((entry) => entry.at(-1) === 'skipped').length;
+  const retryCount = Math.ceil(pendingCount / Math.max(1, Math.ceil((row.batch || 10) / 5)));
+  expectedStats.batches_dispatched += retryCount;
+  if (Array.isArray(row.reply) || Array.isArray(row.reply.validations)) expectedStats.batches_completed += retryCount;
+  assert.deepEqual(out.stats, expectedStats);
   assert.deepEqual(out.gaps, row.gaps ?? []);
-  assert.deepEqual(ctx.calls.map((call) => call.label), row.labels ?? ['validate-batch-0']);
+  assert.deepEqual(ctx.calls.map((call) => call.label), [...(row.labels ?? ['validate-batch-0']),
+    ...Array.from({ length: retryCount }, (_, idx) => `validate-retry-${idx}`)]);
   for (const call of ctx.calls) assert.equal(call.agentType, 'code-gauntlet:validator');
   assert.deepEqual(ctx.violations, []);
 });
 const VALIDATE_TAIL = '\nReturn { validations: [{ finding_id, confidence, justification, '
-  + 'reachability (current | future_change_only | uncertain), site_confirmations }] } \u2014 confidence 0-100 '
+  + 'reachability (current | future_change_only | uncertain), site_confirmations, policy_subject (test_defect | coverage | ordinary | unresolved), admission_assessments }] } \u2014 confidence 0-100 '
   + '(one entry per finding).';
 const VALIDATE_PROMPT_ROWS = [
   { name: 'equal range endpoints print once', fields: { file: 'one.js', line_start: 42, line_end: 42 },
@@ -84,12 +218,14 @@ for (const row of VALIDATE_PROMPT_ROWS) test(`validate prompt: ${row.name}`, asy
   assert.ok(ctx.calls[0].prompt.includes('code-evidence and disproof contract'));
   assert.ok(ctx.calls[0].prompt.includes(row.block));
   assert.ok(ctx.calls[0].prompt.endsWith(VALIDATE_TAIL));
-  assert.deepEqual(ctx.calls[0].schema, { type: 'object', properties: { validations: {
+  const { anyOf, ...base } = ctx.calls[0].schema.properties.validations.items;
+  assert.ok(anyOf.length > 0);
+  assert.deepEqual({ ...ctx.calls[0].schema, properties: { validations: { type: 'array', items: base } } }, { type: 'object', properties: { validations: {
     type: 'array', items: { type: 'object', properties: {
       finding_id: { type: 'string' }, confidence: { type: 'number' }, justification: { type: 'string' },
       reachability: { type: 'string', enum: ['current', 'future_change_only', 'uncertain'] },
       ...VALIDATION_RETURN_PROPERTIES,
-    }, required: ['finding_id', 'confidence'] },
+    }, required: ['finding_id'] },
   } }, required: ['validations'] });
 });
 
@@ -142,7 +278,7 @@ const CHALLENGE_ROWS = [
     labels: ['challenge-0', 'challenge-1'], stats: { ...CHALLENGE_GOLDEN,
       total_input: 2, dispatched: 2, completed: 2, challenge_survived: 2, final_count: 2 }, justifications: ['claim holds',
         'claim holds'] },
-  { name: 'legacy low score removes', input: [finding({ id: 'F1', validation: 'skipped', origin: 'unknown' })], reply: { score: 10, justification: 'does not hold' },
+  { name: 'legacy low score removes', input: [finding({ id: 'F1' })], reply: { score: 10, justification: 'does not hold' },
     kept: [], scores: [], eliminated: ['F1'],
     stats: { ...CHALLENGE_GOLDEN, challenge_removed: 1, challenge_survived: 0, final_count: 0 } },
   { name: 'canonical zero is scored', input: [finding({ id: 'F1' })],
@@ -169,10 +305,8 @@ const CHALLENGE_ROWS = [
     ], stats: { ...CHALLENGE_GOLDEN, total_input: 3, dispatched: 2, completed: 2, skipped: 1,
       challenge_survived: 2, final_count: 2 } },
   { name: 'clean candidates fill cap first', input: [finding({ id: 'DIRTY', severity: 'critical', validation: 'skipped' }),
-    finding({ id: 'CLEAN', severity: 'low' })], reply: { score: 80 }, cap: 1, kept: ['CLEAN'], scores: [80],
-    unverified: [['DIRTY', 'capped']], gaps: [
-      'challenge: 1 finding(s) over challengeCap=1 left unchallenged (challenge=capped, pipeline-degraded)',
-    ], stats: { ...CHALLENGE_GOLDEN, total_input: 2, skipped: 1 } },
+    finding({ id: 'CLEAN', severity: 'low' })], reply: { score: 80 }, cap: 1, kept: ['CLEAN', 'DIRTY'], scores: [80, undefined],
+    unverified: [], gaps: [], stats: { ...CHALLENGE_GOLDEN, total_input: 2, admission_terminal: 1 } },
   { name: 'empty with timestamp', input: [], reply: { score: 80 }, kept: [], scores: [], labels: [],
     generatedAt: '2026-07-18T00:00:00Z',
     stats: { ...CHALLENGE_GOLDEN, total_input: 0, dispatched: 0, completed: 0, challenge_survived: 0, final_count: 0 } },

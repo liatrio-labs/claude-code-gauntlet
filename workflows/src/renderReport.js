@@ -199,7 +199,7 @@ function coerceReportFinding(finding, severities) {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
     } else if (key === 'sites') {
       value = Array.isArray(raw) ? raw : [];
-    } else if (['disposition_reasons', 'delivery_group'].includes(key)) {
+    } else if (['disposition_reasons', 'delivery_group', 'admission', 'admission_assessments', 'body_fix_task_eligible'].includes(key)) {
       value = raw;
     } else if (key === 'consolidation_primary' || key === 'challenge_contested') {
       value = raw;
@@ -410,7 +410,15 @@ function locationUrl(finding, permalinks, displayedLocation) {
   return `${permalinks.blobBase}${path}${anchor}`;
 }
 
+function admissionHoldback(finding) {
+  return finding.challenge === 'admission_terminal' && incompleteVetting(finding).length === 0
+    && finding.validation === 'validated' && finding.admission?.status === 'held_back'
+    && Array.isArray(finding.admission.reasons);
+}
+
 function unverifiedReason(finding) {
+  if (admissionHoldback(finding)) return `admission predicates not established: ${finding.admission.reasons
+    .filter((reason) => reason.status === 'held_back').map((reason) => inline(reason.predicate)).join(', ')}`;
   const reasons = incompleteVetting(finding).map((check) => UNVERIFIED_REASONS[check]);
   if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge)) {
     reasons.push(UNVERIFIED_REASONS.challenge[finding.challenge]);
@@ -427,7 +435,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   const url = locationUrl(finding, permalinks, where);
   if (where) bullets.push(url ? `- **Location:** [${where}](${url})` : `- **Location:** ${where}`);
   for (const site of finding.sites || []) {
-    const located = { ...site, disposition: finding.disposition };
+    const located = { ...site, disposition: finding.disposition, admission: finding.admission };
     const link = locationUrl(located, permalinks);
     if (link) bullets.push(`- **Additional site:** [${location(located)}](${link})`);
   }
@@ -438,7 +446,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   if (finding.origin === 'surfaced') {
     bullets.push('- **Origin:** surfaced — pre-existing, surfaced by this change');
   }
-  if (unverified) bullets.push(`- **Unverified because:** ${unverifiedReason(finding)}`);
+  if (unverified) bullets.push(`- **${admissionHoldback(finding) ? 'Held back' : 'Unverified'} because:** ${unverifiedReason(finding)}`);
   if ((finding.report_tag ?? finding.report_destination) === 'suggestion') {
     bullets.push('- **Routing:** improvement suggestion');
   }
@@ -549,7 +557,9 @@ function countsSentence(findings, rawCount, unverified, view) {
   sentence += count > 0 && breakdown.length ? ` — ${breakdown.join(', ')}.` : '.';
   const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
   if (suggestions) sentence += ` ${suggestions} routed as improvement ${plural(suggestions, 'suggestion')}.`;
-  if (unverified.length) sentence += ` ${unverified.length} unverified / pipeline-degraded.`;
+  const held = unverified.filter(admissionHoldback).length;
+  if (held) sentence += ` ${held} held back by admission.`;
+  if (unverified.length > held) sentence += ` ${unverified.length - held} unverified / pipeline-degraded.`;
   return sentence;
 }
 
@@ -827,8 +837,9 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
   const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, 'report');
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
+  const held = unverified.filter(admissionHoldback);
+  const degraded = unverified.filter((finding) => !admissionHoldback(finding));
   const findingsView = severityView(findings);
-  const unverifiedView = severityView(unverified);
   const identity = inp.prIdentity && typeof inp.prIdentity === 'object' && !Array.isArray(inp.prIdentity)
     ? inp.prIdentity
     : null;
@@ -895,13 +906,20 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
     renderSeverityBuckets(builder, findingsView, false, permalinks);
   }
 
-  if (unverified.length) {
+  if (held.length) {
+    builder.add();
+    builder.add('## Findings held back by admission');
+    builder.add();
+    builder.add('These findings retain their validation but lack the evidence required for admission.');
+    renderSeverityBuckets(builder, severityView(held), true, permalinks);
+  }
+  if (degraded.length) {
     builder.add();
     builder.add('## Unverified / pipeline-degraded findings');
     builder.add();
     builder.add('These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. '
       + 'They are not confirmed findings.');
-    renderSeverityBuckets(builder, unverifiedView, true, permalinks);
+    renderSeverityBuckets(builder, severityView(degraded), true, permalinks);
   }
   const eliminated = [...projected, ...coerceReportFindings(inp.eliminated)].filter((f) => deliveryAllows(f, 'eliminated'));
   if (eliminated.length) {

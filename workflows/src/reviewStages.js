@@ -1,14 +1,15 @@
 import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { incompleteVetting } from './vetting.js';
-import { effectiveBatchSize, effectiveChallengeCap } from './capacity.js';
-import { modelFor, VALIDATION_RETURN_PROPERTIES } from './registry.js';
+import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
+import { modelFor, VALIDATION_RETURN_PROPERTIES, admissionPolicy, requiredAssessments } from './registry.js';
 import { INT_POLICY, coerceInt } from './wire.js';
 import { applyValidations, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
 import { applyChallenges, rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
 import { deliveryGroups } from './dispose.js';
+import { admissionContext, admissionRequests, hasAdmission, validationRejections } from './admission.js';
 
 // The platform rejects array-rooted tool schemas, so validation entries need an object wrapper.
 const VALIDATE_SCHEMA = {
@@ -25,7 +26,7 @@ const VALIDATE_SCHEMA = {
           reachability: { type: 'string', enum: REACHABILITY_VALUES },
           ...VALIDATION_RETURN_PROPERTIES,
         },
-        required: ['finding_id', 'confidence'],
+        required: ['finding_id', 'confidence', 'policy_subject'],
       },
     },
   },
@@ -39,6 +40,48 @@ function validateReturnDescriptor() {
       return `${name}${values}`;
     })
     .join(', ');
+}
+
+function assessmentRequirement(predicates) {
+  return { ...(predicates.length ? { properties: { admission_assessments: { allOf: predicates.map((predicate) => ({
+    contains: { properties: { predicate: { const: predicate } }, required: ['predicate'] },
+  })) } } } : {}), required: predicates.length ? ['admission_assessments'] : [] };
+}
+
+function validateSchema(batch, accepted) {
+  const base = VALIDATE_SCHEMA.properties.validations.items;
+  const variants = batch.flatMap((finding) => {
+    const previous = accepted.get(finding.id);
+    if (previous) {
+      const requirements = assessmentRequirement(validationRejections(finding, previous)
+        .map((reason) => reason.slice('missing_assessment:'.length)));
+      return [{ ...requirements, properties: { finding_id: { enum: [finding.id] }, ...requirements.properties } }];
+    }
+    return VALIDATION_RETURN_PROPERTIES.policy_subject.enum.map((subject) => {
+      const { promotion } = admissionPolicy(finding);
+      const requirements = assessmentRequirement(requiredAssessments(finding, subject));
+      const references = Object.keys(admissionRequests(finding)).filter((key) => key === 'primary');
+      const conditional = promotion && references.length > 0;
+      return { properties: { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] },
+        ...(!conditional ? requirements.properties : {}) }, required: [...base.required, ...(!conditional ? requirements.required : [])],
+        ...(conditional ? { if: { properties: { admission_assessments: { contains: {
+          properties: { predicate: { const: promotion.predicate }, status: { const: 'confirmed' },
+            references: { const: references } }, required: ['predicate', 'status', 'references'],
+        } } }, required: ['admission_assessments'] },
+        then: assessmentRequirement(requiredAssessments(finding, subject, true)), else: requirements } : {}),
+      };
+    });
+  });
+  return { ...VALIDATE_SCHEMA, properties: { validations: { type: 'array', items: { ...base, required: ['finding_id'], anyOf: variants } } } };
+}
+
+// Keep exact small returns and explicit truncation receipts without consuming the checkpoint budget.
+function validatorAudit(audit, label, result, rejections) {
+  const raw = JSON.stringify(result ?? null);
+  const record = { label, raw: raw.slice(0, 8192), raw_characters: raw.length, truncated: raw.length > 8192,
+    rejections: rejections.slice(0, 100), omitted_rejections: Math.max(0, rejections.length - 100) };
+  if (audit.batches.length < 64 && JSON.stringify(audit).length + JSON.stringify(record).length < 64000) audit.batches.push(record);
+  else audit.omitted_batches += 1;
 }
 
 // Parallel results retain batch positions so gaps identify the exact findings left unvalidated.
@@ -59,55 +102,83 @@ export async function validateStage(ctx, input) {
   const batches = [];
   for (let i = 0; i < findings.length; i += batchSize) batches.push(findings.slice(i, i + batchSize));
 
-  const thunks = batches.map((batch, idx) => () => ctx.agent(validatePrompt(inp, batch), {
-    label: `validate-batch-${idx}`,
-    agentType: 'code-gauntlet:validator',
-    model,
-    schema: VALIDATE_SCHEMA,
-  }));
-
-  const results = await ctx.parallel(thunks);
-
   const gaps = [];
-  const validations = [];
-  const skippedSet = new Set();
+  const accepted = new Map();
+  const audit = { batches: [], omitted_batches: 0 };
+  const terminalRejections = new Map();
   let completed = 0;
-
-  results.forEach((res, idx) => {
-    const batch = batches[idx];
+  let dispatched = 0;
+  const dispatch = (batch, label) => () => ctx.agent(validatePrompt(inp, batch, accepted), {
+    label, agentType: 'code-gauntlet:validator', model, schema: validateSchema(batch, accepted),
+  });
+  const consume = (res, batch, label) => {
     const list = res === null || res === undefined
       ? null
       : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
-    if (list === null) {
-      gaps.push(`validate-batch-${idx}: validator returned null/malformed — ${batch.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
-      for (const f of batch) skippedSet.add(f);
-      return;
+    if (list) completed += 1;
+    const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ ...e, id: e.id ?? e.finding_id }));
+    const rejections = [];
+    for (const finding of batch) {
+      const matches = entries.filter((entry) => entry.id === finding.id);
+      if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
+      for (const entry of matches) {
+        const previous = accepted.get(finding.id);
+        const missing = previous ? validationRejections(finding, previous).map((reason) => reason.slice('missing_assessment:'.length)) : [];
+        const replacements = (Array.isArray(entry.admission_assessments) ? entry.admission_assessments : [])
+          .filter((assessment) => missing.includes(assessment?.predicate));
+        const merged = previous && label.startsWith('validate-retry-') ? { ...previous,
+          admission_assessments: [...(Array.isArray(previous.admission_assessments) ? previous.admission_assessments : []).filter((assessment) =>
+            !replacements.some((replacement) => replacement?.predicate === assessment?.predicate)), ...replacements] } : entry;
+        const reasons = validationRejections(finding, merged);
+        if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
+        // Missing admission evidence still warrants a retry, but does not invalidate a score.
+        if (reasons.every((reason) => reason.startsWith('missing_assessment:'))) accepted.set(finding.id, merged);
+      }
     }
-    completed += 1;
-    const entries = list.filter((e) => e && typeof e === 'object')
-      .map((e) => ({ ...e, id: e.id ?? e.finding_id }));
-    validations.push(...entries);
-    const scored = new Set(entries.filter((e) => coerceInt(e.confidence, INT_POLICY.validation) !== null).map((e) => e.id));
-    const unscored = batch.filter((f) => !scored.has(f.id));
+    validatorAudit(audit, label, res, rejections);
+    for (const rejection of rejections) terminalRejections.set(rejection.id, rejection.reasons);
+    return list;
+  };
+  const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
+  dispatched += batches.length;
+  const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
+  const pending = findings.filter((finding) => validationRejections(finding, accepted.get(finding.id)).length);
+  if (pending.length) {
+    // One follow-up round only; small batches isolate incomplete records from successful siblings.
+    const retries = [];
+    const retrySize = effectiveValidationRetrySize(limits, findings.length);
+    for (let i = 0; i < pending.length; i += retrySize) retries.push(pending.slice(i, i + retrySize));
+    const retried = await ctx.parallel(retries.map((batch, idx) => dispatch(batch, `validate-retry-${idx}`)));
+    dispatched += retries.length;
+    retries.forEach((batch, idx) => consume(retried[idx], batch, `validate-retry-${idx}`));
+  }
+  batches.forEach((batch, idx) => {
+    const unscored = batch.filter((finding) => !accepted.has(finding.id));
     if (unscored.length) {
-      gaps.push(`validate-batch-${idx}: validator omitted scores — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
-      for (const f of unscored) skippedSet.add(f);
+      const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))]
+        .filter((reason) => !reason.startsWith('missing_assessment:'));
+      let problem = mainLists[idx] ? 'omitted scores' : 'returned null/malformed';
+      if (reasons.some((reason) => !['missing_entry', 'malformed_return'].includes(reason))) {
+        problem = `returned invalid/incomplete entries (${reasons.join(', ')})`;
+      }
+      gaps.push(`validate-batch-${idx}: validator ${problem} — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
     }
   });
 
-  const { adjustedCount } = applyValidations(findings, validations);
+  const { adjustedCount } = applyValidations(findings, [...accepted.values()]);
 
   let skipped = 0;
   for (const f of findings) {
-    if (skippedSet.has(f)) { f.validation = 'skipped'; skipped += 1; }
+    if (!accepted.has(f.id)) { f.validation = 'skipped'; skipped += 1; }
     else f.validation = 'validated';
   }
 
   return {
     findings,
     gaps,
+    audit,
     stats: {
-      batches_dispatched: batches.length,
+      batches_dispatched: dispatched,
       batches_completed: completed,
       validated: findings.length - skipped,
       skipped,
@@ -116,7 +187,7 @@ export async function validateStage(ctx, input) {
   };
 }
 
-function validatePrompt(inp, batch) {
+function validatePrompt(inp, batch, accepted) {
   const ctxLine = inp.contextLine || '';
   // Locations and claims let validators inspect the relevant code instead of scoring identifiers without evidence.
   const block = batch.map((f) => {
@@ -126,9 +197,10 @@ function validatePrompt(inp, batch) {
     const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
     const sites = (f.resolved_sites || []).filter((site) => locationAllows(site, 'sourceLink'));
     const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
-    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests}`;
+    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f, accepted.get(f.id)))}`;
   }).join('\n');
-  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. Findings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
+  if (batch.every((finding) => accepted.has(finding.id))) return `${ctxLine}Supply only the missing admission assessments listed in each finding's admission_context. Correctness, reachability and policy_subject are fixed. Use confirmed, rejected or unresolved with the exact request names inspected in references.\nFindings:\n${block}\nReturn { validations: [{ finding_id, admission_assessments }] } (one entry per finding).`;
+  return `${ctxLine}Independently validate the supplied batch using the code-evidence and disproof contract. First judge the correctness of each claim and return confidence, justification and reachability from the code. Complete that judgment before admission; missing admission evidence or posting value must not lower confidence or change reachability. Then classify policy_subject as ordinary, test_defect, coverage or unresolved, regardless of producer. A test location alone does not reclassify a grounded convention claim. Assess only the predicates for the selected policy_subject in that finding's admission_context, using confirmed, rejected or unresolved and the exact request names inspected in references. If its promotion predicate is confirmed, use only the promotion's confirmed requirements. Resolution and confidence are not semantic confirmation. Assess body_fix_task predicates separately for local task eligibility. For each resolved site request, confirm whether it is the same defect requiring the same correction; return site_confirmations only for those requests. On an admission-only retry, return finding_id and only missing admission_assessments listed in that context; the accepted correctness and reachability judgments are fixed.\nFindings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding).`;
 }
 
 // The runtime has no wall clock, so generated_at must come from the supplied arguments.
@@ -201,10 +273,9 @@ export async function challengeStage(ctx, input) {
   const model = modelFor('code-gauntlet:challenger', policy);
 
   // Reserve scarce challenge capacity for findings that can still be delivered.
-  const ranked = [
-    ...rankFindings(findings.filter((f) => incompleteVetting(f).length === 0)),
-    ...rankFindings(findings.filter((f) => incompleteVetting(f).length > 0)),
-  ];
+  const actionable = (f) => hasAdmission(f) && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
+  const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f, challenge: 'admission_terminal' }));
+  const ranked = rankFindings(findings.filter(actionable));
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);
 
@@ -234,7 +305,7 @@ export async function challengeStage(ctx, input) {
     }
     // Use the known finding id because challenger output cannot be trusted to echo it.
     challenges.push({ id: finding.id, score: rawScore, justification: res.justification });
-    challenged.push(finding);
+    challenged.push({ ...finding, challenge: 'survived' });
   });
 
   for (const f of overflow) skipped.push({ ...f, challenge: 'capped' });
@@ -247,12 +318,13 @@ export async function challengeStage(ctx, input) {
   const unverified = rankFindings(skipped);
 
   return {
-    findings: applied.findings,
+    findings: [...applied.findings, ...terminal],
     unverified,
     eliminated: applied.eliminated,
     gaps,
     stats: {
       total_input: findings.length,
+      ...(terminal.length ? { admission_terminal: terminal.length } : {}),
       dispatched: candidates.length,
       completed: challenged.length,
       skipped: skipped.length,

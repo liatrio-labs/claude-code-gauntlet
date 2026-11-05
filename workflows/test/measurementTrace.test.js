@@ -34,7 +34,7 @@ for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves
   assert.deepEqual(replay.persistence.map(({ label, agent_type, prompt_sha256, error }) => ({ label, agent_type, prompt_sha256, error })),
     measured.ctx.calls.filter(({ label }) => ['artifact-writer', 'assemble-artifacts'].includes(label))
       .map(({ label, agentType, prompt }) => ({ label, agent_type: agentType, prompt_sha256: createHash('sha256').update(prompt).digest('hex'), error: null })));
-  assert.deepEqual(trace.snapshots.map((s) => s.stage), ['discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'dispose', 'select']);
+  assert.deepEqual(trace.snapshots.map((s) => s.stage), ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'dispose', 'select']);
   assert.equal(trace.schema_version, 1);
   assert.equal(trace.complete, true);
   const first = trace.versions.find((v) => v.finding.id === 'FILTER');
@@ -45,6 +45,10 @@ for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves
     assert.ok(decisions.some((d) => d.reason_code === code), code);
   }
   assert.ok(decisions.every((d) => TRACE_REASONS.includes(d.reason_code)));
+  const report = trace.versions.find((v) => v.finding.id === 'REPORT');
+  const selection = trace.snapshots.find((s) => s.stage === 'select').decisions.find((d) => d.trace_id === report.trace_id);
+  assert.equal(selection.reason_code, 'report_only');
+  assert.deepEqual(selection.detail, { kind: 'additional_case' });
   assert.ok(trace.snapshots.some((s) => s.cap_hit));
 });
 

@@ -9,7 +9,7 @@ import { fnv1a32 } from '../../src/wire.js';
 export function measurementScenario(mode = 'return', overrides = {}, options = {}) {
   const id = { owner: 'synthetic', repo: 'fixture', pr_number: 1, sha_full: 'a'.repeat(40), platform: 'github', web_origin: 'https://github.com' };
   const args = validArgs({ delivery: { tier: 'all', prIdentity: id },
-    limits: { challengeCap: 6, deliveryCap: 1 },
+    limits: { challengeCap: 5, deliveryCap: 1 },
     ...(mode === 'return' ? { persist: { returnPrimaries: true } } : mode === 'derived' ? { persist: {} } : {}),
     ...overrides,
   });
@@ -22,6 +22,7 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
     makeFinding('DELIVERY', { confidence: 80 }),
     makeFinding('SKIP', { severity: 'critical' }), makeFinding('CAP', { severity: 'low' }),
     makeFinding('GROUP', { file: 'group.js', severity: 'critical', title: 'shared group defect', description: 'The shared group defect breaks the ordinary value when this public function is called.' }),
+    makeFinding('REPORT', { dimension: 'test_coverage', test_kind: 'additional_case', criticality: 8, failure_scenario: 'Extra case' }),
   ];
   const convention = makeFinding('CORROBORATOR', { file: 'group.js', dimension: 'intent', spec_text: 'Return the correct value', severity: 'critical', title: 'corroborating shared defect', description: `${seed.at(-1).description} The intended return value is therefore broken.` });
   if (options.extraBytes) seed[1].diagnostic = 'x'.repeat(options.extraBytes);
@@ -49,14 +50,15 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
       const index = Number(/verify-slice-(\d+)/.exec(label)[1]);
       return sliceInputRecorder(deltaEnvelope(slice, { sha: args.headShaShort, nonce: `${args.nonce}.${index}`,
         overrides: Object.fromEntries(slice.map((f) => [f.id, f.id === 'VERIFY'
-          ? { verified: false, elimination_reason: 'trusted executor disproved the claim' } : { origin: 'new', diff_validation: { in_diff: true } }])) }), prompt);
+          ? { verified: false, elimination_reason: 'trusted executor disproved the claim' } : { origin: 'new', path_role: 'source', diff_validation: { in_diff: true } }])) }), prompt);
     }
-    if (options.failValidation && label.startsWith('validate-batch-')) throw new Error('synthetic validation dispatch failure');
-    if (label.startsWith('validate-batch-')) {
+    if (options.failValidation && /^validate-(batch|retry)-/.test(label)) throw new Error('synthetic validation dispatch failure');
+    if (/^validate-(batch|retry)-/.test(label)) {
       ctx.calls.push({ prompt, ...dispatch });
       const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
-      return { validations: ids.filter((id) => !['SKIP', 'CAP'].includes(id)).map((finding_id) => ({ finding_id,
-        confidence: finding_id === 'FILTER' ? 45 : seed.find((f) => f.id === finding_id)?.confidence ?? 90 })) };
+      return { validations: ids.filter((id) => id !== 'SKIP').map((finding_id) => ({ finding_id, policy_subject: 'ordinary',
+        confidence: finding_id === 'FILTER' ? 45 : seed.find((f) => f.id === finding_id)?.confidence ?? 90,
+        ...(finding_id === 'REPORT' ? { admission_assessments: [{ predicate: 'present_defect', status: 'rejected', references: ['primary'] }] } : {}) })) };
     }
     if (label.startsWith('challenge-')) {
       ctx.calls.push({ prompt, ...dispatch });

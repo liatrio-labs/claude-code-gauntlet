@@ -258,13 +258,15 @@ for (const [status, input] of [
   if (status === 'overflow' || status === 'unavailable') assert.ok(!out.gaps.some((gap) => gap.includes('possibly incomplete')));
 });
 
-test('removed coverage remains held back with real Verify and discovery replay', async () => {
+test('removed coverage shares admission and capped body delivery with real Verify', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'removed-tests-'));
+  assert.equal(spawnSync('git', ['init', '-q'], { cwd: dir }).status, 0);
   const outputDir = join(dir, 'out');
   mkdirSync(outputDir);
+  mkdirSync(join(dir, 'tests'));
   writeFileSync(join(dir, 'source'), 'return override\n');
   const bugs = Array.from({ length: 6 }, (_, index) => makeFinding(`bug${index}`, {
-    file: `bug${index}`, line_start: 1, line_end: 1, severity: 'medium',
+    file: `bug${index}`, line_start: 1, line_end: 1, anchor: 'return broken', severity: 'medium',
   }));
   for (const bug of bugs) writeFileSync(join(dir, bug.file), 'return broken\n');
   const diffPath = join(outputDir, 'code-gauntlet-diff-abc1234.patch');
@@ -277,12 +279,14 @@ test('removed coverage remains held back with real Verify and discovery replay',
   assert.equal(produced.status, 0, produced.stderr);
   const receipt = JSON.parse(produced.stdout);
   assert.equal(receipt.removedTests.items.length, 1);
-  const auditRow = { ...lost, id: receipt.removedTests.items[0].id, losses: [{ ...loss, file: join(dir, 'source') }] };
+  const auditRow = { ...lost, id: receipt.removedTests.items[0].id, losses: [{ ...loss, file: join(dir, 'source'),
+    production_element: { file: 'source', line_start: 1, line_end: 1, anchor: 'return override' } }] };
   let discoverOutput;
   for (const tier of ['all', 'main_only']) {
     let payload;
     const args = validArgs({
       repoRoot: dir, outputDir, diffPath, pluginRoot: resolve('.'),
+      verify: { targetKind: 'local' },
       ...receipt, delivery: { tier }, limits: { deliveryCap: 6 },
       ...(tier === 'main_only' ? checkpointArgs({ discover: discoverOutput }) : {}),
     });
@@ -296,6 +300,18 @@ test('removed coverage remains held back with real Verify and discovery replay',
         assert.equal(result.status, 0, result.stderr);
         return JSON.parse(readFileSync(resolve(dir, argv[argv.indexOf('--output') + 1]), 'utf8'));
       }
+      if (dispatch.label.startsWith('validate-batch-')) {
+        const result = await agent(prompt, dispatch);
+        for (const validation of result.validations) if (validation.finding_id.startsWith('removed-test:')) {
+          validation.admission_assessments = [
+            { predicate: 'present_defect', status: 'rejected', references: ['primary'] },
+            { predicate: 'resolved_production_element', status: 'confirmed', references: ['production_element'] },
+            { predicate: 'complete_searches', status: 'confirmed', references: ['searched_paths:0'] },
+            { predicate: 'complete_behavioral_absence', status: 'confirmed', references: ['production_element', 'searched_paths:0'] },
+          ];
+        }
+        return result;
+      }
       const result = await agent(prompt, dispatch);
       // A partial persistence return carries the discovery phase for resume.
       if (tier === 'all' && dispatch.label === 'artifact-writer') throw new Error('capture resumable phases');
@@ -304,18 +320,21 @@ test('removed coverage remains held back with real Verify and discovery replay',
     const out = await runWith(ctx, args);
     assert.equal(out.ok, true, JSON.stringify(out));
     assert.equal(out.stats.verified, true, JSON.stringify(out.gaps));
-    assert.equal(payload.postReview.length, 6);
-    assert.ok(payload.postReview.every((finding) => finding.disposition === 'body'));
-    assert.ok(!payload.postReview.some((finding) => finding.removed_test));
-    const held = payload.findings.find((finding) => finding.removed_test);
-    assert.equal(held.disposition, 'held_back');
-    assert.equal(held.origin, 'new');
-    assert.equal(held.removed_test.path, item.path);
+    assert.equal(payload.postReview.length, 6, JSON.stringify(payload.findings));
+    assert.ok(payload.postReview.filter((finding) => !finding.removed_test).every((finding) => finding.disposition === 'deliver'));
+    assert.ok(payload.postReview.some((finding) => finding.removed_test));
+    const admitted = payload.findings.find((finding) => finding.removed_test);
+    assert.equal(admitted.disposition, 'body');
+    assert.equal(admitted.admission.status, 'admitted');
+    assert.equal(admitted.diff_validation.in_diff, false);
+    assert.equal(admitted.anchor, 'return override');
+    assert.equal(admitted.origin, 'new');
+    assert.equal(admitted.removed_test.path, item.path);
     const challenge = ctx.calls.find((call) => call.label.startsWith('challenge-') && call.prompt.includes(loss.title));
     assert.ok(challenge.prompt.includes(diffPath));
     assert.ok(challenge.prompt.includes(`${JSON.stringify(item.path)}, old lines 3-7`));
     assert.doesNotMatch(challenge.prompt, /failure_scenario|criticality|covered_by/);
-    assert.match(payload.report, /\| Test Coverage \| test-analyzer \| 0 \(\+1 unverified\) \|/);
+    assert.match(payload.report, /\| Test Coverage \| test-analyzer \| 1 \|/);
     if (tier === 'all') {
       discoverOutput = out.checkpoints.phases.discover;
       assert.deepEqual(discoverOutput.removedTestAudit, { status: 'ran-clean' });

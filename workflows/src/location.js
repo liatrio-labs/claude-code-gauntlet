@@ -23,6 +23,8 @@ export function deliveryAllows(finding, right) {
   const rights = DISPOSITION_RIGHTS[stamp];
   if (right === 'report') return rights.report === 'finding';
   if (right === 'unverified' || right === 'eliminated') return rights.report === right;
+  if (finding.admission?.version !== 1 || finding.admission.status !== 'admitted' || typeof finding.admission.input_proof !== 'string') return false;
+  if (stamp === 'body' && right === 'fixTask' && finding.body_fix_task_eligible !== true) return false;
   return rights[right] === true && locationAllows(finding, right);
 }
 

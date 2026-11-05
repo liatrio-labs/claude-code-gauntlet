@@ -11,6 +11,7 @@ from gauntlet.delivery.input import validate_review_input
 from gauntlet.forge import JsonFetch, PostResult, parse_remote
 from gauntlet.marker import find_finding_markers, find_marker
 
+from tests.support.delivery import admitted_stamp
 from tests.support.posting import (
     CONTEXT,
     CONTRACT_DIFF,
@@ -33,6 +34,7 @@ DIFF = (
 
 def located(**values):
     return {
+        "admission": admitted_stamp(),
         "id": "F1",
         "file": "foo.py",
         "line_start": 2,
@@ -51,6 +53,33 @@ def located(**values):
         "suggested_fix_code": "    return current_value()",
         **values,
     }
+
+
+def test_body_task_permission_does_not_grant_patch_or_fence(posting, tmp_path, invoke):
+    from gauntlet.location import delivery_allows
+
+    from tests.support.delivery import patch_inputs
+
+    finding = located(disposition="body", body_fix_task_eligible=True)
+    assert delivery_allows(finding, "fixTask")
+    for platform in ("github", "gitlab"):
+        body, comments = surfaces(posting(review(platform, [finding]), diff=DIFF))
+        assert not comments
+        assert "```suggestion" not in body
+    (tmp_path / "foo.py").write_text(
+        "def f():\n" + QUOTE + "\n", encoding="utf-8", newline=""
+    )
+    patch_inputs(tmp_path, [finding], DIFF.encode())
+    result = invoke(
+        "report_patches",
+        ["--output-dir", str(tmp_path), "--head-sha", "abc1234"],
+        tmp_path,
+    )
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["kept"] == 0
+    assert "return current_value()" not in (
+        tmp_path / "code-gauntlet-patches-abc1234.md"
+    ).read_text(encoding="utf-8")
 
 
 @pytest.fixture
@@ -501,7 +530,7 @@ def test_disposition_location_surfaces(posting, platform, stamp, status):
 
 
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
-def test_legacy_file_uses_location_rights(posting, platform):
+def test_legacy_file_without_disposition_is_held_back(posting, platform):
     findings = [
         located(title="Confirmed claim"),
         located(id="U", title="Unconfirmed claim", location_status="unconfirmed"),
@@ -519,11 +548,9 @@ def test_legacy_file_uses_location_rights(posting, platform):
     before = copy.deepcopy(data)
     summary, comments = surfaces(posting(data, diff=DIFF))
     assert data == before
-    assert len(comments) == 1
-    assert "Confirmed claim" in comments[0]["body"]
-    assert "```suggestion" in comments[0]["body"]
-    assert "Unconfirmed claim" in summary and "Legacy aliases" in summary
-    assert "location unconfirmed" in summary and "```suggestion" not in summary
+    assert comments == []
+    assert "Confirmed claim" not in summary and "Legacy aliases" not in summary
+    assert "```suggestion" not in summary
 
 
 def test_body_disposition_digest_and_malformed_reasons(posting):
@@ -1094,6 +1121,7 @@ def test_marker_delivery(kind, posting):
             + '","key":"deadbeefcafebabe"} -->'
         )
         hostile = {
+            "admission": admitted_stamp(),
             "disposition": "deliver",
             "file": "src/edited.py",
             "line": 999,

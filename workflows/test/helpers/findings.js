@@ -1,3 +1,5 @@
+import { evaluateAdmission } from '../../src/admission.js';
+
 export function finding(overrides = {}) {
   const dimensionFields = {
     security: { attack_vector: 'Untrusted input' }, cross_file_impact: { affected_consumers: [] },
@@ -6,6 +8,7 @@ export function finding(overrides = {}) {
     type_design: { quality_basis: 'current_correctness' }, simplification: { quality_basis: 'current_correctness' },
   };
   const value = {
+    origin: 'new', validation: 'validated', policy_subject: 'ordinary', path_role: 'source', diff_validation: { in_diff: true },
     location_status: 'confirmed', anchor: 'return process(value);', line_end: overrides.line_start ?? 10,
     id: 'f1', file: 'src/x.py', line_start: 10, severity: 'high',
     confidence: 90, title: 'Real bug',
@@ -13,6 +16,9 @@ export function finding(overrides = {}) {
     agent: 'bug-detector', dimension: 'bug', ...dimensionFields[overrides.dimension], ...overrides,
   };
   for (const key of Object.keys(value)) if (value[key] === undefined) delete value[key];
+  evaluateAdmission(value);
+  for (const key of ['report_tag', 'report_destination']) if (Object.hasOwn(overrides, key)) value[key] = overrides[key];
+  if (Object.hasOwn(overrides, 'report_destination') && !Object.hasOwn(overrides, 'report_tag')) delete value.report_tag;
   return value;
 }
 

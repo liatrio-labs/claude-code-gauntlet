@@ -9,6 +9,8 @@ import pytest
 from gauntlet import fix_tasks as renderer
 from gauntlet import proc
 
+from tests.support.delivery import admitted_stamp
+
 
 @pytest.fixture
 def fix_root(tmp_path, monkeypatch):
@@ -35,6 +37,7 @@ def fix_artifact(fix_root):
 
 def make_finding(**changes):
     value = {
+        "admission": admitted_stamp(),
         "id": "bug-1",
         "file": "src/bug.py",
         "line_start": 10,
@@ -54,6 +57,61 @@ def make_finding(**changes):
             "stale_value = read_value()\nstale_value = read_value()\nstale_value = read_value()"
         )
     return value
+
+
+def test_body_tasks_require_current_confirmed_defect(fix_root):
+    root = Path(__file__).resolve().parents[1]
+    script = """
+import {evaluateAdmission} from './workflows/src/admission.js';
+let input=''; for await(const chunk of process.stdin)input+=chunk;
+const rows=JSON.parse(input);
+process.stdout.write(JSON.stringify(rows.map(f=>evaluateAdmission(f))));
+"""
+    good = make_finding(
+        disposition="body",
+        origin="new",
+        path_role="source",
+        validation="validated",
+        policy_subject="ordinary",
+        reachability="current",
+        admission_assessments=[
+            {
+                "predicate": "current_defect",
+                "status": "confirmed",
+                "references": ["primary"],
+            }
+        ],
+    )
+    variants = [
+        {},
+        {"location_status": "relocated"},
+        {"reachability": "future_change_only"},
+        {"reachability": "uncertain"},
+        {"location_status": "unconfirmed"},
+        {"admission_assessments": []},
+    ]
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=root,
+        input=json.dumps(
+            [{**good, "id": str(i), **extra} for i, extra in enumerate(variants)]
+        ),
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    )
+    rows = json.loads(result.stdout)
+    rows.extend(
+        [
+            {**rows[0], "id": "no-admission", "admission": None},
+            {**rows[0], "id": "no-eligibility", "body_fix_task_eligible": None},
+            {**rows[0], "id": "report-only", "disposition": "report_only"},
+            {**rows[0], "id": "stale", "anchor": "wrong quote"},
+        ]
+    )
+    tasks, _ = renderer.build_tasks(rows, str(fix_root), [])
+    assert [t["metadata"]["review_context"]["finding_id"] for t in tasks] == ["0", "1"]
 
 
 @pytest.fixture

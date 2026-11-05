@@ -2,8 +2,8 @@ import { deepClone } from './wire.js';
 import { incompleteVetting, UNVERIFIED_REASONS } from './vetting.js';
 import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
-import { eliminationDecisions, traceDecision } from './measurementTrace.js';
-import { findingPolicy } from './registry.js';
+import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
+import { hasAdmission } from './admission.js';
 
 export function disposeFindings(challenged) {
   const input = deepClone(challenged);
@@ -15,27 +15,30 @@ export function disposeFindings(challenged) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
     delete finding.delivery_group;
-    delete finding.site_requests;
-    delete finding.resolved_sites;
     const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
     if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
       reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed');
     }
     if ((input.unverified || []).includes(finding) && !reasons.length) reasons.push('held_back');
     let disposition = 'body';
-    const policy = findingPolicy(finding);
+    const admitted = hasAdmission(finding);
     if (reasons.length) disposition = 'held_back';
-    else if (policy.row?.admission) {
-      disposition = policy.defaultDisposition === 'report_only' ? 'report_only' : 'held_back';
+    else if (!admitted || finding.admission.status !== 'admitted') {
+      disposition = admitted ? finding.admission.status : 'held_back';
       reasons.push(disposition);
-    } else if ((finding.diff_validation === undefined || finding.diff_validation?.in_diff === true) && locationAllows(finding, 'inline')) {
+    } else if (finding.challenge !== 'survived' && finding.challenge !== 'contested' && finding.challenge !== 'downgraded') {
+      disposition = 'held_back';
+      reasons.push('challenge_failed');
+    } else if (finding.admission.inline_eligible && finding.reachability !== 'future_change_only'
+      && finding.diff_validation?.in_diff === true && locationAllows(finding, 'inline')) {
       disposition = 'deliver';
     } else reasons.push('body_routed');
     finding.disposition = disposition;
-    finding.disposition_reasons = reasons;
+    finding.disposition_reasons = [...new Set([...reasons, ...(admitted ? finding.admission.reasons.map((reason) => reason.status) : [])])];
     (disposition === 'held_back' ? unverified : findings).push(finding);
     if (finding.trace_id) for (const reason of finding.disposition_reasons) {
-      decisions.push(traceDecision(finding, reason, reason, [], ['held_back', 'report_only'].includes(disposition) ? disposition : 'body_routed'));
+      decisions.push(traceDecision(finding, reason, reason, [], ['held_back', 'report_only'].includes(disposition) ? disposition : 'body_routed',
+        admissionDetail(finding, { predicates: finding.admission?.reasons || [], surface: disposition })));
     }
   }
   const eliminations = eliminationDecisions({ eliminated: eliminated.map((f) => ({ ...f, trace_id: f.trace_id || 'unused' })) });
@@ -46,8 +49,9 @@ export function disposeFindings(challenged) {
     finding.disposition_reasons = [eliminations[index].reason_code];
   }
   decisions.push(...eliminations.filter((_, index) => eliminated[index].trace_id));
-  const { consolidatedCount } = consolidateCrossAgent(findings, (f) => deliveryAllows(f, 'inline'));
-  const groups = deliveryGroups(findings).map(({ primary, corroborators }, index) => {
+  const actionable = findings.filter((f) => deliveryAllows(f, 'body'));
+  const { consolidatedCount } = consolidateCrossAgent(actionable, (f) => deliveryAllows(f, 'inline'));
+  const groups = deliveryGroups(actionable).map(({ primary, corroborators }, index) => {
     const members = [primary, ...corroborators];
     const ids = members.map((f) => f.id);
     const issueKey = primary.consolidation_key ? `group:${primary.consolidation_key}` : `issue:${primary.id || index}`;

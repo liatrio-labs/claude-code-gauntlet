@@ -344,9 +344,7 @@ def test_candidate_uses_verify_diff_facts(tmp_path, evidence, changes, expected)
     assert actual["diff_validation"] == expected
     assert actual["origin"] == original["origin"]
     assert actual["severity"] == original["severity"]
-    assert actual["disposition"] == (
-        "deliver" if expected["in_diff"] is True else "body"
-    )
+    assert actual["disposition"] == "held_back"
 
 
 @pytest.mark.parametrize("mode", ["return", "derived", "legacy", "writer-failure"])

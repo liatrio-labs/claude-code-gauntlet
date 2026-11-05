@@ -86,7 +86,8 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
             admission_fields.setdefault(row["admission"]["field"], set()).update(
                 row["admission"]["kinds"]
             )
-        for subject in row["policySubjects"].values():
+        promotion = (row["admission"] or {}).get("promotion", {})
+        for subject in [*row["policySubjects"].values(), promotion]:
             if "stamp" in subject:
                 admission_fields.setdefault(subject["stamp"], set()).add(
                     subject["kind"]
@@ -135,18 +136,9 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
         ):
             raise CliError(f"findings[{index}].sites is malformed")
     normalized = [normalize_location(f) for f in findings]
-    # Only a wholly unstamped caller input predates disposition enforcement.
-    if not any("disposition" in f for f in findings):
-        for finding in normalized:
-            legacy_admission = any(
-                row["admission"]
-                and (
-                    row["dimension"]
-                    in (finding.get("origin_dimension"), finding.get("dimension"))
-                    or row["admission"]["field"] in finding
-                    or row["agentType"].split(":")[-1] == finding.get("agent")
-                )
-                for row in DIMENSION_ROWS
-            )
-            finding["disposition"] = "held_back" if legacy_admission else "deliver"
+    for finding in normalized:
+        if finding.get("disposition") != "eliminate" and (
+            "admission" not in finding or "disposition" not in finding
+        ):
+            finding["disposition"] = "held_back"
     return cast(ReviewInput, {**data, "findings": normalized})

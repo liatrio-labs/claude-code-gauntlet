@@ -48,6 +48,7 @@ Stage = Literal[
     "verify",
     "validate",
     "filter",
+    "admission",
     "challenge",
     "cite",
     "dispose",
@@ -55,7 +56,9 @@ Stage = Literal[
     "select",
     "deliver",
 ]
-OPTIONAL_STAGES: frozenset[Stage] = frozenset(("cite", "dispose", "holdback"))
+OPTIONAL_STAGES: frozenset[Stage] = frozenset(
+    ("admission", "cite", "dispose", "holdback")
+)
 REQUIRED_STAGES = tuple(
     stage
     for stage in get_args(Stage)
@@ -130,6 +133,8 @@ class SurfaceItemWire(TypedDict):
     issue_id: str | None
     source_trace_ids: list[str]
     discovery_dimensions: list[Dimension]
+    test_claim: bool | None
+    test_site: bool | None
 
 
 class AvailableSurfaceViewsWire(TypedDict):
@@ -195,6 +200,8 @@ class Candidate:
     provenance_status: ProvenanceStatus = "legacy_unknown"
     surface: Surface = "inline"
     issue_id: str | None = None
+    test_claim: bool | None = None
+    test_site: bool | None = None
 
     def __post_init__(self):
         if self.surface == "body" and not self.issue_id:
@@ -389,6 +396,8 @@ def candidate_records(
                 provenance_status=c.get("provenance_status", "legacy_unknown"),
                 surface=c.get("surface", "inline"),
                 issue_id=c.get("issue_id"),
+                test_claim=c.get("test_claim"),
+                test_site=c.get("test_site"),
             )
             identity = record.identity()
             identity = digest(
@@ -543,18 +552,40 @@ class SurfaceScoreView:
     source_artifact_hashes: dict[str, str]
 
 
+def _merge_tristate(left: bool | None, right: bool | None) -> bool | None:
+    if left or right:
+        return True
+    if left is None or right is None:
+        return None
+    return False
+
+
 def surface_candidates(mapped):
     """One explicit issue credit, preferring its inline occurrence."""
     mapped = tuple(mapped)
-    seen, result = set(), []
+    seen, result = {}, []
     pr_order = {url: i for i, url in enumerate(dict.fromkeys(c.pr_url for c in mapped))}
     for c in sorted(mapped, key=lambda c: (pr_order[c.pr_url], c.surface != "inline")):
         if c.issue_id is None:
             raise ValueError("all-surface scoring requires explicit issue identity")
         key = (c.pr_url, c.issue_id)
         if key not in seen:
-            seen.add(key)
+            seen[key] = len(result)
             result.append(c)
+        else:
+            index = seen[key]
+            previous = result[index]
+            result[index] = replace(
+                previous,
+                test_claim=_merge_tristate(previous.test_claim, c.test_claim),
+                test_site=_merge_tristate(previous.test_site, c.test_site),
+                discovery_dimensions=tuple(
+                    sorted(set(previous.discovery_dimensions + c.discovery_dimensions))
+                ),
+                source_trace_ids=tuple(
+                    dict.fromkeys(previous.source_trace_ids + c.source_trace_ids)
+                ),
+            )
     return tuple(result)
 
 

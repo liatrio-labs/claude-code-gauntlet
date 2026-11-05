@@ -240,6 +240,8 @@ class DeliveryProvenance:
     provenance_status: ProvenanceStatus = "complete"
     surface: Surface = "inline"
     issue_id: str | None = None
+    test_claim: bool | None = None
+    test_site: bool | None = None
 
 
 def _reconstruct_body_summary(
@@ -466,6 +468,14 @@ def map_delivery(
                 dimensions,
                 surface=row.surface,
                 issue_id=digest(sorted(ids)),
+                test_claim=any(
+                    f.get("policy_subject") in ("test_defect", "coverage")
+                    or f.get("origin_dimension", f.get("dimension")) == "test_coverage"
+                    for f in members
+                )
+                or (False if all("policy_subject" in f for f in members) else None),
+                test_site=any(f.get("path_role") == "test" for f in members)
+                or (False if all("path_role" in f for f in members) else None),
             )
         )
     return tuple(out)
@@ -486,6 +496,8 @@ def bind_candidates(candidates, mapped):
             source_trace_ids=m.source_trace_ids,
             discovery_dimensions=m.discovery_dimensions,
             provenance_status=m.provenance_status,
+            test_claim=m.test_claim,
+            test_site=m.test_site,
         )
         for c, m in zip(candidates, mapped, strict=True)
     )

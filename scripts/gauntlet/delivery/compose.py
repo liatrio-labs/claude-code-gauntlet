@@ -261,7 +261,12 @@ def render_group_sections(
     for finding in (primary, *corroborators):
         for site in cast(Sequence[Mapping[str, object]], finding.get("sites", [])):
             if not delivery_allows(
-                {**site, "disposition": finding.get("disposition")}, "sourceLink"
+                {
+                    **site,
+                    "disposition": finding.get("disposition"),
+                    "admission": finding.get("admission"),
+                },
+                "sourceLink",
             ):
                 continue
             key = site_key(site)

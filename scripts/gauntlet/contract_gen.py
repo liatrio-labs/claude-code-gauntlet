@@ -126,6 +126,9 @@ _REGISTRY_FIELDS = (
     "verifyReferenceDescriptors: m.VERIFY_REFERENCE_DESCRIPTORS",
     "verifyReferenceFields: m.VERIFY_REFERENCE_FIELDS",
     "verifyFactProperties: m.VERIFY_FACT_PROPERTIES",
+    "admissionStampProperties: m.ADMISSION_STAMP_PROPERTIES",
+    "rightEligibility: m.RIGHT_ELIGIBILITY",
+    "stageCosts: m.STAGE_COSTS",
     "discoveryFindingTypes: m.DISCOVERY_FINDING_PROP_TYPES",
     "resolvedSiteSchema: m.RESOLVED_SITE_SCHEMA",
     "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
@@ -482,7 +485,7 @@ def location_reference(registry: Mapping[str, Any]) -> str:
         "",
         "## Final Disposition and Rights",
         "",
-        "Missing or unknown disposition is held back. Delivery intersects these rights with location rights.",
+        "Missing or unknown disposition or admission is held back. Delivery intersects admission, disposition and location rights. Body fix tasks additionally require the persisted current-defect eligibility stamp; patches and fences remain denied.",
         "",
         *_rights_table("Disposition", registry["dispositionRights"]),
     ]
@@ -577,14 +580,65 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     for row in identity["dimensionRows"]:
         field_types.update(row["schemaExtra"])
     nested: list[str] = []
+    delta_keys = identity["deltaKeys"]
+    delta_value_fields = delta_keys[2:]
+    enum_types: dict[str, Sequence[object]] = {
+        "Severity": identity["severityOrder"],
+        "ModelAlias": identity["modelAliases"],
+        "PolicyProvider": identity["policyProviders"],
+        "Reachability": identity["reachability"],
+        "LocationStatus": identity["locationStatuses"],
+        "Disposition": identity["dispositions"],
+        "Dimension": [row["dimension"] for row in identity["dimensionRows"]],
+        "DeltaKey": delta_keys,
+        "DeltaValueField": delta_value_fields,
+        "VerifyReferenceKind": list(
+            dict.fromkeys(identity["verifyReferenceDescriptors"].values())
+        ),
+    }
+    stamp_kinds: dict[str, set[str]] = {}
+    for row in identity["dimensionRows"]:
+        promotion = (row["admission"] or {}).get("promotion", {})
+        for subject in [*row["policySubjects"].values(), promotion]:
+            if "stamp" in subject:
+                stamp_kinds.setdefault(subject["stamp"], set()).add(subject["kind"])
+    for field, kinds in stamp_kinds.items():
+        name = _pascal(field)
+        enum_types[name] = sorted(kinds)
 
-    def schema_type(schema: Any, name: str) -> str:
-        if isinstance(schema, dict) and "enum" in schema:
+    def field_annotation(field: str, kind: str) -> str:
+        def wrap(value: str, indent: int, column: int) -> str:
+            if column + len(value) <= 88:
+                return value
+            if not value.startswith("list["):
+                if indent + 4 + len(value) <= 88:
+                    return (
+                        "(\n" + " " * (indent + 4) + value + "\n" + " " * indent + ")"
+                    )
+                return value
             return (
-                "Literal["
-                + ", ".join(json.dumps(value) for value in schema["enum"])
+                "list[\n"
+                + " " * (indent + 4)
+                + wrap(value[5:-1], indent + 4, indent + 4)
+                + "\n"
+                + " " * indent
                 + "]"
             )
+
+        prefix = f"    {field}: "
+        return prefix + wrap(kind, 4, len(prefix))
+
+    def schema_type(schema: Any, name: str, *, public_enum: bool = False) -> str:
+        if isinstance(schema, dict) and "enum" in schema:
+            # Private aliases cannot shadow generated TypedDict class names.
+            base = name if public_enum else f"_{name}_Literal"
+            alias = base
+            suffix = 2
+            while alias in enum_types and enum_types[alias] != schema["enum"]:
+                alias = f"{base}{suffix}"
+                suffix += 1
+            enum_types[alias] = schema["enum"]
+            return alias
         kind = schema if isinstance(schema, str) else schema.get("type")
         scalars = {
             "string": "str",
@@ -612,27 +666,30 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
                 if set(schema.get("required", [])) == set(schema["properties"])
                 else ", total=False"
             )
+            header = f"class {name}(TypedDict{total}):"
+            if len(header) > 88:
+                header = f"class {name}(\n    TypedDict{total}\n):"
             nested.extend(
                 [
                     "",
                     "",
-                    f"class {name}(TypedDict{total}):",
-                    *(f"    {key}: {value}" for key, value in fields),
+                    header,
+                    *(field_annotation(key, value) for key, value in fields),
                 ]
             )
             return name
         raise CliError(f"unknown finding schema type for {name}: {schema!r}")
 
     wire_types = {
-        field: schema_type(schema, _pascal(field))
+        field: schema_type(schema, _pascal(field), public_enum=True)
         for field, schema in field_types.items()
     }
     resolved_type = schema_type(identity["resolvedSiteSchema"], "ResolvedSites")
     schema_type(identity["deliveryGroupSchema"], "DeliveryGroup")
-    for field, schema in identity["validationReturnProperties"].items():
-        schema_type(schema, _pascal(field))
-    delta_keys = identity["deltaKeys"]
-    delta_value_fields = delta_keys[2:]
+    validation_types = {
+        field: schema_type(schema, _pascal(field))
+        for field, schema in identity["validationReturnProperties"].items()
+    }
     delta_annotations = dict.fromkeys(("confidence", "line_start", "line_end"), "int")
     delta_annotations.update(
         location_status="LocationStatus",
@@ -640,8 +697,14 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         resolved_sites=resolved_type,
     )
     fact_types = {
-        field: schema_type(schema, _pascal(field))
+        field: schema_type(schema, _pascal(field), public_enum=True)
         for field, schema in identity["verifyFactProperties"].items()
+    }
+    admission_types = {
+        field: validation_types[field]
+        if field in validation_types
+        else schema_type(schema, _pascal(field))
+        for field, schema in identity["admissionStampProperties"].items()
     }
     slice_types = dict(wire_types)
     for field, kind in identity["verifyReferenceDescriptors"].items():
@@ -663,6 +726,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "Verify" + _pascal(field),
         )
     delta_annotations.update(fact_types, anchor="str")
+    # Delivery consumes normalized integer ranges and verification's resolved sites.
+    metadata_types = dict(wire_types)
+    metadata_types.update(line_start="int", line_end="int", sites=resolved_type)
     root = "/__gauntlet_registry_root__/"
     sha = "__GAUNTLET_SHA__"
     templates = {
@@ -670,15 +736,31 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         for key, path in identity["artifactPaths"].items()
     }
 
-    def literal_type(values: Sequence[str]) -> str:
-        members = ", ".join(json.dumps(v) for v in values)
-        if len(members) <= 80:
-            return (
-                "Literal[" + members + "]"
-                if len(members) <= 60
-                else "Literal[\n    " + members + "\n]"
+    def literal_type(name: str, values: Sequence[object]) -> str:
+        assignment = f"{name} = "
+        parenthesized = len(assignment) + 1 <= 88 < len(assignment) + len("Literal[")
+        indent = 4 if parenthesized else 0
+        column = indent if parenthesized else len(assignment)
+        members = ", ".join(_python_literal(v) for v in values)
+        if column + len("Literal[") + len(members) + 1 <= 88:
+            literal = "Literal[" + members + "]"
+        elif indent + 4 + len(members) <= 88:
+            literal = (
+                "Literal[\n" + " " * (indent + 4) + members + "\n" + " " * indent + "]"
             )
-        return "Literal[\n" + "\n".join(f"    {json.dumps(v)}," for v in values) + "\n]"
+        else:
+            literal = (
+                "Literal[\n"
+                + "\n".join(
+                    " " * (indent + 4) + _python_literal(v) + "," for v in values
+                )
+                + "\n"
+                + " " * indent
+                + "]"
+            )
+        if parenthesized:
+            return assignment + "(\n    " + literal + "\n)"
+        return assignment + literal
 
     lines = [
         '"""Generated by scripts/generate_contract_requirements.py. Do not edit."""',
@@ -687,40 +769,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "from types import MappingProxyType",
         "from typing import Any, Literal, TypedDict",
         "",
-        f"Severity = {literal_type(identity['severityOrder'])}",
-        f"ModelAlias = {literal_type(identity['modelAliases'])}",
-        f"PolicyProvider = {literal_type(identity['policyProviders'])}",
-        f"Reachability = {literal_type(identity['reachability'])}",
-        f"LocationStatus = {literal_type(identity['locationStatuses'])}",
-        f"Disposition = {literal_type(identity['dispositions'])}",
-        f"Dimension = {literal_type([row['dimension'] for row in identity['dimensionRows']])}",
-        f"DeltaKey = {literal_type(delta_keys)}",
-        f"DeltaValueField = {literal_type(delta_value_fields)}",
-        f"VerifyReferenceKind = {literal_type(list(dict.fromkeys(identity['verifyReferenceDescriptors'].values())))}",
+        *(literal_type(name, values) for name, values in enum_types.items()),
         "",
     ]
-    stamp_kinds: dict[str, set[str]] = {}
-    for row in identity["dimensionRows"]:
-        for subject in row["policySubjects"].values():
-            if "stamp" in subject:
-                stamp_kinds.setdefault(subject["stamp"], set()).add(subject["kind"])
-    for field, kinds in stamp_kinds.items():
-        name = _pascal(field)
-        lines += [f"{name} = {literal_type(sorted(kinds))}", ""]
-    for field, schema in field_types.items():
-        if isinstance(schema, dict) and "enum" in schema:
-            name = _pascal(field)
-            lines += [f"{name} = {literal_type(schema['enum'])}", ""]
-            wire_types[field] = name
-    for field, schema in identity["verifyFactProperties"].items():
-        if "enum" in schema:
-            name = _pascal(field)
-            lines += [f"{name} = {literal_type(schema['enum'])}", ""]
-            fact_types[field] = name
-            delta_annotations[field] = name
-    # Delivery consumes normalized integer ranges and verification's resolved sites.
-    metadata_types = dict(wire_types)
-    metadata_types.update(line_start="int", line_end="int", sites=resolved_type)
     values = {
         "SEVERITY_ORDER": tuple(identity["severityOrder"]),
         "MODEL_ALIASES": tuple(identity["modelAliases"]),
@@ -734,6 +785,8 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "VERIFY_REFERENCE_DESCRIPTORS": identity["verifyReferenceDescriptors"],
         "DISPATCH_RESULTS": identity.get("dispatchResults", {}),
         "DIMENSION_ROWS": identity["dimensionRows"],
+        "RIGHT_ELIGIBILITY": identity["rightEligibility"],
+        "STAGE_COSTS": identity["stageCosts"],
         "BRAND_MARK": identity["brand"]["mark"],
         "BRAND_NAME": identity["brand"]["name"],
         "SEVERITY_EMOJI": identity["severityEmoji"],
@@ -800,15 +853,22 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "",
             "",
             "class FindingFacts(TypedDict, total=False):",
-            *(f"    {field}: {kind}" for field, kind in fact_types.items()),
+            *(field_annotation(field, kind) for field, kind in fact_types.items()),
+            "",
+            "",
+            "class ReferenceDiagnostic(TypedDict):",
+            "    field: str",
+            "    reason: str",
+            "    action: str",
             "",
             "",
             "class FindingMetadata(FindingFacts, total=False):",
+            *(field_annotation(field, kind) for field, kind in admission_types.items()),
             "    origin_dimension: Dimension",
             *(f"    {field}: {_pascal(field)}" for field in stamp_kinds),
-            "    reference_diagnostics: list[str]",
+            "    reference_diagnostics: list[ReferenceDiagnostic]",
             *(
-                f"    {field}: {kind}"
+                field_annotation(field, kind)
                 for field, kind in metadata_types.items()
                 if field not in identity["required"]
             ),
@@ -825,14 +885,19 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "",
             "class Delta(_DeltaRequired, total=False):",
             *(
-                f"    {field}: {delta_annotations.get(field, 'object')}"
+                field_annotation(field, delta_annotations.get(field, "object"))
                 for field in delta_value_fields
             ),
             "",
             "",
             "class VerifySliceFinding(TypedDict, total=False):",
             *(
-                f"    {field}: {slice_types[field] if field in slice_types and isinstance(field_types[field], dict) else 'Any'}"
+                field_annotation(
+                    field,
+                    slice_types[field]
+                    if field in slice_types and isinstance(field_types[field], dict)
+                    else "Any",
+                )
                 for field in identity["verifySliceFields"]
             ),
             "",
@@ -882,6 +947,7 @@ _TEMPLATE_FINDING = {
     **_placeholders("finding", "id file title description confidence dimension"),
     "location_status": "confirmed",
     "disposition": "deliver",
+    "admission": {"version": 1, "status": "admitted", "input_proof": "template"},
     "line_start": 10,
     "line_end": 10,
 }
@@ -1087,6 +1153,7 @@ def pr_identity_fields_body(identity: Mapping[str, Any]) -> list[str]:
 _INLINE_SAMPLE_FINDING = {
     "location_status": "confirmed",
     "disposition": "deliver",
+    "admission": {"version": 1, "status": "admitted", "input_proof": "template"},
     "line_start": 10,
     "line_end": 10,
     "severity": "severity",

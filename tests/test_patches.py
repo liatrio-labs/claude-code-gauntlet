@@ -5,7 +5,7 @@ import json
 import pytest
 from gauntlet import patches
 
-from tests.support.delivery import patch_inputs
+from tests.support.delivery import admitted_stamp, patch_inputs
 from tests.support.path_text import normalize_path_text
 
 QUOTE = "original_source_value()"
@@ -14,6 +14,7 @@ CAPTURE = b"--- x.py\n+++ x.py\n@@ -1 +1 @@\n-old\n+original_source_value()\n"
 
 def patch_finding(**values):
     return {
+        "admission": admitted_stamp(),
         "file": "x.py",
         "line_start": 1,
         "line_end": 1,
@@ -223,6 +224,7 @@ def test_failure_receipt(case, tmp_path, invoke, monkeypatch):
                     "claimed_line_start": row["line"],
                     "claimed_line_end": row["end_line"],
                     "location_status": "confirmed",
+                    "admission": admitted_stamp(),
                     "disposition": "deliver",
                     "anchor": QUOTE,
                 }
