@@ -103,11 +103,12 @@ class StageSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class MeasurementTrace:
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     run_nonce: str
     versions: tuple[FindingVersion, ...]
     snapshots: tuple[StageSnapshot, ...]
     complete: bool
+    dropped_stages: tuple[Stage, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +200,20 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
                 "fold requires constituent identities and coalescence",
             )
     actual = tuple(s.stage for s in trace.snapshots)
+    _require(
+        len(set(trace.dropped_stages)) == len(trace.dropped_stages)
+        and all(s in actual for s in trace.dropped_stages)
+        and (trace.schema_version == 2 or not trace.dropped_stages),
+        "dropped stages",
+    )
+    for snapshot in trace.snapshots:
+        if snapshot.stage in trace.dropped_stages:
+            _require(
+                snapshot.coverage == "unavailable"
+                and not snapshot.finding_version_ids
+                and not snapshot.decisions,
+                "cut stage evidence",
+            )
     reducers = set(actual) & {"dispose", "holdback"}
     _require(len(reducers) <= 1, "duplicate final reducers")
     _require(
@@ -609,6 +624,8 @@ def dimension_metrics(candidates, bugs, stage_rows, profile, traces):
 
 def bind_delivery_trace(trace, candidates, *, omissions=()):
     """Overlay pure, payload-proven posting omissions on producer selection."""
+    if "select" in trace.dropped_stages:
+        return trace
     _require(
         sum(s.stage in ("dispose", "holdback") for s in trace.snapshots) == 1,
         "final reducer",

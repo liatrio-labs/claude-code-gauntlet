@@ -1773,14 +1773,23 @@ function validateConfigEcho(args, errors, table = KNOB_REGISTRY) {
 }
 // --- measurementTrace.js ---
 const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'cite', 'dispose', 'holdback', 'select', 'deliver'];
+const TRACE_FINDING_FIELDS = ['trace_id', 'discovery_agent', 'discovery_dimension', 'id', 'file',
+  'line_start', 'line_end', 'line', 'end_line', 'claimed_line_start', 'claimed_line_end', 'anchor', 'location_status',
+  'title', 'description', 'body', 'evidence', 'severity', 'suggestion', 'suggested_fix_code', 'claude_md_rule', 'spec_text',
+  'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons',
+  'consolidation_key', 'consolidation_primary', 'delivery_group', 'origin_dimension', 'policy_subject', 'path_role'];
 const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
 const traceHistory = new WeakMap();
 const stageDecisions = new WeakMap();
 const decisionsFor = (output) => stageDecisions.get(output) || [];
-function createMeasurementTrace(nonce) {
-  const trace = { schema_version: 1, run_nonce: nonce,
-    versions: [], snapshots: [], complete: false };
-  traceHistory.set(trace, new Map());
+function traceFinding(finding) {
+  return deepClone(Object.fromEntries(TRACE_FINDING_FIELDS.filter((key) => Object.hasOwn(finding, key)).map((key) => [key, finding[key]])));
+}
+function createMeasurementTrace(nonce, previous = null) {
+  const trace = { schema_version: 2, run_nonce: nonce,
+    versions: previous ? previous.versions.map((v) => ({ ...deepClone(v), finding: traceFinding(v.finding) })) : [],
+    snapshots: [], complete: false, dropped_stages: [] };
+  traceHistory.set(trace, new Map(trace.versions.map((v) => [JSON.stringify(v.finding), v.version_id])));
   return trace;
 }
 function measurementDecisions(output, decisions) {
@@ -1812,11 +1821,13 @@ function stampDiscovery(trace, finding, spec, dispatch, occurrence) {
 }
 function traceVersion(trace, finding) {
   if (!finding || typeof finding.trace_id !== 'string') return null;
-  const copy = deepClone(finding);
+  const copy = traceFinding(finding);
   const fingerprint = JSON.stringify(copy);
   const repeated = traceHistory.get(trace).get(fingerprint);
   if (repeated) return repeated;
-  const version_id = `v${trace.versions.length}`;
+  let index = trace.versions.length;
+  while (trace.versions.some((v) => v.version_id === `v${index}`)) index++;
+  const version_id = `v${index}`;
   trace.versions.push({ version_id, trace_id: copy.trace_id,
     discovery_agent: copy.discovery_agent || 'unknown', discovery_dimension: copy.discovery_dimension || 'unknown', finding: copy });
   traceHistory.get(trace).set(fingerprint, version_id);
@@ -1839,9 +1850,28 @@ function recordStage(trace, stage, output, details = {}) {
 }
 function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;
-  return appendBudgetedMeasurement(envelope,
-    { status: 'available', text: JSON.stringify(trace) },
-    { status: 'unavailable', reason: 'return_budget' });
+  const candidate = deepClone(trace);
+  const available = () => ({ ...envelope, measurement: { status: 'available', text: JSON.stringify(candidate) } });
+  let result = available();
+  for (const snapshot of [...candidate.snapshots].reverse()) {
+    if (JSON.stringify(result).length <= RETURN_CHAR_BUDGET) return result;
+    if (candidate.dropped_stages.includes(snapshot.stage)) continue;
+    snapshot.finding_version_ids = [];
+    snapshot.decisions = [];
+    snapshot.coverage = 'unavailable';
+    candidate.dropped_stages.unshift(snapshot.stage);
+    const referenced = new Set(candidate.snapshots.flatMap((s) => s.finding_version_ids));
+    const identities = new Set(candidate.versions.filter((v) => referenced.has(v.version_id)).map((v) => v.trace_id));
+    const needed = new Set(candidate.snapshots.flatMap((s) => s.decisions.flatMap((d) => [d.trace_id, ...d.related_trace_ids])));
+    candidate.versions = candidate.versions.filter((v) => {
+      if (referenced.has(v.version_id)) return true;
+      if (!needed.has(v.trace_id) || identities.has(v.trace_id)) return false;
+      identities.add(v.trace_id);
+      return true;
+    });
+    result = available();
+  }
+  return appendBudgetedMeasurement(envelope, result.measurement, { status: 'unavailable', reason: 'return_budget' });
 }
 function appendBudgetedMeasurement(envelope, available, unavailable) {
   const candidate = { ...envelope, measurement: available };

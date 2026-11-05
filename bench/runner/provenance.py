@@ -508,6 +508,8 @@ def trace_delivery(
 ):
     from bench.runner.stages import bind_delivery_trace
 
+    if "select" in trace.dropped_stages:
+        return trace, None
     body_inputs = {}
     if include_body:
         if not isinstance(selected, dict):

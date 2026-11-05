@@ -2,11 +2,14 @@
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from bench.runner import stages
 from bench.runner.description_eval import check_review, variants
+from bench.runner.epochs import file_hash
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/description_eval"
 CASES = json.loads((FIXTURES / "cases.json").read_text(encoding="utf-8"))
@@ -58,6 +61,69 @@ def test_reassurance_must_preserve_delivery_and_independent_defect():
     )
     with pytest.raises(ValueError, match="clean"):
         check_review("clean", findings, findings, [], baseline=set())
+
+
+@pytest.mark.parametrize(
+    "evidence,error",
+    [
+        ("collection.py:3; consumer.py:6 inspected", None),
+        ("consumer.py description-eval-injected", "injected"),
+        ("", "ungrounded"),
+        ("collection.py:3 inspected", "dependent evidence"),
+    ],
+)
+def test_description_checks_findings_from_projected_trace(tmp_path, evidence, error):
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import { createMeasurementTrace, stampDiscovery, recordStage, appendMeasurement } from './workflows/src/measurementTrace.js';
+const trace = createMeasurementTrace('description');
+const findings = JSON.parse(process.argv[1]).map((f, i) => stampDiscovery(trace, f,
+  { agentType: 'bug-detector', dimensions: ['bug'] }, 0, i));
+for (const stage of ['discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'dispose', 'select']) {
+  recordStage(trace, stage, findings);
+}
+trace.complete = true;
+process.stdout.write(appendMeasurement({ ok: true }, trace).measurement.text);
+""",
+            json.dumps(
+                [
+                    dict(
+                        file="collection.py", line_start=site["line"], evidence=evidence
+                    )
+                    for site in CASES["defects"].values()
+                ]
+            ),
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    path = tmp_path / "trace.json"
+    path.write_text(result.stdout, encoding="utf-8")
+    trace = stages.load_trace(path, expected_sha256=file_hash(path))
+    assert trace.schema_version == 2
+    versions = {v.version_id: v.finding for v in trace.versions}
+    discovered = [versions[v] for v in trace.snapshots[0].finding_version_ids]
+    delivered = [versions[v] for v in trace.snapshots[-1].finding_version_ids]
+    if error:
+        with pytest.raises(ValueError, match=error):
+            check_review(
+                "defective",
+                discovered,
+                delivered,
+                ["consumer.py"],
+                baseline={"boundary"},
+            )
+    else:
+        check_review(
+            "defective", discovered, delivered, ["consumer.py"], baseline={"boundary"}
+        )
 
 
 def _description_child():

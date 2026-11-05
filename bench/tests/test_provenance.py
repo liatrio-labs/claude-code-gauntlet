@@ -137,6 +137,29 @@ def captured_diff(findings):
     )
 
 
+@pytest.mark.parametrize("include_body", [False, True])
+def test_dropped_selection_is_unavailable_provenance(tmp_path, include_body):
+    trace, _, receipt = emit_trace(tmp_path)
+    trace = replace(
+        trace,
+        dropped_stages=("select",),
+        snapshots=tuple(
+            replace(s, finding_version_ids=(), decisions=(), coverage="unavailable")
+            if s.stage == "select"
+            else s
+            for s in trace.snapshots
+        ),
+    )
+    review = receipt["payload"]["postReview"]
+    bound, mapped = provenance.trace_delivery(
+        trace, review, {}, "", include_body=include_body
+    )
+    assert bound == trace
+    assert mapped is None
+    assert stages.bind_delivery_trace(trace, ()) == trace
+    assert all(s.stage != "deliver" for s in bound.snapshots)
+
+
 def test_group_surfaces_preserve_identity(tmp_path, monkeypatch, capsys, forge_factory):
     from bench.tests.test_adapter import _GH_SHA, capture
 

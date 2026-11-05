@@ -17,6 +17,43 @@ from bench.runner.epochs import (
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_old_version_trace_fixture_loads_without_losing_claim_or_provenance():
+    path = Path(__file__).parent / "fixtures/measurement_trace_v1.json"
+    trace = stages.load_trace(path, expected_sha256=file_hash(path))
+    assert trace.schema_version == 1
+    assert trace.dropped_stages == ()
+    assert (
+        trace.versions[0].finding["evidence"] == "Source inspected by the old producer"
+    )
+    inputs = stages.discovery_inputs({"synthetic": (path, trace)}, {})
+    assert "Legacy claim" in inputs["synthetic"]["discover:v0"][0]["text"]
+
+
+def test_large_trace_keeps_all_discovery_claims_at_the_bench_boundary(tmp_path):
+    path = tmp_path / "large.json"
+    subprocess.run(
+        [
+            "node",
+            str(ROOT / "workflows/test/tools/emit_measurement_trace.mjs"),
+            str(path),
+            "large",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    trace = stages.load_trace(path, expected_sha256=file_hash(path))
+    inputs = stages.discovery_inputs({"synthetic": (path, trace)}, {})
+    assert trace.schema_version == 2 and trace.complete
+    assert trace.dropped_stages == ()
+    assert trace.snapshots[0].coverage == "complete"
+    assert {v.discovery_dimension for v in trace.versions} == {"bug"}
+    assert len(inputs["synthetic"]) == 400
+    assert all(
+        "long claim with concrete evidence" in entries[0]["text"]
+        for entries in inputs["synthetic"].values()
+    )
+
+
 @pytest.mark.parametrize("optional", [(), ("cite",), ("cite", "dispose")])
 def test_funnel_coverage_ignores_absent_optional_stages(optional):
     ref = stages.ScoreRef("run", "epoch", "score")
@@ -125,6 +162,10 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
         "detail_kind",
         "detail_policy_subject",
         "detail_shape",
+        "dropped_unknown",
+        "dropped_duplicate",
+        "dropped_evidence",
+        "dropped_legacy",
     ],
 )
 def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
@@ -146,6 +187,18 @@ def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
             snapshot["stage"] = "deliver"
         elif mutation == "reason":
             raw["snapshots"][1]["decisions"][0]["reason_code"] = None
+        elif mutation.startswith("dropped_"):
+            raw["dropped_stages"] = ["select"]
+            if mutation != "dropped_evidence":
+                raw["snapshots"][-1].update(
+                    finding_version_ids=[], decisions=[], coverage="unavailable"
+                )
+            if mutation == "dropped_unknown":
+                raw["dropped_stages"] = ["deliver"]
+            elif mutation == "dropped_duplicate":
+                raw["dropped_stages"] *= 2
+            elif mutation == "dropped_legacy":
+                raw["schema_version"] = 1
         elif mutation.startswith("detail_"):
             detail = next(
                 decision["detail"]
@@ -189,6 +242,11 @@ def test_trace_reader_refuses_corrupt_evidence(tmp_path, mutation):
         "disabled",
         "judge_failed",
         "audit_overlap",
+        "cut_select",
+        "cut_dispose",
+        "cut_challenge",
+        "cut_filter",
+        "cut_verify",
     ],
 )
 def test_score_to_dimension_credit_and_loss_funnel(
@@ -249,6 +307,23 @@ def test_score_to_dimension_credit_and_loss_funnel(
                 snapshot["stage"] = "holdback"
                 snapshot["decisions"] = [asdict(decision)]
         path.write_text(json.dumps(raw), encoding="utf-8")
+    cut = trace_status.removeprefix("cut_") if trace_status.startswith("cut_") else None
+    if cut:
+        raw = read_json(path)
+        start = next(i for i, s in enumerate(raw["snapshots"]) if s["stage"] == cut)
+        raw["dropped_stages"] = [s["stage"] for s in raw["snapshots"][start:]]
+        for snapshot in raw["snapshots"][start:]:
+            snapshot.update(
+                finding_version_ids=[], decisions=[], coverage="unavailable"
+            )
+        path.write_text(json.dumps(raw), encoding="utf-8")
+
+        def unavailable_treatment(*args):
+            pytest.fail("dropped selection must not require a delivery treatment tree")
+
+        monkeypatch.setattr(
+            score.provenance, "resolve_treatment_root", unavailable_treatment
+        )
     if trace_status not in ("missing", "collection_failed"):
         (pr / "code-gauntlet-measurement-abc1234.json").write_bytes(
             path.read_bytes() if trace_status != "unreadable" else b"{}"
@@ -270,13 +345,17 @@ def test_score_to_dimension_credit_and_loss_funnel(
                 raise RuntimeError("unavailable judge")
 
         monkeypatch.setattr(type(score_case), "scorer", fail_judge)
-    packet = score_case.execute(attribution=trace_status != "disabled")
+    packet = score_case.execute(
+        attribution=trace_status != "disabled", surface_views=bool(cut)
+    )
     loaded = observations.load_packet(Path(packet["ledger_row"]["packet_path"]))
     assert {r.stage for r in stages.read_rows(loaded.root)}.isdisjoint({"cite"})
     assert packet["profiles"]["all"]["tp"] == 1
     assert len(score_case.calls) == (
         2
-        if trace_status in ("readable", "holdback", "judge_failed", "audit_overlap")
+        if trace_status
+        in ("readable", "holdback", "judge_failed", "audit_overlap", "cut_select")
+        or cut
         else 1
     )
     tools = read_json(loaded.root / "candidates.json")[score_case.url]
@@ -288,7 +367,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
             / loaded.manifest.evaluator.judge_pin
             / "candidates.json"
         )
-        assert "discover:" + keep not in read_json(inputs)[score_case.url]
+        assert ("discover:" + keep in read_json(inputs)[score_case.url]) == bool(cut)
     if trace_status == "collection_failed":
         assert loaded.manifest.trace_collection[
             score_case.url
@@ -304,7 +383,32 @@ def test_score_to_dimension_credit_and_loss_funnel(
     funnel = stages.loss_funnel(
         rows, population={b.bug_id for b in loaded.observations}
     )
-    if trace_status in ("readable", "holdback", "audit_overlap"):
+    if cut:
+        assert loaded.surface_view is None
+        assert read_json(loaded.root / "surface-views.json")["unavailable_reason"]
+        discovery_rows = [r for r in rows if r.stage == "discover"]
+        assert all(
+            r.coverage == "complete" and r.survives is not None for r in discovery_rows
+        )
+        assert any(r.survives for r in discovery_rows)
+        assert all(
+            r.coverage == "unavailable" and r.survives is None
+            for r in rows
+            if r.stage in raw["dropped_stages"]
+        )
+        assert read_json(loaded.root / "provenance_errors.json") == {}
+        assert all(c.provenance_status == "legacy_unknown" for c in loaded.candidates)
+        if cut in ("filter", "verify"):
+            lost_bugs = {
+                r.bug_id for r in discovery_rows if lost in r.matched_version_ids
+            }
+            assert lost_bugs
+            assert all(
+                r.loss.status == "unavailable"
+                for r in rows
+                if r.stage == "deliver" and r.bug_id in lost_bugs
+            )
+    elif trace_status in ("readable", "holdback", "audit_overlap"):
         assert (
             dict(funnel.losses)[
                 "validate"

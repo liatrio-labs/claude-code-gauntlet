@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "run_nonce": "legacy",
+  "versions": [
+    {
+      "version_id": "v0",
+      "trace_id": "legacy:0:0",
+      "discovery_agent": "bug-detector",
+      "discovery_dimension": "bug",
+      "finding": {
+        "trace_id": "legacy:0:0",
+        "discovery_agent": "bug-detector",
+        "discovery_dimension": "bug",
+        "id": "BUG-1",
+        "title": "Legacy claim",
+        "description": "The old producer stored the entire finding.",
+        "severity": "high",
+        "confidence": 90,
+        "evidence": "Source inspected by the old producer",
+        "verified": true,
+        "validation": "validated"
+      }
+    }
+  ],
+  "snapshots": [
+    {
+      "sequence": 0,
+      "stage": "discover",
+      "finding_version_ids": ["v0"],
+      "decisions": [],
+      "executed": true,
+      "replayed": false,
+      "coverage": "complete",
+      "cap": null,
+      "cap_hit": false
+    }
+  ],
+  "complete": false
+}

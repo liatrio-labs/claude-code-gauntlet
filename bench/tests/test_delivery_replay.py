@@ -483,6 +483,84 @@ def test_replay_preserves_bytes_and_occurrence_identity(tmp_path, mode, evidence
         } == artifacts
 
 
+@pytest.mark.parametrize("reducer", ["holdback", "dispose"])
+@pytest.mark.parametrize("cut", ["verify", "filter", "challenge", "reducer"])
+@pytest.mark.parametrize("suffix", [False, True])
+def test_budget_dropped_join_evidence_replays_without_trace(
+    tmp_path, evidence, reducer, cut, suffix
+):
+    from bench.runner.delivery_replay import load_replay_inputs, replay_delivery
+
+    manifest = _manifest(tmp_path, evidence)
+    wire = json.loads(manifest.read_bytes())
+    trace_path = tmp_path / "trace.json"
+    trace = json.loads(trace_path.read_bytes())
+    for snapshot in trace["snapshots"]:
+        if snapshot["stage"] in ("holdback", "dispose"):
+            snapshot["stage"] = reducer
+    cut = reducer if cut == "reducer" else cut
+    start = next(i for i, s in enumerate(trace["snapshots"]) if s["stage"] == cut)
+    dropped = trace["snapshots"][start:] if suffix else [trace["snapshots"][start]]
+    trace["dropped_stages"] = [s["stage"] for s in dropped]
+    for snapshot in dropped:
+        snapshot.update(finding_version_ids=[], decisions=[], coverage="unavailable")
+    _write(trace_path, trace)
+    wire["trace"]["source"]["sha256"] = _hash(trace_path.read_bytes())
+    _write(manifest, wire)
+
+    inputs = load_replay_inputs(manifest)
+    assert inputs.trace is None
+    degraded = replay_delivery(inputs)
+    wire["trace"]["source"] = None
+    _write(manifest, wire)
+    baseline = replay_delivery(load_replay_inputs(manifest))
+    assert degraded.artifacts == baseline.artifacts
+    receipt = json.loads(degraded.receipt)
+    assert receipt["trace_availability"] == "unavailable"
+    assert "budget" in receipt["trace_unavailable_reason"]
+    assert cut in receipt["trace_unavailable_reason"]
+
+
+def test_budget_drop_outside_join_dependencies_preserves_identity(tmp_path, evidence):
+    from bench.runner.delivery_replay import load_replay_inputs
+
+    manifest = _manifest(tmp_path, evidence)
+    wire = json.loads(manifest.read_bytes())
+    trace_path = tmp_path / "trace.json"
+    trace = json.loads(trace_path.read_bytes())
+    trace["dropped_stages"] = ["select"]
+    trace["snapshots"][-1].update(
+        finding_version_ids=[], decisions=[], coverage="unavailable"
+    )
+    _write(trace_path, trace)
+    wire["trace"]["source"]["sha256"] = _hash(trace_path.read_bytes())
+    _write(manifest, wire)
+    inputs = load_replay_inputs(manifest)
+    assert inputs.trace is not None
+    assert inputs.trace_unavailable_reason is None
+    assert all(
+        f["trace_id"]
+        for f in inputs.workflow["state"]["phaseOutputs"]["challenge"]["findings"]
+    )
+
+
+def test_missing_join_occurrence_without_budget_drop_still_raises(tmp_path, evidence):
+    from bench.runner.delivery_replay import load_replay_inputs
+
+    manifest = _manifest(tmp_path, evidence)
+    wire = json.loads(manifest.read_bytes())
+    trace_path = tmp_path / "trace.json"
+    trace = json.loads(trace_path.read_bytes())
+    for snapshot in trace["snapshots"]:
+        if snapshot["stage"] in ("holdback", "dispose", "challenge"):
+            snapshot.update(finding_version_ids=[], decisions=[])
+    _write(trace_path, trace)
+    wire["trace"]["source"]["sha256"] = _hash(trace_path.read_bytes())
+    _write(manifest, wire)
+    with pytest.raises(ValueError, match="missing or ambiguous challenge occurrence"):
+        load_replay_inputs(manifest)
+
+
 @pytest.mark.parametrize(
     "case",
     [

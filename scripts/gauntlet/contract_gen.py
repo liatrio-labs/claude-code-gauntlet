@@ -149,6 +149,7 @@ _REGISTRY_MODULES = (
     "verifyWire",
     "discover",
     "contextPlan",
+    "measurementTrace",
 )
 # Field order is the JSON key order the generated registry is checked against.
 _REGISTRY_FIELDS = (
@@ -188,6 +189,7 @@ _REGISTRY_FIELDS = (
     "reachability: v.REACHABILITY_VALUES",
     "deltaKeys: w.DELTA_KEYS",
     "verifySliceFields: w.VERIFY_SLICE_FIELDS",
+    "traceFindingFields: t.TRACE_FINDING_FIELDS",
     "fixMaxLines: f.FIX_MAX_LINES",
     "fixMaxChars: f.FIX_MAX_CHARS",
     "artifactPaths: o.plannedArtifactPaths("
@@ -223,7 +225,7 @@ def load_registry(repo_root: str) -> Mapping[str, Any]:
         + ", ".join(
             f"import('./workflows/src/{name}.js')" for name in _REGISTRY_MODULES
         )
-        + "]).then(([m, a, v, f, o, w, d, c]) => console.log(JSON.stringify({"
+        + "]).then(([m, a, v, f, o, w, d, c, t]) => console.log(JSON.stringify({"
         + fields
         + "})))"
     )
@@ -807,6 +809,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "DELTA_KEYS": tuple(delta_keys),
         "DELTA_VALUE_FIELDS": tuple(delta_value_fields),
         "VERIFY_SLICE_FIELDS": tuple(identity["verifySliceFields"]),
+        "TRACE_FINDING_FIELDS": tuple(identity["traceFindingFields"]),
         "VERIFY_REFERENCE_DESCRIPTORS": identity["verifyReferenceDescriptors"],
         "DISPATCH_RESULTS": identity.get("dispatchResults", {}),
         "DIMENSION_ROWS": identity["dimensionRows"],
@@ -830,6 +833,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "DELTA_KEYS": "tuple[DeltaKey, ...]",
         "DELTA_VALUE_FIELDS": "tuple[DeltaValueField, ...]",
         "VERIFY_SLICE_FIELDS": "tuple[str, ...]",
+        "TRACE_FINDING_FIELDS": "tuple[str, ...]",
         "VERIFY_REFERENCE_DESCRIPTORS": "Mapping[str, VerifyReferenceKind]",
         "DIMENSION_ROWS": "list[DimensionRow]",
     }
