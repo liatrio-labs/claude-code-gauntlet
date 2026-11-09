@@ -2,6 +2,39 @@
 
 <!-- version list -->
 
+## v3.61.2 (2026-11-09)
+
+### Bug Fixes
+
+- Bound per-record verify retries
+  ([#582](https://github.com/liatrio-labs/claude-code-gauntlet/pull/582),
+  [`d7877e8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d7877e8bdb3aa75a8a9a6acb2c112851ae7df13c))
+
+- No third verify attempt and per-slice retry budget
+  ([#582](https://github.com/liatrio-labs/claude-code-gauntlet/pull/582),
+  [`d7877e8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d7877e8bdb3aa75a8a9a6acb2c112851ae7df13c))
+
+- Retry garbled verify records one at a time, bounded per slice (#46)
+  ([#582](https://github.com/liatrio-labs/claude-code-gauntlet/pull/582),
+  [`d7877e8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d7877e8bdb3aa75a8a9a6acb2c112851ae7df13c))
+
+- Shorter verify copies and one-at-a-time retry for unresolved records
+  ([#582](https://github.com/liatrio-labs/claude-code-gauntlet/pull/582),
+  [`d7877e8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d7877e8bdb3aa75a8a9a6acb2c112851ae7df13c))
+
+### Chores
+
+- **deps**: Bump the actions group across 1 directory with 4 updates
+  ([#583](https://github.com/liatrio-labs/claude-code-gauntlet/pull/583),
+  [`dcc120e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/dcc120edb26e0431388834cb0cde324c9c50b5e0))
+
+### Documentation
+
+- Describe the bounded verify retry contract
+  ([#582](https://github.com/liatrio-labs/claude-code-gauntlet/pull/582),
+  [`d7877e8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d7877e8bdb3aa75a8a9a6acb2c112851ae7df13c))
+
+
 ## v3.61.1 (2026-11-05)
 
 ### Bug Fixes
