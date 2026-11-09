@@ -154,14 +154,14 @@ export function makeCtx(args, opts = {}) {
       return { summary: 'the PR changes X' };
     }
     if (label.startsWith('verify-slice-')) {
-      const m = /^verify-slice-(\d+)(-retry)?$/.exec(label);
+      const m = /^verify-slice-(\d+)(-retry)?(?:-(\d+))?$/.exec(label);
       const sliceIndex = m ? Number(m[1]) : 0;
       const isRetry = Boolean(m && m[2]);
       if (opts.verifySliceFailIndex === sliceIndex) {
         return { status: 'failed', exitCode: 1, stderr: `injected verify failure on slice ${sliceIndex}` };
       }
       const slice = dispatchedFindings(prompt) ?? sliceForIndex(sliceIndex);
-      const sliceNonce = isRetry ? `${A.nonce}.${sliceIndex}.r1` : `${A.nonce}.${sliceIndex}`;
+      const sliceNonce = isRetry ? `${A.nonce}.${sliceIndex}.${m[3] === undefined ? 'r1' : `r2.${m[3]}`}` : `${A.nonce}.${sliceIndex}`;
       // A deterministic classification keeps routing tests independent of git blame.
       const originOverrides = Object.fromEntries(slice.map((f) => [f.id, { origin: 'new', path_role: 'source', diff_validation: { in_diff: true } }]));
       return sliceInputRecorder(deltaEnvelope(slice, {

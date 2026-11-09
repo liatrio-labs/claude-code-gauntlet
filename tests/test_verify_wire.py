@@ -818,9 +818,7 @@ console.log('presentation quote accepted');
     assert result.stdout.strip() == "presentation quote accepted"
 
 
-def test_real_receipts_retry_unresolved_records_separately(
-    invoke, tmp_path, verify_git
-):
+def test_real_receipts_bound_local_retry_recovery(invoke, tmp_path, verify_git):
     from tests.support.pipeline import run_node
 
     (tmp_path / "source").write_text("perform_action(value)\n", encoding="utf-8")
@@ -839,7 +837,9 @@ def test_real_receipts_retry_unresolved_records_separately(
     for finding in received[1:]:
         finding["confidence"] = 79
     envelopes = []
-    for index, records in enumerate([received, *[[f] for f in findings[1:]]]):
+    for index, records in enumerate(
+        [received, received[1:], *[[f] for f in findings[1:]]]
+    ):
         token = run_node(
             "import { encodeSliceInline, projectVerifySliceFinding } from './workflows/src/verifyWire.js';"
             "let source = ''; for await (const chunk of process.stdin) source += chunk;"
@@ -847,28 +847,32 @@ def test_real_receipts_retry_unresolved_records_separately(
             "process.stdout.write(encodeSliceInline(doc));",
             {"findings": records, "base_branch": "main"},
         ).stdout
-        nonce = (
-            "n-1.0" if index == 0 else f"n-1.0.r1{f'.{index - 1}' if index > 1 else ''}"
-        )
+        nonce = ["n-1.0", "n-1.0.r1", "n-1.0.r2.1", "n-1.0.r2.2", "n-1.0.r2.3"][index]
         env = json.loads(receipt(invoke, tmp_path, token, ["--nonce", nonce]).stdout)
         assert env["status"] == "ok"
         envelopes.append(env)
-    envelopes[2]["receipt"]["deltas_checksum"] = "fnv1a32:0xdeadbeef"
-    envelopes[3]["receipt"]["record_proofs"][0]["checksum"] = "fnv1a32:0xdeadbeef"
+    envelopes[3]["receipt"]["deltas_checksum"] = "fnv1a32:0xdeadbeef"
+    envelopes[4]["receipt"]["record_proofs"][0]["checksum"] = "fnv1a32:0xdeadbeef"
     result = json.loads(
         run_node(
             "import { verifyStage } from './workflows/src/verifyStage.js';"
             "import { verifyCtx, verifyInput, dispatchedFindings } from './workflows/test/helpers/verifyDelta.js';"
             "let source = ''; for await (const chunk of process.stdin) source += chunk;"
             "const x = JSON.parse(source);"
-            "const ctx = verifyCtx((_i, attempt, call) => x.envelopes[attempt === 1 ? 0 : Number(dispatchedFindings(call.prompt)[0].id.slice(1))]);"
+            "const ctx = verifyCtx((_i, attempt, call) => x.envelopes[attempt === 1 ? 0 : attempt === 2 ? 1 : 1 + Number(dispatchedFindings(call.prompt)[0].id.slice(1))]);"
             "const input = verifyInput(x.findings, {headShaShort:'abcd', verify:{baseBranch:'main'}});"
             "const out = await verifyStage(ctx, input);"
             "process.stdout.write(JSON.stringify({out, calls:ctx.calls.map(c => dispatchedFindings(c.prompt).map(f => f.id))}));",
             {"findings": findings, "envelopes": envelopes},
         ).stdout
     )
-    assert result["calls"] == [["F0", "F1", "F2", "F3"], ["F1"], ["F2"], ["F3"]]
+    assert result["calls"] == [
+        ["F0", "F1", "F2", "F3"],
+        ["F1", "F2", "F3"],
+        ["F1"],
+        ["F2"],
+        ["F3"],
+    ]
     out = result["out"]
     assert out["verified"] is False
     assert [f["origin"] == "unknown" for f in out["findings"]] == [
@@ -881,5 +885,7 @@ def test_real_receipts_retry_unresolved_records_separately(
     assert out["inputProof"]["retriedFindings"] == 3
     assert out["inputProof"]["degradedFindings"] == 2
     assert len(out["gaps"]) == 1
-    assert '"F2": delta content proof mismatch' in out["gaps"][0]
-    assert '"F3": record proof missing or mismatched' in out["gaps"][0]
+    assert "delta content proof mismatch" in out["gaps"][0]
+    assert '[ids: "F2"]' in out["gaps"][0]
+    assert "record proof missing or mismatched" in out["gaps"][0]
+    assert '[ids: "F3"]' in out["gaps"][0]

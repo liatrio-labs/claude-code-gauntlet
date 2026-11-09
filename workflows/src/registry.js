@@ -81,7 +81,7 @@ export const DISPOSITION_RIGHTS = deepFreeze({
 });
 export const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
 export const RIGHT_ELIGIBILITY = deepFreeze({ body: { fixTask: ['current_defect', 'current_reachability', 'confirmed_location'] } });
-export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2 }, validate: { retryBatchDivisor: 5 }, writer: { attempts: 2 } });
+export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2, singletonRetries: 3 }, validate: { retryBatchDivisor: 5 }, writer: { attempts: 2 } });
 
 const SOURCE_REFERENCE = {
   type: 'object', $comment: 'source-reference', properties: {

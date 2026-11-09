@@ -94,19 +94,19 @@ for (const row of COST_ROWS) test(`encoder costs: branch length ${row.branch.len
 
 const COUNT_GOLDEN = { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 };
 const COUNT_ROWS = [
-  { name: 'ordinary estimate', limits: { ...COUNT_GOLDEN, validateBatch: 10 }, files: 500, findings: 3000, count: 4890 },
+  { name: 'ordinary estimate', limits: { ...COUNT_GOLDEN, validateBatch: 10 }, files: 500, findings: 3000, count: 1950 },
   { name: 'absent caps challenge all', limits: { summarizeBucketSize: 20, validateBatch: 25, verifySliceSize: 200 },
-    files: 0, findings: 1000, count: 2255 },
-  { name: 'explicit all cap', limits: { ...COUNT_GOLDEN, challengeCap: 1000 }, files: 0, findings: 1000, count: 2255 },
-  { name: 'zero cap is real', limits: { ...COUNT_GOLDEN, challengeCap: 0 }, files: 0, findings: 1000, count: 1255 },
-  { name: 'all sizes absent', limits: {}, files: 20000, findings: 1000, count: 3017 },
+    files: 0, findings: 1000, count: 1275 },
+  { name: 'explicit all cap', limits: { ...COUNT_GOLDEN, challengeCap: 1000 }, files: 0, findings: 1000, count: 1275 },
+  { name: 'zero cap is real', limits: { ...COUNT_GOLDEN, challengeCap: 0 }, files: 0, findings: 1000, count: 275 },
+  { name: 'all sizes absent', limits: {}, files: 20000, findings: 1000, count: 2021 },
   { name: 'explicit default sizes', limits: { verifySliceSize: 100, validateBatch: 100, challengeCap: 40 },
-    files: 200, findings: 100, count: 167 },
-  { name: 'numeric estimate ignores wire split', limits: COUNT_GOLDEN, files: 0, findings: 2, count: 17 },
+    files: 200, findings: 100, count: 71 },
+  { name: 'numeric estimate ignores wire split', limits: COUNT_GOLDEN, files: 0, findings: 2, count: 19 },
   { name: 'array wire split includes its retry', limits: COUNT_GOLDEN, files: 0,
-    findings: [{ id: 'A', file: 'x'.repeat(30000) }, { id: 'B', file: 'y'.repeat(30000) }], count: 18 },
+    findings: [{ id: 'A', file: 'x'.repeat(30000) }, { id: 'B', file: 'y'.repeat(30000) }], count: 24 },
   { name: 'small copy slices include every retry', limits: COUNT_GOLDEN, files: 0,
-    findings: Array.from({ length: 100 }, (_, i) => ({ id: `F${i}`, file: 'x'.repeat(200) })), count: 179 },
+    findings: Array.from({ length: 100 }, (_, i) => ({ id: `F${i}`, file: 'x'.repeat(200) })), count: 99 },
   { name: 'hard-oversize finding consumes no verify dispatch', limits: COUNT_GOLDEN, files: 0,
     findings: [{ id: 'BIG', file: 'x'.repeat(50000) }], count: 13 },
 ];
@@ -115,24 +115,24 @@ for (const row of COUNT_ROWS) test(`agent count: ${row.name}`, () => {
 });
 const COARSEN_ROWS = [
   { name: 'huge findings', limits: { summarizeBucketSize: 20, validateBatch: 2, challengeCap: 900, verifySliceSize: 5 },
-    files: 500, findings: 5000, coarse: { summarizeBucketSize: 20, validateBatch: 65536, challengeCap: 5, verifySliceSize: 10240 }, count: 5043 },
+    files: 500, findings: 5000, coarse: { summarizeBucketSize: 20, validateBatch: 128, challengeCap: 225, verifySliceSize: 80 }, count: 808 },
   { name: 'summarize term dominates', limits: { ...COUNT_GOLDEN, validateBatch: 10 }, files: 20000, findings: 3000,
-    coarse: { summarizeBucketSize: 80, validateBatch: 40960, challengeCap: 5, verifySliceSize: 6400 }, count: 3268 },
+    coarse: { summarizeBucketSize: 80, validateBatch: 40, challengeCap: 40, verifySliceSize: 200 }, count: 825 },
   { name: 'absent cap becomes concrete', limits: { summarizeBucketSize: 20, validateBatch: 25, verifySliceSize: 200 },
-    files: 0, findings: 5000, coarse: { summarizeBucketSize: 20, validateBatch: 51200, verifySliceSize: 12800, challengeCap: 5 }, count: 5018 },
-  { name: 'small review shape', limits: COUNT_GOLDEN, files: 23, findings: 40, coarse: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 }, count: 103 },
+    files: 0, findings: 5000, coarse: { summarizeBucketSize: 20, validateBatch: 100, verifySliceSize: 200, challengeCap: 312 }, count: 747 },
+  { name: 'small review shape', limits: COUNT_GOLDEN, files: 23, findings: 40, coarse: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 }, count: 67 },
   { name: 'smallest verify slice converges', limits: { ...COUNT_GOLDEN, verifySliceSize: 1 }, files: 20, findings: 5000,
-    coarse: { summarizeBucketSize: 20, validateBatch: 51200, challengeCap: 5, verifySliceSize: 16384 }, count: 5019 },
+    coarse: { summarizeBucketSize: 20, validateBatch: 100, challengeCap: 40, verifySliceSize: 64 }, count: 746 },
   { name: 'all limits absent converge', limits: {}, files: 20000, findings: 5000,
-    coarse: { summarizeBucketSize: 80, verifySliceSize: 10000, challengeCap: 5, validateBatch: 80000 }, count: 5268 },
+    coarse: { summarizeBucketSize: 80, challengeCap: 625 }, count: 896 },
   { name: 'wire-bound term stops making progress',
     limits: { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 5, verifySliceSize: 1 }, files: 0,
     findings: Array.from({ length: 1000 }, (_, i) => ({ id: `F${i}`, file: 'x'.repeat(2200) })),
-    coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 5, verifySliceSize: 4 }, count: 1517 },
+    coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 5, verifySliceSize: 4 }, count: 2517 },
   { name: 'oversize singleton calls cannot coarsen away',
     limits: { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 5, verifySliceSize: 1 }, files: 0,
     findings: Array.from({ length: 1000 }, (_, i) => ({ id: `F${i}`, file: 'x'.repeat(6000) })),
-    coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 5, verifySliceSize: 2 }, count: 2017 },
+    coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 5, verifySliceSize: 2 }, count: 5017 },
 ];
 for (const row of COARSEN_ROWS) test(`coarsening: ${row.name}`, () => {
   const before = JSON.stringify(row.limits);
@@ -142,15 +142,15 @@ for (const row of COARSEN_ROWS) test(`coarsening: ${row.name}`, () => {
   assert.equal(worstCaseAgentCount(coarse, row.files, row.findings), row.count);
 });
 const BRANCH_ROWS = [
-  { name: 'windows quoted copy budget', branch: 'main', input: { repoRoot: 'D:/repo' }, slices: 800, count: 1612,
+  { name: 'windows quoted copy budget', branch: 'main', input: { repoRoot: 'D:/repo' }, slices: 800, count: 4012,
     coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 0, verifySliceSize: 50 } },
   { name: 'windows command budget below copy target', branch: 'main',
-    input: { repoRoot: 'D:/repo', verify: { contextFile: 'x'.repeat(27000) } }, slices: 800, count: 1612,
+    input: { repoRoot: 'D:/repo', verify: { contextFile: 'x'.repeat(27000) } }, slices: 800, count: 4012,
     coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 0, verifySliceSize: 50 } },
-  { name: 'main', branch: 'main', slices: 400, count: 1212,
+  { name: 'main', branch: 'main', slices: 400, count: 2012,
     coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 0, verifySliceSize: 50 } },
   { name: 'long branch binds wire budget', branch: `${'b'.repeat(249)}/${'b'.repeat(249)}/${'b'.repeat(249)}/${'b'.repeat(250)}`,
-    slices: 800, count: 1612, coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 0, verifySliceSize: 50 } },
+    slices: 800, count: 4012, coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 0, verifySliceSize: 50 } },
 ];
 for (const row of BRANCH_ROWS) test(`array guard branch: ${row.name}`, () => {
   const findings = Array.from({ length: 800 }, (_, i) => ({ id: `F${i}`, file: (i % 2 ? 'y' : 'x').repeat(2450) }));
@@ -166,18 +166,18 @@ for (const row of BRANCH_ROWS) test(`array guard branch: ${row.name}`, () => {
 test('capacity reserves only dispatched stages and bounded retries', () => {
   const limits = { summarizeBucketSize: 20, verifySliceSize: 10, validateBatch: 2, challengeCap: 5 };
   assert.equal(worstCaseAgentCount(limits, 0, 0), 10);
-  assert.equal(worstCaseAgentCount(limits, 0, 5), 29);
-  assert.equal(worstCaseAgentCount({ ...limits, challengeCap: 0 }, 0, 5), 24);
+  assert.equal(worstCaseAgentCount(limits, 0, 5), 28);
+  assert.equal(worstCaseAgentCount({ ...limits, challengeCap: 0 }, 0, 5), 23);
   assert.deepEqual(coarsenLimits({ validateBatch: 1, challengeCap: 400, verifySliceSize: 1 }, 0, 300),
     { validateBatch: 8, challengeCap: 400, verifySliceSize: 4 });
   const encoded = Array.from({ length: 500 }, (_, i) => ({ id: String(i), file: 'x'.repeat(2600) }));
   const coarse = coarsenLimits({ ...limits, challengeCap: 0 }, 0, encoded);
   assert.equal(coarse.challengeCap, 0);
-  assert.equal(worstCaseAgentCount(coarse, 0, encoded), 1012);
+  assert.equal(worstCaseAgentCount(coarse, 0, encoded), 2512);
   assert.equal(coarsenLimits({ ...limits, challengeCap: 1 }, 0, encoded).challengeCap, 1);
   const large = coarsenLimits({ ...limits, challengeCap: 10000 }, 20000, 10000);
-  assert.equal(worstCaseAgentCount(large, 20000, 10000), 10268);
-  assert.equal(worstCaseAgentCount(coarsenLimits(large, 20000, 10000), 20000, 10000), 10268);
+  assert.ok(worstCaseAgentCount(large, 20000, 10000) < 900);
+  assert.deepEqual(coarsenLimits(large, 20000, 10000), large);
 });
 const EMPTY_BRANCH_ROWS = [undefined, null, '', 'main'];
 for (const [index, branch] of EMPTY_BRANCH_ROWS.entries()) test(`empty branch normalization: ${index}`, () => {

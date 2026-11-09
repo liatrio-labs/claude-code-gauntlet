@@ -3,7 +3,7 @@ import { hostPlatformForRoots } from './paths.js';
 import { FINDING_PROP_TYPES, LOCATION_STATUSES, RESOLVED_SITE_SCHEMA, VERIFY_FACT_PROPERTIES, modelFor } from './registry.js';
 import { firstUnsafeNumber } from './wire.js';
 import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum, stripVerifyFacts } from './verifyWire.js';
-import { VERIFY_ATTEMPTS_PER_RECORD, verifyDispatchCount, verifyInlineBudgets, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
+import { VERIFY_ATTEMPTS_PER_SLICE, VERIFY_SINGLETON_RETRY_CAP, verifyDispatchCount, verifyInlineBudgets, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
 import { measurementDecisions, traceDecision } from './measurementTrace.js';
 
 // Allow honest failures in the schema to avoid fabricated successes under retry
@@ -108,8 +108,8 @@ export async function verifyStage(ctx, input) {
       ['count', 'Raise verifySliceSize to reduce fan-out.'],
     ].find(([reason]) => bounds.has(reason))[1];
     gaps.push(`verify_fanout: effective verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
-      + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${verifyDispatchCount(slices.length, slices.reduce((n, slice) => n + slice.length, 0))} `
-      + `executor dispatches at ${VERIFY_ATTEMPTS_PER_RECORD} attempts per record. ${fanoutAdvice}`);
+      + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${verifyDispatchCount(slices.length)} `
+      + `executor dispatches (${VERIFY_ATTEMPTS_PER_SLICE} batched attempts and up to ${VERIFY_SINGLETON_RETRY_CAP} singleton retries per slice). ${fanoutAdvice}`);
   }
 
   const out = [];
@@ -190,7 +190,7 @@ export async function verifyStage(ctx, input) {
       degradedSlices += 1;
       gaps.push(verifyDegradeGap(`slice ${i}: ${attempt.reason}`, attempt.degraded, findings.length));
     } else if (attempt.retriedFindings) {
-      gaps.push(`verify-slice-retry: slice ${i}'s first executor dispatch left ${attempt.retriedFindings} of ${slice.length} finding(s) unresolved (${attempt.reason}); one-at-a-time retries repaired them`);
+      gaps.push(`verify-slice-retry: slice ${i}'s first executor dispatch left ${attempt.retriedFindings} of ${slice.length} finding(s) unresolved (${attempt.reason}); retries repaired them`);
     }
   }
 
@@ -229,45 +229,77 @@ function prepareVerifySlice(slice, baseBranch) {
 // of another dispatch's receipt from satisfying a retry.
 async function verifySliceWithRetry(c, inp, i, slice, record) {
   const first = await dispatchVerifySlice(c, inp, i, slice, record, `${inp.nonce}.${i}`, `verify-slice-${i}`);
-  const accepted = new Map((first.deltas || []).map((d) => [d.id, d]));
-  const matchedProofIds = new Set(first.matchedProofIds);
-  const unresolved = slice.filter((f) => !accepted.has(f.id));
-  let inputFault = first.inputFault;
-  let retriesProven = true;
-  const failures = [];
-  if (VERIFY_ATTEMPTS_PER_RECORD > 1) {
-    for (const [j, finding] of unresolved.entries()) {
-      const retry = [finding];
-      const retryRecord = { ...prepareVerifySlice(retry, record.baseBranch), model: record.model };
-      const nonce = `${inp.nonce}.${i}.r1${j ? `.${j}` : ''}`;
-      const last = await dispatchVerifySlice(c, inp, i, retry, retryRecord, nonce, `verify-slice-${i}-retry`);
-      inputFault = last.inputFault ?? inputFault;
-      for (const d of last.deltas || []) accepted.set(d.id, d);
-      for (const id of last.matchedProofIds || []) matchedProofIds.add(id);
-      retriesProven &&= Boolean(last.proven);
-      if (!accepted.has(finding.id)) failures.push(`${JSON.stringify(finding.id)}: ${last.reason}`);
+  const accepted = new Map();
+  const matchedProofIds = new Set();
+  const provenIds = new Set();
+  let inputFault;
+  const collect = (result) => {
+    // A later success cannot erase a transcription fault from the ledger.
+    if (inputFault !== 'mismatch') inputFault = result.inputFault ?? inputFault;
+    for (const d of result.deltas || []) {
+      accepted.set(d.id, d);
+      if (result.proven) provenIds.add(d.id);
     }
+    for (const id of result.matchedProofIds || []) matchedProofIds.add(id);
+  };
+  collect(first);
+  const unresolved = slice.filter((f) => !accepted.has(f.id));
+  const failures = new Map();
+  if (unresolved.length && VERIFY_ATTEMPTS_PER_SLICE > 1) {
+    const retryRecord = { ...prepareVerifySlice(unresolved, record.baseBranch), model: record.model };
+    const batch = await dispatchVerifySlice(c, inp, i, unresolved, retryRecord, `${inp.nonce}.${i}.r1`, `verify-slice-${i}-retry`, 'r1');
+    collect(batch);
+    const eligible = new Set(batch.retryIds);
+    const pending = slice.map((finding, index) => ({ finding, index }))
+      .filter(({ finding }) => !accepted.has(finding.id));
+    const singletons = pending.filter(({ finding }) => eligible.has(finding.id)).slice(0, VERIFY_SINGLETON_RETRY_CAP);
+    for (const { finding } of pending) failures.set(finding.id, eligible.has(finding.id)
+      ? `singleton retry cap=${VERIFY_SINGLETON_RETRY_CAP} reached after batched retry` : batch.reason);
+    if (singletons.length) {
+      let results;
+      try {
+        results = await c.parallel(singletons.map(({ finding, index }) => () => {
+          const attempt = `r2.${index}`;
+          const singleRecord = { ...prepareVerifySlice([finding], record.baseBranch), model: record.model };
+          return dispatchVerifySlice(c, inp, i, [finding], singleRecord, `${inp.nonce}.${i}.${attempt}`, `verify-slice-${i}-retry-${index}`, attempt);
+        }));
+      } catch (e) {
+        results = singletons.map(() => ({ reason: `singleton dispatch failed (${e?.message || 'unknown'})` }));
+      }
+      for (const [j, { finding }] of singletons.entries()) {
+        const result = results?.[j] || { reason: 'singleton retry returned no result' };
+        collect(result);
+        failures.set(finding.id, result.reason);
+      }
+    }
+  }
+  const groups = new Map();
+  for (const f of slice) {
+    if (accepted.has(f.id)) continue;
+    const reason = failures.get(f.id) || first.reason;
+    if (!groups.has(reason)) groups.set(reason, []);
+    groups.get(reason).push(f.id);
   }
   const degraded = slice.length - accepted.size;
   return {
     eliminated: slice.filter((f) => accepted.get(f.id)?.verified === false)
       .map((f) => ({ ...f, eliminated_by: 'verify', elimination_reason: accepted.get(f.id).elimination_reason })),
-    // Accepted membership includes trusted eliminations exactly once after retry.
+    // Accepted membership includes trusted eliminations exactly once after recovery.
     verified: slice.flatMap((f) => accepted.has(f.id)
       ? joinVerifyDeltas([f], [accepted.get(f.id)], matchedProofIds) : degradedSlice([f])),
     degraded,
     localised: unresolved.length ? slice.length - unresolved.length : 0,
     retriedFindings: unresolved.length,
-    proven: record.expectedInputChecksum != null && (first.proven || (unresolved.length === slice.length && retriesProven && !degraded)),
-    reason: degraded ? `${failures.join('; ')} — retried once after the first attempt failed (${first.reason})` : first.reason,
+    proven: record.expectedInputChecksum != null && provenIds.size === slice.length,
+    reason: degraded ? [...groups].map(([reason, ids]) => `${reason} [ids: ${ids.map((id) => JSON.stringify(id)).join(', ')}]`).join('; ') : first.reason,
     inputFault,
   };
 }
 
-async function dispatchVerifySlice(c, inp, i, slice, record, sliceNonce, label) {
+async function dispatchVerifySlice(c, inp, i, slice, record, sliceNonce, label, attempt = '') {
   let env;
   try {
-    env = await c.agent(verifyPrompt(inp, i, sliceNonce, record.inlinePayload), {
+    env = await c.agent(verifyPrompt(inp, i, sliceNonce, record.inlinePayload, attempt), {
       label,
       agentType: 'code-gauntlet:executor',
       model: record.model,
@@ -391,6 +423,7 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
   if (wholeSlice && deltas.length !== ids.length) return { ok: false, reason: 'delta does not cover dispatched findings' };
   return {
     ok: true, deltas,
+    retryIds: wholeSlice ? [] : ids.filter((id) => !byId.has(id) || !matchesRecordProof(id)),
     matchedProofIds: new Set(deltas.filter((d) => matchesRecordProof(d.id)).map((d) => d.id)),
     proven: !diagnostic && deltas.length === ids.length,
     reason: diagnostic?.reason || `record proof missing or mismatched for ${ids.length - deltas.length} of ${n} finding(s)`,
@@ -401,7 +434,7 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
 
 // Read the deltas prefix because length-capped Reads give no truncation notice;
 // the later full finding arrays are unnecessary for the join.
-function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
+function verifyPrompt(inp, i, sliceNonce, inlinePayload, attempt) {
   return 'Reproduce the quoted --input-inline token character for character with no line breaks.\n'
-    + verifyCommand(inp, i, sliceNonce, inlinePayload);
+    + verifyCommand(inp, i, sliceNonce, inlinePayload, attempt);
 }
