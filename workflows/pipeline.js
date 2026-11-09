@@ -5623,9 +5623,11 @@ async function verifyStage(ctx, input) {
       ['oversize', 'An oversize finding forced this split; raising verifySliceSize will not reduce this fan-out.'],
       ['count', 'Raise verifySliceSize to reduce fan-out.'],
     ].find(([reason]) => bounds.has(reason))[1];
+    const dispatches = verifyDispatchCount(slices);
+    const batched = slices.length * VERIFY_ATTEMPTS_PER_SLICE;
     gaps.push(`verify_fanout: effective verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
-      + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${verifyDispatchCount(slices)} `
-      + `executor dispatches (${VERIFY_ATTEMPTS_PER_SLICE} batched attempts and up to ${VERIFY_SINGLETON_RETRY_CAP} singleton retries per slice). ${fanoutAdvice}`);
+      + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${dispatches} `
+      + `executor dispatches (${batched} initial or r1 calls and up to ${dispatches - batched} singleton retries). ${fanoutAdvice}`);
   }
   const out = [];
   const eliminated = [];
@@ -5789,7 +5791,8 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
     localised: unresolved.length ? slice.length - unresolved.length : 0,
     retriedFindings: unresolved.length,
     proven: record.expectedInputChecksum != null && provenIds.size === slice.length,
-    reason: degraded ? [...groups].map(([reason, ids]) => `${reason} [ids: ${ids.map((id) => JSON.stringify(id)).join(', ')}]`).join('; ') : first.reason,
+    reason: degraded ? [...groups].map(([reason, ids]) => `${reason} [ids: ${ids.map((id) => JSON.stringify(id)).join(', ')}]`).join('; ')
+      + (groups.has(first.reason) ? '' : `; first attempt: ${first.reason}`) : first.reason,
     inputFault,
   };
 }

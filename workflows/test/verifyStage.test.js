@@ -102,8 +102,9 @@ for (const row of TRUSTED_ROWS) {
   });
 }
 
-const degradedGap = (reason, slice, ids, total) =>
-  `verify: UNVERIFIED \u2014 slice ${slice}: ${reason} [ids: ${ids.map((id) => JSON.stringify(id)).join(', ')}]; `
+const degradedGap = (reason, slice, ids, total, first = reason) =>
+  `verify: UNVERIFIED \u2014 slice ${slice}: ${reason} [ids: ${ids.map((id) => JSON.stringify(id)).join(', ')}]`
+  + (first === reason ? '' : `; first attempt: ${first}`) + '; '
   + `${ids.length} of ${total} finding(s) in stage marked origin=unknown, surfaced-classification skipped, held back to the report`;
 
 const UNTRUSTED_ROWS = [
@@ -178,7 +179,7 @@ for (const row of UNTRUSTED_ROWS) {
       assert.deepEqual(outputs, row.outputs);
       assert.notEqual(outputs[2], outputs[1], 'retry preserves the first attempt output path');
     }
-    assert.deepEqual(out.gaps, [degradedGap(row.reason, row.slice || 0, findings.filter((_, i) => !row.origins || row.origins[i] === 'unknown').map((f) => f.id), findings.length)]);
+    assert.deepEqual(out.gaps, [degradedGap(row.reason, row.slice || 0, findings.filter((_, i) => !row.origins || row.origins[i] === 'unknown').map((f) => f.id), findings.length, row.firstReason)]);
   });
 }
 
@@ -375,11 +376,11 @@ const bulk = (prefix, length, chars) => Array.from({ length }, (_, i) => ({
 const FANOUT_ROWS = [
   { name: 'count bound advises raising slice size', findings: bulk('COUNT', 130, 10),
     gap: ('verify_fanout: effective verifySliceSize=25 splits 130 finding(s) into 6 slices (above the 5-slice '
-      + 'disclosure threshold) \u2014 up to 30 executor dispatches (2 batched attempts and up to 3 singleton retries per slice). Raise verifySliceSize to '
+      + 'disclosure threshold) \u2014 up to 30 executor dispatches (12 initial or r1 calls and up to 18 singleton retries). Raise verifySliceSize to '
       + 'reduce fan-out.') },
   { name: 'budget bound advises that raising slice size will not help', findings: bulk('FAT', 60, 4100),
     gap: ('verify_fanout: effective verifySliceSize=25 splits 60 finding(s) into 60 slices (above the 5-slice '
-      + 'disclosure threshold) \u2014 up to 120 executor dispatches (2 batched attempts and up to 3 singleton retries per slice). The inline character '
+      + 'disclosure threshold) \u2014 up to 120 executor dispatches (120 initial or r1 calls and up to 0 singleton retries). The inline character '
       + 'budget bound this split; raising verifySliceSize will not reduce this fan-out.') },
 ];
 for (const row of FANOUT_ROWS) {
@@ -400,7 +401,7 @@ test('sibling-slice substitution keeps every finding and degrades only the subst
   const out = await verifyStage(ctx, verifyInput(findings, { limits: { verifySliceSize: 2 } }));
   assert.equal(out.verified, false);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['F0', 'unknown'], ['F1', 'unknown'], ['F2', 'new'], ['F3', 'new']]);
-  assert.deepEqual(out.gaps, [degradedGap('record_proofs ids differ from delta ids', 0, ['F0', 'F1'], 4)]);
+  assert.deepEqual(out.gaps, [degradedGap('record_proofs ids differ from delta ids', 0, ['F0', 'F1'], 4, 'status=failed (transient)')]);
 });
 
 test('shell quoting preserves paths with spaces, apostrophes and special branch names', async () => {
@@ -606,6 +607,7 @@ test('bounded local recovery batches first, caps parallel singletons, and preser
   assert.equal(out.inputProof.degradedFindings, 4);
   assert.match(out.gaps[0], /delta content proof mismatch.*\[ids: "F4"\]/);
   assert.match(out.gaps[0], /executor threw \(copy failed\) \[ids: "F5"\]/);
+  assert.match(out.gaps[0], /first attempt: record proof missing or mismatched for 6 of 8 finding/);
   assert.match(out.gaps[0], /singleton retry cap=3 reached after batched retry \[ids: "F6", "F7"\]/);
   assert.equal(out.gaps[0].split('singleton retry cap=').length, 2);
 });
