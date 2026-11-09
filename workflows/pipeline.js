@@ -1422,7 +1422,7 @@ function verifyInlineBudgets(input = {}) {
   if (hostPlatformForRoots(input) === 'windows') {
     const prepared = { ...input, verify: { ...(input.verify || {}),
       baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
-    const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
+    const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1.999999999`, '').length;
     hard = Math.min(hard, Math.max(0, 32767 - overhead - 2048));
   }
   return Object.freeze({ copy: Math.min(VERIFY_INLINE_CHAR_BUDGET, hard), hard });
@@ -1492,7 +1492,8 @@ function planVerifySlices(findings, sliceSize, { copy, hard }, baseBranch, hostP
   return { slices, oversize, closeReasons };
 }
 const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
-const VERIFY_ATTEMPTS_PER_SLICE = STAGE_COSTS.verify.attempts;
+const VERIFY_ATTEMPTS_PER_RECORD = STAGE_COSTS.verify.attempts;
+const verifyDispatchCount = (slices, findings) => slices + findings * (VERIFY_ATTEMPTS_PER_RECORD - 1);
 const AGENT_COUNT_GUARD = 900;
 const SUMMARIZE_TERM_BOUND = 300;
 const CHALLENGE_CAP_FLOOR = 5;
@@ -1509,10 +1510,10 @@ function findingCount(findings) {
 function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   const count = findingCount(findings);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudgets(input), baseBranch, hostPlatformForRoots(input)).slices.length
-      * VERIFY_ATTEMPTS_PER_SLICE;
+    const { slices } = planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudgets(input), baseBranch, hostPlatformForRoots(input));
+    return verifyDispatchCount(slices.length, slices.reduce((n, slice) => n + slice.length, 0));
   }
-  return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
+  return verifyDispatchCount(ceilDiv(count, effectiveSliceSize(L, count)), count);
 }
 function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = limits || {};
@@ -5618,8 +5619,8 @@ async function verifyStage(ctx, input) {
       ['count', 'Raise verifySliceSize to reduce fan-out.'],
     ].find(([reason]) => bounds.has(reason))[1];
     gaps.push(`verify_fanout: effective verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
-      + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${slices.length * VERIFY_ATTEMPTS_PER_SLICE} `
-      + `executor dispatches at ${VERIFY_ATTEMPTS_PER_SLICE} attempts per slice. ${fanoutAdvice}`);
+      + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${verifyDispatchCount(slices.length, slices.reduce((n, slice) => n + slice.length, 0))} `
+      + `executor dispatches at ${VERIFY_ATTEMPTS_PER_RECORD} attempts per record. ${fanoutAdvice}`);
   }
   const out = [];
   const eliminated = [];
@@ -5692,7 +5693,7 @@ async function verifyStage(ctx, input) {
       degradedSlices += 1;
       gaps.push(verifyDegradeGap(`slice ${i}: ${attempt.reason}`, attempt.degraded, findings.length));
     } else if (attempt.retriedFindings) {
-      gaps.push(`verify-slice-retry: slice ${i}'s first executor dispatch left ${attempt.retriedFindings} of ${slice.length} finding(s) unresolved (${attempt.reason}); a second dispatch repaired them`);
+      gaps.push(`verify-slice-retry: slice ${i}'s first executor dispatch left ${attempt.retriedFindings} of ${slice.length} finding(s) unresolved (${attempt.reason}); one-at-a-time retries repaired them`);
     }
   }
   return measurementDecisions({ findings: out, eliminated, verified: degradedSlices === 0, gaps, inputProof },
@@ -5725,12 +5726,21 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
   const accepted = new Map((first.deltas || []).map((d) => [d.id, d]));
   const matchedProofIds = new Set(first.matchedProofIds);
   const unresolved = slice.filter((f) => !accepted.has(f.id));
-  let last = first;
-  if (unresolved.length) {
-    const retryRecord = { ...prepareVerifySlice(unresolved, record.baseBranch), model: record.model };
-    last = await dispatchVerifySlice(c, inp, i, unresolved, retryRecord, `${inp.nonce}.${i}.r1`, `verify-slice-${i}-retry`);
-    for (const d of last.deltas || []) accepted.set(d.id, d);
-    for (const id of last.matchedProofIds || []) matchedProofIds.add(id);
+  let inputFault = first.inputFault;
+  let retriesProven = true;
+  const failures = [];
+  if (VERIFY_ATTEMPTS_PER_RECORD > 1) {
+    for (const [j, finding] of unresolved.entries()) {
+      const retry = [finding];
+      const retryRecord = { ...prepareVerifySlice(retry, record.baseBranch), model: record.model };
+      const nonce = `${inp.nonce}.${i}.r1${j ? `.${j}` : ''}`;
+      const last = await dispatchVerifySlice(c, inp, i, retry, retryRecord, nonce, `verify-slice-${i}-retry`);
+      inputFault = last.inputFault ?? inputFault;
+      for (const d of last.deltas || []) accepted.set(d.id, d);
+      for (const id of last.matchedProofIds || []) matchedProofIds.add(id);
+      retriesProven &&= Boolean(last.proven);
+      if (!accepted.has(finding.id)) failures.push(`${JSON.stringify(finding.id)}: ${last.reason}`);
+    }
   }
   const degraded = slice.length - accepted.size;
   return {
@@ -5741,9 +5751,9 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
     degraded,
     localised: unresolved.length ? slice.length - unresolved.length : 0,
     retriedFindings: unresolved.length,
-    proven: record.expectedInputChecksum != null && (first.proven || (unresolved.length === slice.length && last.proven)),
-    reason: degraded ? `${last.reason} — retried once after the first attempt failed (${first.reason})` : first.reason,
-    inputFault: last.inputFault ?? first.inputFault,
+    proven: record.expectedInputChecksum != null && (first.proven || (unresolved.length === slice.length && retriesProven && !degraded)),
+    reason: degraded ? `${failures.join('; ')} — retried once after the first attempt failed (${first.reason})` : first.reason,
+    inputFault,
   };
 }
 async function dispatchVerifySlice(c, inp, i, slice, record, sliceNonce, label) {

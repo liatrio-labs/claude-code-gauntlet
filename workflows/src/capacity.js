@@ -32,7 +32,7 @@ export function verifyInlineBudgets(input = {}) {
   if (hostPlatformForRoots(input) === 'windows') {
     const prepared = { ...input, verify: { ...(input.verify || {}),
       baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
-    const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
+    const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1.999999999`, '').length;
     hard = Math.min(hard, Math.max(0, 32767 - overhead - 2048));
   }
   return Object.freeze({ copy: Math.min(VERIFY_INLINE_CHAR_BUDGET, hard), hard });
@@ -114,8 +114,9 @@ export function planVerifySlices(findings, sliceSize, { copy, hard }, baseBranch
 // Matching the stage default avoids undercounting fan-out; NaN would silently disable coarsening.
 export const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
 
-// The retry and the agent-count guard must agree on dispatches per slice.
-export const VERIFY_ATTEMPTS_PER_SLICE = STAGE_COSTS.verify.attempts;
+// Each record shares its first dispatch, then gets its own retry.
+export const VERIFY_ATTEMPTS_PER_RECORD = STAGE_COSTS.verify.attempts;
+export const verifyDispatchCount = (slices, findings) => slices + findings * (VERIFY_ATTEMPTS_PER_RECORD - 1);
 
 // Stay strictly under the platform's per-run agent fan-out ceiling; the gap is headroom.
 const AGENT_COUNT_GUARD = 900;
@@ -142,10 +143,10 @@ function findingCount(findings) {
 function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   const count = findingCount(findings);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudgets(input), baseBranch, hostPlatformForRoots(input)).slices.length
-      * VERIFY_ATTEMPTS_PER_SLICE;
+    const { slices } = planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudgets(input), baseBranch, hostPlatformForRoots(input));
+    return verifyDispatchCount(slices.length, slices.reduce((n, slice) => n + slice.length, 0));
   }
-  return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
+  return verifyDispatchCount(ceilDiv(count, effectiveSliceSize(L, count)), count);
 }
 
 export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
