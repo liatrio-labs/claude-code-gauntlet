@@ -4,12 +4,12 @@ import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding
 import { pythonArgv, shellWord } from './wire.js';
 import { hostPlatformForRoots, trustedScriptPath } from './paths.js';
 
-// Shell quoting preserves each argv word; retry paths stay fixed so outputs
-// overwrite the first attempt.
-export function verifyCommand(inp, i, sliceNonce, inlinePayload) {
+// Attempt suffixes keep parallel retries from overwriting evidence or each other.
+export function verifyCommand(inp, i, sliceNonce, inlinePayload, attempt = '') {
   const v = inp.verify || {};
-  const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;
-  const outPath = `${v.outputPathBase || 'phase4-output'}.slice${i}.json`;
+  const suffix = attempt ? `.${attempt}` : '';
+  const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}${suffix}.json`;
+  const outPath = `${v.outputPathBase || 'phase4-output'}.slice${i}${suffix}.json`;
   const parts = [
     ...pythonArgv(inp.python), inp.pluginRoot ? trustedScriptPath(inp.pluginRoot, TRUSTED_SCRIPT_BASENAMES.verify) : 'scripts/verify_findings.py',
     '--input', inPath,
@@ -32,7 +32,7 @@ export function verifyInlineBudgets(input = {}) {
   if (hostPlatformForRoots(input) === 'windows') {
     const prepared = { ...input, verify: { ...(input.verify || {}),
       baseBranch: input.baseBranch ?? input.verify?.baseBranch, diffPath: input.diffPath ?? input.verify?.diffPath } };
-    const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r1`, '').length;
+    const overhead = verifyCommand(prepared, 999999999, `${input.nonce || ''}.999999999.r2.999999999`, '', 'r2.999999999').length;
     hard = Math.min(hard, Math.max(0, 32767 - overhead - 2048));
   }
   return Object.freeze({ copy: Math.min(VERIFY_INLINE_CHAR_BUDGET, hard), hard });
@@ -114,8 +114,13 @@ export function planVerifySlices(findings, sliceSize, { copy, hard }, baseBranch
 // Matching the stage default avoids undercounting fan-out; NaN would silently disable coarsening.
 export const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
 
-// The retry and the agent-count guard must agree on dispatches per slice.
+// The stage and guard share the same finite recovery budget.
 export const VERIFY_ATTEMPTS_PER_SLICE = STAGE_COSTS.verify.attempts;
+export const VERIFY_SINGLETON_RETRY_CAP = STAGE_COSTS.verify.singletonRetries;
+export const verifySingletonRetryBudget = (length) => Math.min(VERIFY_SINGLETON_RETRY_CAP, Math.max(0, length - 1));
+export const verifyDispatchCount = (slices) => Array.isArray(slices)
+  ? slices.reduce((total, slice) => total + VERIFY_ATTEMPTS_PER_SLICE + verifySingletonRetryBudget(slice.length), 0)
+  : slices * (VERIFY_ATTEMPTS_PER_SLICE + VERIFY_SINGLETON_RETRY_CAP);
 
 // Stay strictly under the platform's per-run agent fan-out ceiling; the gap is headroom.
 const AGENT_COUNT_GUARD = 900;
@@ -142,10 +147,10 @@ function findingCount(findings) {
 function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   const count = findingCount(findings);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudgets(input), baseBranch, hostPlatformForRoots(input)).slices.length
-      * VERIFY_ATTEMPTS_PER_SLICE;
+    const { slices } = planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudgets(input), baseBranch, hostPlatformForRoots(input));
+    return verifyDispatchCount(slices);
   }
-  return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
+  return verifyDispatchCount(ceilDiv(count, effectiveSliceSize(L, count)));
 }
 
 export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {

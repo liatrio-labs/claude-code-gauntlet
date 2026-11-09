@@ -111,22 +111,25 @@ export function sliceInputRecorder(env, prompt) {
 
 export function verifyCtx(executorImpl) {
   const calls = [];
+  const parallelCalls = [];
   let inParallel = 0;
   return {
     calls,
+    parallelCalls,
     agent: async (prompt, opts = {}) => {
       assertPrompt(prompt);
       assertValidSchema(opts.schema);
       const call = { prompt, ...opts };
       calls.push(call);
-      const match = /^verify-slice-(\d+)(-retry)?$/.exec(opts.label || '');
+      const match = /^verify-slice-(\d+)(-retry)?(?:-(\d+))?$/.exec(opts.label || '');
       if (!match) throw new Error('verifyStage must dispatch only slice executors');
-      if (inParallel > 0) throw new Error('verifyStage must not use parallel()');
       const index = Number(match[1]);
-      const attempt = match[2] ? 2 : 1;
+      const attempt = match[3] !== undefined ? 3 : match[2] ? 2 : 1;
+      if ((inParallel > 0) !== (attempt === 3)) throw new Error('only singleton retries must use parallel()');
       return sliceInputRecorder(await executorImpl(index, attempt, call), prompt);
     },
     parallel: async (thunks) => {
+      parallelCalls.push(thunks.length);
       inParallel += 1;
       try {
         return await Promise.all(thunks.map(async (thunk) => {
