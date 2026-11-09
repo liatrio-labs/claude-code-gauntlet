@@ -104,7 +104,7 @@ const COUNT_ROWS = [
     files: 200, findings: 100, count: 71 },
   { name: 'numeric estimate ignores wire split', limits: COUNT_GOLDEN, files: 0, findings: 2, count: 19 },
   { name: 'array wire split includes its retry', limits: COUNT_GOLDEN, files: 0,
-    findings: [{ id: 'A', file: 'x'.repeat(30000) }, { id: 'B', file: 'y'.repeat(30000) }], count: 24 },
+    findings: [{ id: 'A', file: 'x'.repeat(30000) }, { id: 'B', file: 'y'.repeat(30000) }], count: 18 },
   { name: 'small copy slices include every retry', limits: COUNT_GOLDEN, files: 0,
     findings: Array.from({ length: 100 }, (_, i) => ({ id: `F${i}`, file: 'x'.repeat(200) })), count: 99 },
   { name: 'hard-oversize finding consumes no verify dispatch', limits: COUNT_GOLDEN, files: 0,
@@ -128,11 +128,11 @@ const COARSEN_ROWS = [
   { name: 'wire-bound term stops making progress',
     limits: { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 5, verifySliceSize: 1 }, files: 0,
     findings: Array.from({ length: 1000 }, (_, i) => ({ id: `F${i}`, file: 'x'.repeat(2200) })),
-    coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 5, verifySliceSize: 4 }, count: 2517 },
+    coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 5, verifySliceSize: 4 }, count: 1517 },
   { name: 'oversize singleton calls cannot coarsen away',
     limits: { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 5, verifySliceSize: 1 }, files: 0,
     findings: Array.from({ length: 1000 }, (_, i) => ({ id: `F${i}`, file: 'x'.repeat(6000) })),
-    coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 5, verifySliceSize: 2 }, count: 5017 },
+    coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 5, verifySliceSize: 2 }, count: 2017 },
 ];
 for (const row of COARSEN_ROWS) test(`coarsening: ${row.name}`, () => {
   const before = JSON.stringify(row.limits);
@@ -142,15 +142,15 @@ for (const row of COARSEN_ROWS) test(`coarsening: ${row.name}`, () => {
   assert.equal(worstCaseAgentCount(coarse, row.files, row.findings), row.count);
 });
 const BRANCH_ROWS = [
-  { name: 'windows quoted copy budget', branch: 'main', input: { repoRoot: 'D:/repo' }, slices: 800, count: 4012,
+  { name: 'windows quoted copy budget', branch: 'main', input: { repoRoot: 'D:/repo' }, slices: 800, count: 1612,
     coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 0, verifySliceSize: 50 } },
   { name: 'windows command budget below copy target', branch: 'main',
-    input: { repoRoot: 'D:/repo', verify: { contextFile: 'x'.repeat(27000) } }, slices: 800, count: 4012,
+    input: { repoRoot: 'D:/repo', verify: { contextFile: 'x'.repeat(27000) } }, slices: 800, count: 1612,
     coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 0, verifySliceSize: 50 } },
-  { name: 'main', branch: 'main', slices: 400, count: 2012,
+  { name: 'main', branch: 'main', slices: 400, count: 1212,
     coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 0, verifySliceSize: 50 } },
   { name: 'long branch binds wire budget', branch: `${'b'.repeat(249)}/${'b'.repeat(249)}/${'b'.repeat(249)}/${'b'.repeat(250)}`,
-    slices: 800, count: 4012, coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 0, verifySliceSize: 50 } },
+    slices: 800, count: 1612, coarse: { summarizeBucketSize: 20, validateBatch: 10000, challengeCap: 0, verifySliceSize: 50 } },
 ];
 for (const row of BRANCH_ROWS) test(`array guard branch: ${row.name}`, () => {
   const findings = Array.from({ length: 800 }, (_, i) => ({ id: `F${i}`, file: (i % 2 ? 'y' : 'x').repeat(2450) }));
@@ -173,7 +173,7 @@ test('capacity reserves only dispatched stages and bounded retries', () => {
   const encoded = Array.from({ length: 500 }, (_, i) => ({ id: String(i), file: 'x'.repeat(2600) }));
   const coarse = coarsenLimits({ ...limits, challengeCap: 0 }, 0, encoded);
   assert.equal(coarse.challengeCap, 0);
-  assert.equal(worstCaseAgentCount(coarse, 0, encoded), 2512);
+  assert.equal(worstCaseAgentCount(coarse, 0, encoded), 1012);
   assert.equal(coarsenLimits({ ...limits, challengeCap: 1 }, 0, encoded).challengeCap, 1);
   const large = coarsenLimits({ ...limits, challengeCap: 10000 }, 20000, 10000);
   assert.ok(worstCaseAgentCount(large, 20000, 10000) < 900);

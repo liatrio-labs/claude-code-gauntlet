@@ -1495,7 +1495,10 @@ function planVerifySlices(findings, sliceSize, { copy, hard }, baseBranch, hostP
 const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
 const VERIFY_ATTEMPTS_PER_SLICE = STAGE_COSTS.verify.attempts;
 const VERIFY_SINGLETON_RETRY_CAP = STAGE_COSTS.verify.singletonRetries;
-const verifyDispatchCount = (slices) => slices * (VERIFY_ATTEMPTS_PER_SLICE + VERIFY_SINGLETON_RETRY_CAP);
+const verifySingletonRetryBudget = (length) => Math.min(VERIFY_SINGLETON_RETRY_CAP, Math.max(0, length - 1));
+const verifyDispatchCount = (slices) => Array.isArray(slices)
+  ? slices.reduce((total, slice) => total + VERIFY_ATTEMPTS_PER_SLICE + verifySingletonRetryBudget(slice.length), 0)
+  : slices * (VERIFY_ATTEMPTS_PER_SLICE + VERIFY_SINGLETON_RETRY_CAP);
 const AGENT_COUNT_GUARD = 900;
 const SUMMARIZE_TERM_BOUND = 300;
 const CHALLENGE_CAP_FLOOR = 5;
@@ -1513,7 +1516,7 @@ function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   const count = findingCount(findings);
   if (Array.isArray(findings)) {
     const { slices } = planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudgets(input), baseBranch, hostPlatformForRoots(input));
-    return verifyDispatchCount(slices.length);
+    return verifyDispatchCount(slices);
   }
   return verifyDispatchCount(ceilDiv(count, effectiveSliceSize(L, count)));
 }
@@ -5621,7 +5624,7 @@ async function verifyStage(ctx, input) {
       ['count', 'Raise verifySliceSize to reduce fan-out.'],
     ].find(([reason]) => bounds.has(reason))[1];
     gaps.push(`verify_fanout: effective verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
-      + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${verifyDispatchCount(slices.length)} `
+      + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${verifyDispatchCount(slices)} `
       + `executor dispatches (${VERIFY_ATTEMPTS_PER_SLICE} batched attempts and up to ${VERIFY_SINGLETON_RETRY_CAP} singleton retries per slice). ${fanoutAdvice}`);
   }
   const out = [];
@@ -5744,12 +5747,13 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
     const retryRecord = { ...prepareVerifySlice(unresolved, record.baseBranch), model: record.model };
     const batch = await dispatchVerifySlice(c, inp, i, unresolved, retryRecord, `${inp.nonce}.${i}.r1`, `verify-slice-${i}-retry`, 'r1');
     collect(batch);
-    const eligible = new Set(batch.retryIds);
+    const eligible = new Set(unresolved.length > 1 ? batch.retryIds : []);
     const pending = slice.map((finding, index) => ({ finding, index }))
       .filter(({ finding }) => !accepted.has(finding.id));
-    const singletons = pending.filter(({ finding }) => eligible.has(finding.id)).slice(0, VERIFY_SINGLETON_RETRY_CAP);
+    const singletonBudget = verifySingletonRetryBudget(slice.length);
+    const singletons = pending.filter(({ finding }) => eligible.has(finding.id)).slice(0, singletonBudget);
     for (const { finding } of pending) failures.set(finding.id, eligible.has(finding.id)
-      ? `singleton retry cap=${VERIFY_SINGLETON_RETRY_CAP} reached after batched retry` : batch.reason);
+      ? `singleton retry cap=${singletonBudget} reached after batched retry` : batch.reason);
     if (singletons.length) {
       let results;
       try {

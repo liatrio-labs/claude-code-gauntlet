@@ -117,7 +117,10 @@ export const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize
 // The stage and guard share the same finite recovery budget.
 export const VERIFY_ATTEMPTS_PER_SLICE = STAGE_COSTS.verify.attempts;
 export const VERIFY_SINGLETON_RETRY_CAP = STAGE_COSTS.verify.singletonRetries;
-export const verifyDispatchCount = (slices) => slices * (VERIFY_ATTEMPTS_PER_SLICE + VERIFY_SINGLETON_RETRY_CAP);
+export const verifySingletonRetryBudget = (length) => Math.min(VERIFY_SINGLETON_RETRY_CAP, Math.max(0, length - 1));
+export const verifyDispatchCount = (slices) => Array.isArray(slices)
+  ? slices.reduce((total, slice) => total + VERIFY_ATTEMPTS_PER_SLICE + verifySingletonRetryBudget(slice.length), 0)
+  : slices * (VERIFY_ATTEMPTS_PER_SLICE + VERIFY_SINGLETON_RETRY_CAP);
 
 // Stay strictly under the platform's per-run agent fan-out ceiling; the gap is headroom.
 const AGENT_COUNT_GUARD = 900;
@@ -145,7 +148,7 @@ function verifyTerm(L, findings, baseBranch = 'main', input = {}) {
   const count = findingCount(findings);
   if (Array.isArray(findings)) {
     const { slices } = planVerifySlices(findings, effectiveSliceSize(L, count), verifyInlineBudgets(input), baseBranch, hostPlatformForRoots(input));
-    return verifyDispatchCount(slices.length);
+    return verifyDispatchCount(slices);
   }
   return verifyDispatchCount(ceilDiv(count, effectiveSliceSize(L, count)));
 }

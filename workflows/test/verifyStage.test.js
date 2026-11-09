@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyStage } from '../src/verifyStage.js';
 import { deltaContentProof, encodeSliceInline, projectVerifySliceFinding } from '../src/verifyWire.js';
-import { coarsenLimits, worstCaseAgentCount } from '../src/capacity.js';
+import { coarsenLimits, verifyDispatchCount, worstCaseAgentCount } from '../src/capacity.js';
 import { ANCHOR_LIMITS } from '../src/registry.js';
 import { deltaEnvelope, deltasFor, ELIMINATION_STAMP, verifyCtx, verifyInput, dispatchedFindings, sliceInputRecorder } from './helpers/verifyDelta.js';
 import { outsideSingleQuotes, shellSplit } from './helpers/shellWords.js';
@@ -379,7 +379,7 @@ const FANOUT_ROWS = [
       + 'reduce fan-out.') },
   { name: 'budget bound advises that raising slice size will not help', findings: bulk('FAT', 60, 4100),
     gap: ('verify_fanout: effective verifySliceSize=25 splits 60 finding(s) into 60 slices (above the 5-slice '
-      + 'disclosure threshold) \u2014 up to 300 executor dispatches (2 batched attempts and up to 3 singleton retries per slice). The inline character '
+      + 'disclosure threshold) \u2014 up to 120 executor dispatches (2 batched attempts and up to 3 singleton retries per slice). The inline character '
       + 'budget bound this split; raising verifySliceSize will not reduce this fan-out.') },
 ];
 for (const row of FANOUT_ROWS) {
@@ -602,6 +602,7 @@ test('bounded local recovery batches first, caps parallel singletons, and preser
   assert.deepEqual(out.findings, [located(findings[0]), located(findings[2]), located(findings[3]),
     ...findings.slice(4).map((f) => unresolved({ ...f, origin: 'unknown' }))]);
   assert.equal(out.inputProof.mismatched, 1);
+  assert.equal(out.inputProof.retriedFindings, 6);
   assert.equal(out.inputProof.degradedFindings, 4);
   assert.match(out.gaps[0], /delta content proof mismatch.*\[ids: "F4"\]/);
   assert.match(out.gaps[0], /executor threw \(copy failed\) \[ids: "F5"\]/);
@@ -643,4 +644,61 @@ for (const fault of ['throw', 'null']) test(`bounded local recovery discloses pa
     ? /singleton dispatch failed \(host unavailable\) \[ids: "F1", "F2", "F3"\]/
     : /singleton retry returned no result \[ids: "F1", "F2", "F3"\]/);
   assert.match(out.gaps[0], /singleton retry cap=3 reached after batched retry \[ids: "F4"\]/);
+});
+
+test('a garbled record that garbles again stops after singleton r1', async () => {
+  const findings = findingsFor(3);
+  const ctx = verifyCtx((_index, attempt, call) => {
+    const env = envelopeForCall(call);
+    if (attempt <= 2) env.receipt.record_proofs.find((proof) => proof.id === 'F1').checksum = BAD_PROOF;
+    return env;
+  });
+  const out = await verifyStage(ctx, verifyInput(findings));
+  assert.deepEqual(ctx.calls.map((call) => dispatchedFindings(call.prompt).map((f) => f.id)), [
+    ['F0', 'F1', 'F2'], ['F1'],
+  ]);
+  assert.deepEqual(ctx.parallelCalls, []);
+  assert.equal(out.verified, false);
+  assert.deepEqual(out.findings, [located(findings[0]), unresolved({ ...findings[1], origin: 'unknown' }), located(findings[2])]);
+  assert.equal(out.inputProof.retriedFindings, 1);
+  assert.equal(out.inputProof.degradedFindings, 1);
+  assert.match(out.gaps[0], /\[ids: "F1"\]/);
+});
+
+test('two-record recovery fits its per-slice budget and counts cap-reached records as retried', async () => {
+  const findings = findingsFor(2);
+  const ctx = verifyCtx((_index, attempt, call) => {
+    const env = envelopeForCall(call);
+    if (attempt <= 2) for (const proof of env.receipt.record_proofs) proof.checksum = BAD_PROOF;
+    return env;
+  });
+  const out = await verifyStage(ctx, verifyInput(findings));
+  assert.deepEqual(ctx.calls.map((call) => dispatchedFindings(call.prompt).map((f) => f.id)), [
+    ['F0', 'F1'], ['F0', 'F1'], ['F0'],
+  ]);
+  assert.equal(verifyDispatchCount([findings]), 3);
+  assert.equal(ctx.calls.length, verifyDispatchCount([findings]));
+  assert.equal(out.inputProof.retriedFindings, 2);
+  assert.equal(out.inputProof.degradedFindings, 1);
+  assert.deepEqual(out.findings, [located(findings[0]), unresolved({ ...findings[1], origin: 'unknown' })]);
+  assert.match(out.gaps[0], /singleton retry cap=1 reached after batched retry \[ids: "F1"\]/);
+});
+
+test('matched record proofs with malformed locations degrade after batched r1 without singleton retries', async () => {
+  const findings = findingsFor(4);
+  const ctx = verifyCtx((_index, _attempt, call) => {
+    const env = envelopeForCall(call);
+    for (const delta of env.result.deltas) if (delta.id !== 'F0') delta.line_end = 0;
+    env.receipt.deltas_checksum = deltaContentProof(env.receipt.record_proofs.map((proof) => proof.id), env.result.deltas);
+    return env;
+  });
+  const out = await verifyStage(ctx, verifyInput(findings));
+  assert.deepEqual(ctx.calls.map((call) => dispatchedFindings(call.prompt).map((f) => f.id)), [
+    ['F0', 'F1', 'F2', 'F3'], ['F1', 'F2', 'F3'],
+  ]);
+  assert.deepEqual(ctx.parallelCalls, []);
+  assert.equal(out.verified, false);
+  assert.deepEqual(out.findings, [located(findings[0]), ...findings.slice(1).map((f) => unresolved({ ...f, origin: 'unknown' }))]);
+  assert.equal(out.inputProof.retriedFindings, 3);
+  assert.equal(out.inputProof.degradedFindings, 3);
 });

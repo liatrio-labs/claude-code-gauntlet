@@ -3,7 +3,7 @@ import { hostPlatformForRoots } from './paths.js';
 import { FINDING_PROP_TYPES, LOCATION_STATUSES, RESOLVED_SITE_SCHEMA, VERIFY_FACT_PROPERTIES, modelFor } from './registry.js';
 import { firstUnsafeNumber } from './wire.js';
 import { deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, recordProof, sliceInputChecksum, sliceTokenChecksum, stripVerifyFacts } from './verifyWire.js';
-import { VERIFY_ATTEMPTS_PER_SLICE, VERIFY_SINGLETON_RETRY_CAP, verifyDispatchCount, verifyInlineBudgets, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
+import { VERIFY_ATTEMPTS_PER_SLICE, VERIFY_SINGLETON_RETRY_CAP, verifySingletonRetryBudget, verifyDispatchCount, verifyInlineBudgets, verifyInlineCost, verifyCommand, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
 import { measurementDecisions, traceDecision } from './measurementTrace.js';
 
 // Allow honest failures in the schema to avoid fabricated successes under retry
@@ -108,7 +108,7 @@ export async function verifyStage(ctx, input) {
       ['count', 'Raise verifySliceSize to reduce fan-out.'],
     ].find(([reason]) => bounds.has(reason))[1];
     gaps.push(`verify_fanout: effective verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
-      + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${verifyDispatchCount(slices.length)} `
+      + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${verifyDispatchCount(slices)} `
       + `executor dispatches (${VERIFY_ATTEMPTS_PER_SLICE} batched attempts and up to ${VERIFY_SINGLETON_RETRY_CAP} singleton retries per slice). ${fanoutAdvice}`);
   }
 
@@ -249,12 +249,14 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
     const retryRecord = { ...prepareVerifySlice(unresolved, record.baseBranch), model: record.model };
     const batch = await dispatchVerifySlice(c, inp, i, unresolved, retryRecord, `${inp.nonce}.${i}.r1`, `verify-slice-${i}-retry`, 'r1');
     collect(batch);
-    const eligible = new Set(batch.retryIds);
+    // Repeating an already isolated copy cannot narrow the fault any further.
+    const eligible = new Set(unresolved.length > 1 ? batch.retryIds : []);
     const pending = slice.map((finding, index) => ({ finding, index }))
       .filter(({ finding }) => !accepted.has(finding.id));
-    const singletons = pending.filter(({ finding }) => eligible.has(finding.id)).slice(0, VERIFY_SINGLETON_RETRY_CAP);
+    const singletonBudget = verifySingletonRetryBudget(slice.length);
+    const singletons = pending.filter(({ finding }) => eligible.has(finding.id)).slice(0, singletonBudget);
     for (const { finding } of pending) failures.set(finding.id, eligible.has(finding.id)
-      ? `singleton retry cap=${VERIFY_SINGLETON_RETRY_CAP} reached after batched retry` : batch.reason);
+      ? `singleton retry cap=${singletonBudget} reached after batched retry` : batch.reason);
     if (singletons.length) {
       let results;
       try {
