@@ -395,9 +395,14 @@ def test_caller_review_scaffold():
     specification = (
         ROOT / "skills/code-gauntlet/references/review-md-spec.md"
     ).read_text(encoding="utf-8")
+    guide_link = re.search(r"\[authoring guide\]\(([^)]+)\)", specification)
+    assert guide_link is not None
+    authoring = (ROOT / "skills/code-gauntlet/references" / guide_link[1]).read_text(
+        encoding="utf-8"
+    )
     match = re.search(
         r"### Root REVIEW\.md template\n\n(````markdown\n.*?\n````)",
-        specification,
+        authoring,
         re.DOTALL,
     )
     assert match is not None

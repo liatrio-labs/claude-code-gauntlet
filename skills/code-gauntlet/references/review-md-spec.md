@@ -2,13 +2,13 @@
 
 A `REVIEW.md` file lets project maintainers customize how code-gauntlet behaves. It can live at the repository root and in subdirectories alongside CLAUDE.md files. It's optional — sensible defaults apply when absent.
 
+For writing rules and starting a file, see the [authoring guide](../../../docs/review-md-authoring.md).
+
 ## Contents
 
 - **Format** — Section overview, all sections optional
 - **Section Details** — Rules and other prose, Severity/Confidence Thresholds, Default Delivery, Ignore
 - **Hierarchy** — Root + subdirectory configs, merge rules, discovery prompts
-- **Rule-Writing Principles** — Prescriptive vs directional, 15-25 rules per file
-- **Scaffolding Templates** — Root template, subdirectory template
 
 ## Format
 
@@ -29,14 +29,6 @@ Built-in defaults, applied whenever a key is absent from the config block: `conf
 
 ````markdown
 # Review Configuration
-
-## Rules
-<!-- Custom natural-language rules applied to all review agents. -->
-<!-- These supplement (don't replace) the built-in review logic. -->
-- All database queries must use parameterized statements, never string concatenation
-- Public API endpoints must validate request body schema before processing
-- Feature flags must have an expiration date comment
-- Console.log statements should not be committed to main
 
 ```yaml
 # code-gauntlet
@@ -77,12 +69,6 @@ dimensions or excludes files. Structural controls:
   runs. There is no REVIEW.md key that changes this.
 - **Which findings are suppressed** is the `ignore` list in the config block (see below) — a
   substring match against finding text, not a file-path exclusion.
-
-Rules should be:
-
-- Specific and actionable (not vague guidelines)
-- Objectively verifiable (an agent can determine compliance)
-- Focused on the code being reviewed (not process/workflow rules)
 
 ### Severity Threshold
 
@@ -130,8 +116,7 @@ Any other remainder, including prose, comment residue, or nothing, means the set
 and the next precedence source applies. The delivery rule validates candidates; unknown tokens,
 duplicates, and `pr_comments` on a local target fail loud as `HEADLESS CONFIG ERROR: REVIEW.md default_delivery=<value> not in {chat,pr_comments,markdown}`.
 For a local target, the error uses `{chat,markdown}`.
-An environment pin wins over this setting. Interactive mode ignores it. The scaffold's
-commented value reads as unset.
+An environment pin wins over this setting. Interactive mode ignores it.
 
 ```
 
@@ -171,8 +156,6 @@ entry, or a PR/issue comment — not inside the pattern string. The parser only 
 list lines under `ignore:` anyway; a comment line between entries breaks the list silently, so there
 is no in-file place to put a per-entry note that both parses correctly and doesn't corrupt the match.
 
-**Soft cap: 10-15 ignore patterns per file.** If you exceed this, it signals either rules that are too sensitive (remove or rewrite them) or a systematic mismatch between your rules and your codebase. Proliferating ignore patterns erodes trust in the review system — when engineers start ignoring entire categories of findings, the tool becomes actively harmful.
-
 ## Hierarchy
 
 `scripts/collect_project_rules.py` owns REVIEW.md discovery across the repo root, changed-file directories, and their ancestors, independently of CLAUDE.md locations. A repository can have:
@@ -181,8 +164,6 @@ is no in-file place to put a per-entry note that both parses correctly and doesn
 - **Subdirectory** `REVIEW.md` files in any directory on that walked set (their thresholds and ignore apply to files in that directory tree)
 
 Subdirectory REVIEW.md files are optional — they're only needed when different parts of the codebase need different thresholds or ignore patterns (e.g., stricter security for an API directory or suppressions for a legacy module).
-
-**Placement decision test:** before adding a rule to a subdirectory REVIEW.md, ask "would this rule generate false positives in the other stack?" If yes, place it in that subdirectory's REVIEW.md as advisory guidance for its subtree. If the rule applies cleanly everywhere, place it in root. Example: "Never use `async void`" is meaningless in a React frontend — record it in `backend/REVIEW.md` as advisory prose. "Validate all user input" applies everywhere — record it in root.
 
 ### Inheritance model
 
@@ -232,141 +213,3 @@ The collector's `review_md` receipt is the authoritative REVIEW.md discovery lis
 A capped file still counts as discovered. A refused candidate is absent from `review_md`; announce its gap separately. Collector or raw Read failure stops the handoff and is never reported as successful empty discovery.
 
 REVIEW.md is read-only in both modes. When none is discovered, the report renderer appends a brief tip pointing here. The tip appears only in the report.
-
----
-
-## Rule-Writing Principles
-
-For rules in REVIEW.md, these principles follow research on AI reviewer effectiveness:
-
-1. **15-25 rules per file, ~50 rules across all REVIEW.md files combined.** Beyond these limits, LLM adherence degrades for ALL rules, not just new ones. With a root + two subdirectory files (e.g., backend + frontend), budget roughly 15-20 for root and 10-15 per subdirectory.
-2. **Prescriptive for security/correctness, directional for design.** "All async methods MUST accept CancellationToken" (binary pass/fail) vs "Prefer immutable types where practical" (allows edge cases). Prescriptive rules produce low false-positive rates; directional rules handle nuance.
-3. **Always include rationale.** "Never force push" is a flat instruction. "Never force push — this rewrites shared history and is unrecoverable for collaborators" helps the reviewer generalize to related scenarios (like `git reset --hard` on shared branches).
-4. **Specific and verifiable.** Each rule should have a binary pass/fail condition. "Write clean code" is unverifiable. "All public API endpoints must validate request body schema before processing" is verifiable.
-5. **Never duplicate linters.** If ESLint, mypy, tsc, clippy, or any deterministic tool catches it, don't make it a review rule. Deterministic tools are faster, cheaper, and more reliable for objective checks.
-6. **Place critical rules first, commonly violated rules last.** LLMs exhibit peripheral bias — they attend more strongly to instructions at the beginning and end of the prompt. Put security and correctness rules first (highest stakes), and place the rules your team violates most frequently last (highest recall value). The middle of the list gets the least attention, so put stable, well-understood conventions there.
-7. **Use severity prefixes sparingly.** `CRITICAL:` for rules that are never acceptable to violate (3-4 per file max). Overuse makes the emphasis invisible.
-
-**Effective rules:**
-
-```
-- CRITICAL: Never commit secrets, API keys, or connection strings in source
-  files. Use environment variables or secret managers.
-- All public API endpoints must enforce authentication and authorization.
-  Missing auth on a single endpoint exposes the entire resource.
-- Prefer composition over inheritance. Deep hierarchies make behavior
-  unpredictable and testing difficult.
-```
-
-**Ineffective rules:**
-
-```
-- Write clean code
-- Follow best practices
-- Check for security issues
-```
-
----
-
-## Scaffolding Templates
-
-Starting points for writing a REVIEW.md by hand. They set sensible defaults and leave repository-specific content to the author.
-
-### Root REVIEW.md template
-
-````markdown
-# Review Configuration
-
-<!-- Customizes how code-gauntlet analyzes this repository.
-     See references/review-md-spec.md in the code-gauntlet skill for all options. -->
-
-## Rules
-
-<!-- Add 15-25 project-specific rules. Each rule should be:
-     - Specific and verifiable (pass/fail, not vague)
-     - Include rationale (why this matters — helps the reviewer generalize)
-     - Use CRITICAL: prefix only for security/correctness rules (3-4 max)
-     - Don't duplicate what linters or type checkers already catch
-
-     Organize by category. Place security and correctness rules first.
-
-     Examples of well-written rules:
-
-     ### Security
-     - CRITICAL: Never commit secrets, API keys, or connection strings.
-       Use environment variables or secret managers.
-     - All API endpoints must enforce authentication and authorization.
-       Missing auth on a single endpoint exposes the entire resource.
-
-     ### Error Handling
-     - Public API endpoints must return structured error responses.
-       Never expose stack traces or internal details to clients.
-
-     ### Architecture
-     - Changes to shared API contracts require review of all consumers.
-       Flag PRs that modify contract types without corresponding updates.
--->
-
-## Default Delivery
-
-<!-- How to deliver review results. Comma-separated list.
-     Options: chat, pr_comments, markdown
-     Read by headless runs only; interactive runs ask after the report.
-     Task creation is offered separately after interactive delivery.
-     Uncomment and adjust to your preference. -->
-<!-- chat,pr_comments -->
-
-<!-- Every key below is optional — omit a key entirely to use its
-     built-in default rather than guessing at a starting number. -->
-```yaml
-# code-gauntlet
-# confidence_threshold: <0-100>
-#   Minimum confidence to include findings. Built-in default when omitted: 55
-#   for non-security dimensions, 70 for security. Setting this applies it to
-#   all non-security dimensions; there is no per-dimension override.
-# security_min_confidence: <0-100>
-#   Effective security threshold is min(confidence_threshold,
-#   security_min_confidence) — a ceiling, not a floor. Set this lower than
-#   confidence_threshold to keep borderline security findings; there is no
-#   minimum it cannot go below.
-# severity_threshold: <critical|high|medium|low>
-#   Minimum severity to include. Built-in default when omitted: low (show
-#   everything). Useful for high-debt codebases where low/medium noise drowns
-#   out critical issues.
-# ignore:
-#   Suppress known false positives. Each entry is a substring matched
-#   case-insensitively against a finding's title + description + suggestion,
-#   first match wins — not scoped by dimension. The pattern is the substring ONLY, never a
-#   reason or date appended to it (that changes what it matches); track why an
-#   entry was added in the commit/PR that added it instead. E.g.:
-#   ignore:
-#     - <substring>
-#     - <another substring>
-```
-````
-
-### Subdirectory REVIEW.md template
-
-````markdown
-# Review Configuration — [directory name]
-
-<!-- Thresholds here override root REVIEW.md and ignore patterns accumulate
-     for this subtree through the pipeline. Every context-reading agent
-     (summarize, discovery, validate) receives every source-path-tagged block;
-     this file's prose is advisory for this directory's subtree.
-     Only create subdirectory configs when this area needs different thresholds or suppressions. -->
-
-## Rules
-
-<!-- These rules are advisory for this directory's subtree. The shared context
-     tags this block with its source path and presents it to every context-reading
-     agent. Aim for 5-10 technology or domain-specific rules. -->
-
-<!-- Optional config block — same keys as the root template, uncommented only
-     if this directory needs a different threshold or suppression list than root. -->
-```yaml
-# code-gauntlet
-# ignore:
-#   - "..."
-```
-````
