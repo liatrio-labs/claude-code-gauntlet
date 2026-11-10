@@ -229,7 +229,7 @@ This summary describes the change context for the report.
 
 - **Cross-file refs:** {finding.cross_file_refs}
 
-- **Corroborated by** `{corroboration.agent}` (`{corroboration.dimension}`, confidence ) — {corroboration.title}
+- **Corroborated by** `{corroboration.agent}` (`{corroboration.dimension}`, severity low, tier main, confidence ): {corroboration.title}
   {corroboration.description}
 
 ### 🟠 High

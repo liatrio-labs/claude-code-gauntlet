@@ -170,9 +170,17 @@ def test_gitlab_same_sha_summary_only_extends_inline_issue_sites(
 def test_gitlab_member_marker_routes_missing_primary_to_summary_once(
     posting, summary_posted
 ):
-    primary = located(consolidation_key="issue", consolidation_primary=True)
+    primary = located(
+        consolidation_key="issue",
+        consolidation_primary=True,
+        severity="medium",
+        dimension="security",
+        report_tag="suggestion",
+    )
     member = located(
         id="M",
+        severity="critical",
+        report_tag="main",
         title="Existing member",
         consolidation_key="issue",
         line_start=4,
@@ -198,7 +206,12 @@ def test_gitlab_member_marker_routes_missing_primary_to_summary_once(
     body = request.payload["body"]
     assert primary["title"] in body and primary["body"] in body
     assert member["title"] not in body and "```suggestion" not in body
-    assert [marker["key"] for marker in find_finding_markers(body)] == [primary_key]
+    assert {marker["key"] for marker in find_finding_markers(body)} == {
+        primary_key,
+        member_key,
+    }
+    assert "**🔴 [CRITICAL]" in body
+    assert "- `foo.py:4`" not in body
     if summary_posted:
         notes[0]["body"] = body
     else:
@@ -420,7 +433,7 @@ def test_group_retry_is_atomic(posting):
         body = request.payload["body"]
         assert_poison(body)
         assert member_keys[0] in body
-        assert (member_keys[1] in body) == (present == 0)
+        assert member_keys[1] in body
         assert all(site["file"] in body for site in sites)
         assert "@ghost" not in body and "<!-- code-gauntlet-findings:" in body
         assert "~~~suggestion" not in body

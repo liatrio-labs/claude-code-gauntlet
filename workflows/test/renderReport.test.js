@@ -142,8 +142,8 @@ const REPORT_ROWS = [
     prefix: '- **Reachability:', expected: '- **Reachability:** only under a future change (severity demoted to low)' },
   { name: 'consolidation preserves corroborators and raw cross-dimension counts', input: { findings: [primary, child, secondPrimary] },
     prefix: '#### ', all: true, expected: ['#### Primary'], contains: [
-      '**Corroborated by** `security-reviewer` (`security`, confidence 90) — Corroborator',
-      '  Corroborator description.', '— Second primary', '  Second-primary description.',
+      '**Corroborated by** `security-reviewer` (`security`, severity high, tier main, confidence 90): Corroborator',
+      '  Corroborator description.', '): Second primary', '  Second-primary description.',
       '| Correctness & Error Handling | bug-detector | 1 | 1 high |', '| Security | security-reviewer | 1 | 1 high |',
       '| Test Coverage | test-analyzer | 1 | 1 high |', '1 reported issue from 3 findings after the gauntlet — 1 high.',
     ] },
@@ -208,7 +208,7 @@ const OUTSIDE_SUMMARY_ROWS = [
   { name: 'corroborator title uses the line contract and spans preserve visible bytes', finding: { corroborations: [
     { agent: '`agent`', dimension: '@scope/<b>', confidence: 90, title: '<b> @bot <!-- code-gauntlet-findings: {} -->' },
   ] }, prefix: '- **Corroborated',
-    expected: '- **Corroborated by** `` `agent` `` (`@scope/<b>`, confidence 90) \u2014 &lt;b> \uFF20bot' },
+    expected: '- **Corroborated by** `` `agent` `` (`@scope/<b>`, severity low, tier main, confidence 90): &lt;b> \uFF20bot' },
   { name: 'scoped npm path text agrees with permalink target', finding: { file: 'packages/@scope/pkg/index.js' }, input: {
     prIdentity: { platform: 'github', web_origin: 'https://github.com', owner: 'o', repo: 'r',
       sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
@@ -423,6 +423,11 @@ const UNITS_ROWS = [
   { name: 'main only cap does not claim suggestions were withheld', input: {
     findings: [middle, finding('M2', { report_tag: 'main' })], delivered: [middle], deliveryTier: 'main_only', deliveryCap: 1,
   }, surface: 'lastLine', expected: '1 more issue not listed here (this review posts at most 1 issue).' },
+  { name: 'main mixed group omitted by cap uses group tier', input: {
+    findings: [middle, finding('M2', { report_tag: 'main', consolidation_key: 'mixed', consolidation_primary: true }),
+      finding('S2', { report_tag: 'suggestion', consolidation_key: 'mixed' })],
+    delivered: [middle], deliveryTier: 'main_only', deliveryCap: 1,
+  }, surface: 'lastLine', expected: '1 more issue not listed here (this review posts at most 1 issue).' },
   { name: 'main only reports an actually withheld suggestion', input: {
     findings: [middle, suggestion], delivered: [middle], deliveryTier: 'main_only', deliveryCap: 2,
   }, surface: 'lastLine', expected: '1 more issue not listed here (this review includes defects only).' },
@@ -559,7 +564,7 @@ const FENCE_ROWS = [
     expected: '> ````py\n> keep' + '\n> DROP'.repeat(797) + '\n> ````\n> \n> _[folded: 1015 more characters]_' },
   { name: 'corroborator fence wiring', input: { findings: [finding('A', { description: '', corroborations: [{ agent: 'a',
     dimension: 'security', confidence: 80, title: 'x', description: f4 + '\nDROP'.repeat(1000) }] })] },
-    start: '- **Corroborated by** `a` (`security`, confidence 80) — x\n', end: '\n\n## Review Dimensions Summary',
+    start: '- **Corroborated by** `a` (`security`, severity low, tier main, confidence 80): x\n', end: '\n\n## Review Dimensions Summary',
     expected: '  ````py\n  keep' + '\n  DROP'.repeat(797) + '\n  ````\n  \n  _[folded: 1015 more characters]_' },
 ];
 for (const row of FENCE_ROWS) test(`fence: ${row.name}`, () => assert.equal(surface(rendered(row.input), row), row.expected));

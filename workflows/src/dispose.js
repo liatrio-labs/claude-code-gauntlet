@@ -5,7 +5,7 @@ import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
 import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
 import { hasAdmission } from './admission.js';
-import { dominatedGroups } from './groupRanking.js';
+import { chooseGroupLead, groupDelivery } from './groupRanking.js';
 
 const DELIVERABLE_CHALLENGES = ['survived', 'contested', 'downgraded'];
 
@@ -76,16 +76,10 @@ export function disposeFindings(challenged) {
       members: [primary, ...corroborators], consolidation_key: primary.consolidation_key,
     })) : accepted.groups;
   for (const group of candidates) {
+    const primary = chooseGroupLead(group.members, group.lead_id);
     for (const member of group.members) {
-      delete member.consolidation_key;
-      delete member.consolidation_primary;
-    }
-    for (const [index, { primary, members }] of dominatedGroups(group.members, group.lead_id).entries()) {
-      if (members.length < 2) continue;
-      for (const member of members) {
-        member.consolidation_key = group.consolidation_key ? (index ? `${group.consolidation_key}:${primary.id}` : group.consolidation_key) : primary.id;
-        member.consolidation_primary = member === primary;
-      }
+      member.consolidation_key = group.consolidation_key ?? primary.id;
+      member.consolidation_primary = member === primary;
     }
   }
   const delivery = deliveryGroups(actionable);
@@ -97,9 +91,10 @@ export function disposeFindings(challenged) {
     const ids = members.map((f) => f.id);
     const issueKey = primary.consolidation_key ? `group:${grouping === 'model' ? primary.id : primary.consolidation_key}` : `issue:${primary.id || index}`;
     const stamp = { issue_key: issueKey, lead_id: primary.id, finding_ids: ids };
+    const delivered = groupDelivery(primary, corroborators);
     if (ids.every((id) => typeof id === 'string' && id)) for (const member of members) member.delivery_group = stamp;
     return { ...stamp, sites: members.flatMap((f) => f.sites || []),
-      tier: members.some((f) => (f.report_tag ?? f.report_destination) === 'main') ? 'main' : 'suggestion',
+      severity: delivered.severity, tier: delivered.report_tag,
       disposition: primary.disposition, same_challenge_verdict: new Set(members.map((f) => typeof f.challenge_score === 'number'
         ? challengeOutcome(f.challenge_score, (f.dimension ?? '').toLowerCase() === 'security')
         : f.challenge_contested ? 'contested' : f.challenge)).size === 1 };

@@ -707,13 +707,13 @@ def test_summary_admission_reserves_review_bytes() -> None:
         PLATFORM_BODY_LIMITS["github"]["surfaces"]["summary"], {"bytes": 1000}
     ):
         composed = compose.compose_review_body(
-            "x" * 100,
+            "x" * 400,
             groups,
             platform="github",
             findings_count=2,
             sha=SHA,
         )
-    assert (composed.shown, composed.omitted, composed.folded_bytes) == (1, 1, 0)
+    assert (composed.shown, composed.omitted, composed.folded_bytes) == (0, 2, 0)
     assert len(composed.body.encode("utf-8")) <= 1000
 
 

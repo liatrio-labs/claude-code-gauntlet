@@ -4,6 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from gauntlet.delivery import compose
 from gauntlet.delivery.input import Finding
 from gauntlet.marker import build_finding_marker, find_finding_markers
@@ -165,22 +166,88 @@ def test_local_report_keeps_every_member_description():
     assert all(str(row["description"]) in result.stdout for row in rows)
 
 
-def test_security_member_keeps_its_own_pr_comment_after_model_grouping():
+@pytest.mark.parametrize(
+    "ordinary,other,lead",
+    [
+        (
+            {"severity": "critical"},
+            {"severity": "medium", "dimension": "security"},
+            "SEC",
+        ),
+        (
+            {"severity": "low"},
+            {"severity": "critical", "report_tag": "suggestion"},
+            "BUG",
+        ),
+        (
+            {"severity": "critical"},
+            {"severity": "medium", "dimension": "security", "report_tag": "suggestion"},
+            "SEC",
+        ),
+    ],
+)
+def test_indivisible_group_posts_security_text_and_group_values(ordinary, other, lead):
     output = run_node(
         "import { makeFinding } from './workflows/test/helpers/pipelineMock.js';"
         "import { disposeFindings } from './workflows/src/dispose.js';"
+        "import { selectDelivery } from './workflows/src/reviewStages.js';"
         "import { writerPayload } from './workflows/src/persistPlan.js';"
-        "const findings=[makeFinding('LEAD',{description:'Ordinary defect text.'}),"
-        "makeFinding('SECURITY',{dimension:'security',description:'Security defect text must stay on the PR.'})];"
-        "process.stdout.write(JSON.stringify(writerPayload(disposeFindings({findings,grouping_reply:"
-        "{groups:[{finding_ids:['LEAD','SECURITY'],lead_id:'LEAD'}]}})).findings));",
-        {},
+        "import { renderSummaryBody, renderReport } from './workflows/src/renderReport.js';"
+        "let s='';for await(const c of process.stdin)s+=c;const rows=JSON.parse(s);"
+        "const findings=rows.map((row,i)=>makeFinding(i?'SEC':'BUG',"
+        "{file:'same.js',description:i?'Security finding text.':'Ordinary defect text.',agent:i?'security-reviewer':'bug-detector',...row}));"
+        "const assessed=findings.map(f=>[f.id,f.severity,f.report_tag]);"
+        "const out=disposeFindings({findings,grouping_reply:{groups:[{finding_ids:['BUG','SEC'],lead_id:'BUG'}]}});"
+        "const selected=selectDelivery([...out.findings,makeFinding('OTHER',{severity:'high'})],1,'main_only');"
+        "process.stdout.write(JSON.stringify({...writerPayload({findings:out.findings,postReview:selected}),"
+        "assessed,summary:renderSummaryBody({...out,delivered:selected}),report:renderReport(out)}));",
+        [ordinary, other],
     )
-    groups = compose.consolidate_delivery(json.loads(output.stdout))
-    comments = [
-        compose.render_group_body(group.primary, group.corroborators)
-        for group in groups
+    result = json.loads(output.stdout)
+    groups = compose.consolidate_delivery(result["postReview"])
+    assert len(groups) == 1
+    group = groups[0]
+    assert group.primary["id"] == lead
+    assert {f["id"] for f in (group.primary, *group.corroborators)} == {"BUG", "SEC"}
+    assert (
+        compose.summary_for_delivery(result["summary"], result["postReview"]).split(
+            "\n", 1
+        )[0]
+        == "Found 1 issue in this change: 1 critical."
+    )
+    assessed_group = [
+        (f["id"], f["severity"], f["report_tag"])
+        for f in (group.primary, *group.corroborators)
     ]
-    assert len(comments) == 2
-    assert "Ordinary defect text." in comments[0]
-    assert "Security defect text must stay on the PR." in comments[1]
+    comment = compose.render_group_body(group.primary, group.corroborators)
+    assert [
+        (f["id"], f["severity"], f["report_tag"])
+        for f in (group.primary, *group.corroborators)
+    ] == assessed_group
+    assert comment.startswith("**🔴 [CRITICAL]")
+    assert ("Security finding text." in comment) == (lead == "SEC")
+    assert ("Ordinary defect text." in comment) == (lead == "BUG")
+    assert [
+        [f["id"], f["severity"], f["report_tag"]] for f in result["findings"]
+    ] == result["assessed"]
+    summary = compose.compose_review_body(
+        result["summary"],
+        [],
+        platform="github",
+        findings_count=2,
+        sha=SHA,
+        index_findings=result["postReview"],
+    ).body
+    assert "Found 1 issue in this change: 1 critical." in summary
+    assert "improvement suggestion" not in summary
+    assert summary.count("- 🔴 [CRITICAL]") == 1
+    assert "Security finding text." in result["report"]
+    assert "Ordinary defect text." in result["report"]
+    assert "severity critical, tier " in result["report"]
+    if (
+        ordinary.get("report_tag") == "suggestion"
+        or other.get("report_tag") == "suggestion"
+    ):
+        assert (
+            "tier suggestion" if lead == "BUG" else "improvement suggestion"
+        ) in result["report"]

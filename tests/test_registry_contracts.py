@@ -458,6 +458,10 @@ def test_emoji_allowlist():
 
 def test_machine_string_registry():
     text = read("docs/machine-parsed-strings.md")
+    table_lines = [
+        i for i, line in enumerate(text.splitlines()) if line.startswith("|")
+    ]
+    assert len(table_lines) == table_lines[-1] - table_lines[0] + 1
     rows = parse_registry(text)
     assert {
         "Headless config:",

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyChallenges } from '../src/applyChallenges.js';
 import { disposeFindings, acceptGroupingReply } from '../src/dispose.js';
+import { selectDelivery } from '../src/reviewStages.js';
 import { chooseGroupLead } from '../src/groupRanking.js';
 import { groupFindings, groupingPrompt, groupingSchema } from '../src/groupFindings.js';
 import { makeFinding, makeCtx, assertValidSchema } from './helpers/pipelineMock.js';
@@ -91,9 +92,10 @@ test('lead ordering prioritizes tier, severity, placement, model, confidence, co
   const [a, b] = members().slice(0, 2).map((f) => ({ ...f, disposition: 'deliver' }));
   for (const [left, right, expected] of [
     [{ ...a, severity: 'medium' }, b, b.id],
-    [a, { ...b, disposition: 'body' }, a.id],
+    [{ ...a, disposition: 'body' }, b, b.id],
     [a, b, a.id],
   ]) assert.equal(chooseGroupLead([left, right], a.id).id, expected);
+  assert.equal(chooseGroupLead([a, b], b.id).id, b.id);
   const withoutModel = (x, y) => chooseGroupLead([x, y], 'absent').id;
   assert.equal(withoutModel({ ...a, confidence: 80 }, b), b.id);
   assert.equal(withoutModel({ ...a, dimension: 'comment_accuracy' }, b), b.id);
@@ -183,26 +185,55 @@ test('short groups are harmless while their ids and lead still validate', () => 
   assert.equal(out.stats.grouped_members, 2);
 });
 
-for (const path of ['model', 'positional']) for (const [name, left, right, expected] of [
-  ['security cannot hide under an equal non-security lead', {}, { dimension: 'security', description: 'Security text must remain visible.' }, 2],
-  ['severity and tier cannot trade away each other', { severity: 'low', report_tag: 'main' }, { severity: 'critical', report_tag: 'suggestion' }, 2],
-  ['security lead may include a non-security member', { dimension: 'security' }, {}, 1],
-]) test(`${path}: ${name}`, () => {
-  const findings = [makeFinding('LEAD', { confidence: 99, file: 'shared.js', description: 'Same complete description', agent: 'bug-detector', ...left }), makeFinding('MEMBER', { file: 'shared.js', description: 'Same complete description', agent: 'security-reviewer', ...right })];
+for (const path of ['model', 'positional']) for (const [name, left, right, expectedLead] of [
+  ['security text under maximum severity', { severity: 'critical' }, { severity: 'medium', dimension: 'security' }, 'MEMBER'],
+  ['main tier with critical suggestion', { severity: 'low', report_tag: 'main' }, { severity: 'critical', report_tag: 'suggestion' }, 'LEAD'],
+  ['planted non-security lead cannot hide or understate security', { severity: 'critical' }, { severity: 'medium', dimension: 'security', report_tag: 'suggestion' }, 'MEMBER'],
+]) test(`${path}: indivisible group preserves ${name}`, () => {
+  const findings = [makeFinding('LEAD', { confidence: 99, file: 'shared.js', description: 'Ordinary defect text', agent: 'bug-detector', ...left }),
+    makeFinding('MEMBER', { file: 'shared.js', description: 'Security or suggestion text', agent: 'security-reviewer', ...right })];
+  const assessed = findings.map((f) => [f.id, f.severity, f.report_tag]);
   const out = disposeFindings({ findings, grouping_reply: path === 'model' ? {
     groups: [{ finding_ids: ['LEAD', 'MEMBER'], lead_id: 'LEAD' }],
   } : null });
-  assert.equal(out.groups.length, expected);
-  assert.equal(out.findings.length, 2);
-  const report = renderReport(out);
-  const summary = renderSummaryBody(out);
-  if (expected === 2) {
-    assert.ok(out.groups.every((group) => group.finding_ids.length === 1));
-    assert.match(report, /#### finding MEMBER/);
-    if (right.dimension === 'security') assert.match(report, /Security text must remain visible/);
-    else {
-      assert.match(summary, /1 critical, 1 low/);
-      assert.match(summary, /1 is a suggested improvement/);
-    }
-  } else assert.equal(out.groups[0].lead_id, 'LEAD');
+  assert.equal(out.groups.length, 1);
+  assert.equal(out.groups[0].lead_id, expectedLead);
+  assert.equal(out.groups[0].severity, 'critical');
+  assert.equal(out.groups[0].tier, 'main');
+  assert.deepEqual(out.findings.map((f) => [f.id, f.severity, f.report_tag]), assessed);
+  assert.deepEqual(findings.map((f) => [f.id, f.severity, f.report_tag]), assessed);
+  const selected = selectDelivery([...out.findings, makeFinding('OTHER', { severity: 'high' })], 1, 'main_only');
+  assert.deepEqual(selected.map((f) => f.id).sort(), ['LEAD', 'MEMBER']);
+  const summary = renderSummaryBody({ ...out, delivered: selected });
+  assert.match(summary, /^Found 1 issue in this change: 1 critical\./);
+  assert.equal(summary.includes('improvement suggestion'), false);
+  assert.match(summary, expectedLead === 'MEMBER' ? /Security or suggestion text|finding MEMBER/ : /finding LEAD/);
+  const local = renderReport(out);
+  const primary = findings.find((f) => f.id === expectedLead);
+  assert.match(local, new RegExp(`### .*${primary.severity[0].toUpperCase()}${primary.severity.slice(1)}[\\s\\S]*#### finding ${expectedLead}`));
+  assert.match(local, /Ordinary defect text/);
+  assert.match(local, /Security or suggestion text/);
 });
+
+
+for (const [mode, reason] of [['invalid', 'missing or non-object reply'], ['throwing', 'dispatch failed']]) {
+  test(`run reports ${mode} grouper fallback without losing findings`, async () => {
+    const findings = members();
+    const args = validArgs({ persist: { returnPrimaries: true } });
+    const ctx = makeCtx(args, { findings });
+    const original = ctx.agent;
+    ctx.agent = (prompt, opts) => {
+      if (opts.label !== 'group-findings') return original(prompt, opts);
+      if (mode === 'throwing') throw Error('offline');
+      return null;
+    };
+    const out = await runWith(ctx, args);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.equal(out.stats.challenge.grouping, 'positional');
+    assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('grouping: ')), [
+      `grouping: ${reason}; same-lines grouping used`,
+    ]);
+    const entry = out.persistReturn.entries.find((entry) => entry.path === out.artifactPaths.findings);
+    assert.deepEqual(JSON.parse(entry.text).map((finding) => finding.id).sort(), findings.map((finding) => finding.id).sort());
+  });
+}

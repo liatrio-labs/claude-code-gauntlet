@@ -1,4 +1,4 @@
-import { dominatedGroups } from './groupRanking.js';
+import { chooseGroupLead } from './groupRanking.js';
 import { canonicalRange } from './location.js';
 import { INT_POLICY, coerceInt, asText, asConfidence, deepFreeze } from './wire.js';
 import { FIELD_RENAMES, SEVERITY_ORDER, INJECTION_STRIPPED_PROSE_FIELDS, AGENT_BUG_DETECTOR } from './registry.js';
@@ -317,13 +317,12 @@ export function consolidateCrossAgent(findings) {
     const bucket = lineBucket(group[0].line_start, LINE_PROXIMITY);
     const consolidationKey = `${file}:${bucket}`;
 
-    for (const [index, { primary, members }] of dominatedGroups(group.filter((f) => pyGet(f, 'id', ''))).entries()) {
-      if (members.length < 2 && group.every((f) => pyGet(f, 'id', ''))) continue;
-      for (const f of members) {
-        f.consolidation_key = index ? `${consolidationKey}:${primary.id}` : consolidationKey;
-        f.consolidation_primary = f === primary;
-        consolidatedCount += 1;
-      }
+    const members = group.filter((f) => pyGet(f, 'id', ''));
+    const primary = chooseGroupLead(members);
+    for (const f of members) {
+      f.consolidation_key = consolidationKey;
+      f.consolidation_primary = f === primary;
+      consolidatedCount += 1;
     }
   }
 

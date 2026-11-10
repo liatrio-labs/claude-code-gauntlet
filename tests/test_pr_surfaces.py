@@ -82,15 +82,26 @@ def test_summary_title_reconciliation_matches_workflow_vectors():
 
 
 @pytest.mark.parametrize(
-    "title", ["An invalid range", "[x]: u", "`x [a]: SENT](a b)`", "x" * 520, "a\nb"]
+    "title,filepath",
+    [
+        (title, "foo.py")
+        for title in [
+            "An invalid range",
+            "[x]: u",
+            "`x [a]: SENT](a b)`",
+            "x" * 520,
+            "a\nb",
+        ]
+    ]
+    + [("Placeholder path", "{title}/{suggestion}.py")],
 )
 def test_late_anchor_failure_removes_only_its_index_bullet(
-    title, tmp_path, monkeypatch, capsys, forge_factory
+    title, filepath, tmp_path, monkeypatch, capsys, forge_factory
 ):
     rows = [
         finding(
             id="A",
-            file="foo.py",
+            file=filepath,
             line=2,
             end_line=2,
             title=title,
@@ -99,7 +110,7 @@ def test_late_anchor_failure_removes_only_its_index_bullet(
         ),
         finding(
             id="B",
-            file="foo.py",
+            file=filepath,
             line=2,
             end_line=2,
             title="Visible issue",
@@ -119,7 +130,7 @@ def test_late_anchor_failure_removes_only_its_index_bullet(
         capsys,
         forge_factory,
         review(findings=rows, review_body=summary),
-        diff="diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -2 +2 @@\n-old_value()\n+valid_value()\n",
+        diff=f"diff --git a/{filepath} b/{filepath}\n--- a/{filepath}\n+++ b/{filepath}\n@@ -2 +2 @@\n-old_value()\n+valid_value()\n",
     )
     assert run.code == 0, run.err
     posted = run.payload["payload"]
@@ -128,7 +139,7 @@ def test_late_anchor_failure_removes_only_its_index_bullet(
     bullets = [
         line for line in posted["body"].splitlines() if line.startswith("- 🟠 [HIGH]")
     ]
-    assert bullets == ["- 🟠 [HIGH] `foo.py:2`: Visible issue"]
+    assert bullets == [f"- 🟠 [HIGH] `{filepath}:2`: Visible issue"]
     assert posted["body"].count("Unanchored lead detail") == 1
     assert (
         "### 1 issue could not be attached to a changed line, so it is described here"

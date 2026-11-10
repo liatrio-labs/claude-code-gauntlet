@@ -2693,33 +2693,28 @@ function applyValidations(findings, validations) {
 }
 // --- groupRanking.js ---
 function groupTier(finding) {
-  return (finding.report_tag ?? finding.report_destination ?? finding.admission?.tier) === 'main' ? 1 : 0;
+  return (finding.report_tag ?? finding.report_destination ?? finding.admission?.tier ?? 'main') === 'main' ? 1 : 0;
 }
-function groupSeverity(finding) {
-  const index = SEVERITY_ORDER.indexOf(finding.severity);
+function groupSeverityRank(finding) {
+  const index = SEVERITY_ORDER.indexOf(asText(finding.severity).trim().toLowerCase());
   return index < 0 ? 0 : SEVERITY_ORDER.length - index;
 }
 function chooseGroupLead(members, modelLead) {
-  const key = (f) => [groupTier(f), groupSeverity(f), deliveryAllows(f, 'inline') ? 1 : 0,
+  const key = (f) => [groupTier(f), groupSeverityRank(f), deliveryAllows(f, 'inline') ? 1 : 0,
     f.id === modelLead ? 1 : 0, asConfidence(f.confidence), findingPolicy(f).core ? 1 : 0, asText(f.description).length];
-  return [...members].sort((a, b) => {
+  const security = members.filter((f) => (f.dimension ?? '').toLowerCase() === 'security');
+  return [...(security.length ? security : members)].sort((a, b) => {
     const ka = key(a), kb = key(b);
     for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return kb[i] - ka[i];
     return 0;
   })[0];
 }
-function dominatedGroups(members, modelLead) {
-  const groups = [];
-  let remaining = [...members];
-  while (remaining.length) {
-    const lead = chooseGroupLead(remaining, modelLead);
-    const dominates = (member) => groupTier(lead) >= groupTier(member)
-      && groupSeverity(lead) >= groupSeverity(member)
-      && ((member.dimension ?? '').toLowerCase() !== 'security' || (lead.dimension ?? '').toLowerCase() === 'security');
-    groups.push({ primary: lead, members: remaining.filter(dominates) });
-    remaining = remaining.filter((member) => !dominates(member));
-  }
-  return groups;
+function groupDelivery(primary, corroborators = []) {
+  if (!corroborators.length) return primary;
+  const members = [primary, ...corroborators];
+  const severity = SEVERITY_ORDER[SEVERITY_ORDER.length - Math.max(...members.map(groupSeverityRank))] ?? 'low';
+  const tier = members.some((f) => groupTier(f)) ? 'main' : 'suggestion';
+  return { ...primary, severity, report_tag: tier, report_destination: tier };
 }
 // --- reviewConfig.js ---
 function cfgGet(config, key, fallback) {
@@ -3556,13 +3551,12 @@ function consolidateCrossAgent(findings) {
     const file = pyGet(group[0], 'file', '');
     const bucket = lineBucket(group[0].line_start, LINE_PROXIMITY);
     const consolidationKey = `${file}:${bucket}`;
-    for (const [index, { primary, members }] of dominatedGroups(group.filter((f) => pyGet(f, 'id', ''))).entries()) {
-      if (members.length < 2 && group.every((f) => pyGet(f, 'id', ''))) continue;
-      for (const f of members) {
-        f.consolidation_key = index ? `${consolidationKey}:${primary.id}` : consolidationKey;
-        f.consolidation_primary = f === primary;
-        consolidatedCount += 1;
-      }
+    const members = group.filter((f) => pyGet(f, 'id', ''));
+    const primary = chooseGroupLead(members);
+    for (const f of members) {
+      f.consolidation_key = consolidationKey;
+      f.consolidation_primary = f === primary;
+      consolidatedCount += 1;
     }
   }
   return { findings, consolidatedCount };
@@ -3849,16 +3843,10 @@ function disposeFindings(challenged) {
       members: [primary, ...corroborators], consolidation_key: primary.consolidation_key,
     })) : accepted.groups;
   for (const group of candidates) {
+    const primary = chooseGroupLead(group.members, group.lead_id);
     for (const member of group.members) {
-      delete member.consolidation_key;
-      delete member.consolidation_primary;
-    }
-    for (const [index, { primary, members }] of dominatedGroups(group.members, group.lead_id).entries()) {
-      if (members.length < 2) continue;
-      for (const member of members) {
-        member.consolidation_key = group.consolidation_key ? (index ? `${group.consolidation_key}:${primary.id}` : group.consolidation_key) : primary.id;
-        member.consolidation_primary = member === primary;
-      }
+      member.consolidation_key = group.consolidation_key ?? primary.id;
+      member.consolidation_primary = member === primary;
     }
   }
   const delivery = deliveryGroups(actionable);
@@ -3870,9 +3858,10 @@ function disposeFindings(challenged) {
     const ids = members.map((f) => f.id);
     const issueKey = primary.consolidation_key ? `group:${grouping === 'model' ? primary.id : primary.consolidation_key}` : `issue:${primary.id || index}`;
     const stamp = { issue_key: issueKey, lead_id: primary.id, finding_ids: ids };
+    const delivered = groupDelivery(primary, corroborators);
     if (ids.every((id) => typeof id === 'string' && id)) for (const member of members) member.delivery_group = stamp;
     return { ...stamp, sites: members.flatMap((f) => f.sites || []),
-      tier: members.some((f) => (f.report_tag ?? f.report_destination) === 'main') ? 'main' : 'suggestion',
+      severity: delivered.severity, tier: delivered.report_tag,
       disposition: primary.disposition, same_challenge_verdict: new Set(members.map((f) => typeof f.challenge_score === 'number'
         ? challengeOutcome(f.challenge_score, (f.dimension ?? '').toLowerCase() === 'security')
         : f.challenge_contested ? 'contested' : f.challenge)).size === 1 };
@@ -4596,8 +4585,9 @@ function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
   });
   return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
 }
-function consolidateForReport(findings) {
+function consolidateForReport(findings, delivery = false) {
   return deliveryGroups(findings).map(({ primary, corroborators }) => {
+    if (delivery) return groupDelivery(primary, corroborators);
     if (!corroborators.length) return primary;
     return {
       ...primary,
@@ -4606,6 +4596,8 @@ function consolidateForReport(findings) {
         agent: c.agent,
         dimension: c.dimension,
         confidence: c.confidence,
+        severity: c.severity,
+        report_tag: c.report_tag ?? c.report_destination,
         title: c.title,
         description: c.description,
       })),
@@ -4936,7 +4928,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
         const dimension = preparedCodeSpan(corroboration.dimension, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
         const confidence = inline(corroboration.confidence);
         const title = inline(corroboration.title);
-        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, confidence ${confidence}) — ${title}`, [agent, dimension]);
+        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, severity ${inline(normalizeReportSeverity(corroboration.severity))}, tier ${inline(corroboration.report_tag ?? 'main')}, confidence ${confidence}): ${title}`, [agent, dimension]);
         if (isPresent(corroboration.description)) {
           builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
@@ -5037,7 +5029,7 @@ function summaryIndex(rawFindings, findingsView, input, projected) {
     }
   }
   pairs.sort((left, right) => deliveryOrder.get(left.original) - deliveryOrder.get(right.original));
-  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding)).map((finding) => (
+  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding), true).map((finding) => (
     [reportUnitKey(finding, originalByProjected.get(finding)), finding]
   )));
   const indexed = reported.map((finding) => deliveredUnits.get(
@@ -5045,14 +5037,17 @@ function summaryIndex(rawFindings, findingsView, input, projected) {
   )).filter(Boolean);
   const omittedUnits = [...unitMembers].filter(([key]) => !deliveredUnits.has(key)).map(([, members]) => members);
   const reasons = [];
-  const isMain = (finding) => (finding.report_tag ?? finding.report_destination) === 'main';
+  const unitTier = (members) => {
+    const delivered = groupDelivery(members[0], members.slice(1));
+    return delivered.report_tag ?? delivered.report_destination;
+  };
   if (typeof input.deliveryCap === 'number' && omittedUnits.some((members) => (
-    input.deliveryTier !== 'main_only' || members.some(isMain)
+    input.deliveryTier !== 'main_only' || unitTier(members) === 'main'
   ))) {
     reasons.push(`this review posts at most ${input.deliveryCap} ${plural(input.deliveryCap, 'issue')}`);
   }
   if (input.deliveryTier === 'main_only' && omittedUnits.some((members) => (
-    members.some((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion')
+    unitTier(members) === 'suggestion'
   ))) {
     reasons.push('this review includes defects only');
   }
@@ -5070,10 +5065,10 @@ function partitionByDisposition(inp, findingsRight) {
 function summaryBlock(builder, input, findingsRight = 'body') {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
-  const findings = consolidateForReport(rawFindings);
+  const local = findingsRight === 'report';
+  const findings = consolidateForReport(rawFindings, !local);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
-  const local = findingsRight === 'report';
   builder.add(local ? localCountsSentence(findings, rawFindings.length, unverified, findingsView) : countsSentence(findings, findingsView));
   const selection = summaryIndex(rawFindings, findingsView, local ? { ...inp, delivered: undefined } : inp, projected);
   const indexed = selection.indexed.filter((finding) => local || deliveryAllows(finding, 'inline'));
@@ -5632,11 +5627,12 @@ async function challengeStage(ctx, input) {
   };
 }
 function selectDelivery(survivors, cap, tier) {
-  const members = tier === 'main_only'
-    ? (survivors || []).filter((f) => (f.report_tag ?? f.report_destination) === 'main')
-    : (survivors || []);
-  const pool = deliveryGroups(members);
-  const rankable = pool.map(({ primary, corroborators }) => rankFindings(coerceReportFindings([primary, ...corroborators]))[0]);
+  const pool = deliveryGroups(survivors || []).filter(({ primary, corroborators }) => (
+    tier !== 'main_only' || (groupDelivery(primary, corroborators).report_tag ?? primary.report_destination) === 'main'
+  ));
+  const rankable = pool.map(({ primary, corroborators }) => groupDelivery(
+    coerceReportFindings([primary])[0], coerceReportFindings(corroborators),
+  ));
   const originalByRankable = new Map(rankable.map((finding, index) => [finding, pool[index]]));
   let ranked = rankFindings(rankable).map((finding) => originalByRankable.get(finding));
   if (cap !== undefined && cap !== null) ranked = ranked.slice(0, Math.max(0, cap));

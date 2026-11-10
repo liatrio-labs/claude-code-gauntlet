@@ -367,13 +367,13 @@ const DELIVERY_ROWS = [
     finding({ id: 'LEAD', severity: 'medium', confidence: 90, consolidation_key: 'issue', consolidation_primary: true }),
     finding({ id: 'CRITICAL', severity: 'critical', confidence: 80, consolidation_key: 'issue' }),
   ], expected: ['LEAD', 'CRITICAL'] },
-  { name: 'main only filters each member before grouping', tier: 'main_only', input: [
+  { name: 'main only keeps every member of a main group', tier: 'main_only', input: [
     finding({ id: 'SUGG_LEAD', report_tag: 'suggestion', consolidation_key: 'one', consolidation_primary: true }),
     finding({ id: 'MAIN_CHILD', report_tag: 'main', consolidation_key: 'one' }),
     finding({ id: 'MAIN_LEAD', report_tag: 'main', consolidation_key: 'two', consolidation_primary: true }),
     finding({ id: 'SUGG_CHILD', report_tag: 'suggestion', consolidation_key: 'two' }),
     finding({ id: 'SUGG_ONLY', report_tag: 'suggestion', consolidation_key: 'three' }),
-  ], expected: ['MAIN_CHILD', 'MAIN_LEAD'] },
+  ], expected: ['SUGG_LEAD', 'MAIN_CHILD', 'MAIN_LEAD', 'SUGG_CHILD'] },
   { name: 'body groups compete with inline groups under the cap', cap: 1, input: [
     finding({ id: 'INLINE', disposition: 'deliver', severity: 'low' }),
     finding({ id: 'BODY', disposition: 'body', severity: 'critical' }),

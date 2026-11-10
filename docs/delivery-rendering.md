@@ -24,14 +24,19 @@ The held claimed start and end must be positive safe integers whose span length 
 canonical anchor length. A missing held end, a longer original fix span, a proper fragment, or a
 platform-shrunk apply range withholds the replacement code while retaining the prose suggestion.
 
-## Outbound text preparation
+## Issue grouping
 
-A lead may fold only members whose tier and severity it meets or exceeds; security members require
-a security lead. Incomparable members form separate issues. Each issue posts only its lead sections. Additional sites combine other members' confirmed ranges
-and all confirmed sites, deduplicated without the lead range. Two or more distinct agents add an
-anonymous reviewer count. Unanchored groups render once under the lead location, without dimension
-headings; counts measure issues. GitLab addenda list only undelivered locations and count the full
-group's distinct reviewers. Other member descriptions remain in the local report.
+Accepted groups stay indivisible. Groups containing security findings choose a security lead;
+otherwise the shared lead ranking applies. Posted severity is the highest member severity, and
+any main-tier member makes the whole group main tier. Selection, caps and public counts use
+these group values; findings keep their own assessed severity and tier in checkpoints and the
+local report. Each issue posts only its lead sections. Additional sites combine other members'
+confirmed ranges and all confirmed sites, deduplicated without the lead range. Two or more
+distinct agents add an anonymous reviewer count. Unanchored groups render once under the lead
+location. GitLab addenda list only undelivered locations and count the full group's distinct
+reviewers. Other member descriptions remain in the local report.
+
+## Outbound text preparation
 
 Every posted text field is prepared before Markdown is assembled. Titles use the single-line class; body and suggestion use multiline prose; the cited
 rule is normalized, redacted, and has backtick runs of three or more collapsed to two

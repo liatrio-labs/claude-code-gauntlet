@@ -8,6 +8,7 @@ import { applyValidations, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
 import { applyChallenges, rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
+import { groupDelivery } from './groupRanking.js';
 import { deliveryGroups } from './dispose.js';
 import { admissionContext, admissionRequests, hasAdmission, validationRejections, missingAssessments, MISSING_ASSESSMENT } from './admission.js';
 
@@ -332,12 +333,13 @@ export async function challengeStage(ctx, input) {
 // Delivery defaults to all survivors to avoid silently narrowing scope.
 // Persisting the selected set lets delivery consume the policy decision without independently filtering or ranking it.
 export function selectDelivery(survivors, cap, tier) {
-  const members = tier === 'main_only'
-    ? (survivors || []).filter((f) => (f.report_tag ?? f.report_destination) === 'main')
-    : (survivors || []);
-  const pool = deliveryGroups(members);
-  // Rank a tolerant projection to handle malformed replay fields, then preserve the original entries for persistence identity.
-  const rankable = pool.map(({ primary, corroborators }) => rankFindings(coerceReportFindings([primary, ...corroborators]))[0]);
+  const pool = deliveryGroups(survivors || []).filter(({ primary, corroborators }) => (
+    tier !== 'main_only' || (groupDelivery(primary, corroborators).report_tag ?? primary.report_destination) === 'main'
+  ));
+  // Rank a tolerant projection, preserving assessed findings and whole groups for persistence.
+  const rankable = pool.map(({ primary, corroborators }) => groupDelivery(
+    coerceReportFindings([primary])[0], coerceReportFindings(corroborators),
+  ));
   const originalByRankable = new Map(rankable.map((finding, index) => [finding, pool[index]]));
   let ranked = rankFindings(rankable).map((finding) => originalByRankable.get(finding));
   if (cap !== undefined && cap !== null) ranked = ranked.slice(0, Math.max(0, cap));

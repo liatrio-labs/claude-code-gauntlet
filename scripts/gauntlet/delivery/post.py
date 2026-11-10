@@ -822,17 +822,9 @@ def post_gitlab(
             or any(key in prior.legacy_group_keys for key in keys)
         ):
             already_present += 1
-            # Per-member deliveries can predate the group's primary finding.
-            if keys[0] not in delivered_keys:
-                extra = cast(Finding, {**members[0], "disposition": "body"})
-                extra.pop("suggested_fix_code", None)
-                coverage_overrides[id(extra)] = coverage(members[0])
-                skipped_groups.append(
-                    (compose.SkippedEntry(extra.get("file"), extra.get("line"), extra),)
-                )
-                continue
+            missing_primary = keys[0] not in delivered_keys
             legacy = any(key in prior.legacy_group_keys for key in keys)
-            if not legacy:
+            if not legacy and not missing_primary:
                 checked = render_inline(
                     group.primary,
                     group.group.corroborators,
@@ -859,11 +851,11 @@ def post_gitlab(
                 )
                 and site_key(site) not in delivered_ranges
             )
-            if new_sites:
+            if new_sites or missing_primary:
                 additions = []
                 for index, (member, key) in enumerate(zip(members, keys, strict=True)):
                     extra = cast(Finding, {**member, "disposition": "body"})
-                    if index == 0:
+                    if index == 0 and not missing_primary:
                         extra["body"] = (
                             "Additional confirmed sites for this previously delivered issue."
                         )

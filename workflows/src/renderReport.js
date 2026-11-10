@@ -4,6 +4,7 @@ import { canonicalRange, locationAllows, deliveryAllows } from './location.js';
 import { incompleteVetting, UNVERIFIED_REASONS } from './vetting.js';
 import { rankFindings } from './applyChallenges.js';
 import { PERMALINK_TEMPLATES, identityCheck, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES } from './registry.js';
+import { groupDelivery } from './groupRanking.js';
 import { deliveryGroups } from './dispose.js';
 import { DIMENSIONS, AGENTS, AGENT_LABELS, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI } from './registry.js';
 import { RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, conditionalSchemaActive, pinsModelIds, resolvePolicy } from './registry.js';
@@ -122,8 +123,9 @@ export function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
   return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
 }
 
-function consolidateForReport(findings) {
+function consolidateForReport(findings, delivery = false) {
   return deliveryGroups(findings).map(({ primary, corroborators }) => {
+    if (delivery) return groupDelivery(primary, corroborators);
     if (!corroborators.length) return primary;
     return {
       ...primary,
@@ -132,6 +134,8 @@ function consolidateForReport(findings) {
         agent: c.agent,
         dimension: c.dimension,
         confidence: c.confidence,
+        severity: c.severity,
+        report_tag: c.report_tag ?? c.report_destination,
         title: c.title,
         description: c.description,
       })),
@@ -507,7 +511,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
         const dimension = preparedCodeSpan(corroboration.dimension, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
         const confidence = inline(corroboration.confidence);
         const title = inline(corroboration.title);
-        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, confidence ${confidence}) — ${title}`, [agent, dimension]);
+        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, severity ${inline(normalizeReportSeverity(corroboration.severity))}, tier ${inline(corroboration.report_tag ?? 'main')}, confidence ${confidence}): ${title}`, [agent, dimension]);
         if (isPresent(corroboration.description)) {
           builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
@@ -618,7 +622,7 @@ function summaryIndex(rawFindings, findingsView, input, projected) {
     }
   }
   pairs.sort((left, right) => deliveryOrder.get(left.original) - deliveryOrder.get(right.original));
-  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding)).map((finding) => (
+  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding), true).map((finding) => (
     [reportUnitKey(finding, originalByProjected.get(finding)), finding]
   )));
   // Keep report group order but select the delivered subset's primary so the index agrees with posted issues.
@@ -627,14 +631,17 @@ function summaryIndex(rawFindings, findingsView, input, projected) {
   )).filter(Boolean);
   const omittedUnits = [...unitMembers].filter(([key]) => !deliveredUnits.has(key)).map(([, members]) => members);
   const reasons = [];
-  const isMain = (finding) => (finding.report_tag ?? finding.report_destination) === 'main';
+  const unitTier = (members) => {
+    const delivered = groupDelivery(members[0], members.slice(1));
+    return delivered.report_tag ?? delivered.report_destination;
+  };
   if (typeof input.deliveryCap === 'number' && omittedUnits.some((members) => (
-    input.deliveryTier !== 'main_only' || members.some(isMain)
+    input.deliveryTier !== 'main_only' || unitTier(members) === 'main'
   ))) {
     reasons.push(`this review posts at most ${input.deliveryCap} ${plural(input.deliveryCap, 'issue')}`);
   }
   if (input.deliveryTier === 'main_only' && omittedUnits.some((members) => (
-    members.some((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion')
+    unitTier(members) === 'suggestion'
   ))) {
     reasons.push('this review includes defects only');
   }
@@ -654,10 +661,10 @@ function partitionByDisposition(inp, findingsRight) {
 function summaryBlock(builder, input, findingsRight = 'body') {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
-  const findings = consolidateForReport(rawFindings);
+  const local = findingsRight === 'report';
+  const findings = consolidateForReport(rawFindings, !local);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
-  const local = findingsRight === 'report';
   builder.add(local ? localCountsSentence(findings, rawFindings.length, unverified, findingsView) : countsSentence(findings, findingsView));
   const selection = summaryIndex(rawFindings, findingsView, local ? { ...inp, delivered: undefined } : inp, projected);
   const indexed = selection.indexed.filter((finding) => local || deliveryAllows(finding, 'inline'));

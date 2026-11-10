@@ -371,9 +371,9 @@ test('whole issue groups reach every artifact', async (t) => {
   assert.deepEqual(post.map((f) => f.id), ['OFF', 'ANCHOR']);
   const grouped = await runAndCapture(validArgs({ ...args, checkpoints: { challenge: challengeOutput({ findings: raw.findings.slice(0, 3) }) } }));
   const groupPost = grouped.payload.postReview.findings;
-  assert.deepEqual(groupPost.map((f) => f.id), ['CORE', 'SUGGESTION']);
-  assert.deepEqual(groupPost[0].delivery_group, { issue_key: 'group:group.txt:10', lead_id: 'CORE', finding_ids: ['CORE', 'SUGGESTION'] });
-  assert.equal(groupPost[0].sites.length, 4);
+  assert.deepEqual(groupPost.map((f) => f.id), ['CORE-LOW', 'SUGGESTION', 'CORE']);
+  assert.deepEqual(groupPost[0].delivery_group, { issue_key: 'group:group.txt:10', lead_id: 'CORE-LOW', finding_ids: ['CORE-LOW', 'SUGGESTION', 'CORE'] });
+  assert.equal(groupPost.find((f) => f.id === 'CORE').sites.length, 4);
   const all = first.payload.findings;
   assert.deepEqual(all.filter((f) => f.delivery_group?.lead_id === 'OFF').map((f) => f.id), ['OFF', 'ANCHOR']);
   for (const id of ['SAME-A', 'SAME-B', 'STALE', 'UNRELATED']) {
@@ -382,7 +382,7 @@ test('whole issue groups reach every artifact', async (t) => {
     assert.equal(f.consolidation_key, undefined);
   }
   assert.equal((first.payload.report.match(/\*\*Additional site:\*\*/g) || []).length, 4);
-  assert.equal((first.payload.report.match(/#### finding CORE\n/g) || []).length, 2);
+  assert.equal((first.payload.report.match(/#### finding CORE\n/g) || []).length, 1);
   const resumed = await replayProducedCheckpoint(args, first.payload.checkpoints);
   assert.deepEqual(resumed.payload.postReview, first.payload.postReview);
   const returned = await runAndCapture(validArgs({ ...args, persist: { returnPrimaries: true }, checkpoints: { challenge: challengeOutput({ findings: raw.findings.slice(0, 3) }) } }));
@@ -391,8 +391,8 @@ test('whole issue groups reach every artifact', async (t) => {
   const main = await runAndCapture(validArgs({ limits: { deliveryCap: 100 }, delivery: { prIdentity: prIdentity(), tier: 'main_only' }, checkpoints: { challenge: raw } }));
   const mainIds = main.payload.postReview.findings.map((f) => f.id);
   assert.ok(mainIds.includes('CORE') && mainIds.includes('CORE-LOW') && mainIds.includes('OFF'));
-  assert.equal(mainIds.includes('SUGGESTION'), false);
-  assert.equal(mainIds.includes('ANCHOR'), false);
+  assert.equal(mainIds.includes('SUGGESTION'), true);
+  assert.equal(mainIds.includes('ANCHOR'), true);
   assert.equal(mainIds.includes('BODY-SUGGESTION'), false);
   const uncapped = await runAndCapture(validArgs({ delivery: { prIdentity: prIdentity() }, limits: { deliveryCap: 100 }, checkpoints: { challenge: raw } }));
   assert.equal(uncapped.out.ok, true, JSON.stringify(uncapped.out));

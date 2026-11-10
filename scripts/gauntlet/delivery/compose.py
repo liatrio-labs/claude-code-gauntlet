@@ -18,7 +18,7 @@ from gauntlet.delivery.fold import (
 )
 from gauntlet.delivery.gate import FenceOffsets
 from gauntlet.delivery.input import Finding
-from gauntlet.location import canonical_range, delivery_allows
+from gauntlet.location import canonical_range, delivery_allows, parse_admission
 from gauntlet.markdown import fence_run
 from gauntlet.marker import LEGACY_PRODUCT, build_footer, build_prose_footer
 from gauntlet.prior_review import site_key
@@ -46,6 +46,7 @@ __all__ = [
     "compose_inline_body",
     "compose_review_body",
     "consolidate_delivery",
+    "delivery_finding",
     "digest_groups",
     "finding_key",
     "key_material_body",
@@ -262,6 +263,36 @@ def group_sites(
     return tuple(sites)
 
 
+def delivery_finding(
+    primary: Mapping[str, object], corroborators: Sequence[Mapping[str, object]] = ()
+) -> Mapping[str, object]:
+    if not corroborators:
+        return primary
+    members = (primary, *corroborators)
+    severity = min(
+        (
+            normalize_report_severity(member.get("severity"), registry.SEVERITY_EMOJI)
+            for member in members
+        ),
+        key=registry.SEVERITY_ORDER.index,
+    )
+    tier = "suggestion"
+    for member in members:
+        assessed = member.get("report_tag", member.get("report_destination"))
+        if assessed is None:
+            admission = parse_admission(member)
+            assessed = admission["tier"] if admission else "main"
+        if assessed == "main":
+            tier = "main"
+            break
+    return {
+        **primary,
+        "severity": severity,
+        "report_tag": tier,
+        "report_destination": tier,
+    }
+
+
 def render_group_sections(
     primary: Mapping[str, object],
     corroborators: Sequence[Mapping[str, object]],
@@ -270,7 +301,11 @@ def render_group_sections(
     style: CommentStyle | None = None,
     additional_sites: Sequence[Mapping[str, object]] | None = None,
 ) -> str:
-    body = render_finding_sections(primary, fence_offsets=fence_offsets, style=style)
+    body = render_finding_sections(
+        delivery_finding(primary, corroborators),
+        fence_offsets=fence_offsets,
+        style=style,
+    )
     sites = (
         group_sites(primary, corroborators)
         if additional_sites is None
@@ -315,9 +350,7 @@ def _plural(count: int, singular: str, plural: str | None = None) -> str:
 def _skipped_frame(n: int) -> str:
     return (
         f"---\n\n### {n} {_plural(n, 'issue')} could not be attached to a changed line, "
-        "so it is described here"
-        if n == 1
-        else f"---\n\n### {n} issues could not be attached to a changed line, so they are described here"
+        f"so {'it is' if n == 1 else 'they are'} described here"
     )
 
 
@@ -423,9 +456,11 @@ def _index_identity(finding: Mapping[str, object]) -> re.Pattern[str] | None:
         ),
         "title": re.escape(prepare_summary_title(finding.get("title", ""))),
     }
-    pattern = re.escape(registry.PUBLIC_SUMMARY["index"])
-    for key, value in values.items():
-        pattern = pattern.replace(re.escape("{" + key + "}"), value)
+    pattern = re.sub(
+        r"\\\{(\w+)\\\}",
+        lambda match: values[match[1]],
+        re.escape(registry.PUBLIC_SUMMARY["index"]),
+    )
     return re.compile(pattern)
 
 
@@ -440,7 +475,12 @@ def _validate_public_index(review_body: str, findings: Sequence[Finding]) -> Non
     identities = [
         identity
         for group in consolidate_delivery(findings)
-        if (identity := _index_identity(group.primary)) is not None
+        if (
+            identity := _index_identity(
+                delivery_finding(group.primary, group.corroborators)
+            )
+        )
+        is not None
     ]
     for line in review_body.split("\n")[1:]:
         if not line or re.fullmatch(
@@ -462,12 +502,14 @@ def _without_body_index(
     _validate_public_index(review_body, index_findings)
     identities = []
     for group in groups:
-        finding = group[0].finding
+        finding = delivery_finding(
+            group[0].finding, [entry.finding for entry in group[1:]]
+        )
         originals = [
-            original
-            for original in index_findings
+            delivery_finding(original.primary, original.corroborators)
+            for original in consolidate_delivery(index_findings)
             if all(
-                original.get(field) == finding.get(field)
+                original.primary.get(field) == finding.get(field)
                 for field in ("id", "file", "title")
             )
         ]
@@ -490,11 +532,12 @@ def summary_for_delivery(report_summary: str, findings: Sequence[Finding]) -> st
     groups = consolidate_delivery(
         [finding for finding in findings if delivery_allows(finding, "body")]
     )
+    delivered = [
+        delivery_finding(group.primary, group.corroborators) for group in groups
+    ]
     severities = [
-        normalize_report_severity(
-            group.primary.get("severity"), registry.SEVERITY_EMOJI
-        )
-        for group in groups
+        normalize_report_severity(finding.get("severity"), registry.SEVERITY_EMOJI)
+        for finding in delivered
     ]
     breakdown = ", ".join(
         f"{severities.count(severity)} {severity}"
@@ -508,9 +551,8 @@ def summary_for_delivery(report_summary: str, findings: Sequence[Finding]) -> st
         breakdown=f": {breakdown}" if breakdown else "",
     )
     suggestions = sum(
-        group.primary.get("report_tag", group.primary.get("report_destination"))
-        == "suggestion"
-        for group in groups
+        finding.get("report_tag", finding.get("report_destination")) == "suggestion"
+        for finding in delivered
     )
     if suggestions == 1:
         sentence += registry.PUBLIC_SUMMARY["improvement"].format(count=suggestions)
