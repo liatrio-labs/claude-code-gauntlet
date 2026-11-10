@@ -8,6 +8,7 @@ import { deriveWhenHolds, deriveConfigWaist, configEchoValue, validateConfigEcho
 import { PYTHON_COMMAND_ARGV, dottedValue, isPlainObject, deepFreeze, fnv1a32, normalizeReviewText } from './wire.js';
 import { buildReviewConfig, loadExclusions } from './reviewConfig.js';
 import { validateRemovedTests } from './removedTests.js';
+import { validContextReadChunks } from './contextPlan.js';
 
 export function resolveRemovedTestsArgs(args) {
   return validateRemovedTests(args.removedTests);
@@ -416,6 +417,9 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
   // The host cannot inspect the context file, so supplied sizes drive its read plan.
   // Bounds prevent an uncatchable allocation failure; missing line counts remain a disclosed degradation.
   validateArgsFields(args, 'context', errors);
+  if (args.contextReadChunks !== undefined && !validContextReadChunks(args)) {
+    errors.push('contextReadChunks must be a writer-stamped plan covering contextLines and contextChars within the read budgets (or [] when unplannable)');
+  }
   if (args.contextChars !== undefined && args.contextLines === undefined) {
     errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
   }

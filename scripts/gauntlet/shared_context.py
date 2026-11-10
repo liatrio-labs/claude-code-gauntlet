@@ -23,7 +23,11 @@ from gauntlet.framing import frame
 from gauntlet.location import SourceAdapter
 from gauntlet.paths import NON_SOURCE_DIRS
 from gauntlet.pr_status import load_snapshot
-from gauntlet.registry import READ_PLAN_MAX_CHARS
+from gauntlet.registry import (
+    READ_PLAN_MAX_CHARS,
+    READ_PLAN_MAX_CHUNKS,
+    READ_PLAN_MAX_LINES,
+)
 from gauntlet.removed_tests import removed_tests
 
 DESCRIPTION = (
@@ -50,7 +54,8 @@ large Read can return only part of a file without notice; the workflow has no
 disk and needs the receipt's line count to plan exact Reads. The content always
 ends with LF, so the newline count equals the Read tool's line numbering.
 ``contextChars`` counts decoded code points with replacement; ``contextMaxLineChars``
-includes LF and bounds Read chunk size even when line lengths vary.
+includes LF. ``contextReadChunks`` greedily packs actual LF-terminated line lengths
+under both Read limits, isolating an oversized line for partial-read continuation.
 """
 )
 
@@ -70,6 +75,31 @@ class LayoutWire(TypedDict):
     entries: list[str]
     unavailable: list[str]
     omitted: list[str]
+
+
+class ReadChunk(TypedDict):
+    offset: int
+    limit: int
+    chars: int
+
+
+def context_read_chunks(content: str) -> list[ReadChunk]:
+    chunks: list[ReadChunk] = []
+    for offset, line in enumerate(content.split("\n")[:-1], 1):
+        chars = len(line) + 1
+        if (
+            not chunks
+            or chunks[-1]["limit"] == READ_PLAN_MAX_LINES
+            or chunks[-1]["chars"] + chars > READ_PLAN_MAX_CHARS
+        ):
+            # The empty sentinel preserves gap disclosure without an unbounded receipt.
+            if len(chunks) == READ_PLAN_MAX_CHUNKS:
+                return []
+            chunks.append({"offset": offset, "limit": 1, "chars": chars})
+        else:
+            chunks[-1]["limit"] += 1
+            chunks[-1]["chars"] += chars
+    return chunks
 
 
 def _layout_json(value: object) -> str:
@@ -268,6 +298,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         "contextLines": lines,
         "contextChars": chars,
         "contextMaxLineChars": max(map(len, decoded.split("\n"))) + 1,
+        "contextReadChunks": context_read_chunks(decoded),
         "removedTests": removed_tests(diff.decode("utf-8", errors="replace")),
     }, 0
 

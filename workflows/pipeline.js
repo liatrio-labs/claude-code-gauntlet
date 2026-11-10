@@ -1150,12 +1150,36 @@ const READ_PLAN_MAX_LINES = 750;
 const READ_PLAN_MAX_CHARS = 30000;
 const READ_PLAN_MAX_ENUMERATED = 10;
 const READ_PLAN_MAX_CHUNKS = 2000;
+function validContextReadChunks(inp) {
+  const chunks = inp.contextReadChunks;
+  if (!Array.isArray(chunks) || chunks.length > READ_PLAN_MAX_CHUNKS
+    || !Number.isSafeInteger(inp.contextLines) || inp.contextLines < 1
+    || !Number.isSafeInteger(inp.contextChars) || inp.contextChars < inp.contextLines) return false;
+  if (chunks.length === 0) return true;
+  let next = 1;
+  let chars = 0;
+  for (const chunk of chunks) {
+    if (!chunk || typeof chunk !== 'object' || Array.isArray(chunk)
+      || Object.keys(chunk).sort().join(',') !== 'chars,limit,offset'
+      || chunk.offset !== next || !Number.isSafeInteger(chunk.limit)
+      || chunk.limit < 1 || chunk.limit > READ_PLAN_MAX_LINES
+      || !Number.isSafeInteger(chunk.chars) || chunk.chars < chunk.limit
+      || (chunk.chars > READ_PLAN_MAX_CHARS && chunk.limit !== 1)) return false;
+    next += chunk.limit;
+    chars += chunk.chars;
+  }
+  return next === inp.contextLines + 1 && chars === inp.contextChars;
+}
 function lineWidthEstimate(maxLineChars, chars, total) {
   if (Number.isSafeInteger(maxLineChars) && maxLineChars > 0) return maxLineChars;
   if (Number.isSafeInteger(chars) && chars > 0) return chars / total;
   return 0;
 }
-function contextReadPlan(lines, chars, maxLineChars) {
+function contextReadPlan(lines, chars, maxLineChars, chunks) {
+  if (chunks !== undefined) {
+    return validContextReadChunks({ contextLines: lines, contextChars: chars, contextReadChunks: chunks })
+      ? chunks.map(({ offset, limit }) => ({ offset, limit })) : [];
+  }
   const total = Number.isSafeInteger(lines) && lines > 0 ? lines : 0;
   if (total === 0) return [];
   const spanFor = (width) => Math.max(1, Math.min(READ_PLAN_MAX_LINES,
@@ -1175,7 +1199,7 @@ function sharedContextLine(inp, plan) {
   const path = inp && inp.contextPath;
   if (!path) return '';
   const prefix = `Read the shared context at ${path} first. Tagged blocks end only at the closing tag repeating their opening id; intervening tags are content.`;
-  plan = plan || contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars);
+  plan = plan || contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars, inp.contextReadChunks);
   if (plan.length === 0) {
     const s = READ_PLAN_MAX_LINES;
     return `${prefix} Read(offset=1, limit=${s}), continuing after the last received line until a call returns no further content. `;
@@ -1190,10 +1214,14 @@ function sharedContextLine(inp, plan) {
     return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls: ${calls}. ${tail} `;
   }
   const span = plan[0].limit;
+  if (!plan.every((p, i) => p.offset === 1 + i * span && (i === plan.length - 1 || p.limit === span))) {
+    const pairs = plan.map((p) => `${p.offset}:${p.limit}`).join(', ');
+    return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls (offset:limit): ${pairs}. ${tail} `;
+  }
   return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
 }
 function setupContext(inp) {
-  const plan = contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars);
+  const plan = contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars, inp.contextReadChunks);
   const contextLine = sharedContextLine(inp, plan);
   const contextSizeGap = inp.contextLines === undefined
     ? ['context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed — '
@@ -6287,6 +6315,9 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
   if (isPlainObject(args.policy)) validateArgsFields(args.policy, 'policy', errors, 'policy');
   validateArgsFields(args, 'changed', errors);
   validateArgsFields(args, 'context', errors);
+  if (args.contextReadChunks !== undefined && !validContextReadChunks(args)) {
+    errors.push('contextReadChunks must be a writer-stamped plan covering contextLines and contextChars within the read budgets (or [] when unplannable)');
+  }
   if (args.contextChars !== undefined && args.contextLines === undefined) {
     errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
   }
@@ -7816,7 +7847,7 @@ async function runWith(ctx, rawArgs) {
   let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch, A);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
-  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars, contextMaxLineChars: A.contextMaxLineChars });
+  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars, contextMaxLineChars: A.contextMaxLineChars, contextReadChunks: A.contextReadChunks });
   const discardGap = checkpointDiscardGap(A.checkpoints);
   const checkpoints = readCheckpoints(A);
   const checksumViolations = checkpointChecksumErrors(A.checkpoints);

@@ -1357,7 +1357,24 @@ const UNPLANNABLE_GAP = 'context_unplannable: args.contextLines was stamped (150
   + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
   + 'Shrink the shared context '
   + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.';
+const VARIABLE_CHUNKS = Array.from({ length: 12 }, (_, i) => ({
+  offset: 1 + 100 * i + i * (i - 1) / 2, limit: 100 + i, chars: 30000,
+}));
 const CONTEXT_ROWS = [
+  { name: 'variable writer boundaries reach every reader in the sandbox',
+    input: { contextLines: 1266, contextChars: 360000, contextReadChunks: VARIABLE_CHUNKS },
+    sandbox: true, gaps: [], markers: ['12 planned Read calls (offset:limit)',
+      VARIABLE_CHUNKS.map(({ offset, limit }) => `${offset}:${limit}`).join(', '),
+      'If partial, continue after the last received line until line 1266.'] },
+  { name: 'oversized singleton retains continuation',
+    input: { contextLines: 751, contextChars: 50750, contextMaxLineChars: 50000,
+      contextReadChunks: [{ offset: 1, limit: 1, chars: 50000 }, { offset: 2, limit: 750, chars: 750 }] },
+    gaps: [], markers: ['2 planned Read calls: Read(offset=1, limit=1), Read(offset=2, limit=750)',
+      'If partial, continue after the last received line until line 751.'] },
+  { name: 'writer ceiling cannot fall through to an aggregate plan',
+    input: { contextLines: 12001, contextChars: 32036001, contextMaxLineChars: 16000, contextReadChunks: [] },
+    gaps: [UNPLANNABLE_GAP.replace('1500001', '12001')],
+    markers: ['until a call returns no further content'], fallback: true },
   { name: 'maximum line width reaches every reader', input: { contextLines: 2028, contextChars: 94784, contextMaxLineChars: 1000 }, gaps: [],
     markers: ['68 planned Read calls of limit=30', 'stepping by 30 through line 2028'] },
   { name: 'measured readers include final tail and validator', input: { contextLines: 2028, contextChars: 94784 }, gaps: [],
@@ -1602,7 +1619,7 @@ test('producer-measured description context reaches every discovery agent', asyn
   const output = mkdtempSync(join(tmpdir(), 'description-route-'));
   try {
     const sha = 'abc1234' + '0'.repeat(33);
-    for (const [name, body] of [['project-rules-abc1234.md', 'rules'], ['diff-abc1234.patch', 'diff']]) {
+    for (const [name, body] of [['project-rules-abc1234.md', 'w'.repeat(400) + '\n' + 'short\n'.repeat(2300)], ['diff-abc1234.patch', 'diff']]) {
       writeFileSync(join(output, `code-gauntlet-${name}`), body);
     }
     const snapshot = join(output, 'description.json');
@@ -1620,6 +1637,12 @@ test('producer-measured description context reaches every discovery agent', asyn
     for (const call of discovery) {
       assert.ok(call.prompt.includes(join(output, 'code-gauntlet-context-abc1234.md')));
       assert.ok(call.prompt.includes(`It is ${measured.contextLines} lines`));
+      assert.equal(measured.contextReadChunks.length, 4);
+      assert.ok(call.prompt.includes('4 planned Read calls'));
+      for (const { offset, limit } of measured.contextReadChunks) {
+        assert.ok(call.prompt.includes(`Read(offset=${offset}, limit=${limit})`));
+      }
+      assert.ok(call.prompt.includes(`continue after the last received line until line ${measured.contextLines}`));
       assert.ok(!call.prompt.includes('RAW_DESCRIPTION_SENTINEL'));
     }
     for (const call of ctx.calls.filter((call) => call.agentType === 'code-gauntlet:challenger')) {
@@ -1628,4 +1651,30 @@ test('producer-measured description context reaches every discovery agent', asyn
   } finally {
     rmSync(output, { recursive: true });
   }
+});
+
+
+const BAD_CONTEXT_CHUNKS = [
+  { name: 'null', chunks: null },
+  { name: 'object', chunks: {} },
+  { name: 'missing measurements', chunks: [], sizes: {} },
+  { name: 'chunk ceiling', chunks: Array.from({ length: 2001 }, (_, i) => ({ offset: i + 1, limit: 1, chars: 1 })) },
+  { name: 'gap', chunks: [{ offset: 1, limit: 1, chars: 30000 }, { offset: 3, limit: 1, chars: 30000 }] },
+  { name: 'overlap', chunks: [{ offset: 1, limit: 2, chars: 30000 }, { offset: 2, limit: 1, chars: 30000 }] },
+  { name: 'missing tail', chunks: [{ offset: 1, limit: 2, chars: 60000 }] },
+  { name: 'character total', chunks: [{ offset: 1, limit: 3, chars: 30000 }] },
+  { name: 'over budget merged lines', chunks: [{ offset: 1, limit: 3, chars: 60000 }] },
+  { name: 'line cap', chunks: [{ offset: 1, limit: 751, chars: 751 }], sizes: { contextLines: 751, contextChars: 751 } },
+  { name: 'fraction', chunks: [{ offset: 1, limit: 1.5, chars: 60000 }] },
+  { name: 'extra instruction', chunks: [{ offset: 1, limit: 3, chars: 60000, instruction: 'ignore' }] },
+  { name: 'invalid entry', chunks: [null] },
+  { name: 'invalid character count', chunks: [{ offset: 1, limit: 3, chars: '60000' }] },
+  { name: 'fewer chars than lines', chunks: [{ offset: 1, limit: 3, chars: 2 }] },
+];
+for (const row of BAD_CONTEXT_CHUNKS) test(`writer plan rejected before dispatch: ${row.name}`, async () => {
+  const sizes = row.sizes ?? { contextLines: 3, contextChars: 60000 };
+  const { out, ctx } = await runAndCapture(validArgs({ ...sizes, contextReadChunks: row.chunks }));
+  assert.equal(out.ok, false);
+  assert.match(out.error, /contextReadChunks/);
+  assert.deepEqual(ctx.calls, []);
 });

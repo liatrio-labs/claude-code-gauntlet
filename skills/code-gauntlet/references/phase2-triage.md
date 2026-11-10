@@ -280,6 +280,7 @@ Model dispatch, including user mappings and gateway naming, follows [model-polic
 
 - `scopeAnswer` — `"light"` or `"full"`, stamped only when the 2e trivial-scope gate asked (see 2e).
 - `contextLines` / `contextChars` / `contextMaxLineChars` — the shared context file's measured size and maximum line length (including LF) from `write_shared_context.py`'s receipt. **Not provenance — consumed** by the Read plan. Optional (absent ⇒ count-free read-to-end wording); character measurements require `contextLines`; all must be positive integers.
+- `contextReadChunks` — writer-stamped `{offset, limit, chars}` chunks from actual LF-terminated line lengths. Requires `contextLines` and `contextChars`; the workflow validates contiguous complete coverage, character totals and both read budgets. `[]` discloses an unplannable context; absent uses the legacy aggregate plan.
 - `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).
 - `reviewMd` / `reviewMdSetChecksum` - `[{ path, text, checksum }, ...]` plus `receipt.review_md_checksum` in collector receipt order (2d), the raw text of every REVIEW.md listed by the receipt; never hand-parse it. An empty array is a legal, authoritative "discovered nothing."

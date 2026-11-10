@@ -41,10 +41,16 @@ Each agent returns structured findings against the canonical schema (`agent()` `
 
 ## Shared-context read plan
 
-Phase 2 stamps `contextLines`, `contextChars` and `contextMaxLineChars` (including LF).
-`contextReadPlan` caps each planned chunk at 750 lines and targets 30,000 characters using the maximum
-line length, falling back to the average for older receipts or when a wide line would exceed the chunk ceiling. It enumerates at most ten
-calls, then expresses longer plans as an offset rule, with a ceiling of 2,000 chunks.
+Phase 2 stamps `contextLines`, `contextChars`, `contextMaxLineChars` (including LF), and
+`contextReadChunks`: `{offset, limit, chars}` records greedily packed from actual line lengths.
+Each chunk fits 750 lines and 30,000 decoded characters including LF; a single oversized line
+stands alone and relies on partial-read continuation. The workflow validates contiguous coverage,
+size totals and budgets before dispatch. At most 2,000 chunks bound receipt and prompt size;
+the writer stamps `[]` if that ceiling is exceeded, preserving gap disclosure.
+`contextReadPlan` uses these boundaries directly. Older receipts retain the maximum-width plan,
+with the average fallback when width is absent or would exceed the chunk ceiling.
+The prompt enumerates at most ten calls in full, then uses compact offset:limit pairs for variable
+chunks or an offset rule for uniform chunks.
 Agents make every planned call and continue past the last received line if a call stops early.
 `runWith` builds `sharedContextLine` once and threads `contextLine` to stages so they cannot
 construct a competing instruction from a path. Missing measurement yields `context_unmeasured`;

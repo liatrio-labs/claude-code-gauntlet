@@ -181,7 +181,7 @@ def test_layout_bounds_names_and_read_chunks(tmp_path, invoke):
         import { readFileSync } from 'node:fs';
         const { receipt, content } = JSON.parse(readFileSync(0, 'utf8'));
         const lines = content.split('\n');
-        const chunks = contextReadPlan(receipt.contextLines, receipt.contextChars, receipt.contextMaxLineChars);
+        const chunks = contextReadPlan(receipt.contextLines, receipt.contextChars, receipt.contextMaxLineChars, receipt.contextReadChunks);
         console.log(JSON.stringify({
           cap: READ_PLAN_MAX_CHARS,
           sizes: chunks.map(({ offset, limit }) =>
@@ -264,6 +264,13 @@ def test_context_neutralizes_block_tags_in_diff(tmp_path, invoke):
             map(len, context.decode("utf-8", errors="replace").split("\n"))
         )
         + 1,
+        "contextReadChunks": [
+            {
+                "offset": 1,
+                "limit": context.count(b"\n"),
+                "chars": len(context.decode("utf-8", errors="replace")),
+            }
+        ],
         "removedTests": {
             **unavailable,
             "checksum": fnv1a32(js_stringify_pretty(unavailable)),
@@ -589,3 +596,65 @@ def test_map_write_failure_refuses_context(tmp_path, invoke):
     assert result.returncode == 2
     assert result.stdout == b""
     assert result.stderr.startswith(b"write_shared_context: cannot write context map (")
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        b"wide" * 100 + b"\n" + b"short\n" * 2300,
+        ("\U0001f680\r\nx\u2028y\n" * 800 + "z" * 29999 + "\n").encode(),
+        b"x" * 50000 + b"\n" + b"short\n" * 1500,
+        (b"x" * 799 + b"\n") * 1100,
+    ],
+    ids=["line-cap", "unicode-and-exact-char-cap", "oversized-line", "char-cap"],
+)
+def test_writer_packs_maximal_actual_line_lengths(tmp_path, invoke, rules):
+    output = tmp_path / "out"
+    write_context_inputs(output, rules, b"diff\n")
+    result = invoke(
+        "write_shared_context",
+        ["--output-dir", str(output), "--head-sha", SHA],
+        tmp_path,
+        b"triage",
+    )
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads(result.stdout)
+    lines = (
+        (output / f"code-gauntlet-context-{SHA}.md")
+        .read_bytes()
+        .decode("utf-8", errors="replace")
+        .split("\n")[:-1]
+    )
+    chunks = receipt["contextReadChunks"]
+    next_offset = 1
+    for chunk in chunks:
+        assert chunk["offset"] == next_offset
+        limit = chunk["limit"]
+        assert 1 <= limit <= 750
+        end = next_offset - 1 + limit
+        size = sum(len(line) + 1 for line in lines[next_offset - 1 : end])
+        assert chunk["chars"] == size
+        assert size <= READ_PLAN_MAX_CHARS or limit == 1
+        if end < len(lines):
+            assert limit == 750 or size + len(lines[end]) + 1 > READ_PLAN_MAX_CHARS
+        next_offset = end + 1
+    assert next_offset == receipt["contextLines"] + 1
+    assert sum(chunk["chars"] for chunk in chunks) == receipt["contextChars"]
+    if rules.startswith(b"wide"):
+        assert len(chunks) == 4
+
+
+def test_writer_discloses_unplannable_context(tmp_path, invoke, monkeypatch):
+    from gauntlet import shared_context
+
+    monkeypatch.setattr(shared_context, "READ_PLAN_MAX_CHUNKS", 2)
+    output = tmp_path / "out"
+    write_context_inputs(output, b"short\n" * 1500, b"diff\n")
+    result = invoke(
+        "write_shared_context",
+        ["--output-dir", str(output), "--head-sha", SHA],
+        tmp_path,
+        b"triage",
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["contextReadChunks"] == []

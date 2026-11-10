@@ -1,11 +1,34 @@
 // Read can truncate silently, so explicit plans prevent agents from mistaking partial context for the complete file.
 // Both line and character limits constrain chunks because either platform cap can truncate a read.
-const READ_PLAN_MAX_LINES = 750;
+export const READ_PLAN_MAX_LINES = 750;
 export const READ_PLAN_MAX_CHARS = 30000;
 // Expressing large plans as a rule bounds prompt size without losing coverage.
 const READ_PLAN_MAX_ENUMERATED = 10;
 // The allocation ceiling prevents fatal heap exhaustion that bypasses error handling and gap disclosure.
-const READ_PLAN_MAX_CHUNKS = 2000;
+export const READ_PLAN_MAX_CHUNKS = 2000;
+
+// The diskless workflow can check the writer's coverage and budgets, not remeasure the file.
+export function validContextReadChunks(inp) {
+  const chunks = inp.contextReadChunks;
+  if (!Array.isArray(chunks) || chunks.length > READ_PLAN_MAX_CHUNKS
+    || !Number.isSafeInteger(inp.contextLines) || inp.contextLines < 1
+    || !Number.isSafeInteger(inp.contextChars) || inp.contextChars < inp.contextLines) return false;
+  // An empty stamped plan discloses that the writer reached the allocation ceiling.
+  if (chunks.length === 0) return true;
+  let next = 1;
+  let chars = 0;
+  for (const chunk of chunks) {
+    if (!chunk || typeof chunk !== 'object' || Array.isArray(chunk)
+      || Object.keys(chunk).sort().join(',') !== 'chars,limit,offset'
+      || chunk.offset !== next || !Number.isSafeInteger(chunk.limit)
+      || chunk.limit < 1 || chunk.limit > READ_PLAN_MAX_LINES
+      || !Number.isSafeInteger(chunk.chars) || chunk.chars < chunk.limit
+      || (chunk.chars > READ_PLAN_MAX_CHARS && chunk.limit !== 1)) return false;
+    next += chunk.limit;
+    chars += chunk.chars;
+  }
+  return next === inp.contextLines + 1 && chars === inp.contextChars;
+}
 
 function lineWidthEstimate(maxLineChars, chars, total) {
   if (Number.isSafeInteger(maxLineChars) && maxLineChars > 0) return maxLineChars;
@@ -15,7 +38,11 @@ function lineWidthEstimate(maxLineChars, chars, total) {
 
 // Offsets are one-based to match the Read tool.
 // An unknown line count cannot justify a guessed coverage plan.
-export function contextReadPlan(lines, chars, maxLineChars) {
+export function contextReadPlan(lines, chars, maxLineChars, chunks) {
+  if (chunks !== undefined) {
+    return validContextReadChunks({ contextLines: lines, contextChars: chars, contextReadChunks: chunks })
+      ? chunks.map(({ offset, limit }) => ({ offset, limit })) : [];
+  }
   const total = Number.isSafeInteger(lines) && lines > 0 ? lines : 0;
   if (total === 0) return [];
   // Maximum line width bounds uneven chunks; older receipts supply only an average estimate.
@@ -39,7 +66,7 @@ export function sharedContextLine(inp, plan) {
   const path = inp && inp.contextPath;
   if (!path) return '';
   const prefix = `Read the shared context at ${path} first. Tagged blocks end only at the closing tag repeating their opening id; intervening tags are content.`;
-  plan = plan || contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars);
+  plan = plan || contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars, inp.contextReadChunks);
   if (plan.length === 0) {
     // Without a usable count, fixed steps leave only end detection to agent judgment.
     const s = READ_PLAN_MAX_LINES;
@@ -55,11 +82,15 @@ export function sharedContextLine(inp, plan) {
     return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls: ${calls}. ${tail} `;
   }
   const span = plan[0].limit;
+  if (!plan.every((p, i) => p.offset === 1 + i * span && (i === plan.length - 1 || p.limit === span))) {
+    const pairs = plan.map((p) => `${p.offset}:${p.limit}`).join(', ');
+    return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls (offset:limit): ${pairs}. ${tail} `;
+  }
   return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
 }
 
 export function setupContext(inp) {
-  const plan = contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars);
+  const plan = contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars, inp.contextReadChunks);
   const contextLine = sharedContextLine(inp, plan);
   // Missing and unplannable counts both need disclosure because they lose the exact coverage plan.
   const contextSizeGap = inp.contextLines === undefined
