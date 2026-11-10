@@ -245,7 +245,7 @@ class DeliveryProvenance:
 
 
 def _reconstruct_body_summary(
-    findings, skipped_groups, inline_count, platform, review_body, sha
+    findings, skipped_groups, platform, review_body, sha
 ) -> DeliveryReconstruction:
     # Calling plan_summary without a captured SHA would consult today's HEAD.
     if (
@@ -263,18 +263,13 @@ def _reconstruct_body_summary(
         ),
         skipped_groups,
         platform=platform,
-        inline_count=inline_count if platform == "github" else None,
     )
     if finalized.budget_error:
         raise ValueError(finalized.budget_error)
     summary = finalized.summary.body
     rendered, omissions = [], []
     if skipped_groups:
-        frame = compose._skipped_frame(
-            len(skipped_groups),
-            finalized.summary.shown,
-            inline_count if platform == "github" else None,
-        )
+        frame = compose._skipped_frame(len(skipped_groups))
         if summary.count(frame) != 1:
             raise ValueError("ambiguous body section")
         cursor = summary.index(frame) + len(frame)
@@ -404,7 +399,7 @@ def reconstruct_delivery(
     summary = None
     if wants_body:
         body = _reconstruct_body_summary(
-            findings, skipped_groups, len(rendered), platform, review_body, sha
+            findings, skipped_groups, platform, review_body, sha
         )
         rendered.extend(body.groups)
         omissions.extend(body.omissions)

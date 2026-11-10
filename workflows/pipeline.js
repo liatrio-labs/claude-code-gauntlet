@@ -178,6 +178,13 @@ const PR_IDENTITY_FIELDS = deepFreeze([
   { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0,
     describe: 'a non-empty string when present' },
 ]);
+const PUBLIC_SUMMARY = deepFreeze({
+  counts: 'Found {count} {issues} in this change{breakdown}.',
+  improvement: ' {count} is a suggested improvement rather than a defect.',
+  improvements: ' {count} are suggested improvements rather than defects.',
+  index: '- {mark} [{severity}] {location}{suggestion}: {title}',
+  suggestion: ' (improvement suggestion)',
+});
 const CODE_OWNED_HEADINGS = deepFreeze([
   '## Summary',
   '## Change Context',
@@ -1782,7 +1789,7 @@ const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admi
 const TRACE_FINDING_FIELDS = ['trace_id', 'discovery_agent', 'discovery_dimension', 'id', 'file',
   'line_start', 'line_end', 'line', 'end_line', 'claimed_line_start', 'claimed_line_end', 'anchor', 'location_status',
   'title', 'description', 'body', 'evidence', 'severity', 'suggestion', 'suggested_fix_code', 'claude_md_rule', 'spec_text',
-  'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons',
+  'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons', 'report_tag', 'report_destination',
   'consolidation_key', 'consolidation_primary', 'delivery_group', 'origin_dimension', 'policy_subject', 'path_role'];
 const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
 const traceHistory = new WeakMap();
@@ -2684,6 +2691,36 @@ function applyValidations(findings, validations) {
   }
   return { adjustedCount, unmatchedIds };
 }
+// --- groupRanking.js ---
+function groupTier(finding) {
+  return (finding.report_tag ?? finding.report_destination ?? finding.admission?.tier) === 'main' ? 1 : 0;
+}
+function groupSeverity(finding) {
+  const index = SEVERITY_ORDER.indexOf(finding.severity);
+  return index < 0 ? 0 : SEVERITY_ORDER.length - index;
+}
+function chooseGroupLead(members, modelLead) {
+  const key = (f) => [groupTier(f), groupSeverity(f), deliveryAllows(f, 'inline') ? 1 : 0,
+    f.id === modelLead ? 1 : 0, asConfidence(f.confidence), findingPolicy(f).core ? 1 : 0, asText(f.description).length];
+  return [...members].sort((a, b) => {
+    const ka = key(a), kb = key(b);
+    for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return kb[i] - ka[i];
+    return 0;
+  })[0];
+}
+function dominatedGroups(members, modelLead) {
+  const groups = [];
+  let remaining = [...members];
+  while (remaining.length) {
+    const lead = chooseGroupLead(remaining, modelLead);
+    const dominates = (member) => groupTier(lead) >= groupTier(member)
+      && groupSeverity(lead) >= groupSeverity(member)
+      && ((member.dimension ?? '').toLowerCase() !== 'security' || (lead.dimension ?? '').toLowerCase() === 'security');
+    groups.push({ primary: lead, members: remaining.filter(dominates) });
+    remaining = remaining.filter((member) => !dominates(member));
+  }
+  return groups;
+}
 // --- reviewConfig.js ---
 function cfgGet(config, key, fallback) {
   const v = config ? config[key] : undefined;
@@ -3503,7 +3540,7 @@ function groupByProximity(findings, lineProximity) {
     pyGet(finding, 'file', ''), lineBucket(finding.line_start, lineProximity),
   ]));
 }
-function consolidateCrossAgent(findings, prefer = () => false) {
+function consolidateCrossAgent(findings) {
   const LINE_PROXIMITY = 5;
   for (const f of findings) {
     if (f && typeof f === 'object') {
@@ -3511,20 +3548,6 @@ function consolidateCrossAgent(findings, prefer = () => false) {
       delete f.consolidation_primary;
     }
   }
-  const winnerKey = (f) => {
-    const isCore = findingPolicy(f).core ? 1 : 0;
-    const conf = asConfidence(f.confidence);
-    const descLen = asText(f.description).length;
-    return [prefer(f) ? 1 : 0, isCore, conf, descLen];
-  };
-  const compareWinnerDesc = (a, b) => {
-    const ka = winnerKey(a);
-    const kb = winnerKey(b);
-    for (let i = 0; i < ka.length; i += 1) {
-      if (ka[i] !== kb[i]) return kb[i] - ka[i];
-    }
-    return 0; // tie -> preserve original order (stable sort)
-  };
   const groups = groupByProximity(findings, LINE_PROXIMITY);
   let consolidatedCount = 0;
   for (const group of groups.values()) {
@@ -3533,13 +3556,13 @@ function consolidateCrossAgent(findings, prefer = () => false) {
     const file = pyGet(group[0], 'file', '');
     const bucket = lineBucket(group[0].line_start, LINE_PROXIMITY);
     const consolidationKey = `${file}:${bucket}`;
-    const ranked = [...group].sort(compareWinnerDesc);
-    const primary = ranked.find((f) => pyGet(f, 'id', ''));
-    for (const f of group) {
-      if (!pyGet(f, 'id', '')) continue; // id-less findings stay unstamped
-      f.consolidation_key = consolidationKey;
-      f.consolidation_primary = f === primary;
-      consolidatedCount += 1;
+    for (const [index, { primary, members }] of dominatedGroups(group.filter((f) => pyGet(f, 'id', ''))).entries()) {
+      if (members.length < 2 && group.every((f) => pyGet(f, 'id', ''))) continue;
+      for (const f of members) {
+        f.consolidation_key = index ? `${consolidationKey}:${primary.id}` : consolidationKey;
+        f.consolidation_primary = f === primary;
+        consolidatedCount += 1;
+      }
     }
   }
   return { findings, consolidatedCount };
@@ -3826,10 +3849,16 @@ function disposeFindings(challenged) {
       members: [primary, ...corroborators], consolidation_key: primary.consolidation_key,
     })) : accepted.groups;
   for (const group of candidates) {
-    const primary = chooseGroupLead(group.members, group.lead_id);
     for (const member of group.members) {
-      member.consolidation_key = group.consolidation_key ?? primary.id;
-      member.consolidation_primary = member === primary;
+      delete member.consolidation_key;
+      delete member.consolidation_primary;
+    }
+    for (const [index, { primary, members }] of dominatedGroups(group.members, group.lead_id).entries()) {
+      if (members.length < 2) continue;
+      for (const member of members) {
+        member.consolidation_key = group.consolidation_key ? (index ? `${group.consolidation_key}:${primary.id}` : group.consolidation_key) : primary.id;
+        member.consolidation_primary = member === primary;
+      }
     }
   }
   const delivery = deliveryGroups(actionable);
@@ -3885,29 +3914,19 @@ function acceptGroupingReply(reply, ids, findings) {
   const known = new Set(ids);
   const seen = new Set();
   for (const group of reply.groups) {
-    if (!object(group) || !Array.isArray(group.finding_ids) || group.finding_ids.length < 2
+    if (!object(group) || !Array.isArray(group.finding_ids)
       || Object.keys(group).some((key) => !['finding_ids', 'lead_id'].includes(key))) return reject('invalid group');
     for (const id of group.finding_ids) {
       if (!known.has(id)) return reject('unknown id');
       if (seen.has(id)) return reject('overlapping id');
       seen.add(id);
     }
-    if (!group.finding_ids.includes(group.lead_id)) return reject('foreign lead');
+    if (group.finding_ids.length && !group.finding_ids.includes(group.lead_id)) return reject('foreign lead');
   }
   const byId = new Map(findings.map((f) => [f.id, f]));
   return { error: null, groups: reply.groups.map((group) => ({
     lead_id: group.lead_id, members: group.finding_ids.map((id) => byId.get(id)).filter(Boolean),
   })).filter((group) => group.members.length >= 2) };
-}
-function chooseGroupLead(members, modelLead) {
-  const key = (f) => [(f.report_tag ?? f.report_destination ?? f.admission?.tier) === 'main' ? 1 : 0,
-    SEVERITY_ORDER.length - (SEVERITY_ORDER.indexOf(f.severity) < 0 ? SEVERITY_ORDER.length : SEVERITY_ORDER.indexOf(f.severity)),
-    deliveryAllows(f, 'inline') ? 1 : 0, f.id === modelLead ? 1 : 0, Number(f.confidence) || 0, findingPolicy(f).core ? 1 : 0, String(f.description || '').length];
-  return [...members].sort((a, b) => {
-    const ka = key(a), kb = key(b);
-    for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return kb[i] - ka[i];
-    return 0;
-  })[0];
 }
 // --- outboundText.js ---
 const OUTBOUND_NAMED_ENTITIES = deepFreeze({
@@ -4967,13 +4986,16 @@ function localCountsSentence(findings, rawCount, unverified, view) {
   if (unverified.length > held) sentence += ` ${unverified.length - held} unverified / pipeline-degraded.`;
   return sentence;
 }
+function publicSummaryText(template, values) {
+  return template.replace(/\{(\w+)\}/g, (_, key) => values[key]);
+}
 function countsSentence(findings, view) {
   const count = findings.length;
   const breakdown = view.order.map((severity) => `${view.buckets.get(severity).length} ${severity}`);
-  let sentence = `Found ${count} ${plural(count, 'issue')} in this change${breakdown.length ? ': ' + breakdown.join(', ') : ''}.`;
+  let sentence = publicSummaryText(PUBLIC_SUMMARY.counts, { count, issues: plural(count, 'issue'), breakdown: breakdown.length ? ': ' + breakdown.join(', ') : '' });
   const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
-  if (suggestions === 1) sentence += ' 1 is a suggested improvement rather than a defect.';
-  else if (suggestions > 1) sentence += ` ${suggestions} are suggested improvements rather than defects.`;
+  if (suggestions === 1) sentence += publicSummaryText(PUBLIC_SUMMARY.improvement, { count: suggestions });
+  else if (suggestions > 1) sentence += publicSummaryText(PUBLIC_SUMMARY.improvements, { count: suggestions });
   return sentence;
 }
 function reportUnitKey(finding, original) {
@@ -5066,9 +5088,9 @@ function summaryBlock(builder, input, findingsRight = 'body') {
     const where = quotedSummaryLocation(finding) || '`location unavailable`';
     const url = locationUrl(finding, permalinks);
     const link = url ? `[${where}](${url})` : where;
-    const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? ' (improvement suggestion)' : '';
+    const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? PUBLIC_SUMMARY.suggestion : '';
     const bullet = outboundTildeRuns(
-      `- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`,
+      publicSummaryText(PUBLIC_SUMMARY.index, { mark: severityMark(severity), severity: severity.toUpperCase(), location: link, suggestion, title: prepareSummaryTitle(finding.title) }),
     );
     const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
     if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
@@ -7855,7 +7877,7 @@ async function deliverFromCheckpoint(c, A, state) {
     deliveryCap: limits.deliveryCap ?? null,
     gapCount: gaps.length,
   };
-  const reviewBody = renderSummaryBody(reportInput);
+  const reviewBody = renderSummaryBody({ ...reportInput, delivered: postReview });
   let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
   const reportGaps = reportOut.gaps || [];
   gaps.push(...reportGaps);

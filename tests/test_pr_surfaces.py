@@ -145,3 +145,53 @@ def test_legacy_summary_plural_improvements_and_missing_index_are_plain():
         "Found 2 issues in this change: 2 low. 2 are suggested improvements rather than defects."
         "\n\n2 more issues not listed here (did not fit in this comment)."
     )
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        lambda text: text.replace("- 🟠 [HIGH]", "- HIGH"),
+        lambda text: text.replace(": Visible issue", " :: Visible issue"),
+    ],
+)
+def test_summary_index_contract_drift_fails_before_posting(drift):
+    rows = [finding(id="A", title="Visible issue", anchor="wrong_value()")]
+    summary = run_node(
+        "import { renderSummaryBody } from './workflows/src/renderReport.js';"
+        "let s='';for await(const c of process.stdin)s+=c;"
+        "process.stdout.write(renderSummaryBody(JSON.parse(s)));",
+        {"findings": rows},
+    ).stdout
+    with pytest.raises(compose.ReportShapeError, match="Summary index does not match"):
+        compose.compose_review_body(
+            drift(summary),
+            [],
+            platform="github",
+            findings_count=1,
+            sha="a" * 40,
+            index_findings=cast(list[Finding], rows),
+        )
+
+
+@pytest.mark.parametrize(
+    "severities,suggestions",
+    [([], 0), (["critical"], 0), (["high", "low"], 1), (["medium", "low", "low"], 2)],
+)
+def test_summary_count_templates_match_across_runtimes(severities, suggestions):
+    rows = [
+        finding(
+            id=str(i),
+            severity=severity,
+            report_tag="suggestion" if i < suggestions else "main",
+        )
+        for i, severity in enumerate(severities)
+    ]
+    body = run_node(
+        "import { renderSummaryBody } from './workflows/src/renderReport.js';"
+        "let s='';for await(const c of process.stdin)s+=c;process.stdout.write(renderSummaryBody(JSON.parse(s)));",
+        {"findings": rows},
+    ).stdout
+    assert (
+        compose.summary_for_delivery("", cast(list[Finding], rows)).split("\n")[0]
+        == body.split("\n")[0]
+    )

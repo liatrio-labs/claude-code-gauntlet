@@ -5,7 +5,7 @@ import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
 import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
 import { hasAdmission } from './admission.js';
-import { SEVERITY_ORDER, findingPolicy } from './registry.js';
+import { dominatedGroups } from './groupRanking.js';
 
 const DELIVERABLE_CHALLENGES = ['survived', 'contested', 'downgraded'];
 
@@ -76,10 +76,16 @@ export function disposeFindings(challenged) {
       members: [primary, ...corroborators], consolidation_key: primary.consolidation_key,
     })) : accepted.groups;
   for (const group of candidates) {
-    const primary = chooseGroupLead(group.members, group.lead_id);
     for (const member of group.members) {
-      member.consolidation_key = group.consolidation_key ?? primary.id;
-      member.consolidation_primary = member === primary;
+      delete member.consolidation_key;
+      delete member.consolidation_primary;
+    }
+    for (const [index, { primary, members }] of dominatedGroups(group.members, group.lead_id).entries()) {
+      if (members.length < 2) continue;
+      for (const member of members) {
+        member.consolidation_key = group.consolidation_key ? (index ? `${group.consolidation_key}:${primary.id}` : group.consolidation_key) : primary.id;
+        member.consolidation_primary = member === primary;
+      }
     }
   }
   const delivery = deliveryGroups(actionable);
@@ -139,28 +145,17 @@ export function acceptGroupingReply(reply, ids, findings) {
   const known = new Set(ids);
   const seen = new Set();
   for (const group of reply.groups) {
-    if (!object(group) || !Array.isArray(group.finding_ids) || group.finding_ids.length < 2
+    if (!object(group) || !Array.isArray(group.finding_ids)
       || Object.keys(group).some((key) => !['finding_ids', 'lead_id'].includes(key))) return reject('invalid group');
     for (const id of group.finding_ids) {
       if (!known.has(id)) return reject('unknown id');
       if (seen.has(id)) return reject('overlapping id');
       seen.add(id);
     }
-    if (!group.finding_ids.includes(group.lead_id)) return reject('foreign lead');
+    if (group.finding_ids.length && !group.finding_ids.includes(group.lead_id)) return reject('foreign lead');
   }
   const byId = new Map(findings.map((f) => [f.id, f]));
   return { error: null, groups: reply.groups.map((group) => ({
     lead_id: group.lead_id, members: group.finding_ids.map((id) => byId.get(id)).filter(Boolean),
   })).filter((group) => group.members.length >= 2) };
-}
-
-export function chooseGroupLead(members, modelLead) {
-  const key = (f) => [(f.report_tag ?? f.report_destination ?? f.admission?.tier) === 'main' ? 1 : 0,
-    SEVERITY_ORDER.length - (SEVERITY_ORDER.indexOf(f.severity) < 0 ? SEVERITY_ORDER.length : SEVERITY_ORDER.indexOf(f.severity)),
-    deliveryAllows(f, 'inline') ? 1 : 0, f.id === modelLead ? 1 : 0, Number(f.confidence) || 0, findingPolicy(f).core ? 1 : 0, String(f.description || '').length];
-  return [...members].sort((a, b) => {
-    const ka = key(a), kb = key(b);
-    for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return kb[i] - ka[i];
-    return 0;
-  })[0];
 }

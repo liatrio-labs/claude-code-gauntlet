@@ -196,7 +196,7 @@ export async function deliverFromCheckpoint(c, A, state) {
     deliveryCap: limits.deliveryCap ?? null,
     gapCount: gaps.length,
   };
-  const reviewBody = renderSummaryBody(reportInput);
+  const reviewBody = renderSummaryBody({ ...reportInput, delivered: postReview });
   // Render from pipeline data so report structure and counts remain deterministic.
   let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
   const reportGaps = reportOut.gaps || [];

@@ -613,16 +613,6 @@ def test_prose_active_fences_preserve_owned_patch(
     assert f"{patch_header}\n{patch_text}\n```" in rendered
     assert compose.BRAND_TRAILER in rendered
 
-    corroborator = {
-        "severity": "low",
-        "title": "corroborator [a]: //e/SENT](a b)",
-        "body": "term\n~ ~~~mermaid\n  x = SENT\n  ~~~\n\ntail",
-        "agent": "Corroborator",
-    }
-    grouped = compose.render_group_body(finding, [corroborator])
-    assert "corroborator" not in grouped
-    assert "mermaid" not in grouped
-
     skipped = compose.compose_review_body(
         "",
         [
@@ -637,6 +627,5 @@ def test_prose_active_fences_preserve_owned_patch(
         platform="github",
         findings_count=1,
         sha="a" * 40,
-        inline_count=None,
     ).body
     assert ": \\~\\~\\~suggestion" in skipped

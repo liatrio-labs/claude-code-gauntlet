@@ -1,6 +1,7 @@
 """Pure delivery bodies, grouping, and key material."""
 
 import hashlib
+import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -81,6 +82,7 @@ class SkippedEntry:
     filepath: object
     line: object
     finding: Mapping[str, object]
+    additional_sites: tuple[Mapping[str, object], ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,19 +231,19 @@ def render_group_body(
     ) + (f"\n\n{style.trailer}")
 
 
-def render_group_sections(
-    primary: Mapping[str, object],
-    corroborators: Sequence[Mapping[str, object]],
-    *,
-    fence_offsets: FenceOffsets | None = None,
-    style: CommentStyle | None = None,
-) -> str:
-    body = render_finding_sections(primary, fence_offsets=fence_offsets, style=style)
-    primary_range = canonical_range(primary)
-    seen = {site_key(primary)} if primary_range is not None else set()
+def location_text(finding: Mapping[str, object]) -> str:
+    span = canonical_range(finding)
+    assert span is not None
+    start, end = span
+    return f"{finding.get('file')}:{start}" + (f"-{end}" if end != start else "")
+
+
+def group_sites(
+    primary: Mapping[str, object], corroborators: Sequence[Mapping[str, object]]
+) -> tuple[Mapping[str, object], ...]:
+    seen = {site_key(primary)} if canonical_range(primary) is not None else set()
     sites = []
-    members = (primary, *corroborators)
-    for finding in members:
+    for finding in (primary, *corroborators):
         candidates = list(
             cast(Sequence[Mapping[str, object]], finding.get("sites", []))
         )
@@ -253,22 +255,34 @@ def render_group_sections(
                 "disposition": finding.get("disposition"),
                 "admission": finding.get("admission"),
             }
-            if not delivery_allows(located, "sourceLink"):
+            if not delivery_allows(located, "sourceLink") or site_key(site) in seen:
                 continue
-            key = site_key(site)
-            if key in seen:
-                continue
-            seen.add(key)
-            span = canonical_range(site)
-            assert span is not None
-            start, end = span
-            location = f"{site['file']}:{start}" + (f"-{end}" if end != start else "")
-            sites.append(f"- {prepare_location(location)}")
+            seen.add(site_key(site))
+            sites.append(site)
+    return tuple(sites)
+
+
+def render_group_sections(
+    primary: Mapping[str, object],
+    corroborators: Sequence[Mapping[str, object]],
+    *,
+    fence_offsets: FenceOffsets | None = None,
+    style: CommentStyle | None = None,
+    additional_sites: Sequence[Mapping[str, object]] | None = None,
+) -> str:
+    body = render_finding_sections(primary, fence_offsets=fence_offsets, style=style)
+    sites = (
+        group_sites(primary, corroborators)
+        if additional_sites is None
+        else additional_sites
+    )
     if sites:
-        body += "\n\n**Additional sites:**\n" + "\n".join(sites)
+        body += "\n\n**Additional sites:**\n" + "\n".join(
+            f"- {prepare_location(location_text(site))}" for site in sites
+        )
     agents = {
         agent.strip().lower()
-        for finding in members
+        for finding in (primary, *corroborators)
         if isinstance(agent := finding.get("agent"), str) and agent.strip()
     }
     if len(agents) >= 2:
@@ -298,7 +312,7 @@ def _plural(count: int, singular: str, plural: str | None = None) -> str:
     return singular if count == 1 else (plural or singular + "s")
 
 
-def _skipped_frame(n: int, shown: int, inline_count: int | None) -> str:
+def _skipped_frame(n: int) -> str:
     return (
         f"---\n\n### {n} {_plural(n, 'issue')} could not be attached to a changed line, "
         "so it is described here"
@@ -312,7 +326,11 @@ def _digest_pieces(entries: Sequence[SkippedEntry]) -> str:
         return ""
     lead, *others = entries
     location = _skipped_location(lead.filepath, lead.finding)
-    sections = render_group_sections(lead.finding, [entry.finding for entry in others])
+    sections = render_group_sections(
+        lead.finding,
+        [entry.finding for entry in others],
+        additional_sites=lead.additional_sites,
+    )
     return neutralize_comment_openers(
         f"\n\n#### {prepare_location(location)}\n\n{sections}"
     )
@@ -333,7 +351,7 @@ def digest_groups(
         yield group, fragment if fits(fragment) else None
 
 
-def _closing_line(m: int, n: int, platform: Platform) -> str:
+def _closing_line(m: int, n: int) -> str:
     return f"_{m} of these {n} {_plural(n, 'issue')} did not fit in this comment._"
 
 
@@ -352,14 +370,12 @@ def compose_inline_body(
 def _bounded_section(
     n: int,
     shown_groups: Sequence[Sequence[SkippedEntry]],
-    inline_count: int | None,
-    platform: Platform,
 ) -> str:
-    section = _skipped_frame(n, len(shown_groups), inline_count)
+    section = _skipped_frame(n)
     section += "".join(_digest_pieces(group) for group in shown_groups)
     omitted = n - len(shown_groups)
     if omitted:
-        section += f"\n\n{_closing_line(omitted, n, platform)}"
+        section += f"\n\n{_closing_line(omitted, n)}"
     return section
 
 
@@ -382,38 +398,59 @@ def _standalone_footer_lines(review_body: str) -> str:
     )
 
 
-def _skipped_reserve(n: int, inline_count: int | None, platform: Platform) -> int:
-    # The widest count and both grammar forms bound every possible shown count.
-    frame = max(utf8_len(_skipped_frame(n, shown, inline_count)) for shown in (0, n))
-    closing = utf8_len(_closing_line(n, n, platform))
-    return frame + closing
+def _skipped_reserve(n: int) -> int:
+    return utf8_len(_skipped_frame(n)) + utf8_len(_closing_line(n, n))
 
 
-def _index_identity(finding: Mapping[str, object]) -> tuple[str, str, str] | None:
-    span = canonical_range(finding)
-    if span is None:
+def _index_identity(finding: Mapping[str, object]) -> re.Pattern[str] | None:
+    if canonical_range(finding) is None:
         return None
-    start, end = span
-    location = f"{finding.get('file')}:{start}" + (f"-{end}" if start != end else "")
-    where = prepare_location(location)
+    where = re.escape(prepare_location(location_text(finding)))
     severity = normalize_report_severity(
         finding.get("severity"), registry.SEVERITY_EMOJI
     )
-    prefix = f"- {registry.SEVERITY_EMOJI.get(severity, registry.SEVERITY_EMOJI_FALLBACK)} [{severity.upper()}] "
-    return (
-        prefix + where,
-        prefix + "[" + where + "](",
-        ": " + prepare_summary_title(finding.get("title", "")),
-    )
+    values = {
+        "mark": re.escape(
+            registry.SEVERITY_EMOJI.get(severity, registry.SEVERITY_EMOJI_FALLBACK)
+        ),
+        "severity": severity.upper(),
+        "location": rf"(?:{where}|\[{where}\]\([^\n]*\))",
+        "suggestion": re.escape(
+            registry.PUBLIC_SUMMARY["suggestion"]
+            if finding.get("report_tag", finding.get("report_destination"))
+            == "suggestion"
+            else ""
+        ),
+        "title": re.escape(prepare_summary_title(finding.get("title", ""))),
+    }
+    pattern = re.escape(registry.PUBLIC_SUMMARY["index"])
+    for key, value in values.items():
+        pattern = pattern.replace(re.escape("{" + key + "}"), value)
+    return re.compile(pattern)
 
 
-def _index_matches(line: str, identity: tuple[str, str, str]) -> bool:
-    plain, linked, title = identity
-    return (
-        line.startswith(plain + ": ")
-        or line.startswith(plain + " (improvement suggestion): ")
-        or line.startswith(linked)
-    ) and line.endswith(title)
+def _index_matches(line: str, identity: re.Pattern[str]) -> bool:
+    return identity.fullmatch(line) is not None
+
+
+def _validate_public_index(review_body: str, findings: Sequence[Finding]) -> None:
+    prefix = registry.PUBLIC_SUMMARY["counts"].split("{count}")[0]
+    if not review_body.startswith(prefix):
+        return
+    identities = [
+        identity
+        for group in consolidate_delivery(findings)
+        if (identity := _index_identity(group.primary)) is not None
+    ]
+    for line in review_body.split("\n")[1:]:
+        if not line or re.fullmatch(
+            r"[0-9]+ more issues? not listed here \([^\n]*\)\.", line
+        ):
+            continue
+        if not any(_index_matches(line, identity) for identity in identities):
+            raise ReportShapeError(
+                "Summary index does not match its findings; regenerate the review summary."
+            )
 
 
 def _without_body_index(
@@ -422,6 +459,7 @@ def _without_body_index(
     index_findings: Sequence[Finding],
 ) -> str:
     # Placement can fail after the workflow rendered its index, so reconcile exact owned bullets.
+    _validate_public_index(review_body, index_findings)
     identities = []
     for group in groups:
         finding = group[0].finding
@@ -464,8 +502,10 @@ def summary_for_delivery(report_summary: str, findings: Sequence[Finding]) -> st
         if severity in severities
     )
     n = len(groups)
-    sentence = f"Found {n} {_plural(n, 'issue')} in this change" + (
-        f": {breakdown}." if breakdown else "."
+    sentence = registry.PUBLIC_SUMMARY["counts"].format(
+        count=n,
+        issues=_plural(n, "issue"),
+        breakdown=f": {breakdown}" if breakdown else "",
     )
     suggestions = sum(
         group.primary.get("report_tag", group.primary.get("report_destination"))
@@ -473,9 +513,9 @@ def summary_for_delivery(report_summary: str, findings: Sequence[Finding]) -> st
         for group in groups
     )
     if suggestions == 1:
-        sentence += " 1 is a suggested improvement rather than a defect."
+        sentence += registry.PUBLIC_SUMMARY["improvement"].format(count=suggestions)
     elif suggestions > 1:
-        sentence += f" {suggestions} are suggested improvements rather than defects."
+        sentence += registry.PUBLIC_SUMMARY["improvements"].format(count=suggestions)
     identities = [
         identity
         for group in groups
@@ -501,7 +541,6 @@ def compose_review_body(
     platform: Platform,
     findings_count: int,
     sha: object,
-    inline_count: int | None = None,
     index_findings: Sequence[Finding] = (),
 ) -> ComposedBody:
     # Standalone prepared summary lines alone drive same-SHA footer deduplication.
@@ -513,7 +552,7 @@ def compose_review_body(
     limits = body_limit(platform)
     skipped = [entry for group in skipped_groups for entry in group]
     n = len(skipped_groups)
-    section = _bounded_section(n, skipped_groups, inline_count, platform) if n else ""
+    section = _bounded_section(n, skipped_groups) if n else ""
     footer = build_footer(
         findings_count,
         sha,
@@ -528,14 +567,14 @@ def compose_review_body(
     if review_body:
         fixed += utf8_len("\n\n")
     if n:
-        fixed += utf8_len("\n\n\n\n") + _skipped_reserve(n, inline_count, platform)
+        fixed += utf8_len("\n\n\n\n") + _skipped_reserve(n)
     allowance = limits.bytes - fixed
 
     if review_body and utf8_len(review_body) > allowance:
         effective_body, folded_bytes = fold_review_body(
             review_body, allowance, platform
         )
-        section = _bounded_section(n, [], inline_count, platform) if n else ""
+        section = _bounded_section(n, []) if n else ""
         body = _compose_fragments(effective_body, section, footer)
         return ComposedBody(
             body,
@@ -563,7 +602,7 @@ def compose_review_body(
             shown_groups.append(group)
         else:
             omitted_groups.append(group)
-    section = _bounded_section(n, shown_groups, inline_count, platform) if n else ""
+    section = _bounded_section(n, shown_groups) if n else ""
     body = _compose_fragments(review_body, section, footer)
     return ComposedBody(
         body,

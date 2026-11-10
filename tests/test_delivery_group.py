@@ -6,10 +6,12 @@ from pathlib import Path
 
 from gauntlet.delivery import compose
 from gauntlet.delivery.input import Finding
-from gauntlet.marker import build_finding_marker
+from gauntlet.marker import build_finding_marker, find_finding_markers
 from gauntlet.prior_review import prior_delivery_from_entries
 
 from tests.support.delivery import date_override_members
+from tests.support.pipeline import run_node
+from tests.support.posting import invoke_posting, review
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests/fixtures/delivery_group.json"
@@ -105,8 +107,10 @@ def test_single_reviewer_and_unconfirmed_member_have_no_extra_claims():
     assert ":125-127`" in body
 
 
-def test_unanchored_group_is_one_issue_with_all_member_marker_coverage():
-    rows, _ = members()
+def test_unanchored_group_is_one_issue_with_all_member_marker_coverage(
+    tmp_path, monkeypatch, capsys, forge_factory
+):
+    rows, keys = members()
     for row in rows:
         row["disposition"] = "body"
     skipped = tuple(
@@ -125,6 +129,19 @@ def test_unanchored_group_is_one_issue_with_all_member_marker_coverage():
     assert "### cross_file_impact" not in composed.body
     assert composed.shown == 1
     assert composed.shown_entries == skipped
+    run = invoke_posting(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        forge_factory,
+        review("gitlab", rows[:2]),
+        dry_run=False,
+    )
+    assert run.code == 0, run.err
+    assert len(run.requests) == 1
+    markers = find_finding_markers(run.requests[0].payload["body"])
+    assert {marker["key"] for marker in markers} == {keys["F107"], keys["F114"]}
+    assert len(markers) == 2
 
 
 def test_local_report_keeps_every_member_description():
@@ -146,3 +163,24 @@ def test_local_report_keeps_every_member_description():
         check=True,
     )
     assert all(str(row["description"]) in result.stdout for row in rows)
+
+
+def test_security_member_keeps_its_own_pr_comment_after_model_grouping():
+    output = run_node(
+        "import { makeFinding } from './workflows/test/helpers/pipelineMock.js';"
+        "import { disposeFindings } from './workflows/src/dispose.js';"
+        "import { writerPayload } from './workflows/src/persistPlan.js';"
+        "const findings=[makeFinding('LEAD',{description:'Ordinary defect text.'}),"
+        "makeFinding('SECURITY',{dimension:'security',description:'Security defect text must stay on the PR.'})];"
+        "process.stdout.write(JSON.stringify(writerPayload(disposeFindings({findings,grouping_reply:"
+        "{groups:[{finding_ids:['LEAD','SECURITY'],lead_id:'LEAD'}]}})).findings));",
+        {},
+    )
+    groups = compose.consolidate_delivery(json.loads(output.stdout))
+    comments = [
+        compose.render_group_body(group.primary, group.corroborators)
+        for group in groups
+    ]
+    assert len(comments) == 2
+    assert "Ordinary defect text." in comments[0]
+    assert "Security defect text must stay on the PR." in comments[1]

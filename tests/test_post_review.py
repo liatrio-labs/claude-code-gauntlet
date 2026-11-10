@@ -419,7 +419,8 @@ def test_group_retry_is_atomic(posting):
         assert "position" not in request.payload
         body = request.payload["body"]
         assert_poison(body)
-        assert member_keys[0] in body and member_keys[1] not in body
+        assert member_keys[0] in body
+        assert (member_keys[1] in body) == (present == 0)
         assert all(site["file"] in body for site in sites)
         assert "@ghost" not in body and "<!-- code-gauntlet-findings:" in body
         assert "~~~suggestion" not in body
@@ -1099,7 +1100,6 @@ def test_composer_defensively_denies_unconfirmed_fence():
         platform="github",
         findings_count=1,
         sha="a" * 40,
-        inline_count=None,
     ).body
     assert "foo.py (location unconfirmed)" in section and "999" not in section
     member["location_status"] = "confirmed"
@@ -1109,7 +1109,6 @@ def test_composer_defensively_denies_unconfirmed_fence():
         platform="github",
         findings_count=1,
         sha="a" * 40,
-        inline_count=None,
     ).body
     assert "foo.py:2" in section and "999" not in section
 
@@ -1514,3 +1513,103 @@ def test_capture_gl_multibyte_boundary(posting, monkeypatch):
     suffix = post._delivery_marker_suffix(SHA, [markers[0]["key"]])
     assert body.removesuffix(suffix) == comments[0]["body"]
     assert "[folded:" in body
+
+
+def test_gitlab_group_site_addenda_count_all_reviewers_without_relisting_delivered_ranges(
+    posting,
+):
+    stamp = {"issue_key": "group:P", "lead_id": "P", "finding_ids": ["P", "M", "N"]}
+    rows = [
+        located(id="P", agent="one", delivery_group=stamp),
+        located(
+            id="M",
+            agent="two",
+            line_start=4,
+            line_end=4,
+            anchor="finish_operation()",
+            delivery_group=stamp,
+        ),
+        located(id="N", agent="three", line_start=8, line_end=8, delivery_group=stamp),
+    ]
+    first = posting(review("gitlab", rows), diff=DIFF, dry_run=False)
+    assert first.code == 0
+    notes = [
+        {
+            "id": 10 + i,
+            "author": {"username": "poster"},
+            "body": request.payload["body"],
+        }
+        for i, request in enumerate(first.requests)
+    ]
+    assert "- `foo.py:4`" in notes[1]["body"]
+    assert "- `foo.py:8`" in notes[1]["body"]
+    sites = [
+        {
+            "file": f"new-{i}.txt",
+            "anchor": "quote",
+            "line_start": 1,
+            "line_end": 1,
+            "location_status": "confirmed",
+        }
+        for i in range(2)
+    ]
+    extended = [{**row, "sites": [sites[i % 2]]} for i, row in enumerate(rows)]
+    update = posting(
+        review("gitlab", extended),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(notes, None),
+    )
+    assert update.code == 0 and len(update.requests) == 1
+    body = update.requests[0].payload["body"]
+    assert body.count("_Found independently by 3 reviewers._") == 1
+    assert [line for line in body.splitlines() if line.startswith("- `")] == [
+        "- `new-0.txt:1`",
+        "- `new-1.txt:1`",
+    ]
+    assert "### 1 issue could not be attached" in body
+    notes[0]["body"] = body
+    repeated = posting(
+        review("gitlab", extended),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(notes, None),
+    )
+    assert repeated.code == 0 and repeated.requests == ()
+    # Member markers prove that their own ranges were already delivered.
+    notes[1]["body"] = (
+        notes[1]["body"].split("<!-- code-gauntlet-coverage:")[0]
+        + "\n"
+        + "\n".join(
+            post.build_finding_marker(SHA, marker["key"])
+            for marker in find_finding_markers(notes[1]["body"])
+        )
+    )
+    resumed = posting(
+        review("gitlab", extended),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(notes, None),
+    )
+    assert resumed.code == 0 and resumed.requests == ()
+    moved_lead = {**stamp, "lead_id": "M", "finding_ids": ["M", "P", "N"]}
+    reranked = posting(
+        review("gitlab", [{**row, "delivery_group": moved_lead} for row in extended]),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(notes, None),
+    )
+    assert reranked.code == 0 and reranked.requests == ()
+
+
+def test_github_skip_message_uses_issue_counts_for_multi_member_groups(posting):
+    stamp = {"issue_key": "group:P", "lead_id": "P", "finding_ids": ["P", "M"]}
+    rows = [
+        located(id="P", disposition="body", delivery_group=stamp, body="huge " * 20000),
+        located(id="M", disposition="body", delivery_group=stamp),
+        located(id="S", disposition="body", title="Small", body="small"),
+    ]
+    run = posting(review("github", rows), diff=DIFF)
+    assert run.code == 0
+    assert "1 of 2 issue(s) skipped inline" in run.out
+    assert "1 of 3" not in run.out

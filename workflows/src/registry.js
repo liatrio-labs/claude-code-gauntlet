@@ -51,6 +51,14 @@ export const PR_IDENTITY_FIELDS = deepFreeze([
     describe: 'a non-empty string when present' },
 ]);
 
+export const PUBLIC_SUMMARY = deepFreeze({
+  counts: 'Found {count} {issues} in this change{breakdown}.',
+  improvement: ' {count} is a suggested improvement rather than a defect.',
+  improvements: ' {count} are suggested improvements rather than defects.',
+  index: '- {mark} [{severity}] {location}{suggestion}: {title}',
+  suggestion: ' (improvement suggestion)',
+});
+
 export const CODE_OWNED_HEADINGS = deepFreeze([
   '## Summary',
   '## Change Context',

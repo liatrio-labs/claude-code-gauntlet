@@ -588,7 +588,7 @@
     {"id":"composed:suggestion_alert_payload","group":"composed","sha256":"48cf206dfbac725d394744131dde9e5fdd8b9dadf0184b512245df4acac2e862","paragraphs":[],"commands":[],"stored_equals_posted":true},
     {"id":"composed:slash_body_line","group":"composed","sha256":"5866ac4461b5ec272b17b5fcf90688ac507d029f8c633a37bb668eb855cca186","paragraphs":[{"start_line":2,"end_line":2}],"commands":[],"stored_equals_posted":true},
     {"id":"composed:slash_suggestion_line","group":"composed","sha256":"5436a93dfa106ec968a8f598de9429b09237d906d7a5520e33d42e1d356a889e","paragraphs":[{"start_line":4,"end_line":6}],"commands":[],"stored_equals_posted":true},
-    {"id":"composed:grouped_corroborator","group":"composed","sha256":"b73615db3ae0608bf96c9c3ad31cee6ff14f81755a613e6d48a585cd910f01e9","paragraphs":[],"commands":[],"stored_equals_posted":true},
+    {"id":"composed:grouped_lead","group":"composed","sha256":"c4cd2383a64bf6e44bd30be4ea1f91ddd0588503ebe944e7c6508ca04b7a5c24","paragraphs":[{"start_line":2,"end_line":4}],"commands":[],"stored_equals_posted":true},
     {"id":"raw:suggestion_alert_payload_breakout","group":"raw","sha256":"158a32c747853346ca70ecff55a0759122914b8856b7303fdcc8d878979aae72","paragraphs":[{"start_line":5,"end_line":6}],"commands":[["label","~zz377nolabel"]],"stored_equals_posted":false,"content":">>> [!note]\nSee the patch below.\n\n```suggestion\n>>>\nreturn x\n```"}
   ]
 }

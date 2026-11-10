@@ -7,7 +7,7 @@ import { PERMALINK_TEMPLATES, identityCheck, CODE_OWNED_HEADINGS, FINDING_PROP_T
 import { deliveryGroups } from './dispose.js';
 import { DIMENSIONS, AGENTS, AGENT_LABELS, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI } from './registry.js';
 import { RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, conditionalSchemaActive, pinsModelIds, resolvePolicy } from './registry.js';
-import { SEVERITY_ORDER, REPORT_FOLD_LIMITS } from './registry.js';
+import { SEVERITY_ORDER, REPORT_FOLD_LIMITS, PUBLIC_SUMMARY } from './registry.js';
 import { REPORT_PLACED_FIELDS, STAGE_DEFAULTS, FINDING_PATH_ARRAY_FIELDS } from './registry.js';
 import { KNOB_REGISTRY } from './knobs.js';
 import { longestBacktickRun, deepFreeze } from './wire.js';
@@ -563,13 +563,17 @@ function localCountsSentence(findings, rawCount, unverified, view) {
   return sentence;
 }
 
+function publicSummaryText(template, values) {
+  return template.replace(/\{(\w+)\}/g, (_, key) => values[key]);
+}
+
 function countsSentence(findings, view) {
   const count = findings.length;
   const breakdown = view.order.map((severity) => `${view.buckets.get(severity).length} ${severity}`);
-  let sentence = `Found ${count} ${plural(count, 'issue')} in this change${breakdown.length ? ': ' + breakdown.join(', ') : ''}.`;
+  let sentence = publicSummaryText(PUBLIC_SUMMARY.counts, { count, issues: plural(count, 'issue'), breakdown: breakdown.length ? ': ' + breakdown.join(', ') : '' });
   const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
-  if (suggestions === 1) sentence += ' 1 is a suggested improvement rather than a defect.';
-  else if (suggestions > 1) sentence += ` ${suggestions} are suggested improvements rather than defects.`;
+  if (suggestions === 1) sentence += publicSummaryText(PUBLIC_SUMMARY.improvement, { count: suggestions });
+  else if (suggestions > 1) sentence += publicSummaryText(PUBLIC_SUMMARY.improvements, { count: suggestions });
   return sentence;
 }
 
@@ -668,9 +672,9 @@ function summaryBlock(builder, input, findingsRight = 'body') {
     const where = quotedSummaryLocation(finding) || '`location unavailable`';
     const url = locationUrl(finding, permalinks);
     const link = url ? `[${where}](${url})` : where;
-    const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? ' (improvement suggestion)' : '';
+    const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? PUBLIC_SUMMARY.suggestion : '';
     const bullet = outboundTildeRuns(
-      `- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`,
+      publicSummaryText(PUBLIC_SUMMARY.index, { mark: severityMark(severity), severity: severity.toUpperCase(), location: link, suggestion, title: prepareSummaryTitle(finding.title) }),
     );
     const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
     if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {

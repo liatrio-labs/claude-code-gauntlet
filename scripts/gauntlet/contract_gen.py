@@ -185,6 +185,7 @@ _REGISTRY_FIELDS = (
     " requiredWhenDimension: d.requiredWhenDimension || [],"
     " extraFields: Object.keys(d.schemaExtra || {})}))",
     "brand: {mark: m.BRAND_MARK, name: m.BRAND_NAME}",
+    "publicSummary: m.PUBLIC_SUMMARY",
     "severityEmoji: m.SEVERITY_EMOJI",
     "severityOrder: m.SEVERITY_ORDER",
     "reachability: v.REACHABILITY_VALUES",
@@ -816,6 +817,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "DIMENSION_ROWS": identity["dimensionRows"],
         "BRAND_MARK": identity["brand"]["mark"],
         "BRAND_NAME": identity["brand"]["name"],
+        "PUBLIC_SUMMARY": identity["publicSummary"],
         "SEVERITY_EMOJI": identity["severityEmoji"],
         "SEVERITY_EMOJI_FALLBACK": identity["severityEmojiFallback"],
         "RULE_SOURCE_LABELS": identity["ruleSourceLabels"],

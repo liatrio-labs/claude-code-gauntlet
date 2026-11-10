@@ -117,5 +117,6 @@ process.stdout.write(JSON.stringify({summary_body:renderSummaryBody(input),repor
         platform="github",
         findings_count=len(findings),
         sha="f" * 40,
+        index_findings=findings,
     ).body
     return result

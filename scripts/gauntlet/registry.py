@@ -299,6 +299,8 @@ TRACE_FINDING_FIELDS: tuple[str, ...] = (
     "admission",
     "disposition",
     "disposition_reasons",
+    "report_tag",
+    "report_destination",
     "consolidation_key",
     "consolidation_primary",
     "delivery_group",
@@ -1216,6 +1218,14 @@ DIMENSION_ROWS: list[DimensionRow] = [
 BRAND_MARK = "⚔️"
 
 BRAND_NAME = "Code Gauntlet"
+
+PUBLIC_SUMMARY = {
+    "counts": "Found {count} {issues} in this change{breakdown}.",
+    "improvement": " {count} is a suggested improvement rather than a defect.",
+    "improvements": " {count} are suggested improvements rather than defects.",
+    "index": "- {mark} [{severity}] {location}{suggestion}: {title}",
+    "suggestion": " (improvement suggestion)",
+}
 
 SEVERITY_EMOJI = {
     "critical": "🔴",

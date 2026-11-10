@@ -371,8 +371,8 @@ test('whole issue groups reach every artifact', async (t) => {
   assert.deepEqual(post.map((f) => f.id), ['OFF', 'ANCHOR']);
   const grouped = await runAndCapture(validArgs({ ...args, checkpoints: { challenge: challengeOutput({ findings: raw.findings.slice(0, 3) }) } }));
   const groupPost = grouped.payload.postReview.findings;
-  assert.deepEqual(groupPost.map((f) => f.id), ['CORE', 'SUGGESTION', 'CORE-LOW']);
-  assert.deepEqual(groupPost[0].delivery_group, { issue_key: 'group:group.txt:10', lead_id: 'CORE', finding_ids: ['CORE', 'SUGGESTION', 'CORE-LOW'] });
+  assert.deepEqual(groupPost.map((f) => f.id), ['CORE', 'SUGGESTION']);
+  assert.deepEqual(groupPost[0].delivery_group, { issue_key: 'group:group.txt:10', lead_id: 'CORE', finding_ids: ['CORE', 'SUGGESTION'] });
   assert.equal(groupPost[0].sites.length, 4);
   const all = first.payload.findings;
   assert.deepEqual(all.filter((f) => f.delivery_group?.lead_id === 'OFF').map((f) => f.id), ['OFF', 'ANCHOR']);
@@ -1410,8 +1410,9 @@ for (const row of DELIVERY_ROWS) test(`delivery wiring: ${row.name}`, async () =
 const IDENTITY = { owner: 'o', repo: 'r', pr_number: 362, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   platform: 'github', web_origin: 'https://github.com' };
 const BODY_ROWS = [
-  { name: 'headless markdown indexes all', mode: 'headless', receipt: 'markdown', identity: true,
-    count: 9, cap: 6, delivered: 6, bullets: 9, suffix: null },
+  { name: 'headless markdown prospective PR index respects cap', mode: 'headless', receipt: 'markdown', identity: true,
+    count: 9, cap: 6, delivered: 6, bullets: 6,
+    suffix: '3 more issues not listed here (this review posts at most 6 issues).' },
   { name: 'interactive local uncapped', mode: 'interactive', count: 9, cap: null, delivered: 9, bullets: 9, suffix: null },
   { name: 'interactive local settings do not cap summary', mode: 'interactive', tier: true,
     count: 9, cap: 1, delivered: 1, bullets: 9, suffix: null },

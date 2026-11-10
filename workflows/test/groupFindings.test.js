@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyChallenges } from '../src/applyChallenges.js';
-import { disposeFindings, acceptGroupingReply, chooseGroupLead } from '../src/dispose.js';
+import { disposeFindings, acceptGroupingReply } from '../src/dispose.js';
+import { chooseGroupLead } from '../src/groupRanking.js';
 import { groupFindings, groupingPrompt, groupingSchema } from '../src/groupFindings.js';
 import { makeFinding, makeCtx, assertValidSchema } from './helpers/pipelineMock.js';
 import { validArgs } from './helpers/argsFixtures.js';
@@ -57,7 +58,7 @@ test('invalid grouping falls back without dropping members, including dispatch f
     assert.deepEqual(out.findings.map((f) => f.delivery_group), [expectedStamp, expectedStamp]);
   };
   for (const grouping_reply of [undefined, null, [], {}, { groups: null }, { groups: [], extra: 1 },
-    { groups: [null] }, { groups: [{ finding_ids: ['F107'], lead_id: 'F107' }] },
+    { groups: [null] }, { groups: [{ finding_ids: ['F107'], lead_id: 'foreign' }] },
     { groups: [{ finding_ids: ['F107', 'F114'], lead_id: 'foreign' }] },
     { groups: [{ finding_ids: ['F107', 'unknown'], lead_id: 'F107' }] },
     { groups: [{ finding_ids: ['F107', 'F114'], lead_id: 'F107' }, { finding_ids: ['F114', 'F107'], lead_id: 'F114' }] },
@@ -154,7 +155,7 @@ for (const grouping of ['model', 'positional']) for (const [name, overrides] of 
   ['tier', { report_tag: 'main' }],
 ]) test(`${grouping} group lead preserves ${name} when the stronger member is outside the diff`, () => {
   const strong = makeFinding('STRONG', { file: 'priority.js', agent: 'security-reviewer', severity: 'low', diff_validation: { in_diff: false }, ...overrides });
-  const inline = makeFinding('INLINE', { file: 'priority.js', agent: 'bug-detector', severity: name === 'tier' ? 'critical' : 'low', report_tag: name === 'tier' ? 'suggestion' : 'main' });
+  const inline = makeFinding('INLINE', { file: 'priority.js', agent: 'bug-detector', severity: 'low', report_tag: name === 'tier' ? 'suggestion' : 'main' });
   const out = disposeFindings({ findings: [inline, strong], grouping_reply: grouping === 'model' ? {
     groups: [{ finding_ids: ['INLINE', 'STRONG'], lead_id: 'INLINE' }],
   } : null });
@@ -168,4 +169,40 @@ for (const grouping of ['model', 'positional']) for (const [name, overrides] of 
   const local = renderReport(out);
   assert.match(local, name === 'severity' ? /### 🔴 Critical[\s\S]*#### finding STRONG/ : /#### finding STRONG/);
   assert.doesNotMatch(local, /#### finding INLINE/);
+});
+
+
+test('short groups are harmless while their ids and lead still validate', () => {
+  const findings = members();
+  const out = disposeFindings({ findings, grouping_reply: { groups: [
+    { finding_ids: [], lead_id: 'ignored' }, { finding_ids: ['F107'], lead_id: 'F107' },
+    { finding_ids: ['F125', 'F141'], lead_id: 'F125' },
+  ] } });
+  assert.equal(out.stats.grouping, 'model');
+  assert.equal(out.groups.length, 3);
+  assert.equal(out.stats.grouped_members, 2);
+});
+
+for (const path of ['model', 'positional']) for (const [name, left, right, expected] of [
+  ['security cannot hide under an equal non-security lead', {}, { dimension: 'security', description: 'Security text must remain visible.' }, 2],
+  ['severity and tier cannot trade away each other', { severity: 'low', report_tag: 'main' }, { severity: 'critical', report_tag: 'suggestion' }, 2],
+  ['security lead may include a non-security member', { dimension: 'security' }, {}, 1],
+]) test(`${path}: ${name}`, () => {
+  const findings = [makeFinding('LEAD', { confidence: 99, file: 'shared.js', description: 'Same complete description', agent: 'bug-detector', ...left }), makeFinding('MEMBER', { file: 'shared.js', description: 'Same complete description', agent: 'security-reviewer', ...right })];
+  const out = disposeFindings({ findings, grouping_reply: path === 'model' ? {
+    groups: [{ finding_ids: ['LEAD', 'MEMBER'], lead_id: 'LEAD' }],
+  } : null });
+  assert.equal(out.groups.length, expected);
+  assert.equal(out.findings.length, 2);
+  const report = renderReport(out);
+  const summary = renderSummaryBody(out);
+  if (expected === 2) {
+    assert.ok(out.groups.every((group) => group.finding_ids.length === 1));
+    assert.match(report, /#### finding MEMBER/);
+    if (right.dimension === 'security') assert.match(report, /Security text must remain visible/);
+    else {
+      assert.match(summary, /1 critical, 1 low/);
+      assert.match(summary, /1 is a suggested improvement/);
+    }
+  } else assert.equal(out.groups[0].lead_id, 'LEAD');
 });

@@ -1,3 +1,4 @@
+import { dominatedGroups } from './groupRanking.js';
 import { canonicalRange } from './location.js';
 import { INT_POLICY, coerceInt, asText, asConfidence, deepFreeze } from './wire.js';
 import { FIELD_RENAMES, SEVERITY_ORDER, INJECTION_STRIPPED_PROSE_FIELDS, AGENT_BUG_DETECTOR } from './registry.js';
@@ -293,7 +294,7 @@ function groupByProximity(findings, lineProximity) {
   ]));
 }
 
-export function consolidateCrossAgent(findings, prefer = () => false) {
+export function consolidateCrossAgent(findings) {
   const LINE_PROXIMITY = 5;
 
   // Clear consolidation stamps before regrouping so a removed primary cannot leave stale group ownership.
@@ -303,23 +304,6 @@ export function consolidateCrossAgent(findings, prefer = () => false) {
       delete f.consolidation_primary;
     }
   }
-
-  const winnerKey = (f) => {
-    const isCore = findingPolicy(f).core ? 1 : 0;
-    const conf = asConfidence(f.confidence);
-    // Ranking uses UTF-16 length; code-point counting would change winners for astral text.
-    const descLen = asText(f.description).length;
-    return [prefer(f) ? 1 : 0, isCore, conf, descLen];
-  };
-
-  const compareWinnerDesc = (a, b) => {
-    const ka = winnerKey(a);
-    const kb = winnerKey(b);
-    for (let i = 0; i < ka.length; i += 1) {
-      if (ka[i] !== kb[i]) return kb[i] - ka[i];
-    }
-    return 0; // tie -> preserve original order (stable sort)
-  };
 
   const groups = groupByProximity(findings, LINE_PROXIMITY);
 
@@ -333,14 +317,13 @@ export function consolidateCrossAgent(findings, prefer = () => false) {
     const bucket = lineBucket(group[0].line_start, LINE_PROXIMITY);
     const consolidationKey = `${file}:${bucket}`;
 
-    const ranked = [...group].sort(compareWinnerDesc);
-    const primary = ranked.find((f) => pyGet(f, 'id', ''));
-
-    for (const f of group) {
-      if (!pyGet(f, 'id', '')) continue; // id-less findings stay unstamped
-      f.consolidation_key = consolidationKey;
-      f.consolidation_primary = f === primary;
-      consolidatedCount += 1;
+    for (const [index, { primary, members }] of dominatedGroups(group.filter((f) => pyGet(f, 'id', ''))).entries()) {
+      if (members.length < 2 && group.every((f) => pyGet(f, 'id', ''))) continue;
+      for (const f of members) {
+        f.consolidation_key = index ? `${consolidationKey}:${primary.id}` : consolidationKey;
+        f.consolidation_primary = f === primary;
+        consolidatedCount += 1;
+      }
     }
   }
 

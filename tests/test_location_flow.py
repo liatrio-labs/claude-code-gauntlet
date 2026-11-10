@@ -457,7 +457,11 @@ process.stdout.write(JSON.stringify({all,some,missing,tampered,gaps:raw.gaps,res
     assert "sites" not in value["resolved"]
     sites = value["all"]["postReview"][0]["sites"]
     assert len(sites) == 4
-    assert [f["id"] for f in value["all"]["postReview"]] == ["ISSUE", "CONSTITUENT"]
+    assert [f["id"] for f in value["all"]["postReview"]] == ["ISSUE"]
+    assert [f["delivery_group"]["finding_ids"] for f in value["all"]["findings"]] == [
+        ["ISSUE"],
+        ["CONSTITUENT"],
+    ]
     assert all(
         (s["line_start"], s["line_end"], s["location_status"], s["diff_validation"])
         == (7, 7, "relocated", {"in_diff": True})

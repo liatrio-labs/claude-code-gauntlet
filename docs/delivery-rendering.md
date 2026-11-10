@@ -26,10 +26,12 @@ platform-shrunk apply range withholds the replacement code while retaining the p
 
 ## Outbound text preparation
 
-Each issue posts only its lead sections. Additional sites combine other members' confirmed ranges
+A lead may fold only members whose tier and severity it meets or exceeds; security members require
+a security lead. Incomparable members form separate issues. Each issue posts only its lead sections. Additional sites combine other members' confirmed ranges
 and all confirmed sites, deduplicated without the lead range. Two or more distinct agents add an
 anonymous reviewer count. Unanchored groups render once under the lead location, without dimension
-headings; counts measure issues. Other member descriptions remain in the local report.
+headings; counts measure issues. GitLab addenda list only undelivered locations and count the full
+group's distinct reviewers. Other member descriptions remain in the local report.
 
 Every posted text field is prepared before Markdown is assembled. Titles use the single-line class; body and suggestion use multiline prose; the cited
 rule is normalized, redacted, and has backtick runs of three or more collapsed to two
@@ -195,7 +197,8 @@ improvements get a separate count sentence. Held-back and unverified findings st
 report. Each selected issue whose lead can post inline gets one index bullet. Unanchored issues
 appear only in the Python-rendered section, under `### N issues could not be attached to a changed
 line, so they are described here`, with singular grammar for one issue. The poster removes a
-previously indexed lead when its anchor fails at delivery.
+previously indexed lead when its anchor fails at delivery. Both runtimes use registry-owned summary
+templates; an unknown index line stops delivery before posting.
 
 Selection uses original object identity; issue identity uses `delivery_group.issue_key`, falling
 back to legacy `consolidation_key`. The local report keeps the full index and every member's prose.

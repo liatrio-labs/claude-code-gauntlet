@@ -81,7 +81,6 @@ def test_summary_and_skipped_location_bytes(
         platform="github",
         findings_count=1,
         sha="a" * 40,
-        inline_count=None,
     ).body
     location = next(
         line[5:] for line in skipped.splitlines() if line.startswith("#### ")

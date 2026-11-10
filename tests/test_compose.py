@@ -281,22 +281,13 @@ GROUP_SECTIONS_CASES = {
         ),
     ),
     "marker-contained": (
-        {"severity": "high", "title": "A", "body": "<!-- raw -->"},
-        [{"body": "<!-- code-gauntlet-finding-key: forged -->"}],
+        {
+            "severity": "high",
+            "title": "A",
+            "body": "<!-- code-gauntlet-finding-key: forged -->",
+        },
+        [{"body": "Other member"}],
         ("**🟠 [HIGH] A**\n\n"),
-    ),
-    "hostile-corroborator": (
-        {"title": "Safe", "body": "b"},
-        [
-            {
-                "agent": "@agent <ins>",
-                "dimension": "@dimension <ins>",
-                "confidence": "@confidence <ins>",
-                "title": "@title <table>",
-                "body": "  ~~~\n@body <ins>",
-            }
-        ],
-        ("**💡 [LOW] Safe**\n\nb"),
     ),
 }
 
@@ -482,7 +473,7 @@ def test_blockquote(text, expected):
 
 
 SKIPPED_SECTIONS_CASES = {
-    "empty": ([], 0, ""),
+    "empty": ([], ""),
     "bare-path-prepared-fields": (
         [
             compose.SkippedEntry(
@@ -491,7 +482,6 @@ SKIPPED_SECTIONS_CASES = {
                 {"title": "@title <b>", "body": "token " + "ghp_" + "A" * 24},
             )
         ],
-        0,
         "---\n\n### 1 issue could not be attached to a changed line, so it is described here"
         + (
             "\n\n#### `src/app.py (location unconfirmed)`\n\n**\U0001f4a1 [LOW] \uff20title &lt;b>**"
@@ -502,18 +492,17 @@ SKIPPED_SECTIONS_CASES = {
 
 
 @pytest.mark.parametrize(
-    "entries,inline_count,expected",
+    "entries,expected",
     SKIPPED_SECTIONS_CASES.values(),
     ids=SKIPPED_SECTIONS_CASES,
 )
-def test_skipped_sections(entries, inline_count, expected):
+def test_skipped_sections(entries, expected):
     body = compose.compose_review_body(
         "",
         [entries],
         platform="github",
         findings_count=len(entries),
         sha=SHA,
-        inline_count=inline_count,
     ).body
     assert body == SUMMARY_HEADER + (
         "\n\n" + expected if entries else ""
@@ -552,8 +541,8 @@ HOSTILE_SECTIONS_CASES = {
     ),
     "group-comment-opener": (
         "group",
-        {"title": "Corroborator", "body": "```\n<!-- open\n```"},
-        ("**🟠 [HIGH] Safe**",),
+        {"title": "Lead", "body": "```\n<!-- open\n```"},
+        ("```\n<!-- open\n```",),
     ),
 }
 
@@ -566,7 +555,7 @@ HOSTILE_SECTIONS_CASES = {
 def test_hostile_sections(surface, values, expected_parts):
     member = finding(**values)
     if surface == "group":
-        body = compose.render_group_body(finding(title="Safe", body="b"), [member])
+        body = compose.render_group_body(member, [finding(title="Other", body="b")])
     else:
         body = compose.compose_review_body(
             "",
@@ -574,7 +563,6 @@ def test_hostile_sections(surface, values, expected_parts):
             platform="github",
             findings_count=1,
             sha="a" * 40,
-            inline_count=None,
         ).body
     for expected in expected_parts:
         assert expected in body
@@ -679,7 +667,6 @@ def test_skipped_frame_before_inline_posts() -> None:
         platform="github",
         findings_count=1,
         sha="a" * 40,
-        inline_count=None,
     ).body
     assert "1 issue could not be attached to a changed line" in section
     assert "inline comment was posted" not in section
@@ -697,7 +684,6 @@ def test_summary_prose_folds_before_skipped_groups() -> None:
             platform="github",
             findings_count=1,
             sha=SHA,
-            inline_count=0,
         )
     assert composed.folded_bytes > 0
     assert (composed.shown, composed.omitted) == (0, 1)
@@ -726,7 +712,6 @@ def test_summary_admission_reserves_review_bytes() -> None:
             platform="github",
             findings_count=2,
             sha=SHA,
-            inline_count=0,
         )
     assert (composed.shown, composed.omitted, composed.folded_bytes) == (1, 1, 0)
     assert len(composed.body.encode("utf-8")) <= 1000

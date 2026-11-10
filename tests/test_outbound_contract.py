@@ -320,7 +320,6 @@ def test_rule_fixture_rows_are_contained_after_blockquote_prefix():
                 platform="github",
                 findings_count=1,
                 sha="a" * 40,
-                inline_count=None,
             ).body,
         ):
             quoted = "\n".join("> " + line for line in row["expected"].split("\n"))
@@ -345,7 +344,6 @@ def test_multiline_non_rule_fields_start_at_column_zero():
             platform="github",
             findings_count=1,
             sha="a" * 40,
-            inline_count=None,
         ).body,
     ):
         for line in ("Body first", "Body second", "Fix first", "Fix second"):
@@ -478,7 +476,6 @@ def test_indented_field_containment_after_composition():
                 platform="github",
                 findings_count=1,
                 sha="a" * 40,
-                inline_count=None,
             ).body,
         ):
             assert_outbound_string_invariant(split_summary_footer(body)[0])
