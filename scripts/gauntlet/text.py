@@ -765,7 +765,7 @@ def prepare_line(text: object) -> str:
 
 
 def prepare_summary_title(text: object) -> str:
-    """Match the workflow's folded title when reconciling actual inline placement."""
+    """Prepare a folded title for legacy public summaries."""
     return _prepare_text(text, single_line=True, summary_title=True)
 
 

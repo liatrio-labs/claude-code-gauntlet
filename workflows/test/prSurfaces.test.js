@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderSummaryBody, renderReport } from '../src/renderReport.js';
+import { renderPublicSummary, renderReport } from '../src/renderReport.js';
 import { finding } from './helpers/reportFixtures.js';
 
 test('delivery issue identity overrides conflicting legacy keys in the PR index', () => {
@@ -8,7 +8,7 @@ test('delivery issue identity overrides conflicting legacy keys in the PR index'
   const a = finding('A', { delivery_group: stamp, consolidation_key: 'left' });
   const b = finding('B', { delivery_group: stamp, consolidation_key: 'right' });
   const input = { findings: [a, b], delivered: [b], deliveryCap: 1 };
-  const body = renderSummaryBody(input);
+  const body = renderPublicSummary(input).body;
   assert.match(body, /^Found 1 issue in this change: 1 high\./);
   assert.equal(body.split('\n').filter((line) => line.startsWith('- ')).length, 1);
   assert.match(body, /finding B/);
@@ -23,7 +23,7 @@ test('body issues are counted once and indexed only in the local report', () => 
   const inline = finding('INLINE');
   const held = finding('HELD', { disposition: 'held_back' });
   const input = { findings: [held, body, inline], delivered: [body, inline] };
-  const summary = renderSummaryBody(input);
+  const summary = renderPublicSummary(input).body;
   assert.match(summary, /^Found 2 issues in this change: 2 high\./);
   assert.match(summary, /finding INLINE/);
   assert.doesNotMatch(summary, /finding BODY|finding HELD|not listed here|admission|pipeline/);

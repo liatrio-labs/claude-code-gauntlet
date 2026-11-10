@@ -83,8 +83,9 @@ once in the summary under their lead location. The local report retains every me
 ```
 
 For a legacy bare findings array, pass `--report PATH` together with `--owner`, `--repo`,
-`--pr-number`, `--platform`, `--web-origin`, and `--sha`. The script derives `review_body` from the
-report and forms the wrapper in code. Wrapper inputs already carrying `review_body` use that body.
+`--pr-number`, `--platform`, `--web-origin`, and `--sha`. The script renders the public summary
+from findings with group values; report text is not copied. Wrapper inputs use `review_summary`
+when present, otherwise `review_body`.
 
 Every finding needs both `admission` and `disposition` stamps for delivery. A finding missing
 either stamp is held back, unless its disposition is `eliminate`. Bare arrays still use the
@@ -130,6 +131,7 @@ The poster prepares text and applies host-specific containment in code. Pass the
 unchanged. See [delivery rendering](../../../docs/delivery-rendering.md#outbound-text-preparation)
 when maintaining escaping or host rendering.
 
+- `review_summary` carries prepared counts, ordered `{lead_id, bullet}` records, and remainder data. The poster filters by id without reformatting bullets.
 - `review_body` — the pipeline-rendered Summary body: counts, selected findings index, and any remainder. The change summary stays in Change Context. Code applies UTF-8 body budgets and preserves the footer; see [delivery rendering](../../../docs/delivery-rendering.md#posted-body-budgets).
 - `findings` — selected findings
   - `file` — relative path in repository

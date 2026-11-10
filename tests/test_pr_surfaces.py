@@ -2,20 +2,16 @@
 
 import json
 import re
-from pathlib import Path
 from typing import cast
 
 import pytest
 from gauntlet.delivery import compose
 from gauntlet.delivery.input import Finding
-from gauntlet.text import prepare_summary_title
 
 from tests.support.delivery import finding
 from tests.support.pipeline import run_node
 from tests.support.posting import invoke_posting, review
 from tests.support.pr_surfaces import render_pr_surfaces
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_rendered_pr_surfaces_have_no_internal_review_vocabulary():
@@ -42,11 +38,8 @@ def test_rendered_pr_surfaces_have_no_internal_review_vocabulary():
             for term in vocabulary
         )
         assert "—" not in prose
-    legacy = compose.summary_for_delivery(
-        compose.summary_body_from_report(actual["report"]),
-        cast(list[Finding], actual["findings"]),
-    )
-    assert legacy == actual["summary_body"]
+    legacy = compose.legacy_summary(cast(list[Finding], actual["findings"]))
+    assert legacy["counts"] == actual["summary_body"].split("\n")[0]
     assert actual["summary"].startswith(
         "### ⚔️ Code Gauntlet\n\nFound 4 issues in this change: 1 high, 2 medium, 1 low. 1 is a suggested improvement rather than a defect."
     )
@@ -60,25 +53,6 @@ def test_rendered_pr_surfaces_have_no_internal_review_vocabulary():
     assert "An unconfirmed observation" not in actual["summary"]
     assert "An unconfirmed observation" in actual["report"]
     assert all(row["description"] in actual["report"] for row in actual["findings"])
-
-
-def test_summary_title_reconciliation_matches_workflow_vectors():
-    payload = json.loads(
-        (ROOT / "tests/fixtures/cross_runtime/outbound_line.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    titles = [row["input"]["findings"][0]["title"] for row in payload["summary_cases"]]
-    titles += ["x" * 520, "a\nb", "before &amp;lt; @someone", "[x]: u"]
-    expected = json.loads(
-        run_node(
-            "import { prepareSummaryTitle } from './workflows/src/outboundText.js';"
-            "let s='';for await(const c of process.stdin)s+=c;"
-            "process.stdout.write(JSON.stringify(JSON.parse(s).map(title=>prepareSummaryTitle(title))));",
-            titles,
-        ).stdout
-    )
-    assert [prepare_summary_title(title) for title in titles] == expected
 
 
 @pytest.mark.parametrize(
@@ -118,18 +92,21 @@ def test_late_anchor_failure_removes_only_its_index_bullet(
             anchor="valid_value()",
         ),
     ]
-    summary = run_node(
-        "import { renderSummaryBody } from './workflows/src/renderReport.js';"
-        "let s='';for await(const c of process.stdin)s+=c;"
-        "process.stdout.write(renderSummaryBody(JSON.parse(s)));",
-        {"findings": rows},
-    ).stdout
+    summary = json.loads(
+        run_node(
+            "import { renderPublicSummary } from './workflows/src/renderReport.js';"
+            "let s='';for await(const c of process.stdin)s+=c;"
+            "process.stdout.write(JSON.stringify(renderPublicSummary(JSON.parse(s))));",
+            {"findings": rows},
+        ).stdout
+    )
+    body = summary.pop("body")
     run = invoke_posting(
         tmp_path,
         monkeypatch,
         capsys,
         forge_factory,
-        review(findings=rows, review_body=summary),
+        review(findings=rows, review_body=body, review_summary=summary),
         diff=f"diff --git a/{filepath} b/{filepath}\n--- a/{filepath}\n+++ b/{filepath}\n@@ -2 +2 @@\n-old_value()\n+valid_value()\n",
     )
     assert run.code == 0, run.err
@@ -147,41 +124,63 @@ def test_late_anchor_failure_removes_only_its_index_bullet(
     )
 
 
-def test_legacy_summary_plural_improvements_and_missing_index_are_plain():
+def test_legacy_summary_owns_its_index():
     rows = [
         finding(id=str(i), report_tag="suggestion", severity="low") for i in range(2)
     ]
-    body = compose.summary_for_delivery("", cast(list[Finding], rows))
-    assert body == (
-        "Found 2 issues in this change: 2 low. 2 are suggested improvements rather than defects."
-        "\n\n2 more issues not listed here (did not fit in this comment)."
+    summary = compose.legacy_summary(cast(list[Finding], rows))
+    assert (
+        summary["counts"]
+        == "Found 2 issues in this change: 2 low. 2 are suggested improvements rather than defects."
     )
+    assert len(summary["index"]) == 2
 
 
 @pytest.mark.parametrize(
-    "drift",
+    "index,error",
     [
-        lambda text: text.replace("- 🟠 [HIGH]", "- HIGH"),
-        lambda text: text.replace(": Visible issue", " :: Visible issue"),
+        ([{"lead_id": "foreign", "bullet": "opaque text"}], "Unknown summary lead id"),
+        ([], "Missing summary bullet"),
     ],
 )
-def test_summary_index_contract_drift_fails_before_posting(drift):
-    rows = [finding(id="A", title="Visible issue", anchor="wrong_value()")]
-    summary = run_node(
-        "import { renderSummaryBody } from './workflows/src/renderReport.js';"
-        "let s='';for await(const c of process.stdin)s+=c;"
-        "process.stdout.write(renderSummaryBody(JSON.parse(s)));",
-        {"findings": rows},
-    ).stdout
-    with pytest.raises(compose.ReportShapeError, match="Summary index does not match"):
+def test_summary_contract_rejects_reference_breaks(index, error):
+    rows = [finding(id="A")]
+    with pytest.raises(compose.ReportShapeError, match=error):
         compose.compose_review_body(
-            drift(summary),
+            "",
             [],
             platform="github",
             findings_count=1,
             sha="a" * 40,
             index_findings=cast(list[Finding], rows),
+            review_summary={
+                "counts": "Counts",
+                "index": index,
+                "omitted": 0,
+                "reasons": [],
+            },
         )
+
+
+def test_summary_contract_preserves_producer_bytes():
+    rows = [finding(id="A")]
+    bullet = "- workflow bytes with  two spaces and \\~\\~\\~"
+    body = compose.compose_review_body(
+        "untrusted stale body",
+        [],
+        platform="github",
+        findings_count=1,
+        sha="a" * 40,
+        index_findings=cast(list[Finding], rows),
+        review_summary={
+            "counts": "Exact counts",
+            "index": [{"lead_id": "A", "bullet": bullet}],
+            "omitted": 0,
+            "reasons": [],
+        },
+    ).body
+    assert "Exact counts\n\n" + bullet in body
+    assert "untrusted stale body" not in body
 
 
 @pytest.mark.parametrize(
@@ -198,11 +197,115 @@ def test_summary_count_templates_match_across_runtimes(severities, suggestions):
         for i, severity in enumerate(severities)
     ]
     body = run_node(
-        "import { renderSummaryBody } from './workflows/src/renderReport.js';"
-        "let s='';for await(const c of process.stdin)s+=c;process.stdout.write(renderSummaryBody(JSON.parse(s)));",
+        "import { renderPublicSummary } from './workflows/src/renderReport.js';"
+        "let s='';for await(const c of process.stdin)s+=c;process.stdout.write(renderPublicSummary(JSON.parse(s)).body);",
         {"findings": rows},
     ).stdout
     assert (
-        compose.summary_for_delivery("", cast(list[Finding], rows)).split("\n")[0]
+        compose.legacy_summary(cast(list[Finding], rows))["counts"]
         == body.split("\n")[0]
     )
+
+
+@pytest.mark.parametrize("pathway", ["workflow", "report"])
+@pytest.mark.parametrize(
+    "vector", ["group-values", "tilde-title", "path-spaces", "title-spaces"]
+)
+def test_summary_data_crosses_delivery_boundary(
+    vector, pathway, tmp_path, monkeypatch, capsys, forge_factory
+):
+    filepath = "  src/a  b.py  " if vector == "path-spaces" else "src/a.py"
+    title = {"tilde-title": "A ~~~ title", "title-spaces": "  A  spaced  title  "}.get(
+        vector, "Visible issue"
+    )
+    rows = [
+        finding(
+            id="ACTIVE",
+            file=filepath,
+            line=2,
+            end_line=2,
+            title=title,
+            body="Inline detail.",
+            anchor="valid_value()",
+            severity="medium" if vector == "group-values" else "high",
+            dimension="security" if vector == "group-values" else "bug",
+            report_tag="suggestion" if vector == "group-values" else "main",
+        ),
+        finding(
+            id="HIDDEN",
+            file=filepath,
+            line=2,
+            end_line=2,
+            title="Unanchored issue",
+            body="Unanchored detail.",
+            anchor="wrong_value()",
+        ),
+    ]
+    if vector == "group-values":
+        rows.append(
+            finding(
+                id="BUG",
+                file=filepath,
+                line=2,
+                end_line=2,
+                title="Other member",
+                body="Other member detail.",
+                severity="critical",
+                report_tag="main",
+                anchor="valid_value()",
+            )
+        )
+    rendered = json.loads(
+        run_node(
+            "import { makeFinding } from './workflows/test/helpers/pipelineMock.js';"
+            "import { disposeFindings } from './workflows/src/dispose.js';"
+            "import { renderPublicSummary, renderReport } from './workflows/src/renderReport.js';"
+            "import { writerPayload } from './workflows/src/persistPlan.js';"
+            "let s='';for await(const c of process.stdin)s+=c;const rows=JSON.parse(s);"
+            "const findings=rows.map(f=>makeFinding(f.id,{...f,description:f.body}));"
+            "const out=disposeFindings({findings,grouping_reply:{groups:rows.length===3?[{finding_ids:['ACTIVE','BUG'],lead_id:'BUG'}]:[]}});"
+            "const {body:reviewBody,...reviewSummary}=renderPublicSummary({...out,delivered:out.findings});"
+            "process.stdout.write(JSON.stringify(writerPayload({findings:out.findings,postReview:out.findings,reviewBody,reviewSummary,report:renderReport(out),"
+            "prIdentity:{owner:'o',repo:'r',pr_number:5,sha_full:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',platform:'github',web_origin:'https://github.com'}})));",
+            rows,
+        ).stdout
+    )
+    payload = rendered["postReview"]
+    expected = next(
+        row["bullet"]
+        for row in payload["review_summary"]["index"]
+        if row["lead_id"] == "ACTIVE"
+    )
+    arguments = ()
+    if pathway == "report":
+        payload.pop("review_summary")
+        payload["review_body"] = ""
+        report = tmp_path / "report.md"
+        report.write_text(rendered["report"], encoding="utf-8")
+        arguments = ("--report", str(report))
+    old, new = json.dumps("a/" + filepath), json.dumps("b/" + filepath)
+    patch = f"diff --git {old} {new}\n--- {old}\n+++ {new}\n@@ -2 +2 @@\n-old_value()\n+valid_value()\n"
+    run = invoke_posting(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        forge_factory,
+        payload,
+        arguments=arguments,
+        diff=patch,
+    )
+    assert run.code == 0, run.err
+    posted = run.payload["payload"]
+    assert len(posted["comments"]) == 1
+    assert posted["comments"][0]["path"] == filepath
+    assert "Inline detail." in posted["comments"][0]["body"]
+    bullets = [line for line in posted["body"].splitlines() if line.startswith("- ")]
+    assert len(bullets) == 1
+    assert posted["body"].count("Unanchored detail.") == 1
+    if pathway == "workflow":
+        assert bullets == [expected]
+    if vector == "group-values":
+        assert bullets[0].startswith("- 🔴 [CRITICAL]")
+        assert "improvement suggestion" not in posted["body"]
+    if vector == "tilde-title":
+        assert r"\~\~\~" in bullets[0]

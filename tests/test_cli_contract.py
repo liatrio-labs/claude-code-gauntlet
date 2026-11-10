@@ -1342,17 +1342,6 @@ def test_patch_command_boundaries(
 @pytest.mark.parametrize(
     "case,content,error",
     [
-        _scenario_param(
-            "missing-summary",
-            "## Findings\n\nOnly findings.\n",
-            "post_review: Report does not contain a rendered Summary section.\n",
-        ),
-        _scenario_param(
-            "missing-following-heading",
-            "## Summary\n\nOnly summary.\n",
-            "post_review: Report does not contain a following code-owned "
-            "heading after Summary.\n",
-        ),
         _scenario_param("malformed-json", "{", "invalid-json"),
         _scenario_param(
             "versions-fetch",
@@ -1374,7 +1363,7 @@ def test_patch_command_boundaries(
         ),
     ],
 )
-def test_poster_report_shape_boundary(
+def test_poster_delivery_boundary(
     case, content, error, tmp_path, invoke, forge_factory
 ):
     path = tmp_path / "findings.json"
@@ -1383,8 +1372,6 @@ def test_poster_report_shape_boundary(
         **POST,
         "findings": [],
         "platform": {
-            "missing-summary": "github",
-            "missing-following-heading": "github",
             "malformed-json": "gitlab",
             "versions-fetch": "gitlab",
             "versions-parse": "gitlab",
@@ -1394,13 +1381,7 @@ def test_poster_report_shape_boundary(
     path.write_text(
         content if case == "malformed-json" else json.dumps(data), encoding="utf-8"
     )
-    if case.startswith("missing"):
-        report_path = tmp_path / "report.md"
-        report_path.write_text(content, encoding="utf-8")
-        argv += ["--report", str(report_path)]
     fake = {
-        "missing-summary": FakeForge(),
-        "missing-following-heading": FakeForge(),
         "malformed-json": FakeForge(),
         "versions-fetch": _gitlab_fake(refs=[JsonFetch(None, content)]),
         "versions-parse": _gitlab_fake(refs=[JsonFetch(None, content)]),
@@ -1411,7 +1392,7 @@ def test_poster_report_shape_boundary(
     assert result.returncode == 1
     assert result.stdout == b""
     assert result.stderr == posting_cases.ERRORS.get(error, error).encode("utf-8")
-    if case.startswith("missing") or case == "malformed-json":
+    if case == "malformed-json":
         assert fake.calls == []
         assert forge_factory.calls == []
     assert not (tmp_path / "post-review-payload.json").exists()

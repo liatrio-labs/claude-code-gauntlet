@@ -192,7 +192,7 @@ def test_indivisible_group_posts_security_text_and_group_values(ordinary, other,
         "import { disposeFindings } from './workflows/src/dispose.js';"
         "import { selectDelivery } from './workflows/src/reviewStages.js';"
         "import { writerPayload } from './workflows/src/persistPlan.js';"
-        "import { renderSummaryBody, renderReport } from './workflows/src/renderReport.js';"
+        "import { renderPublicSummary, renderReport } from './workflows/src/renderReport.js';"
         "let s='';for await(const c of process.stdin)s+=c;const rows=JSON.parse(s);"
         "const findings=rows.map((row,i)=>makeFinding(i?'SEC':'BUG',"
         "{file:'same.js',description:i?'Security finding text.':'Ordinary defect text.',agent:i?'security-reviewer':'bug-detector',...row}));"
@@ -200,7 +200,7 @@ def test_indivisible_group_posts_security_text_and_group_values(ordinary, other,
         "const out=disposeFindings({findings,grouping_reply:{groups:[{finding_ids:['BUG','SEC'],lead_id:'BUG'}]}});"
         "const selected=selectDelivery([...out.findings,makeFinding('OTHER',{severity:'high'})],1,'main_only');"
         "process.stdout.write(JSON.stringify({...writerPayload({findings:out.findings,postReview:selected}),"
-        "assessed,summary:renderSummaryBody({...out,delivered:selected}),report:renderReport(out)}));",
+        "assessed,summary:renderPublicSummary({...out,delivered:selected}).body,report:renderReport(out)}));",
         [ordinary, other],
     )
     result = json.loads(output.stdout)
@@ -210,9 +210,7 @@ def test_indivisible_group_posts_security_text_and_group_values(ordinary, other,
     assert group.primary["id"] == lead
     assert {f["id"] for f in (group.primary, *group.corroborators)} == {"BUG", "SEC"}
     assert (
-        compose.summary_for_delivery(result["summary"], result["postReview"]).split(
-            "\n", 1
-        )[0]
+        compose.legacy_summary(result["postReview"])["counts"]
         == "Found 1 issue in this change: 1 critical."
     )
     assessed_group = [

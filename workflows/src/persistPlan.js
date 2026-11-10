@@ -20,7 +20,7 @@ function toV2Aliased(f) {
   return out;
 }
 
-export function postReviewWrapper(id, reviewBody) {
+export function postReviewWrapper(id, reviewBody, reviewSummary) {
   return {
     owner: id.owner,
     repo: id.repo,
@@ -29,6 +29,7 @@ export function postReviewWrapper(id, reviewBody) {
     platform: id.platform,
     web_origin: id.web_origin,
     review_body: typeof reviewBody === 'string' ? reviewBody : '',
+    ...(reviewSummary ? { review_summary: reviewSummary } : {}),
   };
 }
 
@@ -41,7 +42,7 @@ export function writerPayload(inp) {
     findings: (inp.findings || []).map(toV2Aliased),
     // The envelope carries the reviewed commit and resolved platform without remote inference.
     postReview: id
-      ? { ...postReviewWrapper(id, inp.reviewBody), findings: postReviewSet }
+      ? { ...postReviewWrapper(id, inp.reviewBody, inp.reviewSummary), findings: postReviewSet }
       : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
@@ -100,7 +101,7 @@ export function persistPlan(inp, paths) {
       path: paths.postReview,
       source: paths.findings,
       ids: (inp.postReview || []).map((f) => f && f.id),
-      wrapper: id ? postReviewWrapper(id, inp.reviewBody) : null,
+      wrapper: id ? postReviewWrapper(id, inp.reviewBody, inp.reviewSummary) : null,
     },
     checkpoint: {
       path: paths.checkpoints,

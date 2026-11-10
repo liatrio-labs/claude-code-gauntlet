@@ -136,11 +136,11 @@ headless run reaches this step only when `configResult.resolved.delivery` includ
 follows `configResult.resolved.post_mode`.)
 
 When `delivery.prIdentity` is set in the args waist, the persisted `artifactPaths.postReview` file
-already is the post_review-ready wrapper (`{ owner, repo, pr_number, sha, platform, web_origin, review_body, findings }`).
+already is the post_review-ready wrapper (`{ owner, repo, pr_number, sha, platform, web_origin, review_body, review_summary, findings }`).
 Pass that file to `post_review.py` unchanged. Keep its `sha` because it pins the prior-review marker to the reviewed commit. Code-owned byte budgets and folding are documented in [delivery rendering](../../../docs/delivery-rendering.md).
 
 When the artifact is the legacy bare findings array, invoke `post_review.py` with `--report` and the
-identity flags. The script derives the Summary body from the report and forms the wrapper in code:
+identity flags. The script renders the public summary from findings with group values:
 
 ```bash
 {python} "{plugin_root}/scripts/post_review.py" "{artifactPaths.postReview}" \

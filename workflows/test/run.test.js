@@ -13,7 +13,7 @@ import { deriveFromPlan } from './helpers/deriveFromPlan.js';
 import { normalizeForChecksum, fnv1a32 } from '../src/wire.js';
 import { disposeFindings } from '../src/dispose.js';
 import { applyChallenges } from '../src/applyChallenges.js';
-import { renderReport, renderSummaryBody } from '../src/renderReport.js';
+import { renderReport, renderPublicSummary } from '../src/renderReport.js';
 import { writeArtifacts } from '../src/persist.js';
 import { deltaContentProof } from '../src/verifyWire.js';
 import { mergeStage } from '../src/mergeFindings.js';
@@ -529,7 +529,7 @@ test('final disposition survives replay and persistence', async () => {
   const mainSection = report.split('## Findings')[1].split('## Unverified')[0];
   for (const i of [2, 4, 5, 6]) assert.equal(mainSection.includes(`claim-${i}`), false);
   for (const i of [2, 3, 5, 6]) assert.ok(report.includes(`RIGHT${i}.js:10`));
-  const body = renderSummaryBody(reportInput);
+  const body = renderPublicSummary(reportInput).body;
   for (const i of [2, 3, 4, 5, 6]) assert.equal(body.includes(`finding RIGHT${i}`), false);
   assert.equal(body.includes('claim-1'), false);
   assert.equal(body.includes('claim-0'), false);
@@ -1451,7 +1451,12 @@ for (const row of BODY_ROWS) test(`summary delivery modes: ${row.name}`, async (
   assert.equal(localBody.split('\n').filter((line) => line.startsWith('- ')).length, row.count);
   const body = row.identity ? payload.postReview.review_body : localBody;
   assert.equal(body.split('\n').filter((line) => line.startsWith('- ')).length, row.bullets);
-  if (row.identity) assert.doesNotMatch(body, /after the gauntlet/);
+  if (row.identity) {
+    assert.doesNotMatch(body, /after the gauntlet/);
+    assert.deepEqual(payload.postReview.review_summary.index.map((entry) => entry.bullet),
+      body.split('\n').filter((line) => line.startsWith('- ')));
+    assert.equal(payload.postReview.review_summary.counts, body.split('\n')[0]);
+  }
   if (row.suffix) assert.ok(body.endsWith(row.suffix));
   else assert.equal(body.includes('not listed here'), false);
   if (row.title) { assert.equal(delivered[0].title, row.title); assert.ok(body.includes(': critical choice')); }

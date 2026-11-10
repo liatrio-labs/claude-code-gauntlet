@@ -598,7 +598,7 @@ function plainReportObject(value) {
 
 function summaryIndex(rawFindings, findingsView, input, projected) {
   const reported = findingsView.order.flatMap((severity) => findingsView.buckets.get(severity));
-  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [] };
+  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [], references: new Map(reported.map((f) => [f, typeof f.id === 'string' && f.id ? f.id : projected.indexOf(f)])) };
   const originals = Array.isArray(input.findings) ? input.findings : [];
   const delivered = input.delivered.filter(plainReportObject);
   const deliveredOriginals = new Set(delivered);
@@ -646,7 +646,10 @@ function summaryIndex(rawFindings, findingsView, input, projected) {
     reasons.push('this review includes defects only');
   }
   if (!reasons.length && omittedUnits.length) reasons.push('not selected for this review');
-  return { indexed, reasons };
+  const references = new Map(indexed.map((finding) => [finding,
+    typeof finding.id === 'string' && finding.id ? finding.id : delivered.indexOf(originalByProjected.get(finding)),
+  ]));
+  return { indexed, reasons, references };
 }
 
 function partitionByDisposition(inp, findingsRight) {
@@ -665,11 +668,13 @@ function summaryBlock(builder, input, findingsRight = 'body') {
   const findings = consolidateForReport(rawFindings, !local);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
-  builder.add(local ? localCountsSentence(findings, rawFindings.length, unverified, findingsView) : countsSentence(findings, findingsView));
+  const counts = local ? localCountsSentence(findings, rawFindings.length, unverified, findingsView) : countsSentence(findings, findingsView);
+  builder.add(counts);
   const selection = summaryIndex(rawFindings, findingsView, local ? { ...inp, delivered: undefined } : inp, projected);
   const indexed = selection.indexed.filter((finding) => local || deliveryAllows(finding, 'inline'));
   const bodyCount = selection.indexed.length - indexed.length;
-  const reasons = selection.reasons;
+  const reasons = [...selection.reasons];
+  const records = [];
   const permalinks = permalinkContext(inp.prIdentity);
   const bullets = [];
   let indexChars = 0;
@@ -683,10 +688,11 @@ function summaryBlock(builder, input, findingsRight = 'body') {
     const bullet = outboundTildeRuns(
       publicSummaryText(PUBLIC_SUMMARY.index, { mark: severityMark(severity), severity: severity.toUpperCase(), location: link, suggestion, title: prepareSummaryTitle(finding.title) }),
     );
+    records.push({ lead_id: selection.references.get(finding), bullet });
     const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
-    if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
+    if (cutForLength || indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
       cutForLength = true;
-      break;
+      continue;
     }
     bullets.push(bullet);
     indexChars += nextChars;
@@ -700,14 +706,15 @@ function summaryBlock(builder, input, findingsRight = 'body') {
     : `reported ${plural(remainder, 'issue')}`;
   if (remainder) {
     builder.add();
-    builder.add(`${remainder} more ${remainderNoun} not listed here (${reasons.join('; ')}).`);
+    builder.add(publicSummaryText(PUBLIC_SUMMARY.remainder, { count: remainder, issues: remainderNoun, reasons: reasons.join('; ') }));
   }
+  return { counts, index: records, omitted: findings.length - selection.indexed.length, reasons: selection.reasons };
 }
 
-export function renderSummaryBody(input) {
+export function renderPublicSummary(input) {
   const builder = reportBuilder();
-  summaryBlock(builder, input);
-  return builder.finish();
+  const data = summaryBlock(builder, input);
+  return { ...data, body: builder.finish() };
 }
 
 function receiptSafe(value) {

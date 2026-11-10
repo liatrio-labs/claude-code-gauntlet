@@ -359,7 +359,8 @@ def plan_delivery(
     data: ReviewInput, facts: DiffFacts | None, *, platform: Platform
 ) -> DeliveryPlan:
     findings: list[Finding] = []
-    for raw in data["findings"]:
+    indexes = {}
+    for source_index, raw in enumerate(data["findings"]):
         if not delivery_allows(raw, "body"):
             continue
         finding = cast(Finding, normalize_location(raw))
@@ -374,7 +375,7 @@ def plan_delivery(
                     normalize_location({**finding, "location_status": "unconfirmed"}),
                 )
         findings.append(finding)
-    indexes = {id(finding): index for index, finding in enumerate(findings)}
+        indexes[id(finding)] = source_index
     groups: list[GroupPlan] = []
     candidates: list[gate.OverlapCandidate] = []
     for group in compose.consolidate_delivery(findings):
@@ -448,7 +449,10 @@ def _activate_degraded(
     session.warn_skip(group.warning)
     return tuple(
         compose.SkippedEntry(
-            member.path, member.finding.get("line"), session.activate(member)
+            member.path,
+            member.finding.get("line"),
+            session.activate(member),
+            finding_index=member.index,
         )
         for member in group.members
     )
@@ -524,6 +528,7 @@ def plan_summary(
             platform=platform,
             findings_count=len(data["findings"]),
             index_findings=data["findings"],
+            review_summary=data.get("review_summary"),
             sha=sha,
         )
     except compose.ReportShapeError as exc:
@@ -870,6 +875,7 @@ def post_gitlab(
                             member.get("line"),
                             extra,
                             additional_sites=new_sites if index == 0 else None,
+                            finding_index=group.primary.index if index == 0 else None,
                         )
                     )
                 skipped_groups.append(tuple(additions))
@@ -1102,24 +1108,14 @@ def _execute(args: argparse.Namespace) -> int:
         value = getattr(args, name)
         if value is not None:
             raw[name] = value
-    report_summary = None
-    if args.report and not raw.get("review_body"):
-        try:
-            with open(args.report, encoding="utf-8") as fh:
-                report = fh.read()
-        except FileNotFoundError:
-            die(f"Report file not found: {args.report}")
-        try:
-            report_summary = compose.summary_body_from_report(report)
-            raw["review_body"] = report_summary
-        except compose.ReportShapeError as exc:
-            die(str(exc))
-
+    legacy_report = (
+        args.report and not raw.get("review_body") and not raw.get("review_summary")
+    )
+    if legacy_report and not os.path.isfile(args.report):
+        die(f"Report file not found: {args.report}")
     data = validate_review_input(raw)
-    if report_summary is not None:
-        data["review_body"] = compose.summary_for_delivery(
-            report_summary, data["findings"]
-        )
+    if legacy_report:
+        data["review_summary"] = compose.legacy_summary(data["findings"])
 
     platform = data.get("platform")
     if platform:

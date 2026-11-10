@@ -136,7 +136,7 @@ def _run_node(script: str, value: object) -> subprocess.CompletedProcess[str]:
 
 
 _SUMMARY_BATCH_SCRIPT = """
-import { renderSummaryBody } from './workflows/src/renderReport.js';
+import { renderPublicSummary } from './workflows/src/renderReport.js';
 let source = '';
 for await (const chunk of process.stdin) source += chunk;
 const inputs = JSON.parse(source);
@@ -144,7 +144,7 @@ for (const input of inputs) for (const finding of input.findings || []) {
   finding.disposition = 'deliver';
   finding.admission = {version:1,status:'admitted',input_proof:'fixture'};
 }
-process.stdout.write(JSON.stringify(inputs.map(renderSummaryBody)));
+process.stdout.write(JSON.stringify(inputs.map(input => renderPublicSummary(input).body)));
 """
 
 

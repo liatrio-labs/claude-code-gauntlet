@@ -178,7 +178,9 @@ def _replay_main():
     json.dump(wire, sys.stdout)
 
 
-def _replay_delivery(findings, diff_text, platform, root, review_body, sha):
+def _replay_delivery(
+    findings, diff_text, platform, root, review_body, sha, review_summary
+):
     # Pin gauntlet before bench's bootstrap adds the loading checkout's scripts.
     script = (
         "import sys; sys.path[:0] = sys.argv[1:]; "
@@ -201,6 +203,7 @@ def _replay_delivery(findings, diff_text, platform, root, review_body, sha):
                 platform=platform,
                 review_body=review_body,
                 sha=sha,
+                review_summary=review_summary,
             )
         ),
         capture_output=True,
@@ -245,7 +248,7 @@ class DeliveryProvenance:
 
 
 def _reconstruct_body_summary(
-    findings, skipped_groups, platform, review_body, sha
+    findings, skipped_groups, platform, review_body, sha, review_summary
 ) -> DeliveryReconstruction:
     # Calling plan_summary without a captured SHA would consult today's HEAD.
     if (
@@ -259,7 +262,12 @@ def _reconstruct_body_summary(
     finalized = post.plan_summary(
         cast(
             ReviewInput,
-            {"findings": findings, "review_body": review_body, "sha": sha},
+            {
+                "findings": findings,
+                "review_body": review_body,
+                "sha": sha,
+                "review_summary": review_summary,
+            },
         ),
         skipped_groups,
         platform=platform,
@@ -313,6 +321,7 @@ def reconstruct_delivery(
     treatment_root=None,
     review_body=None,
     sha=None,
+    review_summary=None,
 ):
     """Reproduce initial dry-run delivery ordering, folding and patch demotion."""
     findings = []
@@ -328,7 +337,13 @@ def reconstruct_delivery(
         findings.append(f)
     if treatment_root is not None:
         return _replay_delivery(
-            findings, diff_text, platform, treatment_root, review_body, sha
+            findings,
+            diff_text,
+            platform,
+            treatment_root,
+            review_body,
+            sha,
+            review_summary,
         )
     data = cast(ReviewInput, {"findings": findings})
     facts = parse_diff(diff_text, policy=posting_policy(platform))
@@ -344,7 +359,14 @@ def reconstruct_delivery(
                 skipped_groups.append(
                     tuple(
                         compose.SkippedEntry(
-                            m.path, m.finding.get("line"), session.activate(m)
+                            m.path,
+                            m.finding.get("line"),
+                            session.activate(m),
+                            **(
+                                {"finding_index": m.index}
+                                if review_summary is not None
+                                else {}
+                            ),
                         )
                         for m in group.members
                     )
@@ -399,7 +421,7 @@ def reconstruct_delivery(
     summary = None
     if wants_body:
         body = _reconstruct_body_summary(
-            findings, skipped_groups, platform, review_body, sha
+            findings, skipped_groups, platform, review_body, sha, review_summary
         )
         rendered.extend(body.groups)
         omissions.extend(body.omissions)
@@ -415,6 +437,7 @@ def map_delivery(
     treatment_root=None,
     review_body=None,
     sha=None,
+    review_summary=None,
 ) -> tuple[DeliveryProvenance, ...]:
     """Attach provenance only after exact ordered body/path/line equality."""
     actual = tuple(_iter_comments(payload))
@@ -425,6 +448,7 @@ def map_delivery(
         treatment_root=treatment_root,
         review_body=review_body,
         sha=sha,
+        review_summary=review_summary,
     )
     planned = reconstructed.groups
     if reconstructed.summary is not None:
@@ -512,6 +536,8 @@ def trace_delivery(
         body_inputs = {k: selected.get(k) for k in ("review_body", "sha")}
         if any(value is None for value in body_inputs.values()):
             raise ValueError("original body evidence unavailable")
+        if "review_summary" in selected:
+            body_inputs["review_summary"] = selected["review_summary"]
     selected = selected.get("findings", []) if isinstance(selected, dict) else selected
     versions = {v.version_id: v for v in trace.versions}
     expected = [

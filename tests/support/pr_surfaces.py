@@ -4,7 +4,7 @@ import json
 from typing import TypedDict, cast
 
 from gauntlet.delivery import compose
-from gauntlet.delivery.input import Finding
+from gauntlet.delivery.input import Finding, ReviewSummary
 from gauntlet.location import delivery_allows
 
 from tests.support.delivery import date_override_members, finding
@@ -15,6 +15,7 @@ class RenderedSurfaces(TypedDict):
     findings: list[Finding]
     report: str
     summary_body: str
+    review_summary: ReviewSummary
     summary: str
     inline: list[str]
 
@@ -79,7 +80,7 @@ def render_pr_surfaces() -> RenderedSurfaces:
                 """
 import { disposeFindings } from './workflows/src/dispose.js';
 import { evaluateAdmission } from './workflows/src/admission.js';
-import { renderSummaryBody, renderReport } from './workflows/src/renderReport.js';
+import { renderPublicSummary, renderReport } from './workflows/src/renderReport.js';
 import { writerPayload } from './workflows/src/persistPlan.js';
 import { reportInput } from './workflows/test/helpers/reportFixtures.js';
 let source='';for await(const chunk of process.stdin)source+=chunk;
@@ -89,7 +90,8 @@ const findings=JSON.parse(source).map(f=>evaluateAdmission({...f,description:f.b
 const out=disposeFindings({findings,grouping_reply:{groups:[{
  finding_ids:findings.slice(0,4).map(f=>f.id),lead_id:findings[0].id}]}});
 const input=reportInput({findings:out.findings,unverified:out.unverified,delivered:out.findings});
-process.stdout.write(JSON.stringify({summary_body:renderSummaryBody(input),report:renderReport(input),
+const {body:summary_body,...review_summary}=renderPublicSummary(input);
+process.stdout.write(JSON.stringify({summary_body,review_summary,report:renderReport(input),
  findings:writerPayload({findings:out.findings}).findings}));
 """,
                 rows,
@@ -118,5 +120,6 @@ process.stdout.write(JSON.stringify({summary_body:renderSummaryBody(input),repor
         findings_count=len(findings),
         sha="f" * 40,
         index_findings=findings,
+        review_summary=result["review_summary"],
     ).body
     return result

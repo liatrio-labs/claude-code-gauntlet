@@ -184,6 +184,7 @@ const PUBLIC_SUMMARY = deepFreeze({
   improvements: ' {count} are suggested improvements rather than defects.',
   index: '- {mark} [{severity}] {location}{suggestion}: {title}',
   suggestion: ' (improvement suggestion)',
+  remainder: '{count} more {issues} not listed here ({reasons}).',
 });
 const CODE_OWNED_HEADINGS = deepFreeze([
   '## Summary',
@@ -5005,7 +5006,7 @@ function plainReportObject(value) {
 }
 function summaryIndex(rawFindings, findingsView, input, projected) {
   const reported = findingsView.order.flatMap((severity) => findingsView.buckets.get(severity));
-  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [] };
+  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [], references: new Map(reported.map((f) => [f, typeof f.id === 'string' && f.id ? f.id : projected.indexOf(f)])) };
   const originals = Array.isArray(input.findings) ? input.findings : [];
   const delivered = input.delivered.filter(plainReportObject);
   const deliveredOriginals = new Set(delivered);
@@ -5052,7 +5053,10 @@ function summaryIndex(rawFindings, findingsView, input, projected) {
     reasons.push('this review includes defects only');
   }
   if (!reasons.length && omittedUnits.length) reasons.push('not selected for this review');
-  return { indexed, reasons };
+  const references = new Map(indexed.map((finding) => [finding,
+    typeof finding.id === 'string' && finding.id ? finding.id : delivered.indexOf(originalByProjected.get(finding)),
+  ]));
+  return { indexed, reasons, references };
 }
 function partitionByDisposition(inp, findingsRight) {
   const projected = coerceReportFindings(inp.findings);
@@ -5069,11 +5073,13 @@ function summaryBlock(builder, input, findingsRight = 'body') {
   const findings = consolidateForReport(rawFindings, !local);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
-  builder.add(local ? localCountsSentence(findings, rawFindings.length, unverified, findingsView) : countsSentence(findings, findingsView));
+  const counts = local ? localCountsSentence(findings, rawFindings.length, unverified, findingsView) : countsSentence(findings, findingsView);
+  builder.add(counts);
   const selection = summaryIndex(rawFindings, findingsView, local ? { ...inp, delivered: undefined } : inp, projected);
   const indexed = selection.indexed.filter((finding) => local || deliveryAllows(finding, 'inline'));
   const bodyCount = selection.indexed.length - indexed.length;
-  const reasons = selection.reasons;
+  const reasons = [...selection.reasons];
+  const records = [];
   const permalinks = permalinkContext(inp.prIdentity);
   const bullets = [];
   let indexChars = 0;
@@ -5087,10 +5093,11 @@ function summaryBlock(builder, input, findingsRight = 'body') {
     const bullet = outboundTildeRuns(
       publicSummaryText(PUBLIC_SUMMARY.index, { mark: severityMark(severity), severity: severity.toUpperCase(), location: link, suggestion, title: prepareSummaryTitle(finding.title) }),
     );
+    records.push({ lead_id: selection.references.get(finding), bullet });
     const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
-    if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
+    if (cutForLength || indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
       cutForLength = true;
-      break;
+      continue;
     }
     bullets.push(bullet);
     indexChars += nextChars;
@@ -5104,13 +5111,14 @@ function summaryBlock(builder, input, findingsRight = 'body') {
     : `reported ${plural(remainder, 'issue')}`;
   if (remainder) {
     builder.add();
-    builder.add(`${remainder} more ${remainderNoun} not listed here (${reasons.join('; ')}).`);
+    builder.add(publicSummaryText(PUBLIC_SUMMARY.remainder, { count: remainder, issues: remainderNoun, reasons: reasons.join('; ') }));
   }
+  return { counts, index: records, omitted: findings.length - selection.indexed.length, reasons: selection.reasons };
 }
-function renderSummaryBody(input) {
+function renderPublicSummary(input) {
   const builder = reportBuilder();
-  summaryBlock(builder, input);
-  return builder.finish();
+  const data = summaryBlock(builder, input);
+  return { ...data, body: builder.finish() };
 }
 function receiptSafe(value) {
   if (value === undefined || value === null) return 'unknown';
@@ -6833,7 +6841,7 @@ function toV2Aliased(f) {
   }
   return out;
 }
-function postReviewWrapper(id, reviewBody) {
+function postReviewWrapper(id, reviewBody, reviewSummary) {
   return {
     owner: id.owner,
     repo: id.repo,
@@ -6842,6 +6850,7 @@ function postReviewWrapper(id, reviewBody) {
     platform: id.platform,
     web_origin: id.web_origin,
     review_body: typeof reviewBody === 'string' ? reviewBody : '',
+    ...(reviewSummary ? { review_summary: reviewSummary } : {}),
   };
 }
 function writerPayload(inp) {
@@ -6850,7 +6859,7 @@ function writerPayload(inp) {
   return {
     findings: (inp.findings || []).map(toV2Aliased),
     postReview: id
-      ? { ...postReviewWrapper(id, inp.reviewBody), findings: postReviewSet }
+      ? { ...postReviewWrapper(id, inp.reviewBody, inp.reviewSummary), findings: postReviewSet }
       : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
@@ -6893,7 +6902,7 @@ function persistPlan(inp, paths) {
       path: paths.postReview,
       source: paths.findings,
       ids: (inp.postReview || []).map((f) => f && f.id),
-      wrapper: id ? postReviewWrapper(id, inp.reviewBody) : null,
+      wrapper: id ? postReviewWrapper(id, inp.reviewBody, inp.reviewSummary) : null,
     },
     checkpoint: {
       path: paths.checkpoints,
@@ -7832,10 +7841,6 @@ async function deliverFromCheckpoint(c, A, state) {
   if (measurementTrace) measurementTrace.complete = true;
   stripTraceFields(phaseOutputs);
   stripTraceFields(challengeOut);
-  const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
-  const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
-    && (A.mode !== 'headless'
-      || headlessCommentsEnabled);
   const pathNormalization = {};
   for (const [phase, output] of Object.entries(phaseOutputs)) {
     const counts = {};
@@ -7846,7 +7851,6 @@ async function deliverFromCheckpoint(c, A, state) {
   }
   const reportInput = {
     summary: summaryCopy.summary,
-    ...(includeDelivered ? { delivered: postReview } : {}),
     findings: challengeOut.findings,
     unverified: challengeOut.unverified,
     eliminated: challengeOut.eliminated,
@@ -7873,7 +7877,7 @@ async function deliverFromCheckpoint(c, A, state) {
     deliveryCap: limits.deliveryCap ?? null,
     gapCount: gaps.length,
   };
-  const reviewBody = renderSummaryBody({ ...reportInput, delivered: postReview });
+  const { body: reviewBody, ...reviewSummary } = renderPublicSummary({ ...reportInput, delivered: postReview });
   let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
   const reportGaps = reportOut.gaps || [];
   gaps.push(...reportGaps);
@@ -7883,7 +7887,7 @@ async function deliverFromCheckpoint(c, A, state) {
     findings: [...challengeOut.findings, ...challengeOut.unverified, ...challengeOut.eliminated],
     postReview,
     prIdentity: (A.delivery || {}).prIdentity,
-    reviewBody,
+    reviewBody, reviewSummary,
     report: reportOut.report,
     checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, state.phaseReached),
     outputDir: A.outputDir,

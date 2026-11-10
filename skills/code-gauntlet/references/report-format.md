@@ -362,7 +362,8 @@ report; persistence, delivery, and duration are reported by the orchestrator at 
 ## PR Comment Format (abbreviated)
 
 The persisted wrapper's `review_body` contains plain issue counts, one index entry per inline lead,
-and any delivery remainder. Unanchored issues appear once in the poster's body section under
+and any delivery remainder. Its `review_summary` carries these as structured data for filtering by
+lead id without parsing Markdown. Unanchored issues appear once in the poster's body section under
 `### 1 issue could not be attached to a changed line, so it is described here` (pluralized as needed).
 Held-back diagnostics and the full index stay in the local report. See
 [delivery rendering](../../../docs/delivery-rendering.md#summary-index-and-host-rendering).

@@ -376,33 +376,6 @@ def test_key_pins(finding, expected_body, expected_key, monkeypatch):
         assert original == before
 
 
-REPORT_SLICES_CASES = {
-    "change-context": ("## Summary\n\nBody\n\n## Change Context\nmore", "Body", None),
-    "missing-following-heading": (
-        "## Summary\n\nBody\n## Authored",
-        None,
-        "Report does not contain a following code-owned heading after Summary.",
-    ),
-    "literal-summary-marker": (
-        "## Summary\r\n\r\nBody\r\n## Findings",
-        None,
-        "Report does not contain a rendered Summary section.",
-    ),
-}
-
-
-@pytest.mark.parametrize(
-    "report,expected,error", REPORT_SLICES_CASES.values(), ids=REPORT_SLICES_CASES
-)
-def test_report_slices(report, expected, error):
-    if error:
-        with pytest.raises(compose.ReportShapeError) as exc:
-            compose.summary_body_from_report(report)
-        assert str(exc.value) == error
-    else:
-        assert compose.summary_body_from_report(report) == expected
-
-
 INLINE_ENVELOPES_CASES = {
     "exact-fit": ("textxx", "", "github", "inline", 30, "textxx" + TRAILER, 0),
     "fold-with-marker-reservation": (

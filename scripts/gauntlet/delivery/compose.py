@@ -1,7 +1,6 @@
 """Pure delivery bodies, grouping, and key material."""
 
 import hashlib
-import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -17,7 +16,7 @@ from gauntlet.delivery.fold import (
     utf8_len,
 )
 from gauntlet.delivery.gate import FenceOffsets
-from gauntlet.delivery.input import Finding
+from gauntlet.delivery.input import Finding, ReviewSummary, SummaryBullet
 from gauntlet.location import canonical_range, delivery_allows, parse_admission
 from gauntlet.markdown import fence_run
 from gauntlet.marker import LEGACY_PRODUCT, build_footer, build_prose_footer
@@ -50,11 +49,11 @@ __all__ = [
     "digest_groups",
     "finding_key",
     "key_material_body",
+    "legacy_summary",
     "render_comment_body",
     "render_finding_sections",
     "render_group_body",
     "render_group_sections",
-    "summary_body_from_report",
 ]
 
 # One mark per delivered surface: inline bodies end with the trailer, the
@@ -84,6 +83,7 @@ class SkippedEntry:
     line: object
     finding: Mapping[str, object]
     additional_sites: tuple[Mapping[str, object], ...] | None = None
+    finding_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -435,100 +435,92 @@ def _skipped_reserve(n: int) -> int:
     return utf8_len(_skipped_frame(n)) + utf8_len(_closing_line(n, n))
 
 
-def _index_identity(finding: Mapping[str, object]) -> re.Pattern[str] | None:
-    if canonical_range(finding) is None:
-        return None
-    where = re.escape(prepare_location(location_text(finding)))
-    severity = normalize_report_severity(
-        finding.get("severity"), registry.SEVERITY_EMOJI
-    )
-    values = {
-        "mark": re.escape(
-            registry.SEVERITY_EMOJI.get(severity, registry.SEVERITY_EMOJI_FALLBACK)
-        ),
-        "severity": severity.upper(),
-        "location": rf"(?:{where}|\[{where}\]\([^\n]*\))",
-        "suggestion": re.escape(
-            registry.PUBLIC_SUMMARY["suggestion"]
-            if finding.get("report_tag", finding.get("report_destination"))
-            == "suggestion"
-            else ""
-        ),
-        "title": re.escape(prepare_summary_title(finding.get("title", ""))),
-    }
-    pattern = re.sub(
-        r"\\\{(\w+)\\\}",
-        lambda match: values[match[1]],
-        re.escape(registry.PUBLIC_SUMMARY["index"]),
-    )
-    return re.compile(pattern)
+def _summary_ref(finding: Mapping[str, object], index: int | None) -> str | int:
+    value = finding.get("id")
+    if isinstance(value, str) and value:
+        return value
+    if index is None:
+        raise ReportShapeError("Summary lead has neither an id nor a source index.")
+    return index
 
 
-def _index_matches(line: str, identity: re.Pattern[str]) -> bool:
-    return identity.fullmatch(line) is not None
-
-
-def _validate_public_index(review_body: str, findings: Sequence[Finding]) -> None:
-    prefix = registry.PUBLIC_SUMMARY["counts"].split("{count}")[0]
-    if not review_body.startswith(prefix):
-        return
-    identities = [
-        identity
-        for group in consolidate_delivery(findings)
-        if (
-            identity := _index_identity(
-                delivery_finding(group.primary, group.corroborators)
-            )
-        )
-        is not None
-    ]
-    for line in review_body.split("\n")[1:]:
-        if not line or re.fullmatch(
-            r"[0-9]+ more issues? not listed here \([^\n]*\)\.", line
-        ):
-            continue
-        if not any(_index_matches(line, identity) for identity in identities):
-            raise ReportShapeError(
-                "Summary index does not match its findings; regenerate the review summary."
-            )
-
-
-def _without_body_index(
-    review_body: str,
-    groups: Sequence[Sequence[SkippedEntry]],
-    index_findings: Sequence[Finding],
+def render_summary(
+    summary: ReviewSummary,
+    findings: Sequence[Finding],
+    skipped_groups: Sequence[Sequence[SkippedEntry]],
 ) -> str:
-    # Placement can fail after the workflow rendered its index, so reconcile exact owned bullets.
-    _validate_public_index(review_body, index_findings)
-    identities = []
-    for group in groups:
-        finding = delivery_finding(
-            group[0].finding, [entry.finding for entry in group[1:]]
+    if not isinstance(summary, dict) or set(summary) != {
+        "counts",
+        "index",
+        "omitted",
+        "reasons",
+    }:
+        raise ReportShapeError("Invalid review_summary contract.")
+    if (
+        not isinstance(summary["counts"], str)
+        or not isinstance(summary["index"], list)
+        or not gate.is_plain_int(summary["omitted"])
+        or summary["omitted"] < 0
+        or not isinstance(summary["reasons"], list)
+        or not all(isinstance(reason, str) for reason in summary["reasons"])
+    ):
+        raise ReportShapeError("Invalid review_summary fields.")
+    positions = {id(finding): index for index, finding in enumerate(findings)}
+    groups = consolidate_delivery(findings)
+    known = {
+        _summary_ref(group.primary, positions[id(group.primary)]) for group in groups
+    }
+    expected = {
+        _summary_ref(group.primary, positions[id(group.primary)])
+        for group in groups
+        if delivery_allows(group.primary, "inline")
+    }
+    seen: set[str | int] = set()
+    for row in summary["index"]:
+        if (
+            not isinstance(row, dict)
+            or set(row) != {"lead_id", "bullet"}
+            or not isinstance(row["bullet"], str)
+        ):
+            raise ReportShapeError("Invalid summary bullet record.")
+        ref = row["lead_id"]
+        if not (isinstance(ref, str) or gate.is_plain_int(ref)) or ref not in known:
+            raise ReportShapeError("Unknown summary lead id.")
+        if ref in seen:
+            raise ReportShapeError("Duplicate summary lead id.")
+        seen.add(ref)
+    if expected - seen:
+        raise ReportShapeError("Missing summary bullet for a delivered lead.")
+    blocked = {
+        _summary_ref(group[0].finding, group[0].finding_index)
+        for group in skipped_groups
+    }
+    bullets: list[str] = []
+    size = 0
+    omitted = summary["omitted"]
+    reasons = list(summary["reasons"])
+    cut = False
+    for row in summary["index"]:
+        if row["lead_id"] not in expected or row["lead_id"] in blocked:
+            continue
+        added = len(row["bullet"]) + bool(bullets)
+        if cut or size + added > registry.REPORT_FOLD_LIMITS["summaryIndexChars"]:
+            cut = True
+            omitted += 1
+            continue
+        bullets.append(row["bullet"])
+        size += added
+    body = summary["counts"] + ("\n\n" + "\n".join(bullets) if bullets else "")
+    if cut:
+        reasons.append("did not fit in this comment")
+    if omitted:
+        body += "\n\n" + registry.PUBLIC_SUMMARY["remainder"].format(
+            count=omitted, issues=_plural(omitted, "issue"), reasons="; ".join(reasons)
         )
-        originals = [
-            delivery_finding(original.primary, original.corroborators)
-            for original in consolidate_delivery(index_findings)
-            if all(
-                original.primary.get(field) == finding.get(field)
-                for field in ("id", "file", "title")
-            )
-        ]
-        if len(originals) == 1:
-            finding = originals[0]
-        identity = _index_identity(finding)
-        if identity is not None:
-            identities.append(identity)
-    lines = review_body.split("\n")
-    kept = [
-        line
-        for line in lines
-        if not any(_index_matches(line, identity) for identity in identities)
-    ]
-    return "\n".join(kept).rstrip() if len(kept) != len(lines) else review_body
+    return body
 
 
-def summary_for_delivery(report_summary: str, findings: Sequence[Finding]) -> str:
-    """Legacy report inputs need the same public counts and inline-only index."""
+def legacy_summary(findings: Sequence[Finding]) -> ReviewSummary:
     groups = consolidate_delivery(
         [finding for finding in findings if delivery_allows(finding, "body")]
     )
@@ -558,22 +550,31 @@ def summary_for_delivery(report_summary: str, findings: Sequence[Finding]) -> st
         sentence += registry.PUBLIC_SUMMARY["improvement"].format(count=suggestions)
     elif suggestions > 1:
         sentence += registry.PUBLIC_SUMMARY["improvements"].format(count=suggestions)
-    identities = [
-        identity
-        for group in groups
-        if delivery_allows(group.primary, "inline")
-        and (identity := _index_identity(group.primary)) is not None
-    ]
-    bullets = [
-        line
-        for line in report_summary.split("\n")
-        if any(_index_matches(line, identity) for identity in identities)
-    ]
-    body = sentence + ("\n\n" + "\n".join(bullets) if bullets else "")
-    missing = len(identities) - len(bullets)
-    if missing > 0:
-        body += f"\n\n{missing} more {_plural(missing, 'issue')} not listed here (did not fit in this comment)."
-    return body
+    positions = {id(finding): index for index, finding in enumerate(findings)}
+    index: list[SummaryBullet] = []
+    for group, finding in zip(groups, delivered, strict=True):
+        if not delivery_allows(group.primary, "inline"):
+            continue
+        severity = normalize_report_severity(
+            finding.get("severity"), registry.SEVERITY_EMOJI
+        )
+        bullet = registry.PUBLIC_SUMMARY["index"].format(
+            mark=registry.SEVERITY_EMOJI[severity],
+            severity=severity.upper(),
+            location=prepare_location(location_text(finding)),
+            suggestion=registry.PUBLIC_SUMMARY["suggestion"]
+            if finding.get("report_tag", finding.get("report_destination"))
+            == "suggestion"
+            else "",
+            title=prepare_summary_title(finding.get("title", "")),
+        )
+        index.append(
+            {
+                "lead_id": _summary_ref(group.primary, positions[id(group.primary)]),
+                "bullet": prepare_prose(bullet),
+            }
+        )
+    return {"counts": sentence, "index": index, "omitted": 0, "reasons": []}
 
 
 def compose_review_body(
@@ -584,12 +585,15 @@ def compose_review_body(
     findings_count: int,
     sha: object,
     index_findings: Sequence[Finding] = (),
+    review_summary: ReviewSummary | None = None,
 ) -> ComposedBody:
     # Standalone prepared summary lines alone drive same-SHA footer deduplication.
     # Reserve the complete envelope; groups are indivisible and prose folds first.
     skipped_groups = _ordered_skipped_groups(skipped_groups)
-    review_body = _without_body_index(
-        prepare_prose(review_body), skipped_groups, index_findings
+    review_body = (
+        render_summary(review_summary, index_findings, skipped_groups)
+        if review_summary is not None
+        else prepare_prose(review_body)
     )
     limits = body_limit(platform)
     skipped = [entry for group in skipped_groups for entry in group]
@@ -653,32 +657,6 @@ def compose_review_body(
         0,
         _omitted_entries([group[0] for group in omitted_groups]),
         tuple(entry for group in shown_groups for entry in group),
-    )
-
-
-def summary_body_from_report(report: str) -> str:
-    marker = "## Summary\n\n"
-    start = report.find(marker)
-    if start < 0:
-        raise ReportShapeError("Report does not contain a rendered Summary section.")
-    body_start = start + len(marker)
-    cursor = body_start
-    while cursor <= len(report):
-        end = report.find("\n", cursor)
-        if end < 0:
-            line = report[cursor:]
-            next_cursor = len(report) + 1
-        else:
-            line = report[cursor:end]
-            next_cursor = end + 1
-        if line.endswith("\r"):
-            line = line[:-1]
-        if line in registry.CODE_OWNED_HEADINGS:
-            body = report[body_start:cursor]
-            return body[:-2] if body.endswith("\n\n") else body
-        cursor = next_cursor
-    raise ReportShapeError(
-        "Report does not contain a following code-owned heading after Summary."
     )
 
 

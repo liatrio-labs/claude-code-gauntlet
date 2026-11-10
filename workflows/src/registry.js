@@ -57,6 +57,7 @@ export const PUBLIC_SUMMARY = deepFreeze({
   improvements: ' {count} are suggested improvements rather than defects.',
   index: '- {mark} [{severity}] {location}{suggestion}: {title}',
   suggestion: ' (improvement suggestion)',
+  remainder: '{count} more {issues} not listed here ({reasons}).',
 });
 
 export const CODE_OWNED_HEADINGS = deepFreeze([

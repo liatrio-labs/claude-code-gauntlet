@@ -1225,6 +1225,7 @@ PUBLIC_SUMMARY = {
     "improvements": " {count} are suggested improvements rather than defects.",
     "index": "- {mark} [{severity}] {location}{suggestion}: {title}",
     "suggestion": " (improvement suggestion)",
+    "remainder": "{count} more {issues} not listed here ({reasons}).",
 }
 
 SEVERITY_EMOJI = {
@@ -1244,17 +1245,6 @@ RULE_SOURCE_LABELS = {
 }
 
 RULE_SOURCE_LABEL_FALLBACK = "Cited rule"
-
-CODE_OWNED_HEADINGS = [
-    "## Summary",
-    "## Change Context",
-    "## Findings",
-    "## Findings held back by admission",
-    "## Unverified / pipeline-degraded findings",
-    "## Eliminated findings",
-    "## Review Dimensions Summary",
-    "## Review Methodology",
-]
 
 DETAIL_FIELDS_BY_DIMENSION = {
     "bug": ("hidden_errors",),

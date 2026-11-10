@@ -38,7 +38,7 @@ RENDER_REPORT = (
     + "process.stdout.write(renderReport(JSON.parse(source)));"
 )
 RENDER_SUMMARIES = (
-    "import { renderReport, renderSummaryBody } "
+    "import { renderReport, renderPublicSummary } "
     "from './workflows/src/renderReport.js';"
     + READ_INPUT
     + "const x=JSON.parse(source);"
@@ -68,9 +68,9 @@ def test_summary_and_skipped_location_bytes(
         "title": "Location",
     }
     summary = run_node(
-        "import { renderSummaryBody } from './workflows/src/renderReport.js';"
+        "import { renderPublicSummary } from './workflows/src/renderReport.js';"
         + READ_INPUT
-        + "process.stdout.write(renderSummaryBody(JSON.parse(source)));",
+        + "process.stdout.write(renderPublicSummary(JSON.parse(source)).body);",
         {"findings": [finding]},
     ).stdout
     assert (expected in summary) == (status == "confirmed")
@@ -91,7 +91,7 @@ def test_summary_and_skipped_location_bytes(
     )
 
 
-def test_permalinked_summary_slice_and_guard_equality() -> None:
+def test_summary_renderers_contain_hostile_fields() -> None:
     fixture = {
         "prIdentity": {
             "platform": "github",
@@ -130,19 +130,17 @@ def test_permalinked_summary_slice_and_guard_equality() -> None:
     rendered: list[str] = json.loads(
         run_node(
             RENDER_SUMMARIES + "process.stdout.write(JSON.stringify([renderReport(x),"
-            "renderSummaryBody(x)]));",
+            "renderPublicSummary(x).body]));",
             fixture,
         ).stdout
     )
-    report, summary = rendered
+    _, summary = rendered
     assert (
-        compose.summary_for_delivery(
-            compose.summary_body_from_report(report),
-            cast(list[Finding], fixture["findings"]),
-        )
-        == summary
+        "dev@example.test"
+        in compose.legacy_summary(cast(list[Finding], fixture["findings"]))["index"][0][
+            "bullet"
+        ]
     )
-    assert outbound_text.prepare_prose(summary) == summary
     assert "app/\uff20modal/\uff1cSlot>.tsx" in summary
     assert "dev@example.test" in summary
     assert "&#\u0666\u0664;" in summary
@@ -202,7 +200,7 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             RENDER_SUMMARIES + "x.delivered=x.deliveredIndexes.map(i=>x.findings[i]);"
             "delete x.deliveredIndexes;"
             "process.stdout.write(JSON.stringify([renderReport(x),"
-            "renderSummaryBody(x)]));",
+            "renderPublicSummary(x).body]));",
             {
                 "summary": "The PR claims to change things.",
                 "findings": findings,
@@ -211,7 +209,7 @@ def test_withheld_primary_summary_cross_runtime() -> None:
         ).stdout
     )
     report, body = rendered
-    assert "a.js:1" in compose.summary_body_from_report(report)
+    assert "a.js:1" in report
     assert "a.js:1" not in body
     delivered = cast(list[Finding], [findings[2], findings[1]])
     groups = compose.consolidate_delivery(delivered)

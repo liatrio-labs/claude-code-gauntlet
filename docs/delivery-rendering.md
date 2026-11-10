@@ -43,8 +43,8 @@ rule is normalized, redacted, and has backtick runs of three or more collapsed t
 before its source text is capped at 500 characters. Containment then escapes fence-shaped
 lines and unsafe visible characters before blockquote markers are added. Escaping can make
 the posted rule longer than 500 characters. Display
-locations are quoted with a code-span delimiter longer than any path backtick run. The
-caller-supplied `review_body` runs through the same prose guard before composition. A visible
+locations are quoted with a code-span delimiter longer than any path backtick run. A
+caller-supplied `review_body` without structured summary data runs through the same prose guard. A visible
 ASCII `@` at text start or after a non-alphanumeric character becomes U+FF20 FULLWIDTH COMMERCIAL AT,
 including inside inline code, quoted locations and a URL segment such as `/@name`.
 `<` before an ASCII letter, `/`, `!` or `?` becomes `&lt;` in prose and U+FF1C
@@ -202,8 +202,11 @@ improvements get a separate count sentence. Held-back and unverified findings st
 report. Each selected issue whose lead can post inline gets one index bullet. Unanchored issues
 appear only in the Python-rendered section, under `### N issues could not be attached to a changed
 line, so they are described here`, with singular grammar for one issue. The poster removes a
-previously indexed lead when its anchor fails at delivery. Both runtimes use registry-owned summary
-templates; an unknown index line stops delivery before posting.
+previously indexed lead when its anchor fails at delivery. The workflow supplies `review_summary`
+with prepared counts, ordered `{lead_id, bullet}` records, and remainder data. The poster filters
+by id and preserves each bullet verbatim; unknown ids or missing delivered-lead bullets stop delivery.
+Legacy `--report` inputs render their own summary from findings with group severity and tier;
+they never extract public text from the local report.
 
 Selection uses original object identity; issue identity uses `delivery_group.issue_key`, falling
 back to legacy `consolidation_key`. The local report keeps the full index and every member's prose.

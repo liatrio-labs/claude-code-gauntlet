@@ -11,9 +11,9 @@ import { mentionsPreparedHostRoot, prepareHostRootPatterns, rewritePreparedRepoR
 import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs } from './args.js';
 import { resolveReviewConfig, resolveRemovedTestsArgs } from './args.js';
 import { entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from './entry.js';
-import { computeLightEligible, configEchoValue } from './knobs.js';
+import { computeLightEligible } from './knobs.js';
 import { scopeMatchesFile } from './reviewConfig.js';
-import { renderReport, renderSummaryBody } from './renderReport.js';
+import { renderReport, renderPublicSummary } from './renderReport.js';
 import { writeArtifacts } from './persist.js';
 import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
 import { checkpointChecksumErrors, checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
@@ -153,10 +153,6 @@ export async function deliverFromCheckpoint(c, A, state) {
   if (measurementTrace) measurementTrace.complete = true;
   stripTraceFields(phaseOutputs);
   stripTraceFields(challengeOut);
-  const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
-  const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
-    && (A.mode !== 'headless'
-      || headlessCommentsEnabled);
 
   const pathNormalization = {};
   for (const [phase, output] of Object.entries(phaseOutputs)) {
@@ -168,7 +164,6 @@ export async function deliverFromCheckpoint(c, A, state) {
   }
   const reportInput = {
     summary: summaryCopy.summary,
-    ...(includeDelivered ? { delivered: postReview } : {}),
     findings: challengeOut.findings,
     unverified: challengeOut.unverified,
     eliminated: challengeOut.eliminated,
@@ -196,7 +191,7 @@ export async function deliverFromCheckpoint(c, A, state) {
     deliveryCap: limits.deliveryCap ?? null,
     gapCount: gaps.length,
   };
-  const reviewBody = renderSummaryBody({ ...reportInput, delivered: postReview });
+  const { body: reviewBody, ...reviewSummary } = renderPublicSummary({ ...reportInput, delivered: postReview });
   // Render from pipeline data so report structure and counts remain deterministic.
   let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
   const reportGaps = reportOut.gaps || [];
@@ -211,7 +206,7 @@ export async function deliverFromCheckpoint(c, A, state) {
     findings: [...challengeOut.findings, ...challengeOut.unverified, ...challengeOut.eliminated],
     postReview,
     prIdentity: (A.delivery || {}).prIdentity,
-    reviewBody,
+    reviewBody, reviewSummary,
     report: reportOut.report,
     checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, state.phaseReached),
     outputDir: A.outputDir,

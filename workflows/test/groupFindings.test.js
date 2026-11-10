@@ -8,7 +8,7 @@ import { groupFindings, groupingPrompt, groupingSchema } from '../src/groupFindi
 import { makeFinding, makeCtx, assertValidSchema } from './helpers/pipelineMock.js';
 import { validArgs } from './helpers/argsFixtures.js';
 import { runWith } from '../src/run.js';
-import { renderSummaryBody, renderReport } from '../src/renderReport.js';
+import { renderPublicSummary, renderReport } from '../src/renderReport.js';
 import { slimPersistedCheckpoints } from '../src/checkpoints.js';
 
 const members = () => [107, 114, 125, 141].map((line, i) => makeFinding(`F${line}`, {
@@ -166,7 +166,7 @@ for (const grouping of ['model', 'positional']) for (const [name, overrides] of 
   assert.equal(out.groups[0].disposition, 'body');
   assert.equal(out.groups[0].tier, 'main');
   assert.equal(out.stats.grouping_placement_tradeoffs, 1);
-  const summary = renderSummaryBody(out);
+  const summary = renderPublicSummary(out).body;
   assert.equal(summary, name === 'severity' ? 'Found 1 issue in this change: 1 critical.' : 'Found 1 issue in this change: 1 low.');
   const local = renderReport(out);
   assert.match(local, name === 'severity' ? /### 🔴 Critical[\s\S]*#### finding STRONG/ : /#### finding STRONG/);
@@ -204,7 +204,7 @@ for (const path of ['model', 'positional']) for (const [name, left, right, expec
   assert.deepEqual(findings.map((f) => [f.id, f.severity, f.report_tag]), assessed);
   const selected = selectDelivery([...out.findings, makeFinding('OTHER', { severity: 'high' })], 1, 'main_only');
   assert.deepEqual(selected.map((f) => f.id).sort(), ['LEAD', 'MEMBER']);
-  const summary = renderSummaryBody({ ...out, delivered: selected });
+  const summary = renderPublicSummary({ ...out, delivered: selected }).body;
   assert.match(summary, /^Found 1 issue in this change: 1 critical\./);
   assert.equal(summary.includes('improvement suggestion'), false);
   assert.match(summary, expectedLead === 'MEMBER' ? /Security or suggestion text|finding MEMBER/ : /finding LEAD/);

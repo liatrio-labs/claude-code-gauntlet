@@ -41,8 +41,8 @@ test('the report ends with a REVIEW.md tip only when discovery says none exists'
     assert.equal(report.renderReport(absent), `${withoutTip}\n\n${tip}`);
     assert.equal(withoutTip.includes(tip), false);
     assert.equal(rendered({ mode }).includes(tip), false);
-    assert.equal(report.renderSummaryBody(absent), report.renderSummaryBody(present));
-    assert.equal(report.renderSummaryBody(absent).includes(tip), false);
+    assert.equal(report.renderPublicSummary(absent).body, report.renderPublicSummary(present).body);
+    assert.equal(report.renderPublicSummary(absent).body.includes(tip), false);
   }
 });
 
@@ -364,7 +364,7 @@ SUMMARY_ROWS.push({ name: tilde.id, input: { findings: [finding('OUT', {
   file: 'a.py', line_start: 3, line_end: 3, title: tilde.input,
 })] }, surface: 'lastLine', expected: '- 🟠 [HIGH] `a.py:3`: ' + tilde.expected });
 for (const row of SUMMARY_ROWS) test(`summary: ${row.name}`, () => {
-  const actual = report.renderSummaryBody(row.input);
+  const actual = report.renderPublicSummary(row.input).body;
   assert.deepEqual(surface(actual, row), row.expected);
 });
 
@@ -442,7 +442,7 @@ const UNITS_ROWS = [
 ];
 for (const row of UNITS_ROWS) test(`units: ${row.name}`, () => {
   const input = row.selected ? { ...row.input, delivered: row.selected.map((index) => row.input.findings[index]) } : row.input;
-  const text = report.renderSummaryBody(input);
+  const text = report.renderPublicSummary(input).body;
   if (row.reason) assert.equal(surface(text, row).match(/\((.*)\)\.$/)?.[1], row.reason);
   else assert.deepEqual(surface(text, row), row.expected);
   if (row.starts) assert.ok(text.startsWith(row.starts));
@@ -460,7 +460,7 @@ for (const row of BUDGET_ROWS) test(`budget: ${row.name}`, () => {
     finding('093', { title: 'z'.repeat(row.tailChars) })];
   if (row.extra) findings.push(finding('ZZZ', { title: 'z', severity: 'low' }));
   const input = { findings };
-  const text = report.renderSummaryBody(input);
+  const text = report.renderPublicSummary(input).body;
   const bullets = text.split('\n').filter((line) => line.startsWith('- '));
   assert.deepEqual({ count: bullets.length, chars: [...bullets.join('\n')].length }, row.expected);
   if (row.ends) assert.ok(text.endsWith(row.ends));
@@ -610,7 +610,7 @@ const LINK_ROWS = [
       + ' (improvement suggestion): same\n\n1 more issue not listed here (this review posts at most 2 issues).' },
 ];
 for (const row of LINK_ROWS) test(`links: ${row.name}`, () => {
-  assert.equal(surface(report.renderSummaryBody(row.input), row), row.expected);
+  assert.equal(surface(report.renderPublicSummary(row.input).body, row), row.expected);
 });
 
 test('forged markers are contained outside fenced evidence', () => {
@@ -634,7 +634,7 @@ const SHARED_SUMMARY_ROWS = [{ name: 'standalone and report Summary boundary', i
 for (const row of SHARED_SUMMARY_ROWS) test(`summary boundary: ${row.name}`, () => {
   const text = rendered(row.input);
   assert.equal(surface(text, { start: '## Summary\n\n', end: '\n\n## Change Context' }), row.expected.replace('Found 1 issue in this change: ', '1 finding after the gauntlet — '));
-  assert.equal(report.renderSummaryBody(row.input), row.expected);
+  assert.equal(report.renderPublicSummary(row.input).body, row.expected);
 });
 
 test('location rights govern report and summary links', () => {
@@ -643,7 +643,7 @@ test('location rights govern report and summary links', () => {
       anchor: 'RAW_SOURCE_QUOTE', claimed_line_start: 987, claimed_line_end: 999 });
     const input = { ...reportInput(), findings: [member] };
     const full = report.renderReport(input);
-    const summary = report.renderSummaryBody(input);
+    const summary = report.renderPublicSummary(input).body;
     const resolved = ['confirmed', 'relocated'].includes(status);
     for (const text of [full, summary]) {
       assert.equal(text.includes('source.js#L7-L8'), resolved);

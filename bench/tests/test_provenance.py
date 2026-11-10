@@ -20,6 +20,7 @@ def surface_review(tmp_path, platform="github", *, budget_omission=False, groupe
     trace, path, receipt = emit_trace(tmp_path)
     raw = read_json(path)
     review = receipt["payload"]["postReview"]
+    review.pop("review_summary", None)
     review.update(
         review_body="Summary index repeats inline findings; no new issue.", sha="a" * 40
     )

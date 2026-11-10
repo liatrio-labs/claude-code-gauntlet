@@ -201,7 +201,6 @@ _REGISTRY_FIELDS = (
     "severityEmojiFallback: m.SEVERITY_EMOJI_FALLBACK",
     "ruleSourceLabels: m.RULE_SOURCE_LABELS",
     "ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK",
-    "codeOwnedHeadings: m.CODE_OWNED_HEADINGS",
     "agents: m.AGENTS",
     "modelAliases: m.MODEL_ALIASES",
     "policyProviders: m.POLICY_PROVIDERS",
@@ -822,7 +821,6 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "SEVERITY_EMOJI_FALLBACK": identity["severityEmojiFallback"],
         "RULE_SOURCE_LABELS": identity["ruleSourceLabels"],
         "RULE_SOURCE_LABEL_FALLBACK": identity["ruleSourceLabelFallback"],
-        "CODE_OWNED_HEADINGS": identity["codeOwnedHeadings"],
         "DETAIL_FIELDS_BY_DIMENSION": _detail_fields(identity),
         "KNOB_REGISTRY": tuple(identity["knobs"]),
     }

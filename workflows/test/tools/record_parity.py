@@ -173,11 +173,11 @@ def _cross_runtime_targets():
     outbound_text = outbound_path.read_text(encoding="utf-8")
     outbound = json.loads(outbound_text)
     source = """
-import { renderSummaryBody } from './workflows/src/renderReport.js';
+import { renderPublicSummary } from './workflows/src/renderReport.js';
 let s='';for await(const c of process.stdin)s+=c;
 const rows=JSON.parse(s).map(row=>({...row.input, findings:row.input.findings.map(f=>({...f,
  disposition:'deliver', admission:{version:1,status:'admitted',input_proof:'fixture'}}))}));
-process.stdout.write(JSON.stringify(rows.map(renderSummaryBody)));
+process.stdout.write(JSON.stringify(rows.map(input => renderPublicSummary(input).body)));
 """
     rendered = json.loads(
         subprocess.run(
