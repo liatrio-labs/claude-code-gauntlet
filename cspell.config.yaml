@@ -58,6 +58,7 @@ overrides:
       - GitOps
       - newlines
       - Octo
+      - QODO
       - reranking
 
   - filename: CONTRIBUTING.md
