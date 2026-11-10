@@ -60,6 +60,12 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
         confidence: finding_id === 'FILTER' ? 45 : seed.find((f) => f.id === finding_id)?.confidence ?? 90,
         ...(finding_id === 'REPORT' ? { admission_assessments: [{ predicate: 'present_defect', status: 'rejected', references: ['primary'] }] } : {}) })) };
     }
+    if (label === 'group-findings') {
+      ctx.calls.push({ prompt, ...dispatch });
+      const ids = dispatch.schema.properties.groups.items.properties.lead_id.enum;
+      return { groups: ['GROUP', 'CORROBORATOR'].every((id) => ids.includes(id))
+        ? [{ finding_ids: ['GROUP', 'CORROBORATOR'], lead_id: 'CORROBORATOR' }] : [] };
+    }
     if (label.startsWith('challenge-')) {
       ctx.calls.push({ prompt, ...dispatch });
       return { confidence_claim_is_correct: prompt.includes('finding REMOVE') ? 0 : 90, justification: 'fixed independent check' };

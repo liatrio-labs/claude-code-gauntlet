@@ -19,6 +19,7 @@ from gauntlet.markdown import (
 )
 from gauntlet.marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
 from gauntlet.registry import JS_TRIM_CHARS as JS_TRIM_CHARS
+from gauntlet.registry import REPORT_FOLD_LIMITS
 
 
 def normalize_report_severity(raw: object, labels: Mapping[str, object]) -> str:
@@ -651,6 +652,7 @@ def _prepare_text(
     collapse_ticks: bool = False,
     cap: int | None = None,
     trust_fences: bool = True,
+    summary_title: bool = False,
 ) -> str:
     if text is None:
         return ""
@@ -664,6 +666,11 @@ def _prepare_text(
         text = _BACKTICK_RUN_RE.sub("``", text)
     if single_line:
         text = re.sub(r"[\r\n]+", " ", text)
+    if summary_title:
+        limit = REPORT_FOLD_LIMITS["inlineChars"]
+        if len(text) > limit:
+            text = f"{text[:limit]} [folded: {len(text) - limit} more characters]"
+        text = _escape_triggered_definition_colons(text, force=True)
     if cap is not None:
         text = _cap_rule_text(text, cap)
     if not text.strip():
@@ -755,6 +762,11 @@ def prepare_prose(text: object) -> str:
 def prepare_line(text: object) -> str:
     """Prepare a single-line, untrusted display field."""
     return _prepare_text(text, single_line=True)
+
+
+def prepare_summary_title(text: object) -> str:
+    """Match the workflow's folded title when reconciling actual inline placement."""
+    return _prepare_text(text, single_line=True, summary_title=True)
 
 
 def redact_secrets(text: str) -> str:

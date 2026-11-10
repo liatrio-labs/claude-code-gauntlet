@@ -548,7 +548,7 @@ export function plural(count, noun) {
   return count === 1 ? noun : `${noun}s`;
 }
 
-function countsSentence(findings, rawCount, unverified, view) {
+function localCountsSentence(findings, rawCount, unverified, view) {
   const count = findings.length;
   let sentence = count === rawCount
     ? `${count} ${plural(count, 'finding')} after the gauntlet`
@@ -563,10 +563,19 @@ function countsSentence(findings, rawCount, unverified, view) {
   return sentence;
 }
 
+function countsSentence(findings, view) {
+  const count = findings.length;
+  const breakdown = view.order.map((severity) => `${view.buckets.get(severity).length} ${severity}`);
+  let sentence = `Found ${count} ${plural(count, 'issue')} in this change${breakdown.length ? ': ' + breakdown.join(', ') : ''}.`;
+  const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
+  if (suggestions === 1) sentence += ' 1 is a suggested improvement rather than a defect.';
+  else if (suggestions > 1) sentence += ` ${suggestions} are suggested improvements rather than defects.`;
+  return sentence;
+}
+
 function reportUnitKey(finding, original) {
-  return finding.consolidation_key
-    ? finding.consolidation_key
-    : (original && typeof original === 'object' ? original : finding);
+  return finding.delivery_group?.issue_key ?? finding.consolidation_key
+    ?? (original && typeof original === 'object' ? original : finding);
 }
 
 function plainReportObject(value) {
@@ -579,11 +588,10 @@ function plainReportObject(value) {
   }
 }
 
-function summaryIndex(rawFindings, findingsView, input) {
+function summaryIndex(rawFindings, findingsView, input, projected) {
   const reported = findingsView.order.flatMap((severity) => findingsView.buckets.get(severity));
   if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [] };
   const originals = Array.isArray(input.findings) ? input.findings : [];
-  const projected = rawFindings;
   const delivered = input.delivered.filter(plainReportObject);
   const deliveredOriginals = new Set(delivered);
   const deliveryOrder = new Map();
@@ -596,6 +604,7 @@ function summaryIndex(rawFindings, findingsView, input) {
   for (let index = 0; index < originals.length; index += 1) {
     const original = originals[index];
     const finding = projected[index] || {};
+    if (!rawFindings.includes(finding)) continue;
     if (finding && typeof finding === 'object') originalByProjected.set(finding, original);
     const key = reportUnitKey(finding, original);
     if (!unitMembers.has(key)) unitMembers.set(key, []);
@@ -618,14 +627,14 @@ function summaryIndex(rawFindings, findingsView, input) {
   if (typeof input.deliveryCap === 'number' && omittedUnits.some((members) => (
     input.deliveryTier !== 'main_only' || members.some(isMain)
   ))) {
-    reasons.push(`over the delivery cap of ${input.deliveryCap} ${plural(input.deliveryCap, 'finding')}`);
+    reasons.push(`this review posts at most ${input.deliveryCap} ${plural(input.deliveryCap, 'issue')}`);
   }
   if (input.deliveryTier === 'main_only' && omittedUnits.some((members) => (
     members.some((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion')
   ))) {
-    reasons.push('improvement suggestions held back by delivery tier main_only');
+    reasons.push('this review includes defects only');
   }
-  if (!reasons.length && omittedUnits.length) reasons.push('not selected for delivery');
+  if (!reasons.length && omittedUnits.length) reasons.push('not selected for this review');
   return { indexed, reasons };
 }
 
@@ -640,12 +649,16 @@ function partitionByDisposition(inp, findingsRight) {
 
 function summaryBlock(builder, input, findingsRight = 'body') {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const { rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
+  const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
-  builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
-  const { indexed, reasons } = summaryIndex(rawFindings, findingsView, inp);
+  const local = findingsRight === 'report';
+  builder.add(local ? localCountsSentence(findings, rawFindings.length, unverified, findingsView) : countsSentence(findings, findingsView));
+  const selection = summaryIndex(rawFindings, findingsView, local ? { ...inp, delivered: undefined } : inp, projected);
+  const indexed = selection.indexed.filter((finding) => local || deliveryAllows(finding, 'inline'));
+  const bodyCount = selection.indexed.length - indexed.length;
+  const reasons = selection.reasons;
   const permalinks = permalinkContext(inp.prIdentity);
   const bullets = [];
   let indexChars = 0;
@@ -669,9 +682,9 @@ function summaryBlock(builder, input, findingsRight = 'body') {
   }
   if (bullets.length) builder.add();
   for (const bullet of bullets) builder.add(bullet);
-  const remainder = findings.length - bullets.length;
-  if (cutForLength) reasons.push('over the summary length limit');
-  const remainderNoun = findings.length === rawFindings.length
+  const remainder = findings.length - bullets.length - bodyCount;
+  if (cutForLength) reasons.push(local ? 'over the summary length limit' : 'did not fit in this comment');
+  const remainderNoun = !local ? plural(remainder, 'issue') : findings.length === rawFindings.length
     ? plural(remainder, 'finding')
     : `reported ${plural(remainder, 'issue')}`;
   if (remainder) {

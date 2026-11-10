@@ -271,7 +271,7 @@ def _reconstruct_body_summary(
     rendered, omissions = [], []
     if skipped_groups:
         frame = compose._skipped_frame(
-            sum(len(g) for g in skipped_groups),
+            len(skipped_groups),
             finalized.summary.shown,
             inline_count if platform == "github" else None,
         )
@@ -296,7 +296,7 @@ def _reconstruct_body_summary(
                     )
                 )
                 cursor += len(fragment)
-                shown += len(group)
+                shown += 1
             else:
                 omissions.append(
                     DeliveryOmission(

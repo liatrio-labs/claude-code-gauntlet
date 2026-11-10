@@ -466,7 +466,7 @@ export const RULE_SOURCE_LABELS = deepFreeze({
 export const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 
 export const STAGE_DEFAULTS = deepFreeze({
-  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
+  validator: 'sonnet', challenger: 'sonnet', grouper: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
 });
 

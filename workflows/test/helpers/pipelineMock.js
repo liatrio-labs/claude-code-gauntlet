@@ -175,6 +175,7 @@ export function makeCtx(args, opts = {}) {
       const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
       return { validations: ids.map((finding_id) => ({ finding_id, policy_subject: 'ordinary', confidence: seedFindings().find((f) => f.id === finding_id)?.confidence ?? 90 })) };
     }
+    if (label === 'group-findings') return { groups: [] };
     if (label.startsWith('challenge-')) return { confidence_claim_is_correct: 80, justification: 'claim holds' };
     if (label === 'artifact-writer') {
       if (opts.onPersist) opts.onPersist(parseWriterPayload(prompt));

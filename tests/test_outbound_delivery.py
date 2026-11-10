@@ -160,7 +160,7 @@ def test_direct_sessions_interleave_live_and_dry_delivery(
         ),
     ],
 )
-def test_corroborator_cross_field_wikilink(
+def test_group_omits_reviewer_identity_markup(
     agent: str, dimension: str, confidence: str, expected_identity: str
 ) -> None:
     primary: dict[str, object] = {
@@ -185,7 +185,8 @@ def test_corroborator_cross_field_wikilink(
     }
     body = compose.render_group_body(primary, [corroborator])
     _assert_outbound_string_invariant(body)
-    assert expected_identity in body
+    assert expected_identity not in body
+    assert "Corroborating body" not in body
 
 
 def _deliver(
@@ -373,13 +374,13 @@ def test_python_sink_containment(case: SinkCase) -> None:
     assert "\uff20zz363review_body" in summary
     if case.route == "off_diff":
         assert not inline_bodies
-        assert "could not be anchored inline" in summary
+        assert "could not be attached to a changed line" in summary
         assert "\uff20zz363title" in summary
     else:
         assert len(inline_bodies) == 1
         assert "\uff20zz363title" in inline_bodies[0]
         if case.route == "grouped":
-            assert "Corroborating finding" in inline_bodies[0]
+            assert "Corroborating finding" not in inline_bodies[0]
         if case.route == "rule-fallback":
             assert "\uff20zz363spec_text" in inline_bodies[0]
 
@@ -420,7 +421,7 @@ def _assert_prepared_body(
     assert review_marker.find_finding_markers(body) == list(expected_markers)
 
 
-def test_legacy_report_summary_is_guarded_on_the_real_cli_path(
+def test_legacy_report_free_prose_is_not_posted(
     forge_factory: FakeForgeFactory,
 ) -> None:
     with tempfile.TemporaryDirectory() as tmp:
@@ -472,8 +473,9 @@ def test_legacy_report_summary_is_guarded_on_the_real_cli_path(
     _assert_prepared_body(review_body)
     invariant_body = review_body.replace(review_marker.build_marker(SHA, 0), "")
     _assert_outbound_string_invariant(invariant_body)
-    assert "\uff20zz363sentinel" in review_body
-    assert "\\/close\n\\>>>" in review_body
+    assert "zz363sentinel" not in review_body
+    assert "Found 0 issues in this change." in review_body
+    assert "/close" not in review_body and ">>>" not in review_body
 
 
 def test_markup_rekeys_once() -> None:
@@ -618,16 +620,23 @@ def test_prose_active_fences_preserve_owned_patch(
         "agent": "Corroborator",
     }
     grouped = compose.render_group_body(finding, [corroborator])
-    assert "corroborator [a]\uff1a //e/SENT](a b)" in grouped
-    assert "~ \\~\\~\\~mermaid" in grouped
+    assert "corroborator" not in grouped
+    assert "mermaid" not in grouped
 
-    skipped = compose.build_skipped_section(
+    skipped = compose.compose_review_body(
+        "",
         [
-            compose.SkippedEntry(
-                "src/a.py",
-                3,
-                {"severity": "high", "title": "Skipped", "body": finding["body"]},
-            )
-        ]
-    )
+            [
+                compose.SkippedEntry(
+                    "src/a.py",
+                    3,
+                    {"severity": "high", "title": "Skipped", "body": finding["body"]},
+                )
+            ]
+        ],
+        platform="github",
+        findings_count=1,
+        sha="a" * 40,
+        inline_count=None,
+    ).body
     assert ": \\~\\~\\~suggestion" in skipped

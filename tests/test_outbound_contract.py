@@ -7,6 +7,7 @@ from pathlib import Path
 import gauntlet.text as outbound_text
 import pytest
 from gauntlet.delivery import compose
+from gauntlet.marker import split_summary_footer
 
 from tests.support.delivery import admitted_stamp
 from tests.support.outbound import (
@@ -272,7 +273,15 @@ def test_control_fixture_rows_match_current_sanitizers():
     inputs = []
     expected_text = []
     for case in visible_controls:
-        finding = {"id": case["id"], "severity": "low", "title": "Control"}
+        finding = {
+            "id": case["id"],
+            "severity": "low",
+            "title": "Control",
+            "file": "control.py",
+            "line_start": 1,
+            "line_end": 1,
+            "location_status": "confirmed",
+        }
         if case["field_class"] == "single_line":
             finding["title"] = case["input"]
         else:
@@ -305,9 +314,14 @@ def test_rule_fixture_rows_are_contained_after_blockquote_prefix():
         }
         for rendered in (
             compose.render_comment_body(finding),
-            compose.build_skipped_section(
-                [compose.SkippedEntry("src/file.py", 3, finding)]
-            ),
+            compose.compose_review_body(
+                "",
+                [[compose.SkippedEntry("src/file.py", 3, finding)]],
+                platform="github",
+                findings_count=1,
+                sha="a" * 40,
+                inline_count=None,
+            ).body,
         ):
             quoted = "\n".join("> " + line for line in row["expected"].split("\n"))
             assert quoted in rendered, row["id"]
@@ -325,9 +339,14 @@ def test_multiline_non_rule_fields_start_at_column_zero():
     for rendered in (
         compose.render_comment_body(finding),
         compose.render_group_body(finding, [finding]),
-        compose.build_skipped_section(
-            [compose.SkippedEntry("src/file.py", 3, finding)]
-        ),
+        compose.compose_review_body(
+            "",
+            [[compose.SkippedEntry("src/file.py", 3, finding)]],
+            platform="github",
+            findings_count=1,
+            sha="a" * 40,
+            inline_count=None,
+        ).body,
     ):
         for line in ("Body first", "Body second", "Fix first", "Fix second"):
             assert re.search(r"(?m)^" + re.escape(line) + r"$", rendered), line
@@ -453,8 +472,13 @@ def test_indented_field_containment_after_composition():
         for body in (
             compose.render_comment_body(finding),
             compose.render_group_body(finding, [finding]),
-            compose.build_skipped_section(
-                [compose.SkippedEntry("src/file.py", 3, finding)]
-            ),
+            compose.compose_review_body(
+                "",
+                [[compose.SkippedEntry("src/file.py", 3, finding)]],
+                platform="github",
+                findings_count=1,
+                sha="a" * 40,
+                inline_count=None,
+            ).body,
         ):
-            assert_outbound_string_invariant(body)
+            assert_outbound_string_invariant(split_summary_footer(body)[0])

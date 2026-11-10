@@ -5,8 +5,11 @@ This diagram follows one finding through every stage, and shows what each stage 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/pipeline-detail-dark.svg">
-  <img alt="Code Gauntlet review pipeline in detail, from review target through discovery, merge, verify, validate, filter, blind challenge and report to delivery" src="assets/pipeline-detail-light.svg">
+  <img alt="Code Gauntlet review pipeline in detail, from review target through discovery, merge, verify, validate, filter, blind challenge, grouping and report to delivery" src="assets/pipeline-detail-light.svg">
 </picture>
+
+After blind challenge, a grouper identifies claims fixed by the same change. Delivery posts one
+lead comment per issue; grouping cannot change which findings survived.
 
 The thresholds shown are defaults, which a [`REVIEW.md`](../skills/code-gauntlet/references/review-md-spec.md) can change.
 [CONTRIBUTING.md](../CONTRIBUTING.md) maps the stages to the source files.

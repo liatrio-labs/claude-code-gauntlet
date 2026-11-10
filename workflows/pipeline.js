@@ -539,7 +539,7 @@ const RULE_SOURCE_LABELS = deepFreeze({
 });
 const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 const STAGE_DEFAULTS = deepFreeze({
-  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
+  validator: 'sonnet', challenger: 'sonnet', grouper: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
 });
 const MODEL_IDS = deepFreeze({ sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' });
@@ -3655,6 +3655,12 @@ function rankFindings(findings) {
     return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || ka[3] - kb[3];
   });
 }
+function challengeOutcome(score, isSecurity = false) {
+  if (score < 25 && !isSecurity) return 'removed';
+  if (score < 50) return 'downgraded';
+  if (score < 75) return 'contested';
+  return 'survived';
+}
 function applyChallenges(findings, challenges) {
   const challengeById = new Map();
   for (const entry of challenges) {
@@ -3690,23 +3696,25 @@ function applyChallenges(findings, challenges) {
     if (justification) finding.challenge_justification = justification;
     const isSurfaced = ('origin' in finding ? finding.origin : '').toLowerCase() === 'surfaced';
     const isSecurity = ('dimension' in finding ? finding.dimension : '').toLowerCase() === 'security';
-    if (score < 25 && !isSecurity) {
+    const outcome = challengeOutcome(score, isSecurity);
+    if (outcome === 'removed') {
       eliminated.push({
         ...finding,
         eliminated_by: 'challenge:removed',
         elimination_reason: `challenge score ${score} < 25; finding does not survive blind challenge`,
       });
       stats.challenge_removed += 1;
-    } else if (score < 50) {
+    } else if (outcome === 'downgraded') {
       const currentSev = ('severity' in finding ? finding.severity : 'low').toLowerCase();
       const newSev = downgradeSeverity(currentSev);
       finding.challenge_contested = false;
-      const removed = score < 25 && newSev === null;
+      const belowRemovalThreshold = challengeOutcome(score) === 'removed';
+      const removed = belowRemovalThreshold && newSev === null;
       if (newSev === null) {
         eliminated.push({
           ...finding,
           eliminated_by: removed ? 'challenge:removed' : 'challenge:downgraded',
-          elimination_reason: score < 25
+          elimination_reason: belowRemovalThreshold
             ? `challenge score ${score} < 25; security finding severity already ` +
               `'${currentSev}' (lowest) — finding removed`
             : `challenge score ${score} in 25-49 range; severity already ` +
@@ -3721,7 +3729,7 @@ function applyChallenges(findings, challenges) {
         active.push(finding);
       }
       stats[removed ? 'challenge_removed' : 'challenge_downgraded'] += 1;
-    } else if (score < 75) {
+    } else if (outcome === 'contested') {
       finding.challenge_contested = true;
       if (isSurfaced) {
         finding.report_destination = 'suggestion';
@@ -3753,6 +3761,30 @@ function applyChallenges(findings, challenges) {
 }
 // --- dispose.js ---
 const DELIVERABLE_CHALLENGES = ['survived', 'contested', 'downgraded'];
+function findingDisposition(finding, heldBack = false) {
+  const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
+  if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
+    reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed');
+  }
+  if (heldBack && !reasons.length) reasons.push('held_back');
+  let disposition = 'body';
+  const admitted = hasAdmission(finding);
+  if (reasons.length) disposition = 'held_back';
+  else if (!admitted || finding.admission.status !== 'admitted') {
+    disposition = admitted ? finding.admission.status : 'held_back';
+    reasons.push(disposition);
+  } else if (!DELIVERABLE_CHALLENGES.includes(finding.challenge)) {
+    disposition = 'held_back';
+    reasons.push('challenge_failed');
+  } else if (finding.admission.inline_eligible && finding.reachability !== 'future_change_only'
+    && finding.diff_validation?.in_diff === true && locationAllows(finding, 'inline')) {
+    disposition = 'deliver';
+  } else reasons.push('body_routed');
+  return { disposition, reasons: [...new Set([...reasons, ...(admitted ? finding.admission.reasons.map((reason) => reason.status) : [])])] };
+}
+function isDeliveryCandidate(finding) {
+  return ['deliver', 'body'].includes(findingDisposition(finding).disposition);
+}
 function disposeFindings(challenged) {
   const input = deepClone(challenged);
   const findings = [];
@@ -3765,26 +3797,9 @@ function disposeFindings(challenged) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
     delete finding.delivery_group;
-    const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
-    if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
-      reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed');
-    }
-    if ((input.unverified || []).includes(finding) && !reasons.length) reasons.push('held_back');
-    let disposition = 'body';
-    const admitted = hasAdmission(finding);
-    if (reasons.length) disposition = 'held_back';
-    else if (!admitted || finding.admission.status !== 'admitted') {
-      disposition = admitted ? finding.admission.status : 'held_back';
-      reasons.push(disposition);
-    } else if (!DELIVERABLE_CHALLENGES.includes(finding.challenge)) {
-      disposition = 'held_back';
-      reasons.push('challenge_failed');
-    } else if (finding.admission.inline_eligible && finding.reachability !== 'future_change_only'
-      && finding.diff_validation?.in_diff === true && locationAllows(finding, 'inline')) {
-      disposition = 'deliver';
-    } else reasons.push('body_routed');
+    const { disposition, reasons } = findingDisposition(finding, (input.unverified || []).includes(finding));
     finding.disposition = disposition;
-    finding.disposition_reasons = [...new Set([...reasons, ...(admitted ? finding.admission.reasons.map((reason) => reason.status) : [])])];
+    finding.disposition_reasons = reasons;
     (disposition === 'held_back' ? unverified : findings).push(finding);
     if (finding.trace_id) for (const reason of finding.disposition_reasons) {
       decisions.push(traceDecision(finding, reason, reason, [], ['held_back', 'report_only'].includes(disposition) ? disposition : 'body_routed',
@@ -3800,25 +3815,50 @@ function disposeFindings(challenged) {
   }
   decisions.push(...eliminations.filter((_, index) => eliminated[index].trace_id));
   const actionable = findings.filter((f) => deliveryAllows(f, 'body'));
-  const { consolidatedCount } = consolidateCrossAgent(actionable, (f) => deliveryAllows(f, 'inline'));
-  const groups = deliveryGroups(actionable).map(({ primary, corroborators }, index) => {
+  const accepted = acceptGroupingReply(input.grouping_reply, input.grouping_ids || [
+    ...(input.findings || []), ...(input.unverified || []), ...(input.eliminated || []),
+  ].map((f) => f.id), actionable);
+  const grouping = accepted.error ? 'positional' : 'model';
+  const gaps = accepted.error ? [`grouping: ${input.grouping_error || accepted.error}; same-lines grouping used`] : [];
+  if (accepted.error) consolidateCrossAgent(actionable);
+  const candidates = accepted.error
+    ? deliveryGroups(actionable).filter((g) => g.corroborators.length).map(({ primary, corroborators }) => ({
+      members: [primary, ...corroborators], consolidation_key: primary.consolidation_key,
+    })) : accepted.groups;
+  for (const group of candidates) {
+    const primary = chooseGroupLead(group.members, group.lead_id);
+    for (const member of group.members) {
+      member.consolidation_key = group.consolidation_key ?? primary.id;
+      member.consolidation_primary = member === primary;
+    }
+  }
+  const delivery = deliveryGroups(actionable);
+  const placementTradeoffs = delivery.filter(({ primary, corroborators }) => !deliveryAllows(primary, 'inline')
+    && corroborators.some((f) => deliveryAllows(f, 'inline'))).length;
+  const groupedMembers = delivery.filter((g) => g.corroborators.length).reduce((n, g) => n + 1 + g.corroborators.length, 0);
+  const groups = delivery.map(({ primary, corroborators }, index) => {
     const members = [primary, ...corroborators];
     const ids = members.map((f) => f.id);
-    const issueKey = primary.consolidation_key ? `group:${primary.consolidation_key}` : `issue:${primary.id || index}`;
+    const issueKey = primary.consolidation_key ? `group:${grouping === 'model' ? primary.id : primary.consolidation_key}` : `issue:${primary.id || index}`;
     const stamp = { issue_key: issueKey, lead_id: primary.id, finding_ids: ids };
     if (ids.every((id) => typeof id === 'string' && id)) for (const member of members) member.delivery_group = stamp;
     return { ...stamp, sites: members.flatMap((f) => f.sites || []),
       tier: members.some((f) => (f.report_tag ?? f.report_destination) === 'main') ? 'main' : 'suggestion',
-      disposition: primary.disposition };
+      disposition: primary.disposition, same_challenge_verdict: new Set(members.map((f) => typeof f.challenge_score === 'number'
+        ? challengeOutcome(f.challenge_score, (f.dimension ?? '').toLowerCase() === 'security')
+        : f.challenge_contested ? 'contested' : f.challenge)).size === 1 };
   });
   for (const finding of findings.filter((f) => f.consolidation_key && !f.consolidation_primary && f.trace_id)) {
     const related = findings.filter((f) => f.consolidation_key === finding.consolidation_key && f !== finding && f.trace_id).map((f) => f.trace_id);
     if (related.length) decisions.push(traceDecision(finding, 'folded', 'cross-agent consolidation', related, 'coalesced'));
   }
-  return { findings, unverified, eliminated, groups, decisions, stats: { ...input.stats,
+  return { findings, unverified, eliminated, groups, decisions, gaps,
+    ...Object.fromEntries(['grouping_reply', 'grouping_ids', 'grouping_error'].filter((key) => Object.hasOwn(input, key)).map((key) => [key, input[key]])), stats: { ...input.stats,
     skipped: unverified.filter((f) => Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
     held_back: unverified.length,
-    cross_agent_consolidated: consolidatedCount, final_count: findings.length } };
+    grouping, grouped_members: groupedMembers, grouping_placement_tradeoffs: placementTradeoffs,
+    grouping_verdicts: groups.filter((g) => g.finding_ids.length > 1).map((g) => ({ issue_key: g.issue_key, same_challenge_verdict: g.same_challenge_verdict })),
+    cross_agent_consolidated: groupedMembers, final_count: findings.length } };
 }
 function deliveryGroups(findings) {
   const groups = [];
@@ -3835,6 +3875,39 @@ function deliveryGroups(findings) {
     const primary = ordered.find((f) => stamp ? f.id === stamp.lead_id : f.consolidation_primary) || ordered[0];
     return { primary, corroborators: ordered.filter((f) => f !== primary) };
   });
+}
+function acceptGroupingReply(reply, ids, findings) {
+  const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const reject = (error) => ({ error, groups: [] });
+  if (!object(reply)) return reject('missing or non-object reply');
+  if (!Array.isArray(reply.groups)) return reject('groups is not an array');
+  if (Object.keys(reply).some((key) => key !== 'groups')) return reject('unexpected reply field');
+  const known = new Set(ids);
+  const seen = new Set();
+  for (const group of reply.groups) {
+    if (!object(group) || !Array.isArray(group.finding_ids) || group.finding_ids.length < 2
+      || Object.keys(group).some((key) => !['finding_ids', 'lead_id'].includes(key))) return reject('invalid group');
+    for (const id of group.finding_ids) {
+      if (!known.has(id)) return reject('unknown id');
+      if (seen.has(id)) return reject('overlapping id');
+      seen.add(id);
+    }
+    if (!group.finding_ids.includes(group.lead_id)) return reject('foreign lead');
+  }
+  const byId = new Map(findings.map((f) => [f.id, f]));
+  return { error: null, groups: reply.groups.map((group) => ({
+    lead_id: group.lead_id, members: group.finding_ids.map((id) => byId.get(id)).filter(Boolean),
+  })).filter((group) => group.members.length >= 2) };
+}
+function chooseGroupLead(members, modelLead) {
+  const key = (f) => [(f.report_tag ?? f.report_destination ?? f.admission?.tier) === 'main' ? 1 : 0,
+    SEVERITY_ORDER.length - (SEVERITY_ORDER.indexOf(f.severity) < 0 ? SEVERITY_ORDER.length : SEVERITY_ORDER.indexOf(f.severity)),
+    deliveryAllows(f, 'inline') ? 1 : 0, f.id === modelLead ? 1 : 0, Number(f.confidence) || 0, findingPolicy(f).core ? 1 : 0, String(f.description || '').length];
+  return [...members].sort((a, b) => {
+    const ka = key(a), kb = key(b);
+    for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return kb[i] - ka[i];
+    return 0;
+  })[0];
 }
 // --- outboundText.js ---
 const OUTBOUND_NAMED_ENTITIES = deepFreeze({
@@ -4880,7 +4953,7 @@ function renderSeverityBuckets(builder, view, unverified, permalinks) {
 function plural(count, noun) {
   return count === 1 ? noun : `${noun}s`;
 }
-function countsSentence(findings, rawCount, unverified, view) {
+function localCountsSentence(findings, rawCount, unverified, view) {
   const count = findings.length;
   let sentence = count === rawCount
     ? `${count} ${plural(count, 'finding')} after the gauntlet`
@@ -4894,10 +4967,18 @@ function countsSentence(findings, rawCount, unverified, view) {
   if (unverified.length > held) sentence += ` ${unverified.length - held} unverified / pipeline-degraded.`;
   return sentence;
 }
+function countsSentence(findings, view) {
+  const count = findings.length;
+  const breakdown = view.order.map((severity) => `${view.buckets.get(severity).length} ${severity}`);
+  let sentence = `Found ${count} ${plural(count, 'issue')} in this change${breakdown.length ? ': ' + breakdown.join(', ') : ''}.`;
+  const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
+  if (suggestions === 1) sentence += ' 1 is a suggested improvement rather than a defect.';
+  else if (suggestions > 1) sentence += ` ${suggestions} are suggested improvements rather than defects.`;
+  return sentence;
+}
 function reportUnitKey(finding, original) {
-  return finding.consolidation_key
-    ? finding.consolidation_key
-    : (original && typeof original === 'object' ? original : finding);
+  return finding.delivery_group?.issue_key ?? finding.consolidation_key
+    ?? (original && typeof original === 'object' ? original : finding);
 }
 function plainReportObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -4908,11 +4989,10 @@ function plainReportObject(value) {
     return false;
   }
 }
-function summaryIndex(rawFindings, findingsView, input) {
+function summaryIndex(rawFindings, findingsView, input, projected) {
   const reported = findingsView.order.flatMap((severity) => findingsView.buckets.get(severity));
   if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [] };
   const originals = Array.isArray(input.findings) ? input.findings : [];
-  const projected = rawFindings;
   const delivered = input.delivered.filter(plainReportObject);
   const deliveredOriginals = new Set(delivered);
   const deliveryOrder = new Map();
@@ -4925,6 +5005,7 @@ function summaryIndex(rawFindings, findingsView, input) {
   for (let index = 0; index < originals.length; index += 1) {
     const original = originals[index];
     const finding = projected[index] || {};
+    if (!rawFindings.includes(finding)) continue;
     if (finding && typeof finding === 'object') originalByProjected.set(finding, original);
     const key = reportUnitKey(finding, original);
     if (!unitMembers.has(key)) unitMembers.set(key, []);
@@ -4946,14 +5027,14 @@ function summaryIndex(rawFindings, findingsView, input) {
   if (typeof input.deliveryCap === 'number' && omittedUnits.some((members) => (
     input.deliveryTier !== 'main_only' || members.some(isMain)
   ))) {
-    reasons.push(`over the delivery cap of ${input.deliveryCap} ${plural(input.deliveryCap, 'finding')}`);
+    reasons.push(`this review posts at most ${input.deliveryCap} ${plural(input.deliveryCap, 'issue')}`);
   }
   if (input.deliveryTier === 'main_only' && omittedUnits.some((members) => (
     members.some((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion')
   ))) {
-    reasons.push('improvement suggestions held back by delivery tier main_only');
+    reasons.push('this review includes defects only');
   }
-  if (!reasons.length && omittedUnits.length) reasons.push('not selected for delivery');
+  if (!reasons.length && omittedUnits.length) reasons.push('not selected for this review');
   return { indexed, reasons };
 }
 function partitionByDisposition(inp, findingsRight) {
@@ -4966,12 +5047,16 @@ function partitionByDisposition(inp, findingsRight) {
 }
 function summaryBlock(builder, input, findingsRight = 'body') {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const { rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
+  const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
-  builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
-  const { indexed, reasons } = summaryIndex(rawFindings, findingsView, inp);
+  const local = findingsRight === 'report';
+  builder.add(local ? localCountsSentence(findings, rawFindings.length, unverified, findingsView) : countsSentence(findings, findingsView));
+  const selection = summaryIndex(rawFindings, findingsView, local ? { ...inp, delivered: undefined } : inp, projected);
+  const indexed = selection.indexed.filter((finding) => local || deliveryAllows(finding, 'inline'));
+  const bodyCount = selection.indexed.length - indexed.length;
+  const reasons = selection.reasons;
   const permalinks = permalinkContext(inp.prIdentity);
   const bullets = [];
   let indexChars = 0;
@@ -4995,9 +5080,9 @@ function summaryBlock(builder, input, findingsRight = 'body') {
   }
   if (bullets.length) builder.add();
   for (const bullet of bullets) builder.add(bullet);
-  const remainder = findings.length - bullets.length;
-  if (cutForLength) reasons.push('over the summary length limit');
-  const remainderNoun = findings.length === rawFindings.length
+  const remainder = findings.length - bullets.length - bodyCount;
+  if (cutForLength) reasons.push(local ? 'over the summary length limit' : 'did not fit in this comment');
+  const remainderNoun = !local ? plural(remainder, 'issue') : findings.length === rawFindings.length
     ? plural(remainder, 'finding')
     : `reported ${plural(remainder, 'issue')}`;
   if (remainder) {
@@ -7519,6 +7604,37 @@ function applyChallengeReplayBelt(challengeOut) {
   }
   return challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
 }
+// --- groupFindings.js ---
+function groupingPrompt(findings) {
+  const fold = (text, limit) => {
+    const value = String(text ?? '').replace(/\s+/g, ' ').trim();
+    return limit === undefined ? value : value.slice(0, limit);
+  };
+  return 'Findings:\n' + findings.map((f) => {
+    const range = f.line_end && f.line_end !== f.line_start ? `${f.line_start}-${f.line_end}` : f.line_start;
+    return `- ${f.id} | ${fold(f.file)}:${range} | ${fold(f.severity)} | ${fold(f.title)} | ${fold(f.description, 600)} | Fix: ${fold(f.suggestion, 200)}`;
+  }).join('\n');
+}
+function groupingSchema(ids) {
+  const id = { type: 'string', enum: ids };
+  return { type: 'object', properties: { groups: { type: 'array', items: {
+    type: 'object', properties: { finding_ids: { type: 'array', items: id }, lead_id: id },
+    required: ['finding_ids', 'lead_id'], additionalProperties: false,
+  } } }, required: ['groups'], additionalProperties: false };
+}
+async function groupFindings(ctx, findings, policy = {}) {
+  const grouping_ids = findings.map((f) => f.id);
+  if (findings.length < 2) return { grouping_ids, grouping_reply: { groups: [] } };
+  try {
+    const grouping_reply = await ctx.agent(groupingPrompt(findings), {
+      label: 'group-findings', agentType: 'code-gauntlet:grouper',
+      model: modelFor('code-gauntlet:grouper', policy), schema: groupingSchema(grouping_ids),
+    });
+    return { grouping_ids, grouping_reply: grouping_reply ?? null };
+  } catch {
+    return { grouping_ids, grouping_reply: null, grouping_error: 'dispatch failed' };
+  }
+}
 // --- measurementReplay.js ---
 function promptSha256(text) {
   const bytes = [];
@@ -7674,6 +7790,7 @@ async function deliverFromCheckpoint(c, A, state) {
   gaps.push(...(rawChallenge.gaps || []));
   const markedCount = applyChallengeReplayBelt(challengeCopy);
   const challengeOut = disposeFindings(challengeCopy);
+  gaps.push(...challengeOut.gaps);
   if (measurementTrace) recordStage(measurementTrace, 'dispose', challengeOut, { decisions: challengeOut.decisions });
   if (markedCount > 0) {
     gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
@@ -7948,6 +8065,7 @@ async function runWith(ctx, rawArgs) {
       const out = await challengeStage(c, {
         findings: admitted, limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
       });
+      Object.assign(out, await groupFindings(c, (out.findings || []).filter(isDeliveryCandidate), policy));
       out.eliminated = [...(verifyOut.eliminated || []), ...(filterOut.eliminated || []), ...(out.eliminated || [])];
       return out;
     });

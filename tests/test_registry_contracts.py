@@ -475,8 +475,13 @@ def test_machine_string_registry():
         assert row["producers"] and row["parsers"]
         if NO_PARSER in row["parsers"]:
             assert row["parsers"] == [NO_PARSER] and row["notes"]
-        for rel in row["producers"] + [
-            rel for rel in row["parsers"] if rel != NO_PARSER
+        if NO_PARSER in row["producers"]:
+            assert (
+                row["producers"] == [NO_PARSER]
+                and "no current producer" in row["notes"]
+            )
+        for rel in [
+            rel for rel in row["producers"] + row["parsers"] if rel != NO_PARSER
         ]:
             assert row["string"] in read(rel)
     composite = [

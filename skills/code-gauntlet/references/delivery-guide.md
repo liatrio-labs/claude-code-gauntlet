@@ -68,6 +68,10 @@ Product mark: ⚔️ (Code Gauntlet). Severity emojis: 🔴 critical, 🟠 high,
 Rule source labels: documented_rule -> Cited rule, code_comment -> Cited comment, repo_precedent -> Repo precedent, self_inconsistency -> Inconsistency; unknown values -> Cited rule.
 <!-- /generated-from-registry-identity:severity_legend -->
 
+Each issue posts only its lead text. Other members contribute confirmed additional locations and,
+when at least two distinct agents found it, an anonymous reviewer count. Unanchored issues appear
+once in the summary under their lead location. The local report retains every member description.
+
 ### Using post_review.py
 
 **Do NOT post PR comments via direct `gh api` or `glab api` calls.** Use the bundled `scripts/post_review.py` script instead. It handles platform detection, diff validation, and API calls deterministically.
@@ -80,8 +84,7 @@ Rule source labels: documented_rule -> Cited rule, code_comment -> Cited comment
 
 For a legacy bare findings array, pass `--report PATH` together with `--owner`, `--repo`,
 `--pr-number`, `--platform`, `--web-origin`, and `--sha`. The script derives `review_body` from the
-report Summary and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
-that body as is.
+report and forms the wrapper in code. Wrapper inputs already carrying `review_body` use that body.
 
 Every finding needs both `admission` and `disposition` stamps for delivery. A finding missing
 either stamp is held back, unless its disposition is `eliminate`. Bare arrays still use the
@@ -97,7 +100,7 @@ wrapper arguments above, but unstamped findings post no comments.
 
 ```json
 {
-    "review_body": "The report's Summary section body: counts first, selected findings index, and any remainder with selection reasons",
+    "review_body": "Plain issue counts, an inline issue index, and any delivery remainder",
     "findings": [
         {
             "file": "src/foo.py",

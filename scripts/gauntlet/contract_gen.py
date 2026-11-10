@@ -167,6 +167,7 @@ _REGISTRY_FIELDS = (
     "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
     "validationReturnProperties: m.VALIDATION_RETURN_PROPERTIES",
     "anchorLimits: m.ANCHOR_LIMITS",
+    "reportFoldLimits: m.REPORT_FOLD_LIMITS",
     "locationRights: m.LOCATION_RIGHTS",
     "locationStatuses: m.LOCATION_STATUSES",
     "dispositionRights: m.DISPOSITION_RIGHTS",
@@ -845,6 +846,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     for name, value in (
         ("ANCHOR_SCHEMA", field_types["anchor"]),
         ("ANCHOR_LIMITS", identity["anchorLimits"]),
+        ("REPORT_FOLD_LIMITS", identity["reportFoldLimits"]),
     ):
         lines.extend(
             [

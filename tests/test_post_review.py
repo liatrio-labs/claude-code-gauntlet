@@ -315,7 +315,7 @@ def test_group_retry_is_atomic(posting):
         _, comments = surfaces(run)
         assert len(comments) == 1
         assert comments[0]["body"].count("extra-") == 4
-        assert comments[0]["body"].count("Corroborating finding") == 1
+        assert comments[0]["body"].count("Corroborating finding") == 0
         assert "```suggestion" not in comments[0]["body"]
         assert not any(call.method == "review_entries" for call in run.fake.calls)
     # Membership selects a stamped primary even when a legacy stamp disagrees.
@@ -626,7 +626,7 @@ def test_body_disposition_digest_and_malformed_reasons(posting):
         posting(review("github", body_findings, review_body=""), diff=DIFF)
     )
     assert comments == []
-    assert digest.count("### security\n") == digest.count("### bug\n") == 1
+    assert digest.count("### security\n") == digest.count("### bug\n") == 0
     assert all(digest.count(f"Body claim {i}") == 1 for i in range(3))
     malformed = located(disposition="deliver", disposition_reasons="forged")
     summary, comments = surfaces(
@@ -746,7 +746,7 @@ def test_unconfirmed_delivery_is_summary_only(platform, status, primary, posting
         assert "foo.py (location unconfirmed)" in summary
     else:
         assert "Unresolved observation" not in summary
-        assert "Unresolved observation" in comments[0]["body"]
+        assert "Unresolved observation" not in comments[0]["body"]
     assert "```suggestion" not in summary
     assert "998" not in summary and "999" not in summary and "200" not in summary
 
@@ -1093,14 +1093,24 @@ def test_capture_is_repeatable_and_preserves_input(posting, tmp_path):
 def test_composer_defensively_denies_unconfirmed_fence():
     member = located(location_status="unconfirmed")
     assert "```suggestion" not in compose.render_comment_body(member)
-    section = compose.build_skipped_section(
-        [compose.SkippedEntry("foo.py", 999, member)]
-    )
+    section = compose.compose_review_body(
+        "",
+        [[compose.SkippedEntry("foo.py", 999, member)]],
+        platform="github",
+        findings_count=1,
+        sha="a" * 40,
+        inline_count=None,
+    ).body
     assert "foo.py (location unconfirmed)" in section and "999" not in section
     member["location_status"] = "confirmed"
-    section = compose.build_skipped_section(
-        [compose.SkippedEntry("foo.py", 999, member)]
-    )
+    section = compose.compose_review_body(
+        "",
+        [[compose.SkippedEntry("foo.py", 999, member)]],
+        platform="github",
+        findings_count=1,
+        sha="a" * 40,
+        inline_count=None,
+    ).body
     assert "foo.py:2" in section and "999" not in section
 
 
@@ -1374,9 +1384,9 @@ def test_review_input_overrides_and_report(data, posting, tmp_path):
     )
     assert (run.code, run.err, run.head_calls) == (0, "", ())
     assert run.payload["endpoint"] == "repos/o/r/pulls/5/reviews"
-    assert run.payload["payload"]["body"] == HEADER + "From report" + FOOTER.replace(
-        "{count}", "0"
-    )
+    assert run.payload["payload"][
+        "body"
+    ] == HEADER + "Found 0 issues in this change." + FOOTER.replace("{count}", "0")
     existing = posting(review(), arguments=("--report", "missing-report.md"))
     assert (existing.code, existing.err) == (0, "")
     assert existing.payload["payload"]["body"] == EMPTY_SUMMARY
@@ -1484,7 +1494,7 @@ def test_string_pr_number_and_explicit_group_primary(posting):
     assert run.payload["endpoint"] == "repos/o/r/pulls/5/reviews"
     assert len(comments) == 1 and comments[0]["line"] == 4
     assert comments[0]["body"].startswith("**\U0001f7e0 [HIGH] Primary**")
-    assert "Range bug" in comments[0]["body"]
+    assert "Range bug" not in comments[0]["body"]
 
 
 def test_capture_gl_multibyte_boundary(posting, monkeypatch):

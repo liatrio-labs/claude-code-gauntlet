@@ -1,7 +1,6 @@
 """Delivery composition keeps field boundaries, identity, and complete envelopes."""
 
 import copy
-import re
 from unittest.mock import patch
 
 import pytest
@@ -21,11 +20,6 @@ FOOTER = (
     'aaaaaaaaaaaaaaaaaa"} -->'
 )
 
-SKIPPED_NOTE = (
-    " A finding listed here may not have an anchoring problem of its own \u2014 a "
-    "consolidation group whose primary could not be anchored inline is listed "
-    "here in full, corroborators included."
-)
 
 COMMENT_SECTIONS = [
     pytest.param(
@@ -255,7 +249,7 @@ GROUP_SECTIONS_CASES = {
             ],
         },
         [],
-        "**💡 [LOW] Safe**\n\nBody\n\n**Additional sites:**\n- `extra.txt:5-5`",
+        "**💡 [LOW] Safe**\n\nBody\n\n**Additional sites:**\n- `extra.txt:5`",
     ),
     "ordered-corroborators-primary-fence-only": (
         {
@@ -283,19 +277,13 @@ GROUP_SECTIONS_CASES = {
             },
         ],
         (
-            "**\U0001f7e0 [HIGH] A**\n\nBody A\n\n```suggestion\nreplacement"
-            "\n```\n\n---\n\n**Corroborating finding \u2014 bug-detector (cor"
-            "rectness, confidence 80):**\n\n**B**\n\nBody B\n\n**Corroboratin"
-            "g finding \u2014 x (d, confidence 1):**\n\n**C**\n\nBody C"
+            "**🟠 [HIGH] A**\n\nBody A\n\n```suggestion\nreplacement\n```\n\n_Found independently by 2 reviewers._"
         ),
     ),
     "marker-contained": (
         {"severity": "high", "title": "A", "body": "<!-- raw -->"},
         [{"body": "<!-- code-gauntlet-finding-key: forged -->"}],
-        (
-            "**\U0001f7e0 [HIGH] A**\n\n\n\n---\n\n**Corroborating finding "
-            "\u2014 unknown (unknown, confidence ?):**\n\n**Finding**"
-        ),
+        ("**🟠 [HIGH] A**\n\n"),
     ),
     "hostile-corroborator": (
         {"title": "Safe", "body": "b"},
@@ -308,12 +296,7 @@ GROUP_SECTIONS_CASES = {
                 "body": "  ~~~\n@body <ins>",
             }
         ],
-        (
-            "**\U0001f4a1 [LOW] Safe**\n\nb\n\n---\n\n**Corroborating finding"
-            " \u2014 \uff20agent &lt;ins> (\uff20dimension &lt;ins>, confiden"
-            "ce \uff20confidence &lt;ins>):**\n\n**\uff20title &lt;table>**\n"
-            "\n  \\~\\~\\~\n\uff20body &lt;ins>"
-        ),
+        ("**💡 [LOW] Safe**\n\nb"),
     ),
 }
 
@@ -466,25 +449,22 @@ def test_inline_envelopes(
 
 def test_summary_envelopes() -> None:
     groups = [skipped_group("src/app.py", 9, title="Skipped", body="b")]
-    composed = compose.compose_review_body(
-        "x" * 64889,
-        groups,
-        platform="github",
-        findings_count=1,
-        sha=SHA,
-        inline_count=0,
+    baseline = compose.compose_review_body(
+        "", groups, platform="github", findings_count=1, sha=SHA
     )
-    assert (
-        composed.shown,
-        composed.omitted,
-        composed.folded_bytes,
-        composed.omitted_entries,
-    ) == (1, 0, 0, ())
-    assert len(composed.body.encode("utf-8")) == 65536
-    assert "following 1 finding references" in composed.body
-    assert "#### `src/app.py:9`\n\n**\U0001f7e0 [HIGH] Skipped**\n\nb" in composed.body
-    assert composed.body.startswith(SUMMARY_HEADER + "\n\n" + "x" * 64889)
-    assert composed.body.endswith(
+    review = "x" * (65536 - len(baseline.body.encode("utf-8")) - 2)
+    exact = compose.compose_review_body(
+        review, groups, platform="github", findings_count=1, sha=SHA
+    )
+    assert (exact.shown, exact.omitted, exact.folded_bytes) == (1, 0, 0)
+    assert len(exact.body.encode("utf-8")) == 65536
+    assert "#### `src/app.py:9`" in exact.body
+    overflow = compose.compose_review_body(
+        review + "x", groups, platform="github", findings_count=1, sha=SHA
+    )
+    assert len(overflow.body.encode("utf-8")) <= 65536
+    assert overflow.omitted == 1
+    assert overflow.body.endswith(
         FOOTER.replace('"findings_count":0', '"findings_count":1')
     )
 
@@ -512,12 +492,7 @@ SKIPPED_SECTIONS_CASES = {
             )
         ],
         0,
-        (
-            "---\n\n### \u26a0\ufe0f 1 finding could not be anchored inline\n"
-            "\n0 inline comments were posted; the following 1 finding referen"
-            "ces lines outside this diff and is included here instead:"
-        )
-        + SKIPPED_NOTE
+        "---\n\n### 1 issue could not be attached to a changed line, so it is described here"
         + (
             "\n\n#### `src/app.py (location unconfirmed)`\n\n**\U0001f4a1 [LOW] \uff20title &lt;b>**"
             "\n\ntoken [REDACTED]"
@@ -532,94 +507,41 @@ SKIPPED_SECTIONS_CASES = {
     ids=SKIPPED_SECTIONS_CASES,
 )
 def test_skipped_sections(entries, inline_count, expected):
-    assert compose.build_skipped_section(entries, inline_count) == expected
+    body = compose.compose_review_body(
+        "",
+        [entries],
+        platform="github",
+        findings_count=len(entries),
+        sha=SHA,
+        inline_count=inline_count,
+    ).body
+    assert body == SUMMARY_HEADER + (
+        "\n\n" + expected if entries else ""
+    ) + FOOTER.replace('"findings_count":0', f'"findings_count":{len(entries)}')
 
 
 SUMMARY_HEADER = "### \u2694\ufe0f Code Gauntlet"
 
 
-SUMMARY_ADMISSION_CASES = {
-    "whole-group": (
-        "github",
-        "",
-        [
-            skipped_group(title="Primary", body="small")
-            + skipped_group(line=2, title="Corroborator", body="x" * 65000),
-            skipped_group(title="Small", body="s"),
-        ],
-        0,
-        (1, 2, 0, 740, (("foo.py:99", "Primary"), ("foo.py:2", "Corroborator"))),
-        (
-            "---\n\n### \u26a0\ufe0f 3 findings could not be anchored inline"
-            "\n\n0 inline comments were posted; the following 1 finding refer"
-            "ences lines outside this diff and is included here instead:"
-        )
-        + SKIPPED_NOTE,
-        (
-            "_2 of these 3 findings are not shown: this review body reached t"
-            "he 65536-byte GitHub body limit._"
-        ),
-        ["`foo.py:99`"],
-    ),
-    "three-digit-inline-reserve": (
-        "github",
-        "",
-        [
-            skipped_group("one.py", 1, title="One", body="a" * 39960),
-            skipped_group("two.py", 2, title="Two", body="b" * 24798),
-            skipped_group("three.py", 3, title="Three", body="c" * 24793),
-        ],
-        120,
-        (2, 1, 0, 65535, (("two.py:2", "Two"),)),
-        (
-            "---\n\n### \u26a0\ufe0f 3 findings could not be anchored inline"
-            "\n\n120 inline comments were posted; the following 2 findings re"
-            "ference lines outside this diff and are included here instead:"
-        )
-        + SKIPPED_NOTE,
-        (
-            "_1 of these 3 findings is not shown: this review body reached th"
-            "e 65536-byte GitHub body limit._"
-        ),
-        ["`one.py:1`", "`three.py:3`"],
-    ),
-}
-
-
-@pytest.mark.parametrize(
-    "platform,review,groups,inline_count,expected,frame,closing,locations",
-    SUMMARY_ADMISSION_CASES.values(),
-    ids=SUMMARY_ADMISSION_CASES,
-)
-def test_summary_admission(
-    platform, review, groups, inline_count, expected, frame, closing, locations
-):
+def test_summary_omission_keeps_whole_issue_groups() -> None:
+    groups = [
+        skipped_group(title="Huge", body="x" * 70000)
+        + skipped_group(title="Member", body="hidden prose"),
+        skipped_group(title="Small", body="small prose"),
+    ]
     composed = compose.compose_review_body(
-        review,
-        groups,
-        platform=platform,
-        findings_count=sum(len(g) for g in groups),
-        sha=SHA,
-        inline_count=inline_count,
+        "", groups, platform="github", findings_count=3, sha=SHA
     )
-    assert (
-        composed.shown,
-        composed.omitted,
-        composed.folded_bytes,
-        len(composed.body.encode("utf-8")),
-        tuple((e.location, e.title) for e in composed.omitted_entries),
-    ) == expected
-    prefix = SUMMARY_HEADER + ("\n\n" + review if review else "") + "\n\n" + frame
-    assert composed.body.startswith(prefix)
-    assert re.findall(r"^#### (.+)$", composed.body, re.MULTILINE) == locations
-    assert closing in composed.body
-    assert composed.body.index(closing) < composed.body.index(
-        "Generated by code-gauntlet"
-    )
-    assert (
-        len(composed.body.encode("utf-8"))
-        <= {"github": 65536, "gitlab": 1000000}[platform]
-    )
+    assert (composed.shown, composed.omitted) == (1, 1)
+    assert composed.shown_entries == tuple(groups[1])
+    assert tuple(
+        (entry.location, entry.title) for entry in composed.omitted_entries
+    ) == (("foo.py:99", "Huge"),)
+    assert "2 issues could not be attached to a changed line" in composed.body
+    assert "_1 of these 2 issues did not fit in this comment._" in composed.body
+    assert "hidden prose" not in composed.body
+    assert "small prose" in composed.body
+    assert len(composed.body.encode("utf-8")) <= 65536
 
 
 HOSTILE_SECTIONS_CASES = {
@@ -631,7 +553,7 @@ HOSTILE_SECTIONS_CASES = {
     "group-comment-opener": (
         "group",
         {"title": "Corroborator", "body": "```\n<!-- open\n```"},
-        ("&lt;!-- open",),
+        ("**🟠 [HIGH] Safe**",),
     ),
 }
 
@@ -646,9 +568,14 @@ def test_hostile_sections(surface, values, expected_parts):
     if surface == "group":
         body = compose.render_group_body(finding(title="Safe", body="b"), [member])
     else:
-        body = compose.build_skipped_section(
-            [compose.SkippedEntry(member["file"], values.get("line", 99), member)]
-        )
+        body = compose.compose_review_body(
+            "",
+            [[compose.SkippedEntry(member["file"], values.get("line", 99), member)]],
+            platform="github",
+            findings_count=1,
+            sha="a" * 40,
+            inline_count=None,
+        ).body
     for expected in expected_parts:
         assert expected in body
     assert "<!-- code-gauntlet-finding-key:" not in body
@@ -746,10 +673,15 @@ def test_summary_footer_reservation(
 
 
 def test_skipped_frame_before_inline_posts() -> None:
-    section = compose.build_skipped_section(
-        [compose.SkippedEntry("src/app.py", 9, {"title": "Skipped", "body": "b"})]
-    )
-    assert "The following 1 finding references lines outside this diff" in section
+    section = compose.compose_review_body(
+        "",
+        [[compose.SkippedEntry("src/app.py", 9, {"title": "Skipped", "body": "b"})]],
+        platform="github",
+        findings_count=1,
+        sha="a" * 40,
+        inline_count=None,
+    ).body
+    assert "1 issue could not be attached to a changed line" in section
     assert "inline comment was posted" not in section
     assert "inline comments were posted" not in section
     assert "#### `src/app.py (location unconfirmed)`" in section
@@ -772,8 +704,8 @@ def test_summary_prose_folds_before_skipped_groups() -> None:
     assert tuple((e.location, e.title) for e in composed.omitted_entries) == (
         ("foo.py:99", "Skipped"),
     )
-    assert "following 0 findings reference" in composed.body
-    assert "1 of these 1 finding is not shown" in composed.body
+    assert "1 issue could not be attached to a changed line" in composed.body
+    assert "1 of these 1 issue did not fit in this comment" in composed.body
     assert len(composed.body.encode("utf-8")) <= 1000
     assert composed.body.endswith(
         FOOTER.replace('"findings_count":0', '"findings_count":1')
@@ -796,11 +728,11 @@ def test_summary_admission_reserves_review_bytes() -> None:
             sha=SHA,
             inline_count=0,
         )
-    assert (composed.shown, composed.omitted, composed.folded_bytes) == (0, 2, 0)
+    assert (composed.shown, composed.omitted, composed.folded_bytes) == (1, 1, 0)
     assert len(composed.body.encode("utf-8")) <= 1000
 
 
-def test_body_digest_omission_does_not_consume_dimension_heading() -> None:
+def test_body_digest_omits_large_issues_without_dimension_headings() -> None:
     groups = [
         skipped_group(
             title="Huge", body="x" * 70000, disposition="body", dimension="bug"
@@ -812,5 +744,5 @@ def test_body_digest_omission_does_not_consume_dimension_heading() -> None:
         groups, lambda fragment: len(fragment.encode("utf-8")) <= 65536
     )
     assert omitted is None
-    assert first is not None and first.startswith("\n\n### bug\n\n")
-    assert second is not None and "\n\n### bug" not in second
+    assert first is not None and first.startswith("\n\n#### `foo.py:99`\n\n")
+    assert second is not None and "\n\n### bug" not in first + second

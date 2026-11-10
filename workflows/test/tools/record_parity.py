@@ -5,6 +5,7 @@ Usage: python3 workflows/test/tools/record_parity.py [--check] [<script>] [<case
 """
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -166,6 +167,42 @@ def check(only_script=None, only_case=None):
     return mismatches
 
 
+def _cross_runtime_targets():
+    root = REPO / "tests/fixtures/cross_runtime"
+    outbound_path = root / "outbound_line.json"
+    outbound_text = outbound_path.read_text(encoding="utf-8")
+    outbound = json.loads(outbound_text)
+    source = """
+import { renderSummaryBody } from './workflows/src/renderReport.js';
+let s='';for await(const c of process.stdin)s+=c;
+const rows=JSON.parse(s).map(row=>({...row.input, findings:row.input.findings.map(f=>({...f,
+ disposition:'deliver', admission:{version:1,status:'admitted',input_proof:'fixture'}}))}));
+process.stdout.write(JSON.stringify(rows.map(renderSummaryBody)));
+"""
+    rendered = json.loads(
+        subprocess.run(
+            ["node", "--input-type=module", "-e", source],
+            cwd=REPO,
+            input=json.dumps(outbound["summary_cases"]),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        ).stdout
+    )
+    prefix, separator, summary_text = outbound_text.partition('  "summary_cases": [')
+    bodies = iter(body for body in rendered for _ in range(2))
+    summary_text, count = re.subn(
+        r'("expected_(?:py|js)": )"(?:\\.|[^"\\])*"',
+        lambda match: match[1] + json.dumps(next(bodies)),
+        summary_text,
+    )
+    assert separator and count == 2 * len(rendered)
+    # Preserve deliberate JSON spellings in unrelated synthetic credential controls.
+    targets = {outbound_path: prefix + separator + summary_text}
+    return targets
+
+
 def main(argv=None):
     args = (sys.argv if argv is None else argv)[1:]
     check_mode = "--check" in args
@@ -173,12 +210,20 @@ def main(argv=None):
     only_script = positional[0] if len(positional) > 0 else None
     only_case = positional[1] if len(positional) > 1 else None
 
-    if only_script is not None and only_script not in RECORDERS:
+    if only_script is not None and only_script not in (*RECORDERS, "cross_runtime"):
         print(f"unknown recorder family: {only_script}", file=sys.stderr)
         return 2
 
     if check_mode:
-        mismatches = check(only_script, only_case)
+        mismatches = (
+            check(only_script, only_case) if only_script != "cross_runtime" else []
+        )
+        if only_script in (None, "cross_runtime"):
+            mismatches.extend(
+                str(path.relative_to(REPO))
+                for path, text in _cross_runtime_targets().items()
+                if not path.exists() or path.read_text(encoding="utf-8") != text
+            )
         if mismatches:
             for line in mismatches:
                 print(line, file=sys.stderr)
@@ -187,9 +232,14 @@ def main(argv=None):
         print("all goldens fresh")
         return 0
 
-    for script, case_dir, case_label in _iter_cases(only_script, only_case):
-        record(script, case_dir)
-        print(f"recorded {script}/{case_label}")
+    if only_script != "cross_runtime":
+        for script, case_dir, case_label in _iter_cases(only_script, only_case):
+            record(script, case_dir)
+            print(f"recorded {script}/{case_label}")
+    if only_script in (None, "cross_runtime"):
+        for path, text in _cross_runtime_targets().items():
+            path.write_text(text, encoding="utf-8", newline="")
+            print(f"recorded {path.relative_to(REPO)}")
     return 0
 
 

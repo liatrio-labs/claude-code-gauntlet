@@ -523,6 +523,7 @@ def plan_summary(
         skipped_groups,
         platform=platform,
         findings_count=len(data["findings"]),
+        index_findings=data["findings"],
         sha=sha,
         inline_count=inline_count,
     )
@@ -1104,6 +1105,7 @@ def _execute(args: argparse.Namespace) -> int:
         value = getattr(args, name)
         if value is not None:
             raw[name] = value
+    report_summary = None
     if args.report and not raw.get("review_body"):
         try:
             with open(args.report, encoding="utf-8") as fh:
@@ -1111,11 +1113,16 @@ def _execute(args: argparse.Namespace) -> int:
         except FileNotFoundError:
             die(f"Report file not found: {args.report}")
         try:
-            raw["review_body"] = compose.summary_body_from_report(report)
+            report_summary = compose.summary_body_from_report(report)
+            raw["review_body"] = report_summary
         except compose.ReportShapeError as exc:
             die(str(exc))
 
     data = validate_review_input(raw)
+    if report_summary is not None:
+        data["review_body"] = compose.summary_for_delivery(
+            report_summary, data["findings"]
+        )
 
     platform = data.get("platform")
     if platform:

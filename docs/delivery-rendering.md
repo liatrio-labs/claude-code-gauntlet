@@ -26,8 +26,12 @@ platform-shrunk apply range withholds the replacement code while retaining the p
 
 ## Outbound text preparation
 
-Every posted text field is prepared before Markdown is assembled. Titles and corroborator
-header values use the single-line class; body and suggestion use multiline prose; the cited
+Each issue posts only its lead sections. Additional sites combine other members' confirmed ranges
+and all confirmed sites, deduplicated without the lead range. Two or more distinct agents add an
+anonymous reviewer count. Unanchored groups render once under the lead location, without dimension
+headings; counts measure issues. Other member descriptions remain in the local report.
+
+Every posted text field is prepared before Markdown is assembled. Titles use the single-line class; body and suggestion use multiline prose; the cited
 rule is normalized, redacted, and has backtick runs of three or more collapsed to two
 before its source text is capped at 500 characters. Containment then escapes fence-shaped
 lines and unsafe visible characters before blockquote markers are added. Escaping can make
@@ -149,8 +153,7 @@ the trigger-based rule.
 
 ## Posted body budgets
 
-- `review_body` — exactly the pipeline-rendered Summary section body: counts first, selected findings index,
-  and any remainder with selection reasons. Whole index bullets fit within a 12,000-code-point
+- `review_body`: plain issue counts, an index of inline leads, and any delivery remainder. Whole index bullets fit within a 12,000-code-point
   limit; later units join the remainder. The change summary stays in the report's Change Context section. `post_review.py`
   bounds the summary comment, and every inline comment, discussion and note, with a per-platform
   UTF-8 byte budget. Each includes its trailer; GitLab discussions and notes also include a live
@@ -167,9 +170,7 @@ fold that cuts inside a code fence closes it with a fence of the same character 
 the fold line. The display fold counts Unicode code points; the posted summary budget counts UTF-8
 bytes.
 Description, suggestion, cited text, cross-file references, extra fields, and corroboration
-descriptions fold after 4,000 Unicode code points. The summary comment body is the report's
-Summary section body: the code-owned counts sentence comes first, followed by an index of the
-consolidation units selected for delivery and any remainder count with its selection reasons.
+descriptions fold after 4,000 Unicode code points. The PR summary counts issues and indexes inline leads. The local Summary keeps its full index.
 The change-summarizer prose appears only in the following Change Context section. A present summary
 has a code-owned lead-in explaining its role as shared review-agent context, then folds at
 `REPORT_FOLD_LIMITS.summaryChars` (`workflows/src/registry.js`). An absent or blank summary uses this exact sentence with no
@@ -185,31 +186,22 @@ Evidence folds after 40 lines or 8,000 code points, whichever comes first. One-l
 values fold after 512 code points. Finding cardinality and whole severity buckets never fold.
 Full confirmed finding values remain in `findings.json`; full unverified finding values remain
 in the checkpoint's challenge entry. The report renders any severity value outside `critical`,
-`high`, `medium`, or `low` as `low`, while the original value stays in `findings.json`. The
-report is the sole persisted summary surface.
+`high`, `medium`, or `low` as `low`, while the original value stays in `findings.json`. The report retains review diagnostics.
 
 ## Summary index and host rendering
 
-The pipeline passes selected findings by object identity; structurally equal copies and IDs do not
-establish membership. A consolidation key identifies grouped units, while each ungrouped unit uses
-its original finding object. The index follows the full report's group order. Each selected
-consolidation group uses its selected primary, or its first selected member in delivery order if the
-primary was withheld. A partially selected group counts once in the index and zero times in the
-remainder. The remainder noun follows the counts sentence: `finding(s)` when consolidation merged
-nothing, and `reported issue(s)` when it did. Its line is `{K} more {noun} not listed here ({reasons}).`
-The delivery selection appears only when a PR identity is present and comments can be posted; in
-headless mode the `delivery` receipt must include `pr_comments`. Otherwise every reported unit is
-eligible for the index. Whole bullets are admitted in index order while their code-point total,
-including newlines between bullets, stays at or below 12,000. The first bullet that does not fit
-and every later unit join the remainder with the reason `over the summary length limit`. An
-applicable numeric cap reason reads `over the delivery cap of {cap} finding(s)`, with the noun
-pluralized for the cap, because selection caps raw findings before grouping. Cap and tier reasons
-consider only units omitted by delivery selection.
-Unverified findings contribute to
-the counts sentence but never to the index. Index units plus remainder equal the reported-unit count,
-before the poster applies its byte budget. Each bullet places its location link or code span before
-the optional improvement-suggestion label, then the colon and folded title, so title Markdown cannot
-alter the location.
+The PR summary starts with `Found N issues in this change: <severity breakdown>.` Suggested
+improvements get a separate count sentence. Held-back and unverified findings stay in the local
+report. Each selected issue whose lead can post inline gets one index bullet. Unanchored issues
+appear only in the Python-rendered section, under `### N issues could not be attached to a changed
+line, so they are described here`, with singular grammar for one issue. The poster removes a
+previously indexed lead when its anchor fails at delivery.
+
+Selection uses original object identity; issue identity uses `delivery_group.issue_key`, falling
+back to legacy `consolidation_key`. The local report keeps the full index and every member's prose.
+Whole index bullets fit within 12,000 code points. Remainders use plain reasons such as `this review
+posts at most 25 issues` or `did not fit in this comment`.
+
 The Summary index prepares each title as a single line, folds it to 512 code points, then
 contains raw HTML and visible mentions even in inline code. Its definition-colon guard
 is forced because the containing bullet has a linked location: a Summary title `[x]: u`

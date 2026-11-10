@@ -1535,6 +1535,17 @@ ANCHOR_LIMITS = MappingProxyType(
     }
 )
 
+REPORT_FOLD_LIMITS = MappingProxyType(
+    {
+        "proseChars": 4000,
+        "summaryChars": 12000,
+        "summaryIndexChars": 12000,
+        "evidenceLines": 40,
+        "evidenceChars": 8000,
+        "inlineChars": 512,
+    }
+)
+
 LOCATION_RIGHTS: Mapping[LocationStatus, Mapping[str, bool]] = MappingProxyType(
     {
         "confirmed": MappingProxyType(

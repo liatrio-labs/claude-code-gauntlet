@@ -73,16 +73,23 @@ def test_summary_and_skipped_location_bytes(
         + "process.stdout.write(renderSummaryBody(JSON.parse(source)));",
         {"findings": [finding]},
     ).stdout
-    assert expected in summary
+    assert (expected in summary) == (status == "confirmed")
     assert outbound_text.prepare_prose(summary) == summary
-    skipped = compose.build_skipped_section(
-        [compose.SkippedEntry(filepath, 12, finding)]
-    )
+    skipped = compose.compose_review_body(
+        "",
+        [[compose.SkippedEntry(filepath, 12, finding)]],
+        platform="github",
+        findings_count=1,
+        sha="a" * 40,
+        inline_count=None,
+    ).body
     location = next(
         line[5:] for line in skipped.splitlines() if line.startswith("#### ")
     )
     assert location == expected
-    assert location.encode("utf-8") in summary.encode("utf-8")
+    assert (location.encode("utf-8") in summary.encode("utf-8")) == (
+        status == "confirmed"
+    )
 
 
 def test_permalinked_summary_slice_and_guard_equality() -> None:
@@ -129,7 +136,13 @@ def test_permalinked_summary_slice_and_guard_equality() -> None:
         ).stdout
     )
     report, summary = rendered
-    assert compose.summary_body_from_report(report) == summary
+    assert (
+        compose.summary_for_delivery(
+            compose.summary_body_from_report(report),
+            cast(list[Finding], fixture["findings"]),
+        )
+        == summary
+    )
     assert outbound_text.prepare_prose(summary) == summary
     assert "app/\uff20modal/\uff1cSlot>.tsx" in summary
     assert "dev@example.test" in summary
@@ -199,7 +212,8 @@ def test_withheld_primary_summary_cross_runtime() -> None:
         ).stdout
     )
     report, body = rendered
-    assert compose.summary_body_from_report(report) == body
+    assert "a.js:1" in compose.summary_body_from_report(report)
+    assert "a.js:1" not in body
     delivered = cast(list[Finding], [findings[2], findings[1]])
     groups = compose.consolidate_delivery(delivered)
     bullets = [line for line in body.splitlines() if line.startswith("- ")]
@@ -285,8 +299,9 @@ def test_mixed_disposition_group_cross_runtime(
         else payload["discussions"]
     )
     assert len(comments) == 1
-    assert all(f["title"] in comments[0]["body"] for f in members)
-    assert "Corroborating finding" in comments[0]["body"]
+    assert primary["title"] in comments[0]["body"]
+    assert child["title"] not in comments[0]["body"]
+    assert "Corroborating finding" not in comments[0]["body"]
     assert all(f["title"] not in summary for f in members)
 
 

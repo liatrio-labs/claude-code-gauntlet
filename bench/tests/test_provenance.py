@@ -207,8 +207,8 @@ def test_group_surfaces_preserve_identity(tmp_path, monkeypatch, capsys, forge_f
     assert [m.surface for m in mapped] == ["inline", "body", "body"]
     assert [m.source_trace_ids for m in mapped] == [
         ("run:B", "run:A"),
-        ("run:D",),
         ("run:Z",),
+        ("run:D",),
     ]
     assert mapped[0].path == "B.txt"
     summary = run.payload["payload"]["body"]
@@ -258,7 +258,7 @@ def test_group_surfaces_preserve_identity(tmp_path, monkeypatch, capsys, forge_f
 
 
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
-def test_body_disposition_provenance_uses_composer_dimension_order(
+def test_body_disposition_provenance_preserves_delivery_order(
     tmp_path, monkeypatch, capsys, forge_factory, platform
 ):
     from bench.tests.test_adapter import _GH_SHA, capture
@@ -284,10 +284,10 @@ def test_body_disposition_provenance_uses_composer_dimension_order(
         sha=_GH_SHA,
     )
     assert [m.source_trace_ids for m in mapped[1:]] == [
-        (selected[-1]["trace_id"],),
         (selected[-2]["trace_id"],),
+        (selected[-1]["trace_id"],),
     ]
-    assert "### bug" in mapped[1].text and "### security" in mapped[2].text
+    assert "### bug" not in mapped[1].text and "### security" not in mapped[2].text
 
 
 def payload_for(findings, diff, platform, **body_inputs):

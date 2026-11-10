@@ -17,7 +17,8 @@ import { renderReport, renderSummaryBody } from './renderReport.js';
 import { writeArtifacts } from './persist.js';
 import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
 import { checkpointChecksumErrors, checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
-import { disposeFindings } from './dispose.js';
+import { groupFindings } from './groupFindings.js';
+import { disposeFindings, isDeliveryCandidate } from './dispose.js';
 import { deliveryAllows } from './location.js';
 import { appendMeasurement, createMeasurementTrace, recordStage, traceDecision, admissionDetail, eliminationDecisions, stripTraceFields, decisionsFor } from './measurementTrace.js';
 import { captureDeliveryReplay, appendDeliveryReplay } from './measurementReplay.js';
@@ -126,6 +127,7 @@ export async function deliverFromCheckpoint(c, A, state) {
   // Keep replay disclosures outside checkpoints so resumes cannot duplicate them.
   const markedCount = applyChallengeReplayBelt(challengeCopy);
   const challengeOut = disposeFindings(challengeCopy);
+  gaps.push(...challengeOut.gaps);
   if (measurementTrace) recordStage(measurementTrace, 'dispose', challengeOut, { decisions: challengeOut.decisions });
   if (markedCount > 0) {
     gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
@@ -450,6 +452,7 @@ export async function runWith(ctx, rawArgs) {
         // Shared context would weaken the challenger's independent check, so its prompt contains only the claim and location.
         findings: admitted, limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
       });
+      Object.assign(out, await groupFindings(c, (out.findings || []).filter(isDeliveryCandidate), policy));
       out.eliminated = [...(verifyOut.eliminated || []), ...(filterOut.eliminated || []), ...(out.eliminated || [])];
       return out;
     });
