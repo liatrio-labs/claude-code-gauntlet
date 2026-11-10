@@ -95,7 +95,8 @@ def load_sources(run, score_id, pr_urls=()):
     metadata = read_json(packet / "sources/run.json")
     bindings = read_json(packet / "stage_trace_bindings.json")
     observations = [
-        json.loads(line) for line in (packet / "stages.jsonl").read_text().splitlines()
+        json.loads(line)
+        for line in (packet / "stages.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     if pr_urls and set(pr_urls) - bindings.keys():
         raise ValueError("requested PR is absent from the source score")
@@ -256,7 +257,9 @@ def relocate(source, dest, tree):
         if not (output / name).is_file():
             raise ValueError(f"missing source context artifact {name}")
     payload = json.loads(rewrite(json.dumps(source.payload)))
-    context = (output / f"code-gauntlet-context-{args['headShaShort']}.md").read_text()
+    context = (output / f"code-gauntlet-context-{args['headShaShort']}.md").read_text(
+        encoding="utf-8"
+    )
     # Match the collector's newline and decoded-code-point receipt after relocation.
     payload["args"].update(
         contextLines=context.count("\n"),
@@ -351,7 +354,7 @@ def launch(command, source, dest, auth, timeout):
     if auth == "subscription" and invoke.api_key_helper_files(home):
         raise ValueError("isolated Claude settings contain an apiKeyHelper")
     baseline = invoke.snapshot_workflow_records(home)
-    with (dest / "raw.json").open("w") as output:
+    with (dest / "raw.json").open("w", encoding="utf-8") as output:
         process = subprocess.Popen(
             command,
             cwd=dest / "worktree",
@@ -526,7 +529,11 @@ def main(argv=None):
                 if round_number == 1:
                     for checkout in commands:
                         subprocess.run(
-                            checkout, check=True, capture_output=True, text=True
+                            checkout,
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
                         )
                 launch(command, source, dest, args.child_auth, args.timeout_s)
                 receipt = workflow_result(dest, script)

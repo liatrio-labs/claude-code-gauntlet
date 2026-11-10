@@ -72,13 +72,13 @@ def test_attribution_counts_distinct_bugs_and_unmatched_findings_and_spreads():
 
 def test_workflow_results_require_completed_record_for_exact_script(tmp_path):
     script = tmp_path / "validate.js"
-    script.write_text("return {};")
+    script.write_text("return {};", encoding="utf-8")
     workflows = tmp_path / "workflows"
     workflows.mkdir()
     path = workflows / "wf_one.json"
     record = dict(
         scriptPath=str(script),
-        script=script.read_text(),
+        script=script.read_text(encoding="utf-8"),
         args={},
         status="completed",
         result=dict(kind="bench-validate-replay", dispatches=[]),
@@ -98,7 +98,7 @@ def test_workflow_results_require_completed_record_for_exact_script(tmp_path):
 def test_dry_run_writes_literal_scripts_and_explicit_commands_without_launch(
     tmp_path, monkeypatch
 ):
-    fixture = json.loads(FIXTURE.read_text())
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     payload = fixture["payload"]
     artifacts = []
     source_dir = tmp_path / "source"
@@ -112,7 +112,7 @@ def test_dry_run_writes_literal_scripts_and_explicit_commands_without_launch(
         (f"code-gauntlet-diff-{payload['args']['headShaShort']}.patch", "saved diff\n"),
     ]:
         path = source_dir / name
-        path.write_text(content)
+        path.write_text(content, encoding="utf-8")
         artifacts.append(("artifacts/" + name, path))
     source = replay.SourcePR(
         fixture["source"]["pr_url"],
@@ -160,7 +160,7 @@ def test_dry_run_writes_literal_scripts_and_explicit_commands_without_launch(
     scripts = list(out.glob("replay-*/*/validate-round-1.js"))
     assert len(scripts) == 2
     for script in scripts:
-        assert "code-gauntlet:validator" in script.read_text()
+        assert "code-gauntlet:validator" in script.read_text(encoding="utf-8")
         commands = replay.read_json(script.with_name("commands-round-1.json"))
         child = commands["child"]
         assert child[child.index("--plugin-dir") + 1] == str(ROOT)
@@ -174,7 +174,7 @@ def test_dry_run_writes_literal_scripts_and_explicit_commands_without_launch(
 def test_live_cli_reads_workflow_records_and_aggregates_without_model_transcription(
     tmp_path, monkeypatch
 ):
-    fixture = json.loads(FIXTURE.read_text())
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     payload = fixture["payload"]
     source_dir = tmp_path / "source"
     source_dir.mkdir()
@@ -186,7 +186,7 @@ def test_live_cli_reads_workflow_records_and_aggregates_without_model_transcript
     ]:
         name = f"code-gauntlet-{stem}-{payload['args']['headShaShort']}.{extension}"
         path = source_dir / name
-        path.write_text(content)
+        path.write_text(content, encoding="utf-8")
         artifacts.append(("artifacts/" + name, path))
     source = replay.SourcePR(
         "pr",
@@ -221,7 +221,7 @@ def test_live_cli_reads_workflow_records_and_aggregates_without_model_transcript
             dest / "workflows/wf_replay.json",
             dict(
                 scriptPath=str(script),
-                script=script.read_text(),
+                script=script.read_text(encoding="utf-8"),
                 args={},
                 status="completed",
                 result=dict(kind="bench-validate-replay", dispatches=dispatches),
