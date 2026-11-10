@@ -129,8 +129,27 @@ No `REVIEW.md` is required. See the [configuration reference](skills/code-gauntl
 
 ## Benchmark results
 
-Historical scores below use dfc6cb4-v1 / all. The active e616e84-v1 / core
-epoch awaits new baseline and calibration measurements.
+### v4.0 against v3.42
+
+v4.0 was measured against v3.42.49 on the active e616e84-v1 epoch.
+Each release reviewed the 15-PR gate subset three times, and the same pinned judge scored both.
+
+| Measure | v3.42.49 | v4.0 | Change |
+|---|---|---|---|
+| Recall, uncontaminated PRs (50 bugs) | 0.607 | 0.753 | +14.7 pts |
+| Recall, all gate PRs | 0.581 | 0.747 | +16.7 pts |
+| Recall, holdout PRs (21 bugs) | 0.540 | 0.619 | +7.9 pts |
+| Strict precision | 0.327 | 0.463 | +13.6 pts |
+
+On the uncontaminated PRs, the one-sided lower bound of the gain is +5.7 points.
+The holdout gain is too small a sample to prove, and it shows no harm.
+No bug that v3.42.49 caught in every run was missed by v4.0 in every run.
+Two auditors from different model families checked 60 sampled findings blind, and both marked all 60 grounded in the code.
+The two releases ran three weeks apart on different Claude Code versions with the same model.
+
+### Earlier epoch
+
+The scores below use the older dfc6cb4-v1 / all epoch and do not compare with the table above.
 
 Scores come from the MIT-licensed [Martian benchmark](https://github.com/withmartian/code-review-benchmark), pinned at commit `dfc6cb4`.
 A pinned judge, `claude-opus-4-5-20251101`, scores each review without knowing which tool wrote it.
