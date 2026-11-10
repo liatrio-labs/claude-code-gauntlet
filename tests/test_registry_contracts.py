@@ -466,7 +466,7 @@ def test_machine_string_registry():
         "Reviewed up to:",
         "HEADLESS CONFIG ERROR:",
         "HEADLESS INPUT ERROR:",
-        "code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic "
+        "code-gauntlet requires Claude Code >= 2.1.154 with dynamic "
         "workflows. Install the pre-rename deep-review v2.x for older CLIs.",
         "PAYLOAD_JSON:",
         'PRODUCT = "code-gauntlet"',
