@@ -26,7 +26,7 @@ The resolver is the one reader of configuration pins and the one producer of the
 | `CODE_GAUNTLET_MODEL_TIER` | `optimized` | `optimized` |
 | `CODE_GAUNTLET_DELIVERY` | `chat,pr_comments,markdown` | `markdown` |
 | `CODE_GAUNTLET_POST_MODE` | `dry-run,live` | `dry-run` |
-| `CODE_GAUNTLET_PR_COMMENT_CAP` | `positive integer` | `6` |
+| `CODE_GAUNTLET_PR_COMMENT_CAP` | `positive integer` | `25` |
 | `CODE_GAUNTLET_DELIVERY_TIER` | `all,main_only` | `all` |
 | `CODE_GAUNTLET_DRAFT_POLICY` | `review,skip` | `review` |
 | `CODE_GAUNTLET_REVIEWED_POLICY` | `incremental,full,skip` | `full` |

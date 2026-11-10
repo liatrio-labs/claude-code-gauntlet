@@ -17,7 +17,7 @@ export const KNOB_REGISTRY = deepFreeze([
     type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
   { key: 'pr_comment_cap', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.envDefault },
     rule: { headless: { kind: 'positive_digits' }, interactive: { kind: 'digits_or_null' } }, env: 'CODE_GAUNTLET_PR_COMMENT_CAP',
-    reviewMdKey: null, defaults: { headless: ['6', 'default'], interactive: ['null', 'default'] }, type: 'int_or_null',
+    reviewMdKey: null, defaults: { headless: ['25', 'default'], interactive: ['null', 'default'] }, type: 'int_or_null',
     waistPath: 'limits.deliveryCap', waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: KNOB_VOCAB.interactive,
     resolvedKey: false },
   { key: 'delivery_tier', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.envDefault },

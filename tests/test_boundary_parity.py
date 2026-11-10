@@ -14,6 +14,7 @@ from gauntlet import config as resolve_config
 from gauntlet import patches as report_patches
 from gauntlet.delivery import compose
 from gauntlet.delivery.input import Finding
+from gauntlet.registry import KNOB_REGISTRY
 from gauntlet.verify import wire as verify_wire
 
 from bench.runner import invoke
@@ -28,6 +29,14 @@ from tests.support.pipeline import (
 )
 from tests.support.posting import invoke_posting, review
 from tests.support.verify_parity import project_findings, run_verify_slice
+
+HEADLESS_COMMENT_CAP = int(
+    next(
+        row
+        for row in cast(tuple[dict[str, Any], ...], KNOB_REGISTRY)
+        if row["key"] == "pr_comment_cap"
+    )["defaults"]["headless"][0]
+)
 
 READ_INPUT = (
     "let source = ''; for await (const chunk of process.stdin) source += chunk;"
@@ -518,27 +527,29 @@ def test_receipt_rendering_parity(
 @pytest.mark.parametrize(
     ("mode", "env", "light_eligible", "with_detector", "cap", "tier"),
     [
-        pytest.param("headless", {}, False, False, 6, "all", id="headless"),
+        pytest.param(
+            "headless", {}, False, False, HEADLESS_COMMENT_CAP, "all", id="headless"
+        ),
         pytest.param(
             "headless",
             {"CODE_GAUNTLET_MEASUREMENT_TRACE": "1"},
             False,
             False,
-            6,
+            HEADLESS_COMMENT_CAP,
             "all",
             id="measurement-trace",
         ),
         pytest.param(
             "headless",
             {
-                "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
+                "CODE_GAUNTLET_PR_COMMENT_CAP": "7",
                 "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
                 "CODE_GAUNTLET_REVIEWED_POLICY": "skip",
                 "CODE_GAUNTLET_TRIVIAL_SCOPE": "light",
             },
             True,
             True,
-            25,
+            7,
             "main_only",
             id="combined-with-detector",
         ),
@@ -547,7 +558,7 @@ def test_receipt_rendering_parity(
             {"CODE_GAUNTLET_TRIVIAL_SCOPE": "light"},
             True,
             False,
-            6,
+            HEADLESS_COMMENT_CAP,
             "all",
             id="eligible-light",
         ),

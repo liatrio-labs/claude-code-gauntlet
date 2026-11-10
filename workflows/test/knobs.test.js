@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { KNOB_REGISTRY, DERIVE_WHEN, DERIVED_FROM, matchesRule, computeLightEligible } from '../src/knobs.js';
 import { receiptEntryForKey, deriveConfigWaist, configEchoValue, validateConfigEcho } from '../src/knobs.js';
-import { interactiveArgs, headlessArgs, knobRows, priorReviewDetector } from './helpers/argsFixtures.js';
+import { interactiveArgs, headlessArgs, validArgs, knobRows, priorReviewDetector } from './helpers/argsFixtures.js';
 
 const RULE_ROWS = [
   { name: 'enum malformed values', rule: { kind: 'enum' }, input: 'optimized', expected: false },
@@ -179,60 +179,24 @@ for (const { name, input, expected } of DERIVE_ROWS) {
   });
 }
 
-const DESCRIPTOR_ROWS = [
-  { name: 'model_tier', expected: [
-    ['headless', 'interactive'], { headless: ['env', 'default'], interactive: ['fixed'] },
-    { kind: 'enum', values: ['optimized'] }, 'CODE_GAUNTLET_MODEL_TIER', null,
-    { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] }, 'string', null, null, null, null, [], true,
-  ] },
-  { name: 'delivery', expected: [
-    ['headless'], { headless: ['env', 'review_md', 'default'] }, { kind: 'csv_subset', values: ['chat', 'pr_comments', 'markdown'] },
-    'CODE_GAUNTLET_DELIVERY', 'default_delivery', { headless: ['markdown', 'default'] },
-    'csv_list', null, null, null, null, [], true,
-  ] },
-  { name: 'post_mode', expected: [
-    ['headless'], { headless: ['env', 'default'] }, { kind: 'enum', values: ['dry-run', 'live'] },
-    'CODE_GAUNTLET_POST_MODE', null, { headless: ['dry-run', 'default'] }, 'string', null, null, null, null, [], true,
-  ] },
-  { name: 'pr_comment_cap', expected: [
-    ['headless', 'interactive'], { headless: ['env', 'default'], interactive: ['env', 'default'] },
-    { headless: { kind: 'positive_digits' }, interactive: { kind: 'digits_or_null' } }, 'CODE_GAUNTLET_PR_COMMENT_CAP', null,
-    { headless: ['6', 'default'], interactive: ['null', 'default'] }, 'int_or_null', 'limits.deliveryCap', null, null, null,
-    ['interactive'], false,
-  ] },
-  { name: 'delivery_tier', expected: [
-    ['headless', 'interactive'], { headless: ['env', 'default'], interactive: ['env', 'default'] },
-    { kind: 'enum', values: ['all', 'main_only'] }, 'CODE_GAUNTLET_DELIVERY_TIER', null,
-    { headless: ['all', 'default'], interactive: ['all', 'default'] }, 'string', 'delivery.tier', null, null, null, [], false,
-  ] },
-  { name: 'draft_policy', expected: [
-    ['headless'], { headless: ['env', 'default'] }, { kind: 'enum', values: ['review', 'skip'] },
-    'CODE_GAUNTLET_DRAFT_POLICY', null, { headless: ['review', 'default'] }, 'string', null, null, null, null, [], true,
-  ] },
-  { name: 'reviewed_policy', expected: [
-    ['headless'], { headless: ['env', 'default'] }, { kind: 'enum', values: ['incremental', 'full', 'skip'] },
-    'CODE_GAUNTLET_REVIEWED_POLICY', null, { headless: ['full', 'default'] },
-    'string', 'reviewScope.requested', { skip: 'full' }, null, 'priorReviewDetector', [], true,
-  ] },
-  { name: 'pr_not_found_policy', expected: [
-    ['headless'], { headless: ['env', 'default'] }, { kind: 'enum', values: ['local', 'error'] },
-    'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', null, { headless: ['error', 'default'] }, 'string', null, null, null, null, [], true,
-  ] },
-  { name: 'trivial_scope', expected: [
-    ['headless'], { headless: ['env', 'default'] }, { kind: 'enum', values: ['light', 'full'] },
-    'CODE_GAUNTLET_TRIVIAL_SCOPE', null, { headless: ['full', 'default'] },
-    'string', 'scopeAnswer', null, null, 'lightEligible', [], false,
-  ] },
-  { name: 'review_md', expected: [
-    ['interactive'], { interactive: ['discovery'] }, { kind: 'enum', values: ['present', 'absent'] },
-    null, null, { interactive: ['absent', 'discovery'] }, 'string', null, null, 'reviewMd', null, [], false,
-  ] },
-];
-for (const { name, expected } of DESCRIPTOR_ROWS) {
-  test(`descriptor: ${name}`, () => {
-    const row = KNOB_REGISTRY.find((d) => d.key === name);
-    assert.deepEqual([row.modes, row.allowedSources, row.rule, row.env, row.reviewMdKey, row.defaults,
-      row.type, row.waistPath, row.waistMap, row.derivedFrom, row.deriveWhen, row.nullReceipt, row.resolvedKey], expected);
+for (const mode of ['headless', 'interactive']) {
+  test(`default receipt: ${mode}`, () => {
+    const configEcho = Object.fromEntries(KNOB_REGISTRY.filter((row) => row.modes.includes(mode)).map((row) => {
+      const [value, source] = row.defaults[mode];
+      return [row.key, { value, source }];
+    }));
+    for (const args of mode === 'headless' ? [headlessArgs(), validArgs()] : [interactiveArgs()]) {
+      assert.deepEqual(args.configEcho, configEcho);
+      const errors = [];
+      validateConfigEcho(args, errors);
+      assert.deepEqual(errors, []);
+      if (mode === 'headless') assert.equal(args.limits.deliveryCap, Number(configEcho.pr_comment_cap.value));
+    }
+  });
+}
+
+for (const row of KNOB_REGISTRY) {
+  test(`descriptor: ${row.key}`, () => {
     assert.deepEqual(Object.keys(row), [
       'key', 'modes', 'allowedSources', 'rule', 'env', 'reviewMdKey', 'defaults', 'type', 'waistPath', 'waistMap',
       'derivedFrom', 'deriveWhen', 'nullReceipt', 'resolvedKey',

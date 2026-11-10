@@ -25,7 +25,7 @@ Inspect the session tool definitions for `Workflow` before other work. `ToolSear
 - **Absent from your tool definitions** → print exactly the message below and STOP.
 
 ```
-code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.
+code-gauntlet requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.
 ```
 
 ---

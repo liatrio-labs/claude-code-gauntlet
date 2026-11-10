@@ -1366,7 +1366,7 @@ KNOB_REGISTRY = (
         "env": "CODE_GAUNTLET_PR_COMMENT_CAP",
         "reviewMdKey": None,
         "defaults": {
-            "headless": ["6", "default"],
+            "headless": ["25", "default"],
             "interactive": ["null", "default"],
         },
         "type": "int_or_null",
