@@ -2,6 +2,8 @@ import { fnv1a32, isPlainObject, normalizeReviewText } from '../../src/wire.js';
 import { reviewMdSetChecksum } from '../../src/args.js';
 import { KNOB_REGISTRY } from '../../src/knobs.js';
 
+const [headlessCapValue, headlessCapSource] = KNOB_REGISTRY.find((row) => row.key === 'pr_comment_cap').defaults.headless;
+
 export function emptyRemovedTests() {
   const body = { status: 'available', items: [], omitted: 0 };
   return { ...body, checksum: fnv1a32(JSON.stringify(body, null, 2)) };
@@ -42,12 +44,12 @@ export function validArgs(over = {}) {
     changedLines: 1,
     riskTable: changedFiles.map((path) => ({ path, risk: 'medium' })),
     policy: {},
-    limits: { validateBatch: 25, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20, deliveryCap: 25 },
+    limits: { validateBatch: 25, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20, deliveryCap: Number(headlessCapValue) },
     configEcho: {
       model_tier: { value: 'optimized', source: 'default' },
       delivery: { value: 'markdown', source: 'default' },
       post_mode: { value: 'dry-run', source: 'default' },
-      pr_comment_cap: { value: '25', source: 'default' },
+      pr_comment_cap: { value: headlessCapValue, source: headlessCapSource },
       delivery_tier: { value: 'all', source: 'default' },
       draft_policy: { value: 'review', source: 'default' },
       reviewed_policy: { value: 'full', source: 'default' },
@@ -63,7 +65,7 @@ export function validArgs(over = {}) {
     const cap = args.limits.deliveryCap;
     args.configEcho = {
       ...base.configEcho,
-      pr_comment_cap: { value: cap == null ? 'null' : String(cap), source: 'default' },
+      pr_comment_cap: { value: cap == null ? 'null' : String(cap), source: headlessCapSource },
       delivery_tier: { value: args.delivery && args.delivery.tier ? args.delivery.tier : 'all', source: 'default' },
       trivial_scope: { value: args.scopeAnswer || 'full', source: 'default' },
     };
@@ -115,12 +117,12 @@ export function prIdentity(over = {}) {
 export function headlessArgs(reviewedPolicy = 'full', scope = {}) {
   const args = interactiveArgs();
   return {
-    ...args, mode: 'headless', delivery: {}, limits: { ...args.limits, deliveryCap: 6 },
+    ...args, mode: 'headless', delivery: {}, limits: { ...args.limits, deliveryCap: Number(headlessCapValue) },
     configEcho: {
       model_tier: { value: 'optimized', source: 'default' },
       delivery: { value: 'markdown', source: 'default' },
       post_mode: { value: 'dry-run', source: 'default' },
-      pr_comment_cap: { value: '6', source: 'default' },
+      pr_comment_cap: { value: headlessCapValue, source: headlessCapSource },
       delivery_tier: { value: 'all', source: 'default' },
       draft_policy: { value: 'review', source: 'default' },
       reviewed_policy: { value: reviewedPolicy, source: 'default' },

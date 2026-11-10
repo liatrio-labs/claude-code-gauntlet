@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { KNOB_REGISTRY, DERIVE_WHEN, DERIVED_FROM, matchesRule, computeLightEligible } from '../src/knobs.js';
 import { receiptEntryForKey, deriveConfigWaist, configEchoValue, validateConfigEcho } from '../src/knobs.js';
-import { interactiveArgs, headlessArgs, knobRows, priorReviewDetector } from './helpers/argsFixtures.js';
+import { interactiveArgs, headlessArgs, validArgs, knobRows, priorReviewDetector } from './helpers/argsFixtures.js';
 
 const RULE_ROWS = [
   { name: 'enum malformed values', rule: { kind: 'enum' }, input: 'optimized', expected: false },
@@ -185,9 +185,13 @@ for (const mode of ['headless', 'interactive']) {
       const [value, source] = row.defaults[mode];
       return [row.key, { value, source }];
     }));
-    const errors = [];
-    validateConfigEcho({ mode, configEcho }, errors);
-    assert.deepEqual(errors, []);
+    for (const args of mode === 'headless' ? [headlessArgs(), validArgs()] : [interactiveArgs()]) {
+      assert.deepEqual(args.configEcho, configEcho);
+      const errors = [];
+      validateConfigEcho(args, errors);
+      assert.deepEqual(errors, []);
+      if (mode === 'headless') assert.equal(args.limits.deliveryCap, Number(configEcho.pr_comment_cap.value));
+    }
   });
 }
 
