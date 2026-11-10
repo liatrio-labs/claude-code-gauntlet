@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v3.61.3 (2026-11-10)
+
+### Bug Fixes
+
+- Raise the headless comment cap and name the Workflow approval fix
+  ([#586](https://github.com/liatrio-labs/claude-code-gauntlet/pull/586),
+  [`c92e8ca`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c92e8ca51d2546827a184cc9b7e973d3213bd1ea))
+
+- Raise the headless comment cap and name the Workflow approval fix (#46)
+  ([#586](https://github.com/liatrio-labs/claude-code-gauntlet/pull/586),
+  [`c92e8ca`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c92e8ca51d2546827a184cc9b7e973d3213bd1ea))
+
+### Documentation
+
+- Trim leftover reference guidance before v4 (#46)
+  ([#584](https://github.com/liatrio-labs/claude-code-gauntlet/pull/584),
+  [`90f7ced`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/90f7ced8bc236151ae5409cd391750e0a23906df))
+
+### Testing
+
+- Guard fixture defaults and workflow allow rules
+  ([#586](https://github.com/liatrio-labs/claude-code-gauntlet/pull/586),
+  [`c92e8ca`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c92e8ca51d2546827a184cc9b7e973d3213bd1ea))
+
+
 ## v3.61.2 (2026-11-09)
 
 ### Bug Fixes
