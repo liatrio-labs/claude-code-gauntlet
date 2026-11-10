@@ -173,14 +173,14 @@ The plugin runs on your machine inside your Claude Code session. We operate no s
 
 - It runs `git`, and `gh` or `glab` under your own login, to read the diff, the PR or MR, and earlier review comments.
 - It reads the repository's rule files: `CLAUDE.md`, `AGENTS.md`, `QODO.md`, and `REVIEW.md`.
-- It runs its own Python scripts, which use only the standard library and make no network calls.
+- It runs its own Python scripts, which use only the standard library and reach the network only through `gh` or `glab`.
 - It sends the diff and the files the agents read to the model access you configured in Claude Code, and nowhere else.
 - It writes review files under `.code-gauntlet/`, or the directory `CODE_GAUNTLET_OUTPUT_DIR` names. A rerun replaces the earlier files for the same commit.
 - It adds one ignore entry to `.git/info/exclude` when that directory is inside the repository. It never edits your tracked `.gitignore`.
 - It checks out the PR, MR, or branch under review in interactive runs when your working tree is elsewhere. That checkout can fetch the branch. Headless runs never check out.
 - It posts to the PR or MR through `gh` or `glab`. Interactive runs ask first, and headless runs post only when configured to. Each post uses a temporary file that is deleted afterwards.
 - It creates one Claude Code task per delivered finding if you accept the task-board offer.
-- It ships no hooks, and the review agents can only read and search files. Two helper agents run the plugin's own scripts and write the review files.
+- It ships no hooks, and the review agents can only read and search files. Two helper agents have more: one runs commands through Bash, and one writes the review files.
 - It has no telemetry, analytics, or tracking.
 
 The plugin treats code under review as untrusted input and filters prompt-injection attempts.
@@ -210,9 +210,10 @@ No bug that v3.42.49 caught in every run was missed by v4.0 in every run.
 The benchmark lists only some of each PR's real problems, so a comment that matches no known bug is not a false alarm.
 Two auditors from different model families checked 60 sampled v4.0 findings blind, and both marked all 60 grounded in the code.
 
-Three limits apply.
+Four limits apply.
 The two releases ran three weeks apart on different Claude Code versions, with the same models.
 Every run used an Opus session, and we have not benchmarked a Sonnet session.
+Every run allowed up to 25 inline comments per review, while headless runs default to six.
 The judge and the plugin both use Anthropic models, and same-vendor bias has not been measured here.
 
 ### Earlier epoch
@@ -250,7 +251,7 @@ We run the benchmark by hand ([method](bench/MEASUREMENT.md)), not on every rele
 - Each finding must carry the evidence its kind requires before it can be posted, and code checks that, not a prompt.
 - One final decision sets whether each finding is posted, kept in the report, or held back.
 - Findings that several agents report at the same lines arrive as one comment.
-- The twelve agent prompts shrank from about 23,900 words to about 3,100.
+- The twelve agent prompts shrank from about 23,900 words to about 3,100, counted with `wc -w` over `agents/*.md` at v3.42.49 and v4.0.
 - The `build-review-md` skill is retired, so write `REVIEW.md` by hand from the [authoring guide](docs/review-md-authoring.md).
 
 [CHANGELOG.md](CHANGELOG.md) lists every release.
