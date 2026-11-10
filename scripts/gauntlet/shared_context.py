@@ -24,6 +24,8 @@ from gauntlet.location import SourceAdapter
 from gauntlet.paths import NON_SOURCE_DIRS
 from gauntlet.pr_status import load_snapshot
 from gauntlet.registry import (
+    READ_PLAN_LINE_PREFIX_BYTES,
+    READ_PLAN_MAX_BYTES,
     READ_PLAN_MAX_CHARS,
     READ_PLAN_MAX_CHUNKS,
     READ_PLAN_MAX_LINES,
@@ -54,8 +56,11 @@ large Read can return only part of a file without notice; the workflow has no
 disk and needs the receipt's line count to plan exact Reads. The content always
 ends with LF, so the newline count equals the Read tool's line numbering.
 ``contextChars`` counts decoded code points with replacement; ``contextMaxLineChars``
-includes LF. ``contextReadChunks`` greedily packs actual LF-terminated line lengths
-under both Read limits, isolating an oversized line for partial-read continuation.
+includes LF. ``contextReadPlanVersion`` identifies the measured-plan receipt;
+``contextReadChunks`` carries only per-chunk line counts. Packing caps each Read at
+750 lines and 24,000 UTF-8 bytes including LF and a 12-byte line-prefix reserve.
+This leaves margin under the default 25,000-token Read cap even for multibyte text.
+An oversized line stands alone for partial-read continuation.
 """
 )
 
@@ -77,28 +82,24 @@ class LayoutWire(TypedDict):
     omitted: list[str]
 
 
-class ReadChunk(TypedDict):
-    offset: int
-    limit: int
-    chars: int
-
-
-def context_read_chunks(content: str) -> list[ReadChunk]:
-    chunks: list[ReadChunk] = []
-    for offset, line in enumerate(content.split("\n")[:-1], 1):
-        chars = len(line) + 1
+def context_read_chunks(content: str) -> list[int]:
+    chunks: list[int] = []
+    chunk_bytes = 0
+    for line in content.split("\n")[:-1]:
+        size = len(line.encode("utf-8")) + 1 + READ_PLAN_LINE_PREFIX_BYTES
         if (
             not chunks
-            or chunks[-1]["limit"] == READ_PLAN_MAX_LINES
-            or chunks[-1]["chars"] + chars > READ_PLAN_MAX_CHARS
+            or chunks[-1] == READ_PLAN_MAX_LINES
+            or chunk_bytes + size > READ_PLAN_MAX_BYTES
         ):
-            # The empty sentinel preserves gap disclosure without an unbounded receipt.
+            # An empty receipt degrades to the aggregate plan with a disclosed gap.
             if len(chunks) == READ_PLAN_MAX_CHUNKS:
                 return []
-            chunks.append({"offset": offset, "limit": 1, "chars": chars})
+            chunks.append(1)
+            chunk_bytes = size
         else:
-            chunks[-1]["limit"] += 1
-            chunks[-1]["chars"] += chars
+            chunks[-1] += 1
+            chunk_bytes += size
     return chunks
 
 
@@ -298,6 +299,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         "contextLines": lines,
         "contextChars": chars,
         "contextMaxLineChars": max(map(len, decoded.split("\n"))) + 1,
+        "contextReadPlanVersion": 1,
         "contextReadChunks": context_read_chunks(decoded),
         "removedTests": removed_tests(diff.decode("utf-8", errors="replace")),
     }, 0

@@ -41,16 +41,20 @@ Each agent returns structured findings against the canonical schema (`agent()` `
 
 ## Shared-context read plan
 
-Phase 2 stamps `contextLines`, `contextChars`, `contextMaxLineChars` (including LF), and
-`contextReadChunks`: `{offset, limit, chars}` records greedily packed from actual line lengths.
-Each chunk fits 750 lines and 30,000 decoded characters including LF; a single oversized line
-stands alone and relies on partial-read continuation. The workflow validates contiguous coverage,
-size totals and budgets before dispatch. At most 2,000 chunks bound receipt and prompt size;
-the writer stamps `[]` if that ceiling is exceeded, preserving gap disclosure.
-`contextReadPlan` uses these boundaries directly. Older receipts retain the maximum-width plan,
-with the average fallback when width is absent or would exceed the chunk ceiling.
-The prompt enumerates at most ten calls in full, then uses compact offset:limit pairs for variable
-chunks or an offset rule for uniform chunks.
+Phase 2 stamps `contextLines`, `contextChars`, `contextMaxLineChars` (including LF),
+`contextReadPlanVersion: 1`, and `contextReadChunks`: per-chunk line counts packed from actual lengths.
+The writer packs at most 750 lines and 24,000 UTF-8 bytes including LF and a 12-byte reserve per line
+for numbering. Read limits output in tokens (25,000 by default); bytes conservatively bound byte-fallback
+tokens and leave 1,000 tokens for surrounding output. Oversized single lines remain isolated.
+The 30,000-character heuristic remains only for aggregate fallback; per-chunk size counts stay internal.
+The workflow validates positive integer counts, their 750-line limit, and their sum against `contextLines`.
+A bad or missing versioned list degrades to the aggregate plan with `context_plan_fallback`.
+An empty list for a non-empty file is reported explicitly. Receipts with neither version nor chunk data
+retain the legacy aggregate plan without a gap; loss of both fields cannot be distinguished from an old receipt.
+At most 2,000 counts bound allocation and receipt size (10,000 characters with the writer's JSON spacing).
+Prompts enumerate at most ten calls in full, then compact offset:limit pairs for at most 64 variable chunks
+(at most 702 characters of pairs). Larger variable plans fall back with a gap. Uniform plans use a fixed-size
+stepping rule. The context-read instruction is bounded by 1,100 characters plus the context path.
 Agents make every planned call and continue past the last received line if a call stops early.
 `runWith` builds `sharedContextLine` once and threads `contextLine` to stages so they cannot
 construct a competing instruction from a path. Missing measurement yields `context_unmeasured`;

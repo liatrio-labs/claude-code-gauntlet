@@ -283,7 +283,7 @@ CODE_GAUNTLET_TRIAGE_{nonce}
 The quoted delimiter passes the text verbatim. Never pipe it through `echo` or unquote the delimiter.
 The nonce in the delimiter keeps any line of the text from ending it.
 Use `configResult.identity.repo_root` for `{repo_root}`.
-Stamp the printed `contextLines`, `contextChars`, `contextMaxLineChars`, `contextReadChunks` and `removedTests` into the args waist verbatim, never estimated, carried over or re-derived.
+Stamp the printed `contextLines`, `contextChars`, `contextMaxLineChars`, `contextReadPlanVersion`, `contextReadChunks` and `removedTests` into the args waist verbatim, never estimated, carried over or re-derived.
 An exit 2 wrote no usable context; stop and report its one-line error.
 `scripts/gauntlet/shared_context.py`'s docstring holds the content and measurement rules.
 
@@ -313,7 +313,7 @@ An exit 2 wrote no usable context; stop and report its one-line error.
 
   // the shared context file's measured size, from write_shared_context.py's receipt,
   // verbatim. Character measurements require contextLines.
-  contextLines, contextChars, contextMaxLineChars, contextReadChunks,
+  contextLines, contextChars, contextMaxLineChars, contextReadPlanVersion, contextReadChunks,
 
   // how the run's artifacts reach disk. `returnPrimaries: true` is the default and the
   // only path on which no model transcribes them — see phase2-triage.md, "Args Preparation". Omit `persist`

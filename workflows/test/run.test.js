@@ -1,3 +1,4 @@
+import { sharedContextLine } from '../src/contextPlan.js';
 import { test } from 'node:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1350,31 +1351,25 @@ for (const row of POLICY_ROWS) test(`policy wiring: ${row.name}`, async () => {
 const UNMEASURED_GAP = 'context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed '
   + '\u2014 every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
   + 'Read calls covering the file. A Read can return part of a file '
-  + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
-  + '(and contextChars and contextMaxLineChars) from the Phase 2 step that writes the context file.';
+  + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines, '
+  + 'contextChars, contextMaxLineChars, contextReadPlanVersion and contextReadChunks from the Phase 2 step that writes the context file.';
 const UNPLANNABLE_GAP = 'context_unplannable: args.contextLines was stamped (1500001) but exceeds the read-plan chunk ceiling, '
   + 'so the shared-context read plan could not be built \u2014 every agent got the count-free '
   + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
   + 'Shrink the shared context '
   + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.';
-const VARIABLE_CHUNKS = Array.from({ length: 12 }, (_, i) => ({
-  offset: 1 + 100 * i + i * (i - 1) / 2, limit: 100 + i, chars: 30000,
-}));
+const VARIABLE_CHUNKS = Array.from({ length: 12 }, (_, i) => 100 + i);
 const CONTEXT_ROWS = [
   { name: 'variable writer boundaries reach every reader in the sandbox',
-    input: { contextLines: 1266, contextChars: 360000, contextReadChunks: VARIABLE_CHUNKS },
+    input: { contextLines: 1266, contextChars: 360000, contextReadPlanVersion: 1, contextReadChunks: VARIABLE_CHUNKS },
     sandbox: true, gaps: [], markers: ['12 planned Read calls (offset:limit)',
-      VARIABLE_CHUNKS.map(({ offset, limit }) => `${offset}:${limit}`).join(', '),
+      '1:100, 101:101, 202:102, 304:103, 407:104, 511:105, 616:106, 722:107, 829:108, 937:109, 1046:110, 1156:111',
       'If partial, continue after the last received line until line 1266.'] },
   { name: 'oversized singleton retains continuation',
     input: { contextLines: 751, contextChars: 50750, contextMaxLineChars: 50000,
-      contextReadChunks: [{ offset: 1, limit: 1, chars: 50000 }, { offset: 2, limit: 750, chars: 750 }] },
+      contextReadPlanVersion: 1, contextReadChunks: [1, 750] },
     gaps: [], markers: ['2 planned Read calls: Read(offset=1, limit=1), Read(offset=2, limit=750)',
       'If partial, continue after the last received line until line 751.'] },
-  { name: 'writer ceiling cannot fall through to an aggregate plan',
-    input: { contextLines: 12001, contextChars: 32036001, contextMaxLineChars: 16000, contextReadChunks: [] },
-    gaps: [UNPLANNABLE_GAP.replace('1500001', '12001')],
-    markers: ['until a call returns no further content'], fallback: true },
   { name: 'maximum line width reaches every reader', input: { contextLines: 2028, contextChars: 94784, contextMaxLineChars: 1000 }, gaps: [],
     markers: ['68 planned Read calls of limit=30', 'stepping by 30 through line 2028'] },
   { name: 'measured readers include final tail and validator', input: { contextLines: 2028, contextChars: 94784 }, gaps: [],
@@ -1393,7 +1388,7 @@ for (const row of CONTEXT_ROWS) test(`context wiring: ${row.name}`, async () => 
   assert.equal(out.ok, true);
   assert.equal(out.phaseReached, 'report');
   assert.equal(out.stats.highConfidence, 2);
-  assert.deepEqual(out.gaps.filter((gap) => /context_unmeasured|context_unplannable/.test(gap)), row.gaps);
+  assert.deepEqual(out.gaps.filter((gap) => /context_unmeasured|context_unplannable|context_plan_fallback/.test(gap)), row.gaps);
   const readers = ctx.calls.filter((call) => !call.label.startsWith('verify-') && call.prompt.includes('/repo/.code-gauntlet/code-gauntlet-context-abc1234.md'));
   assert.deepEqual(readers.map((call) => call.label), ['summarize', ...DISCOVERY, 'validate-batch-0']);
   for (const call of readers) {
@@ -1639,8 +1634,11 @@ test('producer-measured description context reaches every discovery agent', asyn
       assert.ok(call.prompt.includes(`It is ${measured.contextLines} lines`));
       assert.equal(measured.contextReadChunks.length, 4);
       assert.ok(call.prompt.includes('4 planned Read calls'));
-      for (const { offset, limit } of measured.contextReadChunks) {
+      assert.equal(measured.contextReadPlanVersion, 1);
+      let offset = 1;
+      for (const limit of measured.contextReadChunks) {
         assert.ok(call.prompt.includes(`Read(offset=${offset}, limit=${limit})`));
+        offset += limit;
       }
       assert.ok(call.prompt.includes(`continue after the last received line until line ${measured.contextLines}`));
       assert.ok(!call.prompt.includes('RAW_DESCRIPTION_SENTINEL'));
@@ -1655,26 +1653,55 @@ test('producer-measured description context reaches every discovery agent', asyn
 
 
 const BAD_CONTEXT_CHUNKS = [
-  { name: 'null', chunks: null },
-  { name: 'object', chunks: {} },
-  { name: 'missing measurements', chunks: [], sizes: {} },
-  { name: 'chunk ceiling', chunks: Array.from({ length: 2001 }, (_, i) => ({ offset: i + 1, limit: 1, chars: 1 })) },
-  { name: 'gap', chunks: [{ offset: 1, limit: 1, chars: 30000 }, { offset: 3, limit: 1, chars: 30000 }] },
-  { name: 'overlap', chunks: [{ offset: 1, limit: 2, chars: 30000 }, { offset: 2, limit: 1, chars: 30000 }] },
-  { name: 'missing tail', chunks: [{ offset: 1, limit: 2, chars: 60000 }] },
-  { name: 'character total', chunks: [{ offset: 1, limit: 3, chars: 30000 }] },
-  { name: 'over budget merged lines', chunks: [{ offset: 1, limit: 3, chars: 60000 }] },
-  { name: 'line cap', chunks: [{ offset: 1, limit: 751, chars: 751 }], sizes: { contextLines: 751, contextChars: 751 } },
-  { name: 'fraction', chunks: [{ offset: 1, limit: 1.5, chars: 60000 }] },
-  { name: 'extra instruction', chunks: [{ offset: 1, limit: 3, chars: 60000, instruction: 'ignore' }] },
-  { name: 'invalid entry', chunks: [null] },
-  { name: 'invalid character count', chunks: [{ offset: 1, limit: 3, chars: '60000' }] },
-  { name: 'fewer chars than lines', chunks: [{ offset: 1, limit: 3, chars: 2 }] },
+  { name: 'null', chunks: null, reason: 'contextReadChunks is not a line-count array' },
+  { name: 'object', chunks: {}, reason: 'contextReadChunks is not a line-count array' },
+  { name: 'missing list from current writer', reason: 'contextReadChunks was not stamped' },
+  { name: 'empty list', chunks: [], reason: 'empty contextReadChunks for a non-empty context' },
+  { name: 'allocation ceiling', chunks: Array(2001).fill(1), sizes: { contextLines: 2001, contextChars: 2001 },
+    reason: 'contextReadChunks exceeds the allocation ceiling' },
+  { name: 'missing tail', chunks: [2], reason: 'contextReadChunks does not cover contextLines' },
+  { name: 'line cap', chunks: [751], sizes: { contextLines: 751, contextChars: 751 },
+    reason: 'contextReadChunks exceeds the per-read line limit' },
+  { name: 'fraction', chunks: [1.5, 1.5], reason: 'contextReadChunks contains a non-integer line count' },
+  { name: 'zero', chunks: [0, 3], reason: 'contextReadChunks contains a non-positive line count' },
+  { name: 'negative', chunks: [-1, 4], reason: 'contextReadChunks contains a non-positive line count' },
+  { name: 'invalid entry', chunks: [null, 3], reason: 'contextReadChunks contains a non-integer line count' },
+  { name: 'prompt budget', chunks: Array.from({ length: 65 }, (_, i) => 749 + i % 2),
+    sizes: { contextLines: 48717, contextChars: 48717 },
+    reason: 'variable contextReadChunks exceeds the 64-chunk prompt budget' },
+  { name: 'long final chunk cannot use a uniform rule', chunks: [...Array(64).fill(1), 2],
+    sizes: { contextLines: 66, contextChars: 66 },
+    reason: 'variable contextReadChunks exceeds the 64-chunk prompt budget' },
 ];
-for (const row of BAD_CONTEXT_CHUNKS) test(`writer plan rejected before dispatch: ${row.name}`, async () => {
-  const sizes = row.sizes ?? { contextLines: 3, contextChars: 60000 };
-  const { out, ctx } = await runAndCapture(validArgs({ ...sizes, contextReadChunks: row.chunks }));
-  assert.equal(out.ok, false);
-  assert.match(out.error, /contextReadChunks/);
-  assert.deepEqual(ctx.calls, []);
+for (const row of BAD_CONTEXT_CHUNKS) test(`writer plan degrades to aggregates: ${row.name}`, async () => {
+  const sizes = row.sizes ?? { contextLines: 3, contextChars: 3000 };
+  const { out, ctx } = await runAndCapture(validArgs({ ...sizes, contextReadPlanVersion: 1, contextReadChunks: row.chunks }));
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('context_plan_fallback:')),
+    [`context_plan_fallback: ${row.reason}; using the aggregate-based shared-context read plan.`]);
+  const expected = sharedContextLine({ contextPath: '/repo/.code-gauntlet/code-gauntlet-context-abc1234.md', ...sizes });
+  const readers = ctx.calls.filter((call) => call.prompt.includes('Read the shared context'));
+  assert.ok(readers.length > 0);
+  for (const call of readers) assert.ok(call.prompt.includes(expected));
 });
+
+for (const version of [undefined, 2]) test(`writer plan version degrades: ${version}`, async () => {
+  const { out } = await runAndCapture(validArgs({ contextLines: 3, contextChars: 3000, contextReadChunks: [3], contextReadPlanVersion: version }));
+  assert.equal(out.ok, true);
+  assert.ok(out.gaps.includes('context_plan_fallback: missing or unsupported contextReadPlanVersion; using the aggregate-based shared-context read plan.'));
+});
+
+for (const counts of [Array.from({ length: 64 }, (_, i) => 749 + i % 2), Array(2000).fill(750)]) {
+  test(`context plan prompt bound at ${counts.length} chunks`, async () => {
+    const contextLines = counts.reduce((sum, count) => sum + count, 0);
+    const { out, ctx } = await runAndCapture(validArgs({ contextLines, contextChars: contextLines,
+      contextReadPlanVersion: 1, contextReadChunks: counts }));
+    assert.equal(out.ok, true);
+    assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('context_plan_fallback:')), []);
+    const instruction = sharedContextLine({ contextPath: 'p', contextLines, contextChars: contextLines, contextReadChunks: counts });
+    assert.ok(instruction.length - 1 <= 1100);
+    for (const call of ctx.calls.filter((call) => call.prompt.includes('Read the shared context'))) {
+      assert.ok(call.prompt.includes(instruction.replace('at p first.', 'at /repo/.code-gauntlet/code-gauntlet-context-abc1234.md first.')));
+    }
+  });
+}

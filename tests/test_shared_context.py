@@ -9,7 +9,11 @@ from typing import TypedDict
 
 import pytest
 from gauntlet.jsjson import fnv1a32, js_stringify_pretty
-from gauntlet.registry import READ_PLAN_MAX_CHARS
+from gauntlet.registry import (
+    READ_PLAN_LINE_PREFIX_BYTES,
+    READ_PLAN_MAX_BYTES,
+    READ_PLAN_MAX_CHARS,
+)
 
 from tests.conftest import Invocation
 from tests.support.git_diff import git, init_git_repo
@@ -264,13 +268,8 @@ def test_context_neutralizes_block_tags_in_diff(tmp_path, invoke):
             map(len, context.decode("utf-8", errors="replace").split("\n"))
         )
         + 1,
-        "contextReadChunks": [
-            {
-                "offset": 1,
-                "limit": context.count(b"\n"),
-                "chars": len(context.decode("utf-8", errors="replace")),
-            }
-        ],
+        "contextReadPlanVersion": 1,
+        "contextReadChunks": [context.count(b"\n")],
         "removedTests": {
             **unavailable,
             "checksum": fnv1a32(js_stringify_pretty(unavailable)),
@@ -605,8 +604,15 @@ def test_map_write_failure_refuses_context(tmp_path, invoke):
         ("\U0001f680\r\nx\u2028y\n" * 800 + "z" * 29999 + "\n").encode(),
         b"x" * 50000 + b"\n" + b"short\n" * 1500,
         (b"x" * 799 + b"\n") * 1100,
+        (("\U0001f680" * 100 + "\n") * 200).encode(),
     ],
-    ids=["line-cap", "unicode-and-exact-char-cap", "oversized-line", "char-cap"],
+    ids=[
+        "line-cap",
+        "unicode-and-oversized-line",
+        "oversized-line",
+        "byte-cap",
+        "multibyte",
+    ],
 )
 def test_writer_packs_maximal_actual_line_lengths(tmp_path, invoke, rules):
     output = tmp_path / "out"
@@ -627,21 +633,27 @@ def test_writer_packs_maximal_actual_line_lengths(tmp_path, invoke, rules):
     )
     chunks = receipt["contextReadChunks"]
     next_offset = 1
-    for chunk in chunks:
-        assert chunk["offset"] == next_offset
-        limit = chunk["limit"]
+    assert receipt["contextReadPlanVersion"] == 1
+    for limit in chunks:
         assert 1 <= limit <= 750
         end = next_offset - 1 + limit
-        size = sum(len(line) + 1 for line in lines[next_offset - 1 : end])
-        assert chunk["chars"] == size
-        assert size <= READ_PLAN_MAX_CHARS or limit == 1
+        size = sum(
+            len(line.encode("utf-8")) + 1 + READ_PLAN_LINE_PREFIX_BYTES
+            for line in lines[next_offset - 1 : end]
+        )
+        assert size <= READ_PLAN_MAX_BYTES or limit == 1
         if end < len(lines):
-            assert limit == 750 or size + len(lines[end]) + 1 > READ_PLAN_MAX_CHARS
+            assert (
+                limit == 750
+                or size
+                + len(lines[end].encode("utf-8"))
+                + 1
+                + READ_PLAN_LINE_PREFIX_BYTES
+                > READ_PLAN_MAX_BYTES
+            )
         next_offset = end + 1
     assert next_offset == receipt["contextLines"] + 1
-    assert sum(chunk["chars"] for chunk in chunks) == receipt["contextChars"]
-    if rules.startswith(b"wide"):
-        assert len(chunks) == 4
+    assert sum(chunks) == receipt["contextLines"]
 
 
 def test_writer_discloses_unplannable_context(tmp_path, invoke, monkeypatch):

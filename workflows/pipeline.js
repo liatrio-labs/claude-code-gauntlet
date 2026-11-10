@@ -1148,27 +1148,29 @@ function suppressAuditOverlaps(findings, audit) {
 // --- contextPlan.js ---
 const READ_PLAN_MAX_LINES = 750;
 const READ_PLAN_MAX_CHARS = 30000;
+const READ_PLAN_MAX_BYTES = 24000;
+const READ_PLAN_LINE_PREFIX_BYTES = 12;
 const READ_PLAN_MAX_ENUMERATED = 10;
+const READ_PLAN_MAX_LISTED = 64;
 const READ_PLAN_MAX_CHUNKS = 2000;
-function validContextReadChunks(inp) {
-  const chunks = inp.contextReadChunks;
-  if (!Array.isArray(chunks) || chunks.length > READ_PLAN_MAX_CHUNKS
-    || !Number.isSafeInteger(inp.contextLines) || inp.contextLines < 1
-    || !Number.isSafeInteger(inp.contextChars) || inp.contextChars < inp.contextLines) return false;
-  if (chunks.length === 0) return true;
-  let next = 1;
-  let chars = 0;
-  for (const chunk of chunks) {
-    if (!chunk || typeof chunk !== 'object' || Array.isArray(chunk)
-      || Object.keys(chunk).sort().join(',') !== 'chars,limit,offset'
-      || chunk.offset !== next || !Number.isSafeInteger(chunk.limit)
-      || chunk.limit < 1 || chunk.limit > READ_PLAN_MAX_LINES
-      || !Number.isSafeInteger(chunk.chars) || chunk.chars < chunk.limit
-      || (chunk.chars > READ_PLAN_MAX_CHARS && chunk.limit !== 1)) return false;
-    next += chunk.limit;
-    chars += chunk.chars;
-  }
-  return next === inp.contextLines + 1 && chars === inp.contextChars;
+function chunkReadPlan(lines, chunks) {
+  if (chunks === undefined) return { reason: 'contextReadChunks was not stamped' };
+  if (!Array.isArray(chunks)) return { reason: 'contextReadChunks is not a line-count array' };
+  if (chunks.length === 0) return { reason: 'empty contextReadChunks for a non-empty context' };
+  if (chunks.length > READ_PLAN_MAX_CHUNKS) return { reason: 'contextReadChunks exceeds the allocation ceiling' };
+  if (chunks.some((count) => !Number.isSafeInteger(count))) return { reason: 'contextReadChunks contains a non-integer line count' };
+  if (chunks.some((count) => count < 1)) return { reason: 'contextReadChunks contains a non-positive line count' };
+  if (chunks.some((count) => count > READ_PLAN_MAX_LINES)) return { reason: 'contextReadChunks exceeds the per-read line limit' };
+  if (chunks.reduce((sum, count) => sum + count, 0) !== lines) return { reason: 'contextReadChunks does not cover contextLines' };
+  const span = chunks[0];
+  const uniform = chunks.every((count, i) => i === chunks.length - 1 ? count <= span : count === span);
+  if (!uniform && chunks.length > READ_PLAN_MAX_LISTED) return { reason: 'variable contextReadChunks exceeds the 64-chunk prompt budget' };
+  let offset = 1;
+  return { plan: chunks.map((limit) => {
+    const chunk = { offset, limit };
+    offset += limit;
+    return chunk;
+  }) };
 }
 function lineWidthEstimate(maxLineChars, chars, total) {
   if (Number.isSafeInteger(maxLineChars) && maxLineChars > 0) return maxLineChars;
@@ -1177,8 +1179,8 @@ function lineWidthEstimate(maxLineChars, chars, total) {
 }
 function contextReadPlan(lines, chars, maxLineChars, chunks) {
   if (chunks !== undefined) {
-    return validContextReadChunks({ contextLines: lines, contextChars: chars, contextReadChunks: chunks })
-      ? chunks.map(({ offset, limit }) => ({ offset, limit })) : [];
+    const measured = chunkReadPlan(lines, chunks);
+    if (measured.plan) return measured.plan;
   }
   const total = Number.isSafeInteger(lines) && lines > 0 ? lines : 0;
   if (total === 0) return [];
@@ -1214,28 +1216,37 @@ function sharedContextLine(inp, plan) {
     return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls: ${calls}. ${tail} `;
   }
   const span = plan[0].limit;
-  if (!plan.every((p, i) => p.offset === 1 + i * span && (i === plan.length - 1 || p.limit === span))) {
+  if (!plan.every((p, i) => p.offset === 1 + i * span && (i === plan.length - 1 ? p.limit <= span : p.limit === span))) {
     const pairs = plan.map((p) => `${p.offset}:${p.limit}`).join(', ');
     return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls (offset:limit): ${pairs}. ${tail} `;
   }
   return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
 }
 function setupContext(inp) {
-  const plan = contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars, inp.contextReadChunks);
+  const contextSizeGap = [];
+  const hasPlanReceipt = inp.contextReadPlanVersion !== undefined || inp.contextReadChunks !== undefined;
+  let measured;
+  if (hasPlanReceipt) {
+    measured = inp.contextReadPlanVersion === 1
+      ? chunkReadPlan(inp.contextLines, inp.contextReadChunks)
+      : { reason: 'missing or unsupported contextReadPlanVersion' };
+    if (measured.reason) contextSizeGap.push(`context_plan_fallback: ${measured.reason}; using the aggregate-based shared-context read plan.`);
+  }
+  const plan = measured?.plan || contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars);
   const contextLine = sharedContextLine(inp, plan);
-  const contextSizeGap = inp.contextLines === undefined
-    ? ['context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed — '
+  if (inp.contextLines === undefined) {
+    contextSizeGap.push('context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed — '
       + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
       + 'Read calls covering the file. A Read can return part of a file '
-      + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
-      + '(and contextChars and contextMaxLineChars) from the Phase 2 step that writes the context file.']
-    : (plan.length === 0
-      ? ['context_unplannable: args.contextLines was stamped (' + inp.contextLines + ') but exceeds the read-plan chunk '
-        + 'ceiling, so the shared-context read plan could not be built — every agent got the count-free '
-        + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
-        + 'Shrink the shared context '
-        + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.']
-      : []);
+      + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines, '
+      + 'contextChars, contextMaxLineChars, contextReadPlanVersion and contextReadChunks from the Phase 2 step that writes the context file.');
+  } else if (plan.length === 0) {
+    contextSizeGap.push('context_unplannable: args.contextLines was stamped (' + inp.contextLines + ') but exceeds the read-plan chunk '
+      + 'ceiling, so the shared-context read plan could not be built — every agent got the count-free '
+      + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
+      + 'Shrink the shared context '
+      + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.');
+  }
   return { contextLine, contextSizeGap };
 }
 // --- verifySymbols.js ---
@@ -6315,9 +6326,6 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
   if (isPlainObject(args.policy)) validateArgsFields(args.policy, 'policy', errors, 'policy');
   validateArgsFields(args, 'changed', errors);
   validateArgsFields(args, 'context', errors);
-  if (args.contextReadChunks !== undefined && !validContextReadChunks(args)) {
-    errors.push('contextReadChunks must be a writer-stamped plan covering contextLines and contextChars within the read budgets (or [] when unplannable)');
-  }
   if (args.contextChars !== undefined && args.contextLines === undefined) {
     errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
   }
@@ -7847,7 +7855,7 @@ async function runWith(ctx, rawArgs) {
   let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch, A);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
-  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars, contextMaxLineChars: A.contextMaxLineChars, contextReadChunks: A.contextReadChunks });
+  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars, contextMaxLineChars: A.contextMaxLineChars, contextReadChunks: A.contextReadChunks, contextReadPlanVersion: A.contextReadPlanVersion });
   const discardGap = checkpointDiscardGap(A.checkpoints);
   const checkpoints = readCheckpoints(A);
   const checksumViolations = checkpointChecksumErrors(A.checkpoints);
