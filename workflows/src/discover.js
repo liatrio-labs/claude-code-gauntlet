@@ -301,13 +301,11 @@ export async function discover(ctx, input) {
       specs.push(spec);
       results.push(hunterResults[i]);
       ledger.hunters.push({ agent: spec.agentType, assigned: assigned.map((r) => r.id),
-        status: Array.isArray(hunterResults[i]?.findings) ? (hunterResults[i].complete === false ? 'incomplete' : 'complete') : 'failed' });
+        outside_assignment: [], status: Array.isArray(hunterResults[i]?.findings) ? (hunterResults[i].complete === false ? 'incomplete' : 'complete') : 'failed' });
     });
   }
 
-  const finalResults = results.map((result, i) => specs[i].dispatch === 'uncovered' && Array.isArray(result?.findings)
-    ? { findings: result.findings.filter((f) => findingInRegions(f, assigned, inp.repoRoot)) } : result);
-  ledger.remaining_uncovered = coverageLedger(inp.discoveryPlan, specs, finalResults, inp.repoRoot, inp.contextLines).uncovered;
+  const finalResults = results.map((result, i) => specs[i].dispatch === 'uncovered' ? { findings: [] } : result);
   const ledgerGaps = [];
   if (inp.discoveryPlan !== undefined && ledger.status !== 'available') ledgerGaps.push('discovery coverage unavailable: invalid or unavailable region plan');
   if (assigned.length && !inp.contextPath) ledgerGaps.push('gap hunter: uncovered regions could not be dispatched without contextPath');
@@ -367,11 +365,11 @@ export async function discover(ctx, input) {
       if (checked.rejected.length) channelGaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
       rejected.push(...checked.rejected);
       if (!checked.valid.length) continue;
-      if (spec.dispatch === 'uncovered' && !findingInRegions(f, assigned, inp.repoRoot)) {
-        rejected.push(f);
-        if (trace) decisions.push(traceDecision(f, 'discover_scope', 'gap hunter finding is outside assigned regions'));
-        channelGaps.push(`${spec.agentType}: finding outside assigned regions rejected`);
-        continue;
+      if (spec.dispatch === 'uncovered') {
+        finalResults[i].findings.push(f);
+        if (!findingInRegions(f, assigned, inp.repoRoot)) {
+          ledger.hunters.find((h) => h.agent === spec.agentType).outside_assignment.push(String(f.id));
+        }
       }
       findings.push(...checked.valid);
     }
@@ -382,6 +380,7 @@ export async function discover(ctx, input) {
     }
   });
 
+  ledger.remaining_uncovered = coverageLedger(inp.discoveryPlan, specs, finalResults, inp.repoRoot, inp.contextLines).uncovered;
   if (!primaryUsable) degradedDims.push(...specs.filter((s) => s.dispatch === 'parallel').flatMap((s) => s.dimensions));
   if (trace) trace.coverage_ledger = boundedCoverageLedger(ledger);
   if (trace) recordStage(trace, 'discover', intake, {

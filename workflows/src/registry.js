@@ -265,7 +265,7 @@ export function discoveryReviewer(row) {
 // One row owns a supplemental role's scheduling, contract, tools and presentation.
 export const DISCOVERY_REVIEWERS = deepFreeze([
   { agentType: 'code-gauntlet:gap-hunter', dimension: 'bug', dispatch: 'uncovered', conditionalFlag: DEEP, label: 'Gap Hunter',
-    objective: 'Review only the supplied uncovered regions and fact cards for present defects. Return findings anchored in the assigned regions.',
+    objective: 'Focus on the supplied uncovered regions and fact cards; report any defect you find, including findings anchored outside the assignment.',
     tools: ['Read'], effort: 'high', color: 'cyan', modelOverride: 'sonnet' },
 ].map(discoveryReviewer));
 

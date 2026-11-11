@@ -680,7 +680,8 @@ import { boundedCoverageLedger } from './workflows/src/coverageLedger.js';
 const regions = [0,1].map(i=>({id:`r${i}`,file:'source',line_start:i?0:1,line_end:i?0:2,reads:[{offset:1,limit:2,bytes:80}]}));
 const plan = {version:2,status:'available',fact_packets:[],regions};
 const ledgers=[];
-for(const reply of [null,{findings:[],complete:false,total_seen:0},{findings:[],complete:true,total_seen:0}]) {
+for(const reply of [null,{findings:[],complete:false,total_seen:0},{findings:[],complete:true,total_seen:0},
+{findings:[{file:'other',line_start:7,title:'Outside focus',description:'A present defect in nearby code',severity:'high',confidence:80,evidence:'source:1',anchor:'return process(value);',change_origin:'introduced'}],complete:true,total_seen:1}]) {
  const ctx={agent:async(_,o)=>o.agentType==='code-gauntlet:gap-hunter'?reply:{findings:[],complete:true,total_seen:0,removed_test_audit:[]},parallel:async ts=>Promise.all(ts.map(t=>t()))};
  for(const input of [{},{agentFlags:{deep:false}},{discoveryPlan:{}},{discoveryPlan:{...plan,regions:regions.map(r=>({...r,reads:[{offset:1,limit:2,bytes:25000}]}))}}]) {
   const out=await discover(ctx,{contextPath:'/prepared',contextLines:10,discoveryPlan:plan,...input});
@@ -720,6 +721,11 @@ def test_ledger_wire_keys_and_closed_values_match_live_discovery(
     assert {
         h["status"] for ledger in emitted_coverage_ledgers for h in ledger["hunters"]
     } == {"complete", "incomplete", "failed"}
+    assert any(
+        h.get("outside_assignment")
+        for ledger in emitted_coverage_ledgers
+        for h in ledger["hunters"]
+    )
     assert {
         r["reason"] for ledger in emitted_coverage_ledgers for r in ledger["omitted"]
     } >= {"scope", "no_head_anchor", "primary_failure", "budget"}
@@ -834,3 +840,24 @@ def test_scope_rejected_match_does_not_hide_a_deeper_matched_survivor(
         reason,
     )
     assert survivor.trace_id in loss.trace_ids
+
+
+def test_legacy_hunter_receipts_preserve_trace_coverage(
+    tmp_path, emitted_coverage_ledgers
+):
+    trace, path, _ = emit_trace(tmp_path)
+    ledger = next(
+        ledger for ledger in emitted_coverage_ledgers if ledger.get("hunters")
+    )
+    raw = asdict(trace)
+    raw["coverage_ledger"] = {
+        **ledger,
+        "hunters": [
+            {k: v for k, v in h.items() if k != "outside_assignment"}
+            for h in ledger["hunters"]
+        ],
+    }
+    path.write_text(json.dumps(raw), encoding="utf-8", newline="")
+    loaded = stages.load_trace(path, expected_sha256=file_hash(path))
+    assert loaded.coverage_ledger == raw["coverage_ledger"]
+    assert loaded.versions == trace.versions

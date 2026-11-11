@@ -394,7 +394,7 @@ test('citations covering every region skip the hunter', async () => {
   assert.deepEqual(out.coverageLedger.hunters, []);
 });
 
-test('hunter failure and rejected scope do not degrade primary dimensions or primary trace coverage', async () => {
+test('hunter failure and outside-assignment findings do not degrade primary dimensions or primary trace coverage', async () => {
   for (const failed of [false, true]) {
     const ctx = stageCtx({ nulls: failed ? ['code-gauntlet:gap-hunter'] : [], replies: {
       'code-gauntlet:bug-detector': { findings: [finding({ file: 'src/main', line_start: 12, cross_file_refs: ['src/main:41'] })], complete: true, total_seen: 1 },
@@ -403,13 +403,14 @@ test('hunter failure and rejected scope do not degrade primary dimensions or pri
     const trace = createMeasurementTrace('failed');
     const out = await discover(ctx, { ...regionInput(), measurementTrace: trace });
     assert.equal(ctx.calls.length, 8);
-    assert.equal(out.findings.length, 1);
+    assert.equal(out.findings.length, failed ? 1 : 2);
     assert.deepEqual(out.degraded, []);
     assert.equal(out.coverageLedger.hunters[0].status, failed ? 'failed' : 'incomplete');
-    assert.ok(out.gaps.some((g) => g.includes(failed ? 'gap investigation failed' : 'outside assigned regions')));
+    assert.ok(out.gaps.some((g) => g.includes(failed ? 'gap investigation failed' : 'gap investigation incomplete')));
     assert.equal(out.gaps.some((g) => g.includes('dimensions bug')), false);
     assert.equal(trace.snapshots[0].coverage, 'complete');
-    if (!failed) assert.equal(trace.snapshots[0].decisions[0].reason_code, 'discover_scope');
+    assert.equal(trace.snapshots[0].decisions.some((d) => d.reason_code === 'discover_scope'), false);
+    assert.deepEqual(out.coverageLedger.hunters[0].outside_assignment, failed ? [] : ['f1']);
   }
 });
 
@@ -533,4 +534,22 @@ test('ledger detail has an independent budget and its phase copy is bounded', as
     assert.ok(ledger.omitted.length);
     if (n === 200) assert.equal(ledger.regions.length, 200);
   }
+});
+
+test('outside-assignment hunter findings survive discovery and merge and contribute their citations', async () => {
+  const trace = createMeasurementTrace('focus');
+  const ctx = stageCtx({ replies: {
+    'code-gauntlet:bug-detector': { findings: [finding({id:'primary', file:'src/main', line_start:12})], complete:true,total_seen:1 },
+    'code-gauntlet:gap-hunter': { findings: [finding({id:'outside',file:'/repo/src/main',line_start:30,line_end:31,
+      evidence:'src/other:3 establishes the failure'})], complete:true,total_seen:1 },
+  } });
+  const out = await discover(ctx, {...regionInput(),measurementTrace:trace});
+  assert.deepEqual(assignmentData(ctx.calls.at(-1).prompt).regions.map((r) => r.id).sort(), ['last','second']);
+  assert.ok(out.findings.some((f) => f.id === 'outside'));
+  assert.ok(mergeStage(out, {}).findings.some((f) => f.id === 'outside'));
+  assert.deepEqual(out.coverageLedger.hunters[0].outside_assignment, ['outside']);
+  assert.deepEqual(out.coverageLedger.remaining_uncovered, ['second']);
+  assert.deepEqual(trace.coverage_ledger, out.coverageLedger);
+  assert.equal(trace.snapshots[0].decisions.some((d) => d.reason_code === 'discover_scope'), false);
+  assert.equal(out.gaps.some((g) => g.includes('outside assigned regions')), false);
 });

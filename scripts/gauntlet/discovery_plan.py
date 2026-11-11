@@ -127,10 +127,14 @@ class OmittedRegion(TypedDict):
     reason: Literal["budget", "no_head_anchor", "scope", "primary_failure"]
 
 
-class HunterReceipt(TypedDict):
+class HunterDispatch(TypedDict):
     agent: str
     assigned: list[str]
     status: Literal["complete", "incomplete", "failed"]
+
+
+class HunterReceipt(HunterDispatch, total=False):
+    outside_assignment: list[str]
 
 
 class CoverageLedger(TypedDict):

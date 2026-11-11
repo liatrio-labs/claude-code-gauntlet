@@ -1282,10 +1282,14 @@ def test_supplemental_role_frontmatter_and_read_contract_have_single_owners(
     source = registry_tree / "workflows/src/registry.js"
     original = source.read_text(encoding="utf-8")
     objective = 'Quoted: "value"\nname: shadow'
-    changed = original.replace(
-        "objective: 'Review only the supplied uncovered regions and fact cards for present defects. Return findings anchored in the assigned regions.'",
-        "objective: " + json.dumps(objective),
+    changed, replacements = re.subn(
+        r"(agentType: 'code-gauntlet:gap-hunter'.*?objective: )'(?:\\.|[^'\\])*'",
+        lambda match: match[1] + json.dumps(objective),
+        original,
+        count=1,
+        flags=re.S,
     )
+    assert replacements == 1
     changed = changed.replace(
         "tools: ['Read'], effort: 'high', color: 'cyan', modelOverride: 'sonnet'",
         "tools: ['Read', 'Grep'], effort: 'medium', color: 'purple', modelOverride: 'haiku'",
