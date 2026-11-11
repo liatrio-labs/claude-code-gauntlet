@@ -81,7 +81,7 @@ This disk check cannot bind the host's cached resolution atomically: removed cac
 files, subsequent writes, duplicate installed plugins, remote configuration storage,
 and undisclosed `--project-config-root` locations require host enforcement.
 An orchestrator that bypasses policy capture also bypasses this check.
-Returned nonces and unkeyed checksums prove consistency, not pipeline identity.
+Returned nonces and plain checksums prove consistency, not pipeline identity.
 
 ### Trust boundaries
 
