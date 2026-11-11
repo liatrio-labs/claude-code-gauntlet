@@ -416,12 +416,6 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
   // The host cannot inspect the context file, so supplied sizes drive its read plan.
   // Bounds prevent an uncatchable allocation failure; missing line counts remain a disclosed degradation.
   validateArgsFields(args, 'context', errors);
-  if (args.contextChars !== undefined && args.contextLines === undefined) {
-    errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
-  }
-  if (args.contextMaxLineChars !== undefined && args.contextLines === undefined) {
-    errors.push('contextMaxLineChars requires contextLines — line width alone cannot size a line-offset read plan');
-  }
   // Validate every config layer before paid stages so malformed subtree settings cannot fail during filtering.
   if (args.reviewConfig !== undefined) {
     if (!isPlainObject(args.reviewConfig)) {

@@ -41,10 +41,23 @@ Each agent returns structured findings against the canonical schema (`agent()` `
 
 ## Shared-context read plan
 
-Phase 2 stamps `contextLines`, `contextChars` and `contextMaxLineChars` (including LF).
-`contextReadPlan` caps each planned chunk at 750 lines and targets 30,000 characters using the maximum
-line length, falling back to the average for older receipts or when a wide line would exceed the chunk ceiling. It enumerates at most ten
-calls, then expresses longer plans as an offset rule, with a ceiling of 2,000 chunks.
+Phase 2 stamps `contextLines`, `contextChars`, `contextMaxLineChars` (including LF),
+`contextReadPlanVersion: 1`, and `contextReadChunks`: per-chunk line counts packed from actual lengths.
+The writer packs at most 750 lines and 24,000 UTF-8 bytes including LF and a 12-byte reserve per line
+for numbering. This assumes a host Read cap of 25,000 tokens and at least one input byte per text token,
+so the charged bytes bound the tokens and leave a 1,000-token margin. Oversized single lines remain isolated.
+The 30,000-character heuristic remains only for aggregate fallback; per-chunk size counts stay internal.
+The workflow validates positive integer counts, their 750-line limit, their sum against `contextLines`,
+and the shared registry's 2,000-chunk ceiling. The writer uses that same ceiling; it never emits more counts.
+Prompts enumerate at most ten calls in full, then list compact offset:limit pairs for every variable chunk;
+uniform plans use one shared predicate to select the stepping rule. Large measured plans retain their
+boundaries instead of reverting to the widest-line heuristic. At most 2,000 counts mean at most 10,000
+characters in the writer's JSON array, 25,998 characters of pairs, and a context-read instruction below
+26,400 characters plus the path. This bounded prompt cost preserves packed reading on large contexts.
+All entry points apply the same version gate. Missing or invalid receipts produce one aggregate-fallback
+gap, including aggregate-only legacy receipts: losing both new fields is indistinguishable from an old receipt,
+so fallback is always disclosed. Missing line counts take precedence and produce only `context_unmeasured`;
+if no aggregate plan fits the allocation ceiling, one `context_unplannable` gap names that cause.
 Agents make every planned call and continue past the last received line if a call stops early.
 `runWith` builds `sharedContextLine` once and threads `contextLine` to stages so they cannot
 construct a competing instruction from a path. Missing measurement yields `context_unmeasured`;

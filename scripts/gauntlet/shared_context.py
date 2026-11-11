@@ -23,7 +23,13 @@ from gauntlet.framing import frame
 from gauntlet.location import SourceAdapter
 from gauntlet.paths import NON_SOURCE_DIRS
 from gauntlet.pr_status import load_snapshot
-from gauntlet.registry import READ_PLAN_MAX_CHARS
+from gauntlet.registry import (
+    READ_PLAN_LINE_PREFIX_BYTES,
+    READ_PLAN_MAX_BYTES,
+    READ_PLAN_MAX_CHARS,
+    READ_PLAN_MAX_CHUNKS,
+    READ_PLAN_MAX_LINES,
+)
 from gauntlet.removed_tests import removed_tests
 
 DESCRIPTION = (
@@ -50,7 +56,12 @@ large Read can return only part of a file without notice; the workflow has no
 disk and needs the receipt's line count to plan exact Reads. The content always
 ends with LF, so the newline count equals the Read tool's line numbering.
 ``contextChars`` counts decoded code points with replacement; ``contextMaxLineChars``
-includes LF and bounds Read chunk size even when line lengths vary.
+includes LF. ``contextReadPlanVersion`` identifies the measured-plan receipt;
+``contextReadChunks`` carries only per-chunk line counts. Packing caps each Read at
+750 lines and 24,000 UTF-8 bytes including LF and a 12-byte line-prefix reserve.
+The budget assumes a 25,000-token host Read cap and at least one UTF-8 byte per
+text token; it is a conservative planning bound, including multibyte text.
+An oversized line stands alone for partial-read continuation.
 """
 )
 
@@ -70,6 +81,27 @@ class LayoutWire(TypedDict):
     entries: list[str]
     unavailable: list[str]
     omitted: list[str]
+
+
+def context_read_chunks(content: str) -> list[int]:
+    chunks: list[int] = []
+    chunk_bytes = 0
+    for line in content.split("\n")[:-1]:
+        size = len(line.encode("utf-8")) + 1 + READ_PLAN_LINE_PREFIX_BYTES
+        if (
+            not chunks
+            or chunks[-1] == READ_PLAN_MAX_LINES
+            or chunk_bytes + size > READ_PLAN_MAX_BYTES
+        ):
+            # An empty receipt degrades to the aggregate plan with a disclosed gap.
+            if len(chunks) == READ_PLAN_MAX_CHUNKS:
+                return []
+            chunks.append(1)
+            chunk_bytes = size
+        else:
+            chunks[-1] += 1
+            chunk_bytes += size
+    return chunks
 
 
 def _layout_json(value: object) -> str:
@@ -268,6 +300,8 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         "contextLines": lines,
         "contextChars": chars,
         "contextMaxLineChars": max(map(len, decoded.split("\n"))) + 1,
+        "contextReadPlanVersion": 1,
+        "contextReadChunks": context_read_chunks(decoded),
         "removedTests": removed_tests(diff.decode("utf-8", errors="replace")),
     }, 0
 

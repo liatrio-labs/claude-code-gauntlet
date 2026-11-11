@@ -91,7 +91,7 @@ const WRAPPER_ROWS = [
       + '| Reviewed up to: 0123456789abcdef01234567', marker: true },
 ];
 for (const row of WRAPPER_ROWS) test(`persisted wrapper bytes: ${row.name}`, async () => {
-  const args = validArgs({ contextLines: 10, delivery: { tier: 'all', prIdentity: {
+  const args = validArgs({ contextLines: 10, contextReadPlanVersion: 1, contextReadChunks: [10], delivery: { tier: 'all', prIdentity: {
     owner: 'o', repo: 'r', pr_number: 279, sha_full: '0123456789abcdef0123456789abcdef01234567',
     platform: 'github', web_origin: 'https://github.com',
   } } });

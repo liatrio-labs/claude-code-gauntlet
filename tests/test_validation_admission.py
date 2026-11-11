@@ -41,7 +41,7 @@ const score = { finding_id:'gap', confidence:80, policy_subject:'ordinary', admi
 const validationSkipped = ['confidence','policy_subject'].includes(missing);
 if (validationSkipped) delete score[missing];
 else score.admission_assessments = entries.filter(e=>e.predicate !== missing);
-const args = validArgs({contextLines:20, contextChars:400, checkpoints:{verify:{findings:[finding], gaps:[]}}});
+const args = validArgs({contextLines:20, contextChars:400, contextReadPlanVersion:1, contextReadChunks:[20], checkpoints:{verify:{findings:[finding], gaps:[]}}});
 let payload;
 const ctx = makeCtx(args, {onPersist: value=>{payload=value;}});
 const agent = ctx.agent;

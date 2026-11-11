@@ -154,6 +154,10 @@ _REGISTRY_MODULES = (
 # Field order is the JSON key order the generated registry is checked against.
 _REGISTRY_FIELDS = (
     "readPlanMaxChars: c.READ_PLAN_MAX_CHARS",
+    "readPlanMaxBytes: c.READ_PLAN_MAX_BYTES",
+    "readPlanLinePrefixBytes: c.READ_PLAN_LINE_PREFIX_BYTES",
+    "readPlanMaxLines: c.READ_PLAN_MAX_LINES",
+    "readPlanMaxChunks: m.READ_PLAN_MAX_CHUNKS",
     "required: m.FINDING_REQUIRED",
     "waistRequired: m.REQUIRED",
     "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
@@ -940,6 +944,10 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             f"FIX_MAX_LINES = {identity['fixMaxLines']}",
             f"FIX_MAX_CHARS = {identity['fixMaxChars']}",
             f"READ_PLAN_MAX_CHARS = {identity['readPlanMaxChars']}",
+            f"READ_PLAN_MAX_BYTES = {identity['readPlanMaxBytes']}",
+            f"READ_PLAN_LINE_PREFIX_BYTES = {identity['readPlanLinePrefixBytes']}",
+            f"READ_PLAN_MAX_LINES = {identity['readPlanMaxLines']}",
+            f"READ_PLAN_MAX_CHUNKS = {identity['readPlanMaxChunks']}",
             "JS_TRIM_CHARS = (\n"
             + "\n".join(
                 "    "
