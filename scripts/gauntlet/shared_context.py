@@ -19,6 +19,7 @@ from gauntlet.cli import (
     require_head_sha,
 )
 from gauntlet.diff import ContextMap, ContextMapEntry, DiffStructureError, annotate_diff
+from gauntlet.discovery_disk import artifact_name, save
 from gauntlet.discovery_plan import (
     DiscoveryPlan,
     FactPacket,
@@ -438,7 +439,20 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         "contextMaxLineChars": max(map(len, decoded.split("\n"))) + 1,
         "contextReadPlanVersion": 1,
         "contextReadChunks": context_read_chunks(decoded),
-        "discoveryPlan": discovery_plan,
+        "discoveryPlanRef": {
+            "path": artifact_name("discovery-plan", args.head_sha),
+            "sha256": save(
+                Path(args.output_dir) / artifact_name("discovery-plan", args.head_sha),
+                {
+                    "version": 1,
+                    "sha": args.head_sha,
+                    "context_sha256": sidecar["context_sha256"],
+                    "diff_sha256": sidecar["diff_sha256"],
+                    "context_lines": lines,
+                    "plan": discovery_plan,
+                },
+            ),
+        },
         "removedTests": removed_tests(diff.decode("utf-8", errors="replace")),
     }, 0
 

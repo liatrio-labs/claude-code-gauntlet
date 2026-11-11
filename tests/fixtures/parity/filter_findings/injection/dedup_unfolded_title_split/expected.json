@@ -8,11 +8,11 @@
       "dimension": "bug",
       "file": "handler.py",
       "id": "S1",
-      "line_start": 42,
-      "severity": "high",
-      "title": "Reviewer note on the handler here",
       "line_end": 42,
-      "location_status": "confirmed"
+      "line_start": 42,
+      "location_status": "confirmed",
+      "severity": "high",
+      "title": "Reviewer note on the handler here"
     },
     {
       "agent": "bug-detector",
@@ -21,11 +21,11 @@
       "dimension": "bug",
       "file": "handler.py",
       "id": "S2",
-      "line_start": 42,
-      "severity": "high",
-      "title": "Review\u0435r note on the handler here",
       "line_end": 42,
-      "location_status": "confirmed"
+      "line_start": 42,
+      "location_status": "confirmed",
+      "severity": "high",
+      "title": "Review\u0435r note on the handler here"
     }
   ]
 }

@@ -68,6 +68,10 @@ Product mark: ⚔️ (Code Gauntlet). Severity emojis: 🔴 critical, 🟠 high,
 Rule source labels: documented_rule -> Cited rule, code_comment -> Cited comment, repo_precedent -> Repo precedent, self_inconsistency -> Inconsistency; unknown values -> Cited rule.
 <!-- /generated-from-registry-identity:severity_legend -->
 
+Each issue posts its lead text and any folded security titles. Other members contribute confirmed locations and,
+when at least two distinct agents found it, an anonymous reviewer count. Unanchored issues appear
+once in the summary under their lead location. The local report retains every member description.
+
 ### Using post_review.py
 
 **Do NOT post PR comments via direct `gh api` or `glab api` calls.** Use the bundled `scripts/post_review.py` script instead. It handles platform detection, diff validation, and API calls deterministically.
@@ -75,13 +79,14 @@ Rule source labels: documented_rule -> Cited rule, code_comment -> Cited comment
 **Usage:**
 
 ```bash
-{python} "{plugin_root}/scripts/post_review.py" "<findings_json_path>" [--report "PATH"]
+{python} "{plugin_root}/scripts/post_review.py" "<findings_json_path>"
 ```
 
-For a legacy bare findings array, pass `--report PATH` together with `--owner`, `--repo`,
-`--pr-number`, `--platform`, `--web-origin`, and `--sha`. The script derives `review_body` from the
-report Summary and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
-that body as is.
+For a legacy bare findings array, pass `--owner`, `--repo`,
+`--pr-number`, `--platform`, `--web-origin`, and `--sha`. The script renders the public summary
+from findings with group values; report text is not copied. Wrapper inputs use `review_summary`
+when present, otherwise `review_body`. The deprecated `--report PATH` option is accepted but
+ignores PATH; summaries no longer read report files.
 
 Every finding needs both `admission` and `disposition` stamps for delivery. A finding missing
 either stamp is held back, unless its disposition is `eliminate`. Bare arrays still use the
@@ -97,7 +102,7 @@ wrapper arguments above, but unstamped findings post no comments.
 
 ```json
 {
-    "review_body": "The report's Summary section body: counts first, selected findings index, and any remainder with selection reasons",
+    "review_body": "Plain issue counts, an inline issue index, and any delivery remainder",
     "findings": [
         {
             "file": "src/foo.py",
@@ -127,7 +132,8 @@ The poster prepares text and applies host-specific containment in code. Pass the
 unchanged. See [delivery rendering](../../../docs/delivery-rendering.md#outbound-text-preparation)
 when maintaining escaping or host rendering.
 
-- `review_body` — the pipeline-rendered Summary body: counts, selected findings index, and any remainder. The change summary stays in Change Context. Code applies UTF-8 body budgets and preserves the footer; see [delivery rendering](../../../docs/delivery-rendering.md#posted-body-budgets).
+- `review_summary` carries prepared counts, ordered `{lead_id, bullet}` records, and remainder data. The poster checks containment, then filters by id. Unsafe or invalid summaries omit the index with a recorded gap; inline comments still post.
+- `review_body`: the public PR summary text: counts, selected findings index, and any remainder. The change summary stays in Change Context. Code applies UTF-8 body budgets and preserves the footer; see [delivery rendering](../../../docs/delivery-rendering.md#posted-body-budgets).
 - `findings` — selected findings
   - `file` — relative path in repository
   - `line` — line number in diff (new version)

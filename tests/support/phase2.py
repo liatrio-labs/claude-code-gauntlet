@@ -44,3 +44,16 @@ def fact_card_payload(content: bytes | str) -> bytes:
     )
     assert match is not None, "prepared context has no fact-card frame"
     return match[1]
+
+
+def discovery_plan_payload(receipt, output_dir):
+    import hashlib
+    import json
+
+    assert "discoveryPlan" not in receipt
+    ref = receipt["discoveryPlanRef"]
+    assert set(ref) == {"path", "sha256"}
+    assert Path(ref["path"]).name == ref["path"]
+    data = (Path(output_dir) / ref["path"]).read_bytes()
+    assert hashlib.sha256(data).hexdigest() == ref["sha256"]
+    return json.loads(data)["plan"]

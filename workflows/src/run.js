@@ -1,23 +1,24 @@
+import { repeatedRequestGap } from './agentCalls.js';
 import { suppressAuditOverlaps } from './removedTests.js';
 // Pipeline sequencing, replay, diagnostics, and return envelopes.
 import { setupContext } from './contextPlan.js';
 import { coarsenLimits } from './capacity.js';
 import { summarize, deriveAgentFlags, discover, allActiveDimensionsDegraded } from './discover.js';
-import { validateStage, filterStage, challengeStage, selectDelivery } from './reviewStages.js';
+import { validateStage, filterStage, challengeStage, selectDelivery, deliveryOmissions } from './reviewStages.js';
 import { mergeStage } from './mergeFindings.js';
 import { verifyStage } from './verifyStage.js';
 import { FINDING_TEXT_FIELD_NAMES, FINDING_REWRITE_EXEMPT_FIELDS, conditionalSchemaActive } from './registry.js';
 import { mentionsPreparedHostRoot, prepareHostRootPatterns, rewritePreparedRepoRoot, safeFindingLabel } from './paths.js';
 import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs } from './args.js';
-import { resolveReviewConfig, resolveRemovedTestsArgs } from './args.js';
+import { resolveRemovedTestsArgs } from './args.js';
 import { entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from './entry.js';
-import { computeLightEligible, configEchoValue } from './knobs.js';
-import { scopeMatchesFile } from './reviewConfig.js';
-import { renderReport, renderSummaryBody } from './renderReport.js';
+import { computeLightEligible } from './knobs.js';
+import { renderReport, renderPublicSummary } from './renderReport.js';
 import { writeArtifacts } from './persist.js';
 import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
 import { checkpointChecksumErrors, checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
-import { disposeFindings } from './dispose.js';
+import { groupFindings } from './groupFindings.js';
+import { disposeFindings, isDeliveryCandidate } from './dispose.js';
 import { deliveryAllows } from './location.js';
 import { appendMeasurement, createMeasurementTrace, recordStage, traceDecision, admissionDetail, eliminationDecisions, stripTraceFields, decisionsFor } from './measurementTrace.js';
 import { captureDeliveryReplay, appendDeliveryReplay } from './measurementReplay.js';
@@ -111,8 +112,7 @@ export function compactMethodology(m) {
 
 export async function deliverFromCheckpoint(c, A, state) {
   const policy = A.policy || {};
-  const { limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
-    reviewMdSubtrees, derivedAgentFlags, runPhase, measured } = state;
+  const { limits, gaps, completed, phaseOutputs, measurementTrace, derivedAgentFlags, runPhase, measured } = state;
   const replay = measurementTrace ? captureDeliveryReplay(c, A, state) : null;
   if (replay) c = replay.ctx;
   const { summarize: summaryOut, discover: discoverOut, merge: mergeOut,
@@ -126,6 +126,7 @@ export async function deliverFromCheckpoint(c, A, state) {
   // Keep replay disclosures outside checkpoints so resumes cannot duplicate them.
   const markedCount = applyChallengeReplayBelt(challengeCopy);
   const challengeOut = disposeFindings(challengeCopy);
+  gaps.push(...challengeOut.gaps);
   if (measurementTrace) recordStage(measurementTrace, 'dispose', challengeOut, { decisions: challengeOut.decisions });
   if (markedCount > 0) {
     gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
@@ -139,22 +140,20 @@ export async function deliverFromCheckpoint(c, A, state) {
 
   const deliveryTier = A.delivery && A.delivery.tier;
   const eligible = challengeOut.findings.filter((f) => deliveryAllows(f, 'body'));
-  const selected = selectDelivery(eligible, limits.deliveryCap, deliveryTier);
-  const postReview = selected;
+  const postReview = selectDelivery(eligible, limits.deliveryCap, deliveryTier);
+  const omitted = deliveryOmissions(eligible, postReview, deliveryTier);
   if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
-    cap_hit: selectDelivery(eligible, null, deliveryTier).length > postReview.length,
-    decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,
-      f.disposition === 'report_only' ? 'report_only'
-        : deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
-      'delivery selection', [], 'not_selected', f.disposition === 'report_only' ? { kind: f.admission.kind } : null)),
+    cap_hit: omitted.some((group) => group.reason === 'delivery_cap'),
+    decisions: [
+      ...omitted.flatMap((group) => group.findings.filter((f) => f.trace_id).map((f) =>
+        traceDecision(f, group.reason, 'delivery selection', [], 'not_selected'))),
+      ...challengeOut.findings.filter((f) => f.disposition === 'report_only' && f.trace_id).map((f) =>
+        traceDecision(f, 'report_only', 'delivery selection', [], 'not_selected', { kind: f.admission.kind })),
+    ],
   });
   if (measurementTrace) measurementTrace.complete = true;
   stripTraceFields(phaseOutputs);
   stripTraceFields(challengeOut);
-  const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
-  const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
-    && (A.mode !== 'headless'
-      || headlessCommentsEnabled);
 
   const pathNormalization = {};
   for (const [phase, output] of Object.entries(phaseOutputs)) {
@@ -166,7 +165,6 @@ export async function deliverFromCheckpoint(c, A, state) {
   }
   const reportInput = {
     summary: summaryCopy.summary,
-    ...(includeDelivered ? { delivered: postReview } : {}),
     findings: challengeOut.findings,
     unverified: challengeOut.unverified,
     eliminated: challengeOut.eliminated,
@@ -188,13 +186,13 @@ export async function deliverFromCheckpoint(c, A, state) {
     pluginRoot: A.pluginRoot,
     pipelineVersion: c.pipelineVersion,
     reviewScope: A.reviewScope,
-    hasReviewMd: Array.isArray(A.reviewMd) ? A.reviewMd.length > 0 : A.reviewConfigPath != null,
+    unsupportedReviewConfig: A.unsupportedReviewConfig === true,
     policy,
     deliveryTier: deliveryTier ?? 'all',
     deliveryCap: limits.deliveryCap ?? null,
-    gapCount: gaps.length,
+    gapCount: gaps.length, gaps: [...gaps],
   };
-  const reviewBody = renderSummaryBody(reportInput);
+  const { body: reviewBody, ...reviewSummary } = renderPublicSummary({ ...reportInput, delivered: postReview });
   // Render from pipeline data so report structure and counts remain deterministic.
   let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
   const reportGaps = reportOut.gaps || [];
@@ -209,7 +207,7 @@ export async function deliverFromCheckpoint(c, A, state) {
     findings: [...challengeOut.findings, ...challengeOut.unverified, ...challengeOut.eliminated],
     postReview,
     prIdentity: (A.delivery || {}).prIdentity,
-    reviewBody,
+    reviewBody, reviewSummary,
     report: reportOut.report,
     checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, state.phaseReached),
     outputDir: A.outputDir,
@@ -237,12 +235,6 @@ export async function deliverFromCheckpoint(c, A, state) {
       degraded: discoverOut.degraded || [],
       validate: validateOut.stats,
       filter: filterOut.stats,
-      // Provenance needs labels and counts without returning document contents.
-      // Report this run's provenance because replayed filter statistics can describe different inputs.
-      reviewConfigSource: resolvedReview.reviewConfigSource,
-      exclusionsSource: resolvedReview.exclusionsSource,
-      reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
-      reviewMdSubtrees,
       // Echo the derived decision so readers can verify scope without recomputing it.
       scope: {
         lightEligible: computeLightEligible(A.riskTable, A.changedLines),
@@ -289,7 +281,7 @@ export async function runWith(ctx, rawArgs) {
     );
   }
 
-  const c = { ...defaultCtx(), ...(ctx || {}) };
+  const c = { ...defaultCtx(), ...(ctx || {}), agentRequests: [] };
   // Before merge, only the changed-file count is known; later coarsening must also account for findings.
   const nChangedFiles = (A.changedFiles || []).length;
   let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch, A);
@@ -325,6 +317,12 @@ export async function runWith(ctx, rawArgs) {
     phaseAttempting = name;
     const replayed = checkpoints[name] !== undefined;
     const out = replayed ? checkpoints[name] : await thunk();
+    const requestError = !replayed && repeatedRequestGap(c.agentRequests, name);
+    if (requestError) {
+      out.gaps = [...(out.gaps || []), requestError];
+      const snapshot = measurementTrace?.snapshots.find((item) => item.stage === name);
+      if (snapshot) { snapshot.gaps = [...out.gaps]; snapshot.coverage = 'partial'; }
+    }
     // Discovery intake covers fresh findings before downstream readers; replayed outputs need the same normalization at every phase.
     const rejected = [];
     if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A, rejected);
@@ -373,7 +371,7 @@ export async function runWith(ctx, rawArgs) {
     // Derive scope flags from validated inputs so callers cannot stamp a different decision.
     const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, contextPath, contextLines: A.contextLines, discoveryPlan: A.discoveryPlan, riskTable: A.riskTable, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
+      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, contextPath, contextLines: A.contextLines, discoveryPlanRef:A.discoveryPlanRef, outputDir:A.outputDir,headShaShort:A.headShaShort,nonce:A.nonce,pluginRoot:A.pluginRoot,python:A.python, riskTable: A.riskTable, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
     }));
 
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
@@ -423,22 +421,13 @@ export async function runWith(ctx, rawArgs) {
 
     const validateOut = await runPhase('validate', () => validateStage(c, {
       findings: verifyOut.findings || [], limits, policy, contextLine,
+      python: A.python, repoRoot: A.repoRoot, pluginRoot: A.pluginRoot, headShaShort: A.headShaShort,
+      diffPath: A.diffPath, targetKind: A.verify?.targetKind, incremental: A.reviewScope?.kind === 'incremental', baseBranch: A.baseBranch,
     }));
     gaps.push(...(validateOut.gaps || []));
 
-    const resolvedReview = resolveReviewConfig(A);
-    // Keep input disclosures outside phase outputs so checkpoint replay cannot duplicate them.
-    gaps.push(...resolvedReview.gaps);
-    const reviewMdSubtrees = (Array.isArray(resolvedReview.reviewConfig.scopes)
-      ? resolvedReview.reviewConfig.scopes
-      : []).map((scope) => ({
-        dir: scope.dir,
-        matched: (validateOut.findings || []).filter((finding) =>
-          scopeMatchesFile(scope, finding.file)).length,
-      }));
     const filterOut = await runPhase('filter', () => filterStage({
-      findings: (validateOut.findings || []).map((finding) => evaluateAdmission(deepClone(finding))), reviewConfig: resolvedReview.reviewConfig,
-      exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
+      findings: (validateOut.findings || []).map((finding) => evaluateAdmission(deepClone(finding))), generatedAt: A.generatedAt,
     }));
     gaps.push(...(filterOut.gaps || []));
 
@@ -451,13 +440,14 @@ export async function runWith(ctx, rawArgs) {
       const out = await challengeStage(c, {
         // Shared context would weaken the challenger's independent check, so its prompt contains only the claim and location.
         findings: admitted, limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
+        python: A.python, repoRoot: A.repoRoot, pluginRoot: A.pluginRoot, headShaShort: A.headShaShort, targetKind: A.verify?.targetKind, incremental: A.reviewScope?.kind === 'incremental', baseBranch: A.baseBranch,
       });
+      Object.assign(out, await groupFindings(c, (out.findings || []).filter(isDeliveryCandidate), policy));
       out.eliminated = [...(verifyOut.eliminated || []), ...(filterOut.eliminated || []), ...(out.eliminated || [])];
       return out;
     });
     return await deliverFromCheckpoint(c, A, {
-      limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
-      reviewMdSubtrees, derivedAgentFlags, runPhase, measured, replayArgs,
+      limits, gaps, completed, phaseOutputs, measurementTrace, derivedAgentFlags, runPhase, measured, replayArgs,
       get phaseReached() { return phaseReached; },
     });
   } catch (e) {

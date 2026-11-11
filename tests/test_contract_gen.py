@@ -320,7 +320,9 @@ def test_site_descriptor_gates_discovery_consumers(
             "-e",
             """
 import { normalizePhaseFindings } from './workflows/src/checkpoints.js';
-import { discover } from './workflows/src/discover.js';
+import { discover as rawDiscover } from './workflows/src/discover.js';
+import { withPreparedPlan } from './workflows/test/helpers/diskDiscovery.js';
+const discover=(ctx,input)=>withPreparedPlan(ctx,input,rawDiscover);
 const schemas = {};
 await discover({agent: async (_, o) => { schemas[o.label] = o.schema; return {findings:[], complete:true, total_seen:0, removed_test_audit:[]}; }, parallel: async ts => Promise.all(ts.map(t=>t()))}, {contextPath:'/context',contextLines:10,discoveryPlan:{version:2,status:'available',fact_packets:[],regions:[{id:'gap',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});
 const out = { findings: [{file:'main.txt', related:[{path:'/repo/ok.txt',active:true},{path:'../escape',active:false}], sites:[{file:'../escape',line_start:1,line_end:1,anchor:'q'}]}] };
@@ -384,7 +386,9 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
             "node",
             "--input-type=module",
             "-e",
-            "import { discover } from './workflows/src/discover.js';"
+            "import { discover as rawDiscover } from './workflows/src/discover.js';"
+            "import { withPreparedPlan } from './workflows/test/helpers/diskDiscovery.js';"
+            "const discover=(ctx,input)=>withPreparedPlan(ctx,input,rawDiscover);"
             + "const schemas = {};"
             + "await discover({agent: async (_, options) => {"
             + "schemas[options.label] = options.schema;"
@@ -558,12 +562,6 @@ KNOB_CASES: list[tuple[str, dict[str, list[str]], dict[str, Any], dict[str, Any]
         {"kind": "csv_subset", "values": ["a", "b"]},
         {"type": "csv_list", "waistPath": "delivery.items"},
     ),
-    (
-        "delta",
-        {"interactive": ["present", "discovery"]},
-        {"kind": "enum", "values": ["present"]},
-        {"derivedFrom": "delta"},
-    ),
 ]
 
 IDENTITY = {
@@ -577,7 +575,6 @@ IDENTITY = {
     },
     "ruleSourceLabelFallback": "RF",
     "deriveWhen": {"gamma": "the gamma condition holds"},
-    "derivedFrom": {"delta": "the delta source is present"},
     "waistRequired": ["nested", "limits"],
     "prIdentityFields": [
         {"name": name, "required": required, "describe": describe}
@@ -619,11 +616,9 @@ IDENTITY = {
             "defaults": defaults,
             "rule": rule,
             "env": None,
-            "reviewMdKey": None,
             "type": "string",
             "waistPath": None,
             "waistMap": None,
-            "derivedFrom": None,
             "deriveWhen": None,
             "nullReceipt": [],
             "resolvedKey": False,
@@ -984,8 +979,8 @@ def test_added_knob(registry_tree, invoke):
         "  { key: 'added', modes: ['headless'], allowedSources: { "
         "headless: ['default'] }, "
         "rule: { kind: 'enum', values: ['value'] }, env: null, "
-        "reviewMdKey: null, defaults: { headless: ['value', 'default'] }, "
-        "type: 'string', waistPath: 'nested.added', waistMap: null, derivedFrom: null, "
+        "defaults: { headless: ['value', 'default'] }, "
+        "type: 'string', waistPath: 'nested.added', waistMap: null, "
         "deriveWhen: null, nullReceipt: [], resolvedKey: false },\n"
     )
     path.write_text(source.replace("\n]);", "\n" + row + "]);", 1), encoding="utf-8")
@@ -1263,7 +1258,9 @@ def test_supplemental_reviewer_registration_generates_agent_manifest_and_dispatc
             "--input-type=module",
             "-e",
             """
-import { discover } from './workflows/src/discover.js';
+import { discover as rawDiscover } from './workflows/src/discover.js';
+import { withPreparedPlan } from './workflows/test/helpers/diskDiscovery.js';
+const discover=(ctx,input)=>withPreparedPlan(ctx,input,rawDiscover);
 const labels = [];
 await discover({agent: async (_, opts) => {labels.push(opts.agentType); return {findings:[],complete:true,total_seen:0,read_regions:[],removed_test_audit:[]};},parallel:async ts=>Promise.all(ts.map(t=>t()))},
 {contextPath:'/prepared', contextLines:10, discoveryPlan:{version:2,status:'available',fact_packets:[],regions:[{id:'unread',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});

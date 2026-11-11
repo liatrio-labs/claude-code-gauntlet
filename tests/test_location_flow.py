@@ -129,24 +129,26 @@ const findings = rows.map(([id,dimension,extra])=>({id,dimension,...primary,titl
 const verified = await verifyStage({agent:async prompt=>{const c=shellSplit(prompt.split('\n').at(-1));execFileSync(c[0],c.slice(1),{cwd:work,env:process.env});return JSON.parse(readFileSync(c[c.indexOf('--output')+1],'utf8'));}},
  {findings,pluginRoot:root,python:'python',headShaShort:sha,nonce:'admission',limits:{},verify:{targetKind:'branch',baseBranch:base,diffPath:`${work}/saved.patch`,inputPathBase:`${work}/in`,outputPathBase:`${work}/out`}});
 assert.equal(verified.verified,true);
-const validated = await validateStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async()=>({validations: verified.findings.map(f=>{
+// Existing checkpoints still use their recorded admission predicates.
+const validated = {findings:verified.findings};
+for(const f of validated.findings){
  const row=rows.find(r=>r[0]===f.id), requests=Object.keys(admissionRequests(f));
  const references={confirmed_test_defect:['primary'],present_defect:['primary'],resolved_production_element:['production_element'],complete_searches:['searched_paths:','candidate_tests:'],complete_behavioral_absence:['production_element','searched_paths:','candidate_tests:'],confirmed_duplication:['primary','duplicate_of'],concrete_equivalent:['primary'],behavior_preserved:['primary'],applicable:['primary','precedent']};
  let entries=row[3].map(predicate=>({predicate,status:predicate===row[6]?(row[7]==='unresolved'?'unresolved':'rejected'):'confirmed',references:requests.filter(key=>references[predicate].some(name=>name.endsWith(':')?key.startsWith(name):key===name))}));
  for(const predicate of requiredAssessments(f,row[5]||'ordinary'))if(!entries.some(e=>e.predicate===predicate))entries.push({predicate,status:'unresolved',references:requests.filter(key=>references[predicate].some(name=>name.endsWith(':')?key.startsWith(name):key===name))});
  if(row[7]==='foreign')entries[0].references=['foreign'];
  if(row[7]==='duplicate')entries.push(entries[0]);
- return {finding_id:f.id,confidence:99,policy_subject:row[5]||'ordinary',reachability:'current',admission_assessments:entries};
-})})},{findings:verified.findings});
-for(const f of validated.findings){evaluateAdmission(f);assert.equal(f.admission.status,rows.find(r=>r[0]===f.id)[4],f.id);assert.ok(hasAdmission(f));}
+ Object.assign(f,{validation:'validated',policy_subject:row[5]||'ordinary',reachability:'current',admission_assessments:entries});
+ evaluateAdmission(f);assert.equal(f.admission.status,row[4],f.id);assert.ok(hasAdmission(f));
+}
 const mapped=validated.findings.find(f=>f.id==='cross-test');
 assert.equal(mapped.effective_test_kind,'defective_test');assert.equal(mapped.test_kind,undefined);
-const challenged=await challengeStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async()=>({score:90})},{findings:validated.findings});
+const challenged=await challengeStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async()=>({verdict:{claim:'confirmed',consequence:'present_failure',justification:'Inspected source'}})},{findings:validated.findings});
 const out=disposeFindings(challenged);
 for(const f of [...out.findings,...out.unverified])assert.equal(deliveryAllows(f,'body'),f.admission.status==='admitted',f.id);
 assert.equal(out.findings.find(f=>f.id==='source-test').disposition,'report_only');
 const first=out.findings.find(f=>f.id==='gap');first.criticality=7;
-assert.equal(disposeFindings({findings:[first]}).unverified[0].disposition,'held_back');
+assert.equal(disposeFindings({findings:[{...first,origin:'unknown'}]}).unverified[0].disposition,'held_back');
 process.stdout.write(JSON.stringify({rows:rows.length,findings:out.findings.length}));
 """
     result = subprocess.run(
@@ -429,16 +431,15 @@ const confirmations = verified.findings[0].resolved_sites.map(s=>({file:s.file,l
 const persist = async list => {
  const validated = await validateStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async(prompt,o)=>{
   if(!o.schema.properties.validations.items.properties.site_confirmations)throw Error('missing return metadata');
-  if(!prompt.includes('same defect requiring the same correction'))throw Error('missing semantic contract');
-  const packet=JSON.parse(prompt.split(' | site_requests: ')[1].split(' | admission_context: ')[0]);
+  const packet=JSON.parse(prompt.split(' | site_requests: ')[1].split('\n')[0]);
   if(packet.length!==4 || packet.some(s=>s.line_start!==7))throw Error('requests are not resolved');
-  return {validations:[{finding_id:'ISSUE',confidence:90,policy_subject:'ordinary',...(list===null?{}:{site_confirmations:list})},{finding_id:'CONSTITUENT',confidence:85,policy_subject:'ordinary'}]};
+  return {validations:[{finding_id:'ISSUE',claim:'confirmed',consequence:'present_failure',justification:'Inspected source',...(list===null?{}:{site_confirmations:list})},{finding_id:'CONSTITUENT',claim:'confirmed',consequence:'present_failure',justification:'Inspected source'}]};
  }},{findings:structuredClone(verified.findings)});
  const out=disposeFindings({...validated,findings:validated.findings.map(f=>evaluateAdmission({...f,challenge:'survived'}))});
  return writerPayload({findings:out.findings,postReview:selectDelivery(out.findings,1,'all'),checkpoints:{challenge:validated}});
 };
 const all = await persist(confirmations);
-const some = await persist([{...confirmations[0],confirmed:true},{...confirmations[1],confirmed:false},{...confirmations[3],confirmed:'true'},{file:'foreign.txt',line_start:7,line_end:7,confirmed:true}]);
+const some = await persist([{...confirmations[0],confirmed:true},{...confirmations[1],confirmed:false},{...confirmations[3],confirmed:false},{file:'foreign.txt',line_start:7,line_end:7,confirmed:true}]);
 const missing = await persist(null);
 const tampered = await verifyStage(context(true),input);
 process.stdout.write(JSON.stringify({all,some,missing,tampered,gaps:raw.gaps,resolved:verified.findings[0]}));
@@ -455,9 +456,13 @@ process.stdout.write(JSON.stringify({all,some,missing,tampered,gaps:raw.gaps,res
     assert len(value["gaps"]) == 1
     assert len(value["resolved"]["site_requests"]) == 5
     assert "sites" not in value["resolved"]
-    sites = value["all"]["postReview"][0]["sites"]
+    sites = next(f for f in value["all"]["postReview"] if f["id"] == "ISSUE")["sites"]
     assert len(sites) == 4
-    assert [f["id"] for f in value["all"]["postReview"]] == ["ISSUE", "CONSTITUENT"]
+    assert [f["id"] for f in value["all"]["postReview"]] == ["CONSTITUENT", "ISSUE"]
+    assert [f["delivery_group"]["finding_ids"] for f in value["all"]["findings"]] == [
+        ["CONSTITUENT", "ISSUE"],
+        ["CONSTITUENT", "ISSUE"],
+    ]
     assert all(
         (s["line_start"], s["line_end"], s["location_status"], s["diff_validation"])
         == (7, 7, "relocated", {"in_diff": True})

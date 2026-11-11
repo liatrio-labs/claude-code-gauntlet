@@ -174,9 +174,10 @@ export function makeCtx(args, opts = {}) {
     }
     if (label.startsWith('validate-batch-')) {
       const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
-      return { validations: ids.map((finding_id) => ({ finding_id, policy_subject: 'ordinary', confidence: seedFindings().find((f) => f.id === finding_id)?.confidence ?? 90 })) };
+      return { validations: ids.map((finding_id) => ({ finding_id, claim: 'confirmed', consequence: 'present_failure', justification: 'Present failing input inspected' })) };
     }
-    if (label.startsWith('challenge-')) return { confidence_claim_is_correct: 80, justification: 'claim holds' };
+    if (label === 'group-findings') return { groups: [] };
+    if (label.startsWith('challenge-')) return { verdict: { claim: 'confirmed', consequence: 'present_failure', justification: 'claim holds' } };
     if (label === 'artifact-writer') {
       if (opts.onPersist) opts.onPersist(parseWriterPayload(prompt));
       // Faithful writer: echo the exact planned paths so writeArtifacts' write-proof gate

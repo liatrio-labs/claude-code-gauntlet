@@ -86,7 +86,10 @@ def run(
 
 
 def run_bytes(
-    argv: Sequence[str], *, cwd: str | None = None, timeout: float | None = None
+    argv: Sequence[str],
+    *,
+    cwd: str | None = None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     command = _resolve(argv)
     with _original_spelling(argv, command[0]):

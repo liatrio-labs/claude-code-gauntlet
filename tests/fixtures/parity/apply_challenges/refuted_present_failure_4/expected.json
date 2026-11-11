@@ -1,0 +1,54 @@
+{
+  "eliminated": [
+    {
+      "challenge": "survived",
+      "challenge_justification": "Guard exists",
+      "challenge_refutation_check": {
+        "verified": true
+      },
+      "challenge_verdict": {
+        "claim": "refuted",
+        "justification": "Guard exists",
+        "refutation": {
+          "anchor": "return safe;",
+          "file": "guard",
+          "line_end": 1,
+          "line_start": 1
+        },
+        "refutation_kind": "guard_exists"
+      },
+      "confidence": 90,
+      "eliminated_by": "verified_refutation",
+      "elimination_reason": "Guard exists",
+      "file": "src",
+      "id": "f",
+      "line_start": 10,
+      "refutation_check": {
+        "verified": true
+      },
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
+      "severity": "high",
+      "verdict": {
+        "claim": "refuted",
+        "justification": "Guard exists",
+        "refutation": {
+          "anchor": "return safe;",
+          "file": "guard",
+          "line_end": 1,
+          "line_start": 1
+        },
+        "refutation_kind": "guard_exists"
+      },
+      "verdict_route": "eliminated"
+    }
+  ],
+  "findings": [],
+  "stats": {
+    "challenge_removed": 1,
+    "challenge_survived": 0,
+    "final_count": 0,
+    "total_input": 1,
+    "unchallenged": 0
+  }
+}

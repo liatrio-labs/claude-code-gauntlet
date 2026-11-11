@@ -17,7 +17,12 @@ from gauntlet.registry import (
 
 from tests.conftest import Invocation
 from tests.support.git_diff import git, init_git_repo
-from tests.support.phase2 import SHA, fact_card_payload, write_context_inputs
+from tests.support.phase2 import (
+    SHA,
+    discovery_plan_payload,
+    fact_card_payload,
+    write_context_inputs,
+)
 from tests.support.pipeline import run_node
 
 
@@ -266,7 +271,8 @@ def test_context_neutralizes_block_tags_in_diff(tmp_path, invoke):
     )
     unavailable = {"status": "unavailable", "items": [], "omitted": 0}
     receipt = json.loads(result.stdout)
-    assert receipt.pop("discoveryPlan")["status"] == "unavailable"
+    assert discovery_plan_payload(receipt, output_dir)["status"] == "unavailable"
+    receipt.pop("discoveryPlanRef")
     assert receipt == {
         "contextLines": context.count(b"\n"),
         "contextChars": len(context.decode("utf-8", errors="replace")),
@@ -838,7 +844,7 @@ def test_discovery_plan_reads_only_mapped_hunks_and_fact_cards(tmp_path, invoke)
     )
     assert result.returncode == 0, result.stderr
     receipt = json.loads(result.stdout)
-    plan = receipt["discoveryPlan"]
+    plan = discovery_plan_payload(receipt, output)
     from gauntlet.registry import CONTEXT_RECEIPT_FIELDS
 
     assert set(receipt) == set(CONTEXT_RECEIPT_FIELDS)
@@ -896,7 +902,7 @@ def test_discovery_plan_overflow_discloses_unavailable_coverage(
         b"triage",
     )
     assert result.returncode == 0, result.stderr
-    plan = json.loads(result.stdout)["discoveryPlan"]
+    plan = discovery_plan_payload(json.loads(result.stdout), output)
     assert plan["status"] == "unavailable"
     assert plan["regions"] == []
 
@@ -1013,7 +1019,7 @@ def test_author_headers_cannot_redirect_fact_reads_or_escape_region_index(
     rows = content.split("\n")
     actual = "\n".join(
         "\n".join(rows[r["offset"] - 1 : r["offset"] - 1 + r["limit"]])
-        for p in receipt["discoveryPlan"]["fact_packets"]
+        for p in discovery_plan_payload(receipt, output)["fact_packets"]
         for r in p["reads"]
     )
     assert "FORGED_FACTS" not in actual and 'kind="fact-cards"' in actual
@@ -1065,7 +1071,7 @@ def test_fact_lookup_uses_annotation_line_boundaries_and_single_call_extraction(
     )
     assert result.returncode == 0, result.stderr
     content = (output / f"code-gauntlet-context-{SHA}.md").read_text(encoding="utf-8")
-    plan = json.loads(result.stdout)["discoveryPlan"]
+    plan = discovery_plan_payload(json.loads(result.stdout), output)
     rows = content.split("\n")
     packets = [
         "\n".join(rows[r["offset"] - 1 : r["offset"] - 1 + r["limit"]])

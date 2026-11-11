@@ -1,3 +1,4 @@
+import { defineAgentCall } from './agentCalls.js';
 // Summary and discovery stages, finding schemas, and scope flags.
 import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISCOVERY_REQUIRED_FIELDS, DISCOVERY_REQUIREMENTS, DISCOVERY_REVIEWERS, discoveryReviewer, DISPATCH_RESULTS, modelFor, DISCOVERY_FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { computeLightEligible } from './knobs.js';
@@ -6,11 +7,15 @@ import { effectiveBucketSize } from './capacity.js';
 import { deepClone, untrustedJson } from './wire.js';
 import { checkRemovedTestAudit } from './removedTests.js';
 import { stampDiscovery, recordStage, measurementDecisions, traceDecision } from './measurementTrace.js';
-import { coverageLedger, findingInRegions, gapHunterPrompt, selectGapAssignment, boundedCoverageLedger } from './coverageLedger.js';
+import { coverageReferences, coverageAnchors } from './coverageLedger.js';
+import { planOnDisk, unavailableCoverage } from './discoveryDisk.js';
 import { validateFindings } from './mergeFindings.js';
 
 // StructuredOutput requires an object wrapper around summary prose.
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
+
+const callSummary = defineAgentCall('summarize', () => SUMMARIZE_SCHEMA);
+const callDiscovery = defineAgentCall('discover', findingSchema, () => agentSpecs().flatMap((spec) => [[spec, {}], [spec, { gateway: true }]]));
 
 export async function summarize(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -27,28 +32,25 @@ export async function summarize(ctx, input) {
     if (bucketed) {
       const buckets = [];
       for (let i = 0; i < changedFiles.length; i += bucketSize) buckets.push(changedFiles.slice(i, i + bucketSize));
-      const thunks = buckets.map((files, idx) => () => ctx.agent(summarizePrompt(inp, files), {
+      const thunks = buckets.map((files, idx) => () => callSummary(ctx, summarizePrompt(inp, files), {
         label: `summarize-bucket-${idx}`,
         agentType: 'code-gauntlet:change-summarizer',
         model,
-        schema: SUMMARIZE_SCHEMA,
       }));
       const partials = (await ctx.parallel(thunks)).filter(Boolean);
       if (partials.length === 0) return { summary: '', gaps: ['summarize failed'] };
-      const mergeResult = await ctx.agent(summarizeMergePrompt(inp, partials), {
+      const mergeResult = await callSummary(ctx, summarizeMergePrompt(inp, partials), {
         label: 'summarize-merge',
         agentType: 'code-gauntlet:change-summarizer',
         model,
-        schema: SUMMARIZE_SCHEMA,
       });
       if (!mergeResult) return { summary: '', gaps: ['summarize failed'] };
       return { summary: mergeResult.summary || '', gaps: [] };
     }
-    const result = await ctx.agent(summarizePrompt(inp, changedFiles), {
+    const result = await callSummary(ctx, summarizePrompt(inp, changedFiles), {
       label: 'summarize',
       agentType: 'code-gauntlet:change-summarizer',
       model,
-      schema: SUMMARIZE_SCHEMA,
     });
     if (!result) return { summary: '', gaps: ['summarize failed'] };
     return { summary: result.summary || '', gaps: [] };
@@ -260,7 +262,7 @@ export async function discover(ctx, input) {
   const limits = inp.limits || {};
   const policy = inp.policy || {};
   const discoveryCap = limits.discoveryCap;
-  const hasPlan = inp.discoveryPlan !== undefined;
+  const hasPlan = inp.discoveryPlanRef !== undefined || inp.discoveryPlan !== undefined;
 
   const activeSpecs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
   const specs = activeSpecs.filter((spec) => spec.dispatch === 'parallel');
@@ -276,46 +278,40 @@ export async function discover(ctx, input) {
   // Labels preserve agent identity for gap attribution.
   const thunks = specs.map((spec) => {
     const model = modelFor(spec.agentType, policy);
-    return () => ctx.agent(discoverPrompt(inp, spec), {
+    return () => callDiscovery(ctx, discoverPrompt(inp, spec), {
       label: spec.agentType,
       agentType: spec.agentType,
       model,
-      schema: findingSchema(spec, policy),
-    });
+    }, spec, policy);
   });
 
   const results = await ctx.parallel(thunks);
 
-  const ledger = coverageLedger(inp.discoveryPlan, specs, results, inp.repoRoot, inp.contextLines);
   const hunters = activeSpecs.filter((spec) => spec.dispatch === 'uncovered');
   const primaryUsable = results.some((res, i) => Array.isArray(res?.findings) && (res.findings.length === 0
     || res.findings.some((raw, n) => {
       const candidate = discoveryCandidate(raw, specs[i], n);
       return validateFindings([candidate]).valid.length > 0 && missingDiscoveryFields(candidate).length === 0;
     })));
-  const assignment = selectGapAssignment(inp.contextPath, inp.discoveryPlan, ledger, inp.riskTable, hunters.length > 0 && primaryUsable,
-    primaryUsable ? 'scope' : 'primary_failure');
-  const assigned = assignment.regions;
-  ledger.omitted = assignment.omitted;
-  ledger.assigned_bytes = assignment.bytes;
-  ledger.omitted_fact_packets = assignment.omitted_fact_packets;
-  if (assigned.length && inp.contextPath) {
-    const hunterResults = await ctx.parallel(hunters.map((spec) => () => ctx.agent(
-      gapHunterPrompt(inp.contextPath, assigned, assignment.facts), {
-        label: spec.agentType, agentType: spec.agentType, model: modelFor(spec.agentType, policy), schema: findingSchema(spec, policy),
-      })));
+  const planRequest = {context:inp.contextPath,context_lines:inp.contextLines,refs:coverageReferences(specs,results,inp.repoRoot),
+    risks:inp.riskTable || [],enabled:hunters.length > 0 && primaryUsable,disabled_reason:primaryUsable ? 'scope' : 'primary_failure'};
+  let planned = hasPlan ? await planOnDisk(ctx,inp,'select',planRequest) : null;
+  let ledger = planned?.summary || unavailableCoverage();
+  if (planned?.assigned_count && inp.contextPath) {
+    const hunterResults = await ctx.parallel(hunters.map((spec) => () => callDiscovery(ctx,
+      planned.assignment_prompt, {
+        label:spec.agentType,agentType:spec.agentType,model:modelFor(spec.agentType,policy),
+      },spec,policy)));
     hunters.forEach((spec, i) => {
       specs.push(spec);
       results.push(hunterResults[i]);
-      ledger.hunters.push({ agent: spec.agentType, assigned: assigned.map((r) => r.id),
-        outside_assignment: [], status: Array.isArray(hunterResults[i]?.findings) ? (hunterResults[i].complete === false ? 'incomplete' : 'complete') : 'failed' });
+
     });
   }
 
   const finalResults = results.map((result, i) => specs[i].dispatch === 'uncovered' ? { findings: [] } : result);
   const ledgerGaps = [];
-  if (hasPlan && ledger.status !== 'available') ledgerGaps.push('discovery coverage unavailable: invalid or unavailable region plan');
-  if (assigned.length && !inp.contextPath) ledgerGaps.push('gap hunter: uncovered regions could not be dispatched without contextPath');
+  if (hasPlan && !planned) ledgerGaps.push('discovery coverage unavailable: invalid or unavailable region plan');
   const gaps = [];
   const hunterGaps = [];
   const findings = [];
@@ -374,9 +370,7 @@ export async function discover(ctx, input) {
       if (!checked.valid.length) continue;
       if (spec.dispatch === 'uncovered') {
         finalResults[i].findings.push(f);
-        if (!findingInRegions(f, assigned, inp.repoRoot)) {
-          ledger.hunters.find((h) => h.agent === spec.agentType).outside_assignment.push(String(f.id));
-        }
+
       }
       findings.push(...checked.valid);
     }
@@ -387,9 +381,21 @@ export async function discover(ctx, input) {
     }
   });
 
-  ledger.remaining_uncovered = coverageLedger(inp.discoveryPlan, specs, finalResults, inp.repoRoot, inp.contextLines).uncovered;
+  const completedHunters = specs.flatMap((spec,i) => spec.dispatch === 'uncovered' ? [{agent:spec.agentType,
+    status:Array.isArray(results[i]?.findings) ? (results[i].complete === false ? 'incomplete' : 'complete') : 'failed',
+    anchors:coverageAnchors(finalResults[i].findings,inp.repoRoot),
+    refs:coverageReferences([spec],[finalResults[i]],inp.repoRoot)}] : []);
+  if (planned && completedHunters.length) {
+    planned = await planOnDisk(ctx,inp,'finalize',{context:inp.contextPath,context_lines:inp.contextLines,state_checksum:planned.state_checksum,hunters:completedHunters});
+    ledger = planned?.summary || unavailableCoverage();
+    if (!planned) ledgerGaps.push('discovery coverage unavailable: final ledger receipt missing or invalid');
+  }
   if (!primaryUsable) degradedDims.push(...specs.filter((s) => s.dispatch === 'parallel').flatMap((s) => s.dimensions));
-  if (trace && hasPlan) trace.coverage_ledger = boundedCoverageLedger(ledger);
+  if (trace && hasPlan) {
+    trace.coverage_ledger = ledger;
+    delete trace.coverage_ledger_artifact;
+    if (planned) trace.coverage_ledger_artifact = planned.artifact;
+  }
   if (trace) recordStage(trace, 'discover', intake, {
     decisions, coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
   gaps.push(...ledgerGaps, ...hunterGaps);
@@ -439,7 +445,7 @@ export async function discover(ctx, input) {
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
-    ...(hasPlan ? { coverageLedger: boundedCoverageLedger(ledger) } : {}),
+    ...(hasPlan ? {coverageLedger:ledger,...(planned ? {coverageLedgerArtifact:planned.artifact} : {})} : {}),
   }, decisions);
 }
 

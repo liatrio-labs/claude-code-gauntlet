@@ -30,6 +30,20 @@ NON_SOURCE_DIRS = frozenset(
         "coverage",
     }
 )
+_ARTIFACT_DIRS = frozenset({"docs", "doc", "documentation", "data"})
+_ARTIFACT_NAMES = frozenset(
+    {
+        "readme",
+        "changelog",
+        "license",
+        "copying",
+        "authors",
+        "claude",
+        "agents",
+        "qodo",
+        "review",
+    }
+)
 _TEST_DIRS = frozenset({"test", "tests", "spec", "specs", "__tests__"})
 _BASENAME_RE = re.compile(r"^(?:test_.+|.+_(?:test|spec))$", re.IGNORECASE)
 _SUFFIX_RE = re.compile(r"(?:Tests?|Spec)$")
@@ -63,6 +77,16 @@ def path_role(path: str, *, readable: bool) -> PathRole:
         return "test"
     # Resolved, validator-confirmed evidence proves a production element; paths cannot.
     return "source"
+
+
+def is_source_evidence_path(path: str) -> bool:
+    # Artifacts can contain defects, but their prose cannot establish executable guards.
+    parts = path.split("/")
+    return (
+        path_role(path, readable=True) != "non_source"
+        and not any(part.lower() in _ARTIFACT_DIRS for part in parts[:-1])
+        and parts[-1].split(".", 1)[0].lower() not in _ARTIFACT_NAMES
+    )
 
 
 # Backslash is Windows' path separator; elsewhere it can escape inside double quotes.

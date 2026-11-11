@@ -21,7 +21,11 @@ def copy_generator_tree(root: Path, destination: Path, targets: Iterable[str]) -
     paths = (
         {COMPLETE_READ_REL}
         | set(targets)
-        | set(tracked_paths(root, ("scripts/", "workflows/src/")))
+        | set(
+            tracked_paths(
+                root, ("scripts/", "workflows/src/", "workflows/test/helpers/")
+            )
+        )
     )
     paths.update(
         str(p.relative_to(root)) for p in (root / "workflows/src").glob("*.js")

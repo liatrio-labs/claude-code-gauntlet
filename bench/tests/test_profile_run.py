@@ -1109,3 +1109,15 @@ class ProfileRunTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_grouper_dispatch_has_its_own_profile_stage():
+    assert (
+        pr.classify_stage("group-findings", "code-gauntlet:grouper") == "group-findings"
+    )
+    stages = [rule["name"] for rule in pr.STAGE_RULES]
+    assert (
+        stages.index("challenge")
+        < stages.index("group-findings")
+        < stages.index("artifact-writer")
+    )

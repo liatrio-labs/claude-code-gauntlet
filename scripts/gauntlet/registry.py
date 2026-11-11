@@ -5,9 +5,16 @@ from types import MappingProxyType
 from typing import Any, Literal, TypedDict
 
 Severity = Literal["critical", "high", "medium", "low"]
+VerdictRoute = Literal[
+    "posted",
+    "posted-latent",
+    "posted-artifact",
+    "report-only",
+    "eliminated",
+    "not-established",
+]
 ModelAlias = Literal["sonnet", "opus", "haiku"]
 PolicyProvider = Literal["firstParty", "bedrock", "vertex", "foundry"]
-Reachability = Literal["current", "future_change_only", "uncertain"]
 LocationStatus = Literal["confirmed", "relocated", "unconfirmed"]
 Disposition = Literal["deliver", "body", "held_back", "report_only", "eliminate"]
 Dimension = Literal[
@@ -69,20 +76,13 @@ QualityBasis = Literal[
 _ResolvedSitesItemLocationStatus_Literal = Literal[
     "confirmed", "relocated", "unconfirmed"
 ]
-_PolicySubject_Literal = Literal["test_defect", "coverage", "ordinary", "unresolved"]
-_AdmissionAssessmentsItemPredicate_Literal = Literal[
-    "confirmed_test_defect",
-    "resolved_production_element",
-    "complete_searches",
-    "complete_behavioral_absence",
-    "present_defect",
-    "confirmed_duplication",
-    "concrete_equivalent",
-    "behavior_preserved",
-    "applicable",
-    "current_defect",
+_Claim_Literal = Literal["confirmed", "refuted", "not_established"]
+_Consequence_Literal = Literal[
+    "present_failure", "latent", "artifact_defect", "no_practical_effect"
 ]
-_AdmissionAssessmentsItemStatus_Literal = Literal["confirmed", "rejected", "unresolved"]
+_RefutationKind_Literal = Literal[
+    "premise_false", "guard_exists", "no_reachable_caller"
+]
 PathRole = Literal["source", "test", "non_source", "unknown"]
 BlameClass = Literal["new", "pre_existing", "surfaced", "unknown"]
 BlameSource = Literal[
@@ -120,6 +120,20 @@ _ResolvedReferencesPrecedentPathRole_Literal = Literal[
 _ResolvedReferencesPrecedentLocationStatus_Literal = Literal[
     "confirmed", "relocated", "unconfirmed"
 ]
+_PolicySubject_Literal = Literal["test_defect", "coverage", "ordinary", "unresolved"]
+_AdmissionAssessmentsItemPredicate_Literal = Literal[
+    "confirmed_test_defect",
+    "resolved_production_element",
+    "complete_searches",
+    "complete_behavioral_absence",
+    "present_defect",
+    "confirmed_duplication",
+    "concrete_equivalent",
+    "behavior_preserved",
+    "applicable",
+    "current_defect",
+]
+_AdmissionAssessmentsItemStatus_Literal = Literal["confirmed", "rejected", "unresolved"]
 _AdmissionVersion_Literal = Literal[1]
 _AdmissionStatus_Literal = Literal["admitted", "report_only", "held_back"]
 _AdmissionReasonsItemStatus_Literal = Literal["report_only", "held_back"]
@@ -183,6 +197,15 @@ class DimensionRow(_RequiredDimensionRow, total=False):
 
 SEVERITY_ORDER: tuple[Severity, ...] = ("critical", "high", "medium", "low")
 
+VERDICT_ROUTES: tuple[VerdictRoute, ...] = (
+    "posted",
+    "posted-latent",
+    "posted-artifact",
+    "report-only",
+    "eliminated",
+    "not-established",
+)
+
 MODEL_ALIASES: tuple[ModelAlias, ...] = ("sonnet", "opus", "haiku")
 
 POLICY_PROVIDERS: tuple[PolicyProvider, ...] = (
@@ -190,12 +213,6 @@ POLICY_PROVIDERS: tuple[PolicyProvider, ...] = (
     "bedrock",
     "vertex",
     "foundry",
-)
-
-REACHABILITY_VALUES: tuple[Reachability, ...] = (
-    "current",
-    "future_change_only",
-    "uncertain",
 )
 
 LOCATION_STATUSES: tuple[LocationStatus, ...] = (
@@ -294,6 +311,13 @@ TRACE_FINDING_FIELDS: tuple[str, ...] = (
     "spec_text",
     "change_origin",
     "change_relevance",
+    "verdict",
+    "validator_verdict",
+    "challenge_verdict",
+    "verdict_route",
+    "refutation_check",
+    "validator_refutation_check",
+    "challenge_refutation_check",
     "rule_source",
     "agent",
     "dimension",
@@ -302,6 +326,8 @@ TRACE_FINDING_FIELDS: tuple[str, ...] = (
     "admission",
     "disposition",
     "disposition_reasons",
+    "report_tag",
+    "report_destination",
     "consolidation_key",
     "consolidation_primary",
     "delivery_group",
@@ -1220,6 +1246,15 @@ BRAND_MARK = "⚔️"
 
 BRAND_NAME = "Code Gauntlet"
 
+PUBLIC_SUMMARY = {
+    "counts": "Found {count} {issues} in this change{breakdown}.",
+    "improvement": " {count} is a suggested improvement rather than a defect.",
+    "improvements": " {count} are suggested improvements rather than defects.",
+    "index": "- {mark} [{severity}] {location}{suggestion}: {title}",
+    "suggestion": " (improvement suggestion)",
+    "remainder": "{count} more {issues} not listed here ({reasons}).",
+}
+
 SEVERITY_EMOJI = {
     "critical": "🔴",
     "high": "🟠",
@@ -1237,17 +1272,6 @@ RULE_SOURCE_LABELS = {
 }
 
 RULE_SOURCE_LABEL_FALLBACK = "Cited rule"
-
-CODE_OWNED_HEADINGS = [
-    "## Summary",
-    "## Change Context",
-    "## Findings",
-    "## Findings held back by admission",
-    "## Unverified / pipeline-degraded findings",
-    "## Eliminated findings",
-    "## Review Dimensions Summary",
-    "## Review Methodology",
-]
 
 DETAIL_FIELDS_BY_DIMENSION = {
     "bug": ("hidden_errors",),
@@ -1292,7 +1316,6 @@ KNOB_REGISTRY = (
             "values": ["optimized"],
         },
         "env": "CODE_GAUNTLET_MODEL_TIER",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["optimized", "default"],
             "interactive": ["optimized", "fixed"],
@@ -1300,7 +1323,6 @@ KNOB_REGISTRY = (
         "type": "string",
         "waistPath": None,
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": True,
@@ -1309,21 +1331,19 @@ KNOB_REGISTRY = (
         "key": "delivery",
         "modes": ["headless"],
         "allowedSources": {
-            "headless": ["env", "review_md", "default"],
+            "headless": ["env", "default"],
         },
         "rule": {
             "kind": "csv_subset",
             "values": ["chat", "pr_comments", "markdown"],
         },
         "env": "CODE_GAUNTLET_DELIVERY",
-        "reviewMdKey": "default_delivery",
         "defaults": {
             "headless": ["markdown", "default"],
         },
         "type": "csv_list",
         "waistPath": None,
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": True,
@@ -1339,14 +1359,12 @@ KNOB_REGISTRY = (
             "values": ["dry-run", "live"],
         },
         "env": "CODE_GAUNTLET_POST_MODE",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["dry-run", "default"],
         },
         "type": "string",
         "waistPath": None,
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": True,
@@ -1367,7 +1385,6 @@ KNOB_REGISTRY = (
             },
         },
         "env": "CODE_GAUNTLET_PR_COMMENT_CAP",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["25", "default"],
             "interactive": ["null", "default"],
@@ -1375,7 +1392,6 @@ KNOB_REGISTRY = (
         "type": "int_or_null",
         "waistPath": "limits.deliveryCap",
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": ["interactive"],
         "resolvedKey": False,
@@ -1392,7 +1408,6 @@ KNOB_REGISTRY = (
             "values": ["all", "main_only"],
         },
         "env": "CODE_GAUNTLET_DELIVERY_TIER",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["all", "default"],
             "interactive": ["all", "default"],
@@ -1400,7 +1415,6 @@ KNOB_REGISTRY = (
         "type": "string",
         "waistPath": "delivery.tier",
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": False,
@@ -1416,14 +1430,12 @@ KNOB_REGISTRY = (
             "values": ["review", "skip"],
         },
         "env": "CODE_GAUNTLET_DRAFT_POLICY",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["review", "default"],
         },
         "type": "string",
         "waistPath": None,
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": True,
@@ -1439,7 +1451,6 @@ KNOB_REGISTRY = (
             "values": ["incremental", "full", "skip"],
         },
         "env": "CODE_GAUNTLET_REVIEWED_POLICY",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["full", "default"],
         },
@@ -1448,7 +1459,6 @@ KNOB_REGISTRY = (
         "waistMap": {
             "skip": "full",
         },
-        "derivedFrom": None,
         "deriveWhen": "priorReviewDetector",
         "nullReceipt": [],
         "resolvedKey": True,
@@ -1464,14 +1474,12 @@ KNOB_REGISTRY = (
             "values": ["local", "error"],
         },
         "env": "CODE_GAUNTLET_PR_NOT_FOUND_POLICY",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["error", "default"],
         },
         "type": "string",
         "waistPath": None,
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": True,
@@ -1487,38 +1495,13 @@ KNOB_REGISTRY = (
             "values": ["light", "full"],
         },
         "env": "CODE_GAUNTLET_TRIVIAL_SCOPE",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["full", "default"],
         },
         "type": "string",
         "waistPath": "scopeAnswer",
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": "lightEligible",
-        "nullReceipt": [],
-        "resolvedKey": False,
-    },
-    {
-        "key": "review_md",
-        "modes": ["interactive"],
-        "allowedSources": {
-            "interactive": ["discovery"],
-        },
-        "rule": {
-            "kind": "enum",
-            "values": ["present", "absent"],
-        },
-        "env": None,
-        "reviewMdKey": None,
-        "defaults": {
-            "interactive": ["absent", "discovery"],
-        },
-        "type": "string",
-        "waistPath": None,
-        "waistMap": None,
-        "derivedFrom": "reviewMd",
-        "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": False,
     },
@@ -1535,6 +1518,17 @@ ANCHOR_LIMITS = MappingProxyType(
     {
         "lines": 8,
         "chars": 400,
+    }
+)
+
+REPORT_FOLD_LIMITS = MappingProxyType(
+    {
+        "proseChars": 4000,
+        "summaryChars": 12000,
+        "summaryIndexChars": 12000,
+        "evidenceLines": 40,
+        "evidenceChars": 8000,
+        "inlineChars": 512,
     }
 )
 
@@ -1697,10 +1691,11 @@ class SiteConfirmationsItem(TypedDict):
     confirmed: bool
 
 
-class AdmissionAssessmentsItem(TypedDict):
-    predicate: _AdmissionAssessmentsItemPredicate_Literal
-    status: _AdmissionAssessmentsItemStatus_Literal
-    references: list[str]
+class Refutation(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    anchor: str
 
 
 class ResolvedReferencesSearchedPathsItem(TypedDict):
@@ -1771,6 +1766,12 @@ class ResolvedReferences(TypedDict, total=False):
     production_element: ResolvedReferencesProductionElement
     duplicate_of: ResolvedReferencesDuplicateOf
     precedent: ResolvedReferencesPrecedent
+
+
+class AdmissionAssessmentsItem(TypedDict):
+    predicate: _AdmissionAssessmentsItemPredicate_Literal
+    status: _AdmissionAssessmentsItemStatus_Literal
+    references: list[str]
 
 
 class AdmissionReasonsItem(TypedDict):
@@ -1931,6 +1932,9 @@ READ_PLAN_MAX_BYTES = 24000
 READ_PLAN_LINE_PREFIX_BYTES = 12
 READ_PLAN_MAX_LINES = 750
 READ_PLAN_MAX_CHUNKS = 2000
+DISCOVERY_CHUNK_CHARS = 3000
+DISCOVERY_RECEIPT_CHARS = 4096
+DISCOVERY_MAX_CHUNKS = 12000
 CONTEXT_RECEIPT_FIELDS = (
     "contextLines",
     "contextChars",
@@ -1938,7 +1942,7 @@ CONTEXT_RECEIPT_FIELDS = (
     "contextReadPlanVersion",
     "contextReadChunks",
     "removedTests",
-    "discoveryPlan",
+    "discoveryPlanRef",
 )
 JS_TRIM_CHARS = (
     "\t\n\u000b\f\r "

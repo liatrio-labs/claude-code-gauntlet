@@ -1,8 +1,0 @@
-{
-  "fn": "_route_by_dimension",
-  "finding": {
-    "dimension": "comment_accuracy",
-    "title": "t",
-    "description": "d"
-  }
-}

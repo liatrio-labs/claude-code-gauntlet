@@ -1,0 +1,51 @@
+{
+  "eliminated": [],
+  "findings": [
+    {
+      "admission": {
+        "core": false,
+        "inline_eligible": true,
+        "input_fields": [],
+        "input_proof": "fnv1a32:0xca89c60c",
+        "kind": "ordinary",
+        "reasons": [
+          {
+            "predicate": "verification",
+            "status": "held_back"
+          }
+        ],
+        "status": "held_back",
+        "tier": "main",
+        "version": 1
+      },
+      "body_fix_task_eligible": false,
+      "challenge": "failed",
+      "challenge_justification": "Need caller",
+      "challenge_verdict": {
+        "claim": "not_established",
+        "justification": "Need caller",
+        "missing_fact": "Does a caller pass zero?"
+      },
+      "confidence": 90,
+      "file": "src",
+      "id": "f",
+      "line_start": 10,
+      "report_destination": "main",
+      "report_tag": "main",
+      "severity": "high",
+      "verdict": {
+        "claim": "not_established",
+        "justification": "Need caller",
+        "missing_fact": "Does a caller pass zero?"
+      },
+      "verdict_route": "not-established"
+    }
+  ],
+  "stats": {
+    "challenge_removed": 0,
+    "challenge_survived": 0,
+    "final_count": 1,
+    "total_input": 1,
+    "unchallenged": 0
+  }
+}

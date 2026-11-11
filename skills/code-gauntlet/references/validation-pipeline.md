@@ -10,7 +10,7 @@
 - [Report stage (`renderReport`)](#report-stage-renderreport)
 - [Operational Recovery](#operational-recovery)
 
-The validation pipeline runs inside `workflows/pipeline.js`. Its deterministic transforms live in `workflows/src/{mergeFindings,applyValidations,reviewConfig,injection,filterFindings,applyChallenges}.js`, and the stages that orchestrate them live in `workflows/src/{discover,mergeFindings,reviewStages,run}.js`, with the verify stage in `workflows/src/{verifyWire,capacity,verifyStage}.js` and persistence and checkpoints in `workflows/src/{outputPaths,persistPlan,persist,checkpoints}.js`. The retained `verify_findings.py` executor handles the verify boundary. This reference documents what each stage does for interpreting gaps and persisted artifacts.
+The validation pipeline runs inside `workflows/pipeline.js`. Its deterministic transforms live in `workflows/src/{mergeFindings,applyValidations,injection,filterFindings,applyChallenges}.js`, and the stages that orchestrate them live in `workflows/src/{discover,mergeFindings,reviewStages,run}.js`, with the verify stage in `workflows/src/{verifyWire,capacity,verifyStage}.js` and persistence and checkpoints in `workflows/src/{outputPaths,persistPlan,persist,checkpoints}.js`. The retained `verify_findings.py` executor handles the verify boundary. This reference documents what each stage does for interpreting gaps and persisted artifacts.
 
 **Pipeline order inside the workflow:** Merge → **Verify** → **Validate** → **Filter** → **Admission** → **Challenge** → Report. Admission is also evaluated before Filter so routing uses the current policy verdict.
 
@@ -79,48 +79,85 @@ These proofs check consistency against transcription errors; an executor that re
 
 ## Validate stage (`validateStage`)
 
-Independent re-scoring by fresh agents, defaulting to Sonnet subject to the resolved override.
+Independent factual checking follows the [shared investigation contract](investigation-methodology.md),
+using fresh agents defaulting to Sonnet subject to the resolved override.
 
-The stage batches findings into `limits.validateBatch` chunks and dispatches one `validator` per batch through `parallel()`. Each validator attempts to **disprove** each finding and returns `{ validations: [{ finding_id, confidence, justification, reachability, policy_subject, admission_assessments }] }` (confidence 0–100). Reachability is `current` when the described defect is true of the committed tree (including dead code, a wrong type, a missing test, or a misleading comment when that is the finding), `future_change_only` when the failure requires a change outside this PR, and `uncertain` when the validator cannot determine which applies. `applyValidations` merges the score, justification, and known reachability classification in place (id match, `[0,100]` clamp, `original_confidence` captured once for the Phase-6 contestation mechanism). The stage also accepts `id` for `finding_id`.
+Validators return `claim` (`confirmed`, `refuted`, `not_established`), `consequence`
+(`present_failure`, `latent`, `artifact_defect`, `no_practical_effect`) only when confirmed, and `justification`. Consequence is the only runtime-effect axis.
+A latent consequence names its future change or unusual precondition in `latent_condition`;
+`not_established` names one missing fact in `missing_fact`. Refutations require a closed
+`refutation_kind` and a source reference (`file`, `line_start`, `line_end`, exact `anchor`).
+The schema and route registry live in `workflows/src/registry.js`.
 
-**Confidence rubric:** the shared scale in [investigation-methodology.md](investigation-methodology.md).
+Both readers inspect confirmed findings, including a validator's non-posting consequence. When
+both confirm, the first consequence in the route registry's seriousness order wins. A challenger’s uncertainty or unverified refutation preserves a validator’s confirmation. Raw reader
+answers remain separate from the resolved verdict. Latent findings post inline at low severity
+when their locations allow it; consequence never forces body placement.
 
-**Retry and degradation.** One follow-up round retries missing scores or admission assessments in smaller batches. Accepted correctness, reachability and policy-subject decisions remain fixed when only assessments are missing. A null/malformed batch or a missing matched score after retry marks the affected findings `validation='skipped'`, with confidence untouched and one gap per batch naming the count. They bypass challenge and enter the unverified bucket, appearing only in the report. Degraded verify slices (`origin='unknown'`) follow the same route.
+The executor runs `check_refutations.py` for refutations. Code checks the exact quote at the
+captured head (the working tree for local reviews), the line range, and the saved diff.
+Comment-only quotes and any span containing added lines fail closed. Requiring every cited line
+to predate the PR prevents a new guard being padded with old context. Source resolution cannot
+prove a model's semantic inference, but an intent comment alone cannot authorize elimination.
+Unavailable or unverifiable evidence sends the finding onward.
+The checker compiles changed-line ownership once, follows the saved patch's path-prefix policy,
+and requires strictly decoded text outside the shared non-source directories and
+artifact paths (documentation, data and repository rules). No external classifier is required. Unavailable or
+undecodable source is reported as a gap. Incremental reviews use the full local base-to-captured-head range; an
+unavailable base prevents verification and produces a gap. Security findings go to blind
+challenge after a validator refutation. Only two independently verified refutations eliminate;
+a single refutation stays report-only at main tier, without asserting low impact.
+
+One smaller retry round repairs missing, duplicate or malformed typed returns. A persistent
+failure records `validation=skipped` and proceeds as not established. Unknown Verify origins
+remain held back because the source investigation was not proven.
 
 ---
 
 ## Filter stage (`filterStage`)
 
-Pure, deterministic JS — no agents. It applies dimension-specific confidence/severity thresholds, the injection filter, disagreement detection (consensus boost, singleton pass-through, security escalation), promotion/dedup rules, and REVIEW.md overrides. `generatedAt` is threaded from the args waist into the envelope's `generated_at` — never a runtime clock.
+The registry routes truth and consequence independently:
 
-- **Reachability demotion.** Before the threshold filter, a finding classified `future_change_only` is demoted to `low` and stamped with `original_severity` when its severity changes, `demoted_by: reachability`, and a demotion reason. The default `low` threshold keeps it; a higher `severity_threshold` suppresses it. Missing or unknown classifications are left unchanged.
-- **Thresholds.** Removes findings below the dimension threshold. When REVIEW.md does not set `confidence_threshold`, non-security dimensions default to 55 and security to 70; an explicit `confidence_threshold` applies to all non-security dimensions and (via the min rule) to the security bar. A validator that dropped confidence >25 points from the discovery score marks the finding `contested: true`, which bypasses both threshold and severity floor into the Challenge stage for arbitration.
-- **Injection filter.** Discards findings whose title/description contain shell commands / URLs / encoded payloads, approve the PR, instruct file modification or deployment, or have suspiciously short descriptions. Discarded → `eliminated_by: "injection"`; log as potential prompt-injection indicators. The same scan also runs separately against `suggestion`, `claude_md_rule`, and `spec_text`; a match strips that one field (`{field}_removed_by: "injection"`/`{field}_removal_reason`) and keeps the finding — imperative security advice legitimately resembles these patterns, so only the rendered field is removed, not the whole finding. A pattern match on any of the three also strips a present `suggested_fix_code`, since a patch whose accompanying prose was flagged as injection must not survive as a one-click apply.
-- **Disagreement.** Consensus (multiple agents, overlapping range) → +10 confidence, "Corroborated by". Singleton → unchanged. Security-vs-safe → security wins. bug-vs-intentional and test-vs-scaffolding suppressions apply.
-- **Routing.** Each surviving finding gets `report_destination` (`"main"` or `"suggestion"`). Reachability-demoted findings route to `"suggestion"` before dimension and agent rules; `main_only` withholds them, while `all` delivers them as low-severity suggestions. Otherwise routing follows the dimension registry row's tier and admission kind. `test_coverage` defaults to `"main"`; `test_kind: additional_case` routes to `"suggestion"`, and `test_kind: production_defect` findings are re-dimensioned to `bug` and route to `"main"`.
+| Answer | Route |
+| --- | --- |
+| Refuted with a code-verified citation | `eliminated`; security requires verified refutations from both readers |
+| Refuted without verified counter-evidence | `not-established` |
+| Confirmed present failure | `posted` at its severity |
+| Confirmed latent consequence | `posted-latent`, low severity, suggestion tier |
+| Confirmed artifact defect, admitted for its finding kind | `posted-artifact`, low severity |
+| Confirmed no practical effect | `report-only` |
+| Not established or absent verdict | `not-established` |
 
-`resolveReviewConfig` parses the raw REVIEW.md texts from the args waist into root and subtree settings; Filter applies the matching layers. The workflow cannot read the files itself.
-
----
+These are eligibility routes before challenge and delivery. Injection checks still apply.
+REVIEW.md is prose project rules, with no settings parser, thresholds, ignore lists, exclusions,
+or per-directory overrides. A retired config block produces one local notice.
 
 ## Admission (`evaluateAdmission`)
 
-The deterministic reducer persists `admitted`, `report_only` or `held_back` with predicate reasons and an input proof. It runs again after Filter because filtering can change policy inputs. Only admitted, fully vetted findings can be challenged. Missing or invalid stamps are held back at disposal, including legacy records; admitted findings without an inline location route to the body.
+For typed findings, admission projects the route table into existing delivery rights and retains
+source-verification safeguards. It does not make a second posting-value judgment. The old
+predicate reducer remains only for reading existing checkpoints without typed verdicts.
 
 ## Challenge stage (`challengeStage`)
 
-Blind, independent scrutiny — the only stage where findings face agents that have never seen the original reasoning. Fresh challengers see **only** `blindChallengeFields`: `title`, `description`, `file`, `line_start`, `line_end`, and a removed-test reference when present (an allowlist, not a delete-list — no evidence, origin, cross_file_refs, or reasoning can ever leak). Defaults to Sonnet, subject to the resolved override.
+The existing blind challenger checks admitted findings and unresolved validation findings within
+`limits.challengeCap`. Its allowlist supplies only title, description and location (and the saved
+diff for deleted tests), withholding upstream verdicts and reasoning. It returns the same typed
+schema and uses the same code citation check and routing table. A successful independent check
+can establish an unresolved finding; unresolved results and failed or capped calls stay local as
+held back. Consequence-based report-only findings also receive blind challenge. Finding-kind
+admission failures remain local.
 
-The stage ranks admitted, fully vetted findings and blind-challenges the top `min(n, limits.challengeCap)` through `parallel()`. Other findings bypass challenge as `admission_terminal`. Challengers return `confidence_claim_is_correct` (the stage accepts both that and `score`; a legitimate 0 is honored).
+One ranking orders severity, consequence seriousness, security, proven origin, main versus suggestion tier, inline
+eligibility, file, line and ID. It governs challenge capacity, delivery selection, group leads
+and report order. Confidence and prose length do not participate. Group severity is the maximum
+of the routed member severities; its tier is main when any admitted member is main. The grouper
+returns only member IDs; code chooses the lead. Folded security claims remain visible.
 
-**Thresholds** (`applyChallenges`):
-
-- **< 25** → remove (non-security) / downgrade one level (security)
-- **25–49** → downgrade one level; surfaced re-routed to `"suggestion"`
-- **50–74** → `challenge_contested: true`; surfaced re-routed to `"suggestion"`
-- **≥ 75** → survives unchanged
-
-After thresholds it ranks survivors and retains upstream eliminations in the challenge checkpoint. Challenge cap overflow is stamped `challenge='capped'`; null/unscored results are stamped `challenge='failed'`. After the replay belt, `disposeFindings` assigns delivery dispositions once: incomplete verification, validation, or challenge becomes `held_back`; admission-terminal records retain `report_only` or `held_back`; admitted challenge survivors become `deliver` when location and diff facts allow inline placement, or `body` otherwise. Eliminations become `eliminate`. The reducer clears stale consolidation and regroups clean survivors. All records enter findings.json and their corresponding report sections; only `deliver` and `body` records share the ranked delivery cap.
+The grouper still identifies claims fixed by one correction. Disposal assigns `deliver`, `body`,
+`report_only`, `held_back` or `eliminate` from the existing source and admission rights. Delivery
+caps and `main_only` still apply to whole groups. There is no additional cap on low-severity or
+latent findings; the replay analysis retains its bounded policy only as a diagnostic.
 
 ---
 
@@ -128,7 +165,7 @@ After thresholds it ranks survivors and retains upstream eliminations in the cha
 
 `report_only` findings appear under **Findings held back by admission** with their predicate reasons. `held_back` findings appear under **Unverified / pipeline-degraded findings**; neither status grants posting or fix rights.
 
-Renders `report.md` in code — `renderReport()` in `workflows/src/renderReport.js`, with text primitives in `workflows/src/outboundText.js` and report vocabularies in `workflows/src/registry.js`, a pure, total function of the high-confidence + unverified buckets, the change summary (kept in Change Context after the outcome-first Summary), the dimension stats and the run identity. No dispatch, no segmentation, no fallback: there is nothing to throw and nothing to degrade, so the stage emits no gaps. `evidence` renders for every finding that carries one, in both buckets. The renderer also appends the code-owned Review Methodology section, including the machine-parsed identity receipt, as the report's last section. Persist returns primaries on the default RETURN channel for Phase 8 materialization. Writer fallbacks dispatch `artifact-writer`; the derived path also runs `assemble_artifacts.py`. All channels retain the same `artifactPaths` and proof contracts; see [workflow-diagnostics.md](workflow-diagnostics.md#executor-and-writer-roles).
+Renders `report.md` in code — `renderReport()` in `workflows/src/renderReport.js`, with text primitives in `workflows/src/outboundText.js` and report vocabularies in `workflows/src/registry.js`, a pure, total function of the findings and unverified buckets, the change summary (kept in Change Context after the outcome-first Summary), the dimension stats and the run identity. No dispatch, no segmentation, no fallback: there is nothing to throw and nothing to degrade, so the stage emits no gaps. `evidence` renders for every finding that carries one, in both buckets. The renderer also appends the code-owned Review Methodology section, including the machine-parsed identity receipt, as the report's last section. Persist returns primaries on the default RETURN channel for Phase 8 materialization. Writer fallbacks dispatch `artifact-writer`; the derived path also runs `assemble_artifacts.py`. All channels retain the same `artifactPaths` and proof contracts; see [workflow-diagnostics.md](workflow-diagnostics.md#executor-and-writer-roles).
 
 ---
 

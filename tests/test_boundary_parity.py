@@ -47,7 +47,7 @@ RENDER_REPORT = (
     + "process.stdout.write(renderReport(JSON.parse(source)));"
 )
 RENDER_SUMMARIES = (
-    "import { renderReport, renderSummaryBody } "
+    "import { renderReport, renderPublicSummary } "
     "from './workflows/src/renderReport.js';"
     + READ_INPUT
     + "const x=JSON.parse(source);"
@@ -77,24 +77,30 @@ def test_summary_and_skipped_location_bytes(
         "title": "Location",
     }
     summary = run_node(
-        "import { renderSummaryBody } from './workflows/src/renderReport.js';"
+        "import { renderPublicSummary } from './workflows/src/renderReport.js';"
         + READ_INPUT
-        + "process.stdout.write(renderSummaryBody(JSON.parse(source)));",
+        + "process.stdout.write(renderPublicSummary(JSON.parse(source)).body);",
         {"findings": [finding]},
     ).stdout
-    assert expected in summary
+    assert (expected in summary) == (status == "confirmed")
     assert outbound_text.prepare_prose(summary) == summary
-    skipped = compose.build_skipped_section(
-        [compose.SkippedEntry(filepath, 12, finding)]
-    )
+    skipped = compose.compose_review_body(
+        "",
+        [[compose.SkippedEntry(filepath, 12, finding)]],
+        platform="github",
+        findings_count=1,
+        sha="a" * 40,
+    ).body
     location = next(
         line[5:] for line in skipped.splitlines() if line.startswith("#### ")
     )
     assert location == expected
-    assert location.encode("utf-8") in summary.encode("utf-8")
+    assert (location.encode("utf-8") in summary.encode("utf-8")) == (
+        status == "confirmed"
+    )
 
 
-def test_permalinked_summary_slice_and_guard_equality() -> None:
+def test_summary_renderers_contain_hostile_fields() -> None:
     fixture = {
         "prIdentity": {
             "platform": "github",
@@ -133,13 +139,17 @@ def test_permalinked_summary_slice_and_guard_equality() -> None:
     rendered: list[str] = json.loads(
         run_node(
             RENDER_SUMMARIES + "process.stdout.write(JSON.stringify([renderReport(x),"
-            "renderSummaryBody(x)]));",
+            "renderPublicSummary(x).body]));",
             fixture,
         ).stdout
     )
-    report, summary = rendered
-    assert compose.summary_body_from_report(report) == summary
-    assert outbound_text.prepare_prose(summary) == summary
+    _, summary = rendered
+    assert (
+        "dev@example.test"
+        in compose.legacy_summary(cast(list[Finding], fixture["findings"]))["index"][0][
+            "bullet"
+        ]
+    )
     assert "app/\uff20modal/\uff1cSlot>.tsx" in summary
     assert "dev@example.test" in summary
     assert "&#\u0666\u0664;" in summary
@@ -199,7 +209,7 @@ def test_withheld_primary_summary_cross_runtime() -> None:
             RENDER_SUMMARIES + "x.delivered=x.deliveredIndexes.map(i=>x.findings[i]);"
             "delete x.deliveredIndexes;"
             "process.stdout.write(JSON.stringify([renderReport(x),"
-            "renderSummaryBody(x)]));",
+            "renderPublicSummary(x).body]));",
             {
                 "summary": "The PR claims to change things.",
                 "findings": findings,
@@ -208,7 +218,8 @@ def test_withheld_primary_summary_cross_runtime() -> None:
         ).stdout
     )
     report, body = rendered
-    assert compose.summary_body_from_report(report) == body
+    assert "a.js:1" in report
+    assert "a.js:1" not in body
     delivered = cast(list[Finding], [findings[2], findings[1]])
     groups = compose.consolidate_delivery(delivered)
     bullets = [line for line in body.splitlines() if line.startswith("- ")]
@@ -294,9 +305,10 @@ def test_mixed_disposition_group_cross_runtime(
         else payload["discussions"]
     )
     assert len(comments) == 1
-    assert all(f["title"] in comments[0]["body"] for f in members)
-    assert "Corroborating finding" in comments[0]["body"]
-    assert all(f["title"] not in summary for f in members)
+    assert primary["title"] in comments[0]["body"]
+    assert child["title"] not in comments[0]["body"]
+    assert summary.count(primary["title"]) == 1
+    assert child["title"] not in summary
 
 
 def test_pipeline_fields_reach_poster(
@@ -449,13 +461,11 @@ def test_both_receipt_modes_cross_the_bench_parsers(mode: str) -> None:
             "model_tier": {"value": "optimized", "source": "fixed"},
             "pr_comment_cap": {"value": "null", "source": "default"},
             "delivery_tier": {"value": "all", "source": "default"},
-            "review_md": {"value": "absent", "source": "discovery"},
         }
         expected = {
             "model_tier": "optimized",
             "delivery_tier": "all",
             "pr_comment_cap": "null",
-            "review_md": "absent",
         }
     report = run_node(
         RENDER_REPORT,
@@ -485,10 +495,8 @@ def test_both_receipt_modes_cross_the_bench_parsers(mode: str) -> None:
 def test_receipt_rendering_parity(
     mode: str, carrier: str | None, value: str | None, token: str | None
 ) -> None:
-    resolved = resolve_config.resolve(mode, {}, None, "pr")
+    resolved = resolve_config.resolve(mode, {}, "pr")
     echo = resolved["configEcho"]
-    if mode == "interactive":
-        echo["review_md"] = {"value": "absent", "source": "discovery"}
     identity = {"pipeline_version": "version", "plugin_root": "/absolute/root"}
     if carrier in ("value", "source"):
         echo["model_tier"][carrier] = value
@@ -594,7 +602,7 @@ def test_resolver_payload_crosses_args_waist(
     cap: int | None,
     tier: str,
 ) -> None:
-    payload = resolve_config.resolve(mode, env, None, "pr")
+    payload = resolve_config.resolve(mode, env, "pr")
     payload["mode"] = mode
     if with_detector:
         payload["reviewScope"] = {

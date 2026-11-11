@@ -1,6 +1,6 @@
 {
   "name": "code-gauntlet",
-  "version": "3.61.3",
+  "version": "3.62.0",
   "description": "Adversarial code review for Claude Code: seven specialist reviewers investigate bugs, security, tests and cross-file impact, with a budgeted gap hunter for uncited regions. Findings pass verification, skeptical validation and blind challenge before posting.",
   "author": {
     "name": "Lee Hopper"
@@ -15,6 +15,7 @@
     "./agents/cross-file-impact.md",
     "./agents/executor.md",
     "./agents/gap-hunter.md",
+    "./agents/grouper.md",
     "./agents/security-reviewer.md",
     "./agents/test-analyzer.md",
     "./agents/type-design-analyzer.md",

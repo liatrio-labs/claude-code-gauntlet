@@ -1,6 +1,6 @@
 {
   "gitlab_version": "19.4.1",
-  "recorded": "2026-10-16",
+  "recorded": "2026-11-10",
   "cases": [
     {"id":"expected:user_mention","group":"expected","sha256":"df4f16e490fddc89e480c0e66873802604f5bfa605488b4332ac2f3429abf659","paragraphs":[],"commands":[],"stored_equals_posted":true},
     {"id":"raw:user_mention","group":"raw","sha256":"f53288daadefc03b024b3c99d12e6b13464c45a272f5f49fd3f9cfccd365b161","paragraphs":[],"commands":[],"stored_equals_posted":true},
@@ -588,7 +588,7 @@
     {"id":"composed:suggestion_alert_payload","group":"composed","sha256":"48cf206dfbac725d394744131dde9e5fdd8b9dadf0184b512245df4acac2e862","paragraphs":[],"commands":[],"stored_equals_posted":true},
     {"id":"composed:slash_body_line","group":"composed","sha256":"5866ac4461b5ec272b17b5fcf90688ac507d029f8c633a37bb668eb855cca186","paragraphs":[{"start_line":2,"end_line":2}],"commands":[],"stored_equals_posted":true},
     {"id":"composed:slash_suggestion_line","group":"composed","sha256":"5436a93dfa106ec968a8f598de9429b09237d906d7a5520e33d42e1d356a889e","paragraphs":[{"start_line":4,"end_line":6}],"commands":[],"stored_equals_posted":true},
-    {"id":"composed:grouped_corroborator","group":"composed","sha256":"9428ccb84ddd4f46a55cedc9b2a4a6816b2d8e8d0363f09c916a73884db6a524","paragraphs":[{"start_line":10,"end_line":12}],"commands":[],"stored_equals_posted":true},
+    {"id":"composed:grouped_lead","group":"composed","sha256":"c4cd2383a64bf6e44bd30be4ea1f91ddd0588503ebe944e7c6508ca04b7a5c24","paragraphs":[{"start_line":2,"end_line":4}],"commands":[],"stored_equals_posted":true},
     {"id":"raw:suggestion_alert_payload_breakout","group":"raw","sha256":"158a32c747853346ca70ecff55a0759122914b8856b7303fdcc8d878979aae72","paragraphs":[{"start_line":5,"end_line":6}],"commands":[["label","~zz377nolabel"]],"stored_equals_posted":false,"content":">>> [!note]\nSee the patch below.\n\n```suggestion\n>>>\nreturn x\n```"}
   ]
 }

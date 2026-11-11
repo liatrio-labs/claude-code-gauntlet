@@ -1,8 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { measurementScenario, persistedScenario } from '../helpers/measurementScenario.js';
 import { runWith } from '../../src/run.js';
 import { agentSpecs } from '../../src/discover.js';
+import { preparePlan, executorAdapter } from '../helpers/diskDiscovery.js';
 
 export async function emitAgentPrompts(bundlePath, mode = 'legacy', overrides = {}, options = {}) {
   const body = readFileSync(bundlePath, 'utf8').replace(/^export const meta.*$/m, '');
@@ -41,16 +42,26 @@ export async function emitLeakPrompts() {
           return result;
         };
       }
-      const out = implementation === 'source' ? await runWith(ctx, args) : await execute(args, ctx.agent, ctx.parallel, undefined);
+      const root = args.discoveryPlan ? preparePlan(args,args.discoveryPlan) : null;
+      const adapter = root ? executorAdapter(ctx,args,{readAssignments:true}) : null;
+      let out;
+      try {
+        out = implementation === 'source' ? await runWith(ctx, args) : await execute(args, ctx.agent, ctx.parallel, undefined);
+      } finally {
+        adapter?.restore();
+        if(root)rmSync(root,{recursive:true,force:true});
+      }
       if (!out.ok) throw new Error(`synthetic prompt capture failed: ${scenario}`);
-      const labels = new Set(ctx.calls.map((call) => call.label));
+      const calls = [...ctx.calls,...(adapter?.executions || []).map(e=>({...e.options,prompt:e.prompt}))];
+      const labels = new Set(calls.map((call) => call.label));
       for (const spec of agentSpecs()) {
-        if ((spec.dispatch === 'parallel' || args.discoveryPlan) && !labels.has(spec.agentType)) throw new Error('incomplete discovery prompt coverage');
+        if ((spec.dispatch === 'parallel' || args.discoveryPlanRef) && !labels.has(spec.agentType)) throw new Error('incomplete discovery prompt coverage');
       }
       const counts = new Map();
-      for (const call of ctx.calls) {
+      for (const call of calls) {
         const producer = call.label.startsWith('summarize') || call.label.startsWith('code-gauntlet:') ? 'discover'
-          : call.label.startsWith('verify-') ? 'verifyStage'
+          : call.label.startsWith('discovery-plan-') ? 'discoveryDisk'
+            : call.label.startsWith('verify-') ? 'verifyStage'
             : call.label.startsWith('validate-') || call.label.startsWith('challenge-') ? 'reviewStages' : 'persist';
         const count = counts.get(call.label) || 0;
         counts.set(call.label, count + 1);

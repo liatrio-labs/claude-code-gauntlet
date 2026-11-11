@@ -9,7 +9,7 @@ import { fnv1a32 } from '../../src/wire.js';
 export function measurementScenario(mode = 'return', overrides = {}, options = {}) {
   const id = { owner: 'synthetic', repo: 'fixture', pr_number: 1, sha_full: 'a'.repeat(40), platform: 'github', web_origin: 'https://github.com' };
   const args = validArgs({ delivery: { tier: 'all', prIdentity: id },
-    limits: { challengeCap: 5, deliveryCap: 1 },
+    limits: { challengeCap: 8, deliveryCap: 1 },
     ...(mode === 'return' ? { persist: { returnPrimaries: true } } : mode === 'derived' ? { persist: {} } : {}),
     ...overrides,
   });
@@ -56,13 +56,21 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
     if (/^validate-(batch|retry)-/.test(label)) {
       ctx.calls.push({ prompt, ...dispatch });
       const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
-      return { validations: ids.filter((id) => id !== 'SKIP').map((finding_id) => ({ finding_id, policy_subject: 'ordinary',
-        confidence: finding_id === 'FILTER' ? 45 : seed.find((f) => f.id === finding_id)?.confidence ?? 90,
-        ...(finding_id === 'REPORT' ? { admission_assessments: [{ predicate: 'present_defect', status: 'rejected', references: ['primary'] }] } : {}) })) };
+      return { validations: ids.filter((id) => id !== 'SKIP').map((finding_id) => ({ finding_id,
+        claim: 'confirmed', consequence: ['FILTER', 'REPORT', 'REMOVE'].includes(finding_id) ? 'no_practical_effect' : 'present_failure',
+        justification: 'Independent code inspection' })) };
+
+    }
+    if (label === 'group-findings') {
+      ctx.calls.push({ prompt, ...dispatch });
+      const ids = dispatch.schema.properties.groups.items.properties.finding_ids.items.enum;
+      return { groups: ['GROUP', 'CORROBORATOR'].every((id) => ids.includes(id))
+        ? [{ finding_ids: ['GROUP', 'CORROBORATOR'] }] : [] };
     }
     if (label.startsWith('challenge-')) {
       ctx.calls.push({ prompt, ...dispatch });
-      return { confidence_claim_is_correct: prompt.includes('finding REMOVE') ? 0 : 90, justification: 'fixed independent check' };
+      if (prompt.includes('finding SKIP')) return { verdict: { claim: 'not_established', justification: 'Missing external caller', missing_fact: 'Which external caller supplies zero?' } };
+      return { verdict: { claim: 'confirmed', consequence: /finding (?:FILTER|REPORT|REMOVE)/.test(prompt) ? 'no_practical_effect' : 'present_failure', justification: 'fixed independent check' } };
     }
     if (label === 'artifact-writer' || label === 'assemble-artifacts') {
       ctx.calls.push({ prompt, ...dispatch });

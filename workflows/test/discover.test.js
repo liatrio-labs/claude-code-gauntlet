@@ -8,6 +8,7 @@ import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
 import { mergeStage } from '../src/mergeFindings.js';
 import { slimPersistedCheckpoints } from '../src/checkpoints.js';
+import { withPreparedPlan } from './helpers/diskDiscovery.js';
 import { createMeasurementTrace, decisionsFor } from '../src/measurementTrace.js';
 
 test('kind contracts apply across providers and gateways', async () => {
@@ -42,7 +43,7 @@ test('kind contracts apply across providers and gateways', async () => {
   }
 });
 
-const discover = (ctx, input) => discoverStage(ctx, { removedTests: { status: 'available', items: [], omitted: 0 }, ...input });
+const discover = (ctx, input) => withPreparedPlan(ctx, { removedTests: { status:'available',items:[],omitted:0 }, ...input }, discoverStage);
 
 test('kept intake warnings leave discovery complete and appear once in merge methodology', async () => {
   const trace = createMeasurementTrace('kept-warning');
@@ -493,7 +494,7 @@ test('failed primaries cannot be rescued by an otherwise successful hunter', asy
       const result = await original(prompt, options);
       return malformed && ROSTER.includes(options.agentType) ? {findings:[null],complete:true,total_seen:1} : result;
     };
-    const out = await runWith(ctx, A);
+    const out = await withPreparedPlan(ctx, A, runWith);
     assert.equal(out.ok, false);
     assert.match(out.error, /^all-degraded:/);
     assert.deepEqual(JSON.parse(out.measurement.text).coverage_ledger.hunters, []);

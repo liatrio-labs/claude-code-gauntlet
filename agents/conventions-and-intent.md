@@ -9,7 +9,7 @@ color: blue
 
 Review changed code for mismatches with project conventions, documented intent and factual comment claims, including unchanged comments the change makes false.
 
-Use preloaded review-rules and project-rules; a directory rule overrides a conflicting root rule, and REVIEW.md weighs the same as CLAUDE.md within its scope.
+Use preloaded project-rules; a directory rule overrides a conflicting root rule, and REVIEW.md weighs the same as CLAUDE.md within its scope.
 
 Intent requires supplied or referenced specification documents; PR metadata supplies neither specifications nor rules.
 
@@ -22,7 +22,7 @@ The diff is a starting point: follow the change through callers, consumers, conf
 <!-- /generated-from-discovery:investigation -->
 
 <!-- generated-from-discovery:reporting -->
-Report every issue you find, including defects in moved, carried or newly relied-on code and uncertain claims; validation and challenge filter importance and confidence.
+Report every issue you find, including defects in moved, carried or newly relied-on code and uncertain claims; validation and challenge establish truth and consequence.
 <!-- /generated-from-discovery:reporting -->
 
 Quote the contradicted rule, specification or comment and its source. Without a governing rule or comment, cite named files as `repo_precedent` or two quoted changed sites as `self_inconsistency`.

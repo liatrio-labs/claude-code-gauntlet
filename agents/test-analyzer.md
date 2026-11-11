@@ -18,7 +18,7 @@ The diff is a starting point: follow the change through callers, consumers, conf
 <!-- /generated-from-discovery:investigation -->
 
 <!-- generated-from-discovery:reporting -->
-Report every issue you find, including defects in moved, carried or newly relied-on code and uncertain claims; validation and challenge filter importance and confidence.
+Report every issue you find, including defects in moved, carried or newly relied-on code and uncertain claims; validation and challenge establish truth and consequence.
 <!-- /generated-from-discovery:reporting -->
 
 Audit every supplied removed-test item. Use `removed_with_code` when all of its tested behavior was removed, and `covered_elsewhere` when another test covers every surviving behavior. Otherwise use `lost`, with one loss per surviving untested behavior. Losses and coverage citations point at surviving files; deleted paths appear only in the item reference.

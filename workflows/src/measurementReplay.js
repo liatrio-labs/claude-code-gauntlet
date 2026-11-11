@@ -37,8 +37,8 @@ function promptSha256(text) {
 }
 
 export function captureDeliveryReplay(c, args, state) {
-  const { limits, gaps, completed, phaseOutputs, resolvedReview, reviewMdSubtrees, derivedAgentFlags, phaseReached } = state;
-  const saved = deepClone({ limits, gaps, completed, phaseOutputs, resolvedReview, reviewMdSubtrees, derivedAgentFlags, phaseReached });
+  const { limits, gaps, completed, phaseOutputs, derivedAgentFlags, phaseReached } = state;
+  const saved = deepClone({ limits, gaps, completed, phaseOutputs, derivedAgentFlags, phaseReached });
   stripTraceFields(saved);
   const record = { args: deepClone(state.replayArgs || args), pipelineVersion: c.pipelineVersion, state: saved, persistence: [] };
   const dispatch = c.agent;

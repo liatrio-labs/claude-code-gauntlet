@@ -11,18 +11,6 @@ export function fnv1a32(s) {
   return `fnv1a32:0x${h.toString(16).padStart(8, '0')}`;
 }
 
-// Read presentation changes must not alter either parsed settings or their proof.
-// Trim by scanning, not by an end-anchored regex, which backtracks quadratically on long space runs.
-export function normalizeReviewText(s) {
-  const lines = s.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n').map((line) => {
-    let end = line.length;
-    while (end > 0 && (line.charCodeAt(end - 1) === 0x20 || line.charCodeAt(end - 1) === 0x09)) end--;
-    return line.slice(0, end);
-  });
-  while (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
-  return lines.join('\n');
-}
-
 // The Write tool may add a BOM or one newline; tolerate those without hiding additional trailing newlines.
 export function normalizeForChecksum(s) {
   let out = typeof s === 'string' ? s : '';
@@ -131,12 +119,6 @@ export const stripPythonWhitespace = (value) => value.replace(PYTHON_STRIP_RE, '
 
 export function asText(value) {
   return typeof value === 'string' ? value : '';
-}
-
-// Keep infinities as numeric filter inputs; the report's finite-only policy is deliberately separate.
-// Non-numbers and NaN need the numeric fallback so arithmetic cannot concatenate text or propagate NaN.
-export function asConfidence(value) {
-  return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
 }
 
 // Freeze nested row data too, since freezing a table alone still permits rule changes.

@@ -181,12 +181,13 @@ const original = ctx.agent;
 const returned = [];
 ctx.agent = async (prompt, dispatch) => {
   if (dispatch.label.startsWith('validate-batch-')) {
-    return { validations: [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => ({ finding_id: m[1], confidence: 90, policy_subject: 'ordinary' })) };
+    return { validations: [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => ({ finding_id: m[1], claim: 'confirmed', consequence: 'present_failure', justification: 'Inspected caller' })) };
   }
   if (dispatch.agentType === 'code-gauntlet:test-analyzer') {
     if (process.argv[1] === 'null') return null;
     if (process.argv[1] === 'malformed') return {};
   }
+  if (dispatch.label.startsWith('challenge-')) return {verdict:{claim:'confirmed',consequence:'present_failure',justification:'Inspected caller'}};
   const result = await original(prompt, dispatch);
   if (dispatch.label.startsWith('code-gauntlet:')) returned.push(dispatch.label);
   return result;
@@ -262,6 +263,7 @@ import { measurementScenario } from './workflows/test/helpers/measurementScenari
 import { runWith } from './workflows/src/run.js';
 const stage = process.argv[1];
 const { args, ctx } = measurementScenario('return');
+args.limits.challengeCap = 2;
 const original = ctx.agent;
 ctx.agent = async (prompt, dispatch) => {
   const label = dispatch.label;
@@ -269,7 +271,8 @@ ctx.agent = async (prompt, dispatch) => {
       (stage === 'verify' && label.startsWith('verify-slice-')) ||
       (stage === 'validate' && label.startsWith('validate-batch-')) ||
       (stage === 'challenge' && label.startsWith('challenge-'))) throw new Error('execution failed');
-  if (label.startsWith('validate-batch-')) return { validations: [...prompt.matchAll(/^- (\\S+) \\[/gm)].map((m) => ({ finding_id: m[1], confidence: 90, policy_subject: 'ordinary' })) };
+  if (label.startsWith('validate-batch-')) return { validations: [...prompt.matchAll(/^- (\\S+) \\[/gm)].map((m) => ({ finding_id: m[1], claim: 'confirmed', consequence: 'present_failure', justification: 'Inspected caller' })) };
+  if (label.startsWith('challenge-')) return {verdict:{claim:'confirmed',consequence:'present_failure',justification:'Inspected caller'}};
   return original(prompt, dispatch);
 };
 const out = await runWith(ctx, args);

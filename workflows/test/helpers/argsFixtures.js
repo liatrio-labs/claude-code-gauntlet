@@ -1,5 +1,4 @@
-import { fnv1a32, isPlainObject, normalizeReviewText } from '../../src/wire.js';
-import { reviewMdSetChecksum } from '../../src/args.js';
+import { fnv1a32, isPlainObject } from '../../src/wire.js';
 import { KNOB_REGISTRY } from '../../src/knobs.js';
 
 const [headlessCapValue, headlessCapSource] = KNOB_REGISTRY.find((row) => row.key === 'pr_comment_cap').defaults.headless;
@@ -16,14 +15,6 @@ export function checkpointArgs(checkpoints) {
     .some((name) => Object.hasOwn(phases, name))) return { checkpoints };
   const wrapper = checkpoints.phases === undefined ? { phases: checkpoints } : checkpoints;
   return { checkpoints: { ...wrapper, checksum: fnv1a32(JSON.stringify(wrapper, null, 2)) } };
-}
-
-export function reviewMdArgs(entries) {
-  const reviewMd = entries.map((entry) => ({
-    ...entry, checksum: Object.hasOwn(entry, 'checksum') ? entry.checksum : fnv1a32(normalizeReviewText(entry.text)),
-  }));
-  return { reviewMd,
-    reviewMdSetChecksum: reviewMdSetChecksum(reviewMd) };
 }
 
 // Wired callers retain their dispatch defaults while focused rows use the smaller waist below.
@@ -70,8 +61,6 @@ export function validArgs(over = {}) {
       trivial_scope: { value: args.scopeAnswer || 'full', source: 'default' },
     };
   }
-  if (Array.isArray(over.reviewMd)) Object.assign(args, reviewMdArgs(over.reviewMd),
-    Object.hasOwn(over, 'reviewMdSetChecksum') ? { reviewMdSetChecksum: over.reviewMdSetChecksum } : {});
   if (Object.hasOwn(over, 'checkpoints')) Object.assign(args, checkpointArgs(over.checkpoints));
   return structuredClone(args);
 }
@@ -81,13 +70,12 @@ export function interactiveArgs(over = {}) {
     argsVersion: 1, removedTests: emptyRemovedTests(), mode: 'interactive', repoRoot: '/r', outputDir: '/r/.code-gauntlet',
     headShaShort: 'abc123', nonce: 'n-1', generatedAt: '2026-07-18T00:00:00Z',
     diffPath: '/r/.code-gauntlet/d.patch', changedFilesPath: '/r/.code-gauntlet/f.json',
-    changedFiles: ['a.js'], changedLines: 1, reviewConfigPath: null,
+    changedFiles: ['a.js'], changedLines: 1,
     riskTable: [{ path: 'a.js', risk: 'medium' }], policy: { tier: 'optimized', subagentModel: null },
     configEcho: {
       model_tier: { value: 'optimized', source: 'fixed' },
       delivery_tier: { value: 'all', source: 'default' },
       pr_comment_cap: { value: 'null', source: 'default' },
-      review_md: { value: 'absent', source: 'discovery' },
     },
     pluginRoot: '/plugin',
     verify: { targetKind: 'branch' },
@@ -95,8 +83,6 @@ export function interactiveArgs(over = {}) {
     limits: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 25, maxLineSpan: 100 },
     ...over,
     ...(Object.hasOwn(over, 'checkpoints') ? checkpointArgs(over.checkpoints) : {}),
-    ...(Array.isArray(over.reviewMd) ? reviewMdArgs(over.reviewMd) : {}),
-    ...(Object.hasOwn(over, 'reviewMdSetChecksum') ? { reviewMdSetChecksum: over.reviewMdSetChecksum } : {}),
   });
 }
 

@@ -396,6 +396,7 @@ def test_detector_real_child_degradation(tmp_path, invoke, monkeypatch):
 PATCH = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
 # argv strings split on spaces before placeholders expand, so paths may hold spaces.
 MAIN_FAILURE = {
+    "check_refutations": "--request invalid --repo-root {dir} --head-sha abcd --target-kind local --diff-file {missing}",
     "capture_policy_env": "",
     "check_eligibility": "--platform github --pr 7",
     "list_pr_files": "--platform github --pr 7",
@@ -450,6 +451,10 @@ BAD_INPUT = {
 POST = {"platform": "github", "owner": "o", "repo": "r", "pr_number": 5, "sha": FULL}
 # Each success row is (files written under the case directory, argv).
 SUCCESS = {
+    "check_refutations": (
+        {"diff.patch": "diff\n"},
+        '--request {{"citations":[]}} --repo-root {dir} --head-sha abcd --target-kind local --diff-file {dir}/diff.patch',
+    ),
     "capture_policy_env": ({}, ""),
     "check_eligibility": ({}, "--platform github --pr 7"),
     "list_pr_files": ({}, "--platform github --pr 7"),
@@ -845,6 +850,12 @@ def _assert_recorded(name, case, returncode, stdout, tmp_path):
             "contextChars": len(context),
             "contextMaxLineChars": max(map(len, context.split("\n"))) + 1,
         }
+        from tests.support.phase2 import discovery_plan_payload
+
+        assert discovery_plan_payload(
+            json.loads(stdout), paths[0].parent
+        ) == wanted.pop("discoveryPlan")
+        actual.pop("discoveryPlanRef")
         for key, value in measured.items():
             assert actual.pop(key) == value
             wanted.pop(key)
@@ -922,7 +933,11 @@ def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch, forge_factory):
 
 
 def test_recording_covers_all_entry_files():
-    assert set(MAIN_FAILURE) == {path.stem for path in (ROOT / "scripts").glob("*.py")}
+    # Content-bound planner envelopes are exercised from foreign cwd by
+    # test_discovery_disk instead of duplicating content-bound byte snapshots here.
+    assert set(MAIN_FAILURE) | {"plan_discovery"} == {
+        path.stem for path in (ROOT / "scripts").glob("*.py")
+    }
     assert set(BAD_INPUT) | set(SUCCESS) <= set(MAIN_FAILURE)
     assert sorted(f"{name}/{case}" for name, case in rows()) == sorted(RECORDED)
 
@@ -1358,17 +1373,6 @@ def test_patch_command_boundaries(
 @pytest.mark.parametrize(
     "case,content,error",
     [
-        _scenario_param(
-            "missing-summary",
-            "## Findings\n\nOnly findings.\n",
-            "post_review: Report does not contain a rendered Summary section.\n",
-        ),
-        _scenario_param(
-            "missing-following-heading",
-            "## Summary\n\nOnly summary.\n",
-            "post_review: Report does not contain a following code-owned "
-            "heading after Summary.\n",
-        ),
         _scenario_param("malformed-json", "{", "invalid-json"),
         _scenario_param(
             "versions-fetch",
@@ -1390,7 +1394,7 @@ def test_patch_command_boundaries(
         ),
     ],
 )
-def test_poster_report_shape_boundary(
+def test_poster_delivery_boundary(
     case, content, error, tmp_path, invoke, forge_factory
 ):
     path = tmp_path / "findings.json"
@@ -1399,8 +1403,6 @@ def test_poster_report_shape_boundary(
         **POST,
         "findings": [],
         "platform": {
-            "missing-summary": "github",
-            "missing-following-heading": "github",
             "malformed-json": "gitlab",
             "versions-fetch": "gitlab",
             "versions-parse": "gitlab",
@@ -1410,13 +1412,7 @@ def test_poster_report_shape_boundary(
     path.write_text(
         content if case == "malformed-json" else json.dumps(data), encoding="utf-8"
     )
-    if case.startswith("missing"):
-        report_path = tmp_path / "report.md"
-        report_path.write_text(content, encoding="utf-8")
-        argv += ["--report", str(report_path)]
     fake = {
-        "missing-summary": FakeForge(),
-        "missing-following-heading": FakeForge(),
         "malformed-json": FakeForge(),
         "versions-fetch": _gitlab_fake(refs=[JsonFetch(None, content)]),
         "versions-parse": _gitlab_fake(refs=[JsonFetch(None, content)]),
@@ -1427,7 +1423,7 @@ def test_poster_report_shape_boundary(
     assert result.returncode == 1
     assert result.stdout == b""
     assert result.stderr == posting_cases.ERRORS.get(error, error).encode("utf-8")
-    if case.startswith("missing") or case == "malformed-json":
+    if case == "malformed-json":
         assert fake.calls == []
         assert forge_factory.calls == []
     assert not (tmp_path / "post-review-payload.json").exists()

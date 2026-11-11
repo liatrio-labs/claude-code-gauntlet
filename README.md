@@ -69,13 +69,14 @@ Discovery produces candidates, and each one then runs the gauntlet:
 1. Merge combines duplicate findings and checks their structure.
 2. Verify checks source facts and separates new issues from older ones.
 3. Validate asks an independent skeptic to disprove each finding.
-4. Filter applies confidence thresholds, rejects prompt injection, and groups related findings.
+4. Filter routes typed verdicts and rejects prompt injection.
 5. Blind challenge asks a fresh agent to check the claim without the original reasoning or evidence.
 6. Deliver ranks the survivors and prepares comments and a report.
 
-A finding the challenger rejects is removed, unless it is a security finding, which is downgraded to a suggestion instead.
-Weakly supported findings are downgraded to suggestions too, and a downgrade removes a finding already at the lowest severity; contested findings are kept and marked in the report.
-If verification or validation itself breaks, the report records the gap. The affected findings still face the blind challenge, then survivors are held back to the report's Unverified / pipeline-degraded section instead of being posted.
+Confirmed present failures post at their severity; latent and artifact defects post at low severity.
+Preferences stay in the local report. Refutations require a verified code citation; security findings
+require verified refutations from both independent readers. Not-established claims go to blind challenge.
+Failures are recorded as gaps, and findings that remain unverified stay in the local report.
 
 Agents see the full diff and follow callers, dependencies, and tests across files.
 Git blame separates new issues from older ones your changes exposed, which the report downgrades and groups separately.
@@ -86,7 +87,7 @@ After new commits, the plugin offers to review only what changed since the last 
 ## What it posts
 
 The plugin saves a markdown report locally. For an open PR or MR, it then asks whether to post the selected findings as inline comments in one review.
-Here is one such comment, rendered from a [repository fixture](tests/fixtures/parity/apply_challenges/issue47_extra_fields_pass_through/input.json) finding and trimmed:
+Here is an illustrative comment:
 
 > **🟠 [HIGH] Missing test for the payment failure rollback path**
 >
@@ -109,25 +110,9 @@ See [security boundaries](SECURITY.md#trust-boundaries).
 The plugin runs locally through Claude Code and collects no data.
 See [PRIVACY.md](PRIVACY.md).
 
-## Configuration: REVIEW.md
+## Project rules
 
-Use `REVIEW.md` to set project rules, confidence thresholds, and findings to ignore.
-Root settings apply project-wide, while matching subdirectory settings override thresholds and add ignores.
-
-````markdown
-## Rules
-- All database queries must use parameterized statements
-
-```yaml
-# code-gauntlet
-confidence_threshold: 75
-ignore:
-  - prompt injection via template tokens
-```
-````
-
-Prose guides the agents; the fenced config block controls thresholds and ignores.
-No `REVIEW.md` is required. See the [configuration reference](skills/code-gauntlet/references/review-md-spec.md) for defaults and hierarchy.
+REVIEW.md prose is read as project rules.
 
 ## Benchmark results
 

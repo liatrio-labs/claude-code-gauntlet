@@ -19,7 +19,7 @@ DEFAULT_ECHO = {
             "source": row["defaults"][mode][1],
         }
         for row in cast(tuple[dict[str, Any], ...], KNOB_REGISTRY)
-        if mode in row["modes"] and row["derivedFrom"] is None
+        if mode in row["modes"]
     }
     for mode in ("interactive", "headless")
 }
@@ -71,85 +71,6 @@ _RULE_ROWS = [
 )
 def test_rules_are_exact_and_fail_closed(rule, value, mode, expected):
     assert resolver.matches_rule(rule, value, mode) is expected
-
-
-_DELIVERY_ROWS = [
-    ("next-heading", "chat,pr_comments\n## Ignore\nmarkdown", "chat,pr_comments"),
-    ("backtick-fence", "```yaml\nchat\n```", None),
-    ("multiline-comment", "<!-- chat,\npr_comments -->\nmarkdown", "markdown"),
-    ("prose", "prose about chat", None),
-]
-
-
-@pytest.mark.parametrize(
-    ("source", "expected"),
-    [
-        pytest.param("## Default Delivery\n" + body, expected, id=name)
-        for name, body, expected in _DELIVERY_ROWS
-    ]
-    + [
-        pytest.param(
-            "prefix\r\n## Default Delivery\r\n\r\n  chat  \r\n",
-            "chat",
-            id="crlf-preamble-indented-value",
-        ),
-    ],
-)
-def test_default_delivery_parser(source, expected):
-    assert resolver.parse_default_delivery(source) == expected
-
-
-@pytest.mark.parametrize(
-    ("mode", "environ", "review", "key", "expected"),
-    [
-        pytest.param(
-            "headless",
-            {"CODE_GAUNTLET_DELIVERY": "chat"},
-            "## Default Delivery\nchat,pr_comments\n",
-            "delivery",
-            {"value": "chat", "source": "env"},
-            id="env-over-review",
-        ),
-        pytest.param(
-            "interactive",
-            {"CODE_GAUNTLET_MODEL_TIER": "optimized"},
-            None,
-            "model_tier",
-            {"value": "optimized", "source": "fixed"},
-            id="validated-fixed-model",
-        ),
-    ],
-)
-def test_valid_pins_keep_their_allowed_source(mode, environ, review, key, expected):
-    assert resolver.resolve(mode, environ, review, "pr")["configEcho"][key] == expected
-
-
-@pytest.mark.parametrize("source", ["env", "review_md"])
-def test_local_delivery_rejects_pr_comments_from_env_or_review(source):
-    environ = {"CODE_GAUNTLET_DELIVERY": "chat,pr_comments"} if source == "env" else {}
-    review = "## Default Delivery\nchat,pr_comments" if source == "review_md" else None
-    name = "CODE_GAUNTLET_DELIVERY" if source == "env" else "REVIEW.md default_delivery"
-    with pytest.raises(resolver.ResolverError) as raised:
-        resolver.resolve("headless", environ, review, "local")
-    assert (
-        str(raised.value)
-        == f"HEADLESS CONFIG ERROR: {name}=chat,pr_comments not in {{chat,markdown}}"
-    )
-
-
-@pytest.mark.parametrize(
-    ("target", "source"),
-    [("pr", "env"), (None, "review_md")],
-    ids=["pr-env", "targetless-review"],
-)
-def test_pr_and_unset_targets_accept_pr_comments(target, source):
-    environ = {"CODE_GAUNTLET_DELIVERY": "chat,pr_comments"} if source == "env" else {}
-    review = "## Default Delivery\nchat,pr_comments" if source == "review_md" else None
-    result = resolver.resolve("headless", environ, review, target)
-    assert result["configEcho"]["delivery"] == {
-        "value": "chat,pr_comments",
-        "source": source,
-    }
 
 
 _INVALID_PIN_ROWS = [
@@ -380,25 +301,3 @@ def test_caller_resolved_mentions(tmp_path):
     )
     with pytest.raises(AssertionError, match="pr_comment_cap"):
         assert_resolved_mentions(tmp_path)
-
-
-def test_caller_review_scaffold():
-    specification = (
-        ROOT / "skills/code-gauntlet/references/review-md-spec.md"
-    ).read_text(encoding="utf-8")
-    guide_link = re.search(r"\[authoring guide\]\(([^)]+)\)", specification)
-    assert guide_link is not None
-    authoring = (ROOT / "skills/code-gauntlet/references" / guide_link[1]).read_text(
-        encoding="utf-8"
-    )
-    match = re.search(
-        r"### Root REVIEW\.md template\n\n(````markdown\n.*?\n````)",
-        authoring,
-        re.DOTALL,
-    )
-    assert match is not None
-    result = resolver.resolve("headless", {}, match[1], "pr")
-    assert result["configEcho"]["delivery"] == {
-        "value": "markdown",
-        "source": "default",
-    }

@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypedDict, get_args
 
-from gauntlet.discovery_plan import CoverageLedger, TrimmedCoverageLedger
+from gauntlet.discovery_plan import ArtifactRef, CoverageLedger, TrimmedCoverageLedger
 from gauntlet.registry import QualityBasis, TestKind
 
 from bench.runner.contracts import ScoreRef, artifact_allowed, exclusive_json
@@ -100,6 +100,7 @@ class StageSnapshot:
     coverage: Coverage
     cap: int | None
     cap_hit: bool
+    gaps: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +113,17 @@ class MeasurementTrace:
     dropped_stages: tuple[Stage, ...] = ()
     coverage_ledger: CoverageLedger | TrimmedCoverageLedger | None = None
     coverage_ledger_gap: str | None = None
+    coverage_ledger_artifact: ArtifactRef | None = None
+
+    def wire(self):
+        value = asdict(self)
+        if value["coverage_ledger_artifact"] is None:
+            del value["coverage_ledger_artifact"]
+        # Missing optional diagnostics must not change a replay's observed prefix.
+        for snapshot in value["snapshots"]:
+            if snapshot["gaps"] is None:
+                del snapshot["gaps"]
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +159,16 @@ def _require(condition, reason):
         raise ValueError("invalid measurement trace: " + reason)
 
 
+def _coverage_artifact_name(name: str) -> bool:
+    import re
+
+    return bool(
+        re.fullmatch(
+            r"code-gauntlet-coverage-ledger-[0-9a-f]{8}-[0-9a-f]{7,40}\.json", name
+        )
+    )
+
+
 def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
     _require(
         artifact_allowed(Path(trace_path)) and not Path(trace_path).is_symlink(),
@@ -154,6 +176,27 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
     )
     _require(file_hash(trace_path) == expected_sha256, "byte hash mismatch")
     raw = read_json(trace_path)
+    if isinstance(raw, dict) and raw.get("coverage_ledger_artifact") is not None:
+        try:
+            ref = decode(ArtifactRef, raw["coverage_ledger_artifact"])
+            if not _coverage_artifact_name(ref["path"]):
+                raise ValueError("invalid ledger artifact name")
+            path = Path(trace_path).parent / ref["path"]
+            _require(
+                not path.is_symlink() and artifact_allowed(path),
+                "denied ledger artifact",
+            )
+            _require(
+                file_hash(path) == ref["sha256"], "ledger artifact checksum mismatch"
+            )
+            raw = {**raw, "coverage_ledger": read_json(path)}
+        except (OSError, TypeError, ValueError) as exc:
+            raw = {
+                **raw,
+                "coverage_ledger": None,
+                "coverage_ledger_artifact": None,
+                "coverage_ledger_gap": f"invalid coverage ledger artifact: {exc}",
+            }
     if isinstance(raw, dict) and raw.get("coverage_ledger") is not None:
         try:
             ledger = raw["coverage_ledger"]
@@ -730,7 +773,11 @@ def _collect_trace(pr_dir: Path) -> CollectedTraceWire | None:
         raise ValueError(
             measurement.get("reason") or "Workflow measurement unavailable"
         )
-    data = decode(str, measurement["text"]).encode("utf-8")
+    from gauntlet.measurement import measurement_text
+
+    data = measurement_text(
+        decode(str, measurement["text"]), measurement.get("encoding")
+    ).encode("utf-8")
     actual = hashlib.sha256(data).hexdigest()
     name = "code-gauntlet-measurement-trace.json"
     path = pr_dir / name
@@ -739,6 +786,32 @@ def _collect_trace(pr_dir: Path) -> CollectedTraceWire | None:
     if not path.exists():
         with path.open("xb") as stream:
             stream.write(data)
+    packet = json.loads(data)
+    artifact = (
+        packet.get("coverage_ledger_artifact") if isinstance(packet, dict) else None
+    )
+    if (
+        isinstance(artifact, dict)
+        and isinstance(artifact.get("path"), str)
+        and _coverage_artifact_name(artifact["path"])
+    ):
+        target = pr_dir / artifact["path"]
+        findings_path = (terminal.get("artifactPaths") or {}).get("findings")
+        if not target.exists() and isinstance(findings_path, str):
+            source = Path(findings_path).parent / artifact["path"]
+            try:
+                if (
+                    not source.is_symlink()
+                    and artifact_allowed(source)
+                    and source.is_file()
+                    and file_hash(source) == artifact.get("sha256")
+                ):
+                    from bench.runner.contracts import copy_exclusive
+
+                    copy_exclusive(source, target)
+            except OSError:
+                # The ordinary loader records missing coverage without losing history.
+                pass
     trace = load_trace(path, expected_sha256=actual)
     channel = terminal.get("persistReturn") or {}
     if channel and trace.run_nonce != channel.get("nonce"):

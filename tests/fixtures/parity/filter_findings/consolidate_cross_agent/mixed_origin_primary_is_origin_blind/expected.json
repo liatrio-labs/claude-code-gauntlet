@@ -10,12 +10,12 @@
       "dimension": "bug",
       "file": "f.py",
       "id": "D1",
+      "line_end": 10,
       "line_start": 10,
+      "location_status": "confirmed",
       "origin": "unknown",
       "severity": "medium",
-      "title": "t1",
-      "line_end": 10,
-      "location_status": "confirmed"
+      "title": "t1"
     },
     {
       "agent": "test-analyzer",
@@ -26,12 +26,12 @@
       "dimension": "test_coverage",
       "file": "f.py",
       "id": "V1",
+      "line_end": 12,
       "line_start": 12,
+      "location_status": "confirmed",
       "origin": "verified",
       "severity": "low",
-      "title": "t2",
-      "line_end": 12,
-      "location_status": "confirmed"
+      "title": "t2"
     }
   ]
 }

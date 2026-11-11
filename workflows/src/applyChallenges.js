@@ -1,139 +1,37 @@
-// Apply challenge scores to findings and preserve the consolidation fields.
-
-import { SEVERITY_ORDER } from './registry.js';
-import { INT_POLICY, coerceInt, deepClone } from './wire.js';
-
-export function downgradeSeverity(severity) {
-  const idx = typeof severity === 'string' ? SEVERITY_ORDER.indexOf(severity.toLowerCase()) : -1;
-  if (idx < 0 || idx + 1 >= SEVERITY_ORDER.length) return null;
-  return SEVERITY_ORDER[idx + 1];
-}
-
-export function rankKey(finding) {
-  const sev = (finding.severity ?? 'low').toLowerCase();
-  let sevIdx = SEVERITY_ORDER.indexOf(sev);
-  if (sevIdx < 0) sevIdx = SEVERITY_ORDER.length;
-  const degraded = finding.origin === 'unknown' ? 1 : 0;
-  const conf = finding.confidence ?? 0;
-  let tertiary;
-  const rl = finding.risk_level;
-  if (rl !== undefined && rl !== null && Number.isFinite(Number(rl))) tertiary = -Number(rl);
-  else tertiary = -((finding.description ?? '').length);
-  return [sevIdx, degraded, -conf, tertiary];
-}
-
-export function rankFindings(findings) {
-  return [...findings].sort((a, b) => {
-    const ka = rankKey(a);
-    const kb = rankKey(b);
-    return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || ka[3] - kb[3];
-  });
-}
+import { VERDICT_ENTRY_SCHEMA } from './registry.js';
+import { rankFindings } from './groupRanking.js';
+import { deepClone } from './wire.js';
+import { evaluateAdmission } from './admission.js';
+import { verdictRejections, routeVerdict, buildVerdict, resolveVerdict } from './verdict.js';
 
 export function applyChallenges(findings, challenges) {
-  const challengeById = new Map();
-  for (const entry of challenges) {
-    const cid = 'id' in entry ? entry.id : undefined;
-    if (cid === undefined || cid === null) continue;
-    const rawScore = 'score' in entry ? entry.score : undefined;
-    if (rawScore === undefined || rawScore === null) continue;
-    if (coerceInt(rawScore, INT_POLICY.validation) === null) continue;
-    challengeById.set(cid, entry);
-  }
-
-  const active = [];
-  const eliminated = [];
-  const stats = {
-    challenge_removed: 0,
-    challenge_downgraded: 0,
-    challenge_contested: 0,
-    challenge_survived: 0,
-    unchallenged: 0,
-  };
-
-  for (let finding of findings) {
-    const fid = 'id' in finding ? finding.id : undefined;
-    const entry = challengeById.get(fid);
-
-    if (entry === undefined) {
-      stats.unchallenged += 1;
-      active.push(finding);
-      continue;
-    }
-
-    const rawScore = 'score' in entry ? entry.score : 0;
-    const score = coerceInt(rawScore, INT_POLICY.validation);
-    const justification = 'justification' in entry ? entry.justification : undefined;
-
-    // Deep-clone before mutation -- no aliasing of the caller's finding.
-    finding = deepClone(finding);
-    finding.challenge_score = score;
-    if (justification) finding.challenge_justification = justification;
-
-    const isSurfaced = ('origin' in finding ? finding.origin : '').toLowerCase() === 'surfaced';
-    const isSecurity = ('dimension' in finding ? finding.dimension : '').toLowerCase() === 'security';
-
-    if (score < 25 && !isSecurity) {
-      eliminated.push({
-        ...finding,
-        eliminated_by: 'challenge:removed',
-        elimination_reason: `challenge score ${score} < 25; finding does not survive blind challenge`,
-      });
+  const byId = new Map(challenges.filter((entry) => verdictRejections(entry, VERDICT_ENTRY_SCHEMA).length === 0).map((entry) => [entry.id, entry]));
+  const active = [], eliminated = [];
+  const stats = { total_input: findings.length, challenge_removed: 0, challenge_survived: 0, unchallenged: 0 };
+  for (const original of findings) {
+    const entry = byId.get(original.id);
+    if (!entry) { active.push(original); stats.unchallenged += 1; continue; }
+    const finding = deepClone(original);
+    const { refutation_check } = entry;
+    const verdict = buildVerdict(entry);
+    finding.challenge_verdict = verdict;
+    const validator = finding.validator_verdict ?? finding.verdict;
+    finding.verdict = resolveVerdict(validator, verdict, finding.validator_refutation_check, refutation_check);
+    delete finding.challenge_refutation_check;
+    if (refutation_check) finding.challenge_refutation_check = deepClone(refutation_check);
+    const effectiveCheck = finding.verdict === verdict ? refutation_check : finding.validator_refutation_check;
+    delete finding.refutation_check;
+    if (effectiveCheck) finding.refutation_check = deepClone(effectiveCheck);
+    finding.challenge_justification = verdict.justification;
+    routeVerdict(finding);
+    finding.challenge = finding.verdict_route === 'not-established' ? 'failed' : 'survived';
+    if (finding.verdict_route === 'eliminated') {
+      eliminated.push({ ...finding, eliminated_by: 'verified_refutation', elimination_reason: finding.verdict.justification });
       stats.challenge_removed += 1;
-    } else if (score < 50) {
-      const currentSev = ('severity' in finding ? finding.severity : 'low').toLowerCase();
-      const newSev = downgradeSeverity(currentSev);
-      finding.challenge_contested = false;
-      const removed = score < 25 && newSev === null;
-      if (newSev === null) {
-        eliminated.push({
-          ...finding,
-          eliminated_by: removed ? 'challenge:removed' : 'challenge:downgraded',
-          elimination_reason: score < 25
-            ? `challenge score ${score} < 25; security finding severity already ` +
-              `'${currentSev}' (lowest) — finding removed`
-            : `challenge score ${score} in 25-49 range; severity already ` +
-              `'${currentSev}' (lowest) — finding removed`,
-        });
-      } else {
-        finding.severity = newSev;
-        finding.severity_downgraded = true;
-        finding.original_severity = currentSev;
-        finding.report_destination = 'suggestion';
-        finding.report_tag = 'suggestion';
-        active.push(finding);
-      }
-      stats[removed ? 'challenge_removed' : 'challenge_downgraded'] += 1;
-    } else if (score < 75) {
-      finding.challenge_contested = true;
-      if (isSurfaced) {
-        finding.report_destination = 'suggestion';
-        finding.report_tag = 'suggestion';
-      }
-      active.push(finding);
-      stats.challenge_contested += 1;
     } else {
-      finding.challenge_contested = false;
-      active.push(finding);
-      stats.challenge_survived += 1;
+      active.push(evaluateAdmission(finding));
+      if (finding.verdict_route !== 'not-established') stats.challenge_survived += 1;
     }
   }
-
-  const totalInput = findings.length;
-
-  const ranked = rankFindings(active);
-
-  return {
-    findings: ranked,
-    eliminated,
-    stats: {
-      total_input: totalInput,
-      challenge_removed: stats.challenge_removed,
-      challenge_downgraded: stats.challenge_downgraded,
-      challenge_contested: stats.challenge_contested,
-      challenge_survived: stats.challenge_survived,
-      unchallenged: stats.unchallenged,
-      final_count: ranked.length,
-    },
-  };
+  return { findings: rankFindings(active), eliminated, stats: { ...stats, final_count: active.length } };
 }

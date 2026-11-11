@@ -57,6 +57,6 @@ add `Workflow(code-gauntlet:code-gauntlet-pipeline)` to `permissions.allow` in a
 file this session loads (or pass it via `--allowedTools` headless), then rerun.
 
 Under `acceptEdits`, a dynamic-workflow review gate
-or an executor's pinned `verify_findings.py` or `assemble_artifacts.py` Bash command may wait for approval the workflow cannot
+or an executor's pinned `verify_findings.py`, `check_refutations.py` or `assemble_artifacts.py` Bash command may wait for approval the workflow cannot
 surface. Check the gate and command permissions before retrying a stalled run. Do not infer
 completion from a permission stall or bypass the invocation and recovery contracts.

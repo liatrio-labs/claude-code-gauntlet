@@ -134,7 +134,8 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
     changed = [
         v
         for v in trace.versions
-        if v.trace_id == first.trace_id and v.projection()["confidence"] == 45
+        if v.trace_id == first.trace_id
+        and v.projection().get("verdict_route") == "report-only"
     ]
     assert changed
     report = next(v for v in trace.versions if v.finding.get("id") == "REPORT")
@@ -294,6 +295,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
         tid = next(
             v.trace_id for v in trace.versions if v.finding.get("id") == "FILTER"
         )
+        version_traces = {v["version_id"]: v["trace_id"] for v in raw["versions"]}
         decision = stages.StageDecision(
             tid, "held_back", "validation_skipped", None, ()
         )
@@ -304,6 +306,11 @@ def test_score_to_dimension_credit_and_loss_funnel(
                 ]
                 snapshot["decisions"] = []
             if snapshot["stage"] == "dispose":
+                snapshot["finding_version_ids"] = [
+                    v
+                    for v in snapshot["finding_version_ids"]
+                    if version_traces[v] != tid
+                ]
                 snapshot["stage"] = "holdback"
                 snapshot["decisions"] = [asdict(decision)]
         path.write_text(json.dumps(raw), encoding="utf-8")
@@ -415,7 +422,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
                 if trace_status == "holdback"
                 else "verify"
                 if trace_status == "audit_overlap"
-                else "filter"
+                else "delivery"
             ]
             == 1
         )
@@ -634,7 +641,7 @@ def test_collection_persists_ledger_decode_gap_without_losing_trace(tmp_path):
     assert loaded.versions == trace.versions
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def emitted_coverage_ledgers():
     result = subprocess.run(
         [
@@ -642,7 +649,9 @@ def emitted_coverage_ledgers():
             "--input-type=module",
             "-e",
             """
-import { discover } from './workflows/src/discover.js';
+import { discover as rawDiscover } from './workflows/src/discover.js';
+import { withPreparedPlan } from './workflows/test/helpers/diskDiscovery.js';
+const discover=(ctx,input)=>withPreparedPlan(ctx,input,rawDiscover);
 import { boundedCoverageLedger } from './workflows/src/coverageLedger.js';
 const regions = [0,1].map(i=>({id:`r${i}`,file:'source',line_start:i?0:1,line_end:i?0:2,reads:[{offset:1,limit:2,bytes:80}]}));
 const plan = {version:2,status:'available',fact_packets:[],regions};
@@ -736,4 +745,121 @@ def test_legacy_hunter_receipts_preserve_trace_coverage(
     path.write_text(json.dumps(raw), encoding="utf-8", newline="")
     loaded = stages.load_trace(path, expected_sha256=file_hash(path))
     assert loaded.coverage_ledger == raw["coverage_ledger"]
+    assert loaded.versions == trace.versions
+
+
+@pytest.mark.parametrize(
+    "encoding,text,reason",
+    [
+        ("unknown", "{}", "unknown measurement encoding"),
+        ("json-pool-lzw16-base64-v1", "!", "base64"),
+        ("json-pool-lzw16-base64-v1", "AA==", "truncated compressed measurement"),
+        ("json-pool-lzw16-base64-v1", "AQA=", "invalid compressed measurement code"),
+    ],
+)
+def test_unreadable_compressed_transport_records_collection_gap(
+    tmp_path, encoding, text, reason
+):
+    workflows = tmp_path / "workflows"
+    workflows.mkdir()
+    (workflows / "wf_current.json").write_text(
+        json.dumps(
+            dict(
+                result=dict(
+                    ok=True,
+                    phaseReached="report",
+                    measurement=dict(status="available", encoding=encoding, text=text),
+                )
+            )
+        ),
+        encoding="utf-8",
+    )
+    receipt = stages.collect_trace(tmp_path)
+    assert receipt.status == "unavailable"
+    assert reason in receipt.reason.lower()
+    assert (
+        read_json(tmp_path / "measurement-collection.json")["reason"] == receipt.reason
+    )
+
+
+@pytest.mark.parametrize(
+    "condition", ["valid", "missing", "changed", "escape", "symlink"]
+)
+def test_external_coverage_artifacts_are_hash_bound_without_losing_trace(
+    tmp_path, emitted_coverage_ledgers, condition
+):
+    from gauntlet.discovery_disk import artifact_name
+
+    trace, path, _ = emit_trace(tmp_path)
+    ledger = next(x for x in emitted_coverage_ledgers if x["status"] == "available")
+    raw = trace.wire()
+    name = artifact_name("coverage-ledger", "abc1234", trace.run_nonce)
+    target = path.parent / name
+    data = json.dumps(ledger).encode()
+    import hashlib
+
+    digest = hashlib.sha256(data).hexdigest()
+    if condition == "escape":
+        name = "../outside.json"
+    elif condition == "symlink":
+        other = path.parent / "other-ledger.json"
+        other.write_bytes(data)
+        target.symlink_to(other)
+    elif condition != "missing":
+        target.write_bytes(data if condition == "valid" else b"changed")
+    raw["coverage_ledger_artifact"] = {"path": name, "sha256": digest}
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    loaded = stages.load_trace(path, expected_sha256=file_hash(path))
+    assert loaded.versions == trace.versions and loaded.snapshots == trace.snapshots
+    if condition == "valid":
+        assert loaded.coverage_ledger == ledger
+        assert loaded.coverage_ledger_gap is None
+    else:
+        assert loaded.coverage_ledger is None
+        assert "coverage ledger artifact" in loaded.coverage_ledger_gap
+
+
+@pytest.mark.parametrize("copy_ok", [True, False])
+def test_trace_collection_copies_the_bound_ledger_from_the_pipeline_output_directory(
+    tmp_path, emitted_coverage_ledgers, monkeypatch, copy_ok
+):
+    from gauntlet.discovery_disk import artifact_name
+
+    trace, _, receipt = emit_trace(tmp_path)
+    ledger = next(x for x in emitted_coverage_ledgers if x["status"] == "available")
+    output = tmp_path / "output"
+    output.mkdir()
+    name = artifact_name("coverage-ledger", "abc1234", trace.run_nonce)
+    artifact = output / name
+    artifact.write_text(json.dumps(ledger), encoding="utf-8")
+    raw = trace.wire()
+    raw["coverage_ledger_artifact"] = {"path": name, "sha256": file_hash(artifact)}
+    receipt["out"]["measurement"]["text"] = json.dumps(raw)
+    receipt["out"]["artifactPaths"]["findings"] = str(
+        output / "code-gauntlet-findings-abc1234.json"
+    )
+    directory = tmp_path / "pr"
+    (directory / "workflows").mkdir(parents=True)
+    (directory / "workflows/wf_current.json").write_text(
+        json.dumps({"result": receipt["out"]}), encoding="utf-8"
+    )
+    if not copy_ok:
+        from bench.runner import contracts
+
+        def unavailable_copy(*_):
+            raise PermissionError("ledger copy unavailable")
+
+        monkeypatch.setattr(contracts, "copy_exclusive", unavailable_copy)
+    collected = stages.collect_trace(directory)
+    assert collected.status == "available"
+    if copy_ok:
+        assert collected.reason is None
+        assert (directory / name).read_bytes() == artifact.read_bytes()
+    else:
+        assert "coverage ledger artifact" in collected.reason
+    binding = read_json(directory / "measurement-artifact.json")
+    loaded = stages.load_trace(
+        directory / binding["path"], expected_sha256=binding["sha256"]
+    )
+    assert loaded.coverage_ledger == (ledger if copy_ok else None)
     assert loaded.versions == trace.versions

@@ -12,6 +12,11 @@ from gauntlet.diff import AnnotatedDiff, split_diff_lines
 from gauntlet.registry import READ_PLAN_LINE_PREFIX_BYTES
 
 
+class ArtifactRef(TypedDict):
+    path: str
+    sha256: str
+
+
 class ReadRange(TypedDict):
     """Absolute shared-context rows and their charged Read bytes."""
 

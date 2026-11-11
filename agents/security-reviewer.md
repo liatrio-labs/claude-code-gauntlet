@@ -18,7 +18,7 @@ The diff is a starting point: follow the change through callers, consumers, conf
 <!-- /generated-from-discovery:investigation -->
 
 <!-- generated-from-discovery:reporting -->
-Report every issue you find, including defects in moved, carried or newly relied-on code and uncertain claims; validation and challenge filter importance and confidence.
+Report every issue you find, including defects in moved, carried or newly relied-on code and uncertain claims; validation and challenge establish truth and consequence.
 <!-- /generated-from-discovery:reporting -->
 
 <!-- generated-from-discovery:changed-anchor -->

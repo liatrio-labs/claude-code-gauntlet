@@ -1,0 +1,35 @@
+{
+  "consolidated_count": 2,
+  "findings": [
+    {
+      "agent": "test-analyzer",
+      "confidence": 50,
+      "consolidation_key": "g.py:20",
+      "consolidation_primary": true,
+      "description": "d",
+      "dimension": "test_coverage",
+      "file": "g.py",
+      "id": "C3",
+      "line_end": 20,
+      "line_start": 20,
+      "location_status": "confirmed",
+      "severity": "low",
+      "title": "t3"
+    },
+    {
+      "agent": "code-simplifier",
+      "confidence": 80,
+      "consolidation_key": "g.py:20",
+      "consolidation_primary": false,
+      "description": "d2",
+      "dimension": "convention",
+      "file": "g.py",
+      "id": "C4",
+      "line_end": 21,
+      "line_start": 21,
+      "location_status": "confirmed",
+      "severity": "low",
+      "title": "t4"
+    }
+  ]
+}

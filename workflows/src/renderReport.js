@@ -2,12 +2,13 @@
 // Line fields use the outbound line contract, and repository spans preserve copyable normalized text in dynamic delimiters.
 import { canonicalRange, locationAllows, deliveryAllows } from './location.js';
 import { incompleteVetting, UNVERIFIED_REASONS } from './vetting.js';
-import { rankFindings } from './applyChallenges.js';
+import { rankFindings } from './groupRanking.js';
 import { PERMALINK_TEMPLATES, identityCheck, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES } from './registry.js';
+import { groupDelivery } from './groupRanking.js';
 import { deliveryGroups } from './dispose.js';
 import { DIMENSIONS, AGENTS, AGENT_LABELS, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI } from './registry.js';
 import { RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, conditionalSchemaActive, pinsModelIds, resolvePolicy } from './registry.js';
-import { SEVERITY_ORDER, REPORT_FOLD_LIMITS } from './registry.js';
+import { SEVERITY_ORDER, REPORT_FOLD_LIMITS, PUBLIC_SUMMARY } from './registry.js';
 import { REPORT_PLACED_FIELDS, STAGE_DEFAULTS, FINDING_PATH_ARRAY_FIELDS } from './registry.js';
 import { KNOB_REGISTRY } from './knobs.js';
 import { longestBacktickRun, deepFreeze } from './wire.js';
@@ -122,8 +123,13 @@ export function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
   return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
 }
 
-function consolidateForReport(findings) {
+function consolidateForReport(findings, delivery = false, sources = new WeakMap()) {
   return deliveryGroups(findings).map(({ primary, corroborators }) => {
+    if (delivery) {
+      const finding = groupDelivery(primary, corroborators);
+      sources.set(finding, primary);
+      return finding;
+    }
     if (!corroborators.length) return primary;
     return {
       ...primary,
@@ -132,6 +138,8 @@ function consolidateForReport(findings) {
         agent: c.agent,
         dimension: c.dimension,
         confidence: c.confidence,
+        severity: c.severity,
+        report_tag: c.report_tag ?? c.report_destination,
         title: c.title,
         description: c.description,
       })),
@@ -195,13 +203,16 @@ function coerceReportFinding(finding, severities) {
       value = raw;
     } else if (key === 'confidence') {
       value = reportAsConfidence(raw);
+    } else if (key === 'verdict') {
+      value = plainReportObject(raw) ? { claim: reportOptionalText(safeReportField(raw, 'claim')),
+        consequence: reportOptionalText(safeReportField(raw, 'consequence')) } : undefined;
     } else if (key === 'corroborations') {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
     } else if (key === 'sites') {
       value = Array.isArray(raw) ? raw : [];
     } else if (['disposition_reasons', 'delivery_group', 'admission', 'admission_assessments', 'body_fix_task_eligible'].includes(key)) {
       value = raw;
-    } else if (key === 'consolidation_primary' || key === 'challenge_contested') {
+    } else if (key === 'consolidation_primary') {
       value = raw;
     } else if (key === 'risk_level') {
       value = reportRiskLevel(raw);
@@ -441,7 +452,8 @@ function renderFinding(builder, finding, unverified, permalinks) {
   }
   const classification = [];
   if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
-  if (isPresent(finding.confidence)) classification.push(`**Confidence:** ${inline(finding.confidence)}%`);
+  if (finding.verdict) classification.push(`**Verdict:** ${inline(finding.verdict.claim)}${finding.verdict.claim === 'confirmed' ? ` / ${inline(finding.verdict.consequence)}` : ''}`);
+  else if (isPresent(finding.confidence)) classification.push(`**Discovery confidence:** ${inline(finding.confidence)}%`);
   if (classification.length) bullets.push(`- ${classification.join(' · ')}`);
   if (finding.origin === 'surfaced') {
     bullets.push('- **Origin:** surfaced — pre-existing, surfaced by this change');
@@ -453,9 +465,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   if (finding.demoted_by === 'reachability') {
     bullets.push('- **Reachability:** only under a future change (severity demoted to low)');
   }
-  if (finding.challenge_contested === true) {
-    bullets.push('- **Contested:** the challenger could not confirm the cited location');
-  }
+
   if (bullets.length) blocks.push(() => bullets.forEach((line) => builder.addSpans(line, [where])));
 
   if (isPresent(finding.description)) blocks.push(() => builder.add(foldedProse(finding.description)));
@@ -505,9 +515,8 @@ function renderFinding(builder, finding, unverified, permalinks) {
       for (const corroboration of finding.corroborations) {
         const agent = preparedCodeSpan(corroboration.agent, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
         const dimension = preparedCodeSpan(corroboration.dimension, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
-        const confidence = inline(corroboration.confidence);
         const title = inline(corroboration.title);
-        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, confidence ${confidence}) — ${title}`, [agent, dimension]);
+        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, severity ${inline(normalizeReportSeverity(corroboration.severity))}, tier ${inline(corroboration.report_tag ?? 'main')}): ${title}`, [agent, dimension]);
         if (isPresent(corroboration.description)) {
           builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
@@ -548,7 +557,7 @@ export function plural(count, noun) {
   return count === 1 ? noun : `${noun}s`;
 }
 
-function countsSentence(findings, rawCount, unverified, view) {
+function localCountsSentence(findings, rawCount, unverified, view) {
   const count = findings.length;
   let sentence = count === rawCount
     ? `${count} ${plural(count, 'finding')} after the gauntlet`
@@ -563,10 +572,23 @@ function countsSentence(findings, rawCount, unverified, view) {
   return sentence;
 }
 
+function publicSummaryText(template, values) {
+  return template.replace(/\{(\w+)\}/g, (_, key) => values[key]);
+}
+
+function countsSentence(findings, view) {
+  const count = findings.length;
+  const breakdown = view.order.map((severity) => `${view.buckets.get(severity).length} ${severity}`);
+  let sentence = publicSummaryText(PUBLIC_SUMMARY.counts, { count, issues: plural(count, 'issue'), breakdown: breakdown.length ? ': ' + breakdown.join(', ') : '' });
+  const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
+  if (suggestions === 1) sentence += publicSummaryText(PUBLIC_SUMMARY.improvement, { count: suggestions });
+  else if (suggestions > 1) sentence += publicSummaryText(PUBLIC_SUMMARY.improvements, { count: suggestions });
+  return sentence;
+}
+
 function reportUnitKey(finding, original) {
-  return finding.consolidation_key
-    ? finding.consolidation_key
-    : (original && typeof original === 'object' ? original : finding);
+  return finding.delivery_group?.issue_key ?? finding.consolidation_key
+    ?? (original && typeof original === 'object' ? original : finding);
 }
 
 function plainReportObject(value) {
@@ -579,11 +601,10 @@ function plainReportObject(value) {
   }
 }
 
-function summaryIndex(rawFindings, findingsView, input) {
+function summaryIndex(rawFindings, findingsView, input, projected, sources) {
   const reported = findingsView.order.flatMap((severity) => findingsView.buckets.get(severity));
-  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [] };
+  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [], references: new Map(reported.map((f) => [f, typeof f.id === 'string' && f.id ? f.id : projected.indexOf(sources.get(f) ?? f)])) };
   const originals = Array.isArray(input.findings) ? input.findings : [];
-  const projected = rawFindings;
   const delivered = input.delivered.filter(plainReportObject);
   const deliveredOriginals = new Set(delivered);
   const deliveryOrder = new Map();
@@ -596,6 +617,7 @@ function summaryIndex(rawFindings, findingsView, input) {
   for (let index = 0; index < originals.length; index += 1) {
     const original = originals[index];
     const finding = projected[index] || {};
+    if (!rawFindings.includes(finding)) continue;
     if (finding && typeof finding === 'object') originalByProjected.set(finding, original);
     const key = reportUnitKey(finding, original);
     if (!unitMembers.has(key)) unitMembers.set(key, []);
@@ -605,28 +627,34 @@ function summaryIndex(rawFindings, findingsView, input) {
     }
   }
   pairs.sort((left, right) => deliveryOrder.get(left.original) - deliveryOrder.get(right.original));
-  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding)).map((finding) => (
-    [reportUnitKey(finding, originalByProjected.get(finding)), finding]
+  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding), true, sources).map((finding) => (
+    [reportUnitKey(finding, originalByProjected.get(sources.get(finding) ?? finding)), finding]
   )));
   // Keep report group order but select the delivered subset's primary so the index agrees with posted issues.
   const indexed = reported.map((finding) => deliveredUnits.get(
-    reportUnitKey(finding, originalByProjected.get(finding)),
+    reportUnitKey(finding, originalByProjected.get(sources.get(finding) ?? finding)),
   )).filter(Boolean);
   const omittedUnits = [...unitMembers].filter(([key]) => !deliveredUnits.has(key)).map(([, members]) => members);
   const reasons = [];
-  const isMain = (finding) => (finding.report_tag ?? finding.report_destination) === 'main';
+  const unitTier = (members) => {
+    const delivered = groupDelivery(members[0], members.slice(1));
+    return delivered.report_tag;
+  };
   if (typeof input.deliveryCap === 'number' && omittedUnits.some((members) => (
-    input.deliveryTier !== 'main_only' || members.some(isMain)
+    input.deliveryTier !== 'main_only' || unitTier(members) === 'main'
   ))) {
-    reasons.push(`over the delivery cap of ${input.deliveryCap} ${plural(input.deliveryCap, 'finding')}`);
+    reasons.push(`this review posts at most ${input.deliveryCap} ${plural(input.deliveryCap, 'issue')}`);
   }
   if (input.deliveryTier === 'main_only' && omittedUnits.some((members) => (
-    members.some((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion')
+    unitTier(members) === 'suggestion'
   ))) {
-    reasons.push('improvement suggestions held back by delivery tier main_only');
+    reasons.push('this review includes defects only');
   }
-  if (!reasons.length && omittedUnits.length) reasons.push('not selected for delivery');
-  return { indexed, reasons };
+  if (!reasons.length && omittedUnits.length) reasons.push('not selected for this review');
+  const references = new Map(indexed.map((finding) => [finding,
+    typeof finding.id === 'string' && finding.id ? finding.id : delivered.indexOf(originalByProjected.get(sources.get(finding) ?? finding)),
+  ]));
+  return { indexed, reasons, references };
 }
 
 function partitionByDisposition(inp, findingsRight) {
@@ -640,12 +668,19 @@ function partitionByDisposition(inp, findingsRight) {
 
 function summaryBlock(builder, input, findingsRight = 'body') {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const { rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
-  const findings = consolidateForReport(rawFindings);
+  const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
+  const local = findingsRight === 'report';
+  const sources = new WeakMap();
+  const findings = consolidateForReport(rawFindings, !local, sources);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
-  builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
-  const { indexed, reasons } = summaryIndex(rawFindings, findingsView, inp);
+  const counts = local ? localCountsSentence(findings, rawFindings.length, unverified, findingsView) : countsSentence(findings, findingsView);
+  builder.add(counts);
+  const selection = summaryIndex(rawFindings, findingsView, local ? { ...inp, delivered: undefined } : inp, projected, sources);
+  const indexed = selection.indexed.filter((finding) => local || deliveryAllows(finding, 'inline'));
+  const bodyCount = selection.indexed.length - indexed.length;
+  const reasons = [...selection.reasons];
+  const records = [];
   const permalinks = permalinkContext(inp.prIdentity);
   const bullets = [];
   let indexChars = 0;
@@ -655,35 +690,37 @@ function summaryBlock(builder, input, findingsRight = 'body') {
     const where = quotedSummaryLocation(finding) || '`location unavailable`';
     const url = locationUrl(finding, permalinks);
     const link = url ? `[${where}](${url})` : where;
-    const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? ' (improvement suggestion)' : '';
+    const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? PUBLIC_SUMMARY.suggestion : '';
     const bullet = outboundTildeRuns(
-      `- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`,
+      publicSummaryText(PUBLIC_SUMMARY.index, { mark: severityMark(severity), severity: severity.toUpperCase(), location: link, suggestion, title: prepareSummaryTitle(finding.title) }),
     );
+    records.push({ lead_id: selection.references.get(finding), bullet });
     const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
-    if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
+    if (cutForLength || indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
       cutForLength = true;
-      break;
+      continue;
     }
     bullets.push(bullet);
     indexChars += nextChars;
   }
   if (bullets.length) builder.add();
   for (const bullet of bullets) builder.add(bullet);
-  const remainder = findings.length - bullets.length;
-  if (cutForLength) reasons.push('over the summary length limit');
-  const remainderNoun = findings.length === rawFindings.length
+  const remainder = findings.length - bullets.length - bodyCount;
+  if (cutForLength) reasons.push(local ? 'over the summary length limit' : 'did not fit in this comment');
+  const remainderNoun = !local ? plural(remainder, 'issue') : findings.length === rawFindings.length
     ? plural(remainder, 'finding')
     : `reported ${plural(remainder, 'issue')}`;
   if (remainder) {
     builder.add();
-    builder.add(`${remainder} more ${remainderNoun} not listed here (${reasons.join('; ')}).`);
+    builder.add(publicSummaryText(PUBLIC_SUMMARY.remainder, { count: remainder, issues: remainderNoun, reasons: reasons.join('; ') }));
   }
+  return { counts, index: records, omitted: findings.length - selection.indexed.length, reasons: selection.reasons };
 }
 
-export function renderSummaryBody(input) {
+export function renderPublicSummary(input) {
   const builder = reportBuilder();
-  summaryBlock(builder, input);
-  return builder.finish();
+  const data = summaryBlock(builder, input);
+  return { ...data, body: builder.finish() };
 }
 
 function receiptSafe(value) {
@@ -805,6 +842,7 @@ function methodologyRows(input, rawFindings) {
 
   const gapCount = Number.isInteger(input.gapCount) ? input.gapCount : 0;
   rows.push(['Gaps', String(gapCount)]);
+  for (const gap of input.gaps || []) rows.push(['Gap', inline(gap)]);
   const dispatched = Array.isArray(input.dimensions && input.dimensions.dispatched) ? input.dimensions.dispatched.length : 0;
   const degraded = Array.isArray(input.dimensions && input.dimensions.degraded) ? input.dimensions.degraded.length : 0;
   rows.push(['Dimensions', `dispatched=${dispatched}; degraded=${degraded}`]);
@@ -890,6 +928,7 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
   summaryBlock(builder, inp, 'report');
 
   builder.add();
+  if (inp.unsupportedReviewConfig === true) builder.add('REVIEW.md settings are no longer supported; use CODE_GAUNTLET_DELIVERY for delivery; its prose is read as project rules.');
   builder.add('## Change Context');
   builder.add();
   if (isPresent(inp.summary)) {
@@ -941,10 +980,6 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
   builder.add();
   builder.add(dimensionsTable);
   renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings, knobs);
-  if (inp.hasReviewMd === false) {
-    builder.add();
-    builder.add('A REVIEW.md at the repository root is the preferred way to state review rules: focus, ignore paths, and severity.');
-    builder.add('Format reference: https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/skills/code-gauntlet/references/review-md-spec.md');
-  }
+
   return builder.finish();
 }

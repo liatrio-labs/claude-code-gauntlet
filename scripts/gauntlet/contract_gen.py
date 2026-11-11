@@ -79,7 +79,7 @@ DISCOVERY_SHARED = {
     "reporting": (
         "Report every issue you find, including defects in moved, carried or newly "
         "relied-on code and uncertain claims; validation and "
-        "challenge filter importance and confidence."
+        "challenge establish truth and consequence."
     ),
     "changed-anchor": (
         "Anchor each finding in head code and explain its connection to the change."
@@ -101,9 +101,17 @@ VERIFICATION_SHARED = {
     ),
     "context": DISCOVERY_SHARED["context"],
     "confidence": (
-        "Score certainty that the claim is correct from 0 to 100: 0 means disproved; "
-        "25 probably false; 50 uncertain; 75 probably real with no meaningful "
-        "counter-evidence; 100 clearly present with no mitigating factors."
+        "Return claim: confirmed (the factual claim holds), refuted (code disproves it), or "
+        "not_established (one fact is missing). Only confirmed claims have a consequence: "
+        "present_failure (a present caller or input fails), latent (a named future change or "
+        "unusual precondition is needed), artifact_defect (a verifiable, fixable defect in a "
+        "test, comment, documentation or unreachable code without runtime effect), or "
+        "no_practical_effect (preference, style or equivalent behavior). For latent name the "
+        "precondition; for not_established name the missing fact. Refute with premise_false "
+        "(false assumption), guard_exists (an existing guard prevents it), or no_reachable_caller "
+        "(no caller reaches it), plus executable counter-evidence: an exact quote of at most "
+        "{lines} lines and {chars} characters with a source range of at most {lines} lines. Intent comments "
+        "and low impact do not refute. Include justification for every answer."
     ),
 }
 VERIFICATION_TARGETS = (
@@ -161,6 +169,7 @@ _REGISTRY_FIELDS = (
     "readPlanMaxLines: c.READ_PLAN_MAX_LINES",
     "readPlanMaxChunks: m.READ_PLAN_MAX_CHUNKS",
     "contextReceiptFields: m.CONTEXT_RECEIPT_FIELDS",
+    "discoveryTransportLimits: m.DISCOVERY_TRANSPORT_LIMITS",
     "required: m.FINDING_REQUIRED",
     "waistRequired: m.REQUIRED",
     "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
@@ -175,6 +184,8 @@ _REGISTRY_FIELDS = (
     "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
     "validationReturnProperties: m.VALIDATION_RETURN_PROPERTIES",
     "anchorLimits: m.ANCHOR_LIMITS",
+    "verdictRoutes: [...new Set([...Object.values(m.VERDICT_ROUTES.confirmed), ...Object.values(m.VERDICT_ROUTES.refuted), m.VERDICT_ROUTES.not_established, ...m.VERDICT_ROUTES.overrides].map(row => row.route))]",
+    "reportFoldLimits: m.REPORT_FOLD_LIMITS",
     "locationRights: m.LOCATION_RIGHTS",
     "locationStatuses: m.LOCATION_STATUSES",
     "dispositionRights: m.DISPOSITION_RIGHTS",
@@ -192,9 +203,9 @@ _REGISTRY_FIELDS = (
     " requiredWhenDimension: d.requiredWhenDimension || [],"
     " extraFields: Object.keys(d.schemaExtra || {})}))",
     "brand: {mark: m.BRAND_MARK, name: m.BRAND_NAME}",
+    "publicSummary: m.PUBLIC_SUMMARY",
     "severityEmoji: m.SEVERITY_EMOJI",
     "severityOrder: m.SEVERITY_ORDER",
-    "reachability: v.REACHABILITY_VALUES",
     "deltaKeys: w.DELTA_KEYS",
     "verifySliceFields: w.VERIFY_SLICE_FIELDS",
     "traceFindingFields: t.TRACE_FINDING_FIELDS",
@@ -207,7 +218,6 @@ _REGISTRY_FIELDS = (
     "severityEmojiFallback: m.SEVERITY_EMOJI_FALLBACK",
     "ruleSourceLabels: m.RULE_SOURCE_LABELS",
     "ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK",
-    "codeOwnedHeadings: m.CODE_OWNED_HEADINGS",
     "agents: m.AGENTS",
     "agentManifest: Object.keys(m.resolvedDispatchModels({})).map(t => `./agents/${t.split(':').pop()}.md`).sort()",
     "modelAliases: m.MODEL_ALIASES",
@@ -220,8 +230,6 @@ _REGISTRY_FIELDS = (
     "knobs: a.KNOB_REGISTRY.map(d => ({...d}))",
     "knobKeys: a.KNOB_REGISTRY.map(d => Object.keys(d))",
     "deriveWhen: Object.fromEntries(Object.entries(a.DERIVE_WHEN)"
-    ".map(([name, d]) => [name, d.describe]))",
-    "derivedFrom: Object.fromEntries(Object.entries(a.DERIVED_FROM)"
     ".map(([name, d]) => [name, d.describe]))",
 )
 
@@ -331,9 +339,17 @@ def fill_discovery_shared(text: str) -> str:
     return _fill_shared(text, "discovery", DISCOVERY_SHARED, skip_absent=True)
 
 
-def fill_verification_shared(text: str) -> str:
+def fill_verification_shared(
+    text: str, *, limits: Mapping[str, int] | None = None
+) -> str:
     """Keep verification decisions grounded in one shared evidence contract."""
-    return _fill_shared(text, "verification", VERIFICATION_SHARED, skip_absent=False)
+    if limits is None:
+        limits = load_registry(ENTRY_ROOT)["anchorLimits"]
+    shared = {
+        **VERIFICATION_SHARED,
+        "confidence": VERIFICATION_SHARED["confidence"].format(**limits),
+    }
+    return _fill_shared(text, "verification", shared, skip_absent=False)
 
 
 def field_required_status(
@@ -575,9 +591,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     delta_value_fields = delta_keys[2:]
     enum_types: dict[str, Sequence[object]] = {
         "Severity": identity["severityOrder"],
+        "VerdictRoute": identity["verdictRoutes"],
         "ModelAlias": identity["modelAliases"],
         "PolicyProvider": identity["policyProviders"],
-        "Reachability": identity["reachability"],
         "LocationStatus": identity["locationStatuses"],
         "Disposition": identity["dispositions"],
         "Dimension": [row["dimension"] for row in identity["dimensionRows"]],
@@ -821,9 +837,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     ]
     values = {
         "SEVERITY_ORDER": tuple(identity["severityOrder"]),
+        "VERDICT_ROUTES": tuple(identity["verdictRoutes"]),
         "MODEL_ALIASES": tuple(identity["modelAliases"]),
         "POLICY_PROVIDERS": tuple(identity["policyProviders"]),
-        "REACHABILITY_VALUES": tuple(identity["reachability"]),
         "LOCATION_STATUSES": tuple(identity["locationStatuses"]),
         "DISPOSITIONS": tuple(identity["dispositions"]),
         "DELTA_KEYS": tuple(delta_keys),
@@ -835,19 +851,19 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "DIMENSION_ROWS": identity["dimensionRows"],
         "BRAND_MARK": identity["brand"]["mark"],
         "BRAND_NAME": identity["brand"]["name"],
+        "PUBLIC_SUMMARY": identity["publicSummary"],
         "SEVERITY_EMOJI": identity["severityEmoji"],
         "SEVERITY_EMOJI_FALLBACK": identity["severityEmojiFallback"],
         "RULE_SOURCE_LABELS": identity["ruleSourceLabels"],
         "RULE_SOURCE_LABEL_FALLBACK": identity["ruleSourceLabelFallback"],
-        "CODE_OWNED_HEADINGS": identity["codeOwnedHeadings"],
         "DETAIL_FIELDS_BY_DIMENSION": _detail_fields(identity),
         "KNOB_REGISTRY": tuple(identity["knobs"]),
     }
     annotations = {
         "SEVERITY_ORDER": "tuple[Severity, ...]",
+        "VERDICT_ROUTES": "tuple[VerdictRoute, ...]",
         "MODEL_ALIASES": "tuple[ModelAlias, ...]",
         "POLICY_PROVIDERS": "tuple[PolicyProvider, ...]",
-        "REACHABILITY_VALUES": "tuple[Reachability, ...]",
         "LOCATION_STATUSES": "tuple[LocationStatus, ...]",
         "DISPOSITIONS": "tuple[Disposition, ...]",
         "DELTA_KEYS": "tuple[DeltaKey, ...]",
@@ -865,6 +881,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     for name, value in (
         ("ANCHOR_SCHEMA", field_types["anchor"]),
         ("ANCHOR_LIMITS", identity["anchorLimits"]),
+        ("REPORT_FOLD_LIMITS", identity["reportFoldLimits"]),
     ):
         lines.extend(
             [
@@ -964,6 +981,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             f"READ_PLAN_LINE_PREFIX_BYTES = {identity['readPlanLinePrefixBytes']}",
             f"READ_PLAN_MAX_LINES = {identity['readPlanMaxLines']}",
             f"READ_PLAN_MAX_CHUNKS = {identity['readPlanMaxChunks']}",
+            f"DISCOVERY_CHUNK_CHARS = {identity['discoveryTransportLimits']['chunkChars']}",
+            f"DISCOVERY_RECEIPT_CHARS = {identity['discoveryTransportLimits']['receiptChars']}",
+            f"DISCOVERY_MAX_CHUNKS = {identity['discoveryTransportLimits']['maxChunks']}",
             "CONTEXT_RECEIPT_FIELDS = "
             + _python_literal(tuple(identity["contextReceiptFields"])),
             "JS_TRIM_CHARS = (\n"
@@ -1009,7 +1029,6 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
         "model_tier": {"value": "optimized", "source": "fixed"},
         "pr_comment_cap": {"value": "null", "source": "default"},
         "delivery_tier": {"value": "all", "source": "default"},
-        "review_md": {"value": "absent", "source": "discovery"},
     },
     "pluginRoot": "/absolute/path/to/claude-code-gauntlet",
     "pipelineVersion": "{pipeline_version}",
@@ -1037,7 +1056,6 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
                 "criticality failure_scenario hidden_errors invalid_state_example",
             ),
             "line_end": 12,
-            "challenge_contested": True,
             "corroborations": [
                 _placeholders(
                     "corroboration", "agent dimension confidence title description"
@@ -1272,7 +1290,6 @@ def _derived_waist_instruction(
 def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
     rows = identity["knobs"]
     waist_rows = [row for row in rows if row["waistPath"] is not None]
-    derived_rows = [row for row in rows if row["derivedFrom"] is not None]
     lines: list[str] = []
     if waist_rows:
         lines.extend(
@@ -1310,25 +1327,6 @@ def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
                     line += f"; `{source}` derives as `{target}`"
             line += ". " + _derived_waist_instruction(row, identity["waistRequired"])
             lines.append(line)
-    if derived_rows:
-        if lines:
-            lines.extend(
-                [
-                    "",
-                    "The workflow fills these receipt entries itself; never stamp them.",
-                    "",
-                ]
-            )
-        else:
-            lines.append(
-                "The workflow fills these receipt entries itself; never stamp them."
-            )
-        for row in derived_rows:
-            description = identity["derivedFrom"][row["derivedFrom"]]
-            lines.append(
-                f"- `configEcho.{row['key']}` ({_modes_phrase(row['modes'])}): "
-                f"{description}."
-            )
     return lines
 
 
@@ -1514,7 +1512,9 @@ def rendered_targets(
             )
         )
     for rel_path in VERIFICATION_TARGETS:
-        steps.setdefault(rel_path, []).append(fill_verification_shared)
+        steps.setdefault(rel_path, []).append(
+            partial(fill_verification_shared, limits=registry["anchorLimits"])
+        )
     steps.setdefault(REPORT_FORMAT_REL, []).append(
         partial(rewrite_required_column, registry=registry)
     )

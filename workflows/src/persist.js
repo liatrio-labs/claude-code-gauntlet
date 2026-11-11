@@ -1,3 +1,4 @@
+import { defineAgentCall } from './agentCalls.js';
 import { pathEscapeReason, persistPlanPath, plannedArtifactPaths, requireAbsoluteOutputDir } from './outputPaths.js';
 import { hardenEscapeRuns, persistDerivable, persistPlan, persistPrimaries, writerPayload } from './persistPlan.js';
 import { trustedScriptPath } from './paths.js';
@@ -12,6 +13,10 @@ const WRITTEN_SCHEMA = {
   type: 'object',
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
+
+const callWriter = defineAgentCall('persist:writer', () => WRITER_SCHEMA);
+const callEntriesWriter = defineAgentCall('persist:entries', () => WRITTEN_SCHEMA);
+const callAssemble = defineAgentCall('persist:assemble', () => ASSEMBLE_RECEIPT_SCHEMA);
 
 // The schema accepts empty or partial echoes, so all planned paths need independent coverage.
 // A self-reported echo checks consistency and liveness; it cannot prove a disk write.
@@ -100,11 +105,10 @@ export async function writeArtifacts(ctx, input) {
 async function writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, extraGaps) {
   const model = modelFor('code-gauntlet:artifact-writer', policy);
   try {
-    const result = await c.agent(writeArtifactsPrompt(inp, paths), {
+    const result = await callWriter(c, writeArtifactsPrompt(inp, paths), {
       label: 'artifact-writer',
       agentType: 'code-gauntlet:artifact-writer',
       model,
-      schema: WRITER_SCHEMA,
     });
     if (!result) return partial('writer returned null', extraGaps);
     const echoed = result.artifactPaths;
@@ -205,11 +209,10 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDi
 
   let writerOut;
   try {
-    writerOut = await c.agent(finalArtifactsWriterPrompt(entries), {
+    writerOut = await callEntriesWriter(c, finalArtifactsWriterPrompt(entries), {
       label: 'artifact-writer',
       agentType: 'code-gauntlet:artifact-writer',
       model: modelFor('code-gauntlet:artifact-writer', policy),
-      schema: WRITTEN_SCHEMA,
     });
   } catch (e) {
     return fail(`writer agent threw (${persistErrorMessage(e)})`);
@@ -229,11 +232,10 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDi
 
   let receipt;
   try {
-    receipt = await c.agent(assemblePrompt(assembleScriptPath, planPath, python), {
+    receipt = await callAssemble(c, assemblePrompt(assembleScriptPath, planPath, python), {
       label: 'assemble-artifacts',
       agentType: 'code-gauntlet:executor',
       model: modelFor('code-gauntlet:executor', policy),
-      schema: ASSEMBLE_RECEIPT_SCHEMA,
     });
   } catch (e) {
     return fail(`assemble executor threw (${persistErrorMessage(e)})`);
