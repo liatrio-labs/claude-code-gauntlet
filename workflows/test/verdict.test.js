@@ -214,8 +214,8 @@ test('malformed site returns isolate a finding and unconfirmed ranges are explic
   assert.equal(out.findings.find((f) => f.id === 'bad').verdict_route, 'not-established');
 });
 
-test('not-established challenge answers agree with survival counts', async () => {
-  const f = makeFinding('f', { verdict: truth, verdict_route: 'posted' });
+test('two not-established answers agree with survival counts', async () => {
+  const f = makeFinding('f', { verdict: unresolved, validator_verdict: unresolved, verdict_route: 'not-established' });
   evaluateAdmission(f);
   const out = await challengeStage({ parallel, agent: async () => ({ verdict: unresolved }) }, { findings: [f] });
   assert.equal(out.findings.length, 0);
@@ -236,10 +236,10 @@ for (const [dimension, fields] of [
 });
 
 test('both readers store the same closed verdict and contradictory reachability is rejected', async () => {
-  const response = { ...truth, finding_id: 'f', validator_only: 'untrusted', verdict_route: 'eliminated' };
+  const response = { ...truth, finding_id: 'f' };
   const first = await validateStage({ parallel, agent: async () => ({ validations: [response] }) }, { findings: [makeFinding('f')] });
   assert.deepEqual(first.findings[0].verdict, truth);
-  const final = await challengeStage({ parallel, agent: async () => ({ verdict: response }) }, { findings: first.findings.map(evaluateAdmission) });
+  const final = await challengeStage({ parallel, agent: async () => ({ verdict: truth }) }, { findings: first.findings.map(evaluateAdmission) });
   assert.deepEqual(final.findings[0].verdict, truth);
   const bad = await validateStage({ parallel, agent: async () => ({ validations: [{ ...truth, finding_id: 'f', reachability: 'future_change_only' }] }) }, { findings: [makeFinding('f')] });
   assert.equal(bad.stats.skipped, 1);

@@ -337,12 +337,12 @@
     },
     {
       "id": "cross-file-impact-1",
-      "passes_filter": false,
+      "passes_filter": true,
       "filter_reason": "passed"
     },
     {
       "id": "bug-detector-2",
-      "passes_filter": false,
+      "passes_filter": true,
       "filter_reason": "passed"
     },
     {

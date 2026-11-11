@@ -259,7 +259,6 @@ def test_hand_typed_expected_bytes_for_every_optional_field(
             "review_context": {
                 "finding_id": "security-1",
                 "dimension": "security",
-                "confidence": 99,
                 "evidence": "Observed `bad` input.",
                 "cross_file_refs": ["src/other.py"],
                 "blame_classification": "surfaced",
@@ -635,3 +634,21 @@ def test_unconfirmed_finding_creates_no_fix_task(
     result = run_renderer()
     assert output(result) == []
     assert "Skipped 1 finding with unconfirmed location: bug-1" in result.stderr
+
+
+def test_fix_metadata_uses_the_verdict_without_requiring_discovery_confidence(
+    write_artifact, run_renderer
+):
+    verdict = {
+        "claim": "confirmed",
+        "consequence": "present_failure",
+        "justification": "Caller fails",
+    }
+    finding = make_finding(verdict=verdict)
+    del finding["confidence"]
+    write_artifact([finding])
+    result = run_renderer()
+    assert result.returncode == 0, result.stderr
+    context = json.loads(result.stdout)[0]["metadata"]["review_context"]
+    assert context["verdict"] == verdict
+    assert "confidence" not in context

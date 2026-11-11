@@ -1,3 +1,4 @@
+import { VERDICT_ENTRY_SCHEMA } from './registry.js';
 import { canonicalRange } from './location.js';
 import { deepClone } from './wire.js';
 import { verdictRejections, routeVerdict, buildVerdict } from './verdict.js';
@@ -5,7 +6,7 @@ import { verdictRejections, routeVerdict, buildVerdict } from './verdict.js';
 export function applyValidations(findings, validations) {
   const byId = new Map();
   for (const finding of findings) {
-    for (const field of ['sites', 'verdict', 'validator_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_verdict', 'reachability',
+    for (const field of ['sites', 'verdict', 'validator_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_verdict', 'challenge_refutation_check', 'reachability',
       'policy_subject', 'admission_assessments', 'admission', 'body_fix_task_eligible', 'effective_test_kind',
       'contested', 'contestation_drop', 'contestation_reason', 'validator_confidence']) delete finding[field];
     byId.set(finding.id, finding);
@@ -13,7 +14,7 @@ export function applyValidations(findings, validations) {
   let adjustedCount = 0;
   const unmatchedIds = [];
   for (const validation of validations) {
-    if (verdictRejections(validation).length) continue;
+    if (verdictRejections(validation, VERDICT_ENTRY_SCHEMA).length) continue;
     const finding = byId.get(validation.id);
     if (!finding) { unmatchedIds.push(validation.id); continue; }
     const verdict = buildVerdict(validation);

@@ -46,8 +46,10 @@ for (const variation of ['same request error', 'different request errors', 'ordi
     const stageGaps = out.gaps.filter((gap) => gap.startsWith('challenge'));
     if (variation === 'same request error') {
       const gap = `challenge: all 109 agent requests failed with the same request error: ${error}`;
-      assert.deepEqual(stageGaps, [gap]);
-      assert.deepEqual(snapshot.gaps, [gap]);
+      assert.equal(stageGaps.length, 110);
+      assert.equal(stageGaps.at(-1), gap);
+      assert.ok(stageGaps.some((value) => value.startsWith('challenge-0:')));
+      assert.deepEqual(snapshot.gaps, stageGaps);
       assert.equal(snapshot.coverage, 'partial');
       assert.ok(payload.report.includes(error), payload.report.slice(-2000));
       assert.equal(payload.findings.filter((f) => f.challenge === 'failed').length, 109);

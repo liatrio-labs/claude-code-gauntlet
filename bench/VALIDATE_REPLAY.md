@@ -52,7 +52,7 @@ Outputs include:
 - `summary.json`: counts by PR and replay, plus totals for each replay.
 - `spread.json`: per-finding typed verdicts, routes, pass counts, and adjacent replay flips.
 
-`passes_filter` measures posting-route eligibility after admission and filtering. `spread.json`
+`passes_filter` records survival of the filter. `posts_inline` records projected inline eligibility. `spread.json`
 contains verdicts, routes, filter pass counts and adjacent-pass route changes.
 Completed outcomes remain on disk if a later PR or round fails. Rerun into a new directory;
 this command does not resume or overwrite an earlier replay.
@@ -71,8 +71,8 @@ Validators retain their read-only tools. Replay does not run blind challenge: `n
 means sent to the existing next check, not eliminated or posted. `posted`, `posted-latent`, and `posted-artifact`
 measure eligibility after validation and filtering, not actual delivery. Each outcome also has
 `disposition` and `posts_inline`, projected through the live disposition function assuming the
-blind challenger agrees. `passes_filter` equals `posts_inline`: body placements do not count as
-inline posts. The projection does not predict a future challenger answer, grouping or delivery caps. Report-only and unresolved findings remain in the full results.
+blind challenger agrees. `passes_filter` records filter survival, including findings routed to the body or local report.
+`posts_inline` records projected inline placement, excluding body and local-only findings. The projection does not predict a future challenger answer, grouping or delivery caps. Report-only and unresolved findings remain in the full results.
 
 The analysis writes JSON tables per pass, per PR, in total, and averaged across passes. A known
 bug can occur on several routes, so route counts are not a partition of the 61 bugs. Places are

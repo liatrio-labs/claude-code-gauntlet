@@ -83,14 +83,14 @@ Independent factual checking follows the [shared investigation contract](investi
 using fresh agents defaulting to Sonnet subject to the resolved override.
 
 Validators return `claim` (`confirmed`, `refuted`, `not_established`), `consequence`
-(`present_failure`, `latent`, `artifact_defect`, `no_practical_effect`) only when confirmed, and `justification`. Reachability is derived from the consequence.
+(`present_failure`, `latent`, `artifact_defect`, `no_practical_effect`) only when confirmed, and `justification`. Consequence is the only runtime-effect axis.
 A latent consequence names its future change or unusual precondition in `latent_condition`;
 `not_established` names one missing fact in `missing_fact`. Refutations require a closed
 `refutation_kind` and a source reference (`file`, `line_start`, `line_end`, exact `anchor`).
 The schema and route registry live in `workflows/src/registry.js`.
 
 Both readers inspect confirmed findings, including a validator's non-posting consequence. When
-both confirm, the first consequence in the route registry's seriousness order wins. Raw reader
+both confirm, the first consequence in the route registry's seriousness order wins. A challenger’s uncertainty or unverified refutation preserves a validator’s confirmation. Raw reader
 answers remain separate from the resolved verdict. Latent findings post inline at low severity
 when their locations allow it; consequence never forces body placement.
 
@@ -165,7 +165,7 @@ latent findings; the replay analysis retains its bounded policy only as a diagno
 
 `report_only` findings appear under **Findings held back by admission** with their predicate reasons. `held_back` findings appear under **Unverified / pipeline-degraded findings**; neither status grants posting or fix rights.
 
-Renders `report.md` in code — `renderReport()` in `workflows/src/renderReport.js`, with text primitives in `workflows/src/outboundText.js` and report vocabularies in `workflows/src/registry.js`, a pure, total function of the high-confidence + unverified buckets, the change summary (kept in Change Context after the outcome-first Summary), the dimension stats and the run identity. No dispatch, no segmentation, no fallback: there is nothing to throw and nothing to degrade, so the stage emits no gaps. `evidence` renders for every finding that carries one, in both buckets. The renderer also appends the code-owned Review Methodology section, including the machine-parsed identity receipt, as the report's last section. Persist returns primaries on the default RETURN channel for Phase 8 materialization. Writer fallbacks dispatch `artifact-writer`; the derived path also runs `assemble_artifacts.py`. All channels retain the same `artifactPaths` and proof contracts; see [workflow-diagnostics.md](workflow-diagnostics.md#executor-and-writer-roles).
+Renders `report.md` in code — `renderReport()` in `workflows/src/renderReport.js`, with text primitives in `workflows/src/outboundText.js` and report vocabularies in `workflows/src/registry.js`, a pure, total function of the findings and unverified buckets, the change summary (kept in Change Context after the outcome-first Summary), the dimension stats and the run identity. No dispatch, no segmentation, no fallback: there is nothing to throw and nothing to degrade, so the stage emits no gaps. `evidence` renders for every finding that carries one, in both buckets. The renderer also appends the code-owned Review Methodology section, including the machine-parsed identity receipt, as the report's last section. Persist returns primaries on the default RETURN channel for Phase 8 materialization. Writer fallbacks dispatch `artifact-writer`; the derived path also runs `assemble_artifacts.py`. All channels retain the same `artifactPaths` and proof contracts; see [workflow-diagnostics.md](workflow-diagnostics.md#executor-and-writer-roles).
 
 ---
 

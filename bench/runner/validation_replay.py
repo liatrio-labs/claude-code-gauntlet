@@ -13,9 +13,9 @@ from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, get_args
 
-from bench.runner import invoke
+from bench.runner import invoke, validity
 from bench.runner.contracts import artifact_allowed
 from bench.runner.mirrors import _mirror_dirname
 
@@ -37,7 +37,7 @@ class ReplayManifestWire(TypedDict):
     treatment_tree: str
     treatment_hashes: dict[str, str]
     child_model: str
-    child_effort: str
+    child_effort: validity.ChildEffort
     child_auth: Literal["api", "subscription"]
     replays: int
     prs: list[str]
@@ -115,10 +115,11 @@ def load_sources(run, score_id, pr_urls=()):
         artifacts = {}
         for relative, expected in hashes.items():
             path = confined(root, relative)
-            if path.is_file():
-                if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
-                    raise ValueError(f"source artifact hash mismatch: {relative}")
-                artifacts[relative] = path
+            if not path.is_file():
+                raise ValueError(f"missing source artifact: {relative}")
+            if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                raise ValueError(f"source artifact hash mismatch: {relative}")
+            artifacts[relative] = path
         records = [
             read_json(path)
             for name, path in artifacts.items()
@@ -431,7 +432,7 @@ def main(argv=None):
     parser.add_argument("--child-auth", choices=("subscription", "api"), required=True)
     parser.add_argument("--child-model", default="sonnet")
     parser.add_argument(
-        "--child-effort", choices=("low", "medium", "high", "max"), default="low"
+        "--child-effort", choices=get_args(validity.ChildEffort), default="low"
     )
     parser.add_argument("--timeout-s", type=int, default=1200)
     parser.add_argument(

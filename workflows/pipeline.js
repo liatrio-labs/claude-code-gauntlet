@@ -403,7 +403,7 @@ const ADMISSION_PREDICATES = deepFreeze({
   confirmed_test_defect: { references: ['primary'], description: 'Actual incorrect assertion, ineffective mock, missing wait, isolation failure or other broken/noisy changed test.' },
   test_diff_site_for_inline: { placement: true },
   criticality_at_least_8: { fact: 'criticality' },
-  resolved_production_element: { references: ['production_element'], description: 'The resolved element is production behavior; directory names do not establish this.' },
+  resolved_production_element: { fact: 'production_element', references: ['production_element'], description: 'The resolved element is production behavior; directory names do not establish this.' },
   complete_searches: { fact: 'searches', references: ['searched_paths', 'candidate_tests'], description: 'Completed coverage investigation inspecting inputs, assertions, helpers and indirect integration coverage, including searches with no candidates.' },
   complete_behavioral_absence: { references: ['production_element', 'searched_paths', 'candidate_tests'], description: 'The entire named behavior has no effective coverage; an extra branch/case or indirect surviving coverage rejects absence.' },
   present_defect: { references: ['primary'], description: 'A present production correctness failure.' },
@@ -428,29 +428,35 @@ const VERDICT_ROUTES = deepFreeze({
   confirmed: {
     present_failure: { route: 'posted', status: 'admitted', tier: 'main' },
     latent: { route: 'posted-latent', status: 'admitted', tier: 'suggestion', severity: 'low' },
-    artifact_defect: { route: 'posted-artifact', status: 'admitted', tier: 'suggestion', severity: 'low', admission: 'kind', demotion: 'consequence' },
+    artifact_defect: { route: 'posted-artifact', status: 'admitted', tier: 'suggestion', severity: 'low' },
     no_practical_effect: { route: 'report-only', status: 'report_only', tier: 'suggestion', challenge: true },
   },
   overrides: [
     { when: { dimension: 'security', phase: 'validation', claim: 'refuted' }, route: 'not-established', status: 'held_back', tier: 'main', challenge: true },
-    { when: { dimension: 'security', phase: 'challenge', claim: 'refuted', verified: true, validatorRefuted: true, validatorVerified: true }, route: 'eliminated', status: 'report_only', tier: 'suggestion' },
-    { when: { dimension: 'security', phase: 'challenge', anyRefutation: true }, route: 'report-only', status: 'report_only', tier: 'main' },
+    { when: { dimension: 'security', phase: 'challenge', claim: 'refuted', verified: true, validatorRefuted: true, validatorVerified: true, challengerRefuted: true, challengerVerified: true }, route: 'eliminated', status: 'report_only', tier: 'suggestion' },
+    { when: { dimension: 'security', phase: 'challenge', anyVerifiedRefutation: true }, route: 'report-only', status: 'report_only', tier: 'main' },
   ],
   refuted: { verified: { route: 'eliminated', status: 'report_only', tier: 'suggestion' },
     unverified: { route: 'not-established', status: 'held_back', tier: 'main', challenge: true } },
   not_established: { route: 'not-established', status: 'held_back', tier: 'main', challenge: true },
 });
+const VERDICT_RESOLUTIONS = deepFreeze({
+  confirmed: { confirmed: 'more_serious', refuted_verified: 'challenger', refuted_unverified: 'validator', not_established: 'validator' },
+  refuted_verified: { confirmed: 'validator', refuted_verified: 'challenger', refuted_unverified: 'validator', not_established: 'validator' },
+  refuted_unverified: { confirmed: 'challenger', refuted_verified: 'challenger', refuted_unverified: 'challenger', not_established: 'challenger' },
+  not_established: { confirmed: 'challenger', refuted_verified: 'challenger', refuted_unverified: 'challenger', not_established: 'challenger' },
+});
 const CONSEQUENCE_ORDER = deepFreeze(Object.keys(VERDICT_ROUTES.confirmed));
 const VERDICT_PROPERTIES = deepFreeze({
   claim: { type: 'string', enum: ['confirmed', 'refuted', 'not_established'] },
   consequence: { type: 'string', enum: CONSEQUENCE_ORDER },
-  justification: { type: 'string', minLength: 1 },
+  justification: { type: 'string', minLength: 1, pattern: '\\S' },
   refutation_kind: { type: 'string', enum: ['premise_false', 'guard_exists', 'no_reachable_caller'] },
   refutation: { ...SOURCE_REFERENCE, description: `Executable counter-evidence: at most ${ANCHOR_LIMITS.lines} inclusive source lines.`,
     properties: { ...SOURCE_REFERENCE.properties, anchor: { type: 'string', minLength: 1, maxLength: ANCHOR_LIMITS.chars, pattern: `^(?:[^\\n]*\\n){0,${ANCHOR_LIMITS.lines - 1}}[^\\n]*$` },
       line_end: { type: 'integer', minimum: 1, description: `Inclusive end, no more than ${ANCHOR_LIMITS.lines - 1} after line_start.` } } },
-  missing_fact: { type: 'string', minLength: 1 },
-  latent_condition: { type: 'string', minLength: 1 },
+  missing_fact: { type: 'string', minLength: 1, pattern: '\\S' },
+  latent_condition: { type: 'string', minLength: 1, pattern: '\\S' },
 });
 const VERDICT_CASES = deepFreeze({
   confirmed: ['consequence', 'latent_condition'],
@@ -470,6 +476,13 @@ function verdictSchema(extra = {}, requiredExtra = []) {
   };
 }
 const VERDICT_SCHEMA = deepFreeze(verdictSchema());
+const VALIDATION_VERDICT_SCHEMA = deepFreeze(verdictSchema({
+  finding_id: { type: 'string' }, site_confirmations: RECURRENCE_RETURN_PROPERTIES.site_confirmations,
+}, ['finding_id']));
+const VERDICT_ENTRY_SCHEMA = deepFreeze(verdictSchema({
+  id: { type: 'string' }, finding_id: { type: 'string' }, site_confirmations: RECURRENCE_RETURN_PROPERTIES.site_confirmations,
+  refutation_check: { type: 'object', properties: { verified: { type: 'boolean' }, reason: { type: 'string' } }, required: ['verified'], additionalProperties: false },
+}, ['id']));
 const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES, ...VERDICT_PROPERTIES });
 const ADMISSION_STAMP_PROPERTIES = deepFreeze({
   policy_subject: { type: 'string', enum: Object.keys(POLICY_SUBJECTS) },
@@ -583,11 +596,11 @@ const PIPELINE_FINDING_FIELDS = deepFreeze([
   'location_status', 'claimed_line_start', 'claimed_line_end',
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
-  'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
-  'verdict', 'validator_verdict', 'challenge_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check',
+  'reachability',
+  'verdict', 'validator_verdict', 'challenge_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_refutation_check',
   'severity_downgraded', 'original_severity',
   'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
-  'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
+  'demoted_by', 'demotion_reason',
   'consensus_count', 'consensus_boost', 'corroborated_by', 'corroborations',
   'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note',
   'consolidation_key', 'consolidation_primary', 'routed_by', 'promoted_from', 'promotion_reason',
@@ -1870,7 +1883,7 @@ const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admi
 const TRACE_FINDING_FIELDS = ['trace_id', 'discovery_agent', 'discovery_dimension', 'id', 'file',
   'line_start', 'line_end', 'line', 'end_line', 'claimed_line_start', 'claimed_line_end', 'anchor', 'location_status',
   'title', 'description', 'body', 'evidence', 'severity', 'suggestion', 'suggested_fix_code', 'claude_md_rule', 'spec_text',
-  'verdict', 'validator_verdict', 'challenge_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check',
+  'verdict', 'validator_verdict', 'challenge_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_refutation_check',
   'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons', 'report_tag', 'report_destination',
   'consolidation_key', 'consolidation_primary', 'delivery_group', 'origin_dimension', 'policy_subject', 'path_role'];
 const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
@@ -1970,7 +1983,7 @@ function appendMeasurement(envelope, trace) {
       identities.add(v.trace_id);
       return true;
     });
-    result = available();
+    result = available(true);
   }
   return appendBudgetedMeasurement(envelope, result.measurement, { status: 'unavailable', reason: 'return_budget' });
 }
@@ -2566,36 +2579,53 @@ async function checkRefutations(ctx, input, entries, label) {
   }
   return gaps;
 }
+// --- schema.js ---
+function schemaAccepts(value, schema) {
+  if (schema.type) {
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+    const actual = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+    if (!types.some((type) => type === 'integer' ? Number.isInteger(value) : type === 'number' ? typeof value === 'number' && Number.isFinite(value) : type === actual)) return false;
+  }
+  if (Object.hasOwn(schema, 'const') && value !== schema.const) return false;
+  if (schema.enum && !schema.enum.includes(value)) return false;
+  if (typeof value === 'string' && ((schema.minLength !== undefined && Array.from(value).length < schema.minLength)
+    || (schema.maxLength !== undefined && Array.from(value).length > schema.maxLength)
+    || (schema.pattern && !new RegExp(schema.pattern, 'u').test(value)))) return false;
+  if (typeof value === 'number' && ((schema.minimum !== undefined && value < schema.minimum)
+    || (schema.maximum !== undefined && value > schema.maximum))) return false;
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    if (schema.required?.some((key) => !Object.hasOwn(value, key))) return false;
+    for (const [key, item] of Object.entries(value)) {
+      if (schema.properties && Object.hasOwn(schema.properties, key)) { if (!schemaAccepts(item, schema.properties[key])) return false; }
+      else if (schema.additionalProperties === false) return false;
+    }
+  }
+  if (Array.isArray(value) && schema.items && value.some((item) => !schemaAccepts(item, schema.items))) return false;
+  if (schema.oneOf && schema.oneOf.filter((branch) => schemaAccepts(value, branch)).length !== 1) return false;
+  if (schema.anyOf && !schema.anyOf.some((branch) => schemaAccepts(value, branch))) return false;
+  if (schema.allOf && !schema.allOf.every((branch) => schemaAccepts(value, branch))) return false;
+  if (schema.if) {
+    const branch = schemaAccepts(value, schema.if) ? schema.then : schema.else;
+    if (branch && !schemaAccepts(value, branch)) return false;
+  }
+  return true;
+}
 // --- verdict.js ---
-function verdictRejections(value) {
-  if (!value || typeof value !== 'object' || !Object.hasOwn(VERDICT_CASES, value.claim)) return ['missing_verdict'];
-  const fields = VERDICT_CASES[value.claim];
-  const reasons = [];
-  for (const key of ['claim', 'justification', ...fields]) {
-    const schema = VERDICT_PROPERTIES[key];
-    if (key === 'latent_condition' && value.consequence !== 'latent' && value[key] === undefined) continue;
-    if (schema.type === 'object' && (!value[key] || typeof value[key] !== 'object' || Array.isArray(value[key]))) reasons.push(`invalid_${key}`);
-    if (schema.enum ? !schema.enum.includes(value[key]) : schema.type === 'string'
-      && (typeof value[key] !== 'string' || !value[key].trim())) reasons.push(`invalid_${key}`);
-  }
-  for (const key of Object.values(VERDICT_CASES).flat()) {
-    if (!fields.includes(key) && value[key] !== undefined) reasons.push(`unexpected_${key}`);
-  }
-  if (value.reachability !== undefined) reasons.push('unexpected_reachability');
-  if (value.site_confirmations !== undefined && (!Array.isArray(value.site_confirmations)
-    || value.site_confirmations.some((site) => !site || typeof site !== 'object'
-      || typeof site.file !== 'string' || !Number.isInteger(site.line_start) || !Number.isInteger(site.line_end)
-      || typeof site.confirmed !== 'boolean'))) reasons.push('invalid_site_confirmations');
-  return reasons;
+function verdictRejections(value, schema = VERDICT_SCHEMA) {
+  return schemaAccepts(value, schema) ? [] : ['schema_rejected'];
 }
 function buildVerdict(value) {
   return Object.fromEntries(['claim', 'justification', ...VERDICT_CASES[value.claim]]
     .filter((key) => value[key] !== undefined).map((key) => [key, deepClone(value[key])]));
 }
-function resolveVerdict(validator, challenger) {
-  if (!verdictRejections(validator).length && validator.claim === 'confirmed' && challenger.claim === 'confirmed'
-    && CONSEQUENCE_ORDER.indexOf(validator.consequence) < CONSEQUENCE_ORDER.indexOf(challenger.consequence)) return validator;
-  return challenger;
+function verdictState(verdict, check) {
+  if (verdictRejections(verdict).length) return 'not_established';
+  return verdict.claim === 'refuted' ? `refuted_${check?.verified === true ? 'verified' : 'unverified'}` : verdict.claim;
+}
+function resolveVerdict(validator, challenger, validatorCheck, challengerCheck) {
+  const choice = VERDICT_RESOLUTIONS[verdictState(validator, validatorCheck)][verdictState(challenger, challengerCheck)];
+  if (choice === 'more_serious') return CONSEQUENCE_ORDER.indexOf(validator.consequence) < CONSEQUENCE_ORDER.indexOf(challenger.consequence) ? validator : challenger;
+  return choice === 'validator' ? validator : challenger;
 }
 function verdictRule(finding) {
   const value = finding.verdict;
@@ -2604,7 +2634,9 @@ function verdictRule(finding) {
     verified: finding.refutation_check?.verified === true,
     validatorRefuted: finding.validator_verdict?.claim === 'refuted',
     validatorVerified: finding.validator_refutation_check?.verified === true,
-    anyRefutation: value.claim === 'refuted' || finding.validator_verdict?.claim === 'refuted' };
+    challengerRefuted: finding.challenge_verdict?.claim === 'refuted', challengerVerified: finding.challenge_refutation_check?.verified === true,
+    anyVerifiedRefutation: (finding.challenge_verdict?.claim === 'refuted' && finding.challenge_refutation_check?.verified === true)
+      || (finding.validator_verdict?.claim === 'refuted' && finding.validator_refutation_check?.verified === true) };
   const override = VERDICT_ROUTES.overrides
     .find((row) => Object.entries(row.when).every(([key, expected]) => context[key] === expected));
   if (override) return override;
@@ -2634,7 +2666,7 @@ function routeVerdict(finding) {
 function applyValidations(findings, validations) {
   const byId = new Map();
   for (const finding of findings) {
-    for (const field of ['sites', 'verdict', 'validator_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_verdict', 'reachability',
+    for (const field of ['sites', 'verdict', 'validator_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_verdict', 'challenge_refutation_check', 'reachability',
       'policy_subject', 'admission_assessments', 'admission', 'body_fix_task_eligible', 'effective_test_kind',
       'contested', 'contestation_drop', 'contestation_reason', 'validator_confidence']) delete finding[field];
     byId.set(finding.id, finding);
@@ -2642,7 +2674,7 @@ function applyValidations(findings, validations) {
   let adjustedCount = 0;
   const unmatchedIds = [];
   for (const validation of validations) {
-    if (verdictRejections(validation).length) continue;
+    if (verdictRejections(validation, VERDICT_ENTRY_SCHEMA).length) continue;
     const finding = byId.get(validation.id);
     if (!finding) { unmatchedIds.push(validation.id); continue; }
     const verdict = buildVerdict(validation);
@@ -3014,7 +3046,7 @@ function applyInjectedProseStrip(finding, rules = INJECTION_RULES) {
   const [stripped, firstPatternStrip] = stripInjectedProseFields(finding, rules);
   return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
 }
-function injectionScanCore(findings, rules) {
+function applyInjectionFilter(findings, rules = INJECTION_RULES) {
   const kept = [];
   const eliminated = [];
   const seenSignatures = new Map();
@@ -3053,12 +3085,6 @@ function injectionScanCore(findings, rules) {
     }
   }
   return { kept, eliminated };
-}
-function applyInjectionFilter(findings, rules = INJECTION_RULES) {
-  return injectionScanCore(findings, rules);
-}
-function applyReplayInjectionScan(findings, rules = INJECTION_RULES) {
-  return injectionScanCore(findings, rules);
 }
 // --- filterFindings.js ---
 function normalizeFieldNames(findings, renames = FIELD_RENAMES) {
@@ -3233,7 +3259,7 @@ function hasPresentDefect(finding, entries) {
     .some((entry) => entry.predicate === promotion.predicate && entry.status === 'confirmed');
 }
 const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
-  'verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'validator_verdict', 'challenge_verdict', 'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
+  'verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_refutation_check', 'validator_verdict', 'challenge_verdict', 'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
   'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
   ...DIMENSIONS.flatMap((row) => row.admission ? [row.admission.field,
     ...Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || [])])] : [])])];
@@ -3279,6 +3305,7 @@ function factAssessment(finding, predicate) {
         || finding.reference_diagnostics?.length;
       return incomplete ? 'held_back' : null;
     },
+    production_element: () => referenceResult(finding, 'production_element'),
     duplicate_of: () => referenceResult(finding, 'duplicate_of'),
     precedent: () => referenceResult(finding, 'precedent'),
     precedent_not_added: () => {
@@ -3321,7 +3348,7 @@ function evaluateAdmission(finding) {
     const verified = ['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin);
     const { row, kind } = findingPolicy(finding);
     const kindReasons = [];
-    if (rule.admission === 'kind') {
+    if (rule.status === 'admitted') {
       if (!row || (row.admission && !kind)) kindReasons.push({ predicate: 'kind', status: 'held_back' });
       if (kind?.defaultDisposition === 'report_only') kindReasons.push({ predicate: 'value', status: 'report_only' });
       for (const predicate of kind?.predicates || []) {
@@ -3330,13 +3357,13 @@ function evaluateAdmission(finding) {
         if (result) kindReasons.push({ predicate, status: result });
       }
     }
-    let status = !verified ? 'held_back' : finding.verdict_route === 'report-only' ? 'report_only' : rule.status;
+    let status = !verified ? 'held_back' : rule.status;
     if (status === 'admitted' && kindReasons.length) status = kindReasons.some((r) => r.status === 'held_back') ? 'held_back' : 'report_only';
     finding.admission = { version: 1, input_fields: [], status,
       reasons: kindReasons.length ? kindReasons : status === 'admitted' ? [] : [{ predicate: verified ? 'verdict' : 'verification', status }],
-      kind: rule.admission === 'kind' ? finding[row?.admission?.field] ?? 'ordinary' : 'ordinary',
+      kind: finding[row?.admission?.field] ?? 'ordinary',
       core: findingPolicy(finding).core, tier: rule.tier,
-      inline_eligible: rule.admission !== 'kind' || !kind?.predicates.includes('test_diff_site_for_inline') || prOwnedTest(finding) };
+      inline_eligible: !kind?.predicates.includes('test_diff_site_for_inline') || prOwnedTest(finding) };
     finding.admission.input_proof = admissionProof(finding, []);
     finding.body_fix_task_eligible = status === 'admitted' && finding.verdict_route === 'posted' && canonicalRange(finding) !== null;
     return finding;
@@ -3383,7 +3410,7 @@ function evaluateAdmission(finding) {
 }
 // --- applyChallenges.js ---
 function applyChallenges(findings, challenges) {
-  const byId = new Map(challenges.filter((entry) => verdictRejections(entry).length === 0).map((entry) => [entry.id, entry]));
+  const byId = new Map(challenges.filter((entry) => verdictRejections(entry, VERDICT_ENTRY_SCHEMA).length === 0).map((entry) => [entry.id, entry]));
   const active = [], eliminated = [];
   const stats = { total_input: findings.length, challenge_removed: 0, challenge_survived: 0, unchallenged: 0 };
   for (const original of findings) {
@@ -3393,15 +3420,18 @@ function applyChallenges(findings, challenges) {
     const { refutation_check } = entry;
     const verdict = buildVerdict(entry);
     finding.challenge_verdict = verdict;
-    finding.verdict = resolveVerdict(finding.validator_verdict ?? finding.verdict, verdict);
+    const validator = finding.validator_verdict ?? finding.verdict;
+    finding.verdict = resolveVerdict(validator, verdict, finding.validator_refutation_check, refutation_check);
+    delete finding.challenge_refutation_check;
+    if (refutation_check) finding.challenge_refutation_check = deepClone(refutation_check);
+    const effectiveCheck = finding.verdict === verdict ? refutation_check : finding.validator_refutation_check;
     delete finding.refutation_check;
-    if (refutation_check) finding.refutation_check = refutation_check;
-    finding.validation = 'validated';
+    if (effectiveCheck) finding.refutation_check = deepClone(effectiveCheck);
     finding.challenge_justification = verdict.justification;
     routeVerdict(finding);
     finding.challenge = finding.verdict_route === 'not-established' ? 'failed' : 'survived';
     if (finding.verdict_route === 'eliminated') {
-      eliminated.push({ ...finding, eliminated_by: 'verified_refutation', elimination_reason: verdict.justification });
+      eliminated.push({ ...finding, eliminated_by: 'verified_refutation', elimination_reason: finding.verdict.justification });
       stats.challenge_removed += 1;
     } else {
       active.push(evaluateAdmission(finding));
@@ -3427,7 +3457,7 @@ function incompleteVetting(finding) {
   return missing;
 }
 // --- dispose.js ---
-const DELIVERABLE_CHALLENGES = ['survived', 'contested', 'downgraded'];
+const DELIVERABLE_CHALLENGES = ['survived'];
 function findingDisposition(finding, heldBack = false) {
   const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
   if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
@@ -4522,7 +4552,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   }
   const classification = [];
   if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
-  if (finding.verdict) classification.push(`**Verdict:** ${inline(finding.verdict.claim)} / ${inline(finding.verdict.consequence)}`);
+  if (finding.verdict) classification.push(`**Verdict:** ${inline(finding.verdict.claim)}${finding.verdict.claim === 'confirmed' ? ` / ${inline(finding.verdict.consequence)}` : ''}`);
   else if (isPresent(finding.confidence)) classification.push(`**Discovery confidence:** ${inline(finding.confidence)}%`);
   if (classification.length) bullets.push(`- ${classification.join(' · ')}`);
   if (finding.origin === 'surfaced') {
@@ -5011,7 +5041,7 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
 }
 // --- reviewStages.js ---
 const VALIDATE_SCHEMA = { type: 'object', properties: { validations: { type: 'array',
-  items: verdictSchema({ finding_id: { type: 'string' }, site_confirmations: VALIDATION_RETURN_PROPERTIES.site_confirmations }, ['finding_id']),
+  items: VALIDATION_VERDICT_SCHEMA,
 } }, required: ['validations'], additionalProperties: false };
 const callValidator = defineAgentCall('validate', () => VALIDATE_SCHEMA);
 function validatorAudit(audit, label, result, rejections) {
@@ -5047,15 +5077,15 @@ async function validateStage(ctx, input) {
       ? null
       : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
     if (list) completed += 1;
-    const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ ...e, id: e.id ?? e.finding_id }));
+    const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ raw: e, id: e.finding_id }));
     const rejections = [];
     for (const finding of batch) {
       const matches = entries.filter((entry) => entry.id === finding.id);
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
-        const reasons = matches.length === 1 ? verdictRejections(entry) : ['duplicate_entry'];
+        const reasons = matches.length === 1 ? verdictRejections(entry.raw, VALIDATION_VERDICT_SCHEMA) : ['duplicate_entry'];
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
-        else accepted.set(finding.id, entry);
+        else accepted.set(finding.id, { ...entry.raw, id: entry.id });
       }
     }
     validatorAudit(audit, label, res, rejections);
@@ -5065,7 +5095,7 @@ async function validateStage(ctx, input) {
   const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
   dispatched += batches.length;
   const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
-  const pending = findings.filter((finding) => verdictRejections(accepted.get(finding.id)).length);
+  const pending = findings.filter((finding) => !accepted.has(finding.id));
   if (pending.length) {
     const retries = [];
     const retrySize = effectiveValidationRetrySize(limits, findings.length);
@@ -6940,7 +6970,7 @@ function beltPartitionList(list) {
   if (!Array.isArray(list) || list.length === 0) return { list, eliminated: [] };
   const objectElements = list.map((el, idx) => ({ ...el, [REPLAY_BELT_INDEX_KEY]: idx }));
   normalizeFieldNames(objectElements);
-  const { kept, eliminated } = applyReplayInjectionScan(objectElements);
+  const { kept, eliminated } = applyInjectionFilter(objectElements);
   const survivorByIdx = new Map();
   for (const f of kept) {
     const { [REPLAY_BELT_INDEX_KEY]: idx, ...clean } = f;
@@ -7385,9 +7415,9 @@ async function runWith(ctx, rawArgs) {
     const out = replayed ? checkpoints[name] : await thunk();
     const requestError = !replayed && repeatedRequestGap(c.agentRequests, name);
     if (requestError) {
-      out.gaps = [requestError];
+      out.gaps = [...(out.gaps || []), requestError];
       const snapshot = measurementTrace?.snapshots.find((item) => item.stage === name);
-      if (snapshot) { snapshot.gaps = [requestError]; snapshot.coverage = 'partial'; }
+      if (snapshot) { snapshot.gaps = [...out.gaps]; snapshot.coverage = 'partial'; }
     }
     const rejected = [];
     if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A, rejected);

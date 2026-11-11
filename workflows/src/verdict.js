@@ -1,26 +1,9 @@
-import { VERDICT_ROUTES, VERDICT_PROPERTIES, VERDICT_CASES, CONSEQUENCE_ORDER } from './registry.js';
+import { VERDICT_ROUTES, VERDICT_CASES, CONSEQUENCE_ORDER, VERDICT_SCHEMA, VERDICT_RESOLUTIONS } from './registry.js';
+import { schemaAccepts } from './schema.js';
 import { deepClone } from './wire.js';
 
-export function verdictRejections(value) {
-  if (!value || typeof value !== 'object' || !Object.hasOwn(VERDICT_CASES, value.claim)) return ['missing_verdict'];
-  const fields = VERDICT_CASES[value.claim];
-  const reasons = [];
-  for (const key of ['claim', 'justification', ...fields]) {
-    const schema = VERDICT_PROPERTIES[key];
-    if (key === 'latent_condition' && value.consequence !== 'latent' && value[key] === undefined) continue;
-    if (schema.type === 'object' && (!value[key] || typeof value[key] !== 'object' || Array.isArray(value[key]))) reasons.push(`invalid_${key}`);
-    if (schema.enum ? !schema.enum.includes(value[key]) : schema.type === 'string'
-      && (typeof value[key] !== 'string' || !value[key].trim())) reasons.push(`invalid_${key}`);
-  }
-  for (const key of Object.values(VERDICT_CASES).flat()) {
-    if (!fields.includes(key) && value[key] !== undefined) reasons.push(`unexpected_${key}`);
-  }
-  if (value.reachability !== undefined) reasons.push('unexpected_reachability');
-  if (value.site_confirmations !== undefined && (!Array.isArray(value.site_confirmations)
-    || value.site_confirmations.some((site) => !site || typeof site !== 'object'
-      || typeof site.file !== 'string' || !Number.isInteger(site.line_start) || !Number.isInteger(site.line_end)
-      || typeof site.confirmed !== 'boolean'))) reasons.push('invalid_site_confirmations');
-  return reasons;
+export function verdictRejections(value, schema = VERDICT_SCHEMA) {
+  return schemaAccepts(value, schema) ? [] : ['schema_rejected'];
 }
 
 export function buildVerdict(value) {
@@ -28,11 +11,15 @@ export function buildVerdict(value) {
     .filter((key) => value[key] !== undefined).map((key) => [key, deepClone(value[key])]));
 }
 
-// A confirming reader cannot discard the other reader's established consequence.
-export function resolveVerdict(validator, challenger) {
-  if (!verdictRejections(validator).length && validator.claim === 'confirmed' && challenger.claim === 'confirmed'
-    && CONSEQUENCE_ORDER.indexOf(validator.consequence) < CONSEQUENCE_ORDER.indexOf(challenger.consequence)) return validator;
-  return challenger;
+export function verdictState(verdict, check) {
+  if (verdictRejections(verdict).length) return 'not_established';
+  return verdict.claim === 'refuted' ? `refuted_${check?.verified === true ? 'verified' : 'unverified'}` : verdict.claim;
+}
+
+export function resolveVerdict(validator, challenger, validatorCheck, challengerCheck) {
+  const choice = VERDICT_RESOLUTIONS[verdictState(validator, validatorCheck)][verdictState(challenger, challengerCheck)];
+  if (choice === 'more_serious') return CONSEQUENCE_ORDER.indexOf(validator.consequence) < CONSEQUENCE_ORDER.indexOf(challenger.consequence) ? validator : challenger;
+  return choice === 'validator' ? validator : challenger;
 }
 
 export function verdictRule(finding) {
@@ -42,7 +29,9 @@ export function verdictRule(finding) {
     verified: finding.refutation_check?.verified === true,
     validatorRefuted: finding.validator_verdict?.claim === 'refuted',
     validatorVerified: finding.validator_refutation_check?.verified === true,
-    anyRefutation: value.claim === 'refuted' || finding.validator_verdict?.claim === 'refuted' };
+    challengerRefuted: finding.challenge_verdict?.claim === 'refuted', challengerVerified: finding.challenge_refutation_check?.verified === true,
+    anyVerifiedRefutation: (finding.challenge_verdict?.claim === 'refuted' && finding.challenge_refutation_check?.verified === true)
+      || (finding.validator_verdict?.claim === 'refuted' && finding.validator_refutation_check?.verified === true) };
   const override = VERDICT_ROUTES.overrides
     .find((row) => Object.entries(row.when).every(([key, expected]) => context[key] === expected));
   if (override) return override;

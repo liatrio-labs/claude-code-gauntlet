@@ -362,8 +362,8 @@ export function applyInjectedProseStrip(finding, rules = INJECTION_RULES) {
   return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
 }
 
-// Rule order fixes diagnostic reason order; replay scans stage outputs without reapplying discovery's short-body heuristic.
-function injectionScanCore(findings, rules) {
+// Rule order fixes diagnostic reason order.
+export function applyInjectionFilter(findings, rules = INJECTION_RULES) {
   const kept = [];
   const eliminated = [];
   const seenSignatures = new Map();
@@ -409,12 +409,4 @@ function injectionScanCore(findings, rules) {
   }
 
   return { kept, eliminated };
-}
-
-export function applyInjectionFilter(findings, rules = INJECTION_RULES) {
-  return injectionScanCore(findings, rules);
-}
-
-export function applyReplayInjectionScan(findings, rules = INJECTION_RULES) {
-  return injectionScanCore(findings, rules);
 }

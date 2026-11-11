@@ -6,7 +6,7 @@
         "core": false,
         "inline_eligible": true,
         "input_fields": [],
-        "input_proof": "fnv1a32:0x110d4a82",
+        "input_proof": "fnv1a32:0x352a6a0c",
         "kind": "ordinary",
         "reasons": [
           {
@@ -33,7 +33,6 @@
       "report_destination": "suggestion",
       "report_tag": "suggestion",
       "severity": "high",
-      "validation": "validated",
       "verdict": {
         "claim": "confirmed",
         "consequence": "no_practical_effect",

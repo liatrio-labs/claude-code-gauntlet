@@ -344,7 +344,7 @@ test('whole issue groups reach every artifact', async (t) => {
       response.receipt.deltas_checksum = deltaContentProof(response.result.deltas.map((d) => d.id), response.result.deltas);
     }
     if (dispatch.label.startsWith('validate-batch-')) for (const validation of response.validations) {
-      validation.site_confirmations = [site(1), site(2)].map((s, i) => ({ ...s, confirmed: i === 0 }));
+      validation.site_confirmations = [site(1), site(2)].map(({ file, line_start, line_end }, i) => ({ file, line_start, line_end, confirmed: i === 0 }));
     }
     return response;
   };
@@ -367,9 +367,9 @@ test('final disposition survives replay and persistence', async () => {
   const byId = new Map(fresh.payload.findings.map((f) => [f.id, f]));
   assert.deepEqual(byId.get('BOTH').disposition_reasons, ['validation_skipped', 'verify_unproven', 'held_back']);
   assert.deepEqual(byId.get('VERIFY').disposition_reasons, ['verify_unproven', 'held_back']);
-  assert.deepEqual(byId.get('VALIDATE').disposition_reasons, []);
+  assert.deepEqual(byId.get('VALIDATE').disposition_reasons, ['validation_skipped']);
   assert.equal(byId.get('CLEAN').disposition, 'deliver');
-  assert.deepEqual(fresh.payload.postReview.map((f) => f.id), ['CLEAN', 'VALIDATE']);
+  assert.deepEqual(fresh.payload.postReview.map((f) => f.id), ['CLEAN']);
   assert.ok(fresh.payload.checkpoints.phases.challenge.findings.every((f) => !Object.hasOwn(f, 'disposition') && !Object.hasOwn(f, 'disposition_reasons')));
   const limited = await runAndCapture(validArgs({ measurementTrace: true, limits: { challengeCap: 1 } }), {
     nullAgentLabels: ['challenge-0'],

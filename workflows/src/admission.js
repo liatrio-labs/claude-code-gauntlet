@@ -44,7 +44,7 @@ export function hasPresentDefect(finding, entries) {
 }
 
 const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
-  'verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'validator_verdict', 'challenge_verdict', 'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
+  'verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_refutation_check', 'validator_verdict', 'challenge_verdict', 'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
   'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
   ...DIMENSIONS.flatMap((row) => row.admission ? [row.admission.field,
     ...Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || [])])] : [])])];
@@ -98,6 +98,7 @@ function factAssessment(finding, predicate) {
         || finding.reference_diagnostics?.length;
       return incomplete ? 'held_back' : null;
     },
+    production_element: () => referenceResult(finding, 'production_element'),
     duplicate_of: () => referenceResult(finding, 'duplicate_of'),
     precedent: () => referenceResult(finding, 'precedent'),
     precedent_not_added: () => {
@@ -143,7 +144,7 @@ export function evaluateAdmission(finding) {
     const verified = ['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin);
     const { row, kind } = findingPolicy(finding);
     const kindReasons = [];
-    if (rule.admission === 'kind') {
+    if (rule.status === 'admitted') {
       if (!row || (row.admission && !kind)) kindReasons.push({ predicate: 'kind', status: 'held_back' });
       if (kind?.defaultDisposition === 'report_only') kindReasons.push({ predicate: 'value', status: 'report_only' });
       for (const predicate of kind?.predicates || []) {
@@ -152,13 +153,13 @@ export function evaluateAdmission(finding) {
         if (result) kindReasons.push({ predicate, status: result });
       }
     }
-    let status = !verified ? 'held_back' : finding.verdict_route === 'report-only' ? 'report_only' : rule.status;
+    let status = !verified ? 'held_back' : rule.status;
     if (status === 'admitted' && kindReasons.length) status = kindReasons.some((r) => r.status === 'held_back') ? 'held_back' : 'report_only';
     finding.admission = { version: 1, input_fields: [], status,
       reasons: kindReasons.length ? kindReasons : status === 'admitted' ? [] : [{ predicate: verified ? 'verdict' : 'verification', status }],
-      kind: rule.admission === 'kind' ? finding[row?.admission?.field] ?? 'ordinary' : 'ordinary',
+      kind: finding[row?.admission?.field] ?? 'ordinary',
       core: findingPolicy(finding).core, tier: rule.tier,
-      inline_eligible: rule.admission !== 'kind' || !kind?.predicates.includes('test_diff_site_for_inline') || prOwnedTest(finding) };
+      inline_eligible: !kind?.predicates.includes('test_diff_site_for_inline') || prOwnedTest(finding) };
     finding.admission.input_proof = admissionProof(finding, []);
     finding.body_fix_task_eligible = status === 'admitted' && finding.verdict_route === 'posted' && canonicalRange(finding) !== null;
     return finding;

@@ -6,7 +6,7 @@ import { eliminationDecisions, traceDecision, admissionDetail } from './measurem
 import { hasAdmission } from './admission.js';
 import { chooseGroupLead, groupDelivery } from './groupRanking.js';
 
-const DELIVERABLE_CHALLENGES = ['survived', 'contested', 'downgraded'];
+const DELIVERABLE_CHALLENGES = ['survived'];
 
 export function findingDisposition(finding, heldBack = false) {
   const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');

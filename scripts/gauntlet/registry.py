@@ -5,9 +5,16 @@ from types import MappingProxyType
 from typing import Any, Literal, TypedDict
 
 Severity = Literal["critical", "high", "medium", "low"]
+VerdictRoute = Literal[
+    "posted",
+    "posted-latent",
+    "posted-artifact",
+    "report-only",
+    "eliminated",
+    "not-established",
+]
 ModelAlias = Literal["sonnet", "opus", "haiku"]
 PolicyProvider = Literal["firstParty", "bedrock", "vertex", "foundry"]
-Reachability = Literal["current", "future_change_only", "uncertain"]
 LocationStatus = Literal["confirmed", "relocated", "unconfirmed"]
 Disposition = Literal["deliver", "body", "held_back", "report_only", "eliminate"]
 Dimension = Literal[
@@ -189,6 +196,15 @@ class DimensionRow(_RequiredDimensionRow, total=False):
 
 SEVERITY_ORDER: tuple[Severity, ...] = ("critical", "high", "medium", "low")
 
+VERDICT_ROUTES: tuple[VerdictRoute, ...] = (
+    "posted",
+    "posted-latent",
+    "posted-artifact",
+    "report-only",
+    "eliminated",
+    "not-established",
+)
+
 MODEL_ALIASES: tuple[ModelAlias, ...] = ("sonnet", "opus", "haiku")
 
 POLICY_PROVIDERS: tuple[PolicyProvider, ...] = (
@@ -196,12 +212,6 @@ POLICY_PROVIDERS: tuple[PolicyProvider, ...] = (
     "bedrock",
     "vertex",
     "foundry",
-)
-
-REACHABILITY_VALUES: tuple[Reachability, ...] = (
-    "current",
-    "future_change_only",
-    "uncertain",
 )
 
 LOCATION_STATUSES: tuple[LocationStatus, ...] = (
@@ -304,6 +314,7 @@ TRACE_FINDING_FIELDS: tuple[str, ...] = (
     "verdict_route",
     "refutation_check",
     "validator_refutation_check",
+    "challenge_refutation_check",
     "rule_source",
     "agent",
     "dimension",

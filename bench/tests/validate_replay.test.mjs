@@ -50,7 +50,7 @@ test('recorded validator returns reproduce every stored filter outcome and reaso
   for (const finding of result.findings) {
     assert.equal(finding.verdict.claim, returned.get(finding.id).claim);
     assert.equal(finding.reachability, undefined);
-    assert.equal(finding.passes_filter, finding.posts_inline);
+    assert.equal(finding.passes_filter, finding.filter_reason === 'passed');
     assert.equal(finding.validation_justification, returned.get(finding.id).justification);
   }
 });
@@ -89,7 +89,7 @@ test('a treatment checkout supplies prompts, model policy, schema, apply and fil
   payload.input = plan.input;
   const result = await apply(treatment, payload, fixture.dispatches);
   assert.ok(result.findings.every((f) => f.validation_justification === 'treatment applied'));
-  assert.ok(result.findings.every((f) => !f.passes_filter || f.route === 'posted-latent'));
+  assert.ok(result.findings.every((f) => !f.posts_inline || f.route === 'posted-latent'));
 });
 
 test('replay artifact admission agrees with live eligibility and injection has the eliminated route', async () => {
@@ -129,8 +129,8 @@ test('replay inline projection follows product disposition including off-diff an
   const result = await apply(tree, payload, dispatches);
   assert.deepEqual(result.findings.map(({ id, route, disposition, posts_inline, passes_filter }) => ({ id, route, disposition, posts_inline, passes_filter })), [
     { id: 'inline', route: 'posted-latent', disposition: 'deliver', posts_inline: true, passes_filter: true },
-    { id: 'off', route: 'posted-latent', disposition: 'body', posts_inline: false, passes_filter: false },
-    { id: 'unknown', route: 'posted-latent', disposition: 'body', posts_inline: false, passes_filter: false },
+    { id: 'off', route: 'posted-latent', disposition: 'body', posts_inline: false, passes_filter: true },
+    { id: 'unknown', route: 'posted-latent', disposition: 'body', posts_inline: false, passes_filter: true },
   ]);
   const treatment = mkdtempSync(join(tmpdir(), 'placement-treatment-'));
   cpSync(join(tree, 'workflows'), join(treatment, 'workflows'), { recursive: true });
@@ -138,5 +138,5 @@ test('replay inline projection follows product disposition including off-diff an
   writeFileSync(path, readFileSync(path, 'utf8').replace('export function findingDisposition(finding, heldBack = false) {',
     "export function findingDisposition(finding, heldBack = false) { return { disposition: 'body', reasons: [] };"));
   const changed = await apply(treatment, payload, dispatches);
-  assert.ok(changed.findings.every((f) => f.disposition === 'body' && !f.posts_inline && !f.passes_filter));
+  assert.ok(changed.findings.every((f) => f.disposition === 'body' && !f.posts_inline && f.passes_filter));
 });

@@ -19,7 +19,7 @@ const reply = { groups: [{ finding_ids: members().map((f) => f.id) }] };
 test('meaning groups distant sites and one-agent repeats after the challenge', async () => {
   const findings = [...members(), makeFinding('F107B', { file: 'src/slots.ts', line_start: 107, line_end: 107, agent: 'security-reviewer', confidence: 80 })];
   const modelReply = { groups: [{ finding_ids: findings.map((f) => f.id) }] };
-  findings[3].challenge = 'contested';
+  findings[3] = applyChallenges([findings[3]], [{ id: findings[3].id, claim: 'confirmed', consequence: 'latent', latent_condition: 'A new caller', justification: 'No current caller' }]).findings[0];
   const grouping = await groupFindings({ agent: async (prompt, dispatch) => {
     assert.match(prompt, /^Findings:\n- F107 \| src\/slots.ts:107/);
     assert.equal(dispatch.agentType, 'code-gauntlet:grouper');

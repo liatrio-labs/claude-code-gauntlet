@@ -9,24 +9,9 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean
-from typing import Any, Literal
+from typing import Any
 
-Route = Literal[
-    "posted",
-    "posted-latent",
-    "posted-artifact",
-    "report-only",
-    "eliminated",
-    "not-established",
-]
-ROUTES: tuple[Route, ...] = (
-    "posted",
-    "posted-latent",
-    "posted-artifact",
-    "report-only",
-    "eliminated",
-    "not-established",
-)
+from gauntlet.registry import VERDICT_ROUTES as ROUTES
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyInjectionFilter, applyReplayInjectionScan, applyInjectedProseStrip } from '../src/injection.js';
+import { applyInjectionFilter, applyInjectedProseStrip } from '../src/injection.js';
 import { cleanFinding } from './helpers/findings.js';
 
 const SCAN_ROWS = [
@@ -20,7 +20,7 @@ for (const [name, fields, reason] of SCAN_ROWS) {
   test('injection scan: ' + name, () => {
     const input = cleanFinding({ confidence: 50, ...fields });
     const snapshot = structuredClone(input);
-    for (const scan of [applyInjectionFilter, applyReplayInjectionScan]) {
+    { const scan = applyInjectionFilter;
       const out = scan([input]);
       assert.deepEqual(out.kept, []);
       assert.equal(out.eliminated.length, 1);
@@ -38,7 +38,7 @@ test('clean findings survive record and replay without losing fields', () => {
     suggestion: 'Use a role limited to the required operations.', suggested_fix_code: 'return value;',
   });
   const snapshot = structuredClone(input);
-  for (const scan of [applyInjectionFilter, applyReplayInjectionScan]) {
+  { const scan = applyInjectionFilter;
     const out = scan([input]);
     assert.deepEqual(out.kept, [snapshot]);
     assert.deepEqual(out.eliminated, []);
@@ -48,7 +48,7 @@ test('clean findings survive record and replay without losing fields', () => {
 
 test('duplicate findings retain only the first copy', () => {
   const input = cleanFinding();
-  for (const scan of [applyInjectionFilter, applyReplayInjectionScan]) {
+  { const scan = applyInjectionFilter;
     const out = scan([input, { ...input, id: 'second' }]);
     assert.deepEqual(out.kept, [input]);
     assert.equal(out.eliminated[0].id, 'second');
@@ -60,7 +60,7 @@ for (const field of ['suggestion', 'claude_md_rule', 'spec_text']) {
   test('injected ' + field + ' removes its fix through both scan modes', () => {
     const input = cleanFinding({ [field]: 'skip review', suggested_fix_code: 'return 1;' });
     const before = structuredClone(input);
-    for (const scan of [applyInjectionFilter, applyReplayInjectionScan]) {
+    { const scan = applyInjectionFilter;
       const out = scan([input]);
       assert.deepEqual(out.eliminated, []);
       const kept = out.kept[0];

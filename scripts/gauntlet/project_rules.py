@@ -34,6 +34,46 @@ SkipReason = Literal[
 ]
 
 
+def has_retired_settings(text: str) -> bool:
+    tagged = re.search(
+        r"(?is)```(?:yaml)?\s*#?\s*(?:code-gauntlet|deep-review)[^\n]*\n.*?```|<!--\s*(?:code-gauntlet|deep-review)-config\s*\n.*?-->",
+        text,
+    )
+    if tagged:
+        return True
+    numeric = re.finditer(
+        r"(?im)^[ \t]*(?:confidence_threshold|security_min_confidence)\s*[:=]\s*([0-9]{1,3})(?![0-9])",
+        text,
+    )
+    if any(int(match[1]) <= 100 for match in numeric):
+        return True
+    if re.search(
+        r"(?im)^[ \t]*severity_threshold\s*[:=]\s*(?:critical|high|medium|low)", text
+    ):
+        return True
+    if re.search(r"(?im)^[ \t]*ignore\s*:\s*\n(?:[ \t]*-[^\n]*\n?)+", text):
+        return True
+    lines = re.split(r"\r\n|\r|\n", text)
+    for index, line in enumerate(lines):
+        if re.fullmatch(r"## Default Delivery[ \t]*", line):
+            body = []
+            for following in lines[index + 1 :]:
+                if re.match(r"^#{1,6}[ \t]|^[ \t]{0,3}(?:`{3,}|~{3,})", following):
+                    break
+                body.append(following)
+            content = re.sub(r"<!--.*?-->", "", "\n".join(body), flags=re.S)
+            candidate = next(
+                (
+                    value.strip()
+                    for value in re.split(r"\r\n|\r|\n", content)
+                    if value.strip()
+                ),
+                "",
+            )
+            return re.fullmatch(r"[a-z_]+(?:,[a-z_]+)*", candidate) is not None
+    return False
+
+
 class _RequiredSkip(TypedDict):
     path: str
     reason: SkipReason
@@ -263,10 +303,7 @@ class RuleCollector:
             self._skip(real, reason or "missing")
             return
 
-        if os.path.basename(real) == "REVIEW.md" and re.search(
-            r"(?im)^\s*```(?:yaml)?\s*#?\s*(?:code-gauntlet|deep-review)\b|<!--\s*(?:code-gauntlet|deep-review)-config\b|^\s*#{1,6}\s+(?:Default Delivery|Ignore|Exclude|Skip)\b|^\s*(?:confidence_threshold|security_min_confidence|severity_threshold|ignore)\s*[:=]",
-            text,
-        ):
+        if os.path.basename(real) == "REVIEW.md" and has_retired_settings(text):
             self.unsupported_review_config = True
         # Copied Claude Code/Codex twins carry the same rules; realpath only
         # collapses symlink twins. Content dedup avoids charging and rendering twice.

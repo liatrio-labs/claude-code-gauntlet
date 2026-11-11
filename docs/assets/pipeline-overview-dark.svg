@@ -109,7 +109,7 @@
   <rect class="agent-stage" x="500" y="502" width="200" height="176" rx="10"/>
   <text class="agent-kind" x="518" y="531">AGENT</text>
   <text class="stage-title" x="518" y="568">Validate</text>
-  <text class="detail" x="518" y="604">Independent score</text>
+  <text class="detail" x="518" y="604">Claim + consequence</text>
   <text class="detail" x="518" y="630">Reachability</text>
   <text class="detail" x="518" y="656">Try to disprove</text>
   <path class="flow" d="M700 590 H728" marker-end="url(#arrow)"/>
@@ -117,9 +117,9 @@
   <rect class="panel" x="730" y="502" width="200" height="176" rx="10"/>
   <text class="kind" x="748" y="531">CODE</text>
   <text class="stage-title" x="748" y="568">Filter</text>
-  <text class="detail" x="748" y="604">Thresholds + ignores</text>
+  <text class="detail" x="748" y="604">Typed routes</text>
   <text class="detail" x="748" y="630">Injection filtering</text>
-  <text class="detail" x="748" y="656">Consensus + grouping</text>
+  <text class="detail" x="748" y="656">Admission gates</text>
   <path class="flow" d="M930 590 H958" marker-end="url(#arrow)"/>
 
   <rect class="agent-stage" x="960" y="502" width="200" height="176" rx="10"/>
@@ -127,7 +127,7 @@
   <text class="challenge-title" x="978" y="568">Blind challenge</text>
   <text class="detail" x="978" y="604">Claim + location only</text>
   <text class="detail" x="978" y="630">Inspect + disprove</text>
-  <text class="detail" x="978" y="656">Remove / downgrade</text>
+  <text class="detail" x="978" y="656">Resolve both readers</text>
 
   <!-- Unchallenged findings do not enter the ranked delivery set. -->
   <path class="flow" d="M1030 678 V709 H420 V746" marker-end="url(#arrow)"/>

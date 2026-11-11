@@ -3,6 +3,9 @@
     {
       "challenge": "survived",
       "challenge_justification": "Guard exists",
+      "challenge_refutation_check": {
+        "verified": true
+      },
       "challenge_verdict": {
         "claim": "refuted",
         "justification": "Guard exists",
@@ -26,7 +29,6 @@
       "report_destination": "suggestion",
       "report_tag": "suggestion",
       "severity": "high",
-      "validation": "validated",
       "verdict": {
         "claim": "refuted",
         "justification": "Guard exists",

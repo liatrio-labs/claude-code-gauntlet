@@ -12,7 +12,7 @@ import { mentionsPreparedHostRoot, prepareHostRootPatterns, rewritePreparedRepoR
 import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs } from './args.js';
 import { resolveRemovedTestsArgs } from './args.js';
 import { entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from './entry.js';
-import { computeLightEligible, configEchoValue } from './knobs.js';
+import { computeLightEligible } from './knobs.js';
 import { renderReport, renderPublicSummary } from './renderReport.js';
 import { writeArtifacts } from './persist.js';
 import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
@@ -317,9 +317,9 @@ export async function runWith(ctx, rawArgs) {
     const out = replayed ? checkpoints[name] : await thunk();
     const requestError = !replayed && repeatedRequestGap(c.agentRequests, name);
     if (requestError) {
-      out.gaps = [requestError];
+      out.gaps = [...(out.gaps || []), requestError];
       const snapshot = measurementTrace?.snapshots.find((item) => item.stage === name);
-      if (snapshot) { snapshot.gaps = [requestError]; snapshot.coverage = 'partial'; }
+      if (snapshot) { snapshot.gaps = [...out.gaps]; snapshot.coverage = 'partial'; }
     }
     // Discovery intake covers fresh findings before downstream readers; replayed outputs need the same normalization at every phase.
     const rejected = [];

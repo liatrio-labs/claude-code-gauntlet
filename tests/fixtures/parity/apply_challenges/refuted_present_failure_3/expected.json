@@ -6,7 +6,7 @@
         "core": false,
         "inline_eligible": true,
         "input_fields": [],
-        "input_proof": "fnv1a32:0x6399e99a",
+        "input_proof": "fnv1a32:0xf5c6f6c4",
         "kind": "ordinary",
         "reasons": [
           {
@@ -21,6 +21,9 @@
       "body_fix_task_eligible": false,
       "challenge": "failed",
       "challenge_justification": "Guard exists",
+      "challenge_refutation_check": {
+        "verified": false
+      },
       "challenge_verdict": {
         "claim": "refuted",
         "justification": "Guard exists",
@@ -42,7 +45,6 @@
       "report_destination": "main",
       "report_tag": "main",
       "severity": "high",
-      "validation": "validated",
       "verdict": {
         "claim": "refuted",
         "justification": "Guard exists",

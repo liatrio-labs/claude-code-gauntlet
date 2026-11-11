@@ -241,6 +241,7 @@ import { measurementScenario } from './workflows/test/helpers/measurementScenari
 import { runWith } from './workflows/src/run.js';
 const stage = process.argv[1];
 const { args, ctx } = measurementScenario('return');
+args.limits.challengeCap = 2;
 const original = ctx.agent;
 ctx.agent = async (prompt, dispatch) => {
   const label = dispatch.label;

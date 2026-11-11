@@ -6,11 +6,11 @@
         "core": false,
         "inline_eligible": true,
         "input_fields": [],
-        "input_proof": "fnv1a32:0x44efcb87",
+        "input_proof": "fnv1a32:0x5f95f576",
         "kind": "ordinary",
         "reasons": [
           {
-            "predicate": "verification",
+            "predicate": "kind",
             "status": "held_back"
           }
         ],
@@ -33,7 +33,6 @@
       "report_destination": "main",
       "report_tag": "main",
       "severity": "high",
-      "validation": "validated",
       "verdict": {
         "claim": "confirmed",
         "consequence": "present_failure",

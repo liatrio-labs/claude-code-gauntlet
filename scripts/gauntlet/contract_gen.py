@@ -108,7 +108,7 @@ VERIFICATION_SHARED = {
         "precondition; for not_established name the missing fact. Refute with premise_false "
         "(false assumption), guard_exists (an existing guard prevents it), or no_reachable_caller "
         "(no caller reaches it), plus executable counter-evidence: an exact quote of at most "
-        "8 lines and 400 characters with a source range of at most 8 lines. Intent comments "
+        "{lines} lines and {chars} characters with a source range of at most {lines} lines. Intent comments "
         "and low impact do not refute. Include justification for every answer."
     ),
 }
@@ -175,6 +175,7 @@ _REGISTRY_FIELDS = (
     "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
     "validationReturnProperties: m.VALIDATION_RETURN_PROPERTIES",
     "anchorLimits: m.ANCHOR_LIMITS",
+    "verdictRoutes: [...new Set([...Object.values(m.VERDICT_ROUTES.confirmed), ...Object.values(m.VERDICT_ROUTES.refuted), m.VERDICT_ROUTES.not_established, ...m.VERDICT_ROUTES.overrides].map(row => row.route))]",
     "reportFoldLimits: m.REPORT_FOLD_LIMITS",
     "locationRights: m.LOCATION_RIGHTS",
     "locationStatuses: m.LOCATION_STATUSES",
@@ -196,7 +197,6 @@ _REGISTRY_FIELDS = (
     "publicSummary: m.PUBLIC_SUMMARY",
     "severityEmoji: m.SEVERITY_EMOJI",
     "severityOrder: m.SEVERITY_ORDER",
-    "reachability: ['current', 'future_change_only', 'uncertain']",
     "deltaKeys: w.DELTA_KEYS",
     "verifySliceFields: w.VERIFY_SLICE_FIELDS",
     "traceFindingFields: t.TRACE_FINDING_FIELDS",
@@ -329,9 +329,17 @@ def fill_discovery_shared(text: str) -> str:
     return _fill_shared(text, "discovery", DISCOVERY_SHARED, skip_absent=True)
 
 
-def fill_verification_shared(text: str) -> str:
+def fill_verification_shared(
+    text: str, *, limits: Mapping[str, int] | None = None
+) -> str:
     """Keep verification decisions grounded in one shared evidence contract."""
-    return _fill_shared(text, "verification", VERIFICATION_SHARED, skip_absent=False)
+    if limits is None:
+        limits = load_registry(ENTRY_ROOT)["anchorLimits"]
+    shared = {
+        **VERIFICATION_SHARED,
+        "confidence": VERIFICATION_SHARED["confidence"].format(**limits),
+    }
+    return _fill_shared(text, "verification", shared, skip_absent=False)
 
 
 def field_required_status(
@@ -562,9 +570,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     delta_value_fields = delta_keys[2:]
     enum_types: dict[str, Sequence[object]] = {
         "Severity": identity["severityOrder"],
+        "VerdictRoute": identity["verdictRoutes"],
         "ModelAlias": identity["modelAliases"],
         "PolicyProvider": identity["policyProviders"],
-        "Reachability": identity["reachability"],
         "LocationStatus": identity["locationStatuses"],
         "Disposition": identity["dispositions"],
         "Dimension": [row["dimension"] for row in identity["dimensionRows"]],
@@ -808,9 +816,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     ]
     values = {
         "SEVERITY_ORDER": tuple(identity["severityOrder"]),
+        "VERDICT_ROUTES": tuple(identity["verdictRoutes"]),
         "MODEL_ALIASES": tuple(identity["modelAliases"]),
         "POLICY_PROVIDERS": tuple(identity["policyProviders"]),
-        "REACHABILITY_VALUES": tuple(identity["reachability"]),
         "LOCATION_STATUSES": tuple(identity["locationStatuses"]),
         "DISPOSITIONS": tuple(identity["dispositions"]),
         "DELTA_KEYS": tuple(delta_keys),
@@ -832,9 +840,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     }
     annotations = {
         "SEVERITY_ORDER": "tuple[Severity, ...]",
+        "VERDICT_ROUTES": "tuple[VerdictRoute, ...]",
         "MODEL_ALIASES": "tuple[ModelAlias, ...]",
         "POLICY_PROVIDERS": "tuple[PolicyProvider, ...]",
-        "REACHABILITY_VALUES": "tuple[Reachability, ...]",
         "LOCATION_STATUSES": "tuple[LocationStatus, ...]",
         "DISPOSITIONS": "tuple[Disposition, ...]",
         "DELTA_KEYS": "tuple[DeltaKey, ...]",
@@ -1474,7 +1482,9 @@ def rendered_targets(
             )
         )
     for rel_path in VERIFICATION_TARGETS:
-        steps.setdefault(rel_path, []).append(fill_verification_shared)
+        steps.setdefault(rel_path, []).append(
+            partial(fill_verification_shared, limits=registry["anchorLimits"])
+        )
     steps.setdefault(REPORT_FORMAT_REL, []).append(
         partial(rewrite_required_column, registry=registry)
     )

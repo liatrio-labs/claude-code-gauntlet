@@ -9,6 +9,7 @@ import { validArgs } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { captureDeliveryReplay, appendDeliveryReplay } from '../src/measurementReplay.js';
 import { largeMeasurement } from './helpers/largeMeasurement.js';
+import { compressMeasurement } from '../src/measurementCompression.js';
 import { RETURN_CHAR_BUDGET } from '../src/wire.js';
 
 for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves every prompt, schema and user artifact: ${mode}`, async () => {
@@ -52,7 +53,7 @@ for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves
   const report = trace.versions.find((v) => v.finding.id === 'REPORT');
   const selection = trace.snapshots.find((s) => s.stage === 'select').decisions.find((d) => d.trace_id === report.trace_id);
   assert.equal(selection.reason_code, 'report_only');
-  assert.deepEqual(selection.detail, { kind: 'ordinary' });
+  assert.deepEqual(selection.detail, { kind: 'additional_case' });
   assert.ok(trace.snapshots.some((s) => s.cap_hit));
 });
 
@@ -272,4 +273,24 @@ test('selection traces one reason for every member of an indivisible omitted gro
   assert.equal(reasons.MAIN, 'delivery_cap');
   assert.equal(reasons.CHILD, 'delivery_cap');
   assert.equal(reasons.SUGGESTION, 'delivery_tier');
+});
+
+test('budget fallback compresses a partial history before dropping another stage', () => {
+  const trace = createMeasurementTrace('partial');
+  const f = stampDiscovery(trace, { description: 'discovery' }, { agentType: 'bug-detector', dimensions: ['bug'] }, 0, 0);
+  recordStage(trace, 'discover', [f]);
+  recordStage(trace, 'merge', [{ ...f, description: 'é'.repeat(300000) }]);
+  const partial = JSON.parse(JSON.stringify(trace));
+  recordStage(trace, 'verify', [{ ...f, description: 'z'.repeat(900000) }]);
+  const encodedSize = (value) => JSON.stringify({ measurement: { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(JSON.stringify(value)) } }).length;
+  const completeSize = encodedSize(trace);
+  const partialSize = encodedSize(partial);
+  const room = Math.floor((completeSize + partialSize) / 2);
+  assert.ok(completeSize > partialSize);
+  const out = appendMeasurement({ primary: 'x'.repeat(RETURN_CHAR_BUDGET - room) }, trace);
+  const saved = decodeMeasurement(out.measurement);
+  assert.deepEqual(saved.dropped_stages, ['verify']);
+  assert.equal(saved.snapshots[1].coverage, 'complete');
+  assert.equal(saved.versions.find((v) => v.finding.description.startsWith('é')).finding.description.length, 300000);
+  assert.ok(JSON.stringify(out).length <= RETURN_CHAR_BUDGET);
 });

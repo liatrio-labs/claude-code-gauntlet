@@ -6,7 +6,7 @@
         "core": false,
         "inline_eligible": true,
         "input_fields": [],
-        "input_proof": "fnv1a32:0x9d8b46d2",
+        "input_proof": "fnv1a32:0xca89c60c",
         "kind": "ordinary",
         "reasons": [
           {
@@ -33,7 +33,6 @@
       "report_destination": "main",
       "report_tag": "main",
       "severity": "high",
-      "validation": "validated",
       "verdict": {
         "claim": "not_established",
         "justification": "Need caller",

@@ -1,6 +1,6 @@
 ---
 name: validator
-description: Tests review findings against code for correctness and current reachability
+description: Tests review findings against code for factual correctness and consequences
 tools: Read, Grep, Glob, LSP
 effort: medium
 model: sonnet

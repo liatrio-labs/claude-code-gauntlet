@@ -2,7 +2,7 @@ import { defineAgentCall } from './agentCalls.js';
 import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
-import { modelFor, VALIDATION_RETURN_PROPERTIES, VERDICT_SCHEMA, verdictSchema } from './registry.js';
+import { modelFor, VERDICT_SCHEMA, VALIDATION_VERDICT_SCHEMA } from './registry.js';
 import { checkRefutations } from './refutations.js';
 import { verdictRejections } from './verdict.js';
 import { applyValidations } from './applyValidations.js';
@@ -15,7 +15,7 @@ import { challengeEligible } from './admission.js';
 
 // Both independent readers answer the same closed questions.
 const VALIDATE_SCHEMA = { type: 'object', properties: { validations: { type: 'array',
-  items: verdictSchema({ finding_id: { type: 'string' }, site_confirmations: VALIDATION_RETURN_PROPERTIES.site_confirmations }, ['finding_id']),
+  items: VALIDATION_VERDICT_SCHEMA,
 } }, required: ['validations'], additionalProperties: false };
 
 const callValidator = defineAgentCall('validate', () => VALIDATE_SCHEMA);
@@ -61,15 +61,15 @@ export async function validateStage(ctx, input) {
       ? null
       : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
     if (list) completed += 1;
-    const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ ...e, id: e.id ?? e.finding_id }));
+    const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ raw: e, id: e.finding_id }));
     const rejections = [];
     for (const finding of batch) {
       const matches = entries.filter((entry) => entry.id === finding.id);
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
-        const reasons = matches.length === 1 ? verdictRejections(entry) : ['duplicate_entry'];
+        const reasons = matches.length === 1 ? verdictRejections(entry.raw, VALIDATION_VERDICT_SCHEMA) : ['duplicate_entry'];
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
-        else accepted.set(finding.id, entry);
+        else accepted.set(finding.id, { ...entry.raw, id: entry.id });
       }
     }
     validatorAudit(audit, label, res, rejections);
@@ -79,7 +79,7 @@ export async function validateStage(ctx, input) {
   const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
   dispatched += batches.length;
   const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
-  const pending = findings.filter((finding) => verdictRejections(accepted.get(finding.id)).length);
+  const pending = findings.filter((finding) => !accepted.has(finding.id));
   if (pending.length) {
     // One follow-up round only; small batches isolate incomplete records from successful siblings.
     const retries = [];

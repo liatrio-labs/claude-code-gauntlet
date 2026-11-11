@@ -452,7 +452,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   }
   const classification = [];
   if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
-  if (finding.verdict) classification.push(`**Verdict:** ${inline(finding.verdict.claim)} / ${inline(finding.verdict.consequence)}`);
+  if (finding.verdict) classification.push(`**Verdict:** ${inline(finding.verdict.claim)}${finding.verdict.claim === 'confirmed' ? ` / ${inline(finding.verdict.consequence)}` : ''}`);
   else if (isPresent(finding.confidence)) classification.push(`**Discovery confidence:** ${inline(finding.confidence)}%`);
   if (classification.length) bullets.push(`- ${classification.join(' · ')}`);
   if (finding.origin === 'surfaced') {

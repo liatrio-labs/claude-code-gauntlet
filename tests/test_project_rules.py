@@ -342,7 +342,7 @@ def test_review_prose_uses_ordinary_imports_and_reports_retired_blocks(
 @pytest.mark.parametrize(
     "form",
     [
-        "## Default Delivery\npr_comments\n",
+        "## Default Delivery\r\npr_comments\r\n",
         "confidence_threshold = 70\n",
         "security_min_confidence: 60\n",
         "severity_threshold: high\n",
@@ -360,3 +360,24 @@ def test_every_retired_configuration_form_is_disclosed_locally(
     assert receipt["unsupported_review_config"]
     assert "A prose invariant." in body
     assert receipt["gaps"] == []
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "## Skip\nSkip expensive checks when appropriate.\n",
+        "## Ignore\nExplain ignored input.\n",
+        "ignore: ordinary prose without a list\n",
+        "confidence_threshold: undecided\n",
+        "## Default Delivery\nUse whatever fits the project.\n",
+        "## Default Delivery\u0085pr_comments\n",
+    ],
+)
+def test_ordinary_review_prose_is_not_retired_configuration(
+    collect_rules, write_rule, prose
+):
+    write_rule("REVIEW.md", prose)
+    code, receipt, body = collect_rules()
+    assert code == 0
+    assert not receipt["unsupported_review_config"]
+    assert prose.strip() in body

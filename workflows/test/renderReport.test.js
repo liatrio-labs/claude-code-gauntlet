@@ -623,3 +623,12 @@ test('location rights govern report and summary links', () => {
     }
   }
 });
+
+for (const [claim, fields, suffix] of [
+  ['confirmed', { consequence: 'latent', latent_condition: 'Add a caller' }, ' / latent'],
+  ['refuted', {}, ''], ['not_established', { missing_fact: 'Which caller?' }, ''],
+]) test(`report verdict classification for ${claim}`, () => {
+  const text = rendered({ findings: [finding('F', { verdict: { claim, justification: 'Inspected', ...fields } })] });
+  const line = text.split('\n').find((value) => value.includes('**Verdict:**'));
+  assert.ok(line.endsWith(`**Verdict:** ${claim}${suffix}`), line);
+});

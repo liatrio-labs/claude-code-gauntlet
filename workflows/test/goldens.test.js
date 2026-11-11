@@ -4,7 +4,7 @@ import { dedupById } from '../src/mergeFindings.js';
 import { merge } from '../src/mergeFindings.js';
 import { applyValidations } from '../src/applyValidations.js';
 import { normalizeFieldNames, applyFilterPipeline, consolidateCrossAgent, tagFindings } from '../src/filterFindings.js';
-import { applyInjectionFilter, applyReplayInjectionScan } from '../src/injection.js';
+import { applyInjectionFilter } from '../src/injection.js';
 import { applyChallenges } from '../src/applyChallenges.js';
 import { loadCases, writeGolden } from './helpers/goldenCases.js';
 
@@ -35,7 +35,7 @@ const FILTER_HANDLERS = {
     return { findings: input.findings };
   },
   apply_injection_filter: (input) => applyInjectionFilter(input.findings),
-  apply_replay_injection_scan: (input) => applyReplayInjectionScan(input.findings),
+  apply_replay_injection_scan: (input) => applyInjectionFilter(input.findings),
   apply_filter_pipeline: (input) => applyFilterPipeline(input.findings, input.generated_at),
   consolidate_cross_agent: (input) => {
     const { findings, consolidatedCount } = consolidateCrossAgent(input.findings);
