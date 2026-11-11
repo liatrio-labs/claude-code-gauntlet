@@ -19,6 +19,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import get_args
 
 # invoke.py imports as ``bench.runner.costs`` -> the repo root must be importable.
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -577,6 +578,8 @@ def _invoke_naive(
     ) or manifest.get("child_model")
     if requested_model not in (None, "inherit"):
         cmd += ["--model", requested_model]
+    if manifest.get("child_effort") is not None:
+        cmd += ["--effort", manifest["child_effort"]]
     prompt = _naive_prompt(pr, diff_text, bench_entry)
 
     proc = subprocess.Popen(
@@ -715,6 +718,7 @@ def _run_prs(
     child_auth=ledger.API_AUTH_MODE,
     epoch=None,
     fixture_mirror=None,
+    child_effort=None,
 ):
     """Execute only scheduled URLs; preserve failed setup and review attempts alike."""
     run_dir = Path(run_dir)
@@ -746,6 +750,7 @@ def _run_prs(
                 validity.measurement_context(manifest)
                 observed = validity.run_provenance(
                     child_model=child_model,
+                    child_effort=child_effort,
                     child_auth=child_auth,
                     timeout_s=timeout_s,
                     epoch_id=manifest["epoch_id"],
@@ -869,6 +874,7 @@ def _run_prs(
                     timeout_s=timeout_s,
                     tool=tool,
                     child_model=child_model,
+                    child_effort=child_effort,
                     child_auth=child_auth,
                 )
             _collect_artifacts(output_dir, pr_dir)
@@ -1027,7 +1033,8 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
             if args.anchor == "naive"
             else _resolve_child_model(args.tool, args.child_model)
         ),
-        # Recorded for EVERY run, deliberately breaking the two fields above: a naive
+        "child_effort": args.child_effort,
+        # Recorded for EVERY run, including a naive anchor: a naive
         # anchor still authenticates (_invoke_naive credentials its child through the same
         # build_env), so a null here would leave the run's auth provenance -- and with it
         # whether its cost is billable API spend -- unrecoverable at scoring time.
@@ -1042,6 +1049,7 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
     }
     provenance = getattr(args, "_provenance", None) or validity.run_provenance(
         child_model=_resolve_child_model(args.tool, args.child_model),
+        child_effort=args.child_effort,
         child_auth=child_auth,
         timeout_s=timeout_s,
         epoch_id=getattr(args, "golden_epoch", None),
@@ -1083,8 +1091,8 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
     validity.exclusive_json(Path(run_dir) / "run.json", manifest)
 
 
-def _write_child_auth_stub(manifest_path, run_id, child_auth):
-    """Create a minimal ``run.json`` recording only which credential a resume spends.
+def _write_child_auth_stub(manifest_path, run_id, child_auth, child_effort=None):
+    """Create a minimal ``run.json`` recording the credential and effort a resume spends.
 
     For a run dir that never got a manifest, so the auth provenance survives to scoring and
     to any later resume. Deliberately not a full manifest: everything else about the
@@ -1093,7 +1101,10 @@ def _write_child_auth_stub(manifest_path, run_id, child_auth):
     provenance without inventing history.
     """
     manifest_path.write_text(
-        json.dumps({"run_id": run_id, "child_auth": child_auth}, indent=2),
+        json.dumps(
+            {"run_id": run_id, "child_auth": child_auth, "child_effort": child_effort},
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
@@ -1155,6 +1166,7 @@ def _new_run(args):
         bench_data,
         tool=args.tool,
         child_model=_resolve_child_model(args.tool, args.child_model),
+        child_effort=args.child_effort,
         child_auth=_resolve_child_auth(args.child_auth),
         epoch=epoch,
     )
@@ -1193,6 +1205,10 @@ def _resume(run_id, args, retry):
         or manifest.get("child_model")
         or _resolve_child_model(args.tool, args.child_model)
     )
+    # A missing effort in a legacy manifest means the child default, just like null.
+    child_effort = (
+        manifest.get("child_effort") if manifest_path.exists() else args.child_effort
+    )
     # And again for the credential mode, where the stakes are higher than a label: letting
     # a flag override the recorded mode would bill half a run's PRs one way and half the
     # other, under a single ledger row that can only carry one auth_mode. Resolved from
@@ -1207,7 +1223,7 @@ def _resume(run_id, args, retry):
     # a manifest that merely lacks child_auth is not missing its provenance (predating the
     # flag IS its provenance), and writing into it would mutate a historical record.
     if not manifest_path.exists():
-        _write_child_auth_stub(manifest_path, run_id, child_auth)
+        _write_child_auth_stub(manifest_path, run_id, child_auth, child_effort)
 
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.failed(urls) if retry else cp.pending(urls)
@@ -1251,6 +1267,7 @@ def _resume(run_id, args, retry):
         bench_data,
         tool=tool,
         child_model=child_model,
+        child_effort=child_effort,
         child_auth=child_auth,
         epoch=epoch,
     )
@@ -1392,6 +1409,12 @@ def parse_args(argv=None):
         help="model for the child orchestrator session "
         "(default: inherit for every tool)",
     )
+    parser.add_argument(
+        "--child-effort",
+        choices=get_args(validity.ChildEffort),
+        default=None,
+        help="reasoning effort for the child orchestrator session (default: child default)",
+    )
     # Which credential the review children spend. None is the "not specified" sentinel
     # (as for --child-model) so the manifest's mode wins on resume. subscription has its
     # own prerequisites -- an OAuth token and no apiKeyHelper, see check_prereqs -- and
@@ -1514,7 +1537,7 @@ def main(argv=None):
         # --check inspects an existing run; combining it with new-run flags is always a
         # mistake (the flags would be silently ignored). Fail loud.
         #
-        # The three per-run knobs -- --tool, --child-model, --child-auth -- are absent from
+        # The per-run knobs -- tool, child model/effort/auth -- are absent from
         # this list on purpose. They describe how a run was produced, so --check and
         # --score-only read them from the run's own manifest and never from the flags;
         # passing one is redundant rather than contradictory, and neither mode invokes
@@ -1596,6 +1619,9 @@ def main(argv=None):
             )
             args._provenance = validity.run_provenance(
                 child_model=model,
+                child_effort=prior.get("child_effort")
+                if prior_manifest is not None
+                else args.child_effort,
                 child_auth=child_auth,
                 timeout_s=timeout_s,
                 epoch_id=args.golden_epoch,

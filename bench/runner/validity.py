@@ -44,6 +44,7 @@ PLUGIN_PATHS = provenance.PLUGIN_PATHS
 agent_read_hash = provenance.agent_read_hash
 require_clean_treatment = provenance.require_clean_treatment
 
+ChildEffort = Literal["low", "medium", "high", "xhigh", "max"]
 CheckpointStatus = Literal["pending", "ok", "timeout", "invalid", "drifted", "failed"]
 ValidityState = Literal["valid", "invalid", "pending", "operational_failure"]
 EFFORT_KEYS = (
@@ -300,6 +301,7 @@ def capture_fingerprint(
     auxiliary_models=(),
     cli_probe=cli_probe,
     model_probe=model_probe,
+    child_effort: ChildEffort | None = None,
 ):
     refuse_ambient_model_overrides(env)
     path = Path(cli_path).resolve(strict=True)
@@ -322,7 +324,10 @@ def capture_fingerprint(
             treatment_sha(root),
             models,
             tuple(sorted(auxiliary_models)),
-            agent_efforts(root),
+            {
+                **agent_efforts(root),
+                **({"orchestrator": child_effort} if child_effort is not None else {}),
+            },
             digest(policy),
         ),
     )
@@ -769,6 +774,7 @@ def run_provenance(
     arm=None,
     root=ROOT,
     epoch=None,
+    child_effort: ChildEffort | None = None,
 ):
     epoch = epoch if epoch is not None else load_epoch(epoch_id, root=DEFAULT_ROOT)
     if epoch_id is not None and epoch_id != epoch.epoch_id:
@@ -779,6 +785,7 @@ def run_provenance(
         fp = capture_fingerprint(
             cli_path=cli,
             child_model=child_model,
+            child_effort=child_effort,
             auth_mode=child_auth,
             epoch=epoch,
             judge_pin=epoch.judge_pin,
@@ -804,6 +811,7 @@ def run_provenance(
             "golden_sha256": epoch.golden_sha256,
             "auth_mode": child_auth,
             "requested_models": {"orchestrator": child_model},
+            "child_effort": child_effort,
         }
 
 

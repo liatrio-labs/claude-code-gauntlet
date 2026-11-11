@@ -34,9 +34,10 @@ def cli_args(**options):
     ]
 
 
+@pytest.mark.parametrize("child_effort", [None, "low"])
 @pytest.mark.parametrize("binding", ["frozen", "unfrozen", "missing"])
 def test_window_cli_binds_rule_and_captures_each_source(
-    git_repo, tmp_path, monkeypatch, binding
+    git_repo, tmp_path, monkeypatch, binding, child_effort
 ):
     root, git = git_repo
     agent = root / "agents/reviewer.md"
@@ -68,6 +69,8 @@ def test_window_cli_binds_rule_and_captures_each_source(
         auth_mode="subscription",
         wave="wave",
     )
+    if child_effort is not None:
+        argv += ["--child-effort", child_effort]
     if binding != "missing":
         argv += ["--rule", str(rule_path)]
     assert windows.main(argv) == (0 if binding == "frozen" else 2)
@@ -75,6 +78,8 @@ def test_window_cli_binds_rule_and_captures_each_source(
         window = v.load_window(path)
         assert (window.wave_id, window.rule_sha256) == ("wave", digest(value))
         assert [t.treatment_git_sha for t in window.arms.values()] == shas
+        for treatment in window.arms.values():
+            assert treatment.agent_efforts.get("orchestrator") == child_effort
 
 
 @pytest.mark.parametrize(

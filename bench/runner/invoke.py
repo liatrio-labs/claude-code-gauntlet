@@ -1427,6 +1427,7 @@ def invoke_review(
     tool="deep-review-v3",
     child_model="inherit",
     child_auth=API_AUTH_MODE,
+    child_effort=None,
 ):
     """Run the headless review for one PR and classify the outcome.
 
@@ -1440,6 +1441,9 @@ def invoke_review(
     ``inherit`` appends ``--model <child_model>`` to the ``claude`` command; ``inherit``
     leaves the child to its own default. The review agents' models are unaffected -- they
     are set by the pipeline's own policy, not this flag.
+
+    ``child_effort`` appends ``--effort <level>`` when set, otherwise the child default
+    applies.
 
     ``child_auth`` is passed straight to ``build_env``, which owns the entire credential
     decision -- it is never re-derived or defaulted here.
@@ -1497,6 +1501,8 @@ def invoke_review(
     # agents' models are set by the pipeline policy and are unaffected by this flag.
     if child_model != "inherit":
         cmd += ["--model", child_model]
+    if child_effort is not None:
+        cmd += ["--effort", child_effort]
 
     with open(raw_path, "w", encoding="utf-8") as fh:
         proc = subprocess.Popen(

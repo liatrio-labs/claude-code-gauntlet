@@ -119,7 +119,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
                       [--contamination PATH] [--rule PATH] [--unseal-holdout RECEIPT]
                       [--child-auth api|subscription]
                       [--golden-epoch EPOCH_ID] [--attribution] [--surface-views]
-                      [--tool deep-review-v2|deep-review-v3] [--child-model MODEL_ID]
+                      [--tool deep-review-v2|deep-review-v3] [--child-model MODEL_ID] [--child-effort LEVEL]
                       [--measurement-window PATH --arm ARM --run-index N]
                       [--reset-confirmed-at ISO_TIMESTAMP]
                       [--baseline-equivalence-receipt PATH]
@@ -136,6 +136,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 | `--fidelity` | `dry-run` \| `live` | `dry-run` | Recorded in the run manifest. |
 | `--tool` | `deep-review-v2` \| `deep-review-v3` | `deep-review-v3` | Pipeline to invoke and record. |
 | `--child-model` | model ID | `inherit` | Child orchestrator model. A measurement window requires resolved service IDs matching its declared treatment. |
+| `--child-effort` | `low`, `medium`, `high`, `xhigh`, `max` | child default | Child orchestrator reasoning effort, recorded as `child_effort` in `run.json`; resume/retry preserve the recorded value. Also accepted when creating a measurement window. |
 | `--measurement-window` | JSON path | off | Validate shared controls, arm treatment, time bounds and requested PRs before mirror work. Resume and retry require the original path and unchanged bytes. |
 | `--arm` | declared arm name | - | Arm in the window. Required for a new windowed run. |
 | `--run-index` | nonnegative integer | - | Planned run index in the window. Required for a new windowed run; `--runs` advances it for each sequential run. |

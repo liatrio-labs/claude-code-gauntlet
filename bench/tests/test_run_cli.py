@@ -54,6 +54,7 @@ def fake_invoke_ok(
     timeout_s=1800,
     tool="deep-review-v3",
     child_model="inherit",
+    child_effort=None,
     child_auth="api",
 ):
     outdir = Path(run_dir) / "output"
@@ -81,6 +82,7 @@ def make_invoke_first_fails():
         timeout_s=1800,
         tool="deep-review-v3",
         child_model="inherit",
+        child_effort=None,
         child_auth="api",
     ):
         state["n"] += 1
@@ -102,6 +104,7 @@ def make_invoke_raises_first(exc):
         timeout_s=1800,
         tool="deep-review-v3",
         child_model="inherit",
+        child_effort=None,
         child_auth="api",
     ):
         state["n"] += 1
@@ -127,6 +130,7 @@ def make_invoke_expecting_auth(expected):
         timeout_s=1800,
         tool="deep-review-v3",
         child_model="inherit",
+        child_effort=None,
         child_auth="api",
     ):
         assert child_auth == expected, (
@@ -257,6 +261,7 @@ class PrereqTest(RunTestBase):
                 fidelity="dry-run",
                 tool="deep-review-v3",
                 child_model=None,
+                child_effort=None,
             )
             run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
             manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
@@ -381,6 +386,7 @@ class ArtifactCaptureTest(RunTestBase):
             timeout_s=1800,
             tool="deep-review-v3",
             child_model="inherit",
+            child_effort=None,
             child_auth="api",
         ):
             # Mimic a child Workflow record written under CLAUDE_CONFIG_DIR during the run.
@@ -864,6 +870,7 @@ class MultiRunTest(RunTestBase):
             fidelity="dry-run",
             tool="deep-review-v3",
             child_model=None,
+            child_effort=None,
             child_auth="api",
         )
         run_dir = self.tmp / "manifest-provenance"
@@ -954,6 +961,7 @@ class ToolWiringTest(RunTestBase):
             timeout_s=1800,
             tool="deep-review-v3",
             child_model="inherit",
+            child_effort=None,
             child_auth="api",
         ):
             captured["tool"] = tool
@@ -1006,6 +1014,7 @@ class ToolWiringTest(RunTestBase):
             timeout_s=1800,
             tool="deep-review-v3",
             child_model="inherit",
+            child_effort=None,
             child_auth="api",
         ):
             captured["child_model"] = child_model
@@ -1716,6 +1725,7 @@ class PrsListTest(RunTestBase):
             timeout_s=1800,
             tool="deep-review-v3",
             child_model="inherit",
+            child_effort=None,
             child_auth="api",
         ):
             seen.append(pr["url"])
@@ -1874,6 +1884,7 @@ class ResumeTest(RunTestBase):
             timeout_s=1800,
             tool="deep-review-v3",
             child_model="inherit",
+            child_effort=None,
             child_auth="api",
         ):
             captured.append(tool)
@@ -1915,6 +1926,7 @@ class ResumeTest(RunTestBase):
             timeout_s=1800,
             tool="deep-review-v3",
             child_model="inherit",
+            child_effort=None,
             child_auth="api",
         ):
             captured.append(child_model)
