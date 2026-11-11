@@ -68,6 +68,21 @@ See [the merge policy](CONTRIBUTING.md#pull-requests).
 
 ## Scope
 
+### Named workflow dispatch
+
+`scripts/capture_policy_env.py` checks for local definitions of the pipeline's
+qualified name before emitting the policy needed to assemble dispatch args, in
+interactive, headless, and benchmark sessions; recovery repeats the capture.
+It checks direct `.js` files in the personal workflow directory and
+`.claude/workflows` in the working directory and every ancestor.
+Files unable to claim the name are ignored; an actual or ambiguous possible shadow
+stops capture with one message naming the path and no policy output.
+This disk check cannot bind the host's cached resolution atomically: removed cached
+files, subsequent writes, duplicate installed plugins, remote configuration storage,
+and undisclosed `--project-config-root` locations require host enforcement.
+An orchestrator that bypasses policy capture also bypasses this check.
+Returned nonces and unkeyed checksums prove consistency, not pipeline identity.
+
 ### Trust boundaries
 
 The pipeline reads several kinds of repository-supplied text and extends each a different level of trust. The

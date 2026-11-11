@@ -15,6 +15,7 @@ from gauntlet.registry import (
     ModelAlias,
     PolicyProvider,
 )
+from gauntlet.workflow_shadow import check_workflow_shadow
 
 
 class PolicyEnv(TypedDict):
@@ -49,6 +50,7 @@ def capture_policy_env(env: Mapping[str, str]) -> PolicyEnv:
 
 
 def main(args: argparse.Namespace) -> tuple[PolicyEnv, int]:
+    check_workflow_shadow()
     return capture_policy_env(os.environ), 0
 
 

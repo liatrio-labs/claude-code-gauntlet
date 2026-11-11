@@ -69,6 +69,7 @@ def test_capture_policy_env_cli(tmp_path, invoke, monkeypatch):
     monkeypatch.setattr(
         "gauntlet.policy_env.os.environ",
         {
+            "CLAUDE_CONFIG_DIR": str(tmp_path / "config"),
             "CLAUDE_CODE_USE_BEDROCK": " true ",
             "ANTHROPIC_BASE_URL": "https://gateway.example",
             "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",

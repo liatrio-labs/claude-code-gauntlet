@@ -267,6 +267,7 @@ The workflow fills these receipt entries itself; never stamp them.
 **`policy` (model policy the workflow runs under):**
 
 Run `scripts/capture_policy_env.py` and stamp its four keys verbatim. The workflow cannot read `process.env`.
+Policy capture refuses when the pipeline name is shadowed; stop on a refusal.
 
 - `tier` - copy `configResult.resolved.model_tier`; the resolver owns its value and source.
 - `subagentModel` - `CLAUDE_CODE_SUBAGENT_MODEL`, or `null` when unset or blank. If non-null, warn the user and record the override in the methodology.
