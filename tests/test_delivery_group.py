@@ -162,27 +162,52 @@ def test_local_report_keeps_every_member_description():
     assert all(str(row["description"]) in result.stdout for row in rows)
 
 
+CRITICAL_BUG_COMMENT = (
+    "**🔴 [CRITICAL] finding BUG**\n\nOrdinary defect text."
+    "\n\n**Security claim:** finding SEC"
+    "\n\n_Found independently by 2 reviewers._\n\n⚔️ *Code Gauntlet*"
+)
+CRITICAL_SUGGESTION_COMMENT = (
+    "**🔴 [CRITICAL] finding SEC**\n\nSecurity finding text."
+    "\n\n_Found independently by 2 reviewers._\n\n⚔️ *Code Gauntlet*"
+)
+
+
 @pytest.mark.parametrize(
-    "ordinary,other,lead",
+    "ordinary,other,lead,expected_comment,expected_routing,expected_corroboration",
     [
-        (
+        pytest.param(
             {"severity": "critical"},
             {"severity": "medium", "dimension": "security"},
             "BUG",
+            CRITICAL_BUG_COMMENT,
+            [],
+            "- **Corroborated by** `security-reviewer` (`security`, severity medium, tier main, confidence 90): finding SEC",
+            id="secondary-security-main",
         ),
-        (
+        pytest.param(
             {"severity": "low"},
             {"severity": "critical", "report_tag": "suggestion"},
             "SEC",
+            CRITICAL_SUGGESTION_COMMENT,
+            ["- **Routing:** improvement suggestion"],
+            "- **Corroborated by** `bug-detector` (`bug`, severity low, tier main, confidence 90): finding BUG",
+            id="suggestion-lead-main-group",
         ),
-        (
+        pytest.param(
             {"severity": "critical"},
             {"severity": "medium", "dimension": "security", "report_tag": "suggestion"},
             "BUG",
+            CRITICAL_BUG_COMMENT,
+            [],
+            "- **Corroborated by** `security-reviewer` (`security`, severity medium, tier suggestion, confidence 90): finding SEC",
+            id="secondary-security-suggestion",
         ),
     ],
 )
-def test_indivisible_group_posts_security_text_and_group_values(ordinary, other, lead):
+def test_indivisible_group_posts_security_text_and_group_values(
+    ordinary, other, lead, expected_comment, expected_routing, expected_corroboration
+):
     output = run_node(
         "import { makeFinding } from './workflows/test/helpers/pipelineMock.js';"
         "import { disposeFindings } from './workflows/src/dispose.js';"
@@ -218,11 +243,7 @@ def test_indivisible_group_posts_security_text_and_group_values(ordinary, other,
         (f["id"], f["severity"], f["report_tag"])
         for f in (group.primary, *group.corroborators)
     ] == assessed_group
-    assert comment.startswith("**🔴 [CRITICAL]")
-    if other.get("dimension") == "security" and lead != "SEC":
-        assert "**Security claim:** finding SEC" in comment
-    assert ("Security finding text." in comment) == (lead == "SEC")
-    assert ("Ordinary defect text." in comment) == (lead == "BUG")
+    assert comment == expected_comment
     assert [
         [f["id"], f["severity"], f["report_tag"]] for f in result["findings"]
     ] == result["assessed"]
@@ -235,16 +256,16 @@ def test_indivisible_group_posts_security_text_and_group_values(ordinary, other,
         index_findings=result["postReview"],
     ).body
     assert "Found 1 issue in this change: 1 critical." in summary
-    assert "improvement suggestion" not in summary
-    assert summary.count("- 🔴 [CRITICAL]") == 1
+    assert (
+        result["summary"]
+        == f"Found 1 issue in this change: 1 critical.\n\n- 🔴 [CRITICAL] `same.js:10`: finding {lead}"
+    )
     assert "Security finding text." in result["report"]
     assert "Ordinary defect text." in result["report"]
-    assert "severity " in result["report"]
-    if (
-        ordinary.get("report_tag") == "suggestion"
-        or other.get("report_tag") == "suggestion"
-    ):
-        assert (
-            "improvement suggestion" in result["report"]
-            or "tier suggestion" in result["report"]
-        )
+    lines = result["report"].splitlines()
+    assert [
+        line for line in lines if line.startswith("- **Routing:**")
+    ] == expected_routing
+    assert [line for line in lines if line.startswith("- **Corroborated by**")] == [
+        expected_corroboration
+    ]

@@ -84,6 +84,7 @@ test('replay filters removed ids after validating the whole grouping reply', () 
   const singleton = disposeFindings({ findings: findings.slice(3), grouping_ids, grouping_reply: reply });
   assert.equal(singleton.groups[0].finding_ids.length, 1);
   assert.equal(singleton.stats.grouped_members, 0);
+  assert.equal(singleton.stats.grouping, 'model');
   assert.equal(acceptGroupingReply(reply, grouping_ids, []).groups.length, 0);
 });
 
@@ -113,7 +114,7 @@ test('prompt bounds folded text and a singleton skips dispatch', async () => {
   assert.equal(fields[4].length, 600);
   assert.equal(fields[5].length, 205);
   assert.match(groupingPrompt([{ id: 'x', file: 'a', line_start: 1, line_end: 2 }]), /a:1-2/);
-  assert.deepEqual((await groupFindings({}, findings)).grouping_reply, { groups: [] });
+  assert.deepEqual(await groupFindings({}, findings), { grouping_ids: ['one'] });
   assert.deepEqual((await groupFindings({ agent: async () => null }, members())).grouping_reply, null);
   const schema = groupingSchema(['x', 'y']);
   assertValidSchema(schema);
@@ -237,3 +238,17 @@ for (const [mode, reason] of [['invalid', 'missing or non-object reply'], ['thro
     assert.deepEqual(JSON.parse(entry.text).map((finding) => finding.id).sort(), findings.map((finding) => finding.id).sort());
   });
 }
+
+
+for (const count of [0, 1]) test(`grouping is not needed for ${count} candidates`, async () => {
+  const findings = members().slice(0, count);
+  let calls = 0;
+  const grouping = await groupFindings({ agent: async () => { calls++; return { groups: [] }; } }, findings);
+  const out = disposeFindings({ findings, ...grouping });
+  assert.equal(calls, 0);
+  assert.equal(out.stats.grouping, 'not_needed');
+  assert.deepEqual(out.gaps, []);
+  assert.equal(out.findings.length, count);
+  assert.equal(Object.hasOwn(out, 'grouping_reply'), false);
+  assert.deepEqual(disposeFindings(out), out);
+});

@@ -22,7 +22,7 @@ export function groupingSchema(ids) {
 
 export async function groupFindings(ctx, findings, policy = {}) {
   const grouping_ids = findings.map((f) => f.id);
-  if (findings.length < 2) return { grouping_ids, grouping_reply: { groups: [] } };
+  if (findings.length < 2) return { grouping_ids };
   try {
     const grouping_reply = await ctx.agent(groupingPrompt(findings), {
       label: 'group-findings', agentType: 'code-gauntlet:grouper',

@@ -3832,10 +3832,11 @@ function disposeFindings(challenged) {
   }
   decisions.push(...eliminations.filter((_, index) => eliminated[index].trace_id));
   const actionable = findings.filter((f) => deliveryAllows(f, 'body'));
-  const accepted = acceptGroupingReply(input.grouping_reply, input.grouping_ids || [
+  const groupingNeeded = (input.grouping_ids || actionable).length >= 2;
+  const accepted = groupingNeeded ? acceptGroupingReply(input.grouping_reply, input.grouping_ids || [
     ...(input.findings || []), ...(input.unverified || []), ...(input.eliminated || []),
-  ].map((f) => f.id), actionable);
-  const grouping = accepted.error ? 'positional' : 'model';
+  ].map((f) => f.id), actionable) : { error: null, groups: [] };
+  const grouping = !groupingNeeded ? 'not_needed' : accepted.error ? 'positional' : 'model';
   const gaps = accepted.error ? [`grouping: ${input.grouping_error || accepted.error}; same-lines grouping used`] : [];
   if (accepted.error) consolidateCrossAgent(actionable);
   const candidates = accepted.error
@@ -7653,7 +7654,7 @@ function groupingSchema(ids) {
 }
 async function groupFindings(ctx, findings, policy = {}) {
   const grouping_ids = findings.map((f) => f.id);
-  if (findings.length < 2) return { grouping_ids, grouping_reply: { groups: [] } };
+  if (findings.length < 2) return { grouping_ids };
   try {
     const grouping_reply = await ctx.agent(groupingPrompt(findings), {
       label: 'group-findings', agentType: 'code-gauntlet:grouper',

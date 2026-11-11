@@ -591,13 +591,13 @@ def _report_summary_budget(composed: compose.ComposedBody, platform: Platform) -
     limits = body_limit(platform)
     if composed.omitted:
         print(
-            f"  {composed.omitted} skipped finding(s) not shown: the "
+            f"  {composed.omitted} issue(s) not shown: the "
             f"{limits.surface} reached the {limits.bytes}-byte "
             f"{limits.label} body limit."
         )
         for entry in composed.omitted_entries:
             warn(
-                f"Skipped finding '{entry.title}' at {entry.location} not shown: the "
+                f"Issue '{entry.title}' at {entry.location} not shown: the "
                 f"{limits.surface} reached the {limits.bytes}-byte "
                 f"{limits.label} body limit."
             )

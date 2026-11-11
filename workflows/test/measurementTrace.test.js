@@ -17,6 +17,7 @@ for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves
   const on = await runWith(measured.ctx, measured.args);
   assert.equal(off.ok, true);
   assert.equal(on.ok, true);
+  assert.equal(on.stats.challenge.grouping, 'model');
   assert.equal(Object.hasOwn(off, 'measurement'), false);
   assert.deepEqual(measured.ctx.calls, plain.ctx.calls);
   assert.deepEqual(persistedScenario(on, measured.state), persistedScenario(off, plain.state));

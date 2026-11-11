@@ -62,7 +62,7 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
     }
     if (label === 'group-findings') {
       ctx.calls.push({ prompt, ...dispatch });
-      const ids = dispatch.schema.properties.groups.items.properties.lead_id.enum;
+      const ids = dispatch.schema.properties.groups.items.properties.finding_ids.items.enum;
       return { groups: ['GROUP', 'CORROBORATOR'].every((id) => ids.includes(id))
         ? [{ finding_ids: ['GROUP', 'CORROBORATOR'] }] : [] };
     }

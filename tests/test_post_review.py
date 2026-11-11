@@ -981,19 +981,38 @@ def test_existing_gitlab_summary_suppresses_guard_and_notices(posting, monkeypat
 
 
 def test_gitlab_summary_reports_omission_after_capture(posting):
+    stamp = {
+        "issue_key": "group:LEAD",
+        "lead_id": "LEAD",
+        "finding_ids": ["LEAD", "MEMBER"],
+    }
     run = posting(
         review(
             "gitlab",
-            [located(line_start=40, line_end=41)],
+            [
+                located(id="LEAD", line_start=40, line_end=41, delivery_group=stamp),
+                located(
+                    id="MEMBER",
+                    title="Related claim",
+                    line_start=42,
+                    line_end=42,
+                    delivery_group=stamp,
+                ),
+            ],
             review_body="X" * 1000000,
         ),
         diff=DIFF,
     )
     summary, _ = surfaces(run)
     assert "[folded:" in summary and "Range bug" not in summary
-    assert "Skipped finding 'Range bug' at foo.py:40 not shown" in run.err
+    budget_warnings = [
+        line for line in run.err.splitlines() if "not shown: the" in line
+    ]
+    assert budget_warnings == [
+        "WARNING: Issue 'Range bug' at foo.py:40 not shown: the summary note reached the 1000000-byte GitLab body limit."
+    ]
     assert run.out.index("MR summary note captured") < run.out.index(
-        "1 skipped finding(s) not shown"
+        "1 issue(s) not shown"
     )
     assert "review_body folded by" in run.out
 
