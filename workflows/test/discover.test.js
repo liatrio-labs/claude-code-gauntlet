@@ -90,7 +90,7 @@ const FLAG_ROWS = [
   { name: 'light', flags: { deep: false }, expected: CORE },
 ];
 for (const row of FLAG_ROWS) test(`active agents: ${row.name}`, () => {
-  assert.deepEqual(agentSpecs().filter((spec) => agentActive(spec, row.flags)).map((spec) => spec.agentType),
+  assert.deepEqual(agentSpecs().filter((spec) => spec.dispatch === 'parallel' && agentActive(spec, row.flags)).map((spec) => spec.agentType),
     row.expected ?? ROSTER);
 });
 const SCOPE_ROWS = [
@@ -329,4 +329,96 @@ test('every dispatched finding requires nonblank evidence and enumerated impact'
       assert.deepEqual(item.properties.severity, { type: 'string', enum: ['critical', 'high', 'medium', 'low'] });
     }
   }
+});
+
+test('discovery retains inherited defects with explicit provenance through the trace', async () => {
+  const { createMeasurementTrace } = await import('../src/measurementTrace.js');
+  const trace = createMeasurementTrace('provenance');
+  const ctx = stageCtx({ replies: { 'code-gauntlet:bug-detector': {
+    findings: ['introduced', 'moved_or_carried', 'pre_existing'].map((change_origin) => finding({ change_origin })),
+    complete: true, total_seen: 3,
+  } } });
+  const out = await discover(ctx, { measurementTrace: trace });
+  assert.deepEqual(out.findings.map((f) => f.change_origin), ['introduced', 'moved_or_carried', 'pre_existing']);
+  assert.deepEqual(trace.versions.map((v) => v.finding.change_origin), out.findings.map((f) => f.change_origin));
+  for (const call of ctx.calls) {
+    const item = call.schema.properties.findings.items;
+    assert.ok(item.required.includes('change_origin'));
+    assert.deepEqual(item.properties.change_origin.enum, ['introduced', 'moved_or_carried', 'pre_existing']);
+  }
+});
+
+const REGION_PLAN = {
+  version: 1, status: 'available', fact_reads: [{ offset: 3, limit: 4 }],
+  regions: [
+    { id: 'first', file: 'src/main', line_start: 10, line_end: 14, reads: [{ offset: 20, limit: 5 }] },
+    { id: 'second', file: 'src/main', line_start: 40, line_end: 44, reads: [{ offset: 25, limit: 5 }] },
+    { id: 'last', file: 'src/other', line_start: 2, line_end: 5, reads: [{ offset: 30, limit: 4 }] },
+  ],
+};
+const regionInput = () => ({ discoveryPlan: structuredClone(REGION_PLAN), contextLines: 40,
+  contextPath: '/out/prepared', repoRoot: '/repo', contextLine: 'WHOLE_CONTEXT_SENTINEL ' });
+
+test('gap discovery uses cited and reported regions, transports only remaining reads, and records its ledger', async () => {
+  const trace = createMeasurementTrace('coverage');
+  const ctx = stageCtx({ replies: {
+    'code-gauntlet:bug-detector': { findings: [finding({ file: '/repo/src/main', line_start: 12 })], read_regions: [], complete: true, total_seen: 1 },
+    'code-gauntlet:security-reviewer': { findings: [], read_regions: ['second', 'forged'], complete: true, total_seen: 0 },
+    'code-gauntlet:gap-hunter': { findings: [finding({ file: 'src/other', line_start: 3 })], read_regions: ['last'], complete: true, total_seen: 1 },
+  } });
+  const out = await discover(ctx, { ...regionInput(), measurementTrace: trace });
+  assert.equal(ctx.calls.length, 8);
+  const hunter = ctx.calls.at(-1);
+  assert.equal(hunter.agentType, 'code-gauntlet:gap-hunter');
+  assert.equal(hunter.prompt.includes('WHOLE_CONTEXT_SENTINEL'), false);
+  assert.equal(hunter.prompt.includes('Repository:'), false);
+  assert.ok(hunter.prompt.includes('"offset":3,"limit":4'));
+  assert.ok(hunter.prompt.includes('"offset":30,"limit":4'));
+  for (const omitted of ['"offset":20', '"offset":25', '"id":"first"', '"id":"second"']) assert.equal(hunter.prompt.includes(omitted), false);
+  assert.equal(out.findings.at(-1).agent, 'gap-hunter');
+  assert.deepEqual(out.coverageLedger.uncovered, ['last']);
+  assert.deepEqual(out.coverageLedger.regions[0].cited_by, ['code-gauntlet:bug-detector']);
+  assert.deepEqual(out.coverageLedger.regions[1].read_by, ['code-gauntlet:security-reviewer']);
+  assert.deepEqual(out.coverageLedger.invalid_receipts, [{ agent: 'code-gauntlet:security-reviewer', ids: ['forged'] }]);
+  assert.deepEqual(out.coverageLedger.hunters[0].assigned, ['last']);
+  assert.deepEqual(trace.coverage_ledger, out.coverageLedger);
+  assert.ok(trace.versions.some((v) => v.discovery_agent === 'gap-hunter'));
+});
+
+test('reported clean coverage skips gap discovery even with no findings', async () => {
+  const ctx = stageCtx({ reply: { findings: [], read_regions: ['first', 'second', 'last'], complete: true, total_seen: 0, removed_test_audit: [] } });
+  const out = await discover(ctx, regionInput());
+  assert.equal(ctx.calls.length, 7);
+  assert.deepEqual(out.coverageLedger.uncovered, []);
+  assert.deepEqual(out.coverageLedger.hunters, []);
+});
+
+test('gap discovery rejects findings outside its assignment and preserves failed coverage', async () => {
+  for (const failed of [false, true]) {
+    const ctx = stageCtx({ nulls: failed ? ['code-gauntlet:gap-hunter'] : [], replies: {
+      'code-gauntlet:bug-detector': { findings: [], read_regions: ['first', 'second'], complete: true, total_seen: 0 },
+      'code-gauntlet:gap-hunter': { findings: [finding({ file: 'src/main', line_start: 12 })], read_regions: [], complete: false, total_seen: 1 },
+    } });
+    const trace = createMeasurementTrace('failed');
+    const out = await discover(ctx, { ...regionInput(), measurementTrace: trace });
+    assert.equal(ctx.calls.length, 8);
+    assert.equal(out.findings.length, 0);
+    assert.deepEqual(out.degraded, []);
+    assert.equal(out.coverageLedger.hunters[0].status, failed ? 'failed' : 'incomplete');
+    assert.ok(out.gaps.some((g) => g.includes(failed ? 'agent returned null' : 'outside assigned regions')));
+    if (!failed) {
+      assert.equal(decisionsFor(out)[0].reason_code, 'out_of_scope');
+      assert.equal(trace.snapshots[0].decisions[0].reason_code, 'out_of_scope');
+    }
+  }
+});
+
+test('nested source citations cover changed regions without trusting file-only references', async () => {
+  const ctx = stageCtx({ replies: {
+    'code-gauntlet:bug-detector': { findings: [finding({ file: 'elsewhere', line_start: 1,
+      sites: [{ file: 'src/main', line_start: 11, line_end: 12, anchor: 'code' }],
+      cross_file_refs: ['src/main:L41-L42', 'src/other'] })], complete: true, total_seen: 1 },
+  } });
+  const out = await discover(ctx, regionInput());
+  assert.deepEqual(out.coverageLedger.uncovered, ['last']);
 });

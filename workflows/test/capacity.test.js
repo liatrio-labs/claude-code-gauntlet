@@ -5,8 +5,11 @@ import {
   verifyInlineBudgets, effectiveVerifyBaseBranch, effectiveSliceSize, effectiveChallengeCap, effectiveBucketSize, effectiveBatchSize,
 } from '../src/capacity.js';
 import { encodeSliceInline, projectVerifySliceFinding } from '../src/verifyWire.js';
+import { AGENTS } from '../src/registry.js';
 import { summarize } from '../src/discover.js';
 import { randomFindings, stageCtx } from './helpers/stageFixtures.js';
+
+const ADDED_REVIEWERS = AGENTS.length - 7;
 
 const BASIC = [
   { id: 'A', file: 'a.js', line_start: 1, origin: 'new', cross_file_refs: [] },
@@ -111,7 +114,7 @@ const COUNT_ROWS = [
     findings: [{ id: 'BIG', file: 'x'.repeat(50000) }], count: 13 },
 ];
 for (const row of COUNT_ROWS) test(`agent count: ${row.name}`, () => {
-  assert.equal(worstCaseAgentCount(row.limits, row.files, row.findings), row.count);
+  assert.equal(worstCaseAgentCount(row.limits, row.files, row.findings), row.count + ADDED_REVIEWERS);
 });
 const COARSEN_ROWS = [
   { name: 'huge findings', limits: { summarizeBucketSize: 20, validateBatch: 2, challengeCap: 900, verifySliceSize: 5 },
@@ -139,7 +142,7 @@ for (const row of COARSEN_ROWS) test(`coarsening: ${row.name}`, () => {
   const coarse = coarsenLimits(row.limits, row.files, row.findings);
   assert.equal(JSON.stringify(row.limits), before);
   assert.deepEqual(coarse, row.coarse);
-  assert.equal(worstCaseAgentCount(coarse, row.files, row.findings), row.count);
+  assert.equal(worstCaseAgentCount(coarse, row.files, row.findings), row.count + ADDED_REVIEWERS);
 });
 const BRANCH_ROWS = [
   { name: 'windows quoted copy budget', branch: 'main', input: { repoRoot: 'D:/repo' }, slices: 800, count: 1612,
@@ -157,23 +160,23 @@ for (const row of BRANCH_ROWS) test(`array guard branch: ${row.name}`, () => {
   const limits = { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 };
   assert.equal(planVerifySlices(findings, 25, verifyInlineBudgets(row.input), row.branch,
     row.input ? 'windows' : 'posix').slices.length, row.slices);
-  assert.equal(worstCaseAgentCount(limits, 0, findings, row.branch, row.input), row.count);
+  assert.equal(worstCaseAgentCount(limits, 0, findings, row.branch, row.input), row.count + ADDED_REVIEWERS);
   const coarse = coarsenLimits(limits, 0, findings, row.branch, row.input);
   assert.deepEqual(coarse, row.coarse);
-  assert.equal(worstCaseAgentCount(coarse, 0, findings, row.branch, row.input), row.count);
+  assert.equal(worstCaseAgentCount(coarse, 0, findings, row.branch, row.input), row.count + ADDED_REVIEWERS);
 });
 
 test('capacity reserves only dispatched stages and bounded retries', () => {
   const limits = { summarizeBucketSize: 20, verifySliceSize: 10, validateBatch: 2, challengeCap: 5 };
-  assert.equal(worstCaseAgentCount(limits, 0, 0), 10);
-  assert.equal(worstCaseAgentCount(limits, 0, 5), 28);
-  assert.equal(worstCaseAgentCount({ ...limits, challengeCap: 0 }, 0, 5), 23);
+  assert.equal(worstCaseAgentCount(limits, 0, 0), 10 + ADDED_REVIEWERS);
+  assert.equal(worstCaseAgentCount(limits, 0, 5), 28 + ADDED_REVIEWERS);
+  assert.equal(worstCaseAgentCount({ ...limits, challengeCap: 0 }, 0, 5), 23 + ADDED_REVIEWERS);
   assert.deepEqual(coarsenLimits({ validateBatch: 1, challengeCap: 400, verifySliceSize: 1 }, 0, 300),
     { validateBatch: 8, challengeCap: 400, verifySliceSize: 4 });
   const encoded = Array.from({ length: 500 }, (_, i) => ({ id: String(i), file: 'x'.repeat(2600) }));
   const coarse = coarsenLimits({ ...limits, challengeCap: 0 }, 0, encoded);
   assert.equal(coarse.challengeCap, 0);
-  assert.equal(worstCaseAgentCount(coarse, 0, encoded), 1012);
+  assert.equal(worstCaseAgentCount(coarse, 0, encoded), 1012 + ADDED_REVIEWERS);
   assert.equal(coarsenLimits({ ...limits, challengeCap: 1 }, 0, encoded).challengeCap, 1);
   const large = coarsenLimits({ ...limits, challengeCap: 10000 }, 20000, 10000);
   assert.ok(worstCaseAgentCount(large, 20000, 10000) < 900);
@@ -185,7 +188,7 @@ for (const [index, branch] of EMPTY_BRANCH_ROWS.entries()) test(`empty branch no
   assert.equal(effectiveVerifyBaseBranch(branch), 'main');
   assert.deepEqual(planVerifySlices(findings, 25, { ...verifyInlineBudgets(), copy: 352 }, branch).slices.map((slice) => slice.map((f) => f.id)),
     [['F0', 'F1'], ['F2', 'F3']]);
-  assert.equal(worstCaseAgentCount({ validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 }, 0, findings, branch), 17);
+  assert.equal(worstCaseAgentCount({ validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 }, 0, findings, branch), 17 + ADDED_REVIEWERS);
 });
 const ACCESSOR_ROWS = [
   { name: 'absent', limits: {}, n: 7, expected: [20, 7, 7, 7] },
@@ -203,7 +206,7 @@ test('absent bucket limit: 47 files', async () => {
   const ctx = stageCtx({ reply: { summary: 's' } });
   const out = await summarize(ctx, { changedFiles: Array.from({ length: 47 }, (_, i) => `f${i}.js`),
     changedLines: 1211, limits: {} });
-  assert.equal(worstCaseAgentCount({}, 47, 0), 13);
+  assert.equal(worstCaseAgentCount({}, 47, 0), 13 + ADDED_REVIEWERS);
   assert.deepEqual(ctx.calls.map((call) => call.label), [
     'summarize-bucket-0', 'summarize-bucket-1', 'summarize-bucket-2', 'summarize-merge',
   ]);

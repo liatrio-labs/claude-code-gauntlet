@@ -128,7 +128,7 @@ def test_layout_is_root_and_changed_directories_only(
     assert layout["omitted"] == []
     if hostile:
         assert b"$(marker)" in content and not (tmp_path / "marker").exists()
-    assert content.count(b"</untrusted-code-content ") == 2
+    assert content.count(b"</untrusted-code-content ") == 3
     assert collect()[1] == layout
     if target == "branch":
         argv[-1] = head[:7] + "f" * 33
@@ -196,10 +196,10 @@ def test_layout_bounds_names_and_read_chunks(tmp_path, invoke):
         {"receipt": receipt, "content": content},
     )
     plan = json.loads(planned.stdout)
-    assert receipt["contextReadChunks"] == [354, 202]
+    assert receipt["contextReadChunks"] == [354, 214]
     assert plan["chunks"] == [
         {"offset": 1, "limit": 354},
-        {"offset": 355, "limit": 202},
+        {"offset": 355, "limit": 214},
     ]
     assert plan["covered"] == receipt["contextLines"] == content.count("\n")
     assert receipt["contextChars"] == len(content)
@@ -265,7 +265,9 @@ def test_context_neutralizes_block_tags_in_diff(tmp_path, invoke):
         b"+<\\/untrusted-code-content\n"
     )
     unavailable = {"status": "unavailable", "items": [], "omitted": 0}
-    assert json.loads(result.stdout) == {
+    receipt = json.loads(result.stdout)
+    assert receipt.pop("discoveryPlan")["status"] == "unavailable"
+    assert receipt == {
         "contextLines": context.count(b"\n"),
         "contextChars": len(context.decode("utf-8", errors="replace")),
         "contextMaxLineChars": max(
@@ -462,7 +464,7 @@ def test_description_delivery(tmp_path, invoke, mode):
         assert b'kind="pr-description" trust="unverified"' in content
         assert content.count(b"<project-rules>") == 0
         assert b"<\\project-rules>" in content and b"$(touch marker)" in content
-        assert content.count(b"<untrusted-code-content ") == 3
+        assert content.count(b"<untrusted-code-content ") == 4
     else:
         assert b"Description status: empty" in content
     assert json.loads(snapshot.read_bytes()) == data
@@ -679,10 +681,10 @@ def test_writer_discloses_unplannable_context(tmp_path, invoke, monkeypatch):
 @pytest.mark.parametrize(
     "rules,expected",
     [
-        (b"x" * 11987 + b"\n" + b"x" * 11987 + b"\n", [2, 15]),
-        (b"x" * 11987 + b"\n" + b"x" * 11988 + b"\n", [1, 16]),
-        ((("\U0001f680" * 2996 + "xyz\n") * 2).encode(), [2, 15]),
-        (b"x" * 24000 + b"\nshort\n", [1, 16]),
+        (b"x" * 11987 + b"\n" + b"x" * 11987 + b"\n", [2, 23]),
+        (b"x" * 11987 + b"\n" + b"x" * 11988 + b"\n", [1, 24]),
+        ((("\U0001f680" * 2996 + "xyz\n") * 2).encode(), [2, 23]),
+        (b"x" * 24000 + b"\nshort\n", [1, 24]),
     ],
     ids=["exact-bytes", "one-byte-over", "multibyte", "oversized-singleton"],
 )
@@ -697,5 +699,191 @@ def test_writer_literal_read_plans(tmp_path, invoke, rules, expected):
     )
     assert result.returncode == 0, result.stderr
     receipt = json.loads(result.stdout)
-    assert receipt["contextLines"] == 17
+    assert receipt["contextLines"] == 25
     assert receipt["contextReadChunks"] == expected
+
+
+@pytest.mark.parametrize("target", ["local", "branch"])
+def test_prepared_context_supplies_bounded_snapshot_facts(
+    tmp_path, invoke, monkeypatch, target
+):
+    from gauntlet.location import SourceAdapter
+
+    original_read = SourceAdapter.read
+
+    def read_source(adapter, file):
+        assert file not in {".env.private", ".npmrc"}
+        return original_read(adapter, file)
+
+    monkeypatch.setattr(SourceAdapter, "read", read_source)
+    root = tmp_path / "repo"
+    root.mkdir()
+    init_git_repo(root, monkeypatch)
+    files = {
+        "work/current.arbitrary": "before\n  bridge.stop(value)\nafter\n",
+        "lib/Bridge.unusual": "component Bridge {\n  public stop(value) {\n    terminate(value)\n  }\n}\n",
+        **{
+            f"work/peer-{n}.different": "component Peer {\n  ensure(valid(value))\n  invoke(value)\n}\n"
+            for n in range(3)
+        },
+        "vendor/Bridge.unusual": "public stop(value) {\n  VENDOR_SENTINEL\n}\n",
+        ".env.private": "SECRET_SENTINEL\n",
+        ".npmrc": "SECRET_SENTINEL\n",
+    }
+    for file, text in files.items():
+        path = root / file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "source")
+    head = git(root, "rev-parse", "HEAD").strip()
+    (root / "lib/Bridge.unusual").write_text(
+        "local edit\n", encoding="utf-8", newline=""
+    )
+    output = tmp_path / "out"
+    diff = b"diff --git a/work/current.arbitrary b/work/current.arbitrary\n--- a/work/current.arbitrary\n+++ b/work/current.arbitrary\n@@ -2 +2 @@\n-  old(value)\n+  bridge.stop(value)\n"
+    write_context_inputs(output, b"rules", diff, sha=head[:7])
+    result = invoke(
+        "write_shared_context",
+        [
+            "--output-dir",
+            str(output),
+            "--head-sha",
+            head[:7],
+            "--repo-root",
+            str(root),
+            "--target-type",
+            target,
+            "--head-sha-full",
+            head,
+        ],
+        tmp_path,
+        b"triage",
+    )
+    assert result.returncode == 0, result.stderr
+    content = (output / f"code-gauntlet-context-{head[:7]}.md").read_bytes()
+    body = re.search(
+        rb'kind="fact-cards"[^>]*>\n(.*?)\n</untrusted-code-content', content, re.S
+    )
+    facts = json.loads(body[1])
+    assert facts["used_bytes"] <= facts["budget_bytes"] <= READ_PLAN_MAX_BYTES
+    assert any(
+        c["kind"] == "neighbor" and "before" in c["text"] for c in facts["cards"]
+    )
+    assert any(
+        c["kind"] == "sibling_contrast" and "ensure(valid(value))" in c["text"]
+        for c in facts["cards"]
+    )
+    callees = [c for c in facts["cards"] if c["kind"] == "callee_candidate"]
+    assert bool(callees) == (target == "branch")
+    if callees:
+        assert "terminate(value)" in callees[0]["text"]
+        assert callees[0]["related_files"] == ["work/current.arbitrary"]
+    assert b"VENDOR_SENTINEL" not in content and b"SECRET_SENTINEL" not in content
+    receipt = json.loads(result.stdout)
+    assert sum(receipt["contextReadChunks"]) == content.count(b"\n")
+
+
+def test_fact_cards_disclose_budget_loss_without_truncating_source(tmp_path, invoke):
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "source").write_text(
+        "\n".join(["unchanged " + "x" * 900] * 60 + ["change(value)"]) + "\n",
+        encoding="utf-8",
+        newline="",
+    )
+    output = tmp_path / "out"
+    write_context_inputs(
+        output,
+        b"rules",
+        b"diff --git a/source b/source\n--- a/source\n+++ b/source\n@@ -61 +61 @@\n-old(value)\n+change(value)\n",
+    )
+    result = invoke(
+        "write_shared_context",
+        ["--output-dir", str(output), "--head-sha", SHA, "--repo-root", str(root)],
+        tmp_path,
+        b"triage",
+    )
+    assert result.returncode == 0, result.stderr
+    content = (output / f"code-gauntlet-context-{SHA}.md").read_bytes()
+    body = re.search(
+        rb'kind="fact-cards"[^>]*>\n(.*?)\n</untrusted-code-content', content, re.S
+    )
+    facts = json.loads(body[1])
+    assert len(body[1]) <= facts["used_bytes"] <= facts["budget_bytes"]
+    assert facts["omitted"] > 0
+    assert facts["cards"] == []
+
+
+def test_discovery_plan_reads_only_mapped_hunks_and_fact_cards(tmp_path, invoke):
+    output = tmp_path / "out"
+    diff = b"diff --git a/one b/one\n--- a/one\n+++ b/one\n@@ -2 +2 @@\n-old\n+first\n@@ -20 +20 @@\n-before\n+last\ndiff --git a/two b/two\n--- a/two\n+++ b/two\n@@ -1,2 +0,0 @@\n-delete\n-only\n"
+    write_context_inputs(output, b"RULES_SENTINEL", diff)
+    result = invoke(
+        "write_shared_context",
+        ["--output-dir", str(output), "--head-sha", SHA],
+        tmp_path,
+        b"TRIAGE_SENTINEL",
+    )
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads(result.stdout)
+    plan = receipt["discoveryPlan"]
+    assert plan["status"] == "available"
+    regions = plan["regions"]
+    assert len(regions) == len({r["id"] for r in regions}) == 3
+    rows = (
+        (output / f"code-gauntlet-context-{SHA}.md")
+        .read_text(encoding="utf-8")
+        .split("\n")
+    )
+
+    def read(ranges):
+        return "\n".join(
+            "\n".join(rows[r["offset"] - 1 : r["offset"] - 1 + r["limit"]])
+            for r in ranges
+        )
+
+    assert [r["file"] for r in regions] == ["one", "one", "two"]
+    assert [r["line_start"] for r in regions] == [2, 20, 0]
+    for region, marker in zip(regions, ["+|first", "+|last", "-|delete"], strict=True):
+        packet = read(region["reads"])
+        assert marker in packet
+        assert "RULES_SENTINEL" not in packet and "TRIAGE_SENTINEL" not in packet
+        assert "Fact cards" not in packet
+    facts = read(plan["fact_reads"])
+    assert "Fact cards" in facts
+    assert (
+        "RULES_SENTINEL" not in facts
+        and "Repository layout" not in facts
+        and "## Diff" not in facts
+    )
+
+
+@pytest.mark.parametrize("huge_packet", [False, True])
+def test_discovery_plan_overflow_discloses_unavailable_coverage(
+    tmp_path, invoke, monkeypatch, huge_packet
+):
+    from gauntlet import shared_context
+
+    monkeypatch.setattr(shared_context, "READ_PLAN_MAX_CHUNKS", 2)
+    if huge_packet:
+        diff = (
+            b"diff --git a/source b/source\n--- a/source\n+++ b/source\n@@ -0,0 +1,1501 @@\n"
+            + b"+new\n" * 1501
+        )
+    else:
+        diff = b"diff --git a/source b/source\n--- a/source\n+++ b/source\n" + b"".join(
+            f"@@ -{n} +{n} @@\n-old\n+new\n".encode() for n in [1, 10, 20]
+        )
+    output = tmp_path / "out"
+    write_context_inputs(output, b"rules", diff)
+    result = invoke(
+        "write_shared_context",
+        ["--output-dir", str(output), "--head-sha", SHA],
+        tmp_path,
+        b"triage",
+    )
+    assert result.returncode == 0, result.stderr
+    plan = json.loads(result.stdout)["discoveryPlan"]
+    assert plan["status"] == "unavailable"
+    assert plan["regions"] == []

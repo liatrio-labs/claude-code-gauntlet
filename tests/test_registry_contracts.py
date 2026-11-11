@@ -209,7 +209,13 @@ def test_contract_schema(agent_type: str) -> None:
     schema = json.loads(blocks[0])
     assert schema == contract["schema"]
     item = schema["properties"]["findings"]["items"]
-    required = [*live["required"], "anchor", "evidence", *contract["requiredExtra"]]
+    required = [
+        *live["required"],
+        "anchor",
+        "evidence",
+        "change_origin",
+        *contract["requiredExtra"],
+    ]
     required = [key for key in required if key != "id"]
     dimensions = [r for r in live["dimensions"] if r["agentType"] == agent_type]
     if len(dimensions) == 1:
@@ -553,7 +559,14 @@ def test_complete_read_contract():
     assert "without a truncation notice" in block
     assert "measured end or exhaust the file" in block
     assert not re.search(r"printf|ndjson|Bash", block, re.IGNORECASE)
-    for name in READERS:
+    for name in (
+        *READERS,
+        *(
+            c["agentType"].split(":")[1]
+            for c in gen.load_registry(str(ROOT))["discoveryContracts"]
+            if c.get("generatedRole")
+        ),
+    ):
         text = read(f"agents/{name}.md")
         assert text.count(READ_MARKER) == 1
         assert block in text

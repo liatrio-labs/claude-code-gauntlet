@@ -19,6 +19,13 @@ from gauntlet.cli import (
     require_head_sha,
 )
 from gauntlet.diff import ContextMap, ContextMapEntry, DiffStructureError, annotate_diff
+from gauntlet.discovery_plan import (
+    DiscoveryPlan,
+    RegionPlanError,
+    changed_regions,
+    read_ranges,
+)
+from gauntlet.fact_cards import build_fact_cards
 from gauntlet.framing import frame
 from gauntlet.location import SourceAdapter
 from gauntlet.paths import NON_SOURCE_DIRS
@@ -46,6 +53,9 @@ framed between triage and diff. Branch/local calls require no snapshot.
 Layout lists root names and changed-file directories from --repo-root, using
 local files or the verified --head-sha-full snapshot. Missing source is disclosed.
 Names are untrusted candidate locations, not evidence of a repository precedent.
+Bounded fact cards add unchanged neighborhoods, lexical callee candidates and
+sibling contrasts from that same snapshot. Their byte budget, omitted cards and
+search limits are disclosed; no card asserts a defect.
 
 Content bytes are rules (adding LF only if needed), a blank line and
 ``## Risk classification and AI-generated-code status``, CR/LF-trimmed stdin
@@ -237,6 +247,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     if not presentation.endswith(b"\n"):
         presentation += b"\n"
     triage = triage.strip(b"\r\n")
+    facts = b"Fact cards unavailable: repository root not supplied."
     layout = b"Layout unavailable: repository root not supplied."
     if args.repo_root:
         if args.target_type != "local":
@@ -248,6 +259,19 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         source = SourceAdapter.capture(
             Path(args.repo_root).resolve(), args.target_type, args.head_sha_full
         )
+        if status == "available":
+            facts = frame(
+                "untrusted-code-content",
+                json.dumps(
+                    build_fact_cards(source, annotated, len(diff)), ensure_ascii=True
+                )
+                .replace("<", "\\u003c")
+                .encode("utf-8")
+                + b"\n",
+                {"kind": "fact-cards"},
+            )
+        else:
+            facts = b"Fact cards unavailable: diff could not be mapped."
         layout = _layout_json(layout_entries(source, changed_files)).encode("utf-8")
         layout = frame(
             "untrusted-code-content", layout + b"\n", {"kind": "repository-layout"}
@@ -257,17 +281,54 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         b"Names locate candidates; they do not establish precedent or admission.\n"
         + layout
     )
+    plan_status = status
+    try:
+        regions = (
+            changed_regions(annotated, context_read_chunks)
+            if status == "available"
+            else []
+        )
+    except RegionPlanError:
+        regions, plan_status = [], "unavailable"
+    if len(regions) > READ_PLAN_MAX_CHUNKS:
+        regions, plan_status = [], "unavailable"
+    region_index = b"\n\n## Discovery regions: [id, head start, head end] by file\n\n"
+    previous_file = None
+    for region in regions:
+        if region["file"] != previous_file:
+            region_index += ("File: " + _layout_json(region["file"]) + "\n").encode(
+                "utf-8"
+            )
+            previous_file = region["file"]
+        region_index += (
+            json.dumps([region["id"], region["line_start"], region["line_end"]]) + "\n"
+        ).encode("utf-8")
     prefix = (
         rules
         + b"\n## Risk classification and AI-generated-code status\n\n"
         + triage
         + description
         + layout
+        + region_index
+        + b"\n\n## Fact cards: bounded lexical evidence\n\n"
+        + facts
         + b"\n\n## Diff\n\n"
     )
     content = prefix + frame("untrusted-code-content", presentation) + b"\n"
+    fact_start = prefix.index(b"\n\n## Fact cards: bounded lexical evidence\n\n")
+    fact_offset = prefix[:fact_start].count(b"\n") + 2
+    fact_text = (
+        prefix[fact_start + 1 :]
+        .removesuffix(b"\n\n## Diff\n\n")
+        .decode("utf-8", "replace")
+        + "\n"
+    )
+    fact_reads = read_ranges(fact_text, fact_offset, context_read_chunks)
     # Framing adds one opening LF and never changes body LF counts.
     offset = prefix.count(b"\n") + 1
+    for region in regions:
+        for read in region["reads"]:
+            read["offset"] += offset
     sidecar: ContextMap = {
         "version": 1,
         "sha": args.head_sha,
@@ -296,12 +357,19 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     lines = content.count(b"\n")
     decoded = content.decode("utf-8", errors="replace")
     chars = len(decoded)
+    discovery_plan: DiscoveryPlan = {
+        "version": 1,
+        "status": plan_status,
+        "regions": regions,
+        "fact_reads": fact_reads,
+    }
     return {
         "contextLines": lines,
         "contextChars": chars,
         "contextMaxLineChars": max(map(len, decoded.split("\n"))) + 1,
         "contextReadPlanVersion": 1,
         "contextReadChunks": context_read_chunks(decoded),
+        "discoveryPlan": discovery_plan,
         "removedTests": removed_tests(diff.decode("utf-8", errors="replace")),
     }, 0
 

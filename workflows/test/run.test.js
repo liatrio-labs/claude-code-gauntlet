@@ -1742,3 +1742,19 @@ for (const input of [
     assert.match(call.prompt, /until a call returns no further content/);
   }
 });
+
+test('run transports prepared region coverage into conditional discovery and its measurement', async () => {
+  const A = validArgs({ measurementTrace: true, contextLines: 10,
+    discoveryPlan: { version: 1, status: 'available', fact_reads: [{ offset: 1, limit: 2 }],
+      regions: [{ id: 'only', file: 'a.js', line_start: 1, line_end: 2, reads: [{ offset: 5, limit: 2 }] }] } });
+  const ctx = makeCtx(A, { findings: [] });
+  const result = await runWith(ctx, A);
+  const hunter = ctx.calls.find((call) => call.label === 'code-gauntlet:gap-hunter');
+  assert.ok(hunter);
+  assert.ok(hunter.prompt.includes(`${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`));
+  assert.equal(result.measurement.status, 'available');
+  assert.deepEqual(JSON.parse(result.measurement.text).coverage_ledger.uncovered, ['only']);
+  const invalid = await runWith(makeCtx(A), { ...A, discoveryPlan: { ...A.discoveryPlan, fact_reads: [{ offset: 10, limit: 2 }] } });
+  assert.equal(invalid.ok, false);
+  assert.ok(invalid.gaps.some((gap) => gap.includes('discoveryPlan')));
+});

@@ -103,6 +103,7 @@ export const FINDING_PROP_TYPES = deepFreeze({
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
   dimension: 'string', origin: 'string', evidence: 'string',
+  change_origin: { type: 'string', enum: ['introduced', 'moved_or_carried', 'pre_existing'], description: 'Relationship to this PR: introduced defect; defect in relocated, copied or newly relied-on code; or other pre-existing defect. Provenance is data, not a reason to omit a finding.' },
   anchor: { type: 'string', description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
   // Optional prose fields must be omitted when inapplicable; emitting null would violate their schema types.
   suggestion: 'string', claude_md_rule: 'string',
@@ -238,6 +239,13 @@ export const DIMENSIONS = deepFreeze([
   } : {}) },
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
+
+// Supplemental discovery roles reuse a lane; one row owns dispatch, contract and presentation.
+export const DISCOVERY_REVIEWERS = deepFreeze([
+  { agentType: 'code-gauntlet:gap-hunter', dimension: 'bug', dispatch: 'uncovered', label: 'Gap Hunter',
+    objective: 'Review only the supplied uncovered regions and fact cards for present defects. Return findings anchored in the assigned regions.',
+    tools: 'Read', modelOverride: null },
+]);
 
 export const VERIFY_REFERENCE_FIELDS = deepFreeze(Object.keys(SOURCE_REFERENCE.properties));
 export const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)))
@@ -439,7 +447,7 @@ export const FINDING_TEXT_FIELD_NAMES = deepFreeze([...new Set([
   ...PIPELINE_FINDING_FIELDS,
 ])]);
 
-export const AGENTS = deepFreeze([...new Set(DIMENSIONS.map((d) => d.agentType))]);
+export const AGENTS = deepFreeze([...new Set([...DIMENSIONS, ...DISCOVERY_REVIEWERS].map((d) => d.agentType))]);
 
 // Key display labels by agent because a shared dispatch contributes one aggregate row, not one row per dimension.
 export const AGENT_LABELS = deepFreeze({
@@ -450,6 +458,7 @@ export const AGENT_LABELS = deepFreeze({
   'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
   'code-gauntlet:type-design-analyzer': 'Type Design',
   'code-gauntlet:code-simplifier': 'Code Simplification',
+  ...Object.fromEntries(DISCOVERY_REVIEWERS.map((r) => [r.agentType, r.label])),
 });
 
 // Presentation branding is separate from the machine-parsed product slug, so changing display text cannot rename the wire protocol.
@@ -493,7 +502,7 @@ export function resolvePolicy(agentType, opts = {}, dimensions = DIMENSIONS) {
     // Preserve explicit third-party deployment IDs so the override remains an escape hatch from alias mapping.
     return { model: toModelId(opts.subagentModelEnv, opts.provider, opts.mappedAliases) };
   }
-  const dim = dimensions.find((d) => d.agentType === agentType);
+  const dim = dimensions.find((d) => d.agentType === agentType) || DISCOVERY_REVIEWERS.find((r) => r.agentType === agentType);
   const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider, opts.mappedAliases);
   return { model };
 }

@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypedDict, get_args
 
+from gauntlet.discovery_plan import CoverageLedger
 from gauntlet.registry import QualityBasis, TestKind
 
 from bench.runner.contracts import ScoreRef, artifact_allowed, exclusive_json
@@ -109,6 +110,7 @@ class MeasurementTrace:
     snapshots: tuple[StageSnapshot, ...]
     complete: bool
     dropped_stages: tuple[Stage, ...] = ()
+    coverage_ledger: CoverageLedger | None = None
 
 
 @dataclass(frozen=True, slots=True)

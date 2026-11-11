@@ -1,11 +1,12 @@
 // Summary and discovery stages, finding schemas, and scope flags.
-import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISPATCH_RESULTS, modelFor, DISCOVERY_FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
+import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISCOVERY_REVIEWERS, DISPATCH_RESULTS, modelFor, DISCOVERY_FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { computeLightEligible } from './knobs.js';
 import { LIMIT_DEFAULTS } from './registry.js';
 import { effectiveBucketSize } from './capacity.js';
 import { deepClone } from './wire.js';
 import { checkRemovedTestAudit } from './removedTests.js';
-import { stampDiscovery, recordStage, measurementDecisions } from './measurementTrace.js';
+import { stampDiscovery, recordStage, measurementDecisions, traceDecision } from './measurementTrace.js';
+import { coverageLedger, findingInRegions, gapHunterPrompt } from './coverageLedger.js';
 import { validateFindings } from './mergeFindings.js';
 
 // StructuredOutput requires an object wrapper around summary prose.
@@ -90,7 +91,7 @@ export function intersectRequiredExtra(rows) {
 }
 
 // Derive agent order from the supplied dimensions so alternate registries cannot produce missing specs.
-export function agentSpecs(dims = DIMENSIONS) {
+export function agentSpecs(dims = DIMENSIONS, reviewers = dims === DIMENSIONS ? DISCOVERY_REVIEWERS : []) {
   const byAgent = new Map();
   for (const d of dims) {
     if (!byAgent.has(d.agentType)) byAgent.set(d.agentType, { agentType: d.agentType, dimensions: [], schemaExtra: {}, conditionalFlags: [], promptExtra: null, rows: [] });
@@ -103,7 +104,7 @@ export function agentSpecs(dims = DIMENSIONS) {
     if (d.promptExtra) spec.promptExtra = d.promptExtra;
   }
   const order = [...new Set(dims.map((d) => d.agentType))];
-  return order.map((a) => {
+  const primary = order.map((a) => {
     const spec = byAgent.get(a);
     spec.requiredExtra = intersectRequiredExtra(spec.rows);
     // Sort conditional requirements so schema derivation does not depend on registry row order.
@@ -115,8 +116,14 @@ export function agentSpecs(dims = DIMENSIONS) {
       .filter(([, kind]) => kind.required.length || kind.anyOf?.length)
       .map(([kind, rule]) => ({ dimension: row.dimension, field: row.admission.field, kind, ...rule })) : []);
     delete spec.rows;
+    spec.dispatch = 'parallel';
     return spec;
   });
+  return [...primary, ...reviewers.map((row) => {
+    const lane = agentSpecs(dims.filter((d) => d.dimension === row.dimension), [])[0];
+    if (!lane) throw new Error(`Unknown discovery lane: ${row.dimension}`);
+    return { ...deepClone(lane), ...row, dimensions: [row.dimension] };
+  })];
 }
 
 // Missing flags enable dimensions so incomplete flag maps cannot silently narrow review scope.
@@ -154,7 +161,7 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
   }
   // Only discovery dispatch requires a quote; pipeline-authored and replayed findings can remain unconfirmed.
   props.anchor.minLength = 1;
-  const required = [...FINDING_REQUIRED, 'anchor', 'evidence', ...(requiredExtra || [])];
+  const required = [...FINDING_REQUIRED, 'anchor', 'evidence', 'change_origin', ...(requiredExtra || [])];
   const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
   if (conditionalRequired && conditionalRequired.length) {
     // The platform accepts conditional requirements nested in finding items rather than top-level schema composition.
@@ -204,9 +211,10 @@ export function findingSchema(spec, policy) {
       },
       complete: { type: 'boolean', description: 'Whether investigation is finished.' },
       total_seen: { type: 'number', description: 'Number of candidates examined, including unreported ones.' },
+      read_regions: { type: 'array', items: { type: 'string' }, uniqueItems: true, description: 'Discovery region IDs actually inspected, including regions with no finding. Omit unread regions; loading the shared context alone is not investigation.' },
       ...deepClone(resultFields),
     },
-    required: ['findings', 'complete', 'total_seen', ...Object.keys(resultFields)],
+    required: ['findings', 'complete', 'total_seen', 'read_regions', ...Object.keys(resultFields)],
   };
 }
 
@@ -227,7 +235,8 @@ export async function discover(ctx, input) {
   const policy = inp.policy || {};
   const discoveryCap = limits.discoveryCap;
 
-  const specs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
+  const activeSpecs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
+  const specs = activeSpecs.filter((spec) => spec.dispatch === 'parallel');
   const inventory = inp.removedTests || { status: 'unavailable', items: [], omitted: 0, reason: 'inventory not supplied' };
   const auditDispatched = specs.some((spec) => spec.agentType === AGENT_TYPE_TEST_ANALYZER);
   let removedTestAudit = inventory.status === 'unavailable'
@@ -250,7 +259,30 @@ export async function discover(ctx, input) {
 
   const results = await ctx.parallel(thunks);
 
+  const ledger = coverageLedger(inp.discoveryPlan, specs, results, inp.repoRoot, inp.contextLines);
+  const assigned = ledger.status === 'available'
+    ? inp.discoveryPlan.regions.filter((r) => ledger.uncovered.includes(r.id)) : [];
+  const hunters = activeSpecs.filter((spec) => spec.dispatch === 'uncovered');
+  if (assigned.length && inp.contextPath) {
+    const hunterResults = await ctx.parallel(hunters.map((spec) => () => ctx.agent(
+      gapHunterPrompt(inp.contextPath, inp.discoveryPlan, assigned), {
+        label: spec.agentType, agentType: spec.agentType, model: modelFor(spec.agentType, policy), schema: findingSchema(spec, policy),
+      })));
+    hunters.forEach((spec, i) => {
+      specs.push(spec);
+      results.push(hunterResults[i]);
+      ledger.hunters.push({ agent: spec.agentType, assigned: assigned.map((r) => r.id),
+        status: Array.isArray(hunterResults[i]?.findings) ? (hunterResults[i].complete === false ? 'incomplete' : 'complete') : 'failed',
+        read_regions: hunterResults[i]?.read_regions || [] });
+    });
+  }
+
+  const finalCoverage = coverageLedger(inp.discoveryPlan, specs, results, inp.repoRoot, inp.contextLines);
+  ledger.remaining_uncovered = finalCoverage.uncovered;
   const gaps = [];
+  if (inp.discoveryPlan && ledger.status !== 'available') gaps.push('discovery coverage unavailable: invalid or unavailable region plan');
+  if (assigned.length && !inp.contextPath) gaps.push('discovery coverage: uncovered regions could not be dispatched without contextPath');
+  if (ledger.invalid_receipts.length) gaps.push('discovery coverage: unknown region IDs in reviewer read receipts were ignored');
   const findings = [];
   const intake = [];
   const rejected = [];
@@ -278,14 +310,14 @@ export async function discover(ctx, input) {
         ? ' (dispatch carried the conditional per-dimension schema)'
         : '';
       gaps.push(`${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered${conditionalNote}`);
-      degradedDims.push(...spec.dimensions);
+      if (spec.dispatch === 'parallel') degradedDims.push(...spec.dimensions);
       return;
     }
     const list = Array.isArray(res.findings) ? res.findings : null;
     if (list === null) {
       // A malformed result provides no usable coverage and must degrade like a null result.
       gaps.push(`${spec.agentType}: malformed result (no findings array)`);
-      degradedDims.push(...spec.dimensions);
+      if (spec.dispatch === 'parallel') degradedDims.push(...spec.dimensions);
       return;
     }
     const agentName = spec.agentType.split(':').pop();
@@ -301,6 +333,12 @@ export async function discover(ctx, input) {
         for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics']) delete f[key];
         f.agent = agentName;
       }
+      if (spec.dispatch === 'uncovered' && !findingInRegions(f, assigned, inp.repoRoot)) {
+        rejected.push(f);
+        decisions.push(traceDecision(f, 'out_of_scope', 'gap hunter finding is outside assigned regions'));
+        gaps.push(`${spec.agentType}: finding outside assigned regions rejected`);
+        continue;
+      }
       const checked = validateFindings([f], decisions);
       if (checked.rejected.length) gaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
       rejected.push(...checked.rejected);
@@ -312,8 +350,9 @@ export async function discover(ctx, input) {
     }
   });
 
+  if (trace) trace.coverage_ledger = deepClone(ledger);
   if (trace) recordStage(trace, 'discover', intake, {
-    coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
+    decisions, coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
 
   if (inventory.omitted > 0) removedTestAudit.omitted = inventory.omitted;
   if (removedTestAudit.status !== 'ran-clean') {
@@ -360,6 +399,7 @@ export async function discover(ctx, input) {
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
+    ...(inp.discoveryPlan ? { coverageLedger: ledger } : {}),
   }, decisions);
 }
 

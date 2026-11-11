@@ -59,6 +59,7 @@ DeltaValueField = Literal[
 ]
 VerifyReferenceKind = Literal["search_paths", "reference_list", "reference"]
 EffectiveTestKind = Literal["defective_test", "production_defect"]
+ChangeOrigin = Literal["introduced", "moved_or_carried", "pre_existing"]
 TestKind = Literal[
     "defective_test", "critical_gap", "production_defect", "additional_case"
 ]
@@ -291,6 +292,7 @@ TRACE_FINDING_FIELDS: tuple[str, ...] = (
     "suggested_fix_code",
     "claude_md_rule",
     "spec_text",
+    "change_origin",
     "rule_source",
     "agent",
     "dimension",
@@ -1840,6 +1842,7 @@ class FindingMetadata(FindingFacts, total=False):
     line_end: int
     origin: str
     evidence: str
+    change_origin: ChangeOrigin
     anchor: str
     suggestion: str
     claude_md_rule: str

@@ -7,6 +7,7 @@ import { KNOB_REGISTRY, computeLightEligible, receiptEntryFor, receiptEntryForKe
 import { deriveWhenHolds, deriveConfigWaist, configEchoValue, validateConfigEcho } from './knobs.js';
 import { PYTHON_COMMAND_ARGV, dottedValue, isPlainObject, deepFreeze, fnv1a32, normalizeReviewText } from './wire.js';
 import { buildReviewConfig, loadExclusions } from './reviewConfig.js';
+import { validDiscoveryPlan } from './coverageLedger.js';
 import { validateRemovedTests } from './removedTests.js';
 
 export function resolveRemovedTestsArgs(args) {
@@ -669,6 +670,7 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
       }
     }
   }
+  if (args.discoveryPlan !== undefined && !validDiscoveryPlan(args.discoveryPlan, args.contextLines)) errors.push('discoveryPlan must be a measured region plan within contextLines');
   return { ok: errors.length === 0, errors };
 }
 

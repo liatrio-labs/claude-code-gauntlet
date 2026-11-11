@@ -14,6 +14,7 @@
     "./agents/conventions-and-intent.md",
     "./agents/cross-file-impact.md",
     "./agents/executor.md",
+    "./agents/gap-hunter.md",
     "./agents/security-reviewer.md",
     "./agents/test-analyzer.md",
     "./agents/type-design-analyzer.md",

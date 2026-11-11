@@ -23,6 +23,8 @@ PREFLIGHT = "skills/code-gauntlet/references/phase1-preflight.md"
 HEADLESS = "skills/code-gauntlet/references/headless-mode.md"
 DELIVER_PHASE = "skills/code-gauntlet/references/phase8-delivery.md"
 TARGETS = (
+    ".claude-plugin/plugin.json",
+    "agents/gap-hunter.md",
     "agents/bug-detector.md",
     "agents/type-design-analyzer.md",
     "agents/security-reviewer.md",
@@ -334,7 +336,11 @@ console.log(JSON.stringify({out, schemas}, (key, value) => key === '$comment' ? 
     ]
     assert value["out"]["findings"][0]["sites"] == []
     assert len(value["out"]["gaps"]) == 2
-    assert contracts == value["schemas"]
+    assert {
+        agent: schema
+        for agent, schema in contracts.items()
+        if agent in value["schemas"]
+    } == value["schemas"]
     for schema in value["schemas"].values():
         item = schema["properties"]["findings"]["items"]
         properties = item["properties"]
@@ -393,7 +399,11 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
         check=True,
     )
     schemas = json.loads(dispatched.stdout)
-    assert set(schemas) == set(after["agents"])
+    assert set(schemas) == {
+        c["agentType"]
+        for c in after["discoveryContracts"]
+        if not c.get("generatedRole")
+    }
     for schema in schemas.values():
         item = schema["properties"]["findings"]["items"]
         assert item["properties"]["anchor"] == {**anchor, "minLength": 1}
@@ -422,7 +432,10 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
         schema = json.loads(
             re.search(r"```json\n(.*?)\n```", blocks[0], re.DOTALL).group(1)
         )
-        assert schema == schemas[agent]
+        expected = next(
+            c["schema"] for c in after["discoveryContracts"] if c["agentType"] == agent
+        )
+        assert schema == expected
         assert generated_block.sub("", contract) == generated_block.sub("", original)
     namespace: dict[str, Any] = {}
     exec(
@@ -1226,3 +1239,48 @@ def test_registry_source_projection(registry_tree, invoke):
         namespace,
     )
     assert namespace["FIX_MAX_LINES"] == 101
+
+
+def test_supplemental_reviewer_registration_generates_agent_manifest_and_dispatch(
+    registry_tree, invoke
+):
+    source = registry_tree / "workflows/src/registry.js"
+    original = source.read_text(encoding="utf-8")
+    row = "  { agentType: 'code-gauntlet:probe-reader', dimension: 'bug', dispatch: 'uncovered', label: 'Probe', objective: 'Inspect assigned regions.', tools: 'Read', modelOverride: null },\n"
+    source.write_text(
+        original.replace(
+            "export const DISCOVERY_REVIEWERS = deepFreeze([\n",
+            "export const DISCOVERY_REVIEWERS = deepFreeze([\n" + row,
+        ),
+        encoding="utf-8",
+        newline="",
+    )
+    result = invoke(
+        "generate_contract_requirements",
+        ["--repo-root", str(registry_tree)],
+        registry_tree,
+    )
+    assert result.returncode == 0, result.stderr
+    contract = (registry_tree / "agents/probe-reader.md").read_text(encoding="utf-8")
+    assert "tools: Read" in contract and "Inspect assigned regions." in contract
+    manifest = json.loads(
+        (registry_tree / ".claude-plugin/plugin.json").read_text(encoding="utf-8")
+    )
+    assert "./agents/probe-reader.md" in manifest["agents"]
+    result = gen.proc.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import { discover } from './workflows/src/discover.js';
+const labels = [];
+await discover({agent: async (_, opts) => {labels.push(opts.agentType); return {findings:[],complete:true,total_seen:0,read_regions:[],removed_test_audit:[]};},parallel:async ts=>Promise.all(ts.map(t=>t()))},
+{contextPath:'/prepared', contextLines:10, discoveryPlan:{version:1,status:'available',fact_reads:[{offset:1,limit:2}],regions:[{id:'unread',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2}]}]}});
+console.log(JSON.stringify(labels));
+""",
+        ],
+        cwd=str(registry_tree),
+        check=True,
+    )
+    assert "code-gauntlet:probe-reader" in json.loads(result.stdout)

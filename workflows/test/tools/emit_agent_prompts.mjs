@@ -24,6 +24,7 @@ export async function emitLeakPrompts() {
     ['derived', 'derived', {}, {}],
     ['bucketed', 'return', { changedLines: 900, changedFiles: Array.from({ length: 24 }, (_, i) => `sample${i}.js`) }, {}],
     ['fallback', 'return', {}, {}],
+    ['uncovered', 'return', { contextLines: 10, discoveryPlan: { version: 1, status: 'available', fact_reads: [{ offset: 1, limit: 2 }], regions: [{ id: 'unread', file: 'unvisited', line_start: 1, line_end: 2, reads: [{ offset: 4, limit: 2 }] }] } }, {}],
   ];
   const body = readFileSync(new URL('../../pipeline.js', import.meta.url), 'utf8').replace(/^export const meta.*$/m, '');
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -44,7 +45,7 @@ export async function emitLeakPrompts() {
       if (!out.ok) throw new Error(`synthetic prompt capture failed: ${scenario}`);
       const labels = new Set(ctx.calls.map((call) => call.label));
       for (const spec of agentSpecs()) {
-        if (!labels.has(spec.agentType)) throw new Error('incomplete discovery prompt coverage');
+        if ((spec.dispatch === 'parallel' || args.discoveryPlan) && !labels.has(spec.agentType)) throw new Error('incomplete discovery prompt coverage');
       }
       const counts = new Map();
       for (const call of ctx.calls) {
