@@ -336,7 +336,7 @@ const QUALITY_ADMISSION = {
     duplication: { description: 'Duplicated behavior identified by duplicate_of.', required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
     simpler_equivalent: { description: 'Simpler replacement preserving observable behavior.', required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
     stack_idiom: { description: 'Behavior-preserving replacement grounded in existing repository precedent.', required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
-    other: { description: 'No demonstrated defect, duplication, simpler equivalent or applicable precedent.', required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
+    other: { description: 'No demonstrated defect, duplication, simpler equivalent or applicable precedent.', required: [], predicates: [], phase: 'semantic', defaultDisposition: 'report_only', tier: 'suggestion' },
   },
 };
 const DIMENSIONS = deepFreeze([
@@ -3404,19 +3404,27 @@ function lineBucket(line, proximity) {
   if (n === null) return 0;
   return pyRound(n / proximity) * proximity;
 }
-function groupFilterFindings(findings, keyFor) {
-  const groups = new Map();
+function groupByProximity(findings, lineProximity) {
+  const files = new Map();
+  const groups = [];
   for (const finding of findings) {
-    const key = canonicalRange(finding) ? keyFor(finding) : finding;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(finding);
+    if (!canonicalRange(finding)) { groups.push([finding]); continue; }
+    const file = pyGet(finding, 'file', '');
+    if (!files.has(file)) files.set(file, []);
+    files.get(file).push(finding);
+  }
+  for (const rows of files.values()) {
+    rows.sort((a, b) => a.line_start - b.line_start);
+    let group;
+    for (const finding of rows) {
+      if (!group || finding.line_start - group[0].line_start > lineProximity) {
+        group = [];
+        groups.push(group);
+      }
+      group.push(finding);
+    }
   }
   return groups;
-}
-function groupByProximity(findings, lineProximity) {
-  return groupFilterFindings(findings, (finding) => JSON.stringify([
-    pyGet(finding, 'file', ''), lineBucket(finding.line_start, lineProximity),
-  ]));
 }
 function consolidateCrossAgent(findings) {
   const LINE_PROXIMITY = 5;
@@ -3624,7 +3632,7 @@ function evaluateAdmission(finding) {
     const kindReasons = [];
     if (rule.status === 'admitted') {
       if (!row || (row.admission && !kind)) kindReasons.push({ predicate: 'kind', status: 'held_back' });
-      if (kind?.defaultDisposition === 'report_only') kindReasons.push({ predicate: 'value', status: 'report_only' });
+      if (kind?.phase === 'deterministic' && kind.defaultDisposition === 'report_only') kindReasons.push({ predicate: 'value', status: 'report_only' });
       for (const predicate of kind?.predicates || []) {
         const descriptor = ADMISSION_PREDICATES[predicate];
         const result = descriptor?.fact ? factAssessment(finding, descriptor.fact) : null;

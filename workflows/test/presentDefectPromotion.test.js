@@ -7,8 +7,7 @@ import { stageCtx } from './helpers/stageFixtures.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 
 for (const [dimension, fields] of [
-  ['test_coverage', { test_kind: 'additional_case' }], ['simplification', { quality_basis: 'other' }],
-  ['type_design', { quality_basis: 'other' }], ['test_coverage', { test_kind: 'critical_gap' }],
+  ['test_coverage', { test_kind: 'additional_case' }], ['test_coverage', { test_kind: 'critical_gap' }],
 ]) test(`typed truth preserves deterministic kind admission: ${dimension}/${JSON.stringify(fields)}`, async () => {
   const ctx = stageCtx({ reply: { validations: [{ finding_id: 'f', claim: 'confirmed', consequence: 'present_failure',
     justification: 'Current caller fails' }] } });

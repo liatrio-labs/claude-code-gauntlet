@@ -146,7 +146,8 @@ export function evaluateAdmission(finding) {
     const kindReasons = [];
     if (rule.status === 'admitted') {
       if (!row || (row.admission && !kind)) kindReasons.push({ predicate: 'kind', status: 'held_back' });
-      if (kind?.defaultDisposition === 'report_only') kindReasons.push({ predicate: 'value', status: 'report_only' });
+      // A posting verdict replaces discovery's semantic categorization, while deterministic restrictions remain.
+      if (kind?.phase === 'deterministic' && kind.defaultDisposition === 'report_only') kindReasons.push({ predicate: 'value', status: 'report_only' });
       for (const predicate of kind?.predicates || []) {
         const descriptor = ADMISSION_PREDICATES[predicate];
         const result = descriptor?.fact ? factAssessment(finding, descriptor.fact) : null;

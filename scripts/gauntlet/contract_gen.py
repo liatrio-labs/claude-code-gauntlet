@@ -493,6 +493,7 @@ def location_reference(registry: Mapping[str, Any]) -> str:
         "## Final Disposition and Rights",
         "",
         "Missing or unknown disposition or admission is held back. Delivery intersects admission, disposition and location rights. Body fix tasks additionally require the persisted current-defect eligibility stamp; patches and fences remain denied.",
+        "Typed posting verdicts supersede semantic kind defaults; deterministic kind defaults and factual gates still apply.",
         "",
         *_rights_table("Disposition", registry["dispositionRights"]),
     ]

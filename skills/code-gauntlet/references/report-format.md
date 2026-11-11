@@ -134,6 +134,7 @@ Unconfirmed findings remain in the review body, labelled `location unconfirmed`.
 ## Final Disposition and Rights
 
 Missing or unknown disposition or admission is held back. Delivery intersects admission, disposition and location rights. Body fix tasks additionally require the persisted current-defect eligibility stamp; patches and fences remain denied.
+Typed posting verdicts supersede semantic kind defaults; deterministic kind defaults and factual gates still apply.
 
 | Disposition | inline | body | report | fixTask | patch | fence | sourceLink |
 |---|---|---|---|---|---|---|---|
@@ -156,7 +157,7 @@ Missing or unknown disposition or admission is held back. Delivery intersects ad
 - `quality_basis: duplication`: {"description": "Duplicated behavior identified by duplicate_of.", "phase": "semantic", "predicates": ["resolved_duplicate", "confirmed_duplication"], "required": ["duplicate_of"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: simpler_equivalent`: {"anyOf": ["suggestion", "suggested_fix_code"], "description": "Simpler replacement preserving observable behavior.", "phase": "semantic", "predicates": ["concrete_equivalent", "behavior_preserved"], "required": ["behavior_preserved"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: stack_idiom`: {"description": "Behavior-preserving replacement grounded in existing repository precedent.", "phase": "semantic", "predicates": ["resolved_precedent", "precedent_not_added", "applicable"], "required": ["precedent"], "tier": "suggestion"}; default disposition `held_back`.
-- `quality_basis: other`: {"defaultDisposition": "report_only", "description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
+- `quality_basis: other`: {"defaultDisposition": "report_only", "description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "semantic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
 
 ### simplification admission
 
@@ -164,7 +165,7 @@ Missing or unknown disposition or admission is held back. Delivery intersects ad
 - `quality_basis: duplication`: {"description": "Duplicated behavior identified by duplicate_of.", "phase": "semantic", "predicates": ["resolved_duplicate", "confirmed_duplication"], "required": ["duplicate_of"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: simpler_equivalent`: {"anyOf": ["suggestion", "suggested_fix_code"], "description": "Simpler replacement preserving observable behavior.", "phase": "semantic", "predicates": ["concrete_equivalent", "behavior_preserved"], "required": ["behavior_preserved"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: stack_idiom`: {"description": "Behavior-preserving replacement grounded in existing repository precedent.", "phase": "semantic", "predicates": ["resolved_precedent", "precedent_not_added", "applicable"], "required": ["precedent"], "tier": "suggestion"}; default disposition `held_back`.
-- `quality_basis: other`: {"defaultDisposition": "report_only", "description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
+- `quality_basis: other`: {"defaultDisposition": "report_only", "description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "semantic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
 <!-- /generated-from-registry-location -->
 
 ---

@@ -199,7 +199,7 @@ def test_quality_basis_contract(
         assert rule["predicates"] == predicates
         assert rule.get("anyOf", []) == any_of
         assert rule.get("defaultDisposition", "held_back") == disposition
-        assert rule["phase"] == ("deterministic" if basis == "other" else "semantic")
+        assert rule["phase"] == "semantic"
         assert rule["tier"] == (
             "main" if basis == "current_correctness" else "suggestion"
         )
